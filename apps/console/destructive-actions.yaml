@@ -77,7 +77,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 47 controls — 46 confirmed, 1 inert
+#   census: 47 controls — 47 confirmed
 
 version: 1
 
@@ -900,13 +900,19 @@ controls:
   - id: account.delete
     route: /[org]
     surface: apps/console/components/shell/account-settings-dialog.tsx
-    mutation: ""
-    reach: [{ menu: "profile" }, { open: "Account settings" }]
-    control: { role: button, name: "Delete Account" }
-    confirm: none
+    # OPENS AN ERASURE REQUEST; it deletes nothing (#4273, ruled 2026-09-18). The click reaches
+    # `requestMyErasure` (app/server/actions/privacy/self-serve.ts), which opens a privacy case about
+    # the signed-in user with identity recorded as session-verified — a person fulfils it. The id
+    # keeps its name because the census and the gate ledger key on it, not because the control
+    # deletes: the real erasure executor is #4854, and when it lands this row moves again.
+    mutation: requestMyErasure
+    reach: [{ menu: "Account menu" }, { open: "Account settings" }]
+    control: { role: button, name: "Request deletion" }
+    confirm: confirm-dialog
+    confirm_action: "Open erasure request"
+    dialog_title: "Request deletion of your account?"
     fixture: none
     persona: owner
-    status: inert
-    issue: "#4273"
+    status: confirmed
     prod-qa: skip
-    reason: the button has no handler at all — the maintainer rules whether it is wired to the erasure flow or removed
+    reason: confirming opens a real erasure request about the QA account on alethialabs.io, which a person then acts on; the production pass is reversible-only and nothing it can do withdraws that request, so this control is never opened there

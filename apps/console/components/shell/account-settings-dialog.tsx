@@ -8,6 +8,9 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import { PRIVACY_RESPONSE_DAYS } from "@/app/server/actions/privacy/response-period";
+import { requestMyErasure } from "@/app/server/actions/privacy/self-serve";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { authClient } from "@/lib/auth/client";
 import { formatDate } from "@repo/format";
 import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/avatar";
@@ -47,9 +50,9 @@ interface AccountSettingsDialogProps {
  * The account/profile settings dialog opened from the sidebar account menu's gear. Shows
  * the user's account overview (avatar, name, email, linked auth providers, member-since),
  * lets them edit their display name (persisted via Better Auth `updateUser`), and exposes
- * the account danger zone. The Delete Account button in that zone is INERT and stays inert
- * until a maintainer rules on which erasure flow it belongs to — the note at the call site
- * states the open question and #4273 carries it.
+ * the account danger zone, whose "Request deletion" button opens an erasure privacy case
+ * about the signed-in user (`requestMyErasure`) behind a confirmation — a request a person
+ * fulfils, not a deletion (#4273).
  */
 export function AccountSettingsDialog({
 	open,
@@ -58,6 +61,8 @@ export function AccountSettingsDialog({
 	const { data: session } = authClient.useSession();
 	const user = session?.user ?? null;
 	const [providers, setProviders] = useState<string[]>([]);
+	const [confirmOpen, setConfirmOpen] = useState(false);
+	const [requesting, setRequesting] = useState(false);
 
 	const {
 		register,
@@ -88,167 +93,194 @@ export function AccountSettingsDialog({
 		}
 	});
 
+	/**
+	 * Opens the erasure request for the signed-in user and says what happened — a request with a
+	 * reference, never a deletion. A second press while one is open gets the existing reference back.
+	 */
+	const onRequestErasure = async () => {
+		setRequesting(true);
+		try {
+			const { reference, alreadyOpen } = await requestMyErasure();
+			if (alreadyOpen) {
+				toast.info(
+					`You already have an open erasure request (${reference}). Nothing has been deleted yet.`,
+				);
+			} else {
+				toast.success(
+					`Erasure request ${reference} opened. Nothing has been deleted yet — a person will act on it.`,
+				);
+			}
+		} catch {
+			toast.error("Couldn't open the erasure request. Please try again.");
+		} finally {
+			setRequesting(false);
+		}
+	};
+
 	const shownProviders = providers.length > 0 ? providers : ["email"];
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
-				<DialogHeader>
-					<DialogTitle>Account Settings</DialogTitle>
-					<DialogDescription>
-						Manage your account information and preferences.
-					</DialogDescription>
-				</DialogHeader>
+		<>
+			<Dialog open={open} onOpenChange={onOpenChange}>
+				<DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+					<DialogHeader>
+						<DialogTitle>Account Settings</DialogTitle>
+						<DialogDescription>
+							Manage your account information and preferences.
+						</DialogDescription>
+					</DialogHeader>
 
-				{/* Account overview */}
-				<div className="flex items-start gap-4">
-					<Avatar className="h-16 w-16 border border-border/50">
-						<AvatarImage
-							src={user?.image || "/generic-user-avatar.png"}
-							alt="User avatar"
-						/>
-						<AvatarFallback className="bg-muted text-lg text-muted-foreground">
-							{user?.email?.charAt(0).toUpperCase() || "U"}
-						</AvatarFallback>
-					</Avatar>
-					<div className="grid flex-1 gap-4 sm:grid-cols-2">
-						<div className="space-y-1">
-							<Label className="flex items-center gap-1.5 text-ui-xs font-medium uppercase tracking-wider text-muted-foreground">
-								<User className="h-3 w-3" />
-								Full Name
-							</Label>
-							<p className="text-sm font-medium text-foreground">
-								{user?.name || "Not set"}
-							</p>
-						</div>
-						<div className="space-y-1">
-							<Label className="flex items-center gap-1.5 text-ui-xs font-medium uppercase tracking-wider text-muted-foreground">
-								<Mail className="h-3 w-3" />
-								Email
-							</Label>
-							<p className="truncate text-sm font-medium text-foreground">
-								{user?.email || "No email"}
-							</p>
-						</div>
-						<div className="space-y-1">
-							<Label className="flex items-center gap-1.5 text-ui-xs font-medium uppercase tracking-wider text-muted-foreground">
-								<Shield className="h-3 w-3" />
-								Authentication
-							</Label>
-							<div className="flex flex-wrap gap-1.5">
-								{shownProviders.map((providerId) => (
-									<Badge
-										key={providerId}
-										variant="secondary"
-										className="h-5 border-border/50 bg-muted/50 px-2 py-0.5 text-ui-xs font-normal text-muted-foreground"
-									>
-										{PROVIDER_LABELS[providerId] ?? providerId}
-									</Badge>
-								))}
+					{/* Account overview */}
+					<div className="flex items-start gap-4">
+						<Avatar className="h-16 w-16 border border-border/50">
+							<AvatarImage
+								src={user?.image || "/generic-user-avatar.png"}
+								alt="User avatar"
+							/>
+							<AvatarFallback className="bg-muted text-lg text-muted-foreground">
+								{user?.email?.charAt(0).toUpperCase() || "U"}
+							</AvatarFallback>
+						</Avatar>
+						<div className="grid flex-1 gap-4 sm:grid-cols-2">
+							<div className="space-y-1">
+								<Label className="flex items-center gap-1.5 text-ui-xs font-medium uppercase tracking-wider text-muted-foreground">
+									<User className="h-3 w-3" />
+									Full Name
+								</Label>
+								<p className="text-sm font-medium text-foreground">
+									{user?.name || "Not set"}
+								</p>
+							</div>
+							<div className="space-y-1">
+								<Label className="flex items-center gap-1.5 text-ui-xs font-medium uppercase tracking-wider text-muted-foreground">
+									<Mail className="h-3 w-3" />
+									Email
+								</Label>
+								<p className="truncate text-sm font-medium text-foreground">
+									{user?.email || "No email"}
+								</p>
+							</div>
+							<div className="space-y-1">
+								<Label className="flex items-center gap-1.5 text-ui-xs font-medium uppercase tracking-wider text-muted-foreground">
+									<Shield className="h-3 w-3" />
+									Authentication
+								</Label>
+								<div className="flex flex-wrap gap-1.5">
+									{shownProviders.map((providerId) => (
+										<Badge
+											key={providerId}
+											variant="secondary"
+											className="h-5 border-border/50 bg-muted/50 px-2 py-0.5 text-ui-xs font-normal text-muted-foreground"
+										>
+											{PROVIDER_LABELS[providerId] ?? providerId}
+										</Badge>
+									))}
+								</div>
+							</div>
+							<div className="space-y-1">
+								<Label className="flex items-center gap-1.5 text-ui-xs font-medium uppercase tracking-wider text-muted-foreground">
+									<Calendar className="h-3 w-3" />
+									Member Since
+								</Label>
+								<p className="text-sm font-medium text-foreground">
+									{user?.createdAt ? formatDate(user.createdAt) : "Unknown"}
+								</p>
 							</div>
 						</div>
-						<div className="space-y-1">
-							<Label className="flex items-center gap-1.5 text-ui-xs font-medium uppercase tracking-wider text-muted-foreground">
-								<Calendar className="h-3 w-3" />
-								Member Since
-							</Label>
-							<p className="text-sm font-medium text-foreground">
-								{user?.createdAt ? formatDate(user.createdAt) : "Unknown"}
-							</p>
-						</div>
 					</div>
-				</div>
 
-				<div className="h-px bg-border" />
+					<div className="h-px bg-border" />
 
-				{/* Edit display name */}
-				<form onSubmit={onSubmit} className="space-y-4">
-					<div className="grid gap-4 sm:max-w-sm">
-						<div className="space-y-2">
-							<Label htmlFor="account-name" className="text-xs">
-								Display Name
-							</Label>
-							<Input
-								id="account-name"
-								placeholder="Enter your name"
-								className="h-9 text-sm"
-								{...register("name")}
-							/>
-							{errors.name && (
-								<p className="text-xs text-destructive">{errors.name.message}</p>
-							)}
+					{/* Edit display name */}
+					<form onSubmit={onSubmit} className="space-y-4">
+						<div className="grid gap-4 sm:max-w-sm">
+							<div className="space-y-2">
+								<Label htmlFor="account-name" className="text-xs">
+									Display Name
+								</Label>
+								<Input
+									id="account-name"
+									placeholder="Enter your name"
+									className="h-9 text-sm"
+									{...register("name")}
+								/>
+								{errors.name && (
+									<p className="text-xs text-destructive">{errors.name.message}</p>
+								)}
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="account-email" className="text-xs">
+									Email
+								</Label>
+								<Input
+									id="account-email"
+									type="email"
+									value={user?.email || ""}
+									disabled
+									className="h-9 bg-muted/50 text-sm text-muted-foreground"
+								/>
+								<p className="text-ui-xs text-muted-foreground">
+									Email cannot be changed after registration.
+								</p>
+							</div>
 						</div>
-						<div className="space-y-2">
-							<Label htmlFor="account-email" className="text-xs">
-								Email
-							</Label>
-							<Input
-								id="account-email"
-								type="email"
-								value={user?.email || ""}
-								disabled
-								className="h-9 bg-muted/50 text-sm text-muted-foreground"
-							/>
-							<p className="text-ui-xs text-muted-foreground">
-								Email cannot be changed after registration.
-							</p>
-						</div>
+						<Button
+							type="submit"
+							size="sm"
+							className="h-9 text-xs font-medium"
+							disabled={isSubmitting || !isDirty}
+						>
+							{isSubmitting ? "Saving…" : "Save Changes"}
+						</Button>
+					</form>
+
+					<div className="h-px bg-border" />
+
+					{/* Danger zone — REQUESTS deletion; it deletes nothing (#4273).
+
+					    The maintainer's ruling (2026-09-18, revised on #4273): this button opens an ERASURE
+					    PRIVACY CASE about the signed-in user, with identity recorded as verified by the session,
+					    and a person fulfils it. It does not call `fulfilErasure`, which today writes a
+					    tombstone and deletes no row (#4854 tracks the executor). So the copy says a request is
+					    opened and never that anything was deleted — if the executor lands and this becomes a
+					    real erasure, the copy, `account.delete` in `destructive-actions.yaml` and
+					    `e2e/account-settings.spec.ts` all move with it.
+
+					    The settings dialog CLOSES before the confirmation opens, rather than stacking the
+					    confirmation on top of it: `e2e/audit/destructive.spec.ts` finds the confirmation as the
+					    FIRST dialog on the page, and a settings dialog still open underneath would be found
+					    first. */}
+					<div className="rounded-md border border-destructive/20 bg-destructive/5 p-4">
+						<SectionHeading
+							title="Delete account"
+							level={4}
+							description={`Ask us to erase your account and the personal data tied to it. Pressing the button opens an erasure request — nothing is deleted at that moment. A person reviews it and is due to answer within ${PRIVACY_RESPONSE_DAYS} days.`}
+							actions={
+								<Button
+									variant="destructive"
+									size="sm"
+									className="h-9 shrink-0 text-xs font-medium"
+									disabled={requesting}
+									onClick={() => {
+										onOpenChange(false);
+										setConfirmOpen(true);
+									}}
+								>
+									{requesting ? "Opening request…" : "Request deletion"}
+								</Button>
+							}
+						/>
 					</div>
-					<Button
-						type="submit"
-						size="sm"
-						className="h-9 text-xs font-medium"
-						disabled={isSubmitting || !isDirty}
-					>
-						{isSubmitting ? "Saving…" : "Save Changes"}
-					</Button>
-				</form>
-
-				<div className="h-px bg-border" />
-
-				{/* Danger zone.
-
-				    THIS BUTTON IS DELIBERATELY INERT, AND THE DECISION BEHIND IT IS STILL OPEN (#4273).
-				    It has no `onClick`, and `apps/console/destructive-actions.yaml` records it as the
-				    registry's one `status: inert` row for exactly that reason. Do not "finish" it — the
-				    thing that is missing is a ruling, not a handler.
-
-				    What is undecided is which flow the click belongs to, and both candidates already
-				    exist in `app/server/actions/privacy/cases.ts`:
-
-				      · `fulfilErasure` — the destructive one. It REFUSES outright unless the request's
-				        identity has been verified through the privileged verification step: "Identity is
-				        not verified. Nothing is destroyed until we know who asked — an erasure performed
-				        on an unverified request is itself a data breach." Whether an authenticated
-				        console session is that verification is a DATA-PROTECTION question, not a wiring
-				        one; answering it in code answers it for the product.
-
-				      · `openPrivacyCase("erasure")` — the request path. Records the erasure request and
-				        leaves fulfilment to the verified flow. Slower for the operator, and it makes the
-				        button mean something different from what its own copy above promises.
-
-				    Until a maintainer picks one, the honest surface is a control that does nothing over a
-				    control that does the wrong thing to somebody's account. The e2e coverage for this
-				    dialog (`apps/console/e2e/account-settings.spec.ts`) asserts the inertness rather than
-				    working around it, so wiring the button without also moving that spec and the registry
-				    entry is a red gate, by design. */}
-				<div className="rounded-md border border-destructive/20 bg-destructive/5 p-4">
-					<SectionHeading
-						title="Delete Account"
-						level={4}
-						description="Once you delete your account, there is no going back. All your configurations and data will be permanently deleted."
-						actions={
-							<Button
-								variant="destructive"
-								size="sm"
-								className="h-9 shrink-0 text-xs font-medium"
-							>
-								Delete Account
-							</Button>
-						}
-					/>
-				</div>
-			</DialogContent>
-		</Dialog>
+				</DialogContent>
+			</Dialog>
+			<ConfirmDialog
+				open={confirmOpen}
+				onOpenChange={setConfirmOpen}
+				title="Request deletion of your account?"
+				description={`This opens an erasure request for ${user?.email ?? "your account"}. Nothing is deleted now: a person reviews the request and carries out the erasure, and your account keeps working until then.`}
+				confirmLabel="Open erasure request"
+				onConfirm={onRequestErasure}
+			/>
+		</>
 	);
 }
