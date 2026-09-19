@@ -612,7 +612,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 
 	test("F9 — the control names the arm when the moving-counts bar holds its counts still", async ({ page }) => {
 		test.setTimeout(300_000);
-		const mutant = FILTERS_FIXTURE.replace('var universe = MODE === "moving-counts" ? rows : ', "var universe = ");
+		const mutant = FILTERS_FIXTURE.replace('var universe = MODE === "moving-counts" || MODE === "one-kind"', 'var universe = MODE === "one-kind"');
 		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
 		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/counts move reported F9 PASS/);
 	});
