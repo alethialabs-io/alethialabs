@@ -123,7 +123,11 @@ describeIfDb("the #3754 grant-ungranted-members operator command", () => {
 		// (app/server/actions/grants.ts) does it — the row deleted, member.role left intact, and an
 		// activity row that names the org but NOT the subject.
 		await ensureMemberGrant(ORG_REVOKED, U.revoked, "member");
-		expect(await canView(U.revoked, ORG_REVOKED)).toBe(true);
+		// A fixture precondition, not an assertion (expect() is not allowed outside a test): the
+		// revocation below only means something if the grant it removes had taken effect.
+		if (!(await canView(U.revoked, ORG_REVOKED))) {
+			throw new Error("fixture: ensureMemberGrant did not authorize the member it granted");
+		}
 		await db.delete(grants).where(eq(grants.org_id, ORG_REVOKED));
 		await db.insert(authzActivityLog).values({
 			org_id: ORG_REVOKED,
