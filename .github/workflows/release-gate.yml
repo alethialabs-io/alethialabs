@@ -529,8 +529,8 @@ jobs:
           // it — that file is where these regexes come from and where they must be kept true.
           const RULES = [
             { when: /^apps\/console\/e2e\/flows\//, legs: ["qa"], why: "e2e/flows/** is the qa project's testMatch" },
-            { when: /^apps\/console\/e2e\/audit\/(destructive|inert)\.spec\.ts$/, legs: ["audit-interaction"], why: "the audit-interaction project's whole testMatch" },
-            { when: /^apps\/console\/e2e\/audit\/[^/]*\.spec\.ts$/, legs: ["audit"], why: "an audit spec (destructive.spec.ts and inert.spec.ts are testIgnored out of this project)" },
+            { when: /^apps\/console\/e2e\/audit\/(destructive|filters|inert)\.spec\.ts$/, legs: ["audit-interaction"], why: "the audit-interaction project's whole testMatch" },
+            { when: /^apps\/console\/e2e\/audit\/[^/]*\.spec\.ts$/, legs: ["audit"], why: "an audit spec (destructive.spec.ts, filters.spec.ts and inert.spec.ts are testIgnored out of this project)" },
             // NOT "other e2e/audit/** -> audit". destructive.spec.ts imports ./context and
             // ./manifest, so a shared audit module moves BOTH audit legs; sending it to `audit`
             // alone would be a silent under-selection.

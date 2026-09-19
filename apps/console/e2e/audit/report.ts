@@ -70,6 +70,13 @@ export const NA_REASONS = {
 	T5: ["no-empty-state"],
 	T6: ["redirect-only"],
 	T7: ["no-restricted-surface"],
+	// F8–F10 (#4278), the live half of the filter standard. Both reasons are STRUCTURAL — derived
+	// from the surface join and the store's defaults, never from what the page rendered. A list that
+	// rendered fewer than two rows, a bar the pass could not find, a route that would not load: each
+	// is a claim about the RUN and goes through `notMeasured()` WITH ITS REASON, never through here.
+	F8: ["not-a-list-page"],
+	F9: ["not-a-list-page"],
+	F10: ["not-a-list-page", "no-search-field"],
 } as const;
 
 export type PredicateId = keyof typeof NA_REASONS;
