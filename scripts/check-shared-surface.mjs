@@ -95,6 +95,16 @@
 //                  true, and neither matcher here looks at a bare call. What they look at is the
 //                  SYMBOL arriving by another route.
 //
+//   @repo/format   A HAND-BUILT CURRENCY FORMATTER — `style: "currency"`, the option that turns
+//                  `Intl.NumberFormat` into a money formatter — in apps/console/{components,app,lib,
+//                  hooks}. Intl writes the symbol itself, so none of the three money shapes above
+//                  can see it (#4176: the billing emails divided every invoice by a fixed 100
+//                  through one). NOT read: `packages/format`, which owns the sanctioned copy, and
+//                  `apps/admin`, which no console scope reaches. A DEFAULTED currency parameter is
+//                  also not matched here: `formatMoney`'s own default is gone and the type checker
+//                  now refuses a one-argument call, while the defaults that remain
+//                  (`useLivePlanPrice`, `formatMonthlyRate`) wait on #4176's currency policy.
+//
 //   NO PAGE TITLE  a raw `<h1>`, in apps/console/app/(private)/** and components/**, as the
 //                  `page_title` rule. THE DIRECTION OF THIS ROW IS INVERTED FROM WHAT IT WAS: it
 //                  used to say "use `PageHeader` instead", and the fix is now DELETION. The
@@ -897,6 +907,23 @@ const RULES = [
 				// the stat-strip rule now, and a fixture that trips two matchers proves neither.
 				probe: 'const a = <Amount value={12} prefix="$" />;',
 				antiProbe: 'const a = <Amount value={12} prefix="~" />;',
+			},
+			{
+				// MONEY THROUGH ITS OWN `Intl.NumberFormat` (#4176). None of the matchers above can
+				// see it: Intl writes the symbol itself, so no `$` is in the source. The billing
+				// emails did exactly this — `format(amountMinor / 100)` on `en-US` — which divided a
+				// zero-decimal invoice by 100 and disagreed with the console's `en-GB` on the one
+				// money surface a customer keeps. `style: "currency"` is the option that makes Intl a
+				// money formatter, so it is the whole shape. Measured before adding it: zero hits
+				// in apps/console once the emails went through `formatMoney`, so it enters with no
+				// allowlist entry. It does NOT read `packages/format`, which is where the one
+				// sanctioned copy lives, nor `apps/admin`, which `console_code` does not reach and
+				// which still carries two (#4176 names them).
+				scope: "console_code",
+				re: /\bstyle\s*:\s*["'`]currency["'`]/g,
+				say: "builds its own currency formatter with `Intl.NumberFormat`. Use `formatMoney` (it takes CENTS and divides by the currency's real Stripe divisor) or `formatMonthlyRate` — they fix the locale and the symbol, so an email and the billing page cannot disagree about one invoice.",
+				probe: 'const f = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });',
+				antiProbe: 'const f = new Intl.NumberFormat("en-US", { style: "percent" });',
 			},
 		],
 	},

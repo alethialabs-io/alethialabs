@@ -161,7 +161,11 @@ export function BillingPanel() {
 	// `unitAmountUsd` is MAJOR units (the action divides Stripe's `unit_amount` by 100),
 	// while `formatMoney` takes MINOR units on purpose — so every render below multiplies
 	// back up by 100. Passing the dollars straight in would print $0.20 for a $20 plan.
+	// The `/ 100` there and the `* 100` here are the SAME fixed 100, so they cancel for any
+	// currency and `formatMoney` applies the currency's real divisor. `summary.currency` is the
+	// currency that amount was quoted in — a EUR subscription used to render with a `$` (#4176).
 	const unit = summary.unitAmountUsd;
+	const { currency } = summary;
 	const monthly = unit === null ? null : meta.perSeat ? unit * seatCount : unit;
 	const { state } = summary;
 	// The Hobby tier is the free baseline — its card shows only the plan name + tagline + an
@@ -229,7 +233,7 @@ export function BillingPanel() {
 										meta.priceLabel
 									) : (
 										<>
-											{formatMoney(monthly * 100)}
+											{formatMoney(monthly * 100, currency)}
 											<span className="font-mono text-ui-sm font-normal text-text-tertiary">
 												/mo
 											</span>
@@ -238,13 +242,13 @@ export function BillingPanel() {
 								</div>
 								{meta.perSeat && unit !== null && monthly !== null && monthly > 0 && (
 									<div className="font-mono text-ui-2xs text-text-tertiary">
-										{formatMoney(unit * 100)}/seat · {seatCount} seat
+										{formatMoney(unit * 100, currency)}/seat · {seatCount} seat
 										{seatCount === 1 ? "" : "s"}
 									</div>
 								)}
 								{showNextCharge && monthly !== null && summary.currentPeriodEnd && (
 									<div className="font-mono text-ui-2xs text-text-tertiary">
-										next charge {formatMoney(monthly * 100)} ·{" "}
+										next charge {formatMoney(monthly * 100, currency)} ·{" "}
 										{formatDate(summary.currentPeriodEnd)}
 									</div>
 								)}
