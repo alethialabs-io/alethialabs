@@ -96,7 +96,11 @@ test.beforeAll(async ({ browser }, testInfo) => {
 	// The control drives four fixture bars end to end — measured at ~50 s on a laptop — before the
 	// org is resolved and the rows seeded. The project's 120 s would be spent before a route ran.
 	testInfo.setTimeout(300_000);
-	const page = await browser.newPage();
+	// A CONTEXT, not `browser.newPage()`: a page made that way owns a context that refuses to open a
+	// second page ("Please use browser.newContext()"), and F8's reload is a fresh tab in the SAME
+	// context. Measured on the first CI run of this spec.
+	const context = await browser.newContext();
+	const page = await context.newPage();
 	ctx.orgSlug = await resolveOrgSlug(page);
 	ctx.owner = await resolveOwner(ctx.orgSlug);
 
@@ -106,7 +110,7 @@ test.beforeAll(async ({ browser }, testInfo) => {
 	if (broken.length > 0) {
 		report.withhold(["F8", "F9", "F10"], `F8–F10's positive control is red, so nothing it measures can be believed: ${broken.join(" · ")}`);
 	}
-	await page.close();
+	await context.close();
 
 	fixtures = await seedFilterFixtures(ctx.owner);
 });
