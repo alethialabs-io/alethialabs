@@ -37,17 +37,34 @@ export interface FilterFixtures {
  *
  * The facet each pair differs on is named beside it, because "two rows" is not the requirement —
  * two rows that are identical on every facet give F9 nothing to compare and F8 nothing to narrow.
+ *
+ * Every id is recorded the moment its row is written, and an insert that throws midway deletes the
+ * rows already written before the error propagates: the caller never receives a `FilterFixtures` in
+ * that case, so without this the partial set would stay in the org `inert.spec.ts` counts next.
  */
 export async function seedFilterFixtures(owner: Owner): Promise<FilterFixtures> {
-	const sql = db();
 	const stamp = Date.now();
 	const project = await seedProject(owner, { name: `Filters ${stamp}` });
+	const written: FilterFixtures = { project, jobIds: [], runnerIds: [], channelIds: [], ruleIds: [], supportCaseIds: [] };
+	try {
+		await seedRows(owner, stamp, written);
+	} catch (err) {
+		await cleanFilterFixtures(written).catch(() => {});
+		throw err;
+	}
+	return written;
+}
+
+/** Write the rows `seedFilterFixtures()` promises into `written`'s project, recording each id as it lands. */
+async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): Promise<void> {
+	const sql = db();
+	const { project } = written;
 
 	// Jobs (`/[org]/~/jobs`, `/[org]/[project]/jobs`): differ on STATUS and TYPE.
-	const jobs = [
-		await seedJob(owner, { projectId: project.projectId, envId: project.envId, status: "SUCCESS", jobType: "DEPLOY" }),
-		await seedJob(owner, { projectId: project.projectId, envId: project.envId, status: "FAILED", jobType: "DESTROY", errorMessage: "e2e filter fixture" }),
-	];
+	written.jobIds.push((await seedJob(owner, { projectId: project.projectId, envId: project.envId, status: "SUCCESS", jobType: "DEPLOY" })).id);
+	written.jobIds.push(
+		(await seedJob(owner, { projectId: project.projectId, envId: project.envId, status: "FAILED", jobType: "DESTROY", errorMessage: "e2e filter fixture" })).id,
+	);
 
 	// Runners (`/[org]/~/runners`): differ on STATUS and VERSION. Inserted directly rather than
 	// through `seed-runners.ts`'s `seedRunner`, whose module-level sweep list belongs to the runner
@@ -70,17 +87,15 @@ export async function seedFilterFixtures(owner: Owner): Promise<FilterFixtures> 
 			returning id`;
 		return row.id;
 	};
-	const runnerIds = [await runner(`filters-a-${stamp}`, "ONLINE", "1.0.0"), await runner(`filters-b-${stamp}`, "OFFLINE", "1.1.0")];
+	written.runnerIds.push(await runner(`filters-a-${stamp}`, "ONLINE", "1.0.0"));
+	written.runnerIds.push(await runner(`filters-b-${stamp}`, "OFFLINE", "1.1.0"));
 
 	// Alerts (`/[org]/~/alerts`): channels differ on TYPE and ENABLED, policies on ENABLED.
-	const channels = [
-		await seedChannel(owner, { type: "email", name: `filters-mail-${stamp}`, enabled: true }),
-		await seedChannel(owner, { type: "webhook", name: `filters-hook-${stamp}`, enabled: false }),
-	];
-	const rules = [
-		await seedRule(owner, { name: `filters-on-${stamp}`, enabled: true, channelIds: [channels[0].id] }),
-		await seedRule(owner, { name: `filters-off-${stamp}`, enabled: false }),
-	];
+	const mail = await seedChannel(owner, { type: "email", name: `filters-mail-${stamp}`, enabled: true });
+	written.channelIds.push(mail.id);
+	written.channelIds.push((await seedChannel(owner, { type: "webhook", name: `filters-hook-${stamp}`, enabled: false })).id);
+	written.ruleIds.push((await seedRule(owner, { name: `filters-on-${stamp}`, enabled: true, channelIds: [mail.id] })).id);
+	written.ruleIds.push((await seedRule(owner, { name: `filters-off-${stamp}`, enabled: false })).id);
 
 	// Support cases (`/[org]/~/support/my-cases`): differ on SEVERITY and TYPE.
 	/** Insert one open support case with the given severity and type. */
@@ -100,33 +115,26 @@ export async function seedFilterFixtures(owner: Owner): Promise<FilterFixtures> 
 			returning id`;
 		return row.id;
 	};
-	const supportCaseIds = [
-		await supportCase(`Filters fixture A ${stamp}`, "normal", "technical"),
-		await supportCase(`Filters fixture B ${stamp}`, "high", "billing"),
-	];
-
-	return {
-		project,
-		jobIds: jobs.map((j) => j.id),
-		runnerIds,
-		channelIds: channels.map((c) => c.id),
-		ruleIds: rules.map((r) => r.id),
-		supportCaseIds,
-	};
+	written.supportCaseIds.push(await supportCase(`Filters fixture A ${stamp}`, "normal", "technical"));
+	written.supportCaseIds.push(await supportCase(`Filters fixture B ${stamp}`, "high", "billing"));
 }
 
 /**
  * Delete exactly the rows one `seedFilterFixtures()` call wrote — never "everything in the org",
  * which would take the fixtures `inert.spec.ts` and `destructive.spec.ts` seed with it.
+ *
+ * An empty id list skips its table: a partial seed calls this too, and `in ()` is not valid SQL.
  */
 export async function cleanFilterFixtures(f: FilterFixtures): Promise<void> {
 	const sql = db();
-	await sql`delete from support_messages where case_id in ${sql(f.supportCaseIds)}`;
-	await sql`delete from support_cases where id in ${sql(f.supportCaseIds)}`;
-	await sql`delete from alert_rules where id in ${sql(f.ruleIds)}`;
-	await sql`delete from alert_channels where id in ${sql(f.channelIds)}`;
-	await sql`delete from runners where id in ${sql(f.runnerIds)}`;
-	await sql`delete from jobs where id in ${sql(f.jobIds)}`;
+	if (f.supportCaseIds.length > 0) {
+		await sql`delete from support_messages where case_id in ${sql(f.supportCaseIds)}`;
+		await sql`delete from support_cases where id in ${sql(f.supportCaseIds)}`;
+	}
+	if (f.ruleIds.length > 0) await sql`delete from alert_rules where id in ${sql(f.ruleIds)}`;
+	if (f.channelIds.length > 0) await sql`delete from alert_channels where id in ${sql(f.channelIds)}`;
+	if (f.runnerIds.length > 0) await sql`delete from runners where id in ${sql(f.runnerIds)}`;
+	if (f.jobIds.length > 0) await sql`delete from jobs where id in ${sql(f.jobIds)}`;
 	await sql`delete from resource_hierarchy where child_type = 'project' and child_id = ${f.project.projectId}`;
 	await sql`delete from projects where id = ${f.project.projectId}`;
 }

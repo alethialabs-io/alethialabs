@@ -13,9 +13,9 @@
 //       surface writes and the count returns to the full count.
 //   F9  every option of that facet carries the same count, and the option set is the same, before
 //       and after the option is applied — F7's unfiltered facet pass, observed end to end.
-//   F10 six keystrokes into the search box → at most ONE data request carrying the search within
-//       500 ms of the last one; the nonsense token then renders `[data-slot="empty"]` inside `main`
-//       and no hand-rolled "No results" outside it.
+//   F10 six keystrokes into the search box → the data requests carrying the search within 500 ms of
+//       the last one carry at most ONE distinct search value; the nonsense token then renders
+//       `[data-slot="empty"]` inside `main` and no hand-rolled "No results" outside it.
 //
 // ── WHAT IT CAN AND CANNOT SEE ─────────────────────────────────────────────────────────────────
 //
@@ -30,7 +30,11 @@
 // "a button carrying a numeric count figure" is the one shape FacetFilter, FilterChip, MultiCombobox
 // and FunnelFilter all share. A bar whose options show no counts is therefore not found, and the
 // route is NOT MEASURED naming that, never PASS. F8 and F9 drive the FIRST option that narrows, of
-// the FIRST facet found; they do not claim every facet.
+// the FIRST facet found that has one; they do not claim every facet. When no facet found offers an
+// option narrower than the full list, or the list does not actually narrow once the option is
+// applied, BOTH are NOT MEASURED with the counts — never PASS, because with the list unchanged F9's
+// comparison and F8's restore and reset steps cannot fail. `measureRoundTrip` enforces it, and the
+// control's `one-kind` arm proves it on a bar that would otherwise have passed F9 vacuously.
 //
 // F10's "data request" is a request whose POST BODY carries the typed token (a server action's
 // arguments) or a non-RSC fetch whose URL does. The App Router's RSC refetch — which
@@ -38,6 +42,12 @@
 // not the debounce's question. And a server action POSTs to the CURRENT page URL, which after the
 // first keystroke carries `?search=…`: matching on the URL would count every unrelated poll on the
 // page as a search request, so a POST is matched on its body alone.
+//
+// The verdict counts DISTINCT search values, not requests. A page that polls (the jobs list refetches
+// every 5 s while anything is active) can send a second request carrying the already-debounced value
+// inside the window; that is the same value twice, not a per-keystroke fetch. A request per
+// keystroke carries a different prefix each time — `zqx`, `zqxv`, … — so it still reads as several.
+// The raw request count stays in the evidence.
 //
 // Nothing here presses a confirm or submits a form: the only things activated are facet options,
 // the openers that show them, the search input and the bar's own Reset.
@@ -262,7 +272,10 @@ export async function markFacetOptions(page: Page): Promise<FacetOption[]> {
 
 /**
  * Mark the controls that can reveal a facet's options — popover triggers, `aria-haspopup` buttons and
- * combobox inputs in `main` — with `data-filter-opener=<index>`, and return how many there are.
+ * text-entry inputs (`role=combobox`, `type=search`/`text`, or no type) in `main` — with
+ * `data-filter-opener=<index>`, and return how many there are. A checkbox, radio or switch built on
+ * `input` is never one: the selector names the text-entry types, so clicking an opener cannot toggle
+ * a setting.
  *
  * NOTHING INSIDE A TABLE, A ROW, A DIALOG OR A FORM. A row's action menu is an `aria-haspopup` button
  * too, and the popover it opens can hold a confirm; a filter bar is never inside any of the four.
@@ -274,7 +287,7 @@ async function markOpeners(page: Page): Promise<number> {
 		const main = document.querySelector("main");
 		if (main === null) return 0;
 		let n = 0;
-		for (const el of main.querySelectorAll('[data-slot="popover-trigger"], button[aria-haspopup], input:not([type="hidden"])')) {
+		for (const el of main.querySelectorAll('[data-slot="popover-trigger"], button[aria-haspopup], input[role="combobox"], input[type="search"], input[type="text"], input:not([type])')) {
 			if (el.closest('table, [role="row"], [role="dialog"], [role="alertdialog"], form') !== null) continue;
 			const r = el.getBoundingClientRect();
 			if (r.width === 0 || r.height === 0) continue;
@@ -339,8 +352,9 @@ function narrows(options: readonly FacetOption[], full: number | null): boolean 
  * Chips first — they need no opener. Then each opener in turn, and one panel deep for a
  * `FunnelFilter`, whose first panel lists facets rather than options. The first facet with an option
  * that NARROWS the list wins — an author facet on a one-author org selects every row and proves
- * nothing about the round trip — and failing that, the first facet with any option at all. Returns
- * null when nothing in the budget revealed a counted option.
+ * nothing about the round trip. Failing that, the first facet with any option at all is returned so
+ * the caller can report WHY nothing was measured; `measureRoundTrip` never applies a non-narrowing
+ * option. Returns null when nothing in the budget revealed a counted option.
  */
 export async function discoverFacet(page: Page, full: number | null): Promise<{ probe: FacetProbe; options: FacetOption[] } | null> {
 	const always = (await markFacetOptions(page)).filter((o) => o.inMain);
@@ -420,13 +434,15 @@ export async function measureRoundTrip(
 	}
 	const { probe } = found;
 	const scope = probe.opener === null ? found.options.filter((o) => o.inMain) : found.options;
-	// The first option that NARROWS: selected already, or covering every row, it would prove nothing.
-	const target =
-		scope.find((o) => !o.pressed && o.count > 0 && full.value !== null && o.count < full.value) ?? scope.find((o) => !o.pressed && o.count > 0);
+	// The first option that NARROWS. There is no fallback to one that does not: an option covering
+	// every row leaves the list — and an in-memory facet pass — exactly as it was, so F9's before/after
+	// comparison and F8's list-restore and reset-count steps would all hold whatever the bar does.
+	const target = scope.find((o) => !o.pressed && o.count > 0 && full.value !== null && o.count < full.value);
 	if (target === undefined) {
 		await closeOverlays(page);
-		const reason = "the facet found offers no unselected option with a count above zero";
-		return { F8: { kind: "not-measured", reason }, F9: { kind: "not-measured", reason } };
+		const reason = "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one";
+		const evidence = { full: full.value, options: scope.map((o) => ({ option: o.label, count: o.count, pressed: o.pressed })) };
+		return { F8: { kind: "not-measured", reason, evidence }, F9: { kind: "not-measured", reason, evidence } };
 	}
 	const before = new Map(scope.map((o) => [o.label, o.count]));
 
@@ -435,6 +451,16 @@ export async function measureRoundTrip(
 	const applied = await waitForUrl(page, (u) => presentParams(u, facetParams).size > 0);
 	const param = [...presentParams(page.url(), facetParams).keys()][0] ?? null;
 	const narrowed = await settle(page);
+
+	// The option's count said it narrows; the list must agree before anything below can fail. A list
+	// that did not move — a click that never landed, or a count source that ignores the filter — makes
+	// F9's comparison and F8's restore/reset steps vacuous, so both are withheld with the reading.
+	if (narrowed.value === null || full.value === null || narrowed.value >= full.value) {
+		await closeOverlays(page);
+		const reason = `the list did not narrow after the option "${target.label}" (count ${target.count}) was applied — ${full.value} before, ${narrowed.value} after, read from the ${narrowed.source} — so an unchanged facet or restored list would prove nothing`;
+		const evidence = { option: target.label, optionCount: target.count, full: full.value, narrowed: narrowed.value, source: narrowed.source, applied, param };
+		return { F8: { kind: "not-measured", reason, evidence }, F9: { kind: "not-measured", reason, evidence } };
+	}
 
 	// ── F9: the same facet's options, after ───────────────────────────────────────────────────
 	let F9: Outcome;
@@ -449,7 +475,7 @@ export async function measureRoundTrip(
 		F9 = {
 			kind: "verdict",
 			verdict: moved.length === 0 && vanished.length === 0 ? "PASS" : "FAIL",
-			evidence: { compared: before.size, moved, vanished, applied },
+			evidence: { compared: before.size, moved, vanished, applied, option: target.label, full: full.value, narrowed: narrowed.value },
 		};
 	}
 
@@ -486,7 +512,7 @@ export async function measureRoundTrip(
 	}
 	const passed = Object.values(steps).every((s) => s === true);
 	return {
-		F8: { kind: "verdict", verdict: passed ? "PASS" : "FAIL", evidence: { param, countSource: full.source, counts, steps } },
+		F8: { kind: "verdict", verdict: passed ? "PASS" : "FAIL", evidence: { param, option: target.label, countSource: full.source, counts, steps } },
 		F9,
 	};
 }
@@ -496,12 +522,21 @@ function searchInput(page: Page) {
 	return page.locator("main div:has(> svg.lucide-search) > input").first();
 }
 
-/** F10's debounce half: how many requests carried the token within the window. */
+/** F10's debounce half: how many requests carried the token within the window, and how many distinct values. */
 export interface DebounceReading {
 	keystrokes: number;
 	windowMs: number;
 	dataRequests: number;
+	distinctValues: string[];
 	rscRequests: number;
+}
+
+/** The longest prefix of `SEARCH_TOKEN` (at least `TOKEN_PREFIX`) that `text` contains, or null. */
+function carriedValue(text: string): string | null {
+	for (let n = SEARCH_TOKEN.length; n >= TOKEN_PREFIX.length; n -= 1) {
+		if (text.includes(SEARCH_TOKEN.slice(0, n))) return SEARCH_TOKEN.slice(0, n);
+	}
+	return null;
 }
 
 /**
@@ -509,20 +544,20 @@ export interface DebounceReading {
  *
  * Classified as the header says: an RSC request (header `rsc: 1`, or `_rsc=` in its URL) is counted
  * apart; a POST counts only when its BODY carries the token; any other fetch counts when its URL
- * does. Page navigations and static assets never carry it.
+ * does. Each hit records the longest token prefix it carried, which is what the verdict compares.
+ * Page navigations and static assets never carry it.
  */
 export async function measureDebounce(page: Page): Promise<DebounceReading | null> {
 	const input = searchInput(page);
 	if ((await input.count()) === 0 || !(await input.isVisible())) return null;
-	const hits: { at: number; rsc: boolean }[] = [];
+	const hits: { at: number; rsc: boolean; value: string }[] = [];
 	const onRequest = (req: Request) => {
 		const url = req.url();
 		const headers = req.headers();
 		const rsc = headers.rsc === "1" || url.includes("_rsc=");
-		const body = req.postData() ?? "";
-		const carries = req.method() === "POST" ? body.includes(TOKEN_PREFIX) : url.includes(TOKEN_PREFIX);
-		if (!carries || req.resourceType() === "document") return;
-		hits.push({ at: Date.now(), rsc });
+		const value = carriedValue(req.method() === "POST" ? (req.postData() ?? "") : url);
+		if (value === null || req.resourceType() === "document") return;
+		hits.push({ at: Date.now(), rsc, value });
 	};
 	page.on("request", onRequest);
 	try {
@@ -533,10 +568,12 @@ export async function measureDebounce(page: Page): Promise<DebounceReading | nul
 		const last = Date.now();
 		await page.waitForTimeout(DEBOUNCE_WINDOW_MS);
 		const inWindow = hits.filter((h) => h.at >= start && h.at <= last + DEBOUNCE_WINDOW_MS);
+		const data = inWindow.filter((h) => !h.rsc);
 		return {
 			keystrokes: SEARCH_TOKEN.length,
 			windowMs: DEBOUNCE_WINDOW_MS,
-			dataRequests: inWindow.filter((h) => !h.rsc).length,
+			dataRequests: data.length,
+			distinctValues: [...new Set(data.map((h) => h.value))],
 			rscRequests: inWindow.filter((h) => h.rsc).length,
 		};
 	} finally {
@@ -608,7 +645,7 @@ export async function measureRoute(page: Page, url: string, surfaces: readonly O
 			};
 		} else {
 			const empty = await readEmptyState(page);
-			const failed = debounce.dataRequests > 1 || !empty.rendered || empty.handRolledOutside > 0;
+			const failed = debounce.distinctValues.length > 1 || !empty.rendered || empty.handRolledOutside > 0;
 			F10 = { kind: "verdict", verdict: failed ? "FAIL" : "PASS", evidence: { debounce, empty } };
 		}
 	}
@@ -617,7 +654,10 @@ export async function measureRoute(page: Page, url: string, surfaces: readonly O
 
 // ── the positive control ────────────────────────────────────────────────────────────────────────
 //
-// Three bars with KNOWN answers, plus the good one they are each one defect away from. The control
+// Four bars with KNOWN answers, plus the good one the first three are each one defect away from. The
+// fourth, `one-kind`, gives every row the same facet value AND computes its counts in memory: no
+// option can narrow it, so F8 and F9 must be NOT MEASURED there — a PASS would be the vacuous one
+// (#4867's review), since an in-memory facet pass shows unchanged counts when nothing narrowed. The control
 // runs before any route is scored, and `filters.spec.ts` withholds F8–F10 for the whole run if it is
 // red — a verdict from an instrument already shown not to work is the #3804 failure.
 
@@ -625,7 +665,7 @@ export async function measureRoute(page: Page, url: string, surfaces: readonly O
 export const CONTROL_ORIGIN = "http://filters-control.invalid";
 
 /** The four fixture modes. Each bad one breaks exactly one predicate. */
-export type ControlMode = "good" | "no-url" | "moving-counts" | "per-keystroke";
+export type ControlMode = "good" | "no-url" | "moving-counts" | "per-keystroke" | "one-kind";
 
 /**
  * The fixture list page. Plain DOM, the SAME slots the real primitives render — a `count-pill`, chips
@@ -642,6 +682,7 @@ export const CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><meta chars
 <script>
 var MODE = "__MODE__";
 var ROWS = [{ name: "alpha", kind: "a" }, { name: "beta", kind: "b" }, { name: "gamma", kind: "a" }];
+if (MODE === "one-kind") ROWS = [{ name: "alpha", kind: "a" }, { name: "beta", kind: "a" }, { name: "gamma", kind: "a" }];
 var p = new URLSearchParams(location.search);
 var state = { kinds: (p.get("kinds") || "").split(",").filter(Boolean), search: p.get("search") || "" };
 var timer = null;
@@ -658,7 +699,7 @@ function render() {
 	var rows = ROWS.filter(match);
 	document.getElementById("pill").textContent = String(rows.length);
 	document.getElementById("rows").innerHTML = rows.map(function (r) { return "<tr><td>" + r.name + "</td><td>" + r.kind + "</td></tr>"; }).join("");
-	var universe = MODE === "moving-counts" ? rows : ROWS.filter(function (r) { return !state.search || r.name.indexOf(state.search) >= 0; });
+	var universe = MODE === "moving-counts" || MODE === "one-kind" ? rows : ROWS.filter(function (r) { return !state.search || r.name.indexOf(state.search) >= 0; });
 	document.getElementById("chips").innerHTML = ["a", "b"].map(function (k) {
 		var n = universe.filter(function (r) { return r.kind === k; }).length;
 		if (MODE === "moving-counts" && n === 0) return "";
@@ -738,6 +779,10 @@ export async function filtersControl(page: Page, fixture = CONTROL_FIXTURE): Pro
 		if (!(moving.F9.kind === "verdict" && moving.F9.verdict === "FAIL")) problems.push(`the bar whose counts move reported F9 ${verdictOf(moving.F9)}`);
 		const chatty = await run("per-keystroke");
 		if (!(chatty.F10.kind === "verdict" && chatty.F10.verdict === "FAIL")) problems.push(`the bar that fetches per keystroke reported F10 ${verdictOf(chatty.F10)}`);
+		const oneKind = await run("one-kind");
+		for (const id of ["F8", "F9"] as const) {
+			if (oneKind[id].kind !== "not-measured") problems.push(`the bar whose facet cannot narrow reported ${id} ${verdictOf(oneKind[id])}`);
+		}
 	} finally {
 		await context.unroute(`${CONTROL_ORIGIN}/**`).catch(() => {});
 	}

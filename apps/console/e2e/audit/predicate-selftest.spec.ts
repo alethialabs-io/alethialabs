@@ -598,7 +598,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 	// read as working.
 
 	test("F8–F10 — the filters control passes on bars whose answers are known", async ({ page }) => {
-		// Four fixture bars end to end: ~50 s on a laptop, over this project's 180 s on a slow runner.
+		// Five fixture bars end to end: ~60 s on a laptop, over this project's 180 s on a slow runner.
 		test.setTimeout(300_000);
 		expect(await filtersControl(page), "every arm answers on the control's own fixtures").toEqual([]);
 	});
@@ -612,7 +612,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 
 	test("F9 — the control names the arm when the moving-counts bar holds its counts still", async ({ page }) => {
 		test.setTimeout(300_000);
-		const mutant = FILTERS_FIXTURE.replace('var universe = MODE === "moving-counts" ? rows : ', "var universe = ");
+		const mutant = FILTERS_FIXTURE.replace('var universe = MODE === "moving-counts" || MODE === "one-kind"', 'var universe = MODE === "one-kind"');
 		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
 		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/counts move reported F9 PASS/);
 	});
@@ -622,6 +622,16 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		const mutant = FILTERS_FIXTURE.replace('if (MODE === "per-keystroke") {', 'if (MODE === "never") {');
 		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
 		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/fetches per keystroke reported F10 PASS/);
+	});
+
+	test("F8–F9 — the control names the arm when the one-kind bar gains an option that narrows", async ({ page }) => {
+		test.setTimeout(300_000);
+		// Give the one-kind bar a second kind: an option now narrows, the in-memory counts move, and the
+		// arm that must be NOT MEASURED is measured instead — so the arm can go red, and would have caught
+		// the vacuous PASS the fallback target used to score on it.
+		const mutant = FILTERS_FIXTURE.replace('ROWS = [{ name: "alpha", kind: "a" }, { name: "beta", kind: "a" }', 'ROWS = [{ name: "alpha", kind: "a" }, { name: "beta", kind: "b" }');
+		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
+		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/facet cannot narrow reported F9 FAIL/);
 	});
 
 	test("F8–F10 — N/A is structural: `not-a-list-page` everywhere, `no-search-field` on F10 only", () => {
