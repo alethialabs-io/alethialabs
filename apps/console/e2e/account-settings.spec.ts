@@ -16,6 +16,15 @@
 //     than opening a second case. If the erasure executor (#4854) ever lands behind this button,
 //     the "session survives" assertion is the one that has to move, and it will fail first.
 //
+// A confirmed press has TWO correct outcomes, and which one a run sees is decided by the deployment,
+// not by the test (#4875). A deployment with a privacy inbox — the hosted service, or any with
+// `PRIVACY_EMAIL` set — opens a case and emails it there. A self-managed deployment with no
+// `PRIVACY_EMAIL` opens nothing and says so, because a case nobody is told about is the defect. The
+// release gate's legs are self-managed and set no `PRIVACY_EMAIL`, so they see the second; a sandbox
+// env is hosted and sees the first. The test reads the outcome from the toast and holds each branch
+// to its own assertions. What it cannot catch is a deployment that SHOULD route and does not — that
+// is pinned by `tests/actions/privacy-self-serve.test.ts`, not here.
+//
 // Confirming is safe here and nowhere else: every test signs up its own throwaway account, so the
 // request it opens is about a user no other test uses. `audit/destructive.spec.ts` only ever
 // cancels, and the production pass never opens this control at all (`prod-qa: skip`).
@@ -107,31 +116,50 @@ test.describe("Account settings dialog", () => {
 		await expect(page.getByRole("button", { name: /account menu/i })).toBeVisible();
 	});
 
-	test("confirming opens ONE erasure request with a reference, and the account survives it", async ({
+	test("confirming opens ONE erasure request, or none when no privacy contact is set, and the account survives it", async ({
 		authedPage: page,
 	}) => {
-		/** Opens the settings, presses Request deletion, confirms, and returns the toast's reference. */
+		const OPENED = /erasure request DSR-[0-9A-F]{8} opened\. nothing has been deleted yet — the request was sent to the privacy team/i;
+		const NO_CONTACT = /no request was opened: this deployment has no privacy contact configured/i;
+
+		/** Opens the settings, presses Request deletion, confirms, and returns the toast's text. */
 		async function confirmRequest(expected: RegExp): Promise<string> {
 			const dialog = await openAccountSettings(page);
 			await dialog.getByRole("button", { name: /^request deletion$/i }).click();
 			const confirmation = page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"]').first();
+			await expect(confirmation).toContainText(/sends it to the privacy team/i);
 			await confirmation.getByRole("button", { name: /open erasure request/i }).click();
 			const toast = page.getByText(expected).first();
 			await expect(toast).toBeVisible({ timeout: 15_000 });
-			const reference = (await toast.textContent())?.match(/DSR-[0-9A-F]{8}/)?.[0];
-			expect(reference, "the toast should quote the request's DSR- reference").toBeTruthy();
-			return reference ?? "";
+			return (await toast.textContent()) ?? "";
 		}
 
-		const first = await confirmRequest(/erasure request DSR-[0-9A-F]{8} opened\. nothing has been deleted yet/i);
+		/** The account is intact: a reload still finds an authenticated console. */
+		async function expectSessionSurvives(): Promise<void> {
+			await page.reload();
+			await expect(page).not.toHaveURL(/\/login/);
+			await expect(page.getByRole("button", { name: /account menu/i })).toBeVisible();
+		}
 
-		// The request is about THIS account and deleted nothing: the session is intact.
-		await page.reload();
-		await expect(page).not.toHaveURL(/\/login/);
-		await expect(page.getByRole("button", { name: /account menu/i })).toBeVisible();
+		// One regex that matches EITHER outcome, so the wait is on the toast and not on a guess.
+		const firstText = await confirmRequest(new RegExp(`${OPENED.source}|${NO_CONTACT.source}`, "i"));
+
+		if (NO_CONTACT.test(firstText)) {
+			// Nobody would be told, so nothing was opened: no reference was ever handed out.
+			expect(firstText).not.toMatch(/DSR-/);
+			await expectSessionSurvives();
+			// And a second press says the same thing — there is no case for it to find.
+			const again = await confirmRequest(NO_CONTACT);
+			expect(again).not.toMatch(/DSR-/);
+			return;
+		}
+
+		const first = firstText.match(/DSR-[0-9A-F]{8}/)?.[0];
+		expect(first, "the toast should quote the request's DSR- reference").toBeTruthy();
+		await expectSessionSurvives();
 
 		// A second press while the first is open returns the SAME case, not a second one.
-		const second = await confirmRequest(/you already have an open erasure request \(DSR-[0-9A-F]{8}\)/i);
-		expect(second).toBe(first);
+		const secondText = await confirmRequest(/you already have an open erasure request \(DSR-[0-9A-F]{8}\)/i);
+		expect(secondText.match(/DSR-[0-9A-F]{8}/)?.[0]).toBe(first);
 	});
 });

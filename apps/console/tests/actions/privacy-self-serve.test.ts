@@ -12,13 +12,32 @@
 //     organization, and the ledger records BOTH the receipt and that the session was the check;
 //   · an erasure case already open for the same user is returned instead of a second being opened;
 //   · the "still open" filter excludes exactly the finished states — asserted on the SQL the where
-//     clause renders, not on the mock's say-so.
+//     clause renders, not on the mock's say-so;
+//   · a new case is EMAILED to the privacy inbox, inside the transaction that writes it, so a failed
+//     send leaves no case behind (#4875). The transaction mock below holds its writes back and only
+//     records them when the callback resolves — which is what a rollback looks like from outside;
+//   · with no inbox to send to (self-managed, no PRIVACY_EMAIL) no case is opened at all, and a
+//     self-managed deployment is never routed to Alethia's own inbox.
 
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getSession, injected } = vi.hoisted(() => ({ getSession: vi.fn(), injected: vi.fn() }));
+const { getSession, injected, sendEmail, mode } = vi.hoisted(() => ({
+	getSession: vi.fn(),
+	injected: vi.fn(),
+	sendEmail: vi.fn(),
+	mode: vi.fn(),
+}));
+vi.mock("@repo/email/send", () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }));
+vi.mock("@repo/email/config", () => ({ getEmailConfig: () => ({ from: { general: "Alethia <hello@example.io>" } }) }));
+vi.mock("@/lib/billing/config", () => ({ deploymentMode: () => mode() }));
+// The template is replaced by one that hands back its props, so a test can read what the email was
+// told. `subject` stays real: the reference in the subject line is part of what is asserted.
+vi.mock("@/emails/privacy-request", async (importActual) => {
+	const actual = await importActual<typeof import("@/emails/privacy-request")>();
+	return { subject: actual.subject, PrivacyRequestEmail: (props: unknown) => ({ props }) };
+});
 vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: (...a: unknown[]) => getSession(...a) } } }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("@/lib/authz/actor-context", () => ({ getInjectedActor: () => injected() }));
@@ -27,6 +46,19 @@ vi.mock("@/lib/authz/actor-context", () => ({ getInjectedActor: () => injected()
 const calls: { op: string; table?: unknown; values?: unknown; where?: SQL }[] = [];
 /** The rows the "is one already open?" read returns. */
 let existing: { reference: string }[] = [];
+
+/** An insert builder that records into `sink`, awaitable bare or through `.returning()`. */
+function insertInto(sink: typeof calls) {
+	return (table: unknown) => ({
+		values: (values: unknown) => {
+			sink.push({ op: "insert", table, values });
+			const done = Promise.resolve(undefined);
+			return Object.assign(done, {
+				returning: async () => [{ id: "case-1" }],
+			});
+		},
+	});
+}
 
 vi.mock("@/lib/db", () => ({
 	getServiceDb: () => ({
@@ -40,15 +72,15 @@ vi.mock("@/lib/db", () => ({
 				}),
 			}),
 		}),
-		insert: (table: unknown) => ({
-			values: (values: unknown) => {
-				calls.push({ op: "insert", table, values });
-				const done = Promise.resolve(undefined);
-				return Object.assign(done, {
-					returning: async () => [{ id: "case-1" }],
-				});
-			},
-		}),
+		insert: insertInto(calls),
+		// Writes made through `tx` reach `calls` only if the callback resolves: a callback that
+		// throws leaves nothing behind, as a rolled-back transaction does.
+		transaction: async (cb: (tx: { insert: ReturnType<typeof insertInto> }) => Promise<unknown>) => {
+			const pending: typeof calls = [];
+			const out = await cb({ insert: insertInto(pending) });
+			calls.push(...pending);
+			return out;
+		},
 	}),
 }));
 
@@ -65,6 +97,11 @@ beforeEach(() => {
 	injected.mockReset();
 	injected.mockReturnValue(undefined);
 	getSession.mockResolvedValue(SESSION);
+	sendEmail.mockReset();
+	sendEmail.mockResolvedValue(undefined);
+	mode.mockReset();
+	mode.mockReturnValue("hosted");
+	delete process.env.PRIVACY_EMAIL;
 });
 
 /** The values object of every insert into `table`, in order. */
@@ -77,7 +114,7 @@ describe("requestMyErasure", () => {
 		const before = Date.now();
 		const out = await requestMyErasure();
 
-		expect(out.alreadyOpen).toBe(false);
+		if (out.outcome !== "opened") throw new Error(`expected a case to be opened, got ${out.outcome}`);
 		expect(out.reference).toMatch(/^DSR-[0-9A-F]{8}$/);
 
 		const [row] = inserts(privacyCase);
@@ -127,7 +164,50 @@ describe("requestMyErasure", () => {
 
 	it("returns the OPEN case instead of opening a second one", async () => {
 		existing = [{ reference: "DSR-ABCDEF12" }];
-		await expect(requestMyErasure()).resolves.toEqual({ reference: "DSR-ABCDEF12", alreadyOpen: true });
+		await expect(requestMyErasure()).resolves.toEqual({ reference: "DSR-ABCDEF12", outcome: "already_open" });
+		expect(inserts(privacyCase)).toEqual([]);
+		expect(inserts(privacyCaseEvent)).toEqual([]);
+		// It was emailed when it was opened; a second press does not email it again.
+		expect(sendEmail).not.toHaveBeenCalled();
+	});
+
+	// ── the hand-off to a person (#4875) ─────────────────────────────────────────────────────────
+
+	it("emails the new case to the hosted privacy inbox, quoting its reference and the subject", async () => {
+		const out = await requestMyErasure();
+		if (out.outcome !== "opened") throw new Error(`expected a case to be opened, got ${out.outcome}`);
+		expect(sendEmail).toHaveBeenCalledTimes(1);
+		const [args] = sendEmail.mock.calls[0] ?? [];
+		expect(args).toMatchObject({
+			to: "privacy@alethialabs.io",
+			subject: expect.stringContaining(out.reference),
+		});
+		expect(args).toHaveProperty("react.props", expect.objectContaining({
+			reference: out.reference,
+			subjectUserId: "user-1",
+			subjectEmail: "Ada@Example.io",
+		}));
+	});
+
+	it("sends to PRIVACY_EMAIL when it is set, on either kind of deployment", async () => {
+		process.env.PRIVACY_EMAIL = " dpo@operator.example ";
+		mode.mockReturnValue("self-managed");
+		const out = await requestMyErasure();
+		expect(out.outcome).toBe("opened");
+		expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: "dpo@operator.example" }));
+	});
+
+	it("opens NO case on a self-managed deployment with no PRIVACY_EMAIL — and never falls back to Alethia's inbox", async () => {
+		mode.mockReturnValue("self-managed");
+		await expect(requestMyErasure()).resolves.toEqual({ outcome: "no_privacy_contact" });
+		expect(inserts(privacyCase)).toEqual([]);
+		expect(inserts(privacyCaseEvent)).toEqual([]);
+		expect(sendEmail).not.toHaveBeenCalled();
+	});
+
+	it("leaves no case and no ledger event behind when the email fails", async () => {
+		sendEmail.mockRejectedValue(new Error("SES said no"));
+		await expect(requestMyErasure()).rejects.toThrow(/SES said no/);
 		expect(inserts(privacyCase)).toEqual([]);
 		expect(inserts(privacyCaseEvent)).toEqual([]);
 	});

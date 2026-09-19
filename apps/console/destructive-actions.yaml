@@ -902,7 +902,9 @@ controls:
     surface: apps/console/components/shell/account-settings-dialog.tsx
     # OPENS AN ERASURE REQUEST; it deletes nothing (#4273, ruled 2026-09-18). The click reaches
     # `requestMyErasure` (app/server/actions/privacy/self-serve.ts), which opens a privacy case about
-    # the signed-in user with identity recorded as session-verified — a person fulfils it. The id
+    # the signed-in user with identity recorded as session-verified, and emails it to the privacy
+    # inbox in the same transaction; a deployment with no inbox (self-managed, no PRIVACY_EMAIL)
+    # opens no case (#4875). A person fulfils it. The id
     # keeps its name because the census and the gate ledger key on it, not because the control
     # deletes: the real erasure executor is #4854, and when it lands this row moves again.
     mutation: requestMyErasure
@@ -915,4 +917,4 @@ controls:
     persona: owner
     status: confirmed
     prod-qa: skip
-    reason: confirming opens a real erasure request about the QA account on alethialabs.io, which a person then acts on; the production pass is reversible-only and nothing it can do withdraws that request, so this control is never opened there
+    reason: confirming opens a real erasure request about the QA account on alethialabs.io and emails it to the privacy inbox, where a person then acts on it; the production pass is reversible-only and nothing it can do withdraws that request, so this control is never opened there
