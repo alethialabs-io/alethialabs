@@ -26,16 +26,16 @@ beforeEach(() => {
 
 describe("workspace switching (ctx)", () => {
 	it("stepping into a project re-scopes ctx and starts a fresh conversation", () => {
-		useElenchStore.getState().openModal({ kind: "project", projectId: PROJECT });
+		useElenchStore.getState().openModal({ kind: "project", projectId: PROJECT, environmentId: null });
 		const s = useElenchStore.getState();
-		expect(s.ctx).toEqual({ kind: "project", projectId: PROJECT });
+		expect(s.ctx).toEqual({ kind: "project", projectId: PROJECT, environmentId: null });
 		// The org thread must NOT follow us into the project workspace.
 		expect(s.threadId).toBeNull();
 		expect(s.epoch).toBe(1);
 	});
 
 	it("stepping back out to the general assistant re-scopes to org and resets again", () => {
-		useElenchStore.getState().openModal({ kind: "project", projectId: PROJECT });
+		useElenchStore.getState().openModal({ kind: "project", projectId: PROJECT, environmentId: null });
 		useElenchStore.setState({ threadId: "project-thread" });
 		useElenchStore.getState().openModal({ kind: "org" });
 		const s = useElenchStore.getState();
@@ -44,10 +44,10 @@ describe("workspace switching (ctx)", () => {
 	});
 
 	it("re-selecting the SAME workspace keeps the conversation (not a reset)", () => {
-		useElenchStore.getState().openModal({ kind: "project", projectId: PROJECT });
+		useElenchStore.getState().openModal({ kind: "project", projectId: PROJECT, environmentId: null });
 		useElenchStore.setState({ threadId: "project-thread" });
 		const before = useElenchStore.getState().epoch;
-		useElenchStore.getState().openModal({ kind: "project", projectId: PROJECT });
+		useElenchStore.getState().openModal({ kind: "project", projectId: PROJECT, environmentId: null });
 		const s = useElenchStore.getState();
 		expect(s.threadId).toBe("project-thread");
 		expect(s.epoch).toBe(before);

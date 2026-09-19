@@ -13,6 +13,7 @@
 
 import { test as base, type BrowserContext, type Page } from "@playwright/test";
 import fs from "node:fs";
+import { needsTags, requireCapability } from "../helpers/capabilities";
 import { attachConsoleGuard, type ConsoleGuard } from "../helpers/console-errors";
 import { attachPerf, type PerfCollector } from "../helpers/perf";
 import { personaMetaPath, type PersonaName, type PersonaRecord } from "../helpers/personas";
@@ -58,10 +59,25 @@ async function makePersona(
 
 export const test = base.extend<{
 	qa: Registry;
+	capabilities: void;
 	owner: PersonaSession;
 	team: PersonaSession;
 	member: PersonaSession;
 }>({
+	// THE CAPABILITY GATE. A test tagged `@needs:<capability>` runs only on a leg that PROMISED it
+	// (`ALETHIA_E2E_CAPABILITIES`). In CI an unmet need throws — the tag and the workflow disagree
+	// and a red test is the honest report; locally it skips with a reason that says NOT MEASURED.
+	// This replaces per-spec `test.skip(!process.env.STRIPE_SECRET_KEY)` guards, whose unset
+	// variable turned 35 billing assertions into green skips. See helpers/capabilities.ts.
+	capabilities: [
+		async ({}, use, testInfo) => {
+			for (const cap of needsTags(testInfo.tags)) {
+				requireCapability(cap, { skip: (reason) => testInfo.skip(true, reason) });
+			}
+			await use();
+		},
+		{ auto: true },
+	],
 	// Auto fixture: sets up first, tears down last → flushes aggregated perf + errors after all
 	// persona contexts (which depend on it) have closed but their record arrays still hold the data.
 	qa: [

@@ -31,6 +31,10 @@ export function SettingsNav() {
 					<Link
 						key={item.sub}
 						href={href}
+						// The settings drill's rows are sidebar rows and carry the same statement as
+						// the main nav (`components/shell/nav-row.tsx`): the active section is in the
+						// accessibility tree, not only in `bg-muted/80`.
+						aria-current={active ? "page" : undefined}
 						className={cn(
 							"flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
 							active

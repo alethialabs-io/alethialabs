@@ -48,8 +48,9 @@ run "shipped_pairing_cpx42_cap2_is_valid" {
   }
 }
 
-# cpx32 is half the hourly rate and tempting for that reason. It holds ONE env — and
-# `dev` permanently holds one, so cpx32 leaves no branch slot at all.
+# cpx32 is half the hourly rate and tempting for that reason. It holds ONE env, and one
+# environment is not a capacity two instances can share — so cpx32 leaves nothing for the
+# second. (This used to say "`dev` permanently holds one"; it does not — #4350.)
 run "cpx32_cannot_host_two_envs" {
   command = plan
   variables {

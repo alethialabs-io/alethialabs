@@ -19,12 +19,14 @@ import {
 	getBillingSummary,
 	resumeSubscription,
 } from "@/app/server/actions/billing";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
+import { SectionHeading } from "@repo/ui/section-heading";
 import { Skeleton } from "@repo/ui/skeleton";
 import { planMeta } from "@repo/plan-catalog";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
@@ -48,6 +50,20 @@ export function BillingPanel() {
 	const [summary, setSummary] = useState<BillingSummary | null>(null);
 	const [pending, startTransition] = useTransition();
 	const [createOpen, setCreateOpen] = useState(false);
+	// Cancelling asks first (#4276). Resuming does not: it RESTORES the subscription, and a
+	// confirmation in front of an undo is friction with nothing behind it. The registry
+	// (apps/console/destructive-actions.yaml, `billing.subscription.cancel`) records the dialog
+	// this state opens.
+	//
+	// WHAT ACTUALLY EXERCISES IT is `e2e/flows/billing.spec.ts` ("Cancel plan opens a
+	// confirmation…"), against the `team` persona's real Stripe trial. NOT the audit leg: that
+	// entry's `fixture:` field is documentation, not a seeding directive, and no seeder in `e2e/`
+	// materialises a subscription for the audit org — `audit/context.ts:seedRouteFixtures` writes
+	// one project, one job and one support case and deliberately nothing else. So `hasSub` below
+	// is false there, the trigger is never rendered, and `audit/destructive.spec.ts` records the
+	// control as WITHHELD every gate. Read the other way round: delete the flows spec and this
+	// dialog is measured by nothing at all.
+	const [cancelOpen, setCancelOpen] = useState(false);
 	// Hobby → Pro upgrades open the shared in-place upgrade sheet (no inline plan dialog).
 	const { openUpgrade } = useUpgradeSheet();
 
@@ -68,16 +84,25 @@ export function BillingPanel() {
 		summary?.state === "canceling" ||
 		summary?.state === "past_due";
 
-	function toggleCancel() {
+	/** Resume a subscription already scheduled to cancel. Not destructive — no confirmation. */
+	function resumePlan() {
 		startTransition(async () => {
 			try {
-				if (summary?.cancelAtPeriodEnd) {
-					await resumeSubscription();
-					toast.success("Subscription resumed.");
-				} else {
-					await cancelSubscription();
-					toast.success("Subscription will cancel at the period end.");
-				}
+				await resumeSubscription();
+				toast.success("Subscription resumed.");
+				refresh();
+			} catch (e) {
+				toast.error(e instanceof Error ? e.message : "Something went wrong.");
+			}
+		});
+	}
+
+	/** Schedule the subscription to end at the period end. Only ever reached from the dialog. */
+	function confirmCancelPlan() {
+		startTransition(async () => {
+			try {
+				await cancelSubscription();
+				toast.success("Subscription will cancel at the period end.");
 				refresh();
 			} catch (e) {
 				toast.error(e instanceof Error ? e.message : "Something went wrong.");
@@ -98,13 +123,10 @@ export function BillingPanel() {
 	if (!summary.hosted) {
 		return (
 			<Card className="p-6">
-				<h2 className="text-sm font-semibold text-foreground">
-					Self-managed deployment
-				</h2>
-				<p className="mt-1 text-sm text-muted-foreground">
-					This instance is not connected to hosted billing. Enterprise features are
-					unlocked by your license key. See the docs for self-managed licensing.
-				</p>
+				<SectionHeading
+					title="Self-managed deployment"
+					description="This instance is not connected to hosted billing. Enterprise features are unlocked by your license key. See the docs for self-managed licensing."
+				/>
 			</Card>
 		);
 	}
@@ -114,13 +136,14 @@ export function BillingPanel() {
 		return (
 			<>
 				<Card className="p-6">
-					<h2 className="text-sm font-semibold text-foreground">
-						Create an organization
-					</h2>
-					<p className="mt-1 max-w-prose text-sm text-muted-foreground">
-						Your account is a personal scope — your Projects are all yours.
-						Create an organization to collaborate with teammates on a paid plan.
-					</p>
+					{/* A section heading, not a page title: these fallback cards are the whole page in
+					    this state, but the billing page has never carried an `h1` and the console no
+					    longer has page titles at all — the breadcrumb says "Billing". */}
+					<SectionHeading
+						className="max-w-prose"
+						title="Create an organization"
+						description="Your account is a personal scope — your Projects are all yours. Create an organization to collaborate with teammates on a paid plan."
+					/>
 					<Button className="mt-4" onClick={() => setCreateOpen(true)}>
 						Create organization
 					</Button>
@@ -167,7 +190,7 @@ export function BillingPanel() {
 					<div className="flex flex-wrap items-start justify-between gap-5 px-6 py-[22px]">
 						<div className="flex flex-col gap-[9px]">
 							<div className="flex items-center gap-2.5">
-								<span className="font-display text-[21px] font-semibold tracking-[-0.02em] text-text-primary">
+								<span className="font-display text-display-xs font-semibold tracking-[-0.02em] text-text-primary">
 									{meta.name}
 								</span>
 								{!isHobby && (
@@ -175,21 +198,21 @@ export function BillingPanel() {
 										<span
 											className={
 												isEntitled
-													? "rounded-full border border-ink bg-ink px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-foreground"
-													: "rounded-full border border-border-strong px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary"
+													? "rounded-full border border-ink bg-ink px-2 py-[3px] font-mono text-ui-3xs uppercase tracking-[0.1em] text-ink-foreground"
+													: "rounded-full border border-border-strong px-2 py-[3px] font-mono text-ui-3xs uppercase tracking-[0.1em] text-text-secondary"
 											}
 										>
 											{STATE_LABEL[state]}
 										</span>
 										{isEntitled && (
-											<span className="rounded-full border border-border-strong px-2 py-[3px] font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary">
+											<span className="rounded-full border border-border-strong px-2 py-[3px] font-mono text-ui-3xs uppercase tracking-[0.1em] text-text-secondary">
 												Monthly
 											</span>
 										)}
 									</>
 								)}
 							</div>
-							<div className="flex flex-wrap items-center gap-2 text-[12.5px] text-text-tertiary">
+							<div className="flex flex-wrap items-center gap-2 text-ui-sm text-text-tertiary">
 								<span>{meta.tagline}</span>
 								{periodLabel && (
 									<>
@@ -201,26 +224,26 @@ export function BillingPanel() {
 						</div>
 						{!isHobby && (
 							<div className="flex flex-col items-end gap-[3px] text-right">
-								<div className="font-display text-[26px] font-semibold tracking-[-0.03em] text-text-primary">
+								<div className="font-display text-display-xs font-semibold tracking-[-0.03em] text-text-primary">
 									{monthly === null ? (
 										meta.priceLabel
 									) : (
 										<>
 											{formatMoney(monthly * 100)}
-											<span className="font-mono text-[12px] font-normal text-text-tertiary">
+											<span className="font-mono text-ui-sm font-normal text-text-tertiary">
 												/mo
 											</span>
 										</>
 									)}
 								</div>
 								{meta.perSeat && unit !== null && monthly !== null && monthly > 0 && (
-									<div className="font-mono text-[10.5px] text-text-tertiary">
+									<div className="font-mono text-ui-2xs text-text-tertiary">
 										{formatMoney(unit * 100)}/seat · {seatCount} seat
 										{seatCount === 1 ? "" : "s"}
 									</div>
 								)}
 								{showNextCharge && monthly !== null && summary.currentPeriodEnd && (
-									<div className="font-mono text-[10.5px] text-text-tertiary">
+									<div className="font-mono text-ui-2xs text-text-tertiary">
 										next charge {formatMoney(monthly * 100)} ·{" "}
 										{formatDate(summary.currentPeriodEnd)}
 									</div>
@@ -230,7 +253,7 @@ export function BillingPanel() {
 					</div>
 
 					<div className="flex flex-wrap items-center justify-between gap-4 border-t border-border bg-surface-sunken px-6 py-[14px]">
-						<div className="flex items-center gap-2 text-[12px] text-text-tertiary">
+						<div className="flex items-center gap-2 text-ui-sm text-text-tertiary">
 							<Info size={13} />
 							Your cloud-resource spend is billed separately by your provider.
 						</div>
@@ -240,7 +263,17 @@ export function BillingPanel() {
 									variant="ghost"
 									size="sm"
 									disabled={pending}
-									onClick={toggleCancel}
+									onClick={
+										// The BRANCH is `cancelAtPeriodEnd`, not `state === "canceling"`,
+										// because that is what the single `toggleCancel` handler this
+										// replaced tested. The two disagree only for a `past_due`
+										// subscription already set to cancel — where the label reads
+										// "Cancel plan" and the click resumes — and that contradiction
+										// is #4276's to record, not to change behind a rename.
+										summary.cancelAtPeriodEnd
+											? resumePlan
+											: () => setCancelOpen(true)
+									}
 								>
 									{state === "canceling" ? "Resume plan" : "Cancel plan"}
 								</Button>
@@ -271,6 +304,20 @@ export function BillingPanel() {
 				</>
 			)}
 
+			{/* Cancelling asks first. The copy states the two facts a person needs to decide:
+			    entitlement runs to the period end, and the decision is reversible until then. */}
+			<ConfirmDialog
+				open={cancelOpen}
+				onOpenChange={setCancelOpen}
+				title="Cancel this subscription?"
+				description={
+					summary.currentPeriodEnd
+						? `${meta.name} stays active until ${formatDate(summary.currentPeriodEnd)}, then this organization drops to the free plan. You can resume any time before then.`
+						: `${meta.name} stays active until the end of the current billing period, then this organization drops to the free plan. You can resume any time before then.`
+				}
+				confirmLabel="Confirm cancellation"
+				onConfirm={confirmCancelPlan}
+			/>
 		</div>
 	);
 }

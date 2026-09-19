@@ -96,6 +96,26 @@ func (p *hetznerProvider) ValidateConfig(config *types.ProjectConfig) error {
 	return validateNetworkCIDR(config, "network_cidr", hetznerMaxNetworkPrefix)
 }
 
+// Every key this file assigns to root tfvars. Hetzner has ONE root-level component — the database,
+// cache and queue are in-cluster charts, and buckets and registry hosts merge into per-item objects
+// — so there is no second component whose knobs could decide these. It still gets a union, and the
+// reason is `hcloud_token` and the four `hetzner_s3_*` credentials sitting in this list: relying on
+// "it is written unconditionally, so merge-if-absent covers it" makes the guarantee depend on the
+// ORDER of two statements, and the day one of those moves inside an `if` the cluster's own
+// provider_config can name the cloud credential. Reserving them says so instead of assuming it.
+//
+// Kept honest by TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads the assignments below:
+// a new `tfvars[...]` fails the suite until it is listed here.
+var hetznerRootReserved = []string{
+	"buckets", "classification_tags", "cloud_dns_enabled", "control_plane_arch",
+	"control_plane_count", "control_plane_server_type", "dns_hosted_zone", "dns_main_domain",
+	"environment", "hcloud_token", "hetzner_s3_access_key", "hetzner_s3_endpoint",
+	"hetzner_s3_region", "hetzner_s3_secret_key", "incluster_registry_hosts", "kubernetes_version",
+	"network_allowed_cidr_blocks", "network_cidr", "network_id", "pod_cidr", "project_name",
+	"provision_network", "region", "service_cidr", "talos_version", "worker_arch", "worker_count",
+	"worker_server_type",
+}
+
 func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Node sizing: prefer an explicit/ resolved instance type, else a cheap, orderable
 	// amd64 default (cpx22 = 2 vCPU / 4 GB). cax11 (ARM) is capacity-unreliable and
@@ -259,7 +279,11 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// classification_tags var (B1.3).
 	tfvars["classification_tags"] = classificationTags(config, hetznerTagStyle)
 
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, hetznerRootReserved...)
+	// DNS was the other half of #4319: hetzner grew a real `hcloud_zone` resource and, unlike the
+	// four managed clouds, never got the merge call to reach it.
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, hetznerRootReserved...)
+	mergeProviderConfig(tfvars, config.Network.ProviderConfig, hetznerRootReserved...)
 
 	return tfvars
 }
@@ -346,13 +370,22 @@ func hetznerS3Region(region string) string {
 func buildHetznerBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"name":               b.Name,
 			"versioning":         b.Versioning,
 			"encryption_enabled": b.EncryptionEnabled,
 			"public_access":      b.PublicAccess,
 			"cors_origins":       ensureStringSlice(b.CorsOrigins),
-		})
+		}
+		// The bucket is the ONE leaf component Hetzner provisions through OpenTofu. The database,
+		// cache, queue, topic, nosql table and secret are in-cluster charts (CloudNativePG, Valkey,
+		// RabbitMQ, ScyllaDB, Vault) driven by Helm values, and the registry is a Harbor release
+		// whose only tofu surface is `incluster_registry_hosts` — a list(string) of mirror hosts with
+		// no per-registry object to merge into. None of those gets a passthrough invented for it
+		// here; each is a named exclusion in TestProviderTfvars_LeafPassthrough.
+		mergeItemProviderConfig(entry, b.ProviderConfig,
+			"name", "versioning", "encryption_enabled", "public_access", "cors_origins")
+		result = append(result, entry)
 	}
 	return result
 }

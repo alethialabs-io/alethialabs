@@ -32,10 +32,10 @@ module "gke" {
   cluster_version  = var.gke_cluster_version
   enable_autopilot = var.gke_enable_autopilot
 
-  network_name          = var.provision_network ? module.vpc_network[0].network_name : data.google_compute_network.existing[0].name
-  subnet_name           = var.provision_network ? module.vpc_network[0].private_subnet_name : data.google_compute_subnetwork.existing[0].name
-  pod_ip_range_name     = var.provision_network ? module.vpc_network[0].pod_ip_range_name : local.existing_pods_range_name
-  service_ip_range_name = var.provision_network ? module.vpc_network[0].service_ip_range_name : local.existing_services_range_name
+  network_name          = try(module.vpc_network[0].network_name, null) != null ? module.vpc_network[0].network_name : one(data.google_compute_network.existing[*].name)
+  subnet_name           = try(module.vpc_network[0].private_subnet_name, null) != null ? module.vpc_network[0].private_subnet_name : one(data.google_compute_subnetwork.existing[*].name)
+  pod_ip_range_name     = try(module.vpc_network[0].pod_ip_range_name, null) != null ? module.vpc_network[0].pod_ip_range_name : local.existing_pods_range_name
+  service_ip_range_name = try(module.vpc_network[0].service_ip_range_name, null) != null ? module.vpc_network[0].service_ip_range_name : local.existing_services_range_name
 
   machine_types     = var.gke_instance_types
   node_min_size     = var.gke_node_min_size
@@ -57,6 +57,11 @@ module "gke" {
   preemptible = var.gke_preemptible
 
   master_authorized_cidr_blocks = var.gke_master_authorized_cidr_blocks
+
+  # Declared at the root and threaded nowhere before #4320; the module used literals equal to these
+  # defaults (private nodes on, public endpoint), so wiring them changes no existing cluster.
+  enable_private_nodes    = var.gke_enable_private_nodes
+  enable_private_endpoint = var.gke_enable_private_endpoint
 
   labels = local.gcp_default_labels
 }

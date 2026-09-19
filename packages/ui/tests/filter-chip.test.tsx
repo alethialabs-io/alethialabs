@@ -53,9 +53,79 @@ describe("FilterChip", () => {
 		await user.click(chip);
 		expect(onClick).toHaveBeenCalledTimes(1);
 	});
+
+	// #4197: the count is a named ink tier at full strength, never an alpha over the chip's
+	// ink — at α=0.6 over the page background no foreground reaches 4.5:1. A filled chip is
+	// inverted end to end, so there the count inherits the chip's `text-background`.
+	it("renders the count as tertiary ink when resting and inherited ink when filled", () => {
+		const { rerender } = render(
+			<FilterChip on={false} onClick={() => {}} count={3}>
+				Healthy
+			</FilterChip>,
+		);
+		const count = screen.getByText("3");
+		expect(count.className).toContain("text-text-tertiary");
+		expect(count.className).toContain("font-mono");
+		expect(count.className).not.toMatch(/opacity-|\/\d+/);
+		expect(screen.getByRole("button", { name: "Healthy 3" })).toBeInTheDocument();
+
+		rerender(
+			<FilterChip on onClick={() => {}} count={3}>
+				Healthy
+			</FilterChip>,
+		);
+		expect(screen.getByText("3").className).not.toContain("text-text-tertiary");
+	});
+
+	it("renders no count node when none is given", () => {
+		render(
+			<FilterChip on={false} onClick={() => {}}>
+				Healthy
+			</FilterChip>,
+		);
+		// The direct form. `childNodes.toHaveLength(1)` asserted "exactly one DOM child", which is
+		// incidental to "renders no count node": it would fail on any unrelated structural change
+		// (an icon slot, wrapping the children) with a message about node counts. What it did catch
+		// that the accessible name cannot — an empty span, a stray `{" "}` — is the span assertion.
+		const button = screen.getByRole("button", { name: "Healthy" });
+		expect(button.querySelector("span")).toBeNull();
+		expect(button.textContent).toBe("Healthy");
+	});
+
+	// The two halves of one control brighten together: the count follows the label on hover rather
+	// than staying at the dimmer tier while the label snaps to `--foreground`.
+	it("gives the resting count a hover rung that matches the label", () => {
+		render(
+			<FilterChip on={false} onClick={() => {}} count={3}>
+				Healthy
+			</FilterChip>,
+		);
+		expect(screen.getByText("3").className).toContain("group-hover:text-foreground");
+		expect(screen.getByRole("button", { name: "Healthy 3" }).className).toContain("group");
+	});
 });
 
 describe("FilterChipGroup", () => {
+	// The group owns ONE renderer for the figure. A `render` callback owns the whole chip, and the
+	// four call sites this API replaced each printed `opt.count` inside their own — so forwarding
+	// both would render `Healthy 3 3`, and that becomes the accessible name.
+	it("does not also append the count when a render callback owns the chip", () => {
+		render(
+			<FilterChipGroup
+				options={[{ value: "healthy", label: "Healthy", count: 3 }]}
+				selected={[]}
+				onToggle={() => {}}
+				render={(opt) => (
+					<>
+						{opt.label} {opt.count}
+					</>
+				)}
+			/>,
+		);
+		expect(screen.getByRole("button", { name: "Healthy 3" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Healthy 3 3" })).toBeNull();
+	});
+
 	it("renders one chip per option and reports toggles by value", async () => {
 		const user = userEvent.setup();
 		const onToggle = vi.fn();
@@ -111,6 +181,25 @@ describe("FilterChipGroup", () => {
 		);
 		expect(screen.getByRole("button", { name: "Production ✓" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Staging" })).toBeInTheDocument();
+	});
+
+	it("passes an option's count through to its chip", () => {
+		render(
+			<FilterChipGroup
+				options={[
+					{ value: "healthy", label: "Healthy", count: 12 },
+					{ value: "failed", label: "Failed", count: 0 },
+					{ value: "unknown", label: "Unknown" },
+				]}
+				selected={[]}
+				onToggle={() => {}}
+				inline
+			/>,
+		);
+		expect(screen.getByRole("button", { name: "Healthy 12" })).toBeInTheDocument();
+		// A zero is a count, not an absence — it renders.
+		expect(screen.getByRole("button", { name: "Failed 0" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Unknown" })).toBeInTheDocument();
 	});
 
 	it("renders nothing when there are no options", () => {

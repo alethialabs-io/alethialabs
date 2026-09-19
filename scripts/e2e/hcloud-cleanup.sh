@@ -89,6 +89,19 @@ DELETE_RETRIES="${DELETE_RETRIES:-5}"   # per-resource delete attempts (exponent
 # Bounded like the other four sweepers (#2257): an unbounded best-effort sweep can consume its
 # caller's job budget, which is how run 31459117502 was cancelled at its cap and leaked a stack.
 PREFLIGHT="${PREFLIGHT:-0}"
+# ── VERIFY_ONLY (#4398) — ask the cloud, change nothing. The same scope-locked verification the
+# normal path ends with, with every purge skipped: the only cloud calls it makes are the listings
+# verify_swept already makes. Refused alongside DRY_RUN/PREFLIGHT because both exit 0 WITHOUT
+# verifying, and this script's exit status is read as a cloud verdict by
+# `sweep-probe.sh --record-verdict`. The reasoning in full is in aws-cleanup.sh.
+VERIFY_ONLY="${VERIFY_ONLY:-0}"
+# Set by the VERIFY_ONLY orchestration below, read by verify_swept. Declared here so `set -u` cannot
+# turn a reordering into an unbound-variable death inside the verification.
+VERIFY_ONLY_UNLABELLED_LBS=""
+if [ "$VERIFY_ONLY" = "1" ] && { [ "$DRY_RUN" = "1" ] || [ "$PREFLIGHT" = "1" ]; }; then
+	echo "::error::VERIFY_ONLY=1 with DRY_RUN=1 or PREFLIGHT=1 — both exit 0 WITHOUT verifying, and this exit status is read as a cloud verdict. Refusing." >&2
+	exit 2
+fi
 # ── CAPTURE MODE (#3481). Writes THIS run's Load Balancer ids to a file while the private network
 # still exists, so the teardown sweep has a run-scoped binding afterwards.
 #
@@ -154,6 +167,36 @@ fi
 # The single, non-empty selector every call is scoped by. Asserted before each use.
 SELECTOR="cluster=${CLUSTER_NAME}"
 
+# ── THE ONE THING THIS SCRIPT DELIBERATELY DOES NOT DELETE, NAMED (#3027). ──────────────────────
+#
+# infra/templates/project/hetzner/image.tf caches the Talos snapshot per
+# (talos_version × architecture × location × extension set), because rebuilding a byte-identical
+# one cost 5–15 minutes on the critical path of every apply and was the floor's dominant flake (it
+# blew its tofu deadline twice — #2458 and run 33080748841 — on the resource that runs before any
+# cluster exists, so losing it lost the whole run).
+#
+# A cache entry carries `alethia.io/cache=talos-image` and, deliberately, NO `cluster` label. That
+# absence is the entire mechanism: this script's selector is `cluster=<name>`, so a cache entry is
+# outside it BY CONSTRUCTION. Nothing here was weakened to allow that — the labelled purge below
+# still deletes every image it ever deleted, including the per-cluster snapshot the template still
+# builds under `talos_image_cache = "disabled"`.
+#
+# The constant exists anyway, and is REPORTED on every sweep, for two reasons:
+#
+#   1. An unswept type nobody mentions is indistinguishable from a swept one. This file's header
+#      already makes that argument for the CCM load balancer and the imager upload helpers; the
+#      cache is the third such type and the only one that is unswept ON PURPOSE.
+#   2. It is the SKIP-LIST BY NAME that #3027 asks for. `scripts/check-hetzner-image-cache.mjs`
+#      fails CI when this string, the template's label and hcloud-image-cache.sh's selector stop
+#      being the same string — so the sweeper and the emitter cannot drift apart silently, which is
+#      the failure mode where a "cached" image quietly starts being deleted every run again.
+#
+# Reclaiming cache entries is a separate, explicitly-flagged operation:
+# `scripts/e2e/hcloud-image-cache.sh --prune-superseded --yes-delete`.
+IMAGE_CACHE_LABEL_KEY="alethia.io/cache"
+IMAGE_CACHE_LABEL_VALUE="talos-image"
+IMAGE_CACHE_SELECTOR="${IMAGE_CACHE_LABEL_KEY}==${IMAGE_CACHE_LABEL_VALUE}"
+
 # Hetzner Object Storage is a SEPARATE PRODUCT from the Hetzner Cloud API — S3 at
 # <region>.your-objectstorage.com, its own access-key pair, no hcloud labels, invisible to the
 # hcloud CLI. So it can only be swept with S3 credentials, and only reported honestly without them.
@@ -173,6 +216,7 @@ S3_ENDPOINT="${HETZNER_S3_ENDPOINT:-${S3_REGION}.your-objectstorage.com}"
 # `exit 0`. (The dispatch itself stays below, where capture_run_lbs and the helpers it calls are
 # actually defined.)
 [ -n "$CAPTURE_LBS" ] || [ "$SELF_TEST" = "1" ] || echo "→ hcloud belt-and-suspenders cleanup for label ${SELECTOR}"
+[ "$VERIFY_ONLY" = "1" ] && echo "  (VERIFY_ONLY=1 — re-listing the cloud, sweeping nothing, deleting nothing)"
 [ -z "$CAPTURE_LBS" ] && [ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 
 # ── Does this hcloud CLI know about DNS zones? `hcloud zone` is recent (the template gained
@@ -353,6 +397,103 @@ capture_is_ours() {
 	[ "$stamped" = "$want" ] && return 0
 	echo "::warning::the load-balancer capture at ${LB_CAPTURE_FILE} was written for cluster '${stamped}', not '${want}' — ignoring it and falling back to the project-wide question." >&2
 	return 1
+}
+
+# report_unlabelled_lbs — the READ-ONLY half of sweep_unlabelled_lbs (#4398). Deletes nothing.
+#
+# ⚠️ WHY THIS EXISTS, AND WHY OMITTING IT WAS THE BUG IT NOW FIXES.
+#
+# BEFORE THIS FUNCTION EXISTED, sweep_unlabelled_lbs was not only a sweeper: it was the only place
+# in this file that recorded the CCM ingress load balancer as UNVERIFIABLE — eight
+# probe_note_unverifiable sites, including `network-already-destroyed`. (There are three places
+# now: that function, this one, and verify_swept's `no jq` branch. The sentence is in the PAST
+# tense on purpose — it describes the tree this function was added to, not the tree it ships in,
+# and a present-tense version of it would be false the moment you read it.)
+#
+# verify_swept's own re-check goes through unlabelled_lb_ids, which
+# `return 0`s SILENTLY when the private-network binding cannot be resolved. And after a teardown
+# that network is gone BY CONSTRUCTION: `tofu destroy` deletes hcloud_network.this FIRST, which is
+# what the long comment inside sweep_unlabelled_lbs says at length.
+#
+# So a verification pass that skipped the sweeper asked NOBODY about the resource this cloud most
+# often leaks, found an empty ledger, and published CLEAN — a failed look reported as an empty
+# account, on the one cloud that runs every night and whose shared account makes "the project holds
+# at least one load balancer" the normal case. That is the exact defect #4398 exists to remove,
+# reintroduced inside its own fix.
+#
+# THE CONTRACT. It echoes, on stdout, the ids of load balancers BOUND TO THIS RUN that are still
+# alive — a leak, which verify_swept counts — and records probe_note_unverifiable for every way of
+# not being able to answer. Every unmeasured path THIS FUNCTION takes leaves a ledger entry behind
+# it, so silence from those paths means measured-none.
+#
+# ⚠️ ONE PATH IT DOES NOT COVER, stated because the absolute version of that sentence is false:
+# when the network is still alive this delegates to unlabelled_lb_ids, whose `jq … 2>/dev/null`
+# swallows an unparseable body and returns silence with NO ledger entry. Benign today — that branch
+# only runs when the teardown has not removed the network, i.e. when something else has already
+# failed loudly — but it is a real gap in the "silence is a measurement" claim and it belongs to
+# unlabelled_lb_ids, not here.
+report_unlabelled_lbs() {
+	assert_selector
+	if ! command -v jq >/dev/null 2>&1; then
+		echo "::warning::jq is not installed — the CCM-created ingress load balancer for ${SELECTOR} could NOT be discovered (it carries no hcloud label; its only binding is a private-network attachment that needs jq to read). NOT verified — check load balancers by hand." >&2
+		probe_note_unverifiable ccm-load-balancers "no jq"
+		return 0
+	fi
+	local net
+	net="$(cluster_network_id)"
+	if printf '%s' "$net" | grep -Eq '^[0-9]+$'; then
+		# The network survived, so the live run-scoped binding still answers. Same question the
+		# sweep asks, same function.
+		unlabelled_lb_ids
+		return 0
+	fi
+	# The network is gone — the NORMAL post-teardown state, not an anomaly. Same ladder as the
+	# sweep: the pre-destroy capture (#3481) is the only run-scoped binding that outlives it;
+	# failing that, the project-wide question is the cheapest SOUND question left, and it can only
+	# ever answer "nothing at all" honestly or "cannot attribute" loudly.
+	if [ -n "$LB_CAPTURE_FILE" ] && [ -f "$LB_CAPTURE_FILE" ] && capture_is_ours; then
+		if [ ! -r "$LB_CAPTURE_FILE" ]; then
+			echo "::warning::the load-balancer capture at ${LB_CAPTURE_FILE} is unreadable — NOT verified; check by hand (#3481)." >&2
+			probe_note_unverifiable ccm-load-balancers "capture-unreadable"
+			return 0
+		fi
+		local captured crc=0
+		captured="$(grep -E '^[0-9]+$' "$LB_CAPTURE_FILE")" || crc=$?
+		if [ "$crc" -gt 1 ]; then
+			echo "::warning::could not read the load-balancer capture at ${LB_CAPTURE_FILE} (grep exit ${crc}) — NOT verified; check by hand (#3481)." >&2
+			probe_note_unverifiable ccm-load-balancers "capture-read-failed"
+			return 0
+		fi
+		# Captured successfully and found none: the one place "none" is honest without a live read,
+		# because it was measured while the binding still existed.
+		[ -z "$captured" ] && return 0
+		local live lrc=0
+		live="$(hcloud load-balancer list -o noheader -o columns=id 2>/dev/null)" || lrc=$?
+		if [ "$lrc" -ne 0 ]; then
+			echo "::warning::'hcloud load-balancer list' failed (exit ${lrc}) while re-checking the load balancer(s) captured for ${SELECTOR}. NOT verified — check by hand (#3481)." >&2
+			probe_note_unverifiable ccm-load-balancers "list-failed-after-capture"
+			return 0
+		fi
+		local cid
+		while IFS= read -r cid; do
+			[ -n "$cid" ] || continue
+			case " $(printf '%s' "$live" | tr '\n' ' ') " in *" $cid "*) printf '%s\n' "$cid" ;; esac
+		done <<<"$captured"
+		return 0
+	fi
+	local lb_list lb_total lb_rc=0
+	lb_list="$(hcloud load-balancer list -o noheader -o columns=id 2>/dev/null)" || lb_rc=$?
+	if [ "$lb_rc" -ne 0 ]; then
+		echo "::warning::'hcloud load-balancer list' failed (exit ${lb_rc}) while checking for a CCM-created ingress load balancer for ${SELECTOR}. NOT verified — check load balancers by hand (#2549)." >&2
+		probe_note_unverifiable ccm-load-balancers "list-failed"
+		return 0
+	fi
+	lb_total="$(printf '%s' "$lb_list" | grep -c . || true)"
+	# Measured: the project holds no load balancer at all, so this run certainly leaked none.
+	[ "${lb_total:-0}" -eq 0 ] && return 0
+	echo "::warning::the run's private network is already gone, so a CCM-created ingress load balancer for ${SELECTOR} cannot be bound to this run — and this project holds ${lb_total}. NOT verified; check load balancers by hand (#2549)." >&2
+	probe_note_unverifiable ccm-load-balancers "network-already-destroyed"
+	return 0
 }
 
 sweep_unlabelled_lbs() {
@@ -624,6 +765,42 @@ s3_available() {
 # below): it makes the daily reaper the standing observer, which is the only thing that watches this
 # account when no nightly is running. #2463 is where the real fix lives — a label from the provider
 # would let the ordinary selector reach them and retire this function entirely.
+# report_image_cache — say what the Talos snapshot cache holds, and that it was NOT swept.
+#
+# Read-only, always. This is the one type whose survival is the DESIGN (see IMAGE_CACHE_SELECTOR
+# above), so it is reported and never deleted, and it touches NEITHER ledger:
+#
+#   · not UNVERIFIABLE, because nothing is left undone — this script owes the cache no action, and
+#     recording it there would red every hetzner teardown on a listing blip, which is exactly the
+#     over-application #3138 made and sweep-probe.sh's header warns about;
+#   · not UNATTRIBUTABLE, because the entries are perfectly attributable — they belong to the
+#     PROJECT rather than to any run, on purpose.
+#
+# What it must not do is collapse its three answers into one. The listing is captured WITHOUT a
+# pipe so its real exit status survives (a pipe would substitute the last stage's, which is how
+# `2>/dev/null | grep` turned an expired token into "nothing found" throughout this file's
+# history) — and "could not list", "none" and "n entries" print three different sentences.
+report_image_cache() {
+	local ids rc=0 count
+	ids="$(hcloud image list --selector "$IMAGE_CACHE_SELECTOR" -o noheader -o columns=id 2>/dev/null)" || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		echo "  · talos image cache: COULD NOT LIST (hcloud exit ${rc}). Not swept — it never is — and not counted."
+		echo "    (This does not affect the verdict below: the cache is outside this script's selector by design.)"
+		return 0
+	fi
+	count="$(printf '%s\n' "$ids" | grep -c . || true)"
+	if [ "$count" -eq 0 ]; then
+		echo "  · talos image cache (${IMAGE_CACHE_SELECTOR}): empty — the next hetzner apply will build a snapshot and stamp one."
+		return 0
+	fi
+	echo "  · talos image cache (${IMAGE_CACHE_SELECTOR}): ${count} entr(y/ies) present and DELIBERATELY NOT SWEPT."
+	echo "    They carry no \`cluster\` label, so this script's selector cannot reach them; that is what makes the"
+	echo "    cache survive a run's teardown (#3027). Reclaim them explicitly with:"
+	echo "      scripts/e2e/hcloud-image-cache.sh                                   # list"
+	echo "      scripts/e2e/hcloud-image-cache.sh --prune-superseded --yes-delete   # duplicates only"
+	return 0
+}
+
 report_imager_helpers() {
 	local servers keys found
 	servers="$(probe_run imager-upload-helpers hcloud server list -o noheader -o columns=id,name | grep -F 'hcloud-upload-image-' || true)"
@@ -801,9 +978,17 @@ if [ "$PREFLIGHT" = "1" ]; then
 		# only; the function never deletes. On the branch below, the per-orphan child sweep reports
 		# them already, so this is not duplicated there.
 		report_imager_helpers
+		# Same argument, for the type that survives ON PURPOSE: on the quiet day this branch runs,
+		# the daily reaper would otherwise never mention the one hcloud type nothing ever deletes.
+		report_image_cache
 		# Reports BOTH states: the unattributable finding, and — if the listing itself failed —
 		# the fact that it could not answer. Preflight never blocks its caller, so both warn.
-		probe_warn_unverifiable hcloud "the preflight scan"
+		#
+		# It also emits the POSITIVE marker, which is what makes this early return readable from
+		# outside: "discovery answered nothing" and "discovery never answered" print the same ✓ line
+		# below, and only a line that must be PRESENT can separate them. See
+		# scripts/e2e/lib/sweep-probe.sh's probe_report_discovery header.
+		probe_report_discovery hcloud "the preflight scan"
 		echo "✓ preflight: no prior-run e2e orphans — nothing to sweep$(probe_clean_suffix)"
 		exit 0
 	fi
@@ -847,7 +1032,7 @@ if [ "$PREFLIGHT" = "1" ]; then
 		# ⚠️ Not "the account is clean" — "every orphan this preflight could SEE is swept". The
 		# discovery listing itself can fail, and preflight is explicitly non-blocking, so the honest
 		# report here is a warning; the always() teardown is what gates.
-		probe_warn_unverifiable hcloud "the preflight orphan scan"
+		probe_report_discovery hcloud "the preflight orphan scan"
 		echo "✓ preflight complete — all prior-run e2e orphans swept"
 	fi
 	exit 0 # preflight never blocks its caller
@@ -862,11 +1047,15 @@ fi
 #   5. firewalls        — now unreferenced by any server
 #   6. networks         — now unreferenced by any server
 #   7. primary-ips      — template sets auto_delete=false, so delete explicitly
-#   8. images           — the Talos snapshots the template built (labelled cluster=…)
+#   8. images           — the per-cluster Talos snapshots the template built (labelled cluster=…).
+#                         NOT the cached snapshots: those carry alethia.io/cache=talos-image and no
+#                         `cluster` label, so this selector cannot reach them. They are REPORTED
+#                         instead, by report_image_cache — see IMAGE_CACHE_SELECTOR (#3027)
 #   9. zones            — hcloud_zone (dns.tf, #1816); already labelled cluster=<name>, just never
 #                         swept. A standing zone is a small forever-charge nothing else would notice
 #  10. object storage   — a separate product; see sweep_object_storage
 #  11. imager helpers   — REPORTED, never deleted; see report_imager_helpers
+#  12. image cache      — REPORTED, never deleted, ON PURPOSE; see report_image_cache
 #
 # The CCM load balancer and the network it is discovered through must both go BEFORE `purge
 # network`, or the network delete fails with the LB still attached and the id we bind to is gone.
@@ -893,13 +1082,54 @@ verify_swept() {
 
 	# The CCM's ingress LB carries no label, so the labelled loop above cannot see it — re-check it
 	# through the same private-network binding the sweep used.
-	if command -v jq >/dev/null 2>&1; then
+	#
+	# THREE BRANCHES, and before #4398 there were ONE and no `else` at all — the check was simply
+	# `if command -v jq; then … fi`. Each branch answers a different question:
+	#
+	#   VERIFY_ONLY   report_unlabelled_lbs already asked, read-only, above. Re-asking here is not
+	#                 just wasteful — see the comment on that branch; it LOSES the answer.
+	#   jq present    the live run-scoped binding, which is what the sweep itself uses.
+	#   jq absent     `jq` is what binds an unlabelled LB to this run, so without it this check
+	#                 cannot run AT ALL. That was the missing `else`: skipping it silently is a
+	#                 verification reporting clean over a question nobody asked.
+	#
+	# ⚠️ THE `no jq` ENTRY HERE IS A BACKSTOP, AND NO BLACK-BOX TEST CAN PIN IT AS THE SOLE SOURCE.
+	# Measured, both ways, with verify-only-readonly-test.sh's assertion G:
+	#
+	#   delete this line alone                     → G stays GREEN; sweep_unlabelled_lbs (sweeping
+	#                                                path) and report_unlabelled_lbs (read-only one)
+	#                                                have already recorded the same entry.
+	#   delete those two and keep this one         → G reds on VERIFY_ONLY=1 and stays green on
+	#                                                VERIFY_ONLY=0 — i.e. THIS line is what holds
+	#                                                the sweeping path up.
+	#
+	# So it is not dead code, and it is not independently testable either. It stays because
+	# verify_swept is the GATE, and a gate that depends on an earlier function having run is a gate
+	# with a precondition nobody checks. Do not read a coverage claim into it.
+	if [ "$VERIFY_ONLY" = "1" ]; then
+		# ⚠️ THIS IS NOT AN OPTIMISATION, AND READING IT AS ONE COSTS A BILLING LOAD BALANCER.
+		#
+		# report_unlabelled_lbs already asked, read-only, above — and it is the ONLY thing that CAN
+		# answer here. Re-asking through unlabelled_lb_ids would return SILENTLY, because in this
+		# mode the teardown has already removed the private network that is the only binding a
+		# CCM-created LB has. The leak that report_unlabelled_lbs found would be dropped and the run
+		# would print "✓ cleanup verified complete" over a load balancer that is still billing.
+		#
+		# Deleting this branch is therefore H1's exact defect, inside H1's own fix.
+		# verify-only-readonly-test.sh's F2 case is what holds it in place: it drives the #3481
+		# capture fixture and asserts this mode exits 1 and names the id. (Saving API calls is a
+		# real but incidental benefit; it is not the reason.)
+		ids="$VERIFY_ONLY_UNLABELLED_LBS"
+	elif command -v jq >/dev/null 2>&1; then
 		ids="$(unlabelled_lb_ids)"
-		if [ -n "$ids" ]; then
-			count="$(printf '%s\n' "$ids" | grep -c . || true)"
-			echo "  ✗ load-balancer (unlabelled, on this run's network): ${count} STILL PRESENT: $(printf '%s' "$ids" | tr '\n' ' ')" >&2
-			leaked=$((leaked + count))
-		fi
+	else
+		ids=""
+		probe_note_unverifiable ccm-load-balancers "no jq"
+	fi
+	if [ -n "$ids" ]; then
+		count="$(printf '%s\n' "$ids" | grep -c . || true)"
+		echo "  ✗ load-balancer (unlabelled, bound to this run): ${count} STILL PRESENT: $(printf '%s' "$ids" | tr '\n' ' ')" >&2
+		leaked=$((leaked + count))
 	fi
 
 	# Object storage, when it can be looked at at all.
@@ -1365,6 +1595,62 @@ if [ "$SELF_TEST" = "1" ]; then
 
 	unset -f s3_available
 
+	# ── THE IMAGE CACHE REPORT (#3027). Three answers that share one stdout shape, plus the
+	#    property that makes it safe to add to a gating script at all: it touches NEITHER ledger.
+	#
+	# The failure this pins is the one this whole file exists to refuse, arriving from a new
+	# direction: a cache listing that FAILED must not print the sentence a cache that is genuinely
+	# EMPTY prints. And it must not gate — the cache is nothing this sweeper owes an action on, so
+	# routing it into the unverifiable ledger would red every hetzner teardown on an unrelated blip.
+	#
+	# ⚠️ It carries its OWN stub. A `hcloud()` defined inside a function is defined GLOBALLY in
+	# bash, so `st_imager_finalize` above has already replaced the file-level stub with one whose
+	# first pattern is `*--selector*) return 0`. Reusing it here would answer every case with
+	# "exit 0, no output" — every assertion below would read the same "empty" sentence and three of
+	# the four would fail for a reason that has nothing to do with the code under test. (Worse, had
+	# the expectations happened to match, they would have passed while testing the stub.)
+	st_image_cache_case() { # <name> <ST_LIST> <ST_LIST_RC> <substring that MUST appear> <substring that must NOT>
+		probe_reset
+		ST_LIST="$2"
+		ST_LIST_RC="$3"
+		hcloud() {
+			case "$1 ${2:-}" in
+			"image list")
+				[ -n "${ST_LIST:-}" ] && printf '%s\n' "$ST_LIST"
+				return "${ST_LIST_RC:-0}"
+				;;
+			*) : ;;
+			esac
+		}
+		local out
+		out="$(report_image_cache 2>&1 || true)"
+		local why=""
+		case "$out" in *"$4"*) ;; *) why="missing '$4'" ;; esac
+		if [ -z "$why" ]; then
+			case "$out" in *"$5"*) why="unexpectedly contains '$5'" ;; *) ;; esac
+		fi
+		# Both ledgers, both directions — the same pairing st_imager_case uses, for the same reason.
+		[ -z "$why" ] && probe_has_unverifiable && why="recorded UNVERIFIABLE (it must not gate)"
+		[ -z "$why" ] && probe_has_unattributable && why="recorded UNATTRIBUTABLE (it is attributable)"
+		if [ -z "$why" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — ${why}" >&2
+			echo "      output was: ${out}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_image_cache_case "a populated cache is reported as DELIBERATELY NOT SWEPT" \
+		"163001" 0 "DELIBERATELY NOT SWEPT" "COULD NOT LIST"
+	st_image_cache_case "...and it counts what it saw" "163001" 0 "1 entr" "COULD NOT LIST"
+	st_image_cache_case "an EMPTY cache says empty" "" 0 "empty" "COULD NOT LIST"
+	# THE PAIR. Identical (empty) stdout from the CLI; the exit code is the only thing that differs,
+	# and it must produce a different sentence — otherwise a dead token reads as an empty cache.
+	st_image_cache_case "a FAILED listing says COULD NOT LIST, never 'empty'" "" 1 "COULD NOT LIST" "empty"
+	ST_LIST=""
+	ST_LIST_RC=0
+	probe_reset
+
 	unset -f hcloud
 
 	if [ "$st_fails" -ne 0 ]; then
@@ -1375,18 +1661,50 @@ if [ "$SELF_TEST" = "1" ]; then
 	exit 0
 fi
 
-purge server "servers"
-purge load-balancer "load balancers"
-sweep_unlabelled_lbs
-wait_for_volumes_detached
-purge volume "volumes"
-purge firewall "firewalls"
-purge network "networks"
-purge primary-ip "primary IPs"
-purge image "images (talos snapshots)"
-[ "$ZONE_SUPPORTED" = "1" ] && purge zone "dns zones"
-sweep_object_storage
-report_imager_helpers
+# VERIFY_ONLY (#4398) skips every PURGE and drops straight to the verification below. What stays is
+# everything that only READS, and the list is not obvious — getting it wrong is how the first cut of
+# this change reintroduced the very defect it removes:
+#
+#   report_image_cache        reports the label-less talos snapshot cache; never deletes.
+#   report_imager_helpers     the file's canonical "report, never delete" case — it is what puts the
+#                             UNATTRIBUTABLE finding in the ledger (#2463).
+#   report_unlabelled_lbs     the READ-ONLY half of sweep_unlabelled_lbs, which is the ONLY place
+#                             the CCM ingress load balancer is recorded as UNVERIFIABLE. Omitting
+#                             it made a post-teardown pass — where the private network is gone BY
+#                             CONSTRUCTION — publish CLEAN over a question nobody had asked.
+#
+# The rule is not "keep the reporters". It is that every state this file can report ABOUT A
+# RESOURCE IT HAS NOT TOUCHED must still be reachable in this mode — and UNVERIFIABLE is the one it
+# exists to keep from going silently absent.
+#
+# The qualifier is not hedging. Some ledger entries presuppose a delete that this mode never
+# performs — `(delete-failed: …)` and `(list-failed-after-delete)` are structurally unreachable
+# here, and correctly so. "EVERY state" without that carve-out is a rule nobody can satisfy, and a
+# rule nobody can satisfy is one the next reader ignores wholesale.
+if [ "$VERIFY_ONLY" != "1" ]; then
+	purge server "servers"
+	purge load-balancer "load balancers"
+	sweep_unlabelled_lbs
+	wait_for_volumes_detached
+	purge volume "volumes"
+	purge firewall "firewalls"
+	purge network "networks"
+	purge primary-ip "primary IPs"
+	purge image "images (talos snapshots)"
+	[ "$ZONE_SUPPORTED" = "1" ] && purge zone "dns zones"
+	sweep_object_storage
+	report_imager_helpers
+else
+	report_imager_helpers
+	# Captured into a variable rather than re-asked inside verify_swept: the ids it echoes are a
+	# LEAK (bound to this run, still alive) and the ledger entries it leaves are the unmeasurable
+	# cases. verify_swept reads both.
+	VERIFY_ONLY_UNLABELLED_LBS="$(report_unlabelled_lbs)"
+fi
+
+# The cache deliberately survives both modes, so report it once outside their branch. Keeping the
+# call at top level also lets check-hetzner-image-cache prove the reporter is not merely defined.
+report_image_cache
 
 
 if [ "$DRY_RUN" = "1" ]; then

@@ -11,7 +11,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { EnvSettingsSheet } from "@/components/design-project/canvas/env-settings-sheet";
+import { EnvSettingsCard } from "@/components/design-project/canvas/cards/env-settings-card";
 import { CollectionPanel } from "@/components/design-project/canvas/inspector/collection-panel";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
@@ -98,7 +98,7 @@ function seed(secretNames: string[], config: Record<string, unknown> = {}, kind:
 		identities: [],
 		baseline: [],
 		collectionPositions: {},
-		envSettingsOpen: true,
+		card: { kind: "env-settings" },
 	});
 	return secrets;
 }
@@ -113,13 +113,13 @@ const providers = () => providersOf("secret");
 
 describe("environment secret store", () => {
 	beforeEach(() => {
-		useCanvasStore.setState({ envSettingsOpen: false });
+		useCanvasStore.setState({ card: null });
 	});
 
 	it("writes the chosen store to EVERY secret in the environment", async () => {
 		seed(["api-key", "stripe-key", "sendgrid-key"]);
 		const user = userEvent.setup();
-		render(<EnvSettingsSheet />);
+		render(<EnvSettingsCard />);
 
 		await user.click(screen.getByRole("combobox", { name: /secret/i }));
 		await user.click(await screen.findByRole("option", { name: /vault/i }));
@@ -134,7 +134,7 @@ describe("environment secret store", () => {
 			provider_config: { mount_path: "secret" },
 		});
 		const user = userEvent.setup();
-		render(<EnvSettingsSheet />);
+		render(<EnvSettingsCard />);
 
 		await user.click(screen.getByRole("combobox", { name: /secret/i }));
 		await user.click(await screen.findByRole("option", { name: /cluster native/i }));
@@ -177,7 +177,7 @@ describe("environment secret store", () => {
 
 	it("offers no store to configure when the environment has no secrets", () => {
 		seed([]);
-		render(<EnvSettingsSheet />);
+		render(<EnvSettingsCard />);
 		expect(screen.getByText(/add a secret to choose where/i)).toBeInTheDocument();
 		expect(screen.queryByRole("combobox", { name: /secret/i })).not.toBeInTheDocument();
 	});
@@ -185,7 +185,7 @@ describe("environment secret store", () => {
 	it("won't let a store with no in-cluster read be chosen", async () => {
 		seed(["api-key"]);
 		const user = userEvent.setup();
-		render(<EnvSettingsSheet />);
+		render(<EnvSettingsCard />);
 
 		await user.click(screen.getByRole("combobox", { name: /secret/i }));
 		const options = await screen.findAllByRole("option");
@@ -199,7 +199,7 @@ describe("environment secret store", () => {
 
 describe("environment container registry", () => {
 	beforeEach(() => {
-		useCanvasStore.setState({ envSettingsOpen: false });
+		useCanvasStore.setState({ card: null });
 	});
 
 	// Registry goes through the SAME dominantProvider collapse as secrets (compose.go:152): the first
@@ -209,7 +209,7 @@ describe("environment container registry", () => {
 	it("writes the chosen registry to EVERY registry in the environment", async () => {
 		seed(["apps", "jobs"], {}, "registry");
 		const user = userEvent.setup();
-		render(<EnvSettingsSheet />);
+		render(<EnvSettingsCard />);
 
 		await user.click(screen.getByRole("combobox", { name: /container registry/i }));
 		await user.click(await screen.findByRole("option", { name: /harbor/i }));
@@ -240,7 +240,7 @@ describe("environment container registry", () => {
 		});
 
 		const user = userEvent.setup();
-		render(<EnvSettingsSheet />);
+		render(<EnvSettingsCard />);
 		await user.click(screen.getByRole("combobox", { name: /container registry/i }));
 		await user.click(await screen.findByRole("option", { name: /harbor/i }));
 
@@ -258,7 +258,7 @@ describe("environment container registry", () => {
 
 	it("offers nothing to configure when the environment has no registries", () => {
 		seed([], {}, "registry");
-		render(<EnvSettingsSheet />);
+		render(<EnvSettingsCard />);
 		expect(screen.getByText(/add a container registry to choose/i)).toBeInTheDocument();
 	});
 });

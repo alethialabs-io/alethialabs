@@ -49,9 +49,18 @@ runcmd:
   - [sh, -c, "corepack enable && corepack prepare pnpm@9.15.0 --activate"]
 
   # ── Go ────────────────────────────────────────────────────────────────────────
-  # For `env:runner` (native mode) and the Go test matrix. Kept in sync with the
-  # toolchain the repo's go.work targets.
-  - [sh, -c, "command -v go >/dev/null || (curl -fsSL https://go.dev/dl/go1.24.5.linux-amd64.tar.gz -o /tmp/go.tgz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz)"]
+  # For `env:runner` (native mode) and the Go test matrix. $${go_version} is READ from
+  # the repo's go.work by server.tf, so there is no literal here to go stale — the
+  # previous one claimed to be "kept in sync with go.work" and was three minors adrift.
+  # packages/core/compat/go_toolchain_test.go reds if that wiring is replaced by a
+  # literal again.
+  #
+  # The guard is a VERSION check, not `command -v go`: this file re-runs on a snapshot
+  # restore, where /usr/local/go already holds whatever the box was built with. A
+  # presence test would keep the old toolchain forever, which is the drift under a
+  # different name. Absolute path because /usr/local/go/bin is not on cloud-init's PATH
+  # (the profile.d entry below is for interactive shells).
+  - [sh, -c, "/usr/local/go/bin/go version 2>/dev/null | grep -q 'go${go_version} ' || (curl -fsSL https://go.dev/dl/go${go_version}.linux-amd64.tar.gz -o /tmp/go.tgz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz)"]
   - [sh, -c, "printf 'export PATH=$PATH:/usr/local/go/bin\\n' > /etc/profile.d/go.sh"]
 
   # ── kubectl + helm ────────────────────────────────────────────────────────────

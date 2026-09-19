@@ -21,7 +21,7 @@ import {
 import { EnvironmentStatusProvider } from "@/lib/canvas/environment-status-context";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
 import type { ComponentStatus } from "@/lib/db/schema/enums";
-import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { PROJECT_NODE_ID, selectInspectorNodeId, useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 /** N secrets in the store, plus the project root. */
 function seedSecrets(names: string[]) {
@@ -221,7 +221,7 @@ describe("the vault's panel — where the secrets actually live", () => {
 
 		await user.click(screen.getByText("stripe-api-key"));
 
-		expect(useCanvasStore.getState().inspectorNodeId).toBe(secrets[0].id);
+		expect(selectInspectorNodeId(useCanvasStore.getState())).toBe(secrets[0].id);
 	});
 
 	it("adds a secret", async () => {

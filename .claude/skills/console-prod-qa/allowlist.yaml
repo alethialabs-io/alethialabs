@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# WHICH IDENTITY /console-prod-qa IS ALLOWED TO DRIVE — as digests, never as plaintext.
+#
+# This repository is public. The QA account's email address and the QA organization's slug are
+# exactly the two strings someone would want in order to aim at the account this pass mutates, so
+# neither is committed. The skill hashes what it finds in the live session and compares; it never
+# needs the plaintext to do that.
+#
+# SHA-256, lowercase hex, of the UTF-8 bytes with NO trailing newline. Compute them with:
+#
+#   printf '%s' 'qa+something@example.com' | shasum -a 256
+#   printf '%s' 'qa-org-slug'              | shasum -a 256
+#
+# `printf` rather than `echo`, deliberately: `echo` appends a newline on every shell, so a digest
+# taken with it will never match one the skill computes from a session value — and the failure
+# looks like a wrong account rather than a wrong command.
+#
+# Both fields ship EMPTY on purpose. An agent cannot know the maintainer's QA identity, and a
+# placeholder digest that happened to match something would be worse than an absent one: the skill
+# refuses on empty (`.claude/skills/console-prod-qa/SKILL.md` §0, precondition 4), so an unfilled
+# file stops the run instead of aiming it somewhere nobody chose.
+
+version: 1
+
+# The account the pass may act as. Digest of the email address on the session.
+email_sha256: ""
+
+# The organization the pass may act in. Digest of the slug `/dashboard` resolves to.
+org_slug_sha256: ""
+
+# Optional. When set, the pass refuses any host but this one, so a copied session cookie on a
+# staging or branch host cannot be mistaken for production. Plaintext is fine here: the hostname
+# is public and already in the marketing site, the docs and the DNS.
+host: alethialabs.io

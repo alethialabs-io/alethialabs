@@ -76,8 +76,10 @@ variable "server_type" {
   #   cpx32 (4c/8GB/160GB,  EUR 0.0569/h) -> env_cap 1, and nothing spare
   #
   # cpx32 is half the hourly rate and was the default until the numbers came in. It
-  # cannot host two envs, and `dev` permanently holds one — so on cpx32 there is no
-  # branch slot at all. checks.tf asserts this pairing rather than trusting a comment.
+  # cannot host two envs, and one environment is not a capacity the box's users can share
+  # — so cpx32 leaves nothing for a second instance. checks.tf asserts this pairing rather
+  # than trusting a comment. (This used to read "and `dev` permanently holds one"; there is
+  # no standing integration env and there was not one on 2026-09-08 — #4350.)
   #
   # Because billing is hourly and the box is DELETED when idle, the sticker price is not
   # what you pay: cpx42 is EUR 69.49/mo left up, ~EUR 13.55 at 4h/day, EUR 0.72 reaped.

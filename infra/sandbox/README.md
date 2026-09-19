@@ -56,15 +56,27 @@ nothing scheduled the reap. `pnpm env:timer` now does (launchd, every 30 min, af
 idle minutes), and the session banner warns once the box has been up 12h. Neither
 replaces `pnpm env:reap --now` when you finish for the day.
 
+Reaping deletes the box for **everyone** on it, so `env:reap` lists every environment it is
+about to destroy and then refuses if another instance's env was touched in the last 60
+minutes (`--now` is not a way around that) or if your own is still live (`--include-mine`
+says you meant both). `pnpm env:reap --dry-run` shows the verdict without touching anything.
+Ownership is the instance identity from `scripts/lib/wt-lease.sh`, not `user@host` — see
+`scripts/lib/env-owner.sh` and #3841 for why that distinction cost a live environment.
+
 Idle floor is **~EUR 0.72/mo**: the Primary IP (0.50) plus two snapshots
 (~15 GB at 0.0143/GB). Note snapshots grow with what is on disk — 3.84 GB fresh, 12 GB
 once envs, `node_modules` and the Playwright browsers have accumulated.
 
 **Why not cpx32, at half the rate?** It holds exactly one environment. An env floors at
 **5.2 GB** and peaks near **7 GB** after a browser run (measured on the box; the earlier
-"~2–3 GB" was an estimate and wrong by 3x), against ~0.5 GB for the shared tier. Since
-`dev` permanently holds a slot, cpx32 would leave no branch slot at all. `checks.tf`
-asserts this pairing and `checks.tftest.hcl` proves the assertion actually fails.
+"~2–3 GB" was an estimate and wrong by 3x), against ~0.5 GB for the shared tier. One
+environment is not a capacity anyone can share, so cpx32 is refused: `checks.tf` asserts
+this pairing and `checks.tftest.hcl` proves the assertion actually fails.
+
+(This paragraph used to justify the sizing with "since `dev` permanently holds a slot".
+It does not — there is no standing integration env, and on 2026-09-08 both slots were held
+by branch envs with `dev` holding none (#4350). The sizing conclusion is unchanged; only
+the reason it was resting on was untrue.)
 
 **A stopped server is not free.** Hetzner bills *"for a server ... for as long as it
 exists, regardless of whether it is turned on or not"*, so stop/start saves nothing and

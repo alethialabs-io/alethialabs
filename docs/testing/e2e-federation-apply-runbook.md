@@ -7,7 +7,12 @@
 import, and one stack that is already correct**. Running four applies would be wrong: on Azure it
 would collide, and on AWS it would diff on nothing.
 
-Every plan below was generated and read before this file was written. `guard-iac.sh` refuses
+> **Part two** of this file — [the E2E assertion broker trust (#4226)](#part-two--the-e2e-assertion-broker-trust-4226)
+> — adds a second issuer to the same four stacks. It was written **before** any plan against live
+> state existed, because the broker has never been deployed; its expected plan shapes are
+> predictions, and it says so where they appear.
+
+Every plan in part one was generated and read before this file was written. `guard-iac.sh` refuses
 `tofu apply` from an agent session, so the applies themselves are the maintainer's — that guard is
 why this file exists instead of a green checkmark.
 
@@ -155,3 +160,200 @@ subsequent `tofu init` needing the alicloud provider failed with a `lstat … no
 directory` that names a path nobody recognises. The entry has been removed and re-downloaded; no
 other provider was affected. Never point `plugin_cache_dir`, or anything it contains, at a
 session-scoped directory.
+
+---
+
+## Part two — the E2E assertion broker trust (#4226)
+
+The four e2e identities trust **one** issuer today: GitHub Actions. #4226 adds a second, the
+dedicated E2E assertion broker (`apps/e2e-issuer`), so the nightly's `cli-demo` proof (#4227) can
+authenticate to each cloud the way a customer's console does, with a short-lived `alethia-connector`
+assertion, not a GitHub token.
+
+**Nothing here is applied by an agent, and nothing in CI applies these stacks.** `guard-iac.sh`
+refuses `tofu apply` in an agent session. No workflow applies any of these four stacks:
+`infra-aws-oidc.yml` validates `aws-oidc` only, and no workflow reads the other three. Every apply
+below is the maintainer's, from a plan the maintainer has read.
+
+### What is in the tree
+
+The trust is written and **off**. Every stack has a variable `e2e_broker_issuer_url`, and every
+committed `terraform.tfvars` sets it to `null`. With `null` nothing is created and no trust document
+changes, so a plan of the current tree shows **no broker resources at all**.
+
+| stack | when the issuer is set, it adds | file |
+|---|---|---|
+| `aws-oidc` | an IAM OIDC provider, plus an `E2EBrokerAssertion` statement in `alethia-e2e-nightly`'s trust | `e2e-broker.tf`, `e2e-nightly.tf` |
+| `gcp-e2e` | its **own** workload identity pool and provider, plus one `roles/iam.workloadIdentityUser` member on the e2e SA | `e2e-broker.tf` |
+| `azure-e2e` | one federated identity credential, `e2e-assertion-broker`, on the e2e application | `e2e-broker.tf` |
+| `alibaba-e2e` | a RAM OIDC provider, plus a second statement in `alethia-e2e-nightly`'s trust | `e2e-broker.tf`, `roles.tf` |
+
+What each cloud pins. The audience and subject are **read from**
+`packages/workload-identity/src/broker.ts` at plan time (`WORKLOAD_PROVIDER_AUDIENCES`,
+`WORKLOAD_SUBJECT`). They are not typed a second time. If that file moves or its shape changes, the
+plan errors.
+
+| | issuer | audience | subject | run binding | lifetime |
+|---|---|---|---|---|---|
+| AWS | provider URL | `sts.amazonaws.com` | `alethia-connector` | broker only¹ | broker only² |
+| GCP | `issuer_uri` | `alethia-gcp-wif` | `alethia-connector` (one principal) | `provider == "gcp"`, `repository`, `workflow_ref ∈ e2e_broker_workflow_refs` | broker only² |
+| Azure | credential issuer | `api://AzureADTokenExchange` | `alethia-connector` | broker only¹ | broker only² |
+| Alibaba | `oidc:iss` | `sts.aliyuncs.com` | `alethia-connector` | broker only¹ | `issuance_limit_time = 1` h, plus the broker² |
+
+¹ IAM, Entra and RAM read only `iss`, `aud` and `sub` from a non-GitHub issuer. The run binding
+(`repository`, `workflow_ref`, `run_id`, `run_attempt`) is in the assertion, but only GCP can
+condition on it. Everywhere else the **broker** enforces it before signing: `ALLOWED_REPOSITORIES`,
+`ALLOWED_WORKFLOW_REFS`, the cross-check against the caller's GitHub token, and the one-use replay
+guard. `run_id` and `run_attempt` change every run, so no standing trust can pin them on any cloud.
+
+² No cloud has a setting for the incoming token's lifetime, except Alibaba's coarse one-hour floor.
+All four refuse an expired token. The broker mints for 60–600 s
+(`MIN_/MAX_ASSERTION_TTL_SECONDS`), so that is the effective cap.
+
+**No private key or assertion material is in any plan.** The stacks hold the issuer's public origin,
+the audiences and the subject. The signing keys are a secret on the `e2e-issuer` GitHub environment
+(`apps/e2e-issuer/README.md`). The clouds fetch only the public JWKS. Alibaba's provider records the
+issuer's **CA certificate fingerprints**, which are public.
+
+### Before you plan
+
+1. **#4547 is done.** The `e2e-issuer` environment has its three secrets and four variables, and
+   *Deploy E2E assertion issuer* has run green. Its post-deploy step fetches discovery at
+   `E2E_ISSUER_URL`. A failed deploy means there is no issuer for a cloud to fetch keys from.
+2. **You have chosen the origin.** A `workers.dev` subdomain includes your Cloudflare account handle.
+   If you want a custom domain instead, choose it now. Every cloud pins the issuer string exactly,
+   and the Worker refuses to serve at any other origin.
+3. **The origin answers.** This must print the same origin back:
+   ```bash
+   curl -fsS https://<origin>/.well-known/openid-configuration | jq -r .issuer
+   ```
+4. **`gcp-e2e`'s `e2e_broker_workflow_refs` equals the broker's `ALLOWED_WORKFLOW_REFS`.** The
+   default is `alethialabs-io/alethialabs/.github/workflows/e2e-nightly.yml@refs/heads/dev`, the
+   value #4226 proposed for that variable. If the variable changed, change the list too.
+
+### Enable it — one reviewed PR, then one plan and apply per cloud
+
+Put the origin in all four `terraform.tfvars`, replacing `null`, and merge that PR:
+
+```hcl
+e2e_broker_issuer_url = "https://<origin>"
+```
+
+Use the committed file, **not** `-var` at apply time. With `-var`, the next bare apply reads `null`
+and **removes** the trust.
+
+Then plan each stack as part one does, with the same inputs. The expected shapes below are
+**predictions from the code**. Nobody has planned them against live state, because there has been no
+issuer to plan against. If a plan shows anything else, stop and read it.
+
+| stack | expected plan | a sign something is wrong |
+|---|---|---|
+| `aws-oidc` | `1 to add` (the OIDC provider), `1 to change` (`alethia-e2e-nightly`'s `assume_role_policy`, gaining one statement, shown in full) | any change to `GithubOIDCNightly`, any other role, or an `assume_role_policy` shown as `(known after apply)` |
+| `gcp-e2e` | `3 to add` (pool, provider, SA IAM member, with the member's `principal://…` string shown in full) | any change to `alethia-e2e-gh-pool`, its provider or `e2e_wif`, or a member shown as `(known after apply)` |
+| `azure-e2e` | `1 to add` (the `e2e-assertion-broker` credential) | any change to `gh-oidc-ref` or `gh-oidc-env` |
+| `alibaba-e2e` | `1 to add` (the RAM OIDC provider), `1 to change` (the role's trust document, gaining a second statement, shown in full) | any change to `Statement[0]`, to the `alethia-github-e2e` provider, or a trust document shown as `(known after apply)` |
+
+**The enabling plan shows the whole new trust document, not `(known after apply)`.** Read it. On AWS
+and Alibaba the broker statement names its OIDC provider, and on GCP the SA member names its pool.
+The provider ARN and the pool name are computed by the cloud when the object is created, so a trust
+that read them off the resource would be unknown on exactly this plan. So each stack **builds** that
+name from values it has at plan time (the account ID or project number from a data source, and the
+provider name, issuer host or pool ID from a variable):
+
+| stack | built as |
+|---|---|
+| `aws-oidc` | `arn:aws:iam::<account>:oidc-provider/<issuer host>` |
+| `alibaba-e2e` | `acs:ram::<account>:oidc-provider/<broker_oidc_provider_name>` |
+| `gcp-e2e` | `projects/<project number>/locations/global/workloadIdentityPools/<broker_pool_id>` |
+
+`azure-e2e` needs none of this: its credential's issuer, subject and audience are all inputs.
+
+Because the name is built, it can disagree with the object the cloud creates. A check compares the
+two (`e2e_broker_provider_arn_matches` on AWS and Alibaba, `e2e_broker_pool_name_matches` on GCP).
+On the enabling plan the created object's name does not exist yet, so **that one check reports at
+apply**, not at plan. On every later plan it reports at plan. If it warns after the apply, the
+trust names an object that does not exist: roll back (below) and report it.
+
+The other broker checks report on the enabling plan. Every stack has three: the broker trust is
+**exact**, it is **additive** (the GitHub trust is unchanged), and it is **absent** when unset.
+`gcp-e2e` has a fourth, `e2e_broker_binding_is_one_subject`: the SA member is one principal, never a
+principal set. So `aws-oidc` and `alibaba-e2e` have four broker checks, `gcp-e2e` five and
+`azure-e2e` three. A check **warns**; it does not fail the plan. Read the warnings.
+
+`gcp-e2e`, `azure-e2e` and `alibaba-e2e` also include `checks.tftest.hcl`. It runs against mocked
+providers, so it needs no credentials, and no workflow runs it. Run it in each of those directories
+before you plan:
+
+```bash
+tofu init -backend=false && tofu test
+```
+
+It checks the planned values against the literals in `broker.ts`, that the trust names the built
+provider ARN or pool name rather than the created object's, and that the guards fire. These tests were
+run with OpenTofu 1.12.3. CI pins 1.10.10, and the tests have never run on that version.
+`aws-oidc` has no such test: its trust document comes from a data source that a mock cannot
+render.
+
+```bash
+# the per-stack pattern; add the same -var inputs part one uses for that stack
+tofu plan -input=false -out=tfplan
+tofu show tfplan     # read it
+tofu apply tfplan
+```
+
+`gcp-e2e` has one real gate. If `e2e_broker_workflow_refs` is empty or names another repository, a
+`precondition` refuses the plan. Without a workflow pin, the run binding would admit any workflow in
+the repository.
+
+### Verify
+
+```bash
+aws iam get-role --role-name alethia-e2e-nightly \
+  --query 'Role.AssumeRolePolicyDocument.Statement[].Sid'        # GithubOIDCNightly, E2EBrokerAssertion
+gcloud iam workload-identity-pools providers describe alethia-e2e-broker-oidc \
+  --workload-identity-pool=alethia-e2e-broker --location=global --project=<e2e project> \
+  --format='value(attributeCondition,oidc.issuerUri)'
+az ad app federated-credential list --id <e2e app id> -o tsv --query "[].[name,issuer,subject]"
+aliyun ram GetRole --RoleName alethia-e2e-nightly               # AssumeRolePolicyDocument: two statements
+```
+
+The end-to-end proof is #4227's. The nightly exchanges a real broker assertion on each cloud. Until
+that runs, the trust is configured but **unproven**.
+
+### Roll back, one cloud at a time
+
+Set that stack's `e2e_broker_issuer_url` back to `null` in `terraform.tfvars`, merge the change, then
+plan and apply. The expected plan is the reverse of the table above: the broker objects are
+destroyed, the AWS or Alibaba trust document loses its second statement, and nothing else changes.
+Each stack is independent, so you can remove one cloud's trust and keep the others.
+
+**GCP deletion is soft.** A destroyed pool stays recoverable for 30 days, and its ID
+(`alethia-e2e-broker`) cannot be reused in that time. To enable it again within 30 days, restore the
+pool first, then plan again:
+
+```bash
+gcloud iam workload-identity-pools undelete alethia-e2e-broker --location=global --project=<e2e project>
+```
+
+Alternatively, set a new `broker_pool_id`.
+
+### Rotation
+
+- **Signing keys: no infrastructure change.** Every cloud fetches the broker's JWKS from the
+  issuer, so a key rotation happens entirely in the broker. Follow the procedure in
+  `apps/e2e-issuer/README.md`: publish, wait 24 h, sign with the new key, wait 24 h, retire the old
+  key. None of the four stacks pins a key.
+- **Alibaba certificate fingerprints: expect this to break, and plan again when it does.** The RAM
+  provider pins the fingerprints of the CA certificates in the chain the issuer **presents**. A server
+  normally does not send its root, so in practice that is the **issuing intermediate**, not a root.
+  Cloudflare's edge certificates can change issuing CA, and a CA such as Let's Encrypt can pick a
+  different intermediate at each renewal. So a routine certificate renewal at Cloudflare **can**
+  change the pinned value. When it does, AssumeRoleWithOIDC fails for the broker only, and nothing
+  reports it until the nightly's Alibaba leg fails. To fix it, plan and apply `alibaba-e2e` again:
+  `data.tls_certificate` reads the fingerprints again. The GitHub provider in `oidc.tf` has the same
+  design and the same exposure. A plan whose only change is `fingerprints` on a provider is this
+  case.
+- **The issuer origin.** A new origin is a new issuer on every cloud. Change the origin in all four
+  `terraform.tfvars` in one PR and plan each stack. Read whether each plan updates the issuer in
+  place or replaces the object. This file does not predict which, because nobody has measured it.
+  Broker runs fail between the Worker moving and each apply, so do it when no nightly is scheduled.

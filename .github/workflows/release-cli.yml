@@ -24,16 +24,18 @@ on:
 permissions:
   contents: write
   packages: write
-  id-token: write # assume the read-only vault role for the release-metadata bearer
 
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
     steps:
       # Derive the version + tags from the trigger: a cli-v* tag push (release-please), or a manual
       # dispatch with the bare version. CLI_TAG = the monorepo source tag; MIRROR_TAG = the clean
       # semver tag published on alethia-cli.
       - name: Resolve version + tags
+        id: resolve
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -44,6 +46,7 @@ jobs:
           echo "REL_VERSION=$VER" >> "$GITHUB_ENV"
           echo "CLI_TAG=cli-v$VER" >> "$GITHUB_ENV"
           echo "MIRROR_TAG=v$VER" >> "$GITHUB_ENV"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Checkout monorepo @ the release tag
         uses: actions/checkout@v7
@@ -159,54 +162,6 @@ jobs:
           SCOOP_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
           GORELEASER_CURRENT_TAG: ${{ env.MIRROR_TAG }}
 
-      # ── best-effort, like the step it exists to serve. ──
-      #
-      # This workflow triggers on `push: tags: ['cli-v*']`, so its OIDC subject is
-      # `repo:<repo>:ref:refs/tags/cli-vX.Y.Z`. `alethia-deploy-reader` trusts exactly two subjects —
-      # `ref:refs/heads/main` and `environment:production` — so the assume-role has never succeeded
-      # from a tag, and this step failed hard after twelve retries on EVERY release since v0.4.0.
-      #
-      # The step below already says a console blip "must not red an otherwise-successful publish",
-      # and carries `continue-on-error` to guarantee it. That guard was on the wrong step: the
-      # credential step it depends on had none, so it reddened the job anyway. GoReleaser had
-      # already published — v0.4.0 and v0.5.0 are both on alethialabs-io/alethia-cli with their full
-      # asset sets — and the release still reported FAILURE. A pipeline that is red on every
-      # successful run cannot tell anyone about an unsuccessful one.
-      #
-      # This makes the release report the truth. It does NOT make the notification work: the
-      # credentials still will not mint from a tag subject, so the console still never hears about a
-      # new CLI version. Fixing that needs either a trusted subject for the tag or a job-level
-      # `environment:` — and `production` carries a branch policy a tag push does not satisfy, so it
-      # is a real decision rather than a one-liner. Tracked separately.
-      - name: Configure AWS credentials (OIDC — read the release bearer)
-        continue-on-error: true
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ vars.DEPLOY_READER_ROLE_ARN }}
-          aws-region: eu-central-1
-
-      # Best-effort console notification — never fails the release (a duplicate version or a console
-      # blip must not red an otherwise-successful publish).
-      - name: Publish release metadata to Alethia
-        continue-on-error: true
-        env:
-          ALETHIA_URL: ${{ vars.PUBLIC_APP_URL }}
-          GH_TOKEN: ${{ steps.cli_token.outputs.token }}
-        run: |
-          set -euo pipefail
-          RELEASE_API_SECRET="$(aws secretsmanager get-secret-value --secret-id alethia/prod/env --region eu-central-1 --query SecretString --output text | jq -r '.RELEASE_API_SECRET // ""')"
-          echo "::add-mask::$RELEASE_API_SECRET"
-          NOTES=$(gh release view "${MIRROR_TAG}" --repo alethialabs-io/alethia-cli --json body -q .body 2>/dev/null || echo "")
-          curl -sf -X POST "${ALETHIA_URL}/api/releases/cli" \
-            -H "Authorization: Bearer ${RELEASE_API_SECRET}" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n \
-              --arg v "${REL_VERSION}" \
-              --arg n "$NOTES" \
-              --arg u "https://github.com/alethialabs-io/alethia-cli/releases/tag/${MIRROR_TAG}" \
-              --arg s "${{ github.sha }}" \
-              '{version: $v, release_notes: $n, github_release_url: $u, commit_sha: $s}')"
-
       # Single-home: the release + binaries live on alethia-cli, so drop the changelog-only Release
       # release-please created on the monorepo. Keep the cli-v* TAG (release-please's version anchor)
       # by NOT passing --cleanup-tag. Best-effort — never fails the release.
@@ -219,3 +174,53 @@ jobs:
           gh release delete "${CLI_TAG}" --repo ${{ github.repository }} --yes \
             && echo "Deleted monorepo Release ${CLI_TAG} (tag kept)." \
             || echo "No monorepo Release ${CLI_TAG} to delete."
+
+  # ── The metadata publish, and the ONLY job that gets a credential ───────────────────────────
+  # Split out of `goreleaser` rather than bolted onto it. That job holds the alethia-cli App token,
+  # the Homebrew/Scoop tap token and a GHCR login, and it pushes source to another repository — none
+  # of which should acquire the ability to read the production vault because the last step in the
+  # job happens to need one secret out of it.
+  #
+  # `environment: cli-release` is what makes this job's OIDC sub `...:environment:cli-release`,
+  # which alethia-deploy-reader trusts (infra/aws-oidc/roles.tf). Without it the sub is
+  # `...:ref:refs/tags/cli-vX.Y.Z` — a tag ref, trusted by nothing, which is why every CLI release
+  # since v0.4.0 published binaries and told the console nothing (#2482). The environment carries a
+  # `cli-v*` TAG deployment policy (infra/github/environments.tf), so no branch and no other tag can
+  # select it, and `production`'s secrets stay unreachable from a tag push.
+  #
+  # ORDERING TRAP: the environment, its tag policy and the trusted sub must all EXIST before this
+  # file reaches `main`. A job naming an environment that does not exist creates it unprotected; a
+  # job naming a protected one it cannot satisfy is refused before it starts. See the PR body.
+  publish-metadata:
+    needs: goreleaser
+    # TAG PUSHES ONLY. `cli-release` is restricted to the `cli-v*` tag pattern, so a
+    # `workflow_dispatch` of this workflow (which runs on a BRANCH ref) cannot select it and would
+    # be refused at the gate — turning a manual re-release into a red run at its last job. Skip the
+    # publish there and repair it deliberately: run `publish-cli-release-metadata.yml` against
+    # `main`, which reaches the same role through the branch sub and runs the same script.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: cli-release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ASM_REGION: eu-central-1
+    steps:
+      - name: Checkout monorepo @ the release tag
+        uses: actions/checkout@v7
+        with:
+          ref: cli-v${{ needs.goreleaser.outputs.version }}
+
+      - name: Configure AWS credentials (read-only vault role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.DEPLOY_READER_ROLE_ARN }}
+          aws-region: ${{ env.ASM_REGION }}
+
+      - name: Publish canonical release metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALETHIA_URL: ${{ vars.PUBLIC_APP_URL }}
+          VERSION: ${{ needs.goreleaser.outputs.version }}
+        run: bash .github/scripts/publish-cli-release-metadata.sh

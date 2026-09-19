@@ -86,6 +86,36 @@ data "aws_iam_policy_document" "e2e_nightly_trust" {
     }
   }
 
+  # Optional (#4226): the E2E assertion broker, a SECOND issuer beside GitHub. Rendered only when
+  # e2e_broker_issuer_url is set; see e2e-broker.tf for what it pins and why that is all IAM can
+  # pin. A separate statement rather than a widened one, so removing it leaves the GitHub statement
+  # byte-identical.
+  dynamic "statement" {
+    for_each = local.broker_enabled ? [1] : []
+    content {
+      sid     = "E2EBrokerAssertion"
+      effect  = "Allow"
+      actions = ["sts:AssumeRoleWithWebIdentity"]
+      # Built from plan-time values (see local.broker_provider_arn in e2e-broker.tf) so the
+      # enabling plan renders this whole document instead of `(known after apply)`.
+      principals {
+        type        = "Federated"
+        identifiers = [local.broker_provider_arn]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "${local.broker_issuer_host}:aud"
+        values   = [local.broker_audience]
+      }
+      # EXACT subject — the one workload subject the broker is allowed to mint. Never StringLike.
+      condition {
+        test     = "StringEquals"
+        variable = "${local.broker_issuer_host}:sub"
+        values   = [local.broker_subject]
+      }
+    }
+  }
+
   # Optional: let an admin principal assume the role for a local apply/import/debug. Empty
   # admin_principal_arns (the default) ⇒ OIDC-only, no human assume path.
   dynamic "statement" {
@@ -375,6 +405,12 @@ resource "aws_iam_role" "e2e_nightly" {
   # workflow's 60m job cap. The workflow requests the duration it needs at assume time.
   max_session_duration = 7200
   tags                 = local.tags
+
+  # The trust names the broker provider by a BUILT ARN (local.broker_provider_arn), which carries no
+  # dependency edge. This one orders the provider's creation before the trust that names it, and its
+  # removal after. On a resource, not the policy-document data source: depends_on on a data source
+  # defers its read to apply and would bring back the `(known after apply)` trust this avoids.
+  depends_on = [aws_iam_openid_connect_provider.e2e_broker]
 }
 
 resource "aws_iam_role_policy" "e2e_nightly" {

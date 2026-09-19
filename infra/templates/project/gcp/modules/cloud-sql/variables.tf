@@ -113,6 +113,15 @@ variable "iam_auth" {
   default     = false
 }
 
+variable "database_flags" {
+  type = list(object({
+    name  = string
+    value = string
+  }))
+  description = "Extra Cloud SQL database flags. Appended after the IAM-auth flag, which always wins a name collision."
+  default     = []
+}
+
 variable "app_iam_sa_email" {
   type        = string
   description = "Email of the app-workload Google service account granted keyless Cloud SQL IAM access (#722). When set, a CLOUD_IAM_SERVICE_ACCOUNT database user is created for it so the workload authenticates with a short-lived IAM token instead of a password. null → no keyless app user."

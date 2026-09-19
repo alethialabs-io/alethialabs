@@ -44,9 +44,13 @@ locals {
   # The trust (assume-role) document. Alibaba OIDC federation uses a Federated principal + the
   # `sts:AssumeRole` action (as in alethia-alibaba-setup.sh and what isALIFederatedTrust keys on),
   # and Version "1" RAM documents.
+  #
+  # Statement[0] is ALWAYS the GitHub statement (checks.tf indexes it). The E2E assertion broker's
+  # statement (#4226, e2e-broker.tf) is APPENDED only while e2e_broker_issuer_url is set, so with it
+  # unset the document is byte-identical to the GitHub-only form, and removing it leaves [0] alone.
   trust_document = {
     Version = "1"
-    Statement = [{
+    Statement = concat([{
       Effect    = "Allow"
       Action    = "sts:AssumeRole"
       Principal = { Federated = [alicloud_ims_oidc_provider.github.arn] }
@@ -59,7 +63,7 @@ locals {
           "oidc:sub" = local.e2e_subs
         }
       }
-    }]
+    }], local.broker_trust_statements)
   }
 
   # Least-privilege provisioning actions — one service wildcard per Alibaba service the alibaba
@@ -103,6 +107,11 @@ resource "alicloud_ram_role" "e2e" {
   # A long ACK apply must outlive the default 1h session; 2h headroom under the workflow's job cap.
   # The nightly requests the duration it needs at assume time.
   max_session_duration = 7200
+
+  # The broker statement names its provider by a BUILT ARN (local.broker_provider_arn,
+  # e2e-broker.tf), which carries no dependency edge; this orders the provider's creation before the
+  # trust that names it. Empty (count 0) while e2e_broker_issuer_url is unset.
+  depends_on = [alicloud_ims_oidc_provider.e2e_broker]
 }
 
 resource "alicloud_ram_policy" "e2e_provision" {

@@ -38,7 +38,7 @@
 #     and confirms each billable survivor before failing the step.
 #
 # Usage:
-#   ALETHIA_E2E_ENV=<run_id>-<attempt> ALETHIA_E2E_REGION=europe-west3 ./scripts/e2e/gcp-cleanup.sh
+#   ALETHIA_E2E_ENV=<run_id>-<attempt> ALETHIA_E2E_REGION=europe-west3-a ./scripts/e2e/gcp-cleanup.sh
 #   (positional $1 accepted for call-site symmetry with hcloud-cleanup.sh but IGNORED.)
 #   ALETHIA_E2E_PROJECT=<project_name>  # the project_name used in resource NAMES (optional; helps the
 #                                       # mid-destroy cluster reconstruction). Distinct from the GCP
@@ -89,7 +89,7 @@ SELF_TEST=0
 if [ "${1:-}" = "--self-test" ]; then
 	SELF_TEST=1
 	ALETHIA_E2E_ENV="selftest-4177-1"
-	ALETHIA_E2E_REGION="europe-west3"
+	ALETHIA_E2E_REGION="europe-west3-a"
 	# The probe retries are a real-cloud kindness (a transient 5xx must not red a healthy teardown)
 	# and pure dead time against a stub. The retry LOOP is still exercised; it just does not wait.
 	PROBE_RETRY_DELAY=0
@@ -97,11 +97,13 @@ fi
 
 ENV="${ALETHIA_E2E_ENV:-}"
 # Region is AUTHORITATIVE from ALETHIA_E2E_REGION only. A silent fallback to an ambient region that
-# differs from where the run provisioned would make the regional scoping wrong. It may be a REGION
-# (europe-west3) or a ZONE (europe-west3-a) — regional/global gcloud lists don't need it (we read
-# each resource's own location back), but the contract requires it be set so the run's region is
-# never ambiguous.
+# differs from where the run provisioned would make the regional scoping wrong. The nightly hands
+# this script the cluster's ZONE (europe-west3-a), while regional managed-service commands require
+# the parent REGION (europe-west3), so normalize the final `-<letter>` exactly once here.
 REGION="${ALETHIA_E2E_REGION:-}"
+case "$REGION" in
+*-[a-z]) REGION="${REGION%-?}" ;;
+esac
 # The project_name segment used in resource NAMES (gke-<short>-<ENV>-<project>). Optional — only used
 # to tighten the mid-destroy cluster/VPC reconstruction. NOT the GCP project ID.
 PROJECT_NAME="${ALETHIA_E2E_PROJECT:-}"
@@ -109,6 +111,16 @@ PROJECT_NAME="${ALETHIA_E2E_PROJECT:-}"
 GCP_PROJECT="${ALETHIA_E2E_GCP_PROJECT_ID:-${CLOUDSDK_CORE_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}}"
 DRY_RUN="${DRY_RUN:-0}"
 PREFLIGHT="${PREFLIGHT:-0}"
+# ── VERIFY_ONLY (#4398) — ask the cloud, change nothing. The same scope-locked verification the
+# normal path ends with, with every sweep skipped: the only cloud calls it makes are the
+# LIST/DESCRIBE calls verify_swept already makes. Refused alongside DRY_RUN/PREFLIGHT because both
+# exit 0 WITHOUT verifying, and this script's exit status is read as a cloud verdict by
+# `sweep-probe.sh --record-verdict`. The reasoning in full is in aws-cleanup.sh.
+VERIFY_ONLY="${VERIFY_ONLY:-0}"
+if [ "$VERIFY_ONLY" = "1" ] && { [ "$DRY_RUN" = "1" ] || [ "$PREFLIGHT" = "1" ]; }; then
+	echo "::error::VERIFY_ONLY=1 with DRY_RUN=1 or PREFLIGHT=1 — both exit 0 WITHOUT verifying, and this exit status is read as a cloud verdict. Refusing." >&2
+	exit 2
+fi
 DELETE_RETRIES="${DELETE_RETRIES:-5}"
 # ── PREFLIGHT budget (#2257, ported from aws-cleanup.sh by #2330). The preflight's "never blocks
 # the caller" promise is carried by `exit 0` at the end of its loop — which is only reached if the
@@ -170,6 +182,7 @@ NETWORK=""         # the run's VPC name (vpc-<short>-<ENV>-<project>) — second
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
 if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
 	echo "→ gcp belt-and-suspenders cleanup in ${REGION}, scope alethia_project-id=${PID_LABEL}"
+	[ "$VERIFY_ONLY" = "1" ] && echo "  (VERIFY_ONLY=1 — re-listing the cloud, sweeping nothing, deleting nothing)"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 fi
 
@@ -421,7 +434,10 @@ list_pvc_disks() { # name<TAB>zone<TAB>region
 		f="labels.goog-k8s-cluster-name=${CLUSTER} AND name~^pvc-"
 	else
 		# No cluster to bind to ⇒ only sweep pvc-* disks that carry OUR tofu project-id label (rare;
-		# most CSI disks carry only GKE's cluster label). Honest limitation — see verify_swept notice.
+		# most CSI disks carry only GKE's cluster label). Honest limitation, and the SWEEP keeps it:
+		# widening the delete past an attributable label is what scope-locking forbids. What must not
+		# survive it is the VERDICT — see report_unbound_pvc_disks below (#4621), which asks the
+		# cheaper question this branch can still answer and reports UNVERIFIABLE when it cannot bind.
 		f="labels.alethia_project-id=${PID_LABEL} AND name~^pvc-"
 	fi
 	gc_list pvc-disk compute disks list --filter="$f" \
@@ -440,6 +456,48 @@ sweep_pvc_disks() {
 		fi
 	done <<<"$(list_pvc_disks)"
 	[ "$any" = "0" ] && echo "  · CSI pvc-* disks: none"
+	return 0
+}
+
+# ── report_unbound_pvc_disks — "none" must mean NONE, not "could not look" (#4621).
+#
+# list_pvc_disks binds a CSI disk to this run through GKE's own `goog-k8s-cluster-name` label, and
+# for a bare `pvc-<uuid>` that label is the ONLY binding there is. The handle it needs is $CLUSTER —
+# and the cluster is the very thing the teardown deletes. On the VERIFY_ONLY (#4398) path, which by
+# design runs AFTER the destroy, list_gke_clusters returns empty, the instance-name fallback in
+# discover_cluster has no node VMs left to scan, and $CLUSTER is empty BY CONSTRUCTION. list_pvc_disks
+# then takes its fallback branch, filters on a tofu label its own comment says "most CSI disks" do
+# not carry, lists nothing, verify_swept counts zero, and the receipt published
+# `{"verdict":"CLEAN","reason":"the cloud was re-listed after the sweep and listed nothing"}` over a
+# disk nobody had looked for. Structurally the hetzner CCM load balancer (#2549, #4613) on another
+# cloud: a run-scoped binding that the teardown itself destroys.
+#
+# So when the binding cannot be resolved, ask the cheaper question that CAN be answered — does this
+# project hold ANY `pvc-*` disk at all? A name-filtered READ, never a delete: a concurrent run's disk
+# matches this name too, and widening to a project-wide purge is precisely what scope-locking
+# forbids. Zero is honestly clean and stays silent, because a signal that fires on every run carries
+# as much information as one that never fires. Anything else is UNVERIFIABLE — probe_gate exits 4 and
+# a human looks. Mirrors report_unlabelled_lbs in hcloud-cleanup.sh.
+#
+# UNVERIFIABLE and not UNATTRIBUTABLE, deliberately: the fourth state is for an ambiguity that is
+# permanent BY DESIGN (hetzner's unlabelable imager helpers, #2463) and would therefore be red every
+# night. This one is transient — it fires only when a `pvc-*` disk actually survived, which is either
+# ours and billing or a concurrent run's — so it is a question somebody can answer, and it gates.
+#
+# The count, never the names: the reason string is copied verbatim into the published receipt, and a
+# fixed token keeps CLI-derived text out of it (see probe_withhold_detail).
+report_unbound_pvc_disks() {
+	assert_scope
+	# Bound ⇒ list_pvc_disks asked the exact question and verify_swept already counted the answer.
+	[ -n "$CLUSTER" ] && return 0
+	local names total
+	# gc_list records UNVERIFIABLE itself when the call does not answer, so an empty answer here is
+	# always an answer — the distinction this whole file exists to keep.
+	names="$(gc_list pvc-disk compute disks list --filter="name~^pvc-" --format="value(name)")"
+	total="$(printf '%s' "$names" | grep -c . || true)"
+	[ "${total:-0}" -eq 0 ] && return 0
+	echo "::warning::this run's GKE cluster is already gone, so a CSI-provisioned pvc-* disk for run ${ENV} cannot be bound to it (GKE's goog-k8s-cluster-name label is the only binding a bare pvc-<uuid> has) — and this project holds ${total}. NOT verified; check persistent disks by hand (#4621)." >&2
+	probe_note_unverifiable pvc-disk "cluster-already-destroyed"
 	return 0
 }
 
@@ -669,6 +727,10 @@ finalize_verification() {
 	if ! verify_swept; then
 		return 1
 	fi
+	# Asked only once the labelled probes came back clean, because this is the one question standing
+	# between "we looked and found nothing" and "we could not look" (#4621). A confirmed leak already
+	# outranks it above, and on that path the extra list is not worth the API call.
+	report_unbound_pvc_disks
 	probe_gate gcp "run ${ENV}" || return 4
 	# probe_clean_suffix is EMPTY on a genuinely clean run and carries any UNATTRIBUTABLE finding
 	# otherwise, so this sentence can never read as "the account is empty" when it is not. Shared
@@ -742,6 +804,19 @@ if [ "$PREFLIGHT" = "1" ]; then
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 	orphans="$(list_orphan_envs || true)"
 	if [ -z "$orphans" ]; then
+		# ── REPORT BEFORE THE EARLY RETURN. ────────────────────────────────────────────────────
+		#
+		# This branch is reached BOTH when discovery answered "nothing" and when discovery never
+		# answered at all — an expired session or a throttled API yields an empty orphan list, and
+		# the ✓ line below then prints over an account nobody looked at, exit 0, with the
+		# `probe_warn_unverifiable` call at the bottom of this block never reached. That log is
+		# byte-identical to a genuinely empty account, and scripts/e2e/reaper-result.mjs recorded it
+		# as `clean` — evidence about resources that BILL.
+		#
+		# hcloud-cleanup.sh has always reported here; the other four did not. See
+		# scripts/e2e/lib/sweep-probe.sh's probe_report_discovery header for why the marker is
+		# positive rather than another warning.
+		probe_report_discovery gcp "the preflight orphan scan"
 		echo "✓ preflight: no prior-run e2e orphans — nothing to sweep"
 		exit 0
 	fi
@@ -786,7 +861,7 @@ if [ "$PREFLIGHT" = "1" ]; then
 		# ⚠️ Not "the project is clean" — "every orphan this preflight could SEE is swept". The
 		# discovery listings can fail too, and preflight is explicitly non-blocking, so the honest
 		# report here is a warning; the always() teardown is what gates.
-		probe_warn_unverifiable gcp "the preflight orphan scan"
+		probe_report_discovery gcp "the preflight orphan scan"
 		echo "✓ preflight complete — all prior-run e2e orphans swept"
 	fi
 	exit 0 # preflight never blocks the provisioning run
@@ -801,7 +876,29 @@ fi
 # varies only the output passes just as happily with the fix removed. ──
 if [ "$SELF_TEST" = "1" ]; then
 	st_fails=0
+	if [ "$REGION" = "europe-west3" ]; then
+		echo "  ✓ a zonal nightly location is normalized for regional cleanup commands"
+	else
+		echo "  ✗ zonal nightly location normalized to '${REGION}', want 'europe-west3'" >&2
+		st_fails=$((st_fails + 1))
+	fi
+	# ST_PVC is a SECOND output channel, and it has to be: the #4621 case is one where every LABELLED
+	# probe answers "nothing" and the unbound, name-only pvc-* question answers "something". A stub
+	# with one output variable cannot express that at all — it would make verify_swept find a leak
+	# and never reach the branch under test.
+	ST_PVC=""
 	gc() {
+		# `--filter=name~^pvc-` is the only project-wide, name-only listing in this file
+		# (report_unbound_pvc_disks). Matched exactly, so list_pvc_disks' two LABEL-filtered variants
+		# — which both also end in `name~^pvc-` — keep answering from ST_OUT.
+		local a
+		for a in "$@"; do
+			if [ "$a" = '--filter=name~^pvc-' ]; then
+				if [ -n "$ST_PVC" ]; then printf '%s\n' "$ST_PVC"; fi
+				if [ "$ST_RC" -ne 0 ]; then printf '%s\n' "${ST_ERR:-ERROR: (gcloud) request failed}" >&2; fi
+				return "$ST_RC"
+			fi
+		done
 		if [ -n "$ST_OUT" ]; then printf '%s\n' "$ST_OUT"; fi
 		if [ "$ST_RC" -ne 0 ]; then printf '%s\n' "${ST_ERR:-ERROR: (gcloud) request failed}" >&2; fi
 		return "$ST_RC"
@@ -810,7 +907,7 @@ if [ "$SELF_TEST" = "1" ]; then
 	echo "→ gcp-cleanup.sh self-test (ENV=${ENV})"
 	st_case() { # <name> <output> <rc> <expected finalize rc> <expect unverifiable: yes|no>
 		probe_reset
-		ST_OUT="$2" ST_RC="$3" ST_ERR="ERROR: (gcloud.container.clusters.list) Your credentials have expired"
+		ST_OUT="$2" ST_RC="$3" ST_PVC="" ST_ERR="ERROR: (gcloud.container.clusters.list) Your credentials have expired"
 		CLUSTER="" CLUSTER_LOCATION="" NETWORK=""
 		local rc=0 unv=no
 		finalize_verification >/dev/null 2>&1 || rc=$?
@@ -827,6 +924,51 @@ if [ "$SELF_TEST" = "1" ]; then
 	# THE REGRESSION. Before this change the case below and the case above-above were byte-identical:
 	# empty stdout, exit 0, "no billable resources remain".
 	st_case "a list that FAILED is UNVERIFIABLE and exits 4, NOT 0" "" 1 4 yes
+
+	# ── #4621: THE CLUSTER THE BINDING NEEDS IS THE ONE THE TEARDOWN DELETED. ───────────────────
+	#
+	# Every labelled probe answers honestly and answers "nothing" — which before this change was
+	# byte-identical to a project that genuinely holds no CSI disk, and published verdict CLEAN.
+	# Asserted in BOTH directions, because either alone is satisfiable by the wrong change: an
+	# unbound run that finds a pvc-* disk must gate, AND one that finds none must still exit 0, or
+	# every post-teardown verification would be permanently unverifiable and stop meaning anything.
+	# The third case pins the guard's SCOPE: with the binding available the question is not asked at
+	# all, so another run's disk can never red this one.
+	st_pvc_case() { # <name> <ST_PVC> <CLUSTER> <expected rc> <expected unverifiable: yes|no>
+		probe_reset
+		ST_OUT="" ST_RC=0 ST_PVC="$2" ST_ERR=""
+		CLUSTER="$3" CLUSTER_LOCATION="" NETWORK=""
+		local rc=0 unv=no out named=no
+		out="$(finalize_verification 2>/dev/null)" || rc=$?
+		probe_has_unverifiable && unv=yes
+		# The ✓ sentence is read as "the account is empty", so it must not be printed at all when the
+		# answer is "could not look" — checking only the exit code would let it survive.
+		case "$out" in *"no billable resources remain"*) named=yes ;; esac
+		local want_named=yes
+		[ "$4" = "0" ] || want_named=no
+		if [ "$rc" = "$4" ] && [ "$unv" = "$5" ] && [ "$named" = "$want_named" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$4/unverifiable=$5/✓-line=${want_named}, got rc=${rc}/unverifiable=${unv}/✓-line=${named}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_pvc_case "an UNBOUND pvc-* disk (cluster already destroyed) exits 4, NOT 0" "pvc-4d6f1f0e-unbound" "" 4 yes
+	st_pvc_case "…and a project holding NO pvc-* disk is still honestly CLEAN" "" "" 0 no
+	st_pvc_case "…and with the cluster still bindable the project-wide question is never asked" \
+		"pvc-someone-elses-run" "gke-ew3-x-alethia" 0 no
+	# The ledger NAMES the type and the reason, so the receipt says what to go and look at.
+	probe_reset
+	ST_OUT="" ST_RC=0 ST_PVC="pvc-4d6f1f0e-unbound" ST_ERR=""
+	CLUSTER="" CLUSTER_LOCATION="" NETWORK=""
+	finalize_verification >/dev/null 2>&1 || true
+	case "$(sort -u "$PROBE_LEDGER" | tr '\n' ' ')" in
+	*"pvc-disk(cluster-already-destroyed)"*) echo "  ✓ the ledger names pvc-disk and why it could not be bound" ;;
+	*)
+		echo "  ✗ the ledger names pvc-disk and why it could not be bound — got '$(sort -u "$PROBE_LEDGER" | tr '\n' ' ')'" >&2
+		st_fails=$((st_fails + 1))
+		;;
+	esac
 
 	# ── CLOUD PARITY FOR THE FOURTH STATE (#3138 follow-up). ─────────────────────────────────────
 	#
@@ -859,12 +1001,12 @@ if [ "$SELF_TEST" = "1" ]; then
 		fi
 	}
 	probe_reset
-	ST_OUT="" ST_RC=0 ST_ERR=""
+	ST_OUT="" ST_RC=0 ST_PVC="" ST_ERR=""
 	CLUSTER="" CLUSTER_LOCATION="" NETWORK=""
 	probe_note_unattributable imager-upload-helpers "unlabelled — cannot be tied to this run"
 	st_parity "an UNATTRIBUTABLE finding is reported loudly and does NOT gate" 0 yes no yes
 	probe_reset
-	ST_OUT="" ST_RC=1 ST_ERR="ERROR: (gcloud) Your credentials have expired"
+	ST_OUT="" ST_RC=1 ST_PVC="" ST_ERR="ERROR: (gcloud) Your credentials have expired"
 	CLUSTER="" CLUSTER_LOCATION="" NETWORK=""
 	probe_note_unattributable imager-upload-helpers "unlabelled — cannot be tied to this run"
 	st_parity "…and it never masks an API failure, which still exits 4" 4 no yes yes
@@ -872,7 +1014,7 @@ if [ "$SELF_TEST" = "1" ]; then
 	# The type NAMES the report, so a human knows what to check by hand. A ledger that only said
 	# "something failed" would send them to look at everything.
 	probe_reset
-	ST_OUT="" ST_RC=1 ST_ERR="PERMISSION_DENIED"
+	ST_OUT="" ST_RC=1 ST_PVC="" ST_ERR="PERMISSION_DENIED"
 	list_sql_instances >/dev/null 2>&1 || true
 	case "$(probe_unverifiable_types)" in
 	*cloud-sql*) echo "  ✓ the ledger names the resource type that could not be checked" ;;
@@ -893,12 +1035,16 @@ fi
 
 # ── Orchestrate, in strict dependency order. ──
 discover_cluster
-sweep_load_balancers
-sweep_gke
-sweep_instances
-sweep_pvc_disks
-sweep_managed_services
-sweep_network
+# VERIFY_ONLY (#4398) skips every mutating pass and drops straight to the verification below.
+# discover_cluster stays: it resolves the handle the scoped probes read, and it only describes.
+if [ "$VERIFY_ONLY" != "1" ]; then
+	sweep_load_balancers
+	sweep_gke
+	sweep_instances
+	sweep_pvc_disks
+	sweep_managed_services
+	sweep_network
+fi
 
 if [ "$DRY_RUN" = "1" ]; then
 	echo "✓ gcp DRY RUN complete for alethia_project-id=${PID_LABEL} (nothing deleted, nothing verified)"

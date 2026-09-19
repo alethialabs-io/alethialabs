@@ -15,6 +15,7 @@ import {
 import type { CredentialScope } from "@/lib/db/schema/enums";
 import { encryptSecret } from "@/lib/crypto/secrets";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
+import { identityWasConfigured } from "@/lib/cloud-providers/identity-configured";
 import { verifyConnectorCredential as pingConnector } from "@/lib/connectors/verify";
 import type { ConnectorCredentials } from "@/types/jsonb.types";
 
@@ -72,34 +73,6 @@ export type CloudAccount = {
 	/** Why verification failed (set when `status === "failed"`). */
 	lastError?: string;
 };
-
-/**
- * Whether a cloud identity was ever actually configured (a credential was submitted), vs. a bare
- * connect-sheet placeholder pre-created by initIdentity (empty credentials + an external_id at most).
- * Role clouds need a role_arn, token clouds a token, GCP a project/SA, Azure a subscription/tenant.
- * Used to keep never-configured placeholders from surfacing a phantom "Verification failed".
- */
-function identityWasConfigured(
-	provider: string,
-	credentials: typeof cloudIdentities.$inferSelect["credentials"],
-): boolean {
-	const c = credentials ?? {};
-	switch (provider) {
-		case "aws":
-		case "alibaba":
-			return !!c.role_arn;
-		case "digitalocean":
-		case "hetzner":
-		case "civo":
-			return !!c.token || !!c.self_managed;
-		case "gcp":
-			return !!c.project_id || !!c.service_account_email;
-		case "azure":
-			return !!c.subscription_id || !!c.tenant_id;
-		default:
-			return false;
-	}
-}
 
 /** Maps a catalog category to its presentation group on the connectors page (1:1, exhaustive). */
 function groupForCategory(category: ConnectorCategory): ConnectorGroup {

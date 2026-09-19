@@ -2,7 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Every step in every workflow must have a `run:` or a `uses:`.
+// A workflow file must MEAN what it says: every step carries a `run:` or a `uses:`, every
+// `permissions:` scope is one Actions accepts, no `name:` loses half of itself to an unquoted `#`,
+// and no step in a job with `services:` runs past a failed `Initialize containers` to report a
+// cause that was never true.
 //
 // WHY THIS EXISTS. A workflow file can be VALID YAML and still be REJECTED by Actions:
 //
@@ -124,6 +127,44 @@ function editDistance(a, b) {
  * Line-scanned, matching the rest of this file: a `permissions:` key, then the indented `k: v`
  * pairs beneath it until the indentation returns.
  */
+/**
+ * Every `name:` whose written text is NOT what YAML parses — because an unquoted `#` preceded by
+ * whitespace opens a comment and the rest of the line is dropped.
+ *
+ * WHY THIS IS WORTH A CHECK, given that the step still runs. Two names in this repo cite an
+ * incident, and the citation is the entire reason they are worded that way:
+ *
+ *     written: Worktree lease guard — replays incident #1247
+ *     parsed : Worktree lease guard — replays incident
+ *     written: Post the result to #2843
+ *     parsed : Post the result to
+ *
+ * The Actions UI shows the parsed form, so the reference a reader needs when the step goes red is
+ * exactly the half that disappears. Same family as the rest of this file: a workflow that says
+ * something it does not mean, and `yaml.parse()` agrees with the file rather than with the author.
+ *
+ * THE RULE IS "`#` PRECEDED BY WHITESPACE", NOT "CONTAINS `#`". `IP-activation markers still match
+ * the legal prose (#2366)` is CORRECT — the `#` follows `(`, so it is part of the scalar and
+ * nothing is lost. Four such names exist here, and a contains-`#` rule would "fix" all four.
+ * A quoted scalar (`name: 'Post the result to #2843'`) is likewise fine.
+ *
+ * @param {string} text
+ * @returns {{line: number, written: string, parsed: string}[]}
+ */
+export function scanNameTruncation(text) {
+	const out = [];
+	text.split("\n").forEach((line, i) => {
+		const m = line.match(/^\s*(?:-\s+)?name:\s*(\S.*?)\s*$/);
+		if (m === null) return;
+		const scalar = m[1];
+		if (scalar.startsWith("'") || scalar.startsWith('"') || scalar.startsWith(">") || scalar.startsWith("|")) return;
+		const cut = scalar.search(/\s#/);
+		if (cut === -1) return;
+		out.push({ line: i + 1, written: scalar, parsed: scalar.slice(0, cut).trimEnd() });
+	});
+	return out;
+}
+
 export function scanPermissions(text) {
 	const lines = text.split("\n");
 	const entries = [];
@@ -197,6 +238,234 @@ export function scanWorkflow(text) {
 	return { jobs, steps, problems, readable: true };
 }
 
+/** GitHub's hard ceiling on one template expression, in BYTES. Over it, the whole FILE is refused. */
+export const EXPRESSION_LIMIT = 21000;
+
+/** Where this check fails instead — see the note below for why the margin is a landing light, not safety. */
+export const EXPRESSION_BUDGET = 18000;
+
+/**
+ * Block scalars big enough to hit GitHub's expression-length ceiling, in the unit that ceiling uses.
+ *
+ * WHY THIS IS WORTH A CHECK, and it is the only one here with a same-repo incident three commits old.
+ * On 2026-09-10 `.github/workflows/release-gate.yml` was REFUSED BY GITHUB. Run 34460914813:
+ * `event=push`, `conclusion=failure`, `jobs: []`, and the run named `.github/workflows/release-gate.yml`
+ * instead of `Release gate` — because `on:` was never read. `gh run list --commit <sha>` returned
+ * nothing, no context reported on the PR, and the reason was legible ONLY inside that run's own UI:
+ *
+ *     (Line: 174, Col: 14): Exceeded max expression length 21000
+ *
+ * A workflow that does not load runs nothing at all, which is the worst failure in this file's
+ * catalogue: no red step, no annotation, no check. `yaml` parsed it; actionlint was silent; nothing
+ * in this repository measured it. That sentence was the finding.
+ *
+ * THREE THINGS ABOUT THE RULE, each measured rather than assumed, because a guard with the wrong
+ * one of them is worse than none:
+ *
+ *   1. IT IS BYTES, NOT CHARACTERS. The rejected scalar was 20,917 characters — UNDER the limit —
+ *      and 21,119 UTF-8 bytes. Every `—`, `·` and `→` in a comment inside a `run:` block costs
+ *      three. A character-counting version of this check would have called that file fine.
+ *   2. IT BINDS PER SCALAR, not per file and not per job. `release-gate.yml` is over three times
+ *      the limit as a file and loads, and its `legs` job carries more than the limit in `run:`
+ *      bytes across its steps and loads. Those two facts are stated without their figures on
+ *      purpose: every attempt to write the current sizes into that file went stale inside the
+ *      commit that wrote them, twice. The live numbers are the summary line below, which prints
+ *      them on a green run — that is the whole job of this check.
+ *   3. IT BINDS ONLY ON A TEMPLATED SCALAR — one containing at least one `${{ … }}`. That is what
+ *      makes GitHub compile the whole scalar as an expression. `deploy-console.yml`'s
+ *      `Assemble .env from the vault and deploy` is 22,422 bytes, over the ceiling, contains no
+ *      expression, and loads. The EVIDENCE for "untemplated and over the ceiling still runs" is
+ *      that same step at 21,500 bytes, which deployed production on 09e09542c, 59ecb03d8 and
+ *      4848b736a; it grew to 22,422 after 2026-08-31 and has not run since, so today's figure is
+ *      the claim and those three runs are the proof. The rejected release-gate scalar
+ *      contained exactly ONE — `${{ matrix.project }}`, written inside a JavaScript COMMENT
+ *      explaining a different job's flag. Prose about an expression is an expression, and it put
+ *      21 KB of shell script under a template compiler.
+ *
+ * Held against every step-level `run:`/`with.script` scalar in this repo — the summary line counts
+ * them, ~180 of them block scalars, and ZERO are `with.script`, so that arm is written for the shape
+ * and exercised only by the self-test —
+ * and against the one observed rejection: exactly one exceeds the ceiling and it is the untemplated
+ * one. That is one positive and one negative, not a documented rule — so this fails on the TEMPLATED
+ * ones only, and the summary prints the largest of BOTH kinds.
+ *
+ * SCOPE, stated: BLOCK scalars under `run:`/`script:` only. An `if:`, an `env:` value and a `with:`
+ * input are template expressions under the same ceiling; the largest of those in this repo today is
+ * 325 bytes, two orders off, so they are left unmeasured deliberately rather than by oversight.
+ *
+ * THE MARGIN IS A LANDING LIGHT, NOT A GUARDRAIL, and saying so is the point. The commit that broke
+ * the file grew one scalar from 10,574 to 21,119 bytes — a single edit larger than the whole 3,000
+ * bytes this check holds back. What it actually buys is that the measurement is TAKEN, and printed
+ * in the summary on a green run, in a file whose entire lesson was that nobody was taking it.
+ *
+ * Line-scanned like everything else here: `yaml` is not a root dependency. Verified against
+ * `yaml@2.9.0`'s own parse of all 40 workflows — same scalars, same byte counts.
+ *
+ * @param {string} text
+ * @returns {{line: number, key: string, bytes: number, chars: number, templated: boolean}[]}
+ */
+export function scanExpressionBudget(text) {
+	const lines = text.split("\n");
+	const out = [];
+	for (let i = 0; i < lines.length; i++) {
+		// `run: |`, `- run: >-`, `script: |2-` … YAML allows the indentation indicator and the chomping
+		// indicator in EITHER order, and the first version of this matched only `[-+]?\d*` — so `|2-`
+		// was not a block scalar to it and the step went UNMEASURED, silently, which is the one
+		// direction a byte guard must not fail in. What matters is that a BLOCK scalar starts here;
+		// an inline `run: pnpm i` is never in range.
+		//
+		// THE BOUND on an explicit indentation indicator: the dedent below uses the observed minimum
+		// indent, so for `|2` whose lines are ALL deeper than two it strips more than YAML would and
+		// under-counts. No workflow here uses one; they are matched so that adding one is measured at
+		// all, which beats being invisible.
+		const head = lines[i].match(/^(\s*)(?:-\s+)?(run|script):\s*[|>](?:\d[-+]?|[-+]\d?)?\s*$/);
+		if (head === null) continue;
+		const indent = head[1].length + (/^\s*-\s/.test(lines[i]) ? 2 : 0);
+		const body = [];
+		let j = i + 1;
+		for (; j < lines.length; j++) {
+			const blank = lines[j].trim() === "";
+			const deeper = (lines[j].match(/^(\s*)/)?.[1].length ?? 0) > indent;
+			if (!blank && !deeper) break;
+			body.push(lines[j]);
+		}
+		while (body.length > 0 && body[body.length - 1].trim() === "") body.pop();
+		if (body.length === 0) continue;
+		const base = Math.min(...body.filter((l) => l.trim() !== "").map((l) => l.match(/^(\s*)/)?.[1].length ?? 0));
+		// `|` and `>` clip to exactly one trailing newline; `-` strips it. Getting this wrong is one
+		// byte, but a check that is one byte wrong about a byte limit has not understood the limit.
+		const clip = /[|>]-/.test(lines[i]) ? "" : "\n";
+		const value = `${body.map((l) => (l.length > base ? l.slice(base) : "")).join("\n")}${clip}`;
+		out.push({
+			line: i + 1,
+			key: head[2],
+			bytes: Buffer.byteLength(value, "utf8"),
+			chars: value.length,
+			templated: value.includes("${{"),
+		});
+		i = j - 1;
+	}
+	return out;
+}
+
+/**
+ * Steps in a SERVICE-BEARING job whose `if:` survives a **setup** failure without also asking
+ * whether anything was ever set up.
+ *
+ * WHY THIS IS WORTH A CHECK. `services:` are started by the runner in `Initialize containers`,
+ * which is step ZERO — it runs BEFORE `actions/checkout`. When a service image fails to pull, that
+ * step fails and every real step in the job is SKIPPED, workspace included. A step written
+ * `if: ${{ !cancelled() }}` is not skipped: `cancelled()` is false, so it runs against an EMPTY
+ * checkout. Run 33710964528's `UI conformance audit` is the whole shape in one job list:
+ *
+ *     1.Set up job=success | 2.Initialize containers=FAILURE | 3.actions/checkout=SKIPPED
+ *     … 4–15 all SKIPPED …
+ *     16.Per-predicate summary of the audit=FAILURE | 17.Upload the audit report=success
+ *
+ * Step 16 reported `Cannot find module … apps/console/scripts/audit-report.mjs` for a file that is
+ * present on `dev` at 173450 bytes, so the log's last line accused the console of a missing script.
+ * Step 17 is the milder half of the same class: it "succeeded" having uploaded nothing.
+ *
+ * `always()` is scanned as well as `!cancelled()`, and that is deliberate rather than thorough. A
+ * guard that watched only `!cancelled()` would have `always()` as its cheapest escape route — a
+ * one-word edit that silences the check and makes the defect strictly worse, because the step then
+ * also runs on a cancel. Both are accepted the moment the expression additionally tests a
+ * `steps.<id>.outcome`/`.conclusion`/`.outputs`, which is the in-repo fix: `ci.yml`'s `guards` job
+ * carries `!cancelled() && steps.setup.outcome == 'success'` on 135 steps, and e2e-nightly's
+ * `provision` job conjoins every one of its `always()` steps the same way.
+ *
+ * Scoped to jobs that declare `services:` on purpose. A job with no service container has no step
+ * ahead of `checkout` that can fail, so `!cancelled()` there means what it says.
+ *
+ * @param {string} text
+ * @returns {{serviceJobs: number, problems: {line: number, job: string, name: string, expr: string}[]}}
+ */
+export function scanServiceGuards(text) {
+	const lines = text.split("\n");
+	const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+	if (jobsAt === -1) return { serviceJobs: 0, problems: [] };
+
+	// Pass one: which jobs declare `services:`. Separate from the step walk because nothing orders
+	// a job's keys — `services:` may sit after `steps:`, and often does not.
+	const withServices = new Set();
+	let job = null;
+	for (let i = jobsAt + 1; i < lines.length; i++) {
+		const head = lines[i].match(/^ {2}([A-Za-z0-9_-]+):\s*$/);
+		if (head !== null) {
+			job = head[1];
+			continue;
+		}
+		if (job !== null && /^ {4}services:\s*$/.test(lines[i])) withServices.add(job);
+	}
+
+	// Pass two: the steps of those jobs.
+	const problems = [];
+	job = null;
+	for (let i = jobsAt + 1; i < lines.length; i++) {
+		const head = lines[i].match(/^ {2}([A-Za-z0-9_-]+):\s*$/);
+		if (head !== null) {
+			job = head[1];
+			continue;
+		}
+		if (job === null || !withServices.has(job)) continue;
+		const item = lines[i].match(/^(\s+)-\s+(\S.*)$/);
+		if (item === null) continue;
+		const indent = item[1].length;
+		// Only list items inside a `steps:` block — the same nearest-shallower-key walk scanWorkflow
+		// uses, and for the same reason: `on:`/`with:`/`paths:` lists are not steps.
+		let owner = null;
+		for (let b = i - 1; b > jobsAt; b--) {
+			const key = lines[b].match(/^(\s*)([A-Za-z0-9_-]+):\s*$/);
+			if (key === null) continue;
+			if (key[1].length < indent) {
+				owner = key[2];
+				break;
+			}
+		}
+		if (owner !== "steps") continue;
+
+		// The step's own keys, re-based so a top-level key of the step sits at column 0. Anything
+		// nested under `with:`/`env:`/`run: |` keeps its indent and cannot be mistaken for one.
+		const own = [{ text: item[2], line: i + 1 }];
+		for (let j = i + 1; j < lines.length; j++) {
+			if (new RegExp(`^\\s{${indent}}-\\s`).test(lines[j])) break;
+			if (lines[j].trim() !== "" && (lines[j].match(/^(\s*)/)?.[1].length ?? 0) <= indent && !/^\s*#/.test(lines[j])) break;
+			own.push({ text: lines[j].slice(indent + 2), line: j + 1 });
+		}
+
+		let name = /^name:/.test(item[2]) ? item[2].replace(/^name:\s*/, "").trim() : item[2].trim();
+		let expr = null;
+		let exprLine = i + 1;
+		for (let k = 0; k < own.length; k++) {
+			const nm = own[k].text.match(/^name:\s*(\S.*?)\s*$/);
+			if (nm !== null) name = nm[1];
+			const iff = own[k].text.match(/^if:\s*(.*?)\s*$/);
+			if (iff === null) continue;
+			let v = iff[1];
+			// A folded/literal block scalar (`if: >-`) puts the expression on the following lines.
+			if (v === "" || /^[|>][-+]?\d*$/.test(v)) {
+				const parts = [];
+				for (let m = k + 1; m < own.length; m++) {
+					if (own[m].text.trim() === "" || !/^\s/.test(own[m].text)) break;
+					parts.push(own[m].text.trim());
+				}
+				v = parts.join(" ");
+			}
+			expr = v;
+			exprLine = own[k].line;
+		}
+		if (expr === null) continue;
+
+		const survivesFailure = /!\s*cancelled\s*\(\s*\)/.test(expr) || /(^|[^.\w])always\s*\(\s*\)/.test(expr);
+		if (!survivesFailure) continue;
+		// Any test of an earlier step's result is enough — the point is that SOMETHING ran, not
+		// which spelling was used.
+		if (/steps\.[A-Za-z0-9_-]+\.(outcome|conclusion|outputs)\b/.test(expr)) continue;
+		problems.push({ line: exprLine, job, name: name.replace(/^name:\s*/, "").trim(), expr });
+	}
+	return { serviceJobs: withServices.size, problems };
+}
+
 /** @returns {string[]} failures */
 export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.readFileSync(p, "utf8")) {
 	const out = [];
@@ -214,6 +483,12 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 	let totalSteps = 0;
 	let unreadable = 0;
 	let permissionEntries = 0;
+	let serviceJobs = 0;
+	// The largest scalar seen, templated or not. NOT printed from here — `check()` returns problems
+	// and nothing else; the green line is built in `main()` below and takes its own measurement.
+	// This copy exists for one thing: the blindness test at the bottom, which refuses a tree in which
+	// no block scalar was found at all.
+	let biggestScalar = { bytes: 0, chars: 0, templated: false, file: "", line: 0, key: "" };
 	for (const f of files.sort()) {
 		const text = readFile(path.join(dir, f));
 		const { jobs, steps, problems, readable } = scanWorkflow(text);
@@ -256,6 +531,41 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 		if (jobs === 0) {
 			out.push(`${dir}/${f}: a \`jobs:\` block with no jobs under it — Actions would reject this file, producing a run with zero jobs and an EMPTY status rollup.`);
 		}
+		for (const t of scanNameTruncation(text)) {
+			out.push(
+				`${dir}/${f}:${t.line}: this name is silently truncated by YAML — written \`${t.written}\`, ` +
+					`parsed \`${t.parsed}\`. An unquoted \`#\` preceded by whitespace opens a comment, so the ` +
+					"Actions UI drops everything after it — including the issue reference the name exists to carry. " +
+					`Quote it: \`name: '${t.written}'\`.`,
+			);
+		}
+		for (const b of scanExpressionBudget(text)) {
+			if (b.bytes > biggestScalar.bytes) biggestScalar = { ...b, file: f };
+			if (!b.templated || b.bytes <= EXPRESSION_BUDGET) continue;
+			out.push(
+				`${dir}/${f}:${b.line}: this \`${b.key}:\` block is ${b.bytes} BYTES (${b.chars} characters) and contains a \`\${{ … }}\`, ` +
+					`which makes Actions compile the whole scalar as one template expression — ceiling ${EXPRESSION_LIMIT}, budget here ${EXPRESSION_BUDGET}. ` +
+					"Over the ceiling the WHOLE FILE is refused: a run with zero jobs, named after the file's PATH instead of its `name:`, on the `push` event " +
+					"because `on:` was never read, no context reported on the PR, and the reason legible only inside that run's own UI " +
+					"(`Exceeded max expression length 21000`, run 34460914813). " +
+					"Move prose OUT of the block into YAML `#` comments, which cost nothing, or split the step — each `run:` has its own budget. " +
+					"If the block needs no interpolation at all, deleting the last `${{ … }}` takes it out of the limit entirely: an untemplated scalar is never measured, " +
+					"which is how deploy-console.yml has deployed production carrying an untemplated block of 21,500 bytes.",
+			);
+		}
+		const guards = scanServiceGuards(text);
+		serviceJobs += guards.serviceJobs;
+		for (const g of guards.problems) {
+			out.push(
+				`${dir}/${f}:${g.line}: the step \`${g.name}\` in job \`${g.job}\` runs on \`${g.expr}\`, and that job declares ` +
+					"`services:`. A service container that fails to pull fails `Initialize containers` — step ZERO, BEFORE " +
+					"`actions/checkout` — so every real step is SKIPPED and this one is not: it runs against an EMPTY workspace. " +
+					"Run 33710964528's `UI conformance audit` ended by reporting `Cannot find module` for a script that is present " +
+					"on dev, and its upload step reported SUCCESS having uploaded nothing. Conjoin a step-outcome test, as the " +
+					"`guards` job does on 135 steps: `if: ${{ !cancelled() && steps.<id>.outcome == 'success' }}` — giving the " +
+					"job's `actions/checkout` an `id:` if it has none.",
+			);
+		}
 		for (const p of problems) {
 			out.push(
 				`${dir}/${f}:${p.line}: the step \`${p.name}\` has neither \`run:\` nor \`uses:\`. ` +
@@ -281,6 +591,24 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 		out.push(
 			`parsed ${files.length} workflow file(s) and found ZERO \`permissions:\` entries. Every workflow here declares them, ` +
 				"so this scanner has stopped matching — fix it rather than trusting the green.",
+		);
+	}
+	// And once more for the service-guard scanner. It is the only one of the three whose subject is
+	// RARE — a handful of jobs, not hundreds of steps — so "found none" and "found nothing wrong"
+	// are otherwise the same green line, and this repo has shipped that failure repeatedly.
+	if (serviceJobs === 0) {
+		out.push(
+			`parsed ${files.length} workflow file(s) and found ZERO jobs declaring \`services:\`. This repo runs Postgres as a ` +
+				"service container in several jobs, so the setup-failure scanner has stopped matching — fix it rather than trusting the green.",
+		);
+	}
+	// And for the byte-budget scanner. Its subject is EVERY block scalar in the directory — 180 of
+	// them — so zero means the block-scalar matcher stopped matching, and the one number this check
+	// exists to take would silently become "nothing to report".
+	if (biggestScalar.bytes === 0) {
+		out.push(
+			`parsed ${files.length} workflow file(s) and found ZERO \`run:\`/\`script:\` BLOCK scalars. There are ~180, so the ` +
+				"expression-budget scanner has stopped matching — and a byte limit nobody measures is how release-gate.yml was refused by GitHub with no red anywhere.",
 		);
 	}
 	if (unreadable === files.length) {
@@ -323,11 +651,20 @@ jobs:
 	// took workflow-health off the air across dev and three branches, and it was found only because
 	// somebody opened that workflow for an unrelated reason.
 	const permsOf = (body) => scanPermissions(`name: x\n${body}jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n`);
+	// The fixture job carries a `services:` block so the service-guard blindness check below is
+	// satisfied — otherwise every `.length === 0` assertion here would be measuring that guard
+	// rather than the thing it names.
 	const checkOne = (body) =>
 		check(
 			"wf",
 			() => ["w.yml"],
-			() => `name: x\n${body}jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n`,
+			// The step carries a BLOCK scalar, not `run: true`: `check()` refuses a tree in which it finds
+			// no block scalar at all, on the same grounds as the three blindness guards beside it, and a
+			// fixture that trips a guard unrelated to its subject tests the guard rather than the subject.
+			// Revert this one line and five permission assertions go red, NONE of them mentioning block
+			// scalars — the failure misattributes, which is the cost of a shared fixture and the reason
+			// this comment names the coupling instead of leaving the next reader to find it.
+			() => `name: x\n${body}jobs:\n  a:\n    runs-on: ubuntu-latest\n    services:\n      postgres:\n        image: postgres:17-alpine\n    steps:\n      - run: |\n          true\n`,
 		);
 
 	const REAL = "permissions:\n  contents: read\n  administration: read # the #3229 regression\n  issues: write\n";
@@ -390,6 +727,85 @@ jobs:
 	ok("...and without one is caught",
 		scanWorkflow(`jobs:\n  a:\n    steps:\n      - name: n\n        if: \${{ !cancelled() }}\n`).problems.length === 1);
 
+	// ── a setup failure that a step does not skip (#4084) ────────────────────────────────────────
+	//
+	// The two cases above only ask whether an if-first step still carries an action. This asks what
+	// the `if:` MEANS in a job with `services:`. Those containers start in `Initialize containers`,
+	// step ZERO, BEFORE `actions/checkout`: a failed pull skips every real step and leaves an EMPTY
+	// workspace, while `cancelled()` stays false — so `!cancelled()` runs the step anyway. In run
+	// 33710964528 that made the last line of a failed `UI conformance audit` read
+	// `Cannot find module … apps/console/scripts/audit-report.mjs`, accusing the console of a
+	// missing script that is present on dev at 173450 bytes.
+	const svcJob = (step, services = "    services:\n      postgres:\n        image: postgres:17-alpine\n") =>
+		`name: x\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n${services}    steps:\n      - uses: actions/checkout@v7\n${step}`;
+	const guardsOf = (step, services) => scanServiceGuards(svcJob(step, services)).problems;
+
+	// The offending step, verbatim from ci.yml's `ui-audit` job as it stood for that run.
+	const BARE =
+		"      - name: Per-predicate summary of the audit, against the recorded baseline\n" +
+		"        if: ${{ !cancelled() }}\n" +
+		"        run: node apps/console/scripts/audit-report.mjs\n";
+	// A guard written alongside its fix passes for the wrong reason unless the FAILING input is the
+	// one that came off the branch. Assert the catch first, then the fix.
+	ok("the bare !cancelled() step in a service-bearing job is caught", guardsOf(BARE).length === 1, JSON.stringify(guardsOf(BARE)));
+	ok("...and it is named by its `name:`, not by its list item", guardsOf(BARE)[0]?.name === "Per-predicate summary of the audit, against the recorded baseline", JSON.stringify(guardsOf(BARE)));
+	ok("...and the job is named too", guardsOf(BARE)[0]?.job === "a");
+
+	const FIXED = BARE.replace("if: ${{ !cancelled() }}", "if: ${{ !cancelled() && steps.setup.outcome == 'success' }}");
+	const ALWAYS = BARE.replace("${{ !cancelled() }}", "${{ always() }}");
+	const ALWAYS_GATED = BARE.replace("${{ !cancelled() }}", "always() && steps.capture.outcome == 'success'");
+	const OUTPUTS = BARE.replace("${{ !cancelled() }}", "always() && steps.gate.outputs.run == 'false'");
+	// A mutation that silently failed to apply produces four copies of the same passing case.
+	ok("the fixture mutations actually applied", FIXED !== BARE && ALWAYS !== BARE && ALWAYS_GATED !== BARE && OUTPUTS !== BARE);
+
+	ok("the in-repo fix shape (the `guards` job's) is clean", guardsOf(FIXED).length === 0, JSON.stringify(guardsOf(FIXED)));
+	// `always()` is the one-word edit that would otherwise silence this check while making the step
+	// run on a cancel as well — a cheaper escape route than fixing it.
+	ok("a bare always() is caught too", guardsOf(ALWAYS).length === 1, JSON.stringify(guardsOf(ALWAYS)));
+	ok("...and e2e-nightly's conjoined always() is clean", guardsOf(ALWAYS_GATED).length === 0, JSON.stringify(guardsOf(ALWAYS_GATED)));
+	ok("...and a steps.<id>.outputs test gates it just as well", guardsOf(OUTPUTS).length === 0, JSON.stringify(guardsOf(OUTPUTS)));
+
+	// The scope. A job with no service container has nothing that can fail ahead of checkout, so
+	// `!cancelled()` there means exactly what it says and must not be reported.
+	ok("the same step in a job with NO services is not reported", guardsOf(BARE, "").length === 0, JSON.stringify(guardsOf(BARE, "")));
+
+	// False-positive directions, each of which a text-only matcher gets wrong.
+	ok("a step with no if: at all is not reported", guardsOf("      - run: pnpm test\n").length === 0);
+	ok("an unrelated if: is not reported", guardsOf("      - if: github.event_name == 'push'\n        run: x\n").length === 0);
+	ok("`always()` inside a run: body is not an if:", guardsOf('      - name: n\n        run: |\n          echo "if: always()"\n').length === 0);
+	ok(
+		"a `with:` sub-key called name: does not become the step's name",
+		guardsOf("      - name: Upload the audit report\n        if: ${{ !cancelled() }}\n        uses: actions/upload-artifact@v7\n        with:\n          name: ui-audit\n")[0]?.name ===
+			"Upload the audit report",
+	);
+
+	// A folded `if: >-` puts the expression on the FOLLOWING lines; reading only the key's own line
+	// would score every one of them as ungated.
+	ok(
+		"a folded block-scalar if: is read whole",
+		guardsOf("      - name: n\n        if: >-\n          !cancelled()\n          && steps.setup.outcome == 'success'\n        run: x\n").length === 0,
+		JSON.stringify(guardsOf("      - name: n\n        if: >-\n          !cancelled()\n          && steps.setup.outcome == 'success'\n        run: x\n")),
+	);
+	ok("...and a folded BARE one is still caught", guardsOf("      - name: n\n        if: >-\n          !cancelled()\n        run: x\n").length === 1);
+
+	// Nothing orders a job's keys, and several jobs here put `services:` after `steps:`.
+	ok(
+		"a `services:` block declared AFTER `steps:` is still found",
+		scanServiceGuards(`name: x\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n${BARE}    services:\n      postgres:\n        image: postgres:17-alpine\n`).problems.length === 1,
+	);
+
+	// End to end, and the refusal must name the CAUSE — "add a conjunct" without "Initialize
+	// containers runs before checkout" is a rule nobody can check themselves.
+	const viaCheck = check("wf", () => ["w.yml"], () => svcJob(BARE));
+	ok("the bare step is refused through check()", viaCheck.some((p) => /Per-predicate summary of the audit/.test(p) && /declares `services:`/.test(p)), JSON.stringify(viaCheck));
+	ok("...and the refusal names the cause", viaCheck.some((p) => /Initialize containers/.test(p) && /BEFORE/.test(p)));
+	ok("...and points at the in-repo fix", viaCheck.some((p) => /steps\.<id>\.outcome == 'success'/.test(p)));
+
+	// Blindness, again: this scanner's subject is a handful of jobs rather than hundreds of steps,
+	// so "found none" and "found nothing wrong" are otherwise the same green line.
+	const noSvc = check("d", () => ["a.yml"], () => "name: x\npermissions:\n  contents: read\njobs:\n  a:\n    runs-on: x\n    steps:\n      - run: true\n");
+	ok("a tree where no job declares services: FAILS rather than passing", noSvc.some((p) => /ZERO jobs declaring `services:`/.test(p)), JSON.stringify(noSvc));
+
 	// Lists that are NOT steps must not be scanned — this is where a naive matcher goes wrong.
 	const NOTSTEPS = `on:
   push:
@@ -410,8 +826,78 @@ jobs:
 	ok("on:/paths: list items are not steps", scanWorkflow(NOTSTEPS).problems.length === 0, JSON.stringify(scanWorkflow(NOTSTEPS).problems));
 	ok("...and a matrix include is not a step either", scanWorkflow(NOTSTEPS).steps === 1, `steps=${scanWorkflow(NOTSTEPS).steps}`);
 
+	// Name truncation. The false-positive direction is the one that matters: a `#` inside
+	// parentheses is part of the scalar and four correct names in this repo carry one, so a rule
+	// that merely looked for `#` would rewrite all four and teach people the check is noise.
+	ok(
+		"a whitespace-preceded # truncates the name",
+		scanNameTruncation("      - name: Worktree lease guard — replays incident #1247\n")[0]?.parsed ===
+			"Worktree lease guard — replays incident",
+	);
+	ok("a # after ( is part of the scalar", scanNameTruncation("      - name: markers still match the prose (#2366)\n").length === 0);
+	ok("a single-quoted name is safe", scanNameTruncation("      - name: 'Post the result to #2843'\n").length === 0);
+	ok("a double-quoted name is safe", scanNameTruncation('      - name: "Post the result to #2843"\n').length === 0);
+	ok("a name with no # is not reported", scanNameTruncation("      - name: Run the guards\n").length === 0);
+	ok("a job-level name is scanned too", scanNameTruncation("    name: Authz guards for #1\n").length === 1);
+	ok(
+		"the real ci.yml name is reported when unquoted, through check()",
+		check("d", () => ["a.yml"], () => "jobs:\n  a:\n    steps:\n      - name: replays incident #1247\n        run: true\n").some((p) =>
+			/silently truncated by YAML/.test(p),
+		),
+	);
+	ok(
+		"...and not when quoted",
+		!check("d", () => ["a.yml"], () => "jobs:\n  a:\n    steps:\n      - name: 'replays incident #1247'\n        run: true\n").some((p) =>
+			/silently truncated by YAML/.test(p),
+		),
+	);
+
 	// Blindness. Each of these would otherwise be a clean report.
 	ok("a file with no jobs: block is unreadable, not clean", scanWorkflow("name: x\non: push\n").readable === false);
+
+	// ── the expression byte budget (the release-gate.yml rejection, 2026-09-10) ──────────────────
+	//
+	// Every case here is a shape MEASURED on the real files, not invented: the rejected scalar, the
+	// 22 KB untemplated one that deploys production, and the character/byte gap that made the first
+	// look safe. The oracle for the whole matcher is that it reports the rejected file at the line
+	// GitHub named, 174, with the byte count GitHub compared against 21000.
+	const block = (bytes, { expr = false, indicator = "|", item = false } = {}) => {
+		const filler = "x".repeat(Math.max(0, bytes - (expr ? 22 : 0)));
+		const body = `          ${filler}${expr ? "  # ${{ matrix.project }}" : ""}\n`;
+		return `jobs:\n  a:\n    steps:\n      ${item ? "- " : "- name: n\n        "}run: ${indicator}\n${body}`;
+	};
+	const budgeted = (text) => scanExpressionBudget(text).filter((b) => b.templated && b.bytes > EXPRESSION_BUDGET);
+	ok("a 22 KB block with NO expression is not measured against the limit",
+		budgeted(block(22000)).length === 0 && scanExpressionBudget(block(22000))[0].bytes > EXPRESSION_LIMIT,
+		JSON.stringify(scanExpressionBudget(block(22000))));
+	ok("...and the same block with ONE `${{ … }}` in a comment is over budget",
+		budgeted(block(22000, { expr: true })).length === 1);
+	ok("a small templated block is fine", budgeted(block(500, { expr: true })).length === 0);
+	// THE UNIT. A block of em dashes is 3 bytes per character: under budget counted wrongly, over
+	// counted rightly. This is the case that decides whether the check would have caught #4466's
+	// first commit at all — it was 20,917 characters and 21,119 bytes.
+	const emdash = `jobs:\n  a:\n    steps:\n      - run: |\n          ${"—".repeat(6400)} # \${{ matrix.project }}\n`;
+	const dashRow = scanExpressionBudget(emdash)[0];
+	ok("the budget is BYTES, not characters", dashRow.chars < EXPRESSION_BUDGET && dashRow.bytes > EXPRESSION_BUDGET,
+		`chars=${dashRow.chars} bytes=${dashRow.bytes}`);
+	ok("...and it is reported", budgeted(emdash).length === 1);
+	ok("a `>-` folded block is measured too", scanExpressionBudget(block(300, { indicator: ">-" })).length === 1);
+	// Both orders of the two indicators, because only one of them was matched at first and the miss
+	// was silent: an unmatched block header is not a small measurement, it is no measurement.
+	for (const ind of ["|", "|-", "|+", "|2", "|2-", "|-2", ">", ">-", ">2+"]) {
+		ok(`\`${ind}\` is recognised as a block scalar`, scanExpressionBudget(block(300, { indicator: ind })).length === 1, ind);
+	}
+	ok("...and a bare `- run: |` list item is not missed", scanExpressionBudget(block(300, { item: true })).length === 1);
+	ok("`|` clips exactly one trailing newline, `|-` none",
+		scanExpressionBudget("jobs:\n  a:\n    steps:\n      - run: |\n          ab\n").at(0).bytes === 3 &&
+			scanExpressionBudget("jobs:\n  a:\n    steps:\n      - run: |-\n          ab\n").at(0).bytes === 2);
+	ok("an inline `run: pnpm i` is not a block scalar", scanExpressionBudget("jobs:\n  a:\n    steps:\n      - run: pnpm i\n").length === 0);
+	ok("two adjacent blocks are two measurements, not one",
+		scanExpressionBudget("jobs:\n  a:\n    steps:\n      - run: |\n          one\n      - run: |\n          two\n      - run: |\n          three\n").length === 3);
+	// The blindness direction: a matcher that stops matching must not read as "nothing to report".
+	ok("finding zero block scalars is a problem, not a pass",
+		check("d", () => ["w.yml"], () => "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7\n")
+			.some((p) => /ZERO `run:`\/`script:` BLOCK scalars/.test(p)));
 	const noDir = check("nope", () => { throw new Error("ENOENT"); });
 	ok("an unreadable directory fails", /cannot run, which is not the same as passing/.test(noDir[0] ?? ""), JSON.stringify(noDir));
 	const empty = check("d", () => []);
@@ -433,21 +919,44 @@ if (process.argv.includes("--self-test")) {
 	const problems = check();
 	for (const p of problems) console.error(`::error::workflow-shape: ${p}`);
 	if (problems.length > 0) {
-		console.error(`\n${problems.length} problem(s) — Actions would reject a file and the PR would sit BLOCKED with an empty rollup.`);
+		console.error(
+			`\n${problems.length} problem(s). Each is a workflow that does not mean what it says: either Actions rejects the file ` +
+				"outright — zero jobs, an empty rollup, nothing red — or a step runs past a failed `Initialize containers` and reports " +
+				"a cause that was never true.",
+		);
 		process.exit(1);
 	}
 	const files = fs.readdirSync(DIR).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
 	let steps = 0;
 	let perms = 0;
+	let svcJobs = 0;
+	let scalars = 0;
+	let biggest = { bytes: 0, chars: 0, file: "", line: 0, key: "" };
+	// The largest scalar of ANY kind, printed beside it. The templated one is what the limit BINDS
+	// on; this one is what would breach it the day somebody writes `${{` into it, and leaving it out
+	// of the green line is this file's own lesson failing on the number most worth having.
+	let overall = { bytes: 0, chars: 0, templated: false, file: "", line: 0, key: "" };
 	for (const f of files) {
 		const text = fs.readFileSync(path.join(DIR, f), "utf8");
 		steps += scanWorkflow(text).steps;
 		perms += scanPermissions(text).length;
+		svcJobs += scanServiceGuards(text).serviceJobs;
+		for (const b of scanExpressionBudget(text)) {
+			scalars += 1;
+			if (b.templated && b.bytes > biggest.bytes) biggest = { ...b, file: f };
+			if (b.bytes > overall.bytes) overall = { ...b, file: f };
+		}
 	}
 	// The counts are printed because a green line that names no quantity is indistinguishable from a
 	// green line produced by a scanner that matched nothing.
 	console.log(
 		`workflow-shape: ${files.length} workflow(s), ${steps} steps, every one carrying a \`run:\` or \`uses:\`; ` +
-			`${perms} permission entr(ies), every scope and level one Actions accepts`,
+			`${perms} permission entr(ies), every scope and level one Actions accepts; ` +
+			`${svcJobs} job(s) with \`services:\`, none of them running a step past a failed \`Initialize containers\`; ` +
+			"no `name:` losing text to an unquoted `#`; " +
+			`largest TEMPLATED block scalar ${biggest.bytes} bytes of ${EXPRESSION_BUDGET} budgeted (${EXPRESSION_LIMIT} is where Actions refuses the file) ` +
+			`— ${biggest.file}:${biggest.line}, of ${scalars} block scalar(s) measured; ` +
+			`largest of ANY kind ${overall.bytes} bytes — ${overall.file}:${overall.line}` +
+			`${overall.templated ? "" : ", untemplated"}${overall.bytes > EXPRESSION_LIMIT ? ` — OVER the ${EXPRESSION_LIMIT} ceiling, and one \`\${{\` away from taking that workflow off the air` : ""}`,
 	);
 }

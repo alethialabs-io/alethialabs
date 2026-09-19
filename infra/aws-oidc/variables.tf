@@ -39,6 +39,12 @@ variable "github_environment" {
   default     = "production"
 }
 
+variable "cli_release_environment" {
+  description = "GitHub Actions environment selected by the CLI release job so its TAG-triggered run can present a trustable OIDC sub. Adds an exact `repo:<repo>:environment:<this>` sub to alethia-deploy-reader ONLY (never to the state/ECR/ECS roles). The environment must be restricted to the `cli-v*` TAG pattern - see infra/github/environments.tf."
+  type        = string
+  default     = "cli-release"
+}
+
 variable "oidc_provider_arn" {
   description = "ARN of the existing GitHub OIDC provider. Empty = look it up by URL (it already exists from infra/email-ses/bootstrap)."
   type        = string
@@ -132,4 +138,32 @@ variable "e2e_dns_zone_name" {
   description = "Public DNS zone the T2 nightly's ACM/cert proof validates against (#1773), e.g. \"e2e.alethialabs.io\". Long-lived and stable — see e2e-dns.tf for why it is not per-run. Empty (the default) creates no zone, so this stack stays a no-op for anyone who has not delegated one yet."
   type        = string
   default     = ""
+}
+
+# ── E2E assertion broker (#4226) ─────────────────────────────────────────────
+variable "e2e_broker_issuer_url" {
+  description = <<-EOT
+    The HTTPS origin of the E2E assertion broker (apps/e2e-issuer) — exactly the `E2E_ISSUER_URL` the
+    Worker is deployed with, which is the `iss` of every assertion it mints. null (the committed value
+    in terraform.tfvars) creates NO broker trust, so a plan without it changes nothing.
+
+    A bare origin only: no path, no port, no trailing slash, lowercase host. That is the only shape
+    the Worker serves (normalizedIssuer() in apps/e2e-issuer/src/worker.ts refuses anything with a
+    path), every cloud compares `iss` byte-for-byte, and it keeps the console's own issuer
+    (https://alethialabs.io/api/oidc, which HAS a path) from being pasted here by mistake.
+
+    Choosing the origin is the maintainer's decision (#4547); see
+    docs/testing/e2e-federation-apply-runbook.md. Set it in terraform.tfvars in a reviewed PR, never
+    with -var at apply time: the next bare apply would read null and REMOVE the trust.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition = var.e2e_broker_issuer_url == null || (
+      can(regex("^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.e2e_broker_issuer_url)) &&
+      var.e2e_broker_issuer_url != "https://token.actions.githubusercontent.com"
+    )
+    error_message = "e2e_broker_issuer_url must be null or a bare lowercase https origin (no path, port or trailing slash) that is not the GitHub Actions issuer."
+  }
 }

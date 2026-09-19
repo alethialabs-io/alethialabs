@@ -5,7 +5,12 @@
 import { notFound } from "next/navigation";
 import { evaluate } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
-import { helmRegistryProviderConfigSchema } from "@/lib/validations/project-form.schema";
+import {
+	PROJECT_NAME_MAX_LENGTH,
+	helmRegistryProviderConfigSchema,
+	pickFreeProjectName,
+	projectSchema,
+} from "@/lib/validations/project-form.schema";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
@@ -59,6 +64,7 @@ import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
 import { resolveServingCluster } from "@/lib/queries/cluster-for-env";
+import { pickDefaultEnvironment } from "@/lib/queries/default-environment";
 import {
 	envScope,
 	readEnvComponents,
@@ -67,10 +73,14 @@ import { listAssignmentsFor } from "@/lib/queries/classification";
 import {
 	type EnvironmentSpec,
 	insertProjectWithDefaultFabric,
+	isProjectNameTaken,
+	ProjectNameTakenError,
 } from "@/lib/queries/projects";
 import {
 	HETZNER_DB_ENGINES,
 	hetznerDataServicesToAddOns,
+	hetznerNodeNameProblem,
+	type HetznerChartedKind,
 } from "@/lib/cloud-providers/hetzner-services";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import {
@@ -96,9 +106,13 @@ import type {
 	ServiceBinding,
 	TopicSubscription,
 } from "@/types/jsonb.types";
-import { RESERVED_PROJECT_CHILD_SLUGS, slugify } from "@/lib/routing";
+import {
+	environmentNameProblem,
+	normalizeEnvironmentName,
+} from "@/lib/validations/names";
+import { slugify } from "@/lib/utils/slugify";
 import { repoLabel } from "@/lib/repos/repo-label";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
 /**
  * Mirrors the Go provisioner gate (packages/core/provisioner/placement.go):
@@ -175,6 +189,121 @@ function unsupportedKindGateError(
 	return new Error(
 		`Component "${name}" (${kind}) can't be provisioned on ${cloud}: ${detail}.`,
 	);
+}
+
+// ============================================================
+// Refusals — a reason the user can read, not a digest.
+// ============================================================
+
+/**
+ * A refusal the user is meant to READ, returned rather than thrown.
+ *
+ * `"use server"` compiles every export of this file into a POST-addressable Server Action, and in a
+ * PRODUCTION build (which is what the `qa` gate leg drives — `next build` + `next start`) Next
+ * **redacts a thrown `Error`'s message and substitutes a `digest`**. So `throw new Error("…already
+ * exists")` is not a way to tell anybody anything: the sentence the action wrote is replaced before
+ * it reaches the client, and `toast.error(e.message)` renders the redaction. That is #4644.
+ *
+ * Only a refusal — something the user did, and can undo — travels this way. An UNEXPECTED failure
+ * still throws: it may carry query text or infrastructure detail, the user cannot act on it, and
+ * the redaction is then the correct behaviour rather than the bug. A wrapper that turned every
+ * error into an `{ ok: false }` would present a defect as advice.
+ *
+ * The field is `error` and not `reason` because that is this console's existing shape —
+ * `ConnectorCredentialResult` (`actions/connectors.ts`) and `addChannel` (`actions/alerts.ts`)
+ * already return it, and their forms already narrow on `ok`. #4644's body says `reason`; a second
+ * spelling of one idea is the drift CLAUDE.md §6 exists to stop, so the house word wins.
+ *
+ * NOT exported. It is the shared arm of the three result unions below, which ARE — a client narrows
+ * on `res.ok` and never names this type. Exporting it only adds a row to `check:dead-code`'s unused
+ * list, and a name nobody imports is a name that drifts.
+ */
+type ProjectRefusal = { ok: false; error: string };
+
+/** {@link tryCreateProject}'s result: the created project, or a refusal to render. */
+export type CreateProjectResult =
+	| { ok: true; project: Project }
+	| ProjectRefusal;
+
+/** {@link updateProjectName}'s result: the persisted name, or a refusal to render. */
+export type UpdateProjectNameResult =
+	| { ok: true; project_name: string }
+	| ProjectRefusal;
+
+/** {@link deleteProject}'s result: the deletion, or a refusal to render. */
+export type DeleteProjectResult = { ok: true } | ProjectRefusal;
+
+/**
+ * The project-name rule, READ from `project-form.schema.ts` rather than retyped.
+ *
+ * `.refine(canSlugify)` and the `PROJECT_NAME_MAX_LENGTH` bound are the schema's, so widening or
+ * narrowing the rule there moves this with it. That matters here more than it usually would: the
+ * console's ONE create screen applies all three rules client-side (see `configure-project.tsx`) and
+ * the action applied NONE of them, which is the second half of #4644 — `projects.project_name` is
+ * an unbounded `text()` column, so the action was reachable with a name no schema had seen.
+ */
+const PROJECT_NAME_RULE = projectSchema.shape.project_name;
+
+/**
+ * Why this project name is refused, or `null` if it is fine.
+ *
+ * The PREDICATE is always the schema's — nothing here decides whether a name passes. What is
+ * decided here is the WORDING, and the mapping below is not a pass-through, so read it as three
+ * separate calls rather than one:
+ *
+ *   · `too_big` — the schema passes NO message to its `.max()`, so zod's default ("Too big:
+ *     expected string to have <=100 characters") is what a user would otherwise be shown. The
+ *     sentence written here is the one `updateProjectName` and the Configure form already show, and
+ *     its NUMBER is interpolated from `PROJECT_NAME_MAX_LENGTH` rather than typed.
+ *   · `too_small` — the schema's own message is "Project name is required"; the console's two name
+ *     fields both say "A project name is required", so that is what is returned. A deliberate
+ *     override of a message that exists, not a gap being filled.
+ *   · anything else — `issue.message` verbatim. Today that is only `.refine(canSlugify)`'s "Enter
+ *     at least one letter or number", which needs no help; a rule added to the schema later
+ *     therefore arrives here with its own wording instead of silently reading as a too-long name.
+ *
+ * `"Enter a valid project name"` is unreachable while zod reports at least one issue per failure,
+ * and exists so a `safeParse` that somehow failed with an empty `issues` array cannot return `null`
+ * — which would read as "this name is fine".
+ *
+ * @param name the display name as submitted
+ * @returns a sentence to show the user, or null when the name passes
+ */
+function projectNameProblem(name: unknown): string | null {
+	const parsed = PROJECT_NAME_RULE.safeParse(
+		typeof name === "string" ? name.trim() : name,
+	);
+	if (parsed.success) return null;
+	const issue = parsed.error.issues[0];
+	if (!issue) return "Enter a valid project name";
+	if (issue.code === "too_small") return "A project name is required";
+	if (issue.code === "too_big")
+		return `Project name must be ${PROJECT_NAME_MAX_LENGTH} characters or fewer`;
+	return issue.message;
+}
+
+/**
+ * A name `projectNameProblem` refuses, as something a caller can CATCH.
+ *
+ * `createProject` keeps the throwing shape (see its JSDoc), so the only way {@link tryCreateProject}
+ * can tell "the name broke a rule" apart from "the database fell over" is the error's TYPE. A bare
+ * `new Error(problem)` is indistinguishable from either.
+ *
+ * THIS CLASS IS THE REASON THE GUARD CAN STAY FIRST. Without a catchable type the wrapper would have
+ * to re-ask the rule before delegating — which means before `authorize`, since the wrapper is its own
+ * `"use server"` export — and an unauthenticated POST to that action id would get the validator's
+ * answer. With it, the rule is asked once, inside `createProject`, after its `authorize`, and the
+ * refusal travels back out as a value. It is caught in exactly one place; `grep ProjectNameInvalid`
+ * is the whole audit.
+ *
+ * NOT exported: in a `"use server"` file every runtime export becomes a POST-addressable action, so
+ * a class cannot be one. `instanceof` still works — `tryCreateProject` is in this module.
+ */
+class ProjectNameInvalidError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ProjectNameInvalidError";
+	}
 }
 
 // ============================================================
@@ -295,11 +424,15 @@ async function writeComponents(
 	// unreachable, because `namespace`/`vcluster` envs own no cluster row and resolve ONLY by
 	// Fabric (lib/queries/cluster-for-env.ts). See the same fix in lib/cli/project-components.ts.
 	const [envRow] = await tx
-		.select({ fabric_id: projectEnvironments.fabric_id })
+		.select({
+			fabric_id: projectEnvironments.fabric_id,
+			placement_mode: projectEnvironments.placement_mode,
+		})
 		.from(projectEnvironments)
 		.where(eq(projectEnvironments.id, environmentId))
 		.limit(1);
-	const clusterBase = envRow?.fabric_id
+	const clusterBase =
+		envRow?.placement_mode === "dedicated" && envRow.fabric_id
 		? { ...base, fabric_id: envRow.fabric_id }
 		: base;
 
@@ -464,8 +597,44 @@ async function clearComponents(
 		.where(envScope(projectServices, projectId, environmentId));
 }
 
+/**
+ * Creates a project, THROWING on a refusal.
+ *
+ * Kept as the throwing shape because every caller destructures `{ project }` from it and a
+ * `{ ok: false }` would reach them as `undefined` — a silent wrong answer where there is a loud one
+ * today. The three are NOT the same kind of caller, and the difference is the part worth writing
+ * down:
+ *
+ *   · {@link tryCreateProject} (just below) catches the throw and returns it, which is what makes
+ *     the guard-then-parse ordering possible at all. Read its JSDoc before adding a check here.
+ *   · `duplicateProjectForProvider` (below) is NOT in-process, which is what this bullet used to
+ *     claim. It is an export of THIS `"use server"` file, so it is a POST-addressable action id of
+ *     its own, and its one caller — `components/projects/duplicate-project-dialog.tsx` — is a
+ *     `"use client"` component: every call is a Server Action round trip and every throw crosses
+ *     the boundary. The comment's consequence ("no redaction; the thrown message is the message it
+ *     gets") was therefore false in a production build, where the dialog's
+ *     `toast.error(err.message)` rendered a digest. The remedy is the same one this bullet
+ *     recommends for the canvas below — {@link tryDuplicateProjectForProvider} returns the refusal
+ *     as a value, and the dialog renders it beside the name field (#4162).
+ *   · the canvas's create-mode save
+ *     (`components/design-project/canvas/design-project-canvas.tsx`) is a `"use client"` component,
+ *     so its call IS a Server Action round trip and its `toast.error(e.message)` still renders a
+ *     digest in a production build. That is #4644's defect surviving on a second screen. It is not
+ *     fixed here because that file is #4279's scope; the remedy is one line — call
+ *     {@link tryCreateProject} and render `res.error` — and #4644 records it.
+ *
+ * Client callers that must SHOW the refusal use {@link tryCreateProject}.
+ *
+ * The name is parsed HERE and NOWHERE ELSE on the server, so every path — the three above and
+ * anything added later — gets the bound that `projects.project_name`'s unbounded `text()` column
+ * does not give it. It is parsed on the line AFTER `authorize`, and that order is load-bearing: a
+ * parse above the guard answers a question for a caller who has not cleared it. That is also why
+ * the wrapper below re-asks nothing.
+ */
 export async function createProject(data: CreateProjectInput) {
 	const actor = await authorize("create", { type: "project" });
+	const problem = projectNameProblem(data.project.project_name);
+	if (problem) throw new ProjectNameInvalidError(problem);
 	const owner = actor.userId;
 	// A project belongs to the ACTIVE ORG, not the creating user. In the community build these are the
 	// same value (`actor.orgId === userId`), so everything below is byte-identical there. They diverge
@@ -474,6 +643,10 @@ export async function createProject(data: CreateProjectInput) {
 	// (which filters `projects.org_id = actor.orgId`) missed the project and its own creator couldn't
 	// see it. Scope the whole transaction to the org and stamp the org id explicitly.
 	const orgId = actor.orgId;
+	// Stored trimmed, like `updateProjectName` does. Without it " api" and "api" are two DISTINCT
+	// rows under `projects_org_id_project_name_key` (UNIQUE on (org_id, lower(project_name))) — two
+	// projects the CLI's `alethia project get <name>` cannot tell apart.
+	const project_name = data.project.project_name.trim();
 
 	return withScope({ ownerId: owner, orgId }, async (tx) => {
 		// M1: environment_stage is no longer a project column — it seeds the default env.
@@ -483,7 +656,7 @@ export async function createProject(data: CreateProjectInput) {
 		// the shared front-door invariant — the SAME core the CLI route (POST /api/cli/projects)
 		// runs, so the two creation paths can never drift.
 		const { project, defaultEnv } = await insertProjectWithDefaultFabric(tx, {
-			project_name: projectFields.project_name,
+			project_name,
 			region: projectFields.region,
 			cloud_identity_id: projectFields.cloud_identity_id ?? null,
 			iac_version: projectFields.iac_version,
@@ -502,13 +675,68 @@ export async function createProject(data: CreateProjectInput) {
 			user_id: owner,
 			action: "CREATED",
 			changes: {
-				project_name: data.project.project_name,
+				project_name,
 				environment: data.project.environment_stage,
 			},
 		});
 
 		return { project };
 	});
+}
+
+/**
+ * Creates a project, RETURNING a refusal the caller can render.
+ *
+ * The user-facing half of #4644. `createProject` above throws, and a thrown message from a
+ * `"use server"` export is redacted to a `digest` in a production build — so a name that is already
+ * taken, or one no schema would accept, reached the user as a generic failure and the create simply
+ * appeared not to work. This returns that sentence instead.
+ *
+ * ONLY the two refusals are mapped — a name that breaks a `project_name` rule, and a name the org
+ * already holds. Anything else is rethrown on purpose: an unexpected error is a defect, not advice,
+ * and rendering its text as though the user could act on it is worse than the digest. Callers keep
+ * their `catch` for that case.
+ *
+ * **THIS FUNCTION ASKS NOTHING ABOUT THE INPUT BEFORE `createProject` DOES.** It is itself an export
+ * of a `"use server"` file, so it is a POST-addressable action id of its own; any statement it makes
+ * before delegating is a statement made before `authorize`. Validating here first — which is what
+ * this wrapper did when it was written — turns the action into an input oracle an unauthenticated
+ * POST can query: send a name, learn from the reply whether it is too long, unslugifiable or empty,
+ * with no session and nothing written to the audit log. The rule therefore lives exactly once, in
+ * `createProject`, BEHIND its guard, and reaches this wrapper as a caught {@link
+ * ProjectNameInvalidError}. The ordering that matters is `authorize` → parse → write.
+ *
+ * @param data the same `CreateProjectInput` `createProject` takes
+ * @returns the created project, or `{ ok: false, error }` with a sentence to show
+ */
+export async function tryCreateProject(
+	data: CreateProjectInput,
+): Promise<CreateProjectResult> {
+	try {
+		const { project } = await createProject(data);
+		return { ok: true, project };
+	} catch (err) {
+		// The name rule, asked by `createProject` AFTER its `authorize` (see above). Its message is
+		// already a sentence written for a user — `projectNameProblem` produced it.
+		if (err instanceof ProjectNameInvalidError) {
+			return { ok: false, error: err.message };
+		}
+		// The pre-check and the index race both land on this class (see
+		// `insertProjectWithDefaultFabric`); `isProjectNameTaken` covers a raw 23505 that reached
+		// here unmapped, and its sentence is REBUILT rather than read off the driver error, whose
+		// text is "Failed query: insert into …".
+		if (err instanceof ProjectNameTakenError) {
+			return { ok: false, error: err.message };
+		}
+		if (isProjectNameTaken(err)) {
+			return {
+				ok: false,
+				error: new ProjectNameTakenError(data.project.project_name.trim())
+					.message,
+			};
+		}
+		throw err;
+	}
 }
 
 /**
@@ -611,12 +839,30 @@ export async function getProject(
 				desc(projectEnvironments.is_default),
 				projectEnvironments.created_at,
 			);
-		const defaultEnv =
-			environments.find((e) => e.is_default) ?? environments[0] ?? null;
-		const activeEnv =
-			(environmentId
-				? environments.find((e) => e.id === environmentId)
-				: undefined) ?? defaultEnv;
+		// `?? environments[0]` is gone (#4127): the database now refuses to commit a project whose
+		// environments carry no default (`project_environments_one_default_check`,
+		// lib/db/programmables.sql), so the fallback could only ever hide a broken invariant behind a
+		// header, an "Env" column and a deploy target that each looked authoritative and could each
+		// name a different environment. A project with NO environments still yields null, which every
+		// consumer below already handles.
+		// LAZY, and that is the whole point of the ordering. `pickDefaultEnvironment` THROWS on a
+		// project whose environments carry no default, so calling it unconditionally made a broken
+		// project 500 even when the caller had named a perfectly good `environment_id` — i.e. on the
+		// one page an operator would open to look at the damage. An explicit id is answered from the
+		// list without consulting the default at all.
+		const named = environmentId
+			? environments.find((e) => e.id === environmentId)
+			: undefined;
+		// `defaultEnv` is still needed on its own — `default_environment_id` in the return is the
+		// project's DEFAULT, not the env being viewed — so it cannot simply collapse into `activeEnv`.
+		// It follows the same lazy rule: when the caller named an environment, a broken project
+		// degrades this field to `null` (already its value for a project with no environments) rather
+		// than throwing, so the inspection page renders. When no id was named the default IS the
+		// answer, and a violation is reported instead of guessed.
+		const defaultEnv = named
+			? (environments.find((e) => e.is_default) ?? null)
+			: pickDefaultEnvironment(projectId, environments);
+		const activeEnv = named ?? defaultEnv;
 
 		/** Reads one environment's component rows (env-scoped). */
 		async function readComponents(envId: string) {
@@ -1067,6 +1313,51 @@ async function buildConfigSnapshot(
 		}
 
 		if (identity.provider === "hetzner") {
+			// #3588: a node name becomes a Kubernetes object name ONLY here. `db-<name>` /
+			// `cache-<name>` / `queue-<name>` / `topic-<name>` / `nosql-<name>` / `registry-<name>`
+			// are Applications, CNPG Clusters, Services and the Secrets the runner seeds credentials
+			// into, and the runner validates them against the DNS-LABEL charset because they
+			// interpolate into `kubectl` through `bash -c`. A name outside it renders a VALID Secret
+			// and a VALID Application, both apply, and the StatefulSet then sits at
+			// CreateContainerConfigError forever with no credential — the only human in that whole
+			// sequence being the one person not told.
+			//
+			// MIRRORS THE EMITTER: the kinds and their prefixes come from
+			// HETZNER_ADDON_ID_PREFIXES, the same constants hetznerDataServicesToAddOns
+			// interpolates, so a seventh charted kind is covered the day it ships. `secret` and
+			// `chart repo` are absent because they get no id — a secret is one KV entry inside the
+			// single project-wide Vault release, not an object of its own.
+			//
+			// AND ONLY ON THE PATHS THAT CREATE, exactly like the DNS gate above. This lived in
+			// project-form.schema.ts first, which was wrong twice over: the schema cannot see the
+			// provider, so it refused names that are legal on AWS (a table's name IS
+			// `table_name_suffix`, the `for_each` KEY of the DynamoDB module — `Orders.v2` deploys
+			// there today), and every write path re-parses the document, so those projects became
+			// unsavable rather than merely un-deployable. Worse, the rename the message demanded
+			// re-keys that `for_each` and REPLACES the table. Refusing to create more of a broken
+			// config is the point; wedging one that already exists is not.
+			const nameGateApplies = jobKind === "plan" || jobKind === "deploy";
+			if (nameGateApplies) {
+				const charted: [HetznerChartedKind, { name: string }[]][] = [
+					["databases", databases],
+					["caches", caches],
+					["queues", queues],
+					["topics", topics],
+					["tables", nosqlTables],
+					["registries", containerRegistries],
+				];
+				for (const [kind, rows] of charted) {
+					for (const row of rows) {
+						const problem = hetznerNodeNameProblem(kind, row.name);
+						if (problem) {
+							throw new Error(
+								`Component name: ${problem} Rename it in the canvas and save, then deploy again.`,
+							);
+						}
+					}
+				}
+			}
+
 			// Fail-closed engine gate: the mapper only charts what it supports (a NULL
 			// engine_family defaults to postgres), so anything else must throw here rather
 			// than be dropped from the deploy silently. Caches/queues need no gate — the
@@ -1428,6 +1719,7 @@ async function buildConfigSnapshot(
 				num_cache_nodes: c.num_cache_nodes,
 				multi_az: c.multi_az,
 				allowed_cidr_blocks: c.allowed_cidr_blocks,
+				provider_config: c.provider_config,
 				...resolvePlacement(c),
 			})),
 			queues: queues.map((q) => ({
@@ -1440,6 +1732,7 @@ async function buildConfigSnapshot(
 			})),
 			topics: topics.map((t) => ({
 				name: t.name,
+				provider_config: t.provider_config,
 				...resolvePlacement(t),
 				subscriptions: topicSubs.get(t.id) ?? [],
 			})),
@@ -1453,6 +1746,7 @@ async function buildConfigSnapshot(
 				capacity_mode: n.capacity_mode,
 				point_in_time_recovery: n.point_in_time_recovery,
 				global_replicas: n.global_replicas,
+				provider_config: n.provider_config,
 				...resolvePlacement(n),
 			})),
 			secrets: secrets.map((s) => ({
@@ -1650,12 +1944,19 @@ async function resolveTargetEnvironment(
 	}
 
 	// Effective ArgoCD destination namespace. `dedicated` owns the whole Fabric → no namespace
-	// (legacy behaviour); shared placements use the env's explicit namespace, else an RFC-1123
-	// slug of its name (via slugify, capped at 63 chars — the k8s namespace length limit).
+	// (legacy behaviour); shared placements use the env's explicit namespace, else a DNS-1123 slug
+	// of its name.
+	//
+	// The environment id is the fallback, and it is not decorative: `slugify` used to be able to
+	// return "" here and the result went straight into the ArgoCD destination unchecked, which
+	// renders `namespace: ` and applies into whatever ArgoCD defaults to. Env names created from
+	// now on are validated to slug to something (lib/validations/names.ts), but rows that predate
+	// that validation are still in the table — and a uuid is itself a valid DNS-1123 label, so the
+	// fallback is a legal namespace rather than another guess.
 	const namespace =
 		environment.placement_mode === "dedicated"
 			? null
-			: (environment.namespace ?? slugify(environment.name, 63));
+			: (environment.namespace ?? slugify(environment.name, environment.id));
 
 	return { environment, fabric, namespace };
 }
@@ -2160,8 +2461,14 @@ const LIVE_ENV_STATUSES = new Set([
  * cascade; jobs keep their history with a null project reference. This does NOT tear down
  * provisioned cloud infrastructure — it refuses while any environment is live/in-flight, so the
  * caller must destroy those environments first.
+ *
+ * That refusal is RETURNED, not thrown (#4644): it used to be a `throw new Error("This project has
+ * live or in-flight environments…")`, and a production build redacted it, so the Danger Zone closed
+ * its dialog and said nothing the user could act on. See {@link ProjectRefusal}.
  */
-export async function deleteProject(projectId: string) {
+export async function deleteProject(
+	projectId: string,
+): Promise<DeleteProjectResult> {
 	const actor = await authorize("destroy", { type: "project", id: projectId });
 	return withActorScope(actor, async (tx) => {
 		// Refuse while any environment is live/in-flight — deleting would orphan cloud resources.
@@ -2170,13 +2477,15 @@ export async function deleteProject(projectId: string) {
 			.from(projectEnvironments)
 			.where(eq(projectEnvironments.project_id, projectId));
 		if (envs.some((e) => LIVE_ENV_STATUSES.has(e.status))) {
-			throw new Error(
-				"This project has live or in-flight environments. Destroy them before deleting the project.",
-			);
+			return {
+				ok: false,
+				error:
+					"This project has live or in-flight environments. Destroy them before deleting the project.",
+			};
 		}
 		// CASCADE handles all component tables.
 		await tx.delete(projects).where(eq(projects.id, projectId));
-		return { success: true };
+		return { ok: true };
 	});
 }
 
@@ -2306,6 +2615,7 @@ export async function getProjectAsFormData(
 			node_type: c.node_type ?? undefined,
 			num_cache_nodes: c.num_cache_nodes ?? undefined,
 			multi_az: c.multi_az ?? undefined,
+			provider_config: c.provider_config ?? undefined,
 		})),
 		queues: source.components.queues.map((q) => ({
 			name: q.name,
@@ -2316,6 +2626,7 @@ export async function getProjectAsFormData(
 		topics: source.components.topics.map((t) => ({
 			name: t.name,
 			subscriptions: t.subscriptions ?? [],
+			provider_config: t.provider_config ?? undefined,
 		})),
 		nosql_tables: source.components.nosql_tables.map((t) => ({
 			name: t.name,
@@ -2326,6 +2637,7 @@ export async function getProjectAsFormData(
 			table_type: t.table_type ?? undefined,
 			capacity_mode: t.capacity_mode ?? undefined,
 			point_in_time_recovery: t.point_in_time_recovery ?? undefined,
+			provider_config: t.provider_config ?? undefined,
 		})),
 		// provider/provider_config are DESIGN (which secret store this environment reads through),
 		// not provisioned state — they must round-trip. Omitting them was a silent data-loss bug:
@@ -2383,30 +2695,81 @@ export async function getProjectAsFormData(
 	return { formData, provider };
 }
 
-/** Duplicates a project config for a different cloud provider, mapping provider-specific values. */
-export async function duplicateProjectForProvider(
-	sourceProjectId: string,
-	targetCloudIdentityId: string,
-	targetRegion: string,
-): Promise<{
+/** {@link duplicateProjectForProvider}'s success shape, shared with its `try` wrapper. */
+export interface DuplicatedProject {
 	newProjectId: string;
 	/** Slug of the new project, for navigating into its canvas (`/{org}/{slug}`). */
 	newProjectSlug: string;
 	warnings: ConversionWarning[];
-}> {
+}
+
+/** {@link tryDuplicateProjectForProvider}'s result: the clone, or a refusal to render. */
+export type DuplicateProjectResult =
+	| ({ ok: true } & DuplicatedProject)
+	| ProjectRefusal;
+
+/**
+ * The name a cross-cloud clone gets when the user does not choose one.
+ *
+ * ` (${targetProvider})` is 6–10 characters and `pickFreeProjectName` adds up to " N" more, all of
+ * it against `PROJECT_NAME_MAX_LENGTH` (100) — which `createProject` has ENFORCED since #4738.
+ * Before that the column was an unbounded `text()` and an over-long derived name simply persisted;
+ * now it throws, so a project whose own name is within the suffix of the cap became impossible to
+ * duplicate at all (aws/gcp: 95 chars, azure: 93, alibaba/hetzner: 91 — two fewer each once a
+ * collision adds " 2"). That is why the dialog needs a name FIELD and not just a better default:
+ * no derivation can shorten a name the user has not been asked about.
+ *
+ * Kept as one function with exactly one caller-visible behaviour so the default shown in the dialog
+ * and the default the action falls back to cannot drift into two answers.
+ *
+ * @param sourceName the source project's display name
+ * @param targetProvider the cloud being duplicated onto
+ * @param takenNames every project name already in the org
+ * @returns a name the org does not hold — which may exceed the cap, and is not checked here
+ */
+function deriveDuplicateName(
+	sourceName: string,
+	targetProvider: CloudProviderSlug,
+	takenNames: string[],
+): string {
+	return pickFreeProjectName(`${sourceName} (${targetProvider})`, takenNames);
+}
+
+/**
+ * Duplicates a project config for a different cloud provider, mapping provider-specific values.
+ *
+ * THROWS on a refusal, like `createProject` does — see its JSDoc for why, and use
+ * {@link tryDuplicateProjectForProvider} from a client component that must SHOW the refusal.
+ *
+ * @param sourceProjectId the project being copied
+ * @param targetCloudIdentityId the verified cloud account the clone is created against
+ * @param targetRegion the clone's region on the target cloud
+ * @param projectName the clone's display name; when absent the derived default is used, so the
+ *   action keeps a correct answer for a caller that does not have a name field (#4162)
+ */
+export async function duplicateProjectForProvider(
+	sourceProjectId: string,
+	targetCloudIdentityId: string,
+	targetRegion: string,
+	projectName?: string,
+): Promise<DuplicatedProject> {
 	const actor = await authorize("create", { type: "project" });
 	const owner = actor.userId;
 
 	const { formData, provider: sourceProvider } =
 		await getProjectAsFormData(sourceProjectId);
 
-	const targetIdentity = await withActorScope(actor, async (tx) => {
+	const { targetIdentity, takenNames } = await withActorScope(actor, async (tx) => {
 		const [row] = await tx
 			.select({ provider: cloudIdentities.provider })
 			.from(cloudIdentities)
 			.where(eq(cloudIdentities.id, targetCloudIdentityId))
 			.limit(1);
-		return row;
+		const names = await tx
+			.select({ project_name: projects.project_name })
+			.from(projects)
+			.where(eq(projects.org_id, actor.orgId));
+		return { targetIdentity: row, takenNames: names.map((n) => n.project_name) };
 	});
 
 	if (!targetIdentity) throw new Error("Target cloud identity not found");
@@ -2421,6 +2784,27 @@ export async function duplicateProjectForProvider(
 
 	converted.project.region = targetRegion;
 	converted.project.cloud_identity_id = targetCloudIdentityId;
+	// THE CLONE NEEDS ITS OWN NAME. `convertProjectConfig` translates services and never touches
+	// `project_name`, and the same-provider branch is a bare `structuredClone` — so without this the
+	// name handed to `createProject` is the SOURCE project's, in the source project's own org, and
+	// #3145's uniqueness check matches the source row itself — "A project named … already exists"
+	// every single time, and no project ever created. The dialog now HAS a name field (#4162), but
+	// the derivation stays: it is the field's pre-filled default, and it is what a caller without a
+	// field — the action is a POST-addressable id of its own — still gets.
+	//
+	// The user's name WINS when the dialog sent one — that is #4162's whole point, and it is also
+	// the only way past the cap for a source project whose own name is within the suffix of it.
+	// Nothing is asked about it here: `createProject` parses every name it is handed, after its
+	// `authorize`, and a bad one comes back as the catchable `ProjectNameInvalidError` the wrapper
+	// below renders. Re-asking here would put a validator in front of an action id that an
+	// unauthenticated POST can reach — the ordering #4644 records.
+	converted.project.project_name =
+		projectName ??
+		deriveDuplicateName(
+			formData.project.project_name,
+			targetProvider,
+			takenNames,
+		);
 
 	const { project } = await createProject(converted);
 	if (!project.slug) throw new Error("Duplicated project is missing a slug");
@@ -2430,6 +2814,68 @@ export async function duplicateProjectForProvider(
 		newProjectSlug: project.slug,
 		warnings,
 	};
+}
+
+/**
+ * Duplicates a project, RETURNING a refusal the caller can render.
+ *
+ * Exactly {@link tryCreateProject}'s shape, for exactly its reason, on the second screen that needs
+ * it. The duplicate dialog is a `"use client"` component, so its call is a Server Action round trip
+ * and a thrown message is redacted to a `digest` in a production build. That is the whole reason
+ * #4162's name field would otherwise be useless: the user could edit the name, but the sentence
+ * saying WHY the old one was refused — too long, or already held by the org — never reached them.
+ *
+ * ONLY the two name refusals are mapped; anything else is rethrown, because an unexpected error is
+ * a defect rather than advice and the dialog's `catch` is what handles it. `ProjectNameInvalidError`
+ * is module-private (a `"use server"` file may export nothing but async functions), and this wrapper
+ * lives in the same module for that reason.
+ *
+ * **IT ASKS NOTHING ABOUT THE INPUT BEFORE DELEGATING.** It is its own action id, so any check here
+ * is a check made before `authorize` — an input oracle an unauthenticated POST can query. The rule
+ * lives once, in `createProject`, behind its guard.
+ *
+ * @param sourceProjectId the project being copied
+ * @param targetCloudIdentityId the verified cloud account the clone is created against
+ * @param targetRegion the clone's region on the target cloud
+ * @param projectName the clone's display name; absent falls back to the derived default
+ * @returns the clone, or `{ ok: false, error }` with a sentence to show beside the name field
+ */
+export async function tryDuplicateProjectForProvider(
+	sourceProjectId: string,
+	targetCloudIdentityId: string,
+	targetRegion: string,
+	projectName?: string,
+): Promise<DuplicateProjectResult> {
+	try {
+		const duplicated = await duplicateProjectForProvider(
+			sourceProjectId,
+			targetCloudIdentityId,
+			targetRegion,
+			projectName,
+		);
+		return { ok: true, ...duplicated };
+	} catch (err) {
+		if (err instanceof ProjectNameInvalidError) {
+			return { ok: false, error: err.message };
+		}
+		if (err instanceof ProjectNameTakenError) {
+			return { ok: false, error: err.message };
+		}
+		// `ProjectNameTakenError` above ALREADY covers the index race that `pickFreeProjectName`'s
+		// JSDoc describes — `takenNames` is read in one transaction and the insert happens in
+		// another, so two concurrent duplicates can derive the same name and
+		// `projects_org_id_project_name_key` refuses the loser. `insertProjectWithDefaultFabric`
+		// maps every 23505 on that index onto the class, on both the first insert and the slug
+		// retry, so it arrives here typed.
+		//
+		// There is deliberately NO `isProjectNameTaken(err)` fallback, which is where this wrapper
+		// differs from `tryCreateProject`. That fallback rebuilds the sentence from the name the
+		// CALLER passed, and this caller may pass none: the name would then be the derived default,
+		// which is computed inside `duplicateProjectForProvider` and is not a value this scope
+		// holds. Naming the wrong project in "A project named … already exists" is worse than the
+		// digest it would replace, so an unmapped error stays an unexpected one.
+		throw err;
+	}
 }
 
 /**
@@ -2449,11 +2895,28 @@ export type DuplicateCategory =
 	| "topics"
 	| "secrets";
 
-/** Source provider + the service categories present, for the cross-cloud duplicate preview. */
+/**
+ * Source provider, the service categories present, and the per-target default NAME, for the
+ * cross-cloud duplicate preview.
+ *
+ * `suggestedNames` is what pre-fills the dialog's name field, and it is keyed by target cloud
+ * because the suffix NAMES that cloud — a field still reading " (aws)" after the user switched the
+ * target to GCP is a wrong default, not a stale one. It is computed HERE, by the same
+ * `deriveDuplicateName` the action falls back to, rather than in the client: a second derivation in
+ * the dialog would be a second source of truth, and the client has no business reading the org's
+ * project names to de-duplicate against. Only the source project's own name reaches the client, in
+ * five pre-composed strings.
+ *
+ * It is a SUGGESTION and nothing here checks it against `PROJECT_NAME_MAX_LENGTH`: when the source
+ * name is long enough the suggestion is over the cap and the form says so on the first render —
+ * which is the honest reading, because that is precisely the project #4738 made un-duplicatable and
+ * the field the user must now shorten.
+ */
 export async function getProjectDuplicateSummary(projectId: string): Promise<{
 	provider: CloudProviderSlug;
 	projectName: string;
 	categories: DuplicateCategory[];
+	suggestedNames: Record<CloudProviderSlug, string>;
 }> {
 	const { formData, provider } = await getProjectAsFormData(projectId);
 	const categories: DuplicateCategory[] = ["network", "cluster"];
@@ -2464,7 +2927,30 @@ export async function getProjectDuplicateSummary(projectId: string): Promise<{
 	if (formData.queues?.length) categories.push("queues");
 	if (formData.topics?.length) categories.push("topics");
 	if (formData.secrets?.length) categories.push("secrets");
-	return { provider, projectName: formData.project.project_name, categories };
+
+	const actor = await currentActor();
+	const takenNames = await withActorScope(actor, async (tx) => {
+		const names = await tx
+			.select({ project_name: projects.project_name })
+			.from(projects)
+			.where(eq(projects.org_id, actor.orgId));
+		return names.map((n) => n.project_name);
+	});
+	const sourceName = formData.project.project_name;
+	// A literal annotated `Record<CloudProviderSlug, string>` rather than a fold over
+	// `CLOUD_PROVIDER_SLUGS`: the annotation is checked in BOTH directions, so a cloud added to the
+	// slug union fails to compile here until it is given a suggestion, and one removed fails too. A
+	// fold would need an `as` on its seed to type an accumulator that is briefly incomplete — and
+	// that cast is exactly the thing that would let a missing key through silently.
+	const suggestedNames: Record<CloudProviderSlug, string> = {
+		aws: deriveDuplicateName(sourceName, "aws", takenNames),
+		gcp: deriveDuplicateName(sourceName, "gcp", takenNames),
+		azure: deriveDuplicateName(sourceName, "azure", takenNames),
+		hetzner: deriveDuplicateName(sourceName, "hetzner", takenNames),
+		alibaba: deriveDuplicateName(sourceName, "alibaba", takenNames),
+	};
+
+	return { provider, projectName: sourceName, categories, suggestedNames };
 }
 
 // ============================================================
@@ -2498,12 +2984,12 @@ export async function addEnvironment(
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
-	const name = slugify(input.name);
-	if (!name) throw new Error("Environment name is required");
-	if (RESERVED_PROJECT_CHILD_SLUGS.includes(name))
-		throw new Error(
-			`"${name}" is reserved and can't be used as an environment name`,
-		);
+	// One definition of what an environment name may be, shared with the CLI's `project env add`
+	// and with `project create --env` (lib/validations/names.ts). The two used to disagree: this
+	// path slugified `Prod` to `prod`, the create path 400'd on it.
+	const problem = environmentNameProblem(input.name);
+	if (problem) throw new Error(problem);
+	const name = normalizeEnvironmentName(input.name);
 	return withActorScope(actor, async (tx) => {
 		const [project] = await tx
 			.select({ org_id: projects.org_id })
@@ -2520,7 +3006,22 @@ export async function addEnvironment(
 				name,
 				stage: input.stage,
 				status: "DRAFT",
-				is_default: false,
+				// TRUE WHEN THE PROJECT HAS NONE, not a flat `false`. The constraint trigger makes
+				// "some environments, none of them default" illegal at COMMIT, and a project CAN
+				// legitimately reach zero environments — the SCOPE note in programmables.sql keeps
+				// that a reported state (`CliEnvTarget.no-environments`) rather than an error. A
+				// hard-coded `false` therefore made such a project UNREPAIRABLE: the one insert that
+				// would fix it is refused, from the console and the CLI alike, with a raw
+				// `has 1 environment(s) but 0 default` 500.
+				//
+				// Same expression as the integration fixtures' `defaultIfFirst`, and correct for the
+				// same reason: this is a ONE-ROW insert, so the subquery is evaluated once against
+				// the pre-statement snapshot. A multi-row VALUES would see that snapshot for every
+				// row and set them all true.
+				is_default: sql<boolean>`NOT EXISTS (
+					SELECT 1 FROM public.project_environments e
+					 WHERE e.project_id = ${projectId}::uuid AND e.is_default
+				)`,
 				region: input.region ?? null,
 			})
 			.returning();
@@ -2541,12 +3042,9 @@ export async function duplicateEnvironment(
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
-	const slug = slugify(name);
-	if (!slug) throw new Error("Environment name is required");
-	if (RESERVED_PROJECT_CHILD_SLUGS.includes(slug))
-		throw new Error(
-			`"${slug}" is reserved and can't be used as an environment name`,
-		);
+	const problem = environmentNameProblem(name);
+	if (problem) throw new Error(problem);
+	const slug = normalizeEnvironmentName(name);
 	// The base env's design (form shape = config only; provisioned outputs already stripped). Null
 	// when the base env has no design yet (an empty env) → the duplicate is created empty too.
 	const baseConfig = await getProjectAsFormData(projectId, baseEnvironmentId)
@@ -2577,7 +3075,22 @@ export async function duplicateEnvironment(
 				name: slug,
 				stage: base.stage,
 				status: "DRAFT",
-				is_default: false,
+				// TRUE WHEN THE PROJECT HAS NONE, not a flat `false`. The constraint trigger makes
+				// "some environments, none of them default" illegal at COMMIT, and a project CAN
+				// legitimately reach zero environments — the SCOPE note in programmables.sql keeps
+				// that a reported state (`CliEnvTarget.no-environments`) rather than an error. A
+				// hard-coded `false` therefore made such a project UNREPAIRABLE: the one insert that
+				// would fix it is refused, from the console and the CLI alike, with a raw
+				// `has 1 environment(s) but 0 default` 500.
+				//
+				// Same expression as the integration fixtures' `defaultIfFirst`, and correct for the
+				// same reason: this is a ONE-ROW insert, so the subquery is evaluated once against
+				// the pre-statement snapshot. A multi-row VALUES would see that snapshot for every
+				// row and set them all true.
+				is_default: sql<boolean>`NOT EXISTS (
+					SELECT 1 FROM public.project_environments e
+					 WHERE e.project_id = ${projectId}::uuid AND e.is_default
+				)`,
 				region: base.region,
 			})
 			.returning();
@@ -2744,24 +3257,93 @@ export async function getProjectGeneral(
 /**
  * Renames a project. The slug is intentionally left stable so existing URLs / bookmarks keep
  * resolving — only the display name changes.
+ *
+ * This was the SECOND path that minted duplicate names (#3145): it wrote the new name with no
+ * uniqueness check at all, so one project could be renamed onto another's name deliberately — the
+ * stable slug is what made that survivable, and what made it invisible. It is now refused, with the
+ * same error and the same wording the create path uses, because "that name is taken" should not
+ * depend on which screen you are standing on.
+ *
+ * All three refusals are RETURNED, not thrown (#4644). They were thrown, and a production build
+ * redacted every one of them, so the rename field reported a digest for a thing the user could fix
+ * in one keystroke. See {@link ProjectRefusal}.
+ *
+ * The rules are `projectNameProblem`'s — the same ones the create path applies — so a name accepted
+ * on one screen is accepted on the other. That is the third round of exactly this asymmetry: the
+ * comment beside the schema's `.max()` records create/rename disagreeing at 50 vs 100, and #4644
+ * records the create action applying no rule at all while this one applied two of the three.
  */
 export async function updateProjectName(
 	projectId: string,
 	name: string,
-): Promise<{ project_name: string }> {
+): Promise<UpdateProjectNameResult> {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const project_name = name.trim();
-	if (!project_name) throw new Error("A project name is required");
-	if (project_name.length > 100)
-		throw new Error("Project name must be 100 characters or fewer");
+	const problem = projectNameProblem(project_name);
+	if (problem) return { ok: false, error: problem };
 	return withActorScope(actor, async (tx) => {
-		const [row] = await tx
-			.update(projects)
-			.set({ project_name, updated_at: new Date() })
+		// Scoped on the project's OWN org rather than trusting the RLS session alone — the same
+		// reasoning insertProjectWithDefaultFabric records, and it keeps the predicate identical
+		// to the index whether or not a future caller arrives service-role.
+		const [current] = await tx
+			.select({ org_id: projects.org_id })
+			.from(projects)
 			.where(eq(projects.id, projectId))
-			.returning({ project_name: projects.project_name });
-		if (!row) notFound(); // stale/deleted id → 404, not a captured error
-		return row;
+			.limit(1);
+		if (!current) notFound();
+
+		// Case-insensitive and excluding the project itself, matching
+		// `projects_org_id_project_name_key` (UNIQUE on (org_id, lower(project_name))). Excluding
+		// self matters: re-saving a name unchanged, or changing only its case, must not be refused
+		// as a collision with itself.
+		//
+		// The null-org branch mirrors the INDEX rather than being tidier than it. `org_id` is
+		// nullable in the column list, and a btree unique treats NULLs as DISTINCT — so a row with
+		// no org is not constrained by that index at all, and pre-checking it with
+		// `IS NOT DISTINCT FROM` would refuse a rename Postgres would happily accept. In practice
+		// the state is unreachable (the projects_set_org_id trigger coalesces to user_id, which is
+		// NOT NULL, and programmables.sql sweeps any historical NULL), which is exactly why the
+		// friendly check is skipped rather than guessed: the constraint below remains the
+		// authority either way.
+		if (current.org_id !== null) {
+			const clash = await tx
+				.select({ id: projects.id })
+				.from(projects)
+				.where(
+					and(
+						eq(projects.org_id, current.org_id),
+						sql`lower(${projects.project_name}) = lower(${project_name})`,
+						ne(projects.id, projectId),
+					),
+				)
+				.limit(1);
+			if (clash.length > 0)
+				return {
+					ok: false,
+					error: new ProjectNameTakenError(project_name).message,
+				};
+		}
+
+		try {
+			const [row] = await tx
+				.update(projects)
+				.set({ project_name, updated_at: new Date() })
+				.where(eq(projects.id, projectId))
+				.returning({ project_name: projects.project_name });
+			if (!row) notFound(); // stale/deleted id → 404, not a captured error
+			return { ok: true, project_name: row.project_name };
+		} catch (err) {
+			// The read above is optimistic at READ COMMITTED; the index is what enforces it. Map
+			// the loser of a concurrent rename onto the same refusal rather than a raw 23505 — the
+			// race and the ordinary case must read identically, which is what #3145 established and
+			// what a thrown-then-redacted message took away again.
+			if (isProjectNameTaken(err))
+				return {
+					ok: false,
+					error: new ProjectNameTakenError(project_name).message,
+				};
+			throw err;
+		}
 	});
 }
 

@@ -98,7 +98,7 @@ describe("useElenchThreads — org context", () => {
 
 describe("useElenchThreads — project context (Phase-2 un-gating)", () => {
 	it("lists + resumes threads scoped to the project id (same as org, not ephemeral)", async () => {
-		storeState.ctx = { kind: "project", projectId: "proj-1" };
+		storeState.ctx = { kind: "project", projectId: "proj-1", environmentId: null };
 		vi.mocked(listThreads).mockResolvedValue([{ id: "pt-newest" }] as never);
 		vi.mocked(getThread).mockResolvedValue({
 			id: "pt-newest",
@@ -116,7 +116,7 @@ describe("useElenchThreads — project context (Phase-2 un-gating)", () => {
 	});
 
 	it("resolves to an ephemeral conversation when the project has no threads", async () => {
-		storeState.ctx = { kind: "project", projectId: "proj-1" };
+		storeState.ctx = { kind: "project", projectId: "proj-1", environmentId: null };
 		vi.mocked(listThreads).mockResolvedValue([] as never);
 
 		const { result } = renderHook(() => useElenchThreads());
@@ -129,7 +129,7 @@ describe("useElenchThreads — project context (Phase-2 un-gating)", () => {
 	});
 
 	it("lazily creates + attaches a project thread on the first send (startThread)", async () => {
-		storeState.ctx = { kind: "project", projectId: "proj-1" };
+		storeState.ctx = { kind: "project", projectId: "proj-1", environmentId: null };
 		vi.mocked(listThreads).mockResolvedValue([] as never);
 		vi.mocked(createThread).mockResolvedValue({ id: "pt-fresh" } as never);
 

@@ -379,7 +379,9 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				fmt.Fprintf(stdoutLogger, "Assuming role %s into account %s...\n", claim.CloudIdentity.RoleArn, claim.CloudIdentity.AccountID)
 				sessionName := fmt.Sprintf("runner-%s", shortID(job.ID, 8))
 				if err := AssumeRole(ctx, claim.CloudIdentity.RoleArn, claim.CloudIdentity.ExternalID, sessionName); err != nil {
-					errMsg := fmt.Sprintf("Failed to assume role: %v", err)
+					// #3348: say WHICH credential path this is and why it had nothing to read. The
+					// SDK's own message names EC2 IMDS, which is its last source, not the cause.
+					errMsg := ambientCredentialFailure("Failed to assume role", "aws", w.config.Operator, err)
 					fmt.Fprintln(stderrLogger, errMsg)
 					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
 					return err
@@ -410,7 +412,8 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				fmt.Fprintf(stdoutLogger, "Activating WIF for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
 				cleanup, err := ActivateGcpWIF(claim.CloudIdentity.WifConfig, claim.CloudIdentity.ProjectID)
 				if err != nil {
-					errMsg := fmt.Sprintf("Failed to activate GCP WIF: %v", err)
+					// #3348, the GCP half: ADC exhaustion reads the same way as the AWS IMDS 404.
+					errMsg := ambientCredentialFailure("Failed to activate GCP WIF", "gcp", w.config.Operator, err)
 					fmt.Fprintln(stderrLogger, errMsg)
 					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
 					return err
@@ -755,9 +758,22 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	if costCeilingFromEnv() > 0 {
 		deployInfracostToken = os.Getenv("INFRACOST_API_KEY")
 	}
+	// A REFUSED override is not the same as an absent one, and the difference has to reach the
+	// operator. Both builders fail closed on a malformed waiver, and until this line said so the
+	// only symptom was the gate's own message — "…or supply an authorized override to proceed" —
+	// telling someone who HAD supplied one to supply one. stdout is the job log, which is where
+	// they are already looking when an apply blocks.
+	verifyOverride, verifyRefusal := buildVerifyOverride(job.VerifyOverride)
+	compatOverride, compatRefusal := buildCompatOverride(job.CompatOverride)
+	for _, refusal := range []string{verifyRefusal, compatRefusal} {
+		if refusal != "" {
+			fmt.Fprintf(stdout, "Override REFUSED and the gate stays closed: %s\n", refusal)
+		}
+	}
+
 	payload := buildDeployPayload(vc, provider, false, planFile,
 		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
-		deployInfracostToken, buildVerifyOverride(job.VerifyOverride), buildCompatOverride(job.CompatOverride),
+		deployInfracostToken, verifyOverride, compatOverride,
 		w.config.AlethiaURL, job.ID)
 	stage, err := newStage(sandbox.StageDeploy, payload)
 	if err != nil {

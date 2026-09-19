@@ -1,45 +1,54 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// E2E for the redesigned connectors page (full-width: group-filter dropdown +
-// search + card/table toggle, grouped sections). Route is /{org}/~/connectors.
+// The connectors board (`/{org}/~/connectors`) against a BRAND-NEW org — this project drives a
+// full email-OTP signup per test, so every assertion here is about the pristine state that the
+// shared-persona `qa` suite (e2e/flows/connectors*.spec.ts) can never observe: nothing connected,
+// no accounts, no phantom verification, an untouched setup guide.
+//
+// It used to look for a Radix `<Select>` group filter (`getByRole("combobox")`). That control is
+// gone: the board is on the console filter standard, whose group axis is a `FacetFilter` popover
+// (`components/connectors/connectors-filter-bar.tsx`).
+//
+// Never `getByRole("button", { name: "Connect" })` — the catalog renders a couple of dozen buttons
+// whose visible word is "Connect", so that fails strict mode. Each carries
+// `aria-label="Connect <connector name>"` (#4268); ask for the one you mean, with `exact: true`.
 
 import { test, expect } from "./fixtures/auth";
 
 test.describe("Connectors page", () => {
-	test("loads the connectors browser", async ({ authedPage: page, orgSlug }) => {
+	test("loads the board on the shared filter grammar", async ({ authedPage: page, orgSlug }) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await expect(page.getByLabel(/search connectors/i)).toBeVisible();
-		// The group-filter Select (Radix trigger → combobox role) and a known connector.
-		await expect(page.getByRole("combobox")).toBeVisible();
-		await expect(page.getByText("GitHub").first()).toBeVisible();
+		await expect(page.getByLabel("Search connectors")).toBeVisible();
+		await expect(page.getByRole("button", { name: /^Group\b/ })).toBeVisible();
+		await expect(page.getByPlaceholder("All vendors")).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Clouds", exact: true })).toBeVisible();
 	});
 
-	test("search filters connectors", async ({ authedPage: page, orgSlug }) => {
+	test("search filters the board by name", async ({ authedPage: page, orgSlug }) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await page.getByLabel(/search connectors/i).fill("GitHub");
-		await expect(page.getByText("GitHub").first()).toBeVisible();
-		await expect(page.getByText("Datadog")).toHaveCount(0);
+		await page.getByLabel("Search connectors").fill("Datadog");
+		await expect(page.getByRole("button", { name: "Connect Datadog", exact: true })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Source", exact: true })).toHaveCount(0);
 	});
 
-	test("group dropdown narrows to a category", async ({
+	test("the Group facet narrows the board to one section", async ({
 		authedPage: page,
 		orgSlug,
 	}) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await page.getByRole("combobox").click();
-		await page.getByRole("option", { name: /clouds/i }).click();
-		await expect(page.getByText("AWS").first()).toBeVisible();
+		await page.getByRole("button", { name: /^Group\b/ }).click();
+		await page.getByRole("option", { name: /^Clouds/ }).click();
+		await page.keyboard.press("Escape");
+		await expect(page.getByRole("heading", { name: "Clouds", exact: true })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Registries", exact: true })).toHaveCount(0);
 	});
 
-	test("toggles between card and table view", async ({
-		authedPage: page,
-		orgSlug,
-	}) => {
+	test("toggles between card and table view", async ({ authedPage: page, orgSlug }) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await page.getByRole("button", { name: /table view/i }).click();
+		await page.getByRole("button", { name: "Table view" }).click();
 		await expect(page.getByRole("table").first()).toBeVisible();
-		await page.getByRole("button", { name: /card view/i }).click();
+		await page.getByRole("button", { name: "Card view" }).click();
 		await expect(page.getByRole("table")).toHaveCount(0);
 	});
 
@@ -51,11 +60,9 @@ test.describe("Connectors page", () => {
 		orgSlug,
 	}) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await expect(page.getByLabel(/search connectors/i)).toBeVisible();
+		await expect(page.getByLabel("Search connectors")).toBeVisible();
 		await expect(page.getByText(/verification failed/i)).toHaveCount(0);
-		await expect(
-			page.getByRole("button", { name: /re-verify/i }),
-		).toHaveCount(0);
+		await expect(page.getByRole("button", { name: /^Re-verify/ })).toHaveCount(0);
 	});
 
 	// Regression: visiting the connectors page pre-creates pending placeholder cloud identities.
@@ -67,7 +74,7 @@ test.describe("Connectors page", () => {
 	}) => {
 		// Trigger the eager placeholder creation.
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await expect(page.getByLabel(/search connectors/i)).toBeVisible();
+		await expect(page.getByLabel("Search connectors")).toBeVisible();
 
 		// Back on the overview, open the setup guide from the topbar.
 		await page.goto(`/${orgSlug}`);

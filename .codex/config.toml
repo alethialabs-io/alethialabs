@@ -1,6 +1,7 @@
 # Alethia Codex project configuration.
 # Routine work is autonomous; repository hooks and the sandbox enforce safety.
-approval_policy = "never"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
 sandbox_mode = "workspace-write"
 
 [sandbox_workspace_write]

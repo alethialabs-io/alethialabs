@@ -25,7 +25,6 @@
 // would either leak those rows to a tenant or hide a person's case from the only path that can
 // answer it.
 
-import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNull, lt } from "drizzle-orm";
 import { z } from "zod";
 import { authorize, currentActor } from "@/lib/authz/guard";
@@ -35,48 +34,13 @@ import {
 	privacyCaseEvent,
 	privacyErasureTombstone,
 } from "@/lib/db/schema";
-import type { PrivacyCaseEventKind, PrivacyCaseKind } from "@/lib/db/schema/enums";
+import type { PrivacyCaseKind } from "@/lib/db/schema/enums";
 import { buildErasurePlan, planToScope } from "@/lib/privacy/erasure-plan";
-import type { PrivacyEventDetail } from "@/types/jsonb.types";
+import { newReference, recordEvent, subjectHash } from "./ledger";
+import { PRIVACY_RESPONSE_DAYS as RESPONSE_DAYS } from "./response-period";
 
-/** The statutory period to answer, in days (GDPR art. 12(3): one month). */
-const RESPONSE_DAYS = 30;
 /** The single extension available for a complex request, in days (two further months). */
 const EXTENSION_DAYS = 60;
-
-/**
- * SHA-256 of a contact address, lower-cased and trimmed.
- *
- * The only identifier that survives fulfilment, so it is hashed rather than stored: a table listing
- * everyone who ever exercised a privacy right, in plaintext, would be a privacy problem created by
- * the machinery meant to solve one.
- */
-export function subjectHash(email: string): string {
-	return createHash("sha256").update(email.trim().toLowerCase()).digest("hex");
-}
-
-/** A short, human reference to quote in correspondence. Unique; never reused. */
-function newReference(): string {
-	return `DSR-${randomUUID().slice(0, 8).toUpperCase()}`;
-}
-
-/**
- * Appends to the ledger. Never updates — the trigger in programmables.sql refuses UPDATE and DELETE,
- * so this is the only way anything is recorded and the history cannot be revised afterwards.
- */
-async function recordEvent(
-	caseId: string,
-	kind: PrivacyCaseEventKind,
-	detail: PrivacyEventDetail,
-	actorUserId: string | null,
-): Promise<void> {
-	await getServiceDb().insert(privacyCaseEvent).values({
-		caseId,
-		kind,
-		actorUserId,
-		detail,
-	});
-}
 
 const openSchema = z.object({
 	kind: z.enum([
@@ -143,7 +107,9 @@ export async function openPrivacyCase(
  * Deliberately a separate, privileged step rather than something `openPrivacyCase` infers: a request
  * arriving from a signed-in session is good evidence, but the requests that matter most are the ones
  * that do not — from a former account, or from an address we cannot place — and a code path that
- * verifies implicitly would have no way to handle those.
+ * verifies implicitly would have no way to handle those. The one case that arrives verified is the
+ * account dialog's own erasure request (`requestMyErasure`, `self-serve.ts`): a separate entry point
+ * that takes no subject from its caller and records in the ledger that the session was the check.
  */
 export async function verifyPrivacyCaseIdentity(
 	reference: string,

@@ -3,6 +3,7 @@
 
 import { sql } from "drizzle-orm";
 import { enforceDecision } from "@/lib/authz/activity";
+import { targetForEffect } from "@/lib/authz/grant-scope";
 import { listOrgResourceIds } from "@/lib/authz/resource-tables";
 import { getServiceDb } from "@/lib/db";
 import { coversResource, decide, permissionKey } from "./evaluate";
@@ -16,6 +17,54 @@ import type {
 } from "./types";
 
 type Db = ReturnType<typeof getServiceDb>;
+
+/**
+ * A matched grant row, exactly as projected — the two scope columns and the effect.
+ * A type alias, not an interface: `db.execute<T>` constrains T to `Record<string, unknown>`,
+ * which an interface does not satisfy (no implicit index signature).
+ */
+type GrantRow = {
+	resource_type: string;
+	resource_id: string | null;
+	effect: string;
+};
+
+/**
+ * The rows of one effect, reduced to the ids they cover: `null` for an org-wide grant, the
+ * resource id for a scoped one. This is the ONLY place this engine interprets a grant's scope,
+ * and it does it through the same `targetForEffect` the OpenFGA expander uses.
+ *
+ * ⚠ THE EFFECT IS PASSED IN, AND IT IS NOT JUST A FILTER. An allow row is being asked what it
+ * CONFERS; a deny row is being asked what it EXCLUDES. For a row whose scope resolves to nothing
+ * those questions have opposite safe answers — conferring nothing is fail-closed, excluding
+ * nothing is fail-OPEN — so `targetForEffect` routes them to different predicates rather than
+ * letting one answer stand in for both. RULED (#4584): an uninterpretable scope confers nothing
+ * and EXCLUDES THE WHOLE ORG. Two different values, both failing closed; see
+ * `EMPTY_SCOPE_DENIES` in lib/authz/grant-scope.ts for the decision and the option it rejected.
+ *
+ * ⚠ THIS ENGINE IS WHERE THE RULING CHANGES LIVE ACCESS. It never projected `resource_type`, so
+ * EVERY row with a non-null `resource_id` was scoped to that id here regardless of kind — which
+ * means an allow row NARROWS to nothing and a deny row WIDENS to the whole org, on both classes,
+ * with nobody editing anything. `backfill` re-expands raw rows on every boot, so the deploy is
+ * what changes what they mean. Measured before deploy per row by `deploy_change` in
+ * docs/ops/grants-scope-contradictions.sql; see `denyTarget` for which class widens on which
+ * engine and why the ruling is uniform anyway.
+ *
+ * Before #4584 this engine did not project `resource_type` at all, so an `('org', <uuid>)` row
+ * read as a scoped grant on that uuid while the OpenFGA engine read the same row as
+ * organization-wide — one row, two opposite answers, decided by which engine an installation
+ * happens to run.
+ */
+function coveredIds(rows: GrantRow[], effect: "allow" | "deny"): (string | null)[] {
+	const ids: (string | null)[] = [];
+	for (const row of rows) {
+		if (row.effect !== effect) continue;
+		const target = targetForEffect(effect, row.resource_type, row.resource_id);
+		if (target.kind === "org") ids.push(null);
+		else if (target.kind === "resource") ids.push(target.resourceId);
+	}
+	return ids;
+}
 
 /**
  * Community Policy Decision Point: scoped RBAC over plain Postgres. Resolves the
@@ -32,10 +81,15 @@ export class PostgresRbacPDP implements Pdp {
 		db: Db,
 		actor: Actor,
 		permKey: string,
-	): Promise<{ resource_id: string | null; effect: string }[]> {
+	): Promise<GrantRow[]> {
 		// The actor's own grants PLUS grants to any team they belong to.
-		return db.execute<{ resource_id: string | null; effect: string }>(sql`
-			select g.resource_id, g.effect
+		//
+		// `resource_type` is projected because a grant's scope is not readable from
+		// `resource_id` alone: `coveredIds` needs both columns to reach the same verdict the
+		// OpenFGA expander reaches. Both callers (`can`, `listAccessible`) consume the result
+		// identically, through that one helper.
+		return db.execute<GrantRow>(sql`
+			select g.resource_type, g.resource_id, g.effect
 			from grants g
 			left join role_permission rp on rp.role_id = g.role_id
 			where g.org_id = ${actor.orgId}
@@ -107,8 +161,8 @@ export class PostgresRbacPDP implements Pdp {
 		);
 		if (rows.length === 0) return { allowed: false, reason: "no_grant" };
 
-		const allowIds = rows.filter((r) => r.effect === "allow").map((r) => r.resource_id);
-		const denyIds = rows.filter((r) => r.effect === "deny").map((r) => r.resource_id);
+		const allowIds = coveredIds(rows, "allow");
+		const denyIds = coveredIds(rows, "deny");
 
 		// Ancestors only matter when a scoped grant (allow or deny) is in play.
 		const scoped =
@@ -148,9 +202,9 @@ export class PostgresRbacPDP implements Pdp {
 			actor,
 			permissionKey(resourceType, action),
 		);
-		const allowIds = rows.filter((r) => r.effect === "allow").map((r) => r.resource_id);
+		const allowIds = coveredIds(rows, "allow");
 		if (allowIds.length === 0) return [];
-		const denyIds = rows.filter((r) => r.effect === "deny").map((r) => r.resource_id);
+		const denyIds = coveredIds(rows, "deny");
 		// An org-wide deny on this permission removes everything.
 		if (denyIds.some((id) => id === null)) return [];
 

@@ -1,23 +1,57 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The org layout calls notFound() before AppShell renders, so this shows full-page
-// (no dashboard chrome). Intentionally non-leaky: an unknown org and a forbidden
-// org read the same — we never disclose existence.
+// WHAT REACHES THIS FILE, AND WHAT DOES NOT.
+//
+// It used to say "the org layout calls notFound() before AppShell renders, so this shows
+// full-page". The first clause was true and was precisely why the second was false: this boundary
+// mounts inside `[org]/layout.tsx` (Next hands a segment's not-found.tsx to the LayoutRouter for
+// that segment's CHILDREN slot), so a throw FROM that layout escapes it. The org's own failure
+// never arrived here; it is answered by `(private)/not-found.tsx`, one segment up — see the
+// mechanism written out there.
+//
+// What arrives here is a notFound() thrown BELOW this layout by a route that has no nearer
+// boundary of its own. The org resolved for any such throw, so this renders INSIDE AppShell and
+// `fullPage` is the wrong variant — it would paint a min-h-screen centred panel inside the
+// dashboard chrome. The compact in-content ErrorState is the right one.
+//
+// ⚠ NOTHING REACHES IT TODAY, and the two examples this comment used to give are the reason to say
+// so out loud. It named "a project slug that does not resolve, a support case id that does not
+// exist" — and BOTH have since grown their own nearer boundary (`[org]/[project]/not-found.tsx`,
+// #3880; `~/support/cases/[id]/not-found.tsx`), which is precisely the remedy the paragraph below
+// recommends. Every `notFound()` call under `[org]` is inside one of those two subtrees, so this
+// file is a dormant fallback waiting for the next segment that throws without one. That is a fine
+// thing to be; it is not a fine thing to describe as if users were seeing it. #4267 was written
+// against the old sentence and asserted this copy on the project 404 — the run said
+// "Project not found".
+//
+// The copy is resource-neutral for the same reason. It is a fallback for whatever below `[org]`
+// has not been given its own not-found.tsx yet; naming the organization here told the user the
+// wrong thing about a missing project. A segment that wants to name its resource adds its own
+// boundary beside its page (`scripts/check-route-states.mjs`, predicate T3), and takes precedence
+// over this one.
+//
+// Still non-leaky: absent and forbidden read the same — we never disclose existence.
 
 import Link from "next/link";
 import { ErrorState } from "@/components/errors/error-state";
 import { Button } from "@repo/ui/button";
 
+/** The in-shell 404 for anything under a RESOLVED org that has no nearer not-found boundary. */
 export default function OrgNotFound() {
 	return (
 		<ErrorState
-			fullPage
 			code="404"
-			title="Organization not found"
-			description="This organization doesn't exist, or you don't have access to it."
+			title="Not found"
+			description="This page doesn't exist, or you don't have access to it."
 			actions={
-				<Button size="sm" nativeButton={false} render={<Link href="/" />}>
+				// `role="link"` is not decoration. base-ui's Button adds `role="button"` whenever
+				// `nativeButton` is false (`use-button/useButton.js` merges `{role: 'button'}` for
+				// the non-native branch), so this control — an `<a href="/">` in the DOM, the only
+				// way out of a 404 — announced itself as a button and could not be found by
+				// `getByRole("link")` at all. External props win that merge, so naming the role the
+				// element actually has restores the truth without giving up the Button's chrome.
+				<Button size="sm" nativeButton={false} role="link" render={<Link href="/" />}>
 					Go home
 				</Button>
 			}

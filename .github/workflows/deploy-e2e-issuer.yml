@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Deploys the E2E assertion issuer — the Worker four cloud federations trust as an OIDC issuer.
+#
+# Two controls keep "trusted issuer" from meaning "whatever branch last ran this file":
+#   · the `deploy` job refuses any ref but `dev` (a bare `workflow_dispatch --ref feat/x` would
+#     otherwise publish arbitrary code as the issuer), and
+#   · the `e2e-issuer` GitHub environment carries a deployment-branch policy of `dev`, declared in
+#     infra/github/environments.tf next to `production`'s `main` policy. The environment holds the
+#     Cloudflare credentials, so a job that cannot select it cannot deploy at all.
+#
+# Key material never rides a code deploy. `SIGNING_KEYS_JSON` is uploaded only when a dispatch
+# says so (`upload-signing-keys`), which is a ROTATION step, not a deploy step — see the README.
+
+name: Deploy E2E assertion issuer
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - apps/e2e-issuer/**
+      # wrangler bundles the broker schemas into the Worker, so a change there is a change here.
+      - packages/workload-identity/**
+      - pnpm-lock.yaml
+      - .github/workflows/deploy-e2e-issuer.yml
+  workflow_dispatch:
+    inputs:
+      upload-signing-keys:
+        description: Upload SIGNING_KEYS_JSON from the environment secret before deploying (a rotation step, never part of a code deploy)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-e2e-issuer
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: e2e-issuer
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      # No deployment credential is in scope here: install (third-party lifecycle scripts) and
+      # the test suite run without them, and only the two wrangler steps receive them.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C apps/e2e-issuer run test
+      - name: Upload rotation-aware signing key set
+        if: github.event_name == 'workflow_dispatch' && inputs.upload-signing-keys
+        working-directory: apps/e2e-issuer
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SIGNING_KEYS_JSON: ${{ secrets.SIGNING_KEYS_JSON }}
+        run: pnpm dlx wrangler@4.33.1 secret put SIGNING_KEYS_JSON <<< "$SIGNING_KEYS_JSON"
+      - name: Deploy Worker
+        working-directory: apps/e2e-issuer
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
+          GITHUB_TOKEN_AUDIENCE: ${{ vars.GITHUB_TOKEN_AUDIENCE }}
+          ALLOWED_REPOSITORIES: ${{ vars.ALLOWED_REPOSITORIES }}
+          ALLOWED_WORKFLOW_REFS: ${{ vars.ALLOWED_WORKFLOW_REFS }}
+        run: >-
+          pnpm dlx wrangler@4.33.1 deploy
+          --var "ISSUER_URL:$ISSUER_URL"
+          --var "GITHUB_TOKEN_AUDIENCE:$GITHUB_TOKEN_AUDIENCE"
+          --var "ALLOWED_REPOSITORIES:$ALLOWED_REPOSITORIES"
+          --var "ALLOWED_WORKFLOW_REFS:$ALLOWED_WORKFLOW_REFS"
+      # The Worker refuses to serve at any origin but ISSUER_URL, so this is a measurement of the
+      # deployed issuer, not an echo of the variable: a mismatch is a 503 here, not a silent
+      # cloud-side rejection later.
+      - name: Verify the deployed issuer serves discovery at its configured origin
+        env:
+          ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
+        run: |
+          set -euo pipefail
+          discovery="$(curl -fsS --max-time 20 "$ISSUER_URL/.well-known/openid-configuration")"
+          served="$(printf '%s' "$discovery" | jq -r '.issuer')"
+          [ "$served" = "${ISSUER_URL%/}" ] || { echo "issuer mismatch: served '$served', configured '$ISSUER_URL'" >&2; exit 1; }
+          curl -fsS --max-time 20 "$ISSUER_URL/.well-known/jwks.json" | jq -e '.keys | length > 0' >/dev/null

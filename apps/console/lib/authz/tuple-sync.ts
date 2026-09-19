@@ -8,6 +8,7 @@
 // getTupleSync() and never import ee/. Writes are best-effort/fire-and-forget at the
 // call sites — Postgres is authoritative, and backfill() reconciles any drift.
 
+import type { GrantScope } from "@/lib/authz/fga-tuples";
 import { getEnterprise } from "@/lib/enterprise";
 
 export interface HierarchyEdge {
@@ -17,18 +18,20 @@ export interface HierarchyEdge {
 	parentId: string;
 }
 
-export interface ScopedGrant {
-	orgId: string;
-	principalType: "user" | "team";
-	principalId: string;
-	effect: "allow" | "deny";
-	resourceType: string;
-	/** null ⇒ org-wide; otherwise scoped to this resource. */
-	resourceId: string | null;
+/**
+ * A grant row to mirror: its typed scope (`GrantScope`, a discriminated union — an org-wide grant
+ * has no `resourceId`, a scoped one has a `ScopableType` and a non-null id) plus what it grants.
+ *
+ * It used to restate the scope as `resourceType: string; resourceId: string | null` with its own
+ * "null ⇒ org-wide" contract, which omitted fga-tuples.ts's `"org" ⇒ org-wide` clause — two
+ * contracts for one pair of columns (#4582). It now reuses `GrantScope`, so there is one. A
+ * request reaches it through `parseGrantResource`; a stored row through `grantScopeFromRow`.
+ */
+export type ScopedGrant = GrantScope & {
 	/** A role bundle XOR a single permission key. */
 	roleId: string | null;
 	permissionKey: string | null;
-}
+};
 
 export interface TupleSync {
 	/** Set a member's org-wide capabilities to `role`'s permissions (replace prior). */

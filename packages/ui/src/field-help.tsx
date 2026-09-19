@@ -46,7 +46,7 @@ export function FieldHelp({
             type="button"
             aria-label={`Help: ${title}`}
             className={cn(
-              "inline-flex items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:text-foreground",
+              "inline-flex items-center justify-center rounded-full text-text-tertiary transition-colors hover:text-foreground",
               className,
             )}
           >

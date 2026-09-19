@@ -44,10 +44,12 @@ CI config, a log, or the proof bundle.
 | `target_project_id` | `E2E_SECRETS_XACCT_PROJECT_ID` |
 | `remote_key` | `E2E_SECRETS_XACCT_REMOTE_KEY` |
 | `expect_sha256` | `E2E_SECRETS_XACCT_EXPECT_SHA256` |
+| `granted_service_account` | `E2E_SECRETS_XACCT_ESO_GSA_EMAIL` |
 
-`granted_service_account` is not a repo variable — it is there so you can confirm it matches the
-project template's `external_secrets_service_account_email`. If the two differ, the cluster reads as
-a different identity and is denied.
+The nightly makes the gcp cluster adopt `E2E_SECRETS_XACCT_ESO_GSA_EMAIL` by writing it to the
+cluster's `provider_config` as `external_secrets_service_account_email`
+(`adoptStandingIdentity`, `test/e2e/t2_secrets_xacct.go`). If the two ever differ, the cluster reads
+as a different identity and is denied.
 
 ## What the checks refuse
 

@@ -5,8 +5,10 @@
 import { BookOpen, LayoutDashboard, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
 import { ScrollArea } from "@repo/ui/scroll-area";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import type { AgentThread } from "@/lib/db/schema";
 import { cn } from "@repo/ui/utils";
 
@@ -70,6 +72,10 @@ export function ThreadRail({
 	knowledgeActive = false,
 }: ThreadRailProps) {
 	const [q, setQ] = useState("");
+	// The thread a delete has been REQUESTED for. A chat carries its whole transcript and there is
+	// no undo, and the trigger is a hover-revealed icon a hand's width from the row you meant to
+	// open — so the click asks first (#4280).
+	const [pendingDelete, setPendingDelete] = useState<AgentThread | null>(null);
 
 	const groups = useMemo(() => {
 		const todayStart = startOfDay(new Date());
@@ -105,7 +111,7 @@ export function ThreadRail({
 						type="button"
 						onClick={onOpenArtifacts}
 						className={cn(
-							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-[13px] text-foreground transition-colors hover:bg-muted",
+							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-ui-md text-foreground transition-colors hover:bg-muted",
 							artifactsActive && "border-border bg-muted",
 						)}
 					>
@@ -118,7 +124,7 @@ export function ThreadRail({
 						type="button"
 						onClick={onOpenKnowledge}
 						className={cn(
-							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-[13px] text-foreground transition-colors hover:bg-muted",
+							"flex w-full items-center gap-2 rounded-none border border-transparent px-2.5 py-1.5 text-ui-md text-foreground transition-colors hover:bg-muted",
 							knowledgeActive && "border-border bg-muted",
 						)}
 					>
@@ -145,52 +151,86 @@ export function ThreadRail({
 			<ScrollArea className="flex-1">
 				<div className="px-2 pb-3.5">
 					{groups.length === 0 && (
-						<p className="px-2 py-6 text-center text-xs text-muted-foreground">
-							No chats yet.
-						</p>
+						/* The rail is a 240px column, so the shared state's page-sized padding is
+						   tuned down the same way the artifact panel's is — the structure and the
+						   words stay shared, only the scale is local. */
+						<EmptyState
+							className="gap-2 p-6 md:p-6 [&_[data-slot=empty-title]]:text-xs [&_[data-slot=empty-title]]:font-normal [&_[data-slot=empty-title]]:text-muted-foreground"
+							title="No chats yet."
+						/>
 					)}
 					{groups.map((g) => (
 						<div key={g.label}>
-							<div className="vx-eyebrow px-2 pb-1.5 pt-3 text-[9px]">
+							<div className="vx-eyebrow px-2 pb-1.5 pt-3 text-ui-3xs">
 								{g.label}
 							</div>
 							{g.items.map((t) => (
-								<button
-									key={t.id}
-									type="button"
-									data-testid="thread-rail-row"
-									onClick={() => onSelect(t.id)}
-									className={cn(
-										"group flex w-full flex-col gap-0.5 border-l-2 border-transparent px-2.5 py-2 text-left transition-colors hover:bg-muted",
-										activeId === t.id && "border-l-foreground bg-muted",
-									)}
-								>
-									<span className="flex min-w-0 items-center justify-between gap-2">
-										<span
-											title={t.title}
-											className="min-w-0 flex-1 truncate text-[12.5px] text-foreground"
-										>
-											{t.title}
+								/* The row is a button and the delete is a SIBLING of it, not a child.
+								   The trash used to be a bare `<svg onClick>` inside the row button —
+								   it had no role, so nothing keyboard-driven (and no `getByRole`)
+								   could reach it, and a real <button> nested inside another is
+								   invalid. The wrapper carries `group` so the hover reveal is
+								   unchanged, and the row button keeps its testid and its classes. */
+								<div key={t.id} className="group relative">
+									<button
+										type="button"
+										data-testid="thread-rail-row"
+										onClick={() => onSelect(t.id)}
+										className={cn(
+											"flex w-full flex-col gap-0.5 border-l-2 border-transparent px-2.5 py-2 text-left transition-colors hover:bg-muted",
+											activeId === t.id && "border-l-foreground bg-muted",
+										)}
+									>
+										<span className="flex min-w-0 items-center gap-2 pr-5">
+											<span
+												title={t.title}
+												className="min-w-0 flex-1 truncate text-ui-sm text-foreground"
+											>
+												{t.title}
+											</span>
 										</span>
-										<Trash2
-											aria-label="Delete chat"
-											onClick={(e) => {
-												e.stopPropagation();
-												onDelete(t.id);
-											}}
-											className="h-3 w-3 flex-none text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
-										/>
-									</span>
-									<span className="flex items-center gap-1.5 font-mono text-[9.5px] text-muted-foreground">
-										<span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
-										{relTime(new Date(t.updated_at))}
-									</span>
-								</button>
+										<span className="flex items-center gap-1.5 font-mono text-ui-3xs text-muted-foreground">
+											<span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
+											{relTime(new Date(t.updated_at))}
+										</span>
+									</button>
+									{/* The name carries the TITLE, and the noun is not decoration. N rows
+									    all named "Delete chat" are N indistinguishable buttons to a
+									    screen reader, and — now that this is a real <button> with a
+									    role — the destructive-action audit's `/Delete/i` prefix match
+									    resolved the Artifacts and Knowledge entries to THIS control,
+									    because the rail is mounted before <main> and `.first()` takes
+									    document order. The three surfaces now say which thing they
+									    delete: "Delete chat …", "Delete artifact …", "Delete
+									    document …". */}
+									<button
+										type="button"
+										aria-label={`Delete chat ${t.title}`}
+										onClick={() => setPendingDelete(t)}
+										className="absolute right-2 top-2 flex size-4 items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+									>
+										<Trash2 className="h-3 w-3" />
+									</button>
+								</div>
 							))}
 						</div>
 					))}
 				</div>
 			</ScrollArea>
+
+			<ConfirmDialog
+				open={pendingDelete !== null}
+				onOpenChange={(o) => {
+					if (!o) setPendingDelete(null);
+				}}
+				title={`Delete ${pendingDelete?.title ?? "this chat"}?`}
+				description="This permanently deletes the conversation and everything in it — the transcript, its widgets and its approvals. This cannot be undone."
+				confirmLabel="Delete chat"
+				onConfirm={() => {
+					if (pendingDelete) onDelete(pendingDelete.id);
+					setPendingDelete(null);
+				}}
+			/>
 		</aside>
 	);
 }

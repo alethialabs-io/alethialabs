@@ -10,6 +10,7 @@ import { Button } from "@repo/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
 import { Check, Loader2, RefreshCw } from "lucide-react";
+import { useId } from "react";
 
 interface ConnectorCardProps {
 	integration: ConnectorWithConnection;
@@ -55,6 +56,11 @@ export function ConnectorCard({
 	selected = false,
 	onSelect,
 }: ConnectorCardProps) {
+	// Ids for the two nodes the pick's accessible DESCRIPTION is built from. See the pick-mode
+	// block on the root element below for why a description is needed at all.
+	const uid = useId();
+	const descId = `${uid}-desc`;
+	const metaId = `${uid}-meta`;
 	const isConnected = integration.connected;
 	// The status wording and the filter bucket both come from `connectorState` — one ladder, so
 	// a tile can never say something the Status facet disagrees with.
@@ -63,6 +69,14 @@ export function ConnectorCard({
 	// lack provisioning templates) yet still have a live account from before — that account must keep
 	// its Manage → disconnect path, so a connected one is treated as a normal connection everywhere.
 	const isComingSoon = state.health === "coming_soon";
+	// A coming-soon card steps its description down one ink tier and keeps its name at full
+	// strength; its state label already says "Coming soon" in words. It is NOT a blanket
+	// `opacity-50` on the card — that dimmed the `text-foreground` name to 3.6:1 and the
+	// `--muted-foreground` copy to 2.3:1, and at α=0.5 over the page background not even pure
+	// black reaches 4.5:1 (#4197). The same step-down as `connector-row.tsx`'s `secondaryInk`,
+	// because THIS is the view `/[org]/~/connectors` renders by default (`connectors-page.tsx`
+	// opens on `card`), so it is the one the audit scores.
+	const secondaryInk = isComingSoon ? "text-text-tertiary" : "text-muted-foreground";
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
 	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a
@@ -85,16 +99,77 @@ export function ConnectorCard({
 		!cloudTesting;
 
 	return (
+		// THE PICK IS A CONTROL, NOT A BARE `<div onClick>` (#4625).
+		//
+		// In pick mode this card WAS operable by pointer only: `onClick` with no `role`, no
+		// `tabIndex` and no key handling, and a check indicator that was an `aria-hidden` span.
+		// Choosing a cloud is the FIRST REQUIRED STEP of creating a project, so a keyboard or
+		// screen-reader user could not create one at all (WCAG 2.1.1). The four pick attributes
+		// below sit behind the existing `isPick` predicate deliberately — `isPick` is a
+		// six-condition question and a second copy of it in `create-project/cloud-picker.tsx`
+		// would be the copy that never gets the fix.
+		//
+		// WHY `role="button"` AND NOT `radio`. A radio needs a `radiogroup` parent, and the picker's
+		// container is a `group` — deliberately, because a radio may own no interactive descendants
+		// while an UNCONNECTED tile renders a Connect button inside itself, so a container-level
+		// `radiogroup` would put every tile under a role its unconnected members cannot take
+		// (#4269). `button` + `aria-pressed` says "chosen" and needs no parent role.
+		//
+		// (The `nested-interactive` half of that argument does NOT apply to the role BELOW, which
+		// rides behind `isPick` and so never lands on a tile that offers Connect. Measured: a
+		// pick-mode tile has zero interactive descendants — the tooltip trigger renders a plain
+		// `<div>` with no role and no tabindex. The `radiogroup` parent is the binding reason.)
+		//
+		// WHY THE TILE AND NOT A NATIVE `<button>` AROUND IT. `<button>`'s content model is phrasing
+		// content and this card's body is flow content (nested layout `<div>`s and a `<p>`); the same
+		// JSX also renders the connectors page, where the root hosts real `<button>`s on its other
+		// branches. `role="button"` on the existing element is the shape that works for both.
+		//
+		// WHY `aria-describedby`. `button` is CHILDREN-PRESENTATIONAL in ARIA: the card's body stops
+		// being content and collapses into the name. Measured on this tree, a bare `role="button"`
+		// computed the name "AWS AWS Amazon Web Services. 1 accountConnected" — one run-on string
+		// with the status welded to the account count. Naming the control explicitly and pointing
+		// the description at the two nodes that carry the copy and the state gives them back as a
+		// description. Same remedy, and the same reason, as `create-project/start-from-scratch-cards.tsx`.
 		<div
 			onClick={isPick ? onSelect : undefined}
+			role={isPick ? "button" : undefined}
+			tabIndex={isPick ? 0 : undefined}
+			// Icon-only in effect — the visible distinguishing text is the cloud's name, and the
+			// verb matches this file's other five controls (Connect / Manage / Re-verify / Reconnect
+			// all read "<verb> <connector>"). WCAG 2.5.3 holds: the visible name is a substring.
+			aria-label={isPick ? `Select ${integration.name}` : undefined}
+			aria-describedby={isPick ? `${descId} ${metaId}` : undefined}
+			// The selected state was carried by border colour ALONE. `aria-pressed` is the same
+			// state a screen reader can hear; `aria-checked` would require the radio role above.
+			aria-pressed={isPick ? selected : undefined}
+			onKeyDown={
+				isPick
+					? (e) => {
+							// Self-activation only. The pick branch renders no interactive descendant
+							// today, but a handler that fires on a bubbled key from one later would
+							// select the tile while the user was operating something inside it.
+							if (e.target !== e.currentTarget) return;
+							if (e.key !== "Enter" && e.key !== " ") return;
+							// Space scrolls the page otherwise, and a `role="button"` owes BOTH keys
+							// (ARIA APG) — Space is the pick affordance the console already uses.
+							e.preventDefault();
+							onSelect?.();
+						}
+					: undefined
+			}
 			className={cn(
 				"flex flex-col gap-3 rounded-xl border bg-background p-4 shadow-sm transition-colors",
 				isComingSoon
-					? "opacity-50 border-border/50"
+					? "border-border/50"
 					: selected
 						? "border-foreground ring-1 ring-foreground"
 						: "border-border/60 hover:border-border",
-				isPick && "cursor-pointer",
+				// A sighted keyboard user has to be able to see WHICH cloud is about to be picked,
+				// so the whole tile carries the focus ring — the same treatment as the console's
+				// other card-shaped pick, `design-project/canvas/inspector/radio-card-group.tsx`.
+				isPick &&
+					"cursor-pointer focus-visible:outline-none focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring",
 			)}
 		>
 			<div className="flex items-start gap-3">
@@ -131,7 +206,13 @@ export function ConnectorCard({
 							{integration.name}
 						</TooltipContent>
 					</Tooltip>
-					<p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">
+					{/* The id is on the description, NOT on the TooltipTrigger above it: base-ui's
+					    trigger stamps its own `id` on whatever element it renders (to wire the
+					    popup's `aria-describedby`), so an id set there is overwritten. */}
+					<p
+						id={descId}
+						className={cn("mt-0.5 line-clamp-2 text-xs leading-snug", secondaryInk)}
+					>
 						{integration.description}
 					</p>
 				</div>
@@ -151,7 +232,10 @@ export function ConnectorCard({
 				{/* Wraps rather than truncates. "Verification failed" used to render as
 				    "Verification…" on a Hetzner tile — a clipped status is worse than a taller
 				    card, because the clipped half is the part that says what went wrong. */}
-				<div className="flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10px] leading-tight text-muted-foreground">
+				<div
+					id={metaId}
+					className="flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-ui-2xs leading-tight text-muted-foreground"
+				>
 					{isCloud && isConnected && (
 						<span className="rounded-full border border-border/60 px-1.5 py-0.5">
 							{accountCount} {accountCount === 1 ? "account" : "accounts"}
@@ -174,12 +258,14 @@ export function ConnectorCard({
 								? "This git provider has no OAuth app configured on this instance. See the docs to enable it."
 								: "This cloud needs Alethia platform credentials, which aren't configured on this instance. See the docs to enable managed cloud connections."
 						}
-						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+						className="rounded-full border border-border/60 px-2 py-0.5 font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground"
 					>
 						Unavailable
 					</span>
 				) : isPick ? (
-					// Pick mode: a radio-style indicator; the whole card selects.
+					// Pick mode: a radio-style indicator; the whole card is the control. It stays
+					// `aria-hidden` on purpose — the card's `aria-pressed` already says whether this
+					// cloud is chosen, and a second announcement of the same state is noise.
 					<span
 						className={cn(
 							"grid size-[18px] shrink-0 place-items-center rounded-full border",
@@ -195,6 +281,15 @@ export function ConnectorCard({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						// The board renders one of these per connector and the visible word is the
+						// same on every one of them — 29 buttons reading "Connect", one "Manage" per
+						// connected connector. That is not only a Playwright strict-mode problem: a
+						// screen-reader user tabbing the grid hears "Connect, button" 29 times with
+						// nothing to tell them apart, because the name sits in the CARD, not in the
+						// control. `aria-label` puts the connector's name INTO the control's
+						// accessible name; the visible word is unchanged and stays a prefix of it,
+						// so WCAG 2.5.3 (Label in Name) still holds for voice control.
+						aria-label={`Reconnect ${integration.name}`}
 						disabled={isConnecting}
 						onClick={onConnect}
 					>
@@ -210,6 +305,7 @@ export function ConnectorCard({
 						variant="ghost"
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						aria-label={`Manage ${integration.name}`}
 						onClick={onManage}
 					>
 						Manage
@@ -225,6 +321,7 @@ export function ConnectorCard({
 							variant="ghost"
 							size="sm"
 							className="h-7 px-2.5 text-xs"
+							aria-label={`Manage ${integration.name}`}
 							onClick={onManage}
 						>
 							Manage
@@ -232,6 +329,7 @@ export function ConnectorCard({
 						<Button
 							size="sm"
 							className="h-7 px-2.5 text-xs"
+							aria-label={`Re-verify ${integration.name}`}
 							disabled={isConnecting}
 							onClick={onReverify}
 						>
@@ -247,6 +345,7 @@ export function ConnectorCard({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
+						aria-label={`Connect ${integration.name}`}
 						disabled={isConnecting}
 						onClick={onConnect}
 					>

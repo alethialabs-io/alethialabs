@@ -5,9 +5,12 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 # Console browser E2E (Playwright)
 
-Browser-level end-to-end tests for the console. The one that matters — and the one CI gates — is
-the **hero happy-path**: the sellable flow a human demos, driven end to end in a headless Chromium,
-fully hermetically (no real cloud creds, no external email, no OAuth).
+Browser-level end-to-end tests for the console, in nine Playwright projects. Two of them gate every
+PR into `dev` (`hero`, `elench-ai`); seven of them are the legs of the **release gate**, the browser
+check in front of every production deploy — see *The gate and the ratchet* below.
+
+The one to read first is the **hero happy-path**: the sellable flow a human demos, driven end to end
+in a headless Chromium, fully hermetically (no real cloud creds, no external email, no OAuth).
 
 ## The hero happy-path
 
@@ -104,34 +107,115 @@ Every spec here belongs to exactly one Playwright project, and every project is 
 workflow or explicitly marked as running nowhere. `playwright.config.ts` asserts both on **every**
 invocation — including the two gating CI jobs — so a spec cannot be added into a hole again (#2875).
 
+**Nothing runs nowhere any more.** The release gate (#4265) gave the last three projects a job, and
+`LOCAL_ONLY_REASON` in `playwright.config.ts` is now empty. The table below is a reading of
+`RUN_POSTURE` in that file, which the dead-zone guard checks against `.github/workflows/**` in both
+directions — so where this table and the config disagree, the config is right and this file is stale.
+
 | project | specs | where it runs |
 |---|---|---|
-| `setup` | `fixtures/auth.setup.ts` | dependency of `hero`-adjacent projects; never invoked alone |
-| `hero` | `hero-happy-path.spec.ts` | `ci.yml` → **E2E (browser · Playwright hero path)** — required |
-| `elench-ai` | `elench-ai.spec.ts`, `elench-ux.spec.ts` | `ci.yml` → **E2E (browser · Elench AI journeys · scripted model)** — required |
+| `setup` | `fixtures/auth.setup.ts` | dependency of `elench-ai`, `elench-live`, `canvas`, `audit`, `audit-interaction`; never invoked alone |
+| `hero` | `hero-happy-path.spec.ts` | `ci.yml` → **E2E (browser · Playwright hero path)** · `release-gate.yml` → **Release gate (hero)** |
+| `elench-ai` | `elench-ai.spec.ts`, `elench-ux.spec.ts` | `ci.yml` → **E2E (browser · Elench AI journeys · scripted model)** · `release-gate.yml` → **Release gate (elench-ai)** |
 | `elench-live` | `elench-live.spec.ts` | `e2e-ai-nightly.yml` — real model, never gating |
-| `canvas` | `architecture-canvas.spec.ts` | **nowhere yet** — needs a non-required job |
-| `console` | `account-settings`, `activity`, `billing`, `connectors`, `elench-agent`, `evidence`, `usage` | **nowhere yet** — needs a non-required job |
-| `qa` | `flows/*.spec.ts` | **nowhere yet** — see `apps/console/docs/qa/README.md` |
+| `canvas` | `architecture-canvas.spec.ts` | `release-gate.yml` → **Release gate (canvas)** |
+| `console` | `account-settings`, `activity`, `billing`, `connectors`, `elench-agent`, `evidence`, `usage` | `release-gate.yml` → **Release gate (console)** |
+| `qa` | `flows/*.spec.ts` | `release-gate.yml` → **Release gate (qa)** |
+| `audit` | `audit/*.spec.ts` except `audit/destructive.spec.ts` | `ci.yml` → **UI conformance audit (console · non-required)**, nightly · `release-gate.yml` → **Release gate (audit)** |
+| `audit-interaction` | `audit/destructive.spec.ts` | `release-gate.yml` → **Release gate (audit-interaction)** |
 
-The `e2e-browser` job runs `--project=hero` off the fast path in its own parallel job: a
+`hero` and `elench-ai` are twice-homed on purpose, and the `ci.yml` copies skip themselves on a PR
+into `main` or `staging` (`github.base_ref`), so a promotion does not boot the same console twice.
+
+The `ci.yml` hero job runs `--project=hero` off the fast path in its own parallel job: a
 `postgres:17` service + `pnpm -F console db:migrate` (same as the Integration job), `pnpm -F console
 build`, `playwright install`, then the spec. OpenFGA is left unset so the community
-`PostgresRbacPDP` is the authz engine — no extra service needed. The `e2e-elench-ai` job is the same
-shape with `ALETHIA_AI_MOCK=1`.
-
-### The three that run nowhere
-
-They are real specs against the current routes — not rot — but nothing executes them, so **nothing
-here may be cited as coverage** until it has a job:
-
-- **`canvas`** cannot simply be folded into `hero`: that project runs a *fresh* context (signing in
-  is the hero spec's first act) and these need the `setup` persona's `storageState`.
-- **`console`** specs each drive a full email-OTP signup. Better Auth caps OTP issuance at **5 per
-  60s per IP** (`lib/config/auth.ts`), and at roughly a minute per signup seven of them would about
-  double the hero job — so they cannot be poured into a gating check.
-- **`qa`** is 320 tests never executed against the current console, and `global-setup.ts` does not
-  create the `member` persona several of them require. It needs `ALETHIA_QA_E2E=1`.
+`PostgresRbacPDP` is the authz engine — no extra service needed. The Elench AI job is the same
+shape with `ALETHIA_AI_MOCK=1`, and every release-gate leg is that recipe once more, per leg.
 
 Running `pnpm -F console test:e2e` with no `--project` runs *everything*, `qa` included; pass
 `--project=<name>` for anything narrower.
+
+## The gate and the ratchet
+
+`.github/workflows/release-gate.yml` is the browser gate in front of production. Production deploys
+on a push to `main`, and `main` only ever takes a PR from `staging`, so a check on PRs into `main`
+is "before every production deploy". It runs on a non-draft PR into `main` or `staging`, on a PR
+into `dev` carrying the `release-gate:run` label, and on `workflow_dispatch` (with an optional
+comma-separated `legs` input). Each leg boots its own ephemeral console — a Postgres service, the
+real migrations, `pnpm -F @alethia/ee build`, `next start` — and drives one project against it.
+
+**It is not guarding anything yet.** Measured 2026-09-09, this workflow, `gate-baseline.json` and
+`scripts/e2e-ratchet.mjs` all live on `dev` alone — none of the three is on `origin/staging` or
+`origin/main` — and the live `protect-main` ruleset requires none of the legs. `CONTRIBUTING.md`'s
+promotion checklist has the detail; what follows is how the gate behaves, not what it currently
+blocks.
+
+**Every leg is green-by-ratchet, not green.** The suites were 39% green when the gate was built
+(`apps/console/docs/qa/findings.md`, 2026-09-02), so an absolute-green requirement would have
+blocked every promotion for weeks. Instead each leg fails on **regression** against
+`gate-baseline.json`, which records one entry per (project, spec file, test):
+
+| entry | means |
+|---|---|
+| `"passed"` | it passed, and must keep passing |
+| `"failed"` | recorded debt — it may stay failing, and it may **not** start passing without a ledger move |
+| `{"fixme": "BUG: <what> #<issue>"}` | a known bug parked behind `test.fixme`; it must stay skipped |
+| `{"skip": "<why>"}` | a data-dependent condition; skipped **or** passed is fine, failed is not |
+
+`scripts/e2e-ratchet.mjs` is what compares a run to it, and it is the only step in a leg that can
+fail the job. The Playwright step itself carries `continue-on-error: true` — that is the ratchet
+mechanism, not a softened check, because Playwright exits non-zero whenever any test fails and four
+legs are expected to be red. The ratchet fails on a regression, on a new test that did not pass, on
+a skip the ledger does not record, on a recorded failure that has started passing, on a run with
+fewer tests than the baseline counts, and on a results file it cannot read at all. A separate
+`--list` floor guard runs *before* the suite and fails hard, so `testMatch` drift cannot reach the
+ratchet as a clean run of nothing.
+
+**Fixing a test and moving the ledger are one PR.** The baseline is shrink-only, so a test that
+starts passing while recorded as `failed` is a failure telling you to regenerate:
+
+```bash
+node scripts/e2e-ratchet.mjs --project=qa --results=apps/console/test-results/results.json \
+  --write --only=flows/billing.spec.ts
+```
+
+`--only=<spec file>` replaces just that file's entries, so two lanes regenerating at once produce
+diffs that touch their own files rather than colliding on the whole ledger. Never hand-edit
+`gate-baseline.json`.
+
+**The fixme rule.** A skip is recorded only if it states why. `test.fixme(true, "BUG: <what> #<n>")`
+becomes a `{fixme}` and the description must match `BUG: … #<number>`; `test.skip(cond, "why")`
+becomes a `{skip}`. A skip with no reason is refused rather than recorded — an unrecorded skip is
+always a failure, which is the rule that closes the `HAVE_MEMBER` hole where an unset variable
+turned every RBAC denial into a green skip for two months.
+
+Do not pipe the ratchet into `head` or `tail`: a pipe reports the last command's exit code.
+
+**A leg with no entry in the ledger fails, and one leg is in that state.** `gate-baseline.json`
+carries six projects — `hero`, `elench-ai`, `console`, `canvas`, `qa`, `audit` — and the seventh,
+`audit-interaction`, is not among them, because the baseline was captured (#4325) before that leg
+existed (#4266). The ratchet reads an absent project as the bootstrap placeholder and fails with
+"no baseline has been captured", deliberately: a gate that passes against an empty ledger is
+vacuous. `Release gate (audit-interaction)` is therefore red until someone runs it once and commits
+`node scripts/e2e-ratchet.mjs --project=audit-interaction --results=<json> --write`.
+
+## Capabilities — `@needs:`
+
+A capability is **promised by the leg, never detected by the spec**. The workflow sets
+`ALETHIA_E2E_CAPABILITIES` per leg (`stripe`, `ai-mock`, or empty) and a spec declares what it needs
+with a Playwright tag:
+
+```ts
+test("the trialing org shows its plan", { tag: "@needs:stripe" }, async ({ team }) => { … });
+```
+
+In CI a tagged spec on a leg that does not promise the capability is **red**, never a skip: the
+leg's declaration and the spec's need disagree and one of them is wrong. Locally it skips with a
+reason beginning `NOT MEASURED`, because a laptop with no Stripe keys is the normal case. A
+misspelt promise raises rather than promising nothing.
+
+The workflow also runs `e2e/helpers/capabilities.ts --assert-env` before the console build, so a
+promised capability whose variables are absent is a named failure in seconds at the top of the job
+rather than a downgraded run at the bottom. `helpers/capabilities.ts` owns both the capability list
+and what each one requires; the authoring rules are in `AUTHORING.md`.

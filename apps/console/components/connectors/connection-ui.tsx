@@ -7,15 +7,13 @@ import { Button } from "@repo/ui/button";
 import { FieldHelp } from "@repo/ui/field-help";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { Separator } from "@repo/ui/separator";
+import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import {
-  CheckCircle2,
   HelpCircle,
   KeyRound,
-  Loader2,
   Lock,
   ShieldCheck,
-  XCircle,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
@@ -29,18 +27,30 @@ import type {
 
 type CalloutVariant = "success" | "pending" | "error";
 
-const VARIANT_ICON: Record<CalloutVariant, ReactNode> = {
-  success: <CheckCircle2 className="size-4 shrink-0 text-foreground" />,
-  pending: (
-    <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" />
-  ),
-  error: <XCircle className="mt-0.5 size-4 shrink-0 text-foreground" />,
+/**
+ * The callout's three states, resolved to the ONE status vocabulary the product has.
+ *
+ * This was a `Record<CalloutVariant, ReactNode>` of three lucide icons — a check, a spinner and a
+ * cross — which made the callout a second rendering of states the rest of the console already
+ * draws: a pending connection test showed a spinner here and a hollow dot in every table. A
+ * `Record<YourStatus, StatusTier>` handed to `<StatusBadge tier>` is what `statusTier()`'s own doc
+ * requires for a vocabulary the shared map does not know, so the mark comes from the badge and the
+ * words stay the caller's.
+ *
+ * `pending` takes the `live` tier rather than the shared map's `pending`: a verify in flight is
+ * the one thing on this surface that is genuinely still happening, and `live` is the tier that
+ * breathes. The other two resolve the way the shared map already resolves those words.
+ */
+const VARIANT_TIER: Record<CalloutVariant, StatusTier> = {
+  success: "active",
+  pending: "live",
+  error: "failed",
 };
 
 /**
  * The status banner shown while saving / after a verification attempt. Hairline row,
- * grayscale — the state reads from the icon + title, not a colored fill. Shared across
- * every provider connection component so the states look identical everywhere.
+ * grayscale — the state reads from the shared status dot + title, not a colored fill.
+ * Shared across every provider connection component so the states look identical everywhere.
  */
 export function StatusCallout({
   variant,
@@ -58,7 +68,12 @@ export function StatusCallout({
         variant === "error" ? "items-start" : "items-center",
       )}
     >
-      {VARIANT_ICON[variant]}
+      <StatusBadge
+        status={variant}
+        tier={VARIANT_TIER[variant]}
+        showLabel={false}
+        className={cn("shrink-0", variant === "error" && "mt-0.5")}
+      />
       <div className="min-w-0">
         <p className="font-medium text-foreground text-sm">{title}</p>
         <p className="mt-0.5 text-muted-foreground text-xs leading-relaxed">
@@ -136,7 +151,7 @@ export function ConnectionTestStatus({
 /** The muted "how your credentials are handled" footnote. Shared. */
 export function InfoNote({ children }: { children: ReactNode }) {
   return (
-    <p className="text-[11px] text-muted-foreground leading-relaxed">
+    <p className="text-ui-xs text-muted-foreground leading-relaxed">
       {children}
     </p>
   );
@@ -153,7 +168,7 @@ function HowItWorks({ children }: { children: ReactNode }) {
         render={
           <button
             type="button"
-            className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            className="inline-flex shrink-0 items-center gap-1 text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
           >
             <HelpCircle className="size-3.5" />
             How this works
@@ -199,14 +214,14 @@ export function ConnectSheetShell({
         <div className="flex items-center justify-between gap-3">
           <Badge
             variant="secondary"
-            className="h-5 gap-1 px-1.5 font-medium text-[10px]"
+            className="h-5 gap-1 px-1.5 font-medium text-ui-2xs"
           >
             <ShieldCheck className="size-3" />
             {badgeLabel}
           </Badge>
           <HowItWorks>{howItWorks}</HowItWorks>
         </div>
-        <p className="text-foreground/80 text-sm leading-relaxed">{intro}</p>
+        <p className="text-muted-foreground text-sm leading-relaxed">{intro}</p>
       </div>
       <Separator />
       {children}
@@ -242,7 +257,7 @@ export function MethodTabs({
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1.5">
-        <span className="font-semibold text-[11px] text-muted-foreground uppercase tracking-wider">
+        <span className="font-semibold text-ui-xs text-muted-foreground uppercase tracking-wider">
           {label}
         </span>
         {help && <FieldHelp title={label}>{help}</FieldHelp>}
@@ -284,7 +299,7 @@ export function Step({
 }) {
   return (
     <div className="flex gap-3.5">
-      <div className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border/60 font-medium text-[11px] text-muted-foreground">
+      <div className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border/60 font-medium text-ui-xs text-muted-foreground">
         {n}
       </div>
       <div className="min-w-0 flex-1 space-y-2.5 pt-0.5">
@@ -351,7 +366,7 @@ export function StoredNote({
   revoke: ReactNode;
 }) {
   return (
-    <div className="grid gap-2 rounded-md border border-border/40 bg-muted/20 p-3 text-[11px] text-muted-foreground">
+    <div className="grid gap-2 rounded-md border border-border/40 bg-muted/20 p-3 text-ui-xs text-muted-foreground">
       <div className="flex items-start gap-2">
         <Lock className="mt-0.5 size-3.5 shrink-0" />
         <p className="leading-relaxed">

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Button } from "./button";
+import { CountFigure } from "./count-pill";
 import { Input } from "./input";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 import { cn } from "./utils";
@@ -324,9 +325,7 @@ function FacetSelector({
                   {o.label}
                 </span>
                 {typeof o.count === "number" && (
-                  <span className="font-mono text-[10px] text-muted-foreground/70 tabular-nums">
-                    {o.count}
-                  </span>
+                  <CountFigure>{o.count}</CountFigure>
                 )}
                 {on && <Check className="h-3.5 w-3.5 shrink-0" />}
               </button>

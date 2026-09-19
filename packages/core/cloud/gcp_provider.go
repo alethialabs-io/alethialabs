@@ -47,6 +47,56 @@ func (p *gcpProvider) ValidateConfig(config *types.ProjectConfig) error {
 	return validateNodeDiskSize(config, "gke_disk_size_gb", gcpNodeDiskFloorGB)
 }
 
+// The keys each ROOT-level component's typed mapping owns on GCP, and the union every root merge
+// is passed. See the note above `mergeProviderConfig` in aws_provider.go for why a per-call-site
+// list closes nothing: `cloud_sql_iam_auth` is written only when the canvas asked for keyless auth,
+// so without the union a Firestore table's or a cache's provider_config fills the gap the database
+// deliberately left. Firestore is root-level on GCP alone — one database per project — which is why
+// the nosql list appears here and on no other cloud.
+var (
+	gcpDatabaseReserved = []string{"log_exports", "cloud_sql_iam_auth"}
+	gcpCacheReserved    = []string{
+		"create_memorystore", "create_memorystore_valkey",
+		"memorystore_valkey_shard_count", "memorystore_valkey_replica_count",
+		"memorystore_valkey_engine_version",
+		"memorystore_tier", "memorystore_memory_size_gb", "memorystore_redis_version",
+	}
+	gcpNosqlReserved   = []string{"create_firestore", "firestore_point_in_time_recovery"}
+	gcpClusterReserved = []string{"enable_autopilot"}
+	gcpDNSReserved     = []string{"cloud_armor", "managed_certificate"}
+
+	// Every key this file assigns to root tfvars — the KEYS THE TYPED MAPPING WRITES, whether
+	// unconditionally or only when the canvas asked. All of them are reserved, because
+	// merge-if-absent protects only the unconditional ones: a key written inside an `if` leaves a
+	// gap exactly when the canvas declined to fill it, which is the moment a passthrough must not.
+	// Cluster node sizing and the brownfield network selectors are the whole reason this list
+	// exists rather than the per-component lists alone — none of them appeared in any reservation,
+	// so on every cloud a database's provider_config could set the cluster's disk size, and on
+	// Alibaba its `network_id` and `subnet_ids`. Found in review.
+	//
+	// Generated once from the assignments below it and kept honest by
+	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
+	// assignment fails the suite until it is listed here.
+	gcpTypedTfvars = []string{
+		"artifact_registry_repos", "classification_tags", "cloud_armor_enabled", "cloud_dns_domain",
+		"cloud_dns_enabled", "cloud_dns_zone_name", "cloud_sql_authorized_networks",
+		"cloud_sql_backup_retention_days", "cloud_sql_engine", "cloud_sql_engine_version",
+		"cloud_sql_iam_auth", "cloud_sql_port", "cloud_sql_tier", "cloud_storage_buckets",
+		"create_cloud_sql", "create_cloud_storage", "create_firestore", "create_memorystore",
+		"create_memorystore_valkey", "create_pubsub", "custom_secrets", "environment",
+		"firestore_point_in_time_recovery", "gke_cluster_version", "gke_disk_size_gb",
+		"gke_enable_autopilot", "gke_instance_types", "gke_node_desired_size", "gke_node_max_size",
+		"gke_node_min_size", "memorystore_memory_size_gb", "memorystore_redis_version",
+		"memorystore_tier", "memorystore_valkey_engine_version", "memorystore_valkey_replica_count",
+		"memorystore_valkey_shard_count", "network_allowed_cidr_blocks", "network_cidr", "network_id",
+		"project_id", "project_name", "provision_artifact_registry", "provision_gke",
+		"provision_network", "pubsub_topics", "region", "single_cloud_nat", "subnet_ids",
+	}
+
+	gcpRootReserved = unionReserved(gcpTypedTfvars, gcpDatabaseReserved, gcpCacheReserved, gcpNosqlReserved,
+		gcpClusterReserved, gcpDNSReserved)
+)
+
 func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	enableAutopilot := false
 	if v, ok := config.Cluster.ProviderConfig["enable_autopilot"]; ok {
@@ -206,7 +256,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		// provider_config key could switch keyless on for a cell the canvas never offered, walking
 		// around the offer-parity guard (#1508). `log_exports` is AWS-only — no GCP template variable
 		// declares a Cloud SQL log-export set — so it is reserved rather than emitted undeclared.
-		mergeProviderConfig(tfvars, db.ProviderConfig, "log_exports", "cloud_sql_iam_auth")
+		mergeProviderConfig(tfvars, db.ProviderConfig, gcpRootReserved...)
 	}
 
 	if len(config.Caches) > 0 {
@@ -259,6 +309,20 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 				tfvars["memorystore_redis_version"] = v
 			}
 		}
+		// Generic passthrough — see mergeProviderConfig (aws_provider.go). Every key either engine
+		// branch emits is reserved UNCONDITIONALLY: `memorystore_tier` and the valkey replica count
+		// are written only when the canvas asked, and a provider_config key must not fill the gap it
+		// left — the same rule the database's IAM-auth reservation applies.
+		mergeProviderConfig(tfvars, cache.ProviderConfig, gcpRootReserved...)
+	}
+
+	// NoSQL is ROOT-level on GCP, unlike every other cloud: Firestore is ONE database per project
+	// (see the `create_firestore` note above), so a "table" has no per-item tfvars object to merge
+	// into and its provider_config reaches the database's own `firestore_*` variables instead.
+	// Merge-if-absent means the first table naming a knob wins — the same rule PITR's ANY-aggregate
+	// applies to the one switch the typed fields carry.
+	for _, t := range config.NosqlTables {
+		mergeProviderConfig(tfvars, t.ProviderConfig, gcpRootReserved...)
 	}
 
 	if inst := resolveInstanceTypes("gcp", config.Cluster); len(inst) > 0 {
@@ -295,8 +359,9 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	// user's provider_config can't shadow it. Consumed by the classification_tags var (B1.3).
 	tfvars["classification_tags"] = classificationTags(config, gcpTagStyle)
 
-	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, "enable_autopilot")
-	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "cloud_armor", "managed_certificate")
+	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig, gcpRootReserved...)
+	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, gcpRootReserved...)
+	mergeProviderConfig(tfvars, config.Network.ProviderConfig, gcpRootReserved...)
 
 	return tfvars
 }
@@ -356,10 +421,12 @@ func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.Project
 				"enable_message_ordering": false,
 			})
 		}
-		result[t.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"message_retention_duration": "86400s",
 			"subscriptions":              subs,
 		}
+		mergeItemProviderConfig(entry, t.ProviderConfig, "message_retention_duration", "subscriptions")
+		result[t.Name] = entry
 	}
 	for _, q := range queues {
 		ackDeadline := 10
@@ -378,10 +445,14 @@ func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.Project
 		}
 		sub["enable_message_ordering"] = derefBoolOr(q.Ordered, false)
 		subs := []map[string]interface{}{sub}
-		result[q.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"message_retention_duration": retention,
 			"subscriptions":              subs,
 		}
+		// The queue's typed knobs (ack deadline, ordering) live on its ONE subscription, which is
+		// built above; a queue's provider_config reaches the topic entry the queue is modelled as.
+		mergeItemProviderConfig(entry, q.ProviderConfig, "message_retention_duration", "subscriptions")
+		result[q.Name] = entry
 	}
 	return result
 }
@@ -426,18 +497,23 @@ func gcpMemorystoreRedisVersion(v string) string {
 	}
 }
 
+// buildGCPSecrets maps each NATIVELY provisioned secret onto one entry of the `custom_secrets`
+// tfvar. Shared by the GCP and Azure providers — their templates declare the same object shape — so
+// the per-secret provider_config merge here serves both clouds.
 func buildGCPSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
 		if !secretProvisionedNatively(s.Provider) {
 			continue // read via ESO from its pluggable/cross-account store, not created here
 		}
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"name":          s.Name,
 			"generate":      s.Generate,
 			"length":        s.Length,
 			"special_chars": s.SpecialChars,
-		})
+		}
+		mergeItemProviderConfig(entry, s.ProviderConfig, "name", "generate", "length", "special_chars")
+		result = append(result, entry)
 	}
 	return result
 }
@@ -491,11 +567,16 @@ func buildArtifactRegistryRepos(config *types.ProjectConfig) map[string]interfac
 		if r.VulnerabilityScanning != nil {
 			scanning = *r.VulnerabilityScanning
 		}
-		out[r.Name] = map[string]interface{}{
+		entry := map[string]interface{}{
 			"description":            "Container images for " + r.Name,
 			"immutable_tags":         immutable,
 			"vulnerability_scanning": scanning,
 		}
+		// The registry is an ITEM on GCP: the template declares no root `artifact_registry_*` knobs
+		// beyond the provision flag and this map, so a registry's provider_config merges into its
+		// own repository entry (the reverse of AWS, whose `ecr_*` knobs are root-level).
+		mergeItemProviderConfig(entry, r.ProviderConfig, "description", "immutable_tags", "vulnerability_scanning")
+		out[r.Name] = entry
 	}
 	return out
 }
@@ -519,6 +600,8 @@ func buildGCSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]in
 			"cors_origins":  b.CorsOrigins,
 			"cors_methods":  []string{"GET", "PUT", "POST"},
 		}
+		mergeItemProviderConfig(entry, b.ProviderConfig,
+			"name_suffix", "versioning", "public_access", "cors_origins", "cors_methods")
 		result = append(result, entry)
 	}
 	return result

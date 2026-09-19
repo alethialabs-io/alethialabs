@@ -6,6 +6,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { recordActivity } from "@/lib/authz/activity";
+import { grantScopeFromRow } from "@/lib/authz/fga-tuples";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
 import { grants } from "@/lib/db/schema";
@@ -44,18 +45,22 @@ export async function DELETE(
 			.delete(grants)
 			.where(and(eq(grants.id, id), eq(grants.org_id, actor.orgId)));
 
-		void getTupleSync()
-			.removeScopedGrant({
-				orgId: g.org_id,
-				principalType: g.principal_type === "team" ? "team" : "user",
-				principalId: g.principal_id,
-				effect: g.effect === "deny" ? "deny" : "allow",
-				resourceType: g.resource_type,
-				resourceId: g.resource_id,
-				roleId: g.role_id,
-				permissionKey: g.permission_key,
-			})
-			.catch((err) => console.error("[authz] grant tuple removal failed:", err));
+		// The row is raw columns, so it is narrowed rather than spread into a `ScopedGrant`. A null
+		// scope is an ALLOW row that confers nothing (the #4584 ruling, via `targetForEffect`); it
+		// has no object to clear, which is what ee's writer already did for it (a no-op).
+		const scope = grantScopeFromRow({
+			orgId: g.org_id,
+			principalType: g.principal_type === "team" ? "team" : "user",
+			principalId: g.principal_id,
+			effect: g.effect === "deny" ? "deny" : "allow",
+			resourceType: g.resource_type,
+			resourceId: g.resource_id,
+		});
+		if (scope !== null) {
+			void getTupleSync()
+				.removeScopedGrant({ ...scope, roleId: g.role_id, permissionKey: g.permission_key })
+				.catch((err) => console.error("[authz] grant tuple removal failed:", err));
+		}
 
 		emitAlertEventSafe(actor.orgId, "authz.grant.revoke", {
 			title: `Grant revoked: ${g.effect} ${g.permission_key ?? "role"} on ${g.resource_type}`,

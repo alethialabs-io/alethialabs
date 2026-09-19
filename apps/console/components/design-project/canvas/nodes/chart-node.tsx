@@ -13,12 +13,13 @@ import { useState } from "react";
 import { GitBranch, Loader2, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@repo/ui/utils";
+import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
-import { detachByoChart, scanByoChart } from "@/app/server/actions/byo-charts";
-import { ChartScanSheet } from "@/components/design-project/byo/chart-scan-sheet";
+import { detachByoChart } from "@/app/server/actions/byo-charts";
 import { type CanvasNode, nodeOfKind } from "../graph/types";
 import type { VerifyReport } from "@/types/jsonb.types";
 import { useByoChartCanvas } from "@/components/design-project/byo/byo-chart-canvas-context";
+import { nodeAccessibleName } from "./node-name";
 
 const HANDLE_CLASS = "!h-2 !w-2 !rounded-none !border !border-border !bg-background";
 
@@ -43,7 +44,7 @@ function scanChip(
 			Icon: ShieldAlert,
 		};
 	}
-	return { label: "Not scanned", cls: "text-muted-foreground/60", Icon: ShieldQuestion };
+	return { label: "Not scanned", cls: "text-text-tertiary", Icon: ShieldQuestion };
 }
 
 type ChartStatus = "synced" | "progressing" | "degraded" | "pending";
@@ -68,14 +69,26 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 	const raw = useCanvasStore((s) => s.nodes.find((n) => n.id === id));
 	const node = nodeOfKind(raw, "chart");
 	const ctx = useByoChartCanvas();
+	const openCard = useCanvasStore((s) => s.openCard);
 	const [detaching, setDetaching] = useState(false);
-	const [sheetOpen, setSheetOpen] = useState(false);
+	const [confirmDetach, setConfirmDetach] = useState(false);
 	if (!node) return null;
 	const c = node.data.config;
 	const st = STATUS_META[chartStatus(c.health, c.status)];
 	const chip = scanChip(c.scanStatus, c.scanReport);
 	const ChipIcon = chip.Icon;
+	// Same contract as every other card (`nodes/node-name.ts`): the board's cards are named regions,
+	// so the audit can score them and a journey can reach THIS chart rather than "the first
+	// `.react-flow__node-chart`". A chart's own name is its release id.
+	const accessibleName = nodeAccessibleName("Helm chart", c.id);
 
+	/**
+	 * Detach the chart. Reached ONLY through the confirmation below — `detachByoChart` deletes the
+	 * ArgoCD Application and the `project_addons` row, and a chart is attached by pasting a repo
+	 * URL, a path and a ref, so an accidental 24x24 `×` costs the user all three. Every other
+	 * detach in the console (`byo.iac.detach`) already asks; this one was the registry's last
+	 * `confirm: none` on the canvas (#4279).
+	 */
 	const detach = async () => {
 		if (!ctx) return;
 		setDetaching(true);
@@ -89,22 +102,10 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 		}
 	};
 
-	const rescan = async () => {
-		if (!ctx) return;
-		try {
-			await scanByoChart({ projectId: ctx.projectId, environmentId: ctx.environmentId, id: c.id });
-			toast.message("Scanning chart…");
-			ctx.refresh();
-			// Nudge a couple of refreshes as the runner finishes (best-effort — no live socket).
-			setTimeout(ctx.refresh, 4000);
-			setTimeout(ctx.refresh, 10000);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "Could not start the scan.");
-		}
-	};
-
 	return (
 		<div
+			role="group"
+			aria-label={accessibleName}
 			className={cn(
 				"min-w-[220px] cursor-pointer rounded-none border bg-card text-card-foreground transition-colors",
 				selected
@@ -119,7 +120,7 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 			<div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
 				<GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 				<span className="vx-eyebrow">Helm chart</span>
-				<span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+				<span className="ml-auto flex items-center gap-1.5 font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground">
 					<span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", st.dot)} />
 					{st.label}
 				</span>
@@ -127,38 +128,39 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 
 			<div className="flex flex-col gap-2 px-3 py-2.5">
 				<div className="text-sm font-semibold text-foreground">{c.id}</div>
-				<div className="flex items-center gap-1.5 self-start border border-border px-2 py-1 font-mono text-[10px] text-muted-foreground">
+				<div className="flex items-center gap-1.5 self-start border border-border px-2 py-1 font-mono text-ui-2xs text-muted-foreground">
 					<GitBranch className="h-3 w-3" />
 					{c.repoUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\.git$/, "")}
 				</div>
-				<div className="flex gap-3 font-mono text-[10px] text-muted-foreground">
+				<div className="flex gap-3 font-mono text-ui-2xs text-muted-foreground">
 					<span>
-						path <span className="text-foreground/80">/{c.chartPath.replace(/^\/+/, "")}</span>
+						path <span className="text-foreground">/{c.chartPath.replace(/^\/+/, "")}</span>
 					</span>
 					<span>
-						ref <span className="text-foreground/80">{c.ref}</span>
+						ref <span className="text-foreground">{c.ref}</span>
 					</span>
 				</div>
-				{/* Chart-safety scan chip — opens the findings sheet. */}
+				{/* Chart-safety scan chip — opens the findings card on the workspace rail. */}
 				<button
 					type="button"
-					onClick={() => setSheetOpen(true)}
+					onClick={() => openCard({ kind: "chart-scan", chartId: c.id })}
 					title="Chart safety scan"
-					className="flex items-center gap-1.5 self-start rounded-none border border-border px-2 py-1 font-mono text-[10px] transition-colors hover:bg-muted"
+					className="flex items-center gap-1.5 self-start rounded-none border border-border px-2 py-1 font-mono text-ui-2xs transition-colors hover:bg-muted"
 				>
 					<ChipIcon className={cn("h-3 w-3", chip.cls, chip.spin && "animate-spin")} />
 					<span className={chip.cls}>{chip.label}</span>
 				</button>
 				<div className="flex items-center gap-2 border-t border-border/60 pt-2">
-					<span className="flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+					<span className="flex items-center gap-1.5 font-mono text-ui-2xs text-muted-foreground">
 						<RefreshCw className="h-3 w-3" /> manual sync · ns {c.namespace}
 					</span>
 					{ctx && (
 						<button
 							type="button"
-							onClick={detach}
+							onClick={() => setConfirmDetach(true)}
 							disabled={detaching}
 							title="Detach chart"
+							aria-label="Detach chart"
 							className="ml-auto grid h-6 w-6 place-items-center rounded-none border border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
 						>
 							<X className="h-3 w-3" />
@@ -167,20 +169,19 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 				</div>
 			</div>
 
-			{ctx && (
-				<ChartScanSheet
-					open={sheetOpen}
-					onOpenChange={setSheetOpen}
-					chartId={c.id}
-					repoUrl={c.repoUrl}
-					chartPath={c.chartPath}
-					chartRef={c.ref}
-					scanStatus={c.scanStatus ?? "unscanned"}
-					report={c.scanReport ?? null}
-					scanning={c.scanStatus === "scanning"}
-					onRescan={rescan}
-				/>
-			)}
+			{/* `confirmLabel` is "Detach", NOT "Detach chart": that second string is the TRIGGER's
+			    accessible name, and two buttons sharing one name make
+			    `getByRole("button", { name: "Detach chart" })` ambiguous the moment the dialog is open.
+			    The destructive-action registry reaches the trigger by `control.name` and the confirm by
+			    `confirm_action`, so the two must not collide. */}
+			<ConfirmDialog
+				open={confirmDetach}
+				onOpenChange={setConfirmDetach}
+				title="Detach this chart?"
+				description="The chart's ArgoCD Application and everything it deployed are removed from the cluster. Re-attaching means entering the repository, path and ref again."
+				confirmLabel="Detach"
+				onConfirm={() => void detach()}
+			/>
 		</div>
 	);
 }

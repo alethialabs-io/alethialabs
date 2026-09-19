@@ -25,3 +25,9 @@ output "e2e_gcp_external_dns_sa_email" {
   description = "Standing external-dns identity the project template adopts via external_dns_service_account_email. Without it external-dns cannot list Cloud DNS zones and crash-loops on 403 while ArgoCD reports Synced (#2811)."
   value       = google_service_account.e2e_external_dns.email
 }
+
+# ── E2E assertion broker trust (#4226) ────────────────────────────────────────
+output "e2e_broker_gcp_wif_audience" {
+  description = "The STS `audience` a broker-assertion exchange must name — the broker provider's full resource name — or null while e2e_broker_issuer_url is unset. Distinct from the JWT `aud` (alethia-gcp-wif), which is what allowed_audiences pins."
+  value       = one([for p in google_iam_workload_identity_pool_provider.e2e_broker : "//iam.googleapis.com/${p.name}"])
+}

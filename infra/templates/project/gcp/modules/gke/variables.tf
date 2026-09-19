@@ -144,6 +144,18 @@ variable "preemptible" {
 # Access control
 ################################################################################
 
+variable "enable_private_nodes" {
+  type        = bool
+  description = "Whether nodes have only private IP addresses. Standard clusters must keep this true (enforced by a precondition in main.tf)."
+  default     = true
+}
+
+variable "enable_private_endpoint" {
+  type        = bool
+  description = "Whether the control plane endpoint is reachable only from private IP addresses."
+  default     = false
+}
+
 variable "master_authorized_cidr_blocks" {
   type = list(object({
     cidr_block   = string

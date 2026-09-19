@@ -35,7 +35,17 @@ locals {
     { name = "cloudsql_iam_authentication", value = "on" },
   ] : []
 
-  database_flags = var.engine == "POSTGRES" ? local.database_flags_postgres : local.database_flags_mysql
+  iam_database_flags = var.engine == "POSTGRES" ? local.database_flags_postgres : local.database_flags_mysql
+
+  # The caller's flags (root `cloud_sql_database_flags`, threaded since #4320) are APPENDED, never
+  # substituted: replacing the list would drop the IAM-auth flag above and turn keyless login off
+  # with nothing failing. A caller flag that names the IAM flag itself is dropped for the same
+  # reason — the IAM flag is decided by `iam_auth`, and Cloud SQL rejects a flag named twice.
+  iam_database_flag_names = [for f in local.iam_database_flags : f.name]
+  database_flags = concat(
+    local.iam_database_flags,
+    [for f in var.database_flags : f if !contains(local.iam_database_flag_names, f.name)],
+  )
 
   # The IAM login name differs by engine, and the OUTPUT must be what the app actually authenticates
   # as — the bootstrap GRANT target and the proxy login both key off it.

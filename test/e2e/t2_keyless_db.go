@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -688,4 +689,217 @@ type keylessSummary struct {
 func keylessSummaryJSON(s keylessSummary) ([]byte, error) {
 	s.Feature = "keyless-db-auth"
 	return json.MarshalIndent(s, "", "  ")
+}
+
+// ── the Azure database server's network posture (#1450) ──────────────────────────────────────
+
+// azureDBModulePath is the Azure database module, relative to the repository root. The keyless
+// scenario's Azure cells provision through it, so its servers' privacy is part of what an azure
+// keyless run claims.
+const azureDBModulePath = "infra/templates/project/azure/modules/azure-db/main.tf"
+
+// azureDBPrivacyAttr is one server resource's "this server has no public endpoint" attribute. The two
+// engines spell it differently in azurerm 4.x — PostgreSQL takes a bool with an `_enabled` suffix,
+// MySQL a string enum without one — which is exactly why each is pinned by its own literal rather
+// than one shared name.
+type azureDBPrivacyAttr struct {
+	resourceType string
+	attr         string
+	want         string
+}
+
+// azureDBPrivacyAttrs lists every server resource the azure-db module declares and the literal that
+// keeps it private. TestAzureDBPrivacyCoversEveryServer fails when the module gains a
+// `*_flexible_server` resource this list does not name, so a third engine cannot arrive unpinned.
+var azureDBPrivacyAttrs = []azureDBPrivacyAttr{
+	{resourceType: "azurerm_postgresql_flexible_server", attr: "public_network_access_enabled", want: "false"},
+	{resourceType: "azurerm_mysql_flexible_server", attr: "public_network_access", want: `"Disabled"`},
+}
+
+// maskHCL returns src with every comment and every string's CONTENTS (including interpolations
+// inside it) replaced by spaces. Offsets and newlines are preserved, so a position found in the mask
+// indexes the same byte in src. Braces and `=` signs that survive the mask are therefore structural,
+// which is what lets the attribute reader below count block depth without an HCL parser (test/e2e's
+// go.mod does not require one directly, and the tidy guard would reject adding it here).
+//
+// It REFUSES a heredoc rather than guessing at one: a heredoc body is free text, so any brace inside
+// it would be miscounted, and a reader that miscounts reports a short block that looks clean.
+func maskHCL(src string) (string, error) {
+	out := []byte(src)
+	blank := func(from, to int) {
+		for k := from; k < to && k < len(out); k++ {
+			if out[k] != '\n' {
+				out[k] = ' '
+			}
+		}
+	}
+	// Each frame is a string (true) or an interpolation inside one (false); interpolation frames carry
+	// their own brace depth so `${ { a = 1 } }` closes on the right brace.
+	type frame struct {
+		str   bool
+		depth int
+	}
+	var stack []frame
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		inString := len(stack) > 0 && stack[len(stack)-1].str
+		if inString {
+			switch {
+			case c == '\\':
+				blank(i, i+2)
+				i++
+			case c == '"':
+				stack = stack[:len(stack)-1]
+			case (c == '$' || c == '%') && i+1 < len(src) && src[i+1] == '{':
+				blank(i, i+2)
+				stack = append(stack, frame{})
+				i++
+			default:
+				blank(i, i+1)
+			}
+			continue
+		}
+		inInterp := len(stack) > 0
+		switch {
+		case c == '#' || (c == '/' && i+1 < len(src) && src[i+1] == '/'):
+			end := strings.IndexByte(src[i:], '\n')
+			if end < 0 {
+				end = len(src) - i
+			}
+			blank(i, i+end)
+			i += end - 1
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				return "", fmt.Errorf("unterminated /* comment at byte %d", i)
+			}
+			blank(i, i+2+end+2)
+			i += 2 + end + 1
+		case c == '<' && i+1 < len(src) && src[i+1] == '<':
+			return "", fmt.Errorf("heredoc at byte %d: this reader cannot count braces inside one, so it refuses rather than misreading the block", i)
+		case c == '"':
+			stack = append(stack, frame{str: true})
+		case inInterp && c == '{':
+			stack[len(stack)-1].depth++
+			blank(i, i+1)
+		case inInterp && c == '}':
+			if stack[len(stack)-1].depth == 0 {
+				stack = stack[:len(stack)-1]
+			} else {
+				stack[len(stack)-1].depth--
+			}
+			blank(i, i+1)
+		case inInterp:
+			blank(i, i+1)
+		}
+	}
+	if len(stack) > 0 {
+		return "", fmt.Errorf("unterminated string or interpolation at end of file")
+	}
+	return string(out), nil
+}
+
+// hclAttrLine matches an attribute assignment at the start of a masked line. `==` is excluded so a
+// comparison inside a multi-line expression is not read as an assignment.
+var hclAttrLine = regexp.MustCompile(`^[ \t]*([A-Za-z_][A-Za-z0-9_-]*)[ \t]*=([^=]|$)`)
+
+// hclResourceTopLevelAttrs returns the attributes assigned DIRECTLY in the body of every
+// `resource "<resourceType>" "<name>"` block in src, as name → raw value expressions (one per block
+// that assigns it, so a duplicate block shows up as two values). Attributes inside nested blocks
+// (`storage { … }`, a `dynamic` block's `content`) are not top-level and are not returned: an
+// attribute that only exists under a `dynamic` block is conditional, and a posture that holds only
+// sometimes is not the posture this reader is asked about.
+//
+// It also returns how many such blocks it found, because "found no block" must never read as "the
+// block has no such attribute" — the caller refuses a count it did not expect.
+func hclResourceTopLevelAttrs(src, resourceType string) (map[string][]string, int, error) {
+	masked, err := maskHCL(src)
+	if err != nil {
+		return nil, 0, err
+	}
+	// The header is matched on the ORIGINAL text (the mask blanks the type label) and then confirmed
+	// against the mask, so a header quoted inside a comment or a string is not counted.
+	header := regexp.MustCompile(`(?m)^resource[ \t]+"` + regexp.QuoteMeta(resourceType) + `"[ \t]+"[^"\n]*"[ \t]*\{`)
+	attrs := map[string][]string{}
+	blocks := 0
+	for _, loc := range header.FindAllStringIndex(src, -1) {
+		if !strings.HasPrefix(masked[loc[0]:], "resource") {
+			continue
+		}
+		blocks++
+		open := loc[1] - 1
+		depth := 0
+		end := -1
+		for k := open; k < len(masked); k++ {
+			switch masked[k] {
+			case '{':
+				depth++
+			case '}':
+				depth--
+			}
+			if depth == 0 {
+				end = k
+				break
+			}
+		}
+		if end < 0 {
+			return nil, blocks, fmt.Errorf("resource %q at byte %d never closes", resourceType, loc[0])
+		}
+		// Walk the body line by line, tracking the depth at each line's start.
+		depth = 1
+		for pos := open + 1; pos < end; {
+			nl := strings.IndexByte(masked[pos:end], '\n')
+			lineEnd := end
+			if nl >= 0 {
+				lineEnd = pos + nl
+			}
+			line := masked[pos:lineEnd]
+			if depth == 1 {
+				if m := hclAttrLine.FindStringSubmatchIndex(line); m != nil {
+					name := line[m[2]:m[3]]
+					eq := strings.IndexByte(line[m[3]:], '=') + m[3]
+					valEnd := len(strings.TrimRight(line, " \t\r"))
+					attrs[name] = append(attrs[name], strings.TrimSpace(src[pos+eq+1:pos+valEnd]))
+				}
+			}
+			depth += strings.Count(line, "{") - strings.Count(line, "}")
+			pos = lineEnd + 1
+		}
+	}
+	return attrs, blocks, nil
+}
+
+// azureDBPrivacyProblems reports every way the azure-db module's servers fail to STATE that they
+// are private: a server block missing or duplicated, the privacy attribute absent, assigned twice,
+// set to anything but its private literal, or present only inside a nested block. Each server must
+// also be VNet-integrated (`delegated_subnet_id`), because a disabled public endpoint on a server
+// with no private one is an unreachable database, not a private one.
+//
+// This checks what the module DECLARES. What Azure actually reports for a provisioned server is only
+// observed by a real apply — the maintainer-run azure·mysql keyless scenario.
+func azureDBPrivacyProblems(src string) []string {
+	var problems []string
+	for _, p := range azureDBPrivacyAttrs {
+		attrs, blocks, err := hclResourceTopLevelAttrs(src, p.resourceType)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", p.resourceType, err))
+			continue
+		}
+		if blocks != 1 {
+			problems = append(problems, fmt.Sprintf("%s: found %d resource blocks, want exactly 1 — the reader vouches only for the one server it expects", p.resourceType, blocks))
+			continue
+		}
+		switch got := attrs[p.attr]; {
+		case len(got) == 0:
+			problems = append(problems, fmt.Sprintf("%s does not set %s at the top level of its body — the server's privacy is whatever the service defaults it to", p.resourceType, p.attr))
+		case len(got) > 1:
+			problems = append(problems, fmt.Sprintf("%s sets %s %d times", p.resourceType, p.attr, len(got)))
+		case got[0] != p.want:
+			problems = append(problems, fmt.Sprintf("%s sets %s = %s, want %s", p.resourceType, p.attr, got[0], p.want))
+		}
+		if len(attrs["delegated_subnet_id"]) != 1 {
+			problems = append(problems, fmt.Sprintf("%s is not VNet-integrated (no top-level delegated_subnet_id) — with its public endpoint disabled it would be unreachable", p.resourceType))
+		}
+	}
+	return problems
 }
