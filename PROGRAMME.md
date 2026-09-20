@@ -342,11 +342,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35430876309 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 35430876309 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 35430876309 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35430876309 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 35430876309 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35499891484 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 35499891484 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 35499891484 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ⛔ **unwired** | a gate-off proof was recorded — run 35499891484 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 35499891484 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -385,51 +385,51 @@ A row marked **closed … inside this refresh window** is a red that was filed a
 
 ### Orphan reaper — nothing standing
 
-**0 of 5 clouds are verified clean.** A real reclaim result stays current for 48 hours.
+**3 of 5 clouds are verified clean.** A real reclaim result stays current for 48 hours.
 
 A run that reclaimed an orphan may still finish clean; the incident counts remain visible. Dry runs, skipped gates, failed or missing logs, unverifiable checks and unattributable resources never count as clean.
 
 | cloud | state | durable evidence |
 |---|:---:|---|
-| **aws** | ? indeterminate | no durable reclaim result |
-| **gcp** | ? indeterminate | no durable reclaim result |
-| **azure** | ? indeterminate | no durable reclaim result |
-| **alibaba** | ? indeterminate | no durable reclaim result |
-| **hetzner** | ? indeterminate | no durable reclaim result |
+| **aws** | ✅ clean | run 35510381524 at 2026-09-20T12:29:27Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
+| **gcp** | ✅ clean | run 35510381524 at 2026-09-20T12:29:27Z reclaimed 1 orphan run(s) / 10 resource(s), then verified clean |
+| **azure** | ✅ clean | run 35510381524 at 2026-09-20T12:29:27Z found no orphan runs and verified clean |
+| **alibaba** | ? indeterminate | run 35510381524 at 2026-09-20T12:29:27Z skipped its cloud gate |
+| **hetzner** | ? indeterminate | run 35510381524 at 2026-09-20T12:29:27Z found 1 unattributable resource(s) |
 
 ### Blocked on a human
 
-- #4854 — security(privacy): fulfilErasure erases nothing — build the erasure executor, and make the register match the schema
+- **`alibaba` cannot provision** — `E2E_ALIBABA_ROLE_ARN` is not set, so the leg green-skips.
 - #4771 — e2e nightly: aws RED (floor · after proof capture)
 - #4740 — cost(e2e): 10 orphan pvc-* disks have stood in gcp europe-west3 since 2026-08-29 — 158 GB the reaper never reclaimed
 - #4642 — infra(github): the live rulesets enforce 10 of the 19 contexts protect-main declares — all seven release-gate legs are unenforced
-- #4583 — audit(grants): find existing rows with an org kind and a resource id — grants someone believed were scoped, and are not
 - #4547 — infra(e2e-issuer): the assertion issuer has never deployed — CLOUDFLARE_API_TOKEN is unset in the e2e-issuer environment
 - #4395 — chore(promote): the orphan reaper has published nothing in 8 green runs — MVP predicate #6 is unsatisfiable until staging reaches main
 - #4374 — infra(cp-hetzner): adopt the live Cloudflare email routing — import the 11 resources and set the inputs in one change
-- #4326 — cost(sandbox): the alethia-sandbox project has no server and still bills — delete the leftover snapshots and the unassigned IP
 - #4287 — maintainer(release-gate): the first /console-prod-qa run on production, and its report PR
 - #4286 — maintainer(release-gate): Stripe test secrets, the tofu apply that makes the gate required, and three deliberately red dispatches
+- #4226 — infra(e2e-issuer): establish four-cloud trust for broker assertions
 - #4177 — ci(mergify): batch_size: 5 is INERT — it lives only on dev, and Mergify reads its config from main
 - #4114 — console: the BYO chart dialog offers fictional acme/* repos as its worked example
 - #4113 — templates: no template is announced until it has been deployed once — REAL CLOUD SPEND, not agent-buildable
 - #4112 — templates: create the three public starter repos and set is_template — ORG ADMIN, not agent-buildable
 - #3907 — legal(assets): the nine third-party marks already shipping were never cleared — and the test that disqualified harbor applies to them
 - #3855 — e2e nightly: gcp RED (floor)
+- #3754 — fix(authz): members stuck ungranted by the toOrgRole gap are not backfilled — and a naive backfill would restore revoked access
 - #3549 — ci: the live branch rulesets do not require what infra/github says they do
 - #3524 — e2e(addons): remove external-dns from addOnExclusions once a paid gcp/azure addons run is green
 - #3438 — release(runner): `release-runner` has never once succeeded — the ECR repo it pushes to does not exist, and nothing creates it
 - #3348 — AWS and GCP cannot be provisioned in production: the deployed runner runs as `self` with no ambient credentials, and the error names EC2 IMDS
-- #3292 — infra: ssh_allowed_cidrs defaults to 0.0.0.0/0 on three boxes, two of which CI applies unattended
 - #3038 — feat(e2e): the CLI demo bar proves reachability, not the demo — drive a real provision through the real binary
 - #2759 — ci: workflows red on every recent run
 - #2545 — e2e nightly: alibaba RED (floor)
-- #2482 — release: the console never learns about a new CLI version — the notification's credentials cannot mint from a tag
 - #2462 — infra(e2e): make the e2e-dev OIDC trust widening authoritative — four applies, currently hand-applied
 - #2385 — feat(e2e): price the full bar on gcp/azure/alibaba/hetzner, so a schedule can be restored
 - #2384 — e2e nightly: alibaba RED (full-bar)
 - #2283 — probe(alibaba-cr): does an AUTO scan rule fire with no VPC endpoint? (#2265 shipped the wiring, not the proof)
 - #1513 — feat(keyless): GA — default-on rollout and delete ALETHIA_KEYLESS_DB_AUTH_ENABLED
+- #1450 — test(e2e): azure-mysql keyless real-apply on Azure (main-gated)
+- #1268 — test(e2e): cross-account keyless cloud-SM in-cluster read — AWS/GCP/Azure/Alibaba (main-gated)
 - #845 — test(fabric): W-h prove enterprise-demo on all 4 partner clouds (acceptance gate)
 
 ### Debt ratchets
@@ -453,7 +453,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-09-19T10:48:19Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-09-20T13:15:13Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
