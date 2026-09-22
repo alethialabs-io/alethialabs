@@ -953,6 +953,16 @@ jobs:
       - name: ...and that census is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-destructive-actions.mjs --self-test
+      # A third-party firm's name was removed from this public tree once already (0a2e9a42d,
+      # "remove the former client's name from the public repo", #2416) and 80 occurrences were
+      # back by 2026-09-22. A one-pass replace removes what exists; nothing failed when it
+      # returned. This is the half #2416 lacked.
+      - name: No forbidden third-party name is in the tree
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:forbidden-names
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-forbidden-names.mjs --self-test
       - name: Console shared surface (@repo/format, @repo/ui/page-header) is not hand-rolled
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:shared-surface
