@@ -223,16 +223,6 @@ baseline:
     off: "alibaba,aws,gcp,hetzner"
     state: unreviewed
     issue: "#2004"
-  - variable: azure_cache_capacity
-    on: "azure"
-    off: "alibaba,aws,gcp,hetzner"
-    state: unreviewed
-    issue: "#2004"
-  - variable: azure_cache_family
-    on: "azure"
-    off: "alibaba,aws,gcp,hetzner"
-    state: unreviewed
-    issue: "#2004"
   - variable: azure_cache_multi_az
     on: "azure"
     off: "alibaba,aws,gcp,hetzner"

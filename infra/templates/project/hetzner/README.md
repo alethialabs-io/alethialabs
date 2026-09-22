@@ -188,8 +188,8 @@ provider (`~> 3.3`) in `s3_compat_mode`. Each `buckets` entry:
 | `name` | Bucket name (namespaced `project-environment-<name>`). |
 | `versioning` | Enabled via `minio_s3_bucket_versioning` when `true`. |
 | `public_access` | `true` → `public-read` ACL, else `private`. |
-| `encryption_enabled` | **Informational** — Hetzner encrypts at rest automatically; no per-bucket toggle. |
-| `cors_origins` | **Ignored** — the provider does not apply CORS to a non-MinIO backend (`s3_compat_mode` skips it). |
+| `encryption_enabled` | **Informational, reaches no resource** — Hetzner Object Storage supports only SSE-C (per-request customer keys) and has no bucket-level default-encryption configuration, so there is nothing to write. Objects are encrypted at rest either way; this cannot turn that off. |
+| `cors_origins` | Builds a `minio_s3_bucket_cors` rule for any bucket that asks for one (#4320). Under `s3_compat_mode` the provider *skips* CORS rather than failing when a backend does not implement it, so the request is honoured where Hetzner supports it and is a no-op where it is not — never an apply error. |
 
 Object Storage exists only in `fsn1`/`nbg1`/`hel1`; a cluster in a compute-only region
 (ash/hil/sin) falls back to `fsn1` for buckets.
