@@ -18,25 +18,29 @@
 //   · IT REPORTS ROWS, NOT RULES. The old counts were `plan.erase.length` — how many TABLES were
 //     considered. A count of tables cannot distinguish "erased 412 rows" from "erased nothing",
 //     which is exactly the distinction that was missing.
-//   · IT REFUSES WHILE THE SUBJECT'S PERSONAL ORG STILL HAS LIVE RESOURCES. See
-//     `findLiveResidency` — this is a maintainer ruling and a feature, not an edge case.
+//   · IT REFUSES WHILE AN ORG ONLY THE SUBJECT CAN REACH STILL HAS LIVE RESOURCES — their personal
+//     one, and every team org whose only active owner they are. See `findLiveResidency`; the
+//     refusal is a maintainer ruling and a feature, not an edge case.
 //
 // `server-only`, and not `"use server"`: nothing here may become a POST-addressable action — every
 // export of a `"use server"` module is an endpoint whether or not the product calls it, and these
 // take the subject as a parameter. The one caller is `fulfilErasure`, which is gated on standing
-// over the CASE (the subject themselves, or an admin of the organization it was raised in — see
-// `actions/privacy/cases.ts`), and it runs on the RLS-bypassing service connection because an
-// erasure crosses every tenancy boundary a subject's rows sit behind.
+// over the CASE — an admin of the organization it was RAISED IN, and never the subject, who is not
+// the second party to their own erasure (see `actions/privacy/cases.ts`). It runs on the
+// RLS-bypassing service connection because an erasure crosses every tenancy boundary a subject's
+// rows sit behind.
 
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, count, eq, is, ne, sql, type SQL } from "drizzle-orm";
+import { and, count, eq, inArray, is, ne, sql, type SQL } from "drizzle-orm";
 import { toSnakeCase } from "drizzle-orm/casing";
 import { getTableConfig, type PgColumn, PgTable } from "drizzle-orm/pg-core";
 import type { Tx } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
+import { toPdpRole } from "@/lib/authz/org-access-control";
 import {
 	cloudIdentities,
+	member,
 	projectEnvironments,
 	projects,
 } from "@/lib/db/schema";
@@ -84,18 +88,32 @@ export interface ErasureExecution {
 // ── The subject's live estate ────────────────────────────────────────────────────────────────────
 
 /**
- * What the subject's personal organization still owns.
+ * What the organizations the subject ALONE can reach still own.
  *
  * A personal org's id is the user's id, so erasing the owner reaches projects, tofu state, live
  * cloud resources and OpenFGA tuples — none of which this module destroys or detaches.
+ *
+ * ⚠️ AND THE PERSONAL ORG IS NOT THE ONLY ONE. This counted only the personal org until the
+ * security review of #4854, and the omission produced exactly the outcome the count exists to
+ * prevent. The erasure deletes `session` and `account` and rewrites `user.email` to an address in
+ * a reserved-for-invalid domain, so the account can never sign in again; `member` carries no rule,
+ * so the subject stays the owner of every team organization they own. A team org whose ONLY active
+ * owner is the subject therefore ends up with live infrastructure and no account able to reach,
+ * bill or tear it down — the same hazard, one tenancy across.
  */
 export interface ErasureResidency {
-	/** Rows in `projects` scoped to the personal org. A project is destroyed by removing it. */
+	/** Rows in `projects`, over every org in scope. A project is destroyed by removing it. */
 	readonly projects: number;
 	/** Environments not in the terminal `DESTROYED` state. */
 	readonly environments: number;
 	/** Connected cloud accounts. While one exists, resources may be live behind it. */
 	readonly cloudConnections: number;
+	/**
+	 * How many of the counted rows' organizations are TEAM orgs the subject is the only active
+	 * owner of — so the refusal can name the one action that clears them, which is not "delete
+	 * every project" but "transfer ownership, or delete the organization".
+	 */
+	readonly soleOwnedOrganizations: number;
 }
 
 /** True when nothing is left and an erasure may proceed. */
@@ -104,7 +122,44 @@ export function residencyIsClear(r: ErasureResidency): boolean {
 }
 
 /**
- * Counts what the subject's personal organization still holds.
+ * The organizations whose resources an erasure would strand: the subject's personal org, plus
+ * every team org whose only ACTIVE OWNER is the subject.
+ *
+ * ⚠️ THE ROLE IS NOT A SQL EQUALITY. `member.role` is text and Better Auth's org plugin stores a
+ * comma-joined list for a multi-role invite (`"owner,admin"` is a legitimate value, and the plugin
+ * itself reads it back with a split) — so `role = 'owner'` misses a real owner. `toPdpRole`
+ * resolves the most-privileged component, which is the same answer the PDP grants from.
+ *
+ * An org with a SUSPENDED second owner counts as sole-owned: a suspended member holds the role and
+ * not the access (`lib/db/schema/organizations.ts`), so they cannot tear anything down either.
+ */
+async function strandedOrgIds(tx: Tx, subject: ErasureSubject): Promise<string[]> {
+	const mine = await tx
+		.select({ orgId: member.organizationId, role: member.role })
+		.from(member)
+		.where(and(eq(member.userId, subject.userId), eq(member.status, "active")));
+	const owned = mine
+		.filter((m) => toPdpRole(m.role) === "owner")
+		.map((m) => m.orgId);
+	if (owned.length === 0) return [subject.personalOrgId];
+
+	const others = await tx
+		.select({ orgId: member.organizationId, userId: member.userId, role: member.role })
+		.from(member)
+		.where(and(inArray(member.organizationId, owned), eq(member.status, "active")));
+	const coOwned = new Set(
+		others
+			.filter((m) => m.userId !== subject.userId && toPdpRole(m.role) === "owner")
+			.map((m) => m.orgId),
+	);
+	return [
+		subject.personalOrgId,
+		...owned.filter((id) => !coOwned.has(id) && id !== subject.personalOrgId),
+	];
+}
+
+/**
+ * Counts what those organizations still hold.
  *
  * ⚠️ THE MEASUREMENT IS DELIBERATELY BROADER THAN "a running server", and errs towards refusing.
  * `cloudConnections` counts credential anchors, not resources: while a connection exists we cannot
@@ -118,34 +173,75 @@ export function residencyIsClear(r: ErasureResidency): boolean {
  * Every other state, `FAILED` included, counts — a failed destroy is the case where something is
  * most likely still running.
  *
+ * ⚠️ WHAT IT DOES NOT ASK, stated because the bound is a decision and not an oversight: a
+ * sole-owned organization holding NOTHING does not block. The maintainer's ruling is about
+ * infrastructure left running, and an empty org has none — it is orphaned, which is a membership
+ * question (who inherits it, is it deleted) that nobody has ruled on and that this step must not
+ * decide by refusing.
+ *
  * Read inside the caller's transaction so the count and the deletes see one snapshot; checking
  * outside would leave a window in which a project is created between the check and the erasure.
  */
 export async function findLiveResidency(
 	tx: Tx,
-	personalOrgId: string,
+	subject: ErasureSubject,
 ): Promise<ErasureResidency> {
-	const [p] = await tx
-		.select({ n: count() })
-		.from(projects)
-		.where(eq(projects.org_id, personalOrgId));
-	const [e] = await tx
-		.select({ n: count() })
-		.from(projectEnvironments)
-		.where(
-			and(
-				eq(projectEnvironments.org_id, personalOrgId),
-				ne(projectEnvironments.status, "DESTROYED"),
-			),
+	const orgIds = await strandedOrgIds(tx, subject);
+	/**
+	 * Folds one grouped count into a total and the orgs that contributed.
+	 *
+	 * `org_id` is nullable on all three tables, so the row type is too. An `inArray` predicate can
+	 * never match NULL, so no such row reaches here — the filter is what makes that a statement the
+	 * type system holds rather than one a reader has to reconstruct.
+	 */
+	const byOrg = (
+		rows: { orgId: string | null; n: number }[],
+	): { total: number; orgs: string[] } => {
+		const named = rows.filter(
+			(r): r is { orgId: string; n: number } => r.orgId !== null,
 		);
-	const [c] = await tx
-		.select({ n: count() })
-		.from(cloudIdentities)
-		.where(eq(cloudIdentities.org_id, personalOrgId));
+		return {
+			total: named.reduce((sum, r) => sum + r.n, 0),
+			orgs: named.filter((r) => r.n > 0).map((r) => r.orgId),
+		};
+	};
+
+	const p = byOrg(
+		await tx
+			.select({ orgId: projects.org_id, n: count() })
+			.from(projects)
+			.where(inArray(projects.org_id, orgIds))
+			.groupBy(projects.org_id),
+	);
+	const e = byOrg(
+		await tx
+			.select({ orgId: projectEnvironments.org_id, n: count() })
+			.from(projectEnvironments)
+			.where(
+				and(
+					inArray(projectEnvironments.org_id, orgIds),
+					ne(projectEnvironments.status, "DESTROYED"),
+				),
+			)
+			.groupBy(projectEnvironments.org_id),
+	);
+	const c = byOrg(
+		await tx
+			.select({ orgId: cloudIdentities.org_id, n: count() })
+			.from(cloudIdentities)
+			.where(inArray(cloudIdentities.org_id, orgIds))
+			.groupBy(cloudIdentities.org_id),
+	);
+
+	// Which of the BLOCKING organizations are team orgs rather than the personal one. Counted from
+	// the rows that actually blocked, so an empty sole-owned org is not reported as a thing to fix.
+	const blocking = new Set([...p.orgs, ...e.orgs, ...c.orgs]);
+	blocking.delete(subject.personalOrgId);
 	return {
-		projects: p?.n ?? 0,
-		environments: e?.n ?? 0,
-		cloudConnections: c?.n ?? 0,
+		projects: p.total,
+		environments: e.total,
+		cloudConnections: c.total,
+		soleOwnedOrganizations: blocking.size,
 	};
 }
 
@@ -171,11 +267,23 @@ export function describeResidency(r: ErasureResidency): string {
 			`${r.cloudConnections} connected cloud account${r.cloudConnections === 1 ? "" : "s"}`,
 		);
 	}
+	const where =
+		r.soleOwnedOrganizations > 0
+			? `the account's organizations still have ${parts.join(", ")}, ` +
+				`across ${r.soleOwnedOrganizations} organization${r.soleOwnedOrganizations === 1 ? "" : "s"} ` +
+				"it is the only owner of and its own personal organization"
+			: `the account's personal organization still has ${parts.join(", ")}`;
+	const clear =
+		r.soleOwnedOrganizations > 0
+			? "Destroy every environment, delete every project and disconnect every cloud account — and " +
+				"for an organization somebody else should keep, make somebody else an owner of it instead. "
+			: "Destroy every environment, delete every project and disconnect every cloud account, ";
 	return (
-		`Erasure is not performed while the account's personal organization still has ${parts.join(", ")}. ` +
+		`Erasure is not performed while ${where}. ` +
 		"Erasing the owner would leave infrastructure running that nothing can reach, bill or tear down, " +
-		"and this step never destroys cloud resources and never transfers them to somebody else. " +
-		"Destroy every environment, delete every project and disconnect every cloud account, then ask " +
+		"and this step never destroys cloud resources, never transfers them to somebody else and never " +
+		"changes who owns an organization. " +
+		`${clear}then ask ` +
 		"for the request to be fulfilled again. The request stays open and its deadline is unchanged."
 	);
 }

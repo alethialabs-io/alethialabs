@@ -48,6 +48,8 @@ const ADMIN = "99999999-9999-9999-9999-999999999999";
 const SUBJECT = "11111111-1111-1111-1111-111111111111";
 /** The organization the case was raised in — NOT the one the caller's session points at. */
 const TENANT = "33333333-3333-3333-3333-333333333333";
+/** A team organization the subject is a member of. Its resources are not the personal org's. */
+const TEAM = "55555555-5555-5555-5555-555555555555";
 const NOW = new Date("2026-09-19T09:00:00.000Z");
 
 /** One thing that reached the database. `bare` = NOT inside the erasure transaction. */
@@ -66,8 +68,24 @@ const calls: Call[] = [];
 let caseRow: Record<string, unknown>;
 /** False makes the reference lookup find nothing, without making `caseRow` nullable. */
 let caseFound = true;
-/** What the residency counts answer with. */
-let residency = { projects: 0, environments: 0, cloudConnections: 0 };
+/**
+ * What the residency counts answer with, PER ORGANIZATION.
+ *
+ * Keyed by org id because the count is no longer about one org: since #4854's security review
+ * `findLiveResidency` asks about the personal org AND every team org the subject is the only
+ * active owner of, and a fake that could answer for only one of them could not tell them apart.
+ */
+let residency: Record<
+	string,
+	{ projects: number; environments: number; cloudConnections: number }
+> = {};
+/** The subject's active `member` rows. Empty means they own no team organization. */
+let memberRows: {
+	organizationId: string;
+	userId: string;
+	role: string;
+	status: string;
+}[] = [];
 /** How many rows every erase/pseudonymize statement reports back. */
 let rowsPerStatement = 4;
 
@@ -86,7 +104,10 @@ type Row = Record<string, unknown>;
 interface FakeClient {
 	select: (fields?: unknown) => {
 		from: (table: unknown) => {
-			where: (where: SQL) => Promise<Row[]> & { limit: (n?: number) => Promise<Row[]> };
+			where: (where: SQL) => Promise<Row[]> & {
+				limit: (n?: number) => Promise<Row[]>;
+				groupBy: (...by: unknown[]) => Promise<Row[]>;
+			};
 		};
 	};
 	insert: (table: unknown) => {
@@ -111,6 +132,9 @@ function client(bare: boolean): FakeClient {
 					const rows = rowsFor(table, where);
 					return Object.assign(Promise.resolve(rows), {
 						limit: async () => rows,
+						// The residency counts are GROUPED by org id since the security review; a
+						// fake with no `groupBy` fails on the chain rather than on the assertion.
+						groupBy: async () => rows,
 					});
 				},
 			}),
@@ -139,24 +163,64 @@ function client(bare: boolean): FakeClient {
 	};
 }
 
+/**
+ * The values bound into a WHERE clause.
+ *
+ * The fake HONOURS the org predicate rather than ignoring it, and that is the difference between
+ * a residency test and a test of its own fixture: with the predicate ignored, an org that should
+ * have been excluded from the count still contributes to it, and "this org does not block" passes
+ * for every implementation including one that never excluded anything.
+ */
+function paramsOf(where: SQL): unknown[] {
+	return dialect.sqlToQuery(where).params;
+}
+
+/** One grouped row per org IN SCOPE that has any — which is what `group by` returns. */
+function grouped(
+	where: SQL,
+	pick: (c: { projects: number; environments: number; cloudConnections: number }) => number,
+): Row[] {
+	const scope = paramsOf(where);
+	return Object.entries(residency)
+		.filter(([orgId]) => scope.includes(orgId))
+		.map(([orgId, counts]) => ({ orgId, n: pick(counts) }))
+		.filter((r) => r.n > 0);
+}
+
 /** What a read answers with, keyed on the table it was made against. */
-function rowsFor(table: unknown, _where: SQL): Row[] {
+function rowsFor(table: unknown, where: SQL): Row[] {
 	if (table === privacyCase) return caseFound ? [caseRow] : [];
-	if (table === projects) return [{ n: residency.projects }];
-	if (table === projectEnvironments) return [{ n: residency.environments }];
-	if (table === cloudIdentities) return [{ n: residency.cloudConnections }];
+	if (table === member) {
+		// Both membership reads filter on `status = 'active'`; the first also names the subject,
+		// the second the organizations, so one predicate serves both. The rows come back under the
+		// SELECT's aliases (`orgId`), not the column names — a fixture that kept the column names
+		// would hand the caller `undefined` org ids and every org would silently drop out.
+		const scope = paramsOf(where);
+		return memberRows
+			.filter(
+				(m) =>
+					m.status === "active" &&
+					(scope.includes(m.userId) || scope.includes(m.organizationId)),
+			)
+			.map((m) => ({ orgId: m.organizationId, userId: m.userId, role: m.role }));
+	}
+	if (table === projects) return grouped(where, (c) => c.projects);
+	if (table === projectEnvironments) return grouped(where, (c) => c.environments);
+	if (table === cloudIdentities) return grouped(where, (c) => c.cloudConnections);
 	return [];
 }
 
 import { fulfilErasure } from "@/app/server/actions/privacy/cases";
 import {
 	cloudIdentities,
+	member,
 	privacyCase,
 	privacyCaseEvent,
 	privacyErasureTombstone,
 	projectEnvironments,
 	projects,
 } from "@/lib/db/schema";
+import { ForbiddenError } from "@/lib/authz/types";
 import { buildErasurePlan } from "@/lib/privacy/erasure-plan";
 
 const PLAN = buildErasurePlan();
@@ -192,7 +256,8 @@ function events(): { kind: unknown; detail: { summary: string; counts?: Record<s
 
 beforeEach(() => {
 	calls.length = 0;
-	residency = { projects: 0, environments: 0, cloudConnections: 0 };
+	residency = {};
+	memberRows = [];
 	rowsPerStatement = 4;
 	caseFound = true;
 	injected = undefined;
@@ -218,14 +283,19 @@ beforeEach(() => {
 	};
 });
 
-describe("refusing while the personal org still has live resources", () => {
+describe("refusing while an org only the subject can reach has live resources", () => {
 	it("erases nothing and leaves the case open when a project is still there", async () => {
-		residency = { projects: 2, environments: 1, cloudConnections: 0 };
+		residency = { [SUBJECT]: { projects: 2, environments: 1, cloudConnections: 0 } };
 		const out = await fulfilErasure("DSR-ABCD1234", NOW);
 
 		expect(out.outcome).toBe("refused_live_resources");
 		if (out.outcome !== "refused_live_resources") return;
-		expect(out.residency).toEqual({ projects: 2, environments: 1, cloudConnections: 0 });
+		expect(out.residency).toEqual({
+			projects: 2,
+			environments: 1,
+			cloudConnections: 0,
+			soleOwnedOrganizations: 0,
+		});
 		expect(out.message).toContain("2 projects");
 
 		// NOTHING was erased. This is the assertion that fails if the refusal is dropped.
@@ -247,22 +317,102 @@ describe("refusing while the personal org still has live resources", () => {
 			projects: 2,
 			environments_not_destroyed: 1,
 			cloud_connections: 0,
+			sole_owned_organizations: 0,
 		});
 	});
 
 	// The executor never detaches a credential, so while one exists we cannot know from here what
 	// is live behind it. Refusing over-refuses on purpose; the message says to disconnect it.
 	it("refuses on a connected cloud account alone", async () => {
-		residency = { projects: 0, environments: 0, cloudConnections: 1 };
+		residency = { [SUBJECT]: { projects: 0, environments: 0, cloudConnections: 1 } };
 		const out = await fulfilErasure("DSR-ABCD1234", NOW);
 		expect(out.outcome).toBe("refused_live_resources");
 		expect(of("execute")).toEqual([]);
 	});
 
+	// THE TEAM ORG THE SUBJECT ALONE OWNS. The erasure deletes every session and rewrites the
+	// address, so the account can never sign in again; `member` carries no rule, so the subject
+	// stays that org's only owner. Counting only the personal org produced exactly the outcome the
+	// count exists to prevent — infrastructure running with nobody able to reach or bill it.
+	it("refuses over an organization the subject is the only active owner of", async () => {
+		memberRows = [
+			{ organizationId: TEAM, userId: SUBJECT, role: "owner", status: "active" },
+			{ organizationId: TEAM, userId: ADMIN, role: "admin", status: "active" },
+		];
+		residency = { [TEAM]: { projects: 3, environments: 0, cloudConnections: 0 } };
+		const out = await fulfilErasure("DSR-ABCD1234", NOW);
+
+		expect(out.outcome).toBe("refused_live_resources");
+		if (out.outcome !== "refused_live_resources") return;
+		expect(out.residency.projects).toBe(3);
+		expect(out.residency.soleOwnedOrganizations).toBe(1);
+		// The instruction has to be the one that clears THIS: destroying projects is not enough if
+		// the organization should outlive the person.
+		expect(out.message).toMatch(/only owner of/);
+		expect(out.message).toMatch(/make somebody else an owner/);
+		expect(of("execute")).toEqual([]);
+	});
+
+	// A second active owner can tear it down, so that org is not stranded and does not block.
+	it("does not count an organization that has another active owner", async () => {
+		memberRows = [
+			{ organizationId: TEAM, userId: SUBJECT, role: "owner", status: "active" },
+			{ organizationId: TEAM, userId: ADMIN, role: "owner", status: "active" },
+		];
+		residency = { [TEAM]: { projects: 3, environments: 0, cloudConnections: 0 } };
+		const out = await fulfilErasure("DSR-ABCD1234", NOW);
+		expect(out.outcome).toBe("erased");
+	});
+
+	// `member.role` is TEXT and the org plugin stores a comma-joined list for a multi-role invite,
+	// so `role = 'owner'` misses a real owner — and missing one is the under-refusal, not the
+	// over-refusal. Asserted in both directions in one test: the subject's own multi-role row must
+	// count as ownership, and so must the OTHER owner's.
+	it("reads a comma-joined role as the ownership it grants", async () => {
+		memberRows = [
+			{ organizationId: TEAM, userId: SUBJECT, role: "owner,admin", status: "active" },
+		];
+		residency = { [TEAM]: { projects: 1, environments: 0, cloudConnections: 0 } };
+		expect((await fulfilErasure("DSR-ABCD1234", NOW)).outcome).toBe(
+			"refused_live_resources",
+		);
+
+		calls.length = 0;
+		memberRows = [
+			{ organizationId: TEAM, userId: SUBJECT, role: "owner", status: "active" },
+			{ organizationId: TEAM, userId: ADMIN, role: "admin,owner", status: "active" },
+		];
+		expect((await fulfilErasure("DSR-ABCD1234", NOW)).outcome).toBe("erased");
+	});
+
+	// A suspended member holds the role and not the access, so they cannot tear anything down
+	// either — the org is still stranded.
+	it("treats a suspended second owner as no second owner", async () => {
+		memberRows = [
+			{ organizationId: TEAM, userId: SUBJECT, role: "owner", status: "active" },
+			{ organizationId: TEAM, userId: ADMIN, role: "owner", status: "suspended" },
+		];
+		residency = { [TEAM]: { projects: 1, environments: 0, cloudConnections: 0 } };
+		expect((await fulfilErasure("DSR-ABCD1234", NOW)).outcome).toBe(
+			"refused_live_resources",
+		);
+	});
+
+	// The bound, stated as a test because it is a DECISION and not an oversight: an empty
+	// sole-owned org is orphaned, which is a membership question nobody has ruled on. The ruling
+	// this step implements is about infrastructure left running, and there is none.
+	it("does not block on a sole-owned organization that holds nothing", async () => {
+		memberRows = [
+			{ organizationId: TEAM, userId: SUBJECT, role: "owner", status: "active" },
+		];
+		residency = {};
+		expect((await fulfilErasure("DSR-ABCD1234", NOW)).outcome).toBe("erased");
+	});
+
 	// `DESTROYED` is the terminal state a teardown leaves behind. The count the action asks for
 	// must exclude it, or an org that HAS been torn down is permanently un-erasable.
 	it("asks for environments that are not DESTROYED", async () => {
-		residency = { projects: 0, environments: 0, cloudConnections: 0 };
+		residency = {};
 		await fulfilErasure("DSR-ABCD1234", NOW);
 		const read = calls.find((c) => c.op === "select" && c.table === projectEnvironments);
 		expect(read).toBeDefined();
@@ -407,29 +557,63 @@ describe("standing over the case", () => {
 	// just because the caller owns a personal organization of their own.
 	it("refuses a case that is neither the caller's own nor their organization's", async () => {
 		caseRow.organizationId = null;
-		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(/not yours/);
+		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(/not yours to decide/);
 		expect(authorizeInOrg).not.toHaveBeenCalled();
 		expect(of("execute")).toEqual([]);
 		expect(of("insert", privacyErasureTombstone)).toEqual([]);
 	});
 
-	// The self-serve path (#4875/#4878) lands here: a personal org is recorded as none, so the
-	// subject is the only standing there is. Being the subject is a fact about the row, which is
-	// strictly stronger than the permission it replaced.
-	it("lets the subject act on their own case, which carries no organization", async () => {
+	// SEPARATION OF DUTY, and the reason this endpoint needs it. `requestMyErasure` hands the
+	// browser a reference to a case it has already marked identity-verified, and this module is
+	// `"use server"` — so admitting the subject would make an irreversible erasure reachable in ONE
+	// unconfirmed POST, with no confirmation dialog, no `destructive-actions.yaml` row and no e2e
+	// coverage, while the account dialog promises a person reviews it. The subject may READ their
+	// own case (`privacyCaseHistory`); they are not the second party to their own erasure.
+	it("refuses the SUBJECT on their own case — an erasure needs a second party", async () => {
 		caseRow.organizationId = null;
 		currentActor.mockResolvedValue({ userId: SUBJECT, orgId: SUBJECT });
-		const out = await fulfilErasure("DSR-ABCD1234", NOW);
-		expect(out.outcome).toBe("erased");
-		expect(authorizeInOrg).not.toHaveBeenCalled();
-		expect(of("execute")).toHaveLength(TOUCHING_RULES);
+		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(/not yours to decide/);
+		expect(of("execute")).toEqual([]);
+		expect(of("insert", privacyErasureTombstone)).toEqual([]);
+	});
+
+	// …and not even when the case WAS raised in an org, if that is the only thing the caller has.
+	it("refuses the subject even on a case their own organization raised", async () => {
+		currentActor.mockResolvedValue({ userId: SUBJECT, orgId: TENANT });
+		authorizeInOrg.mockRejectedValue(
+			new ForbiddenError("edit", { type: "org", id: TENANT }, "not scoped"),
+		);
+		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(/not yours to decide/);
+		expect(of("execute")).toEqual([]);
+	});
+
+	// The guard's own refusal says "not scoped to organization <id>" and CARRIES THE CASE'S
+	// ORGANIZATION ID — a fact about a case the caller has just been told it may not see. It is
+	// converted into this module's one message so the refusals cannot be told apart by their text.
+	it("never lets the guard's refusal name the case's organization", async () => {
+		authorizeInOrg.mockRejectedValue(
+			new ForbiddenError("edit", { type: "org", id: TENANT }, "not scoped"),
+		);
+		const err = await fulfilErasure("DSR-ABCD1234", NOW).catch((e: unknown) => e);
+		expect(String(err)).not.toContain(TENANT);
+		expect(String(err)).toMatch(/not yours to decide/);
+	});
+
+	// …and ONLY a ForbiddenError is converted. A database failure inside the guard must keep
+	// propagating as an error: reporting an outage as a denial is how a broken lookup starts
+	// answering "no" for everyone.
+	it("lets a non-authorization failure inside the guard propagate", async () => {
+		authorizeInOrg.mockRejectedValue(new Error("connection terminated"));
+		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(
+			/connection terminated/,
+		);
 	});
 
 	// A reference that matches nothing and one the caller may not touch answer identically, so
 	// enumerating references cannot tell a stranger which of them exist.
 	it("answers an unknown reference exactly as it answers one you may not touch", async () => {
 		caseFound = false;
-		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(/not yours/);
+		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(/not yours to decide/);
 		expect(of("execute")).toEqual([]);
 	});
 
@@ -448,12 +632,10 @@ describe("standing over the case", () => {
 
 	// The MCP / API-token path. `requestMyErasure` refuses an injected actor for the same reason
 	// and this is the destructive end of the same process: the #4273 ruling binds the identity bar
-	// to a console SESSION, and a machine credential does not inherit it. Refused BEFORE the
-	// subject ground is considered — a token acting as the subject would otherwise satisfy it.
-	it("refuses a machine credential even when it acts as the subject", async () => {
-		caseRow.organizationId = null;
-		injected = { userId: SUBJECT, orgId: SUBJECT };
-		currentActor.mockResolvedValue({ userId: SUBJECT, orgId: SUBJECT });
+	// to a console SESSION, and a machine credential does not inherit it. Refused BEFORE anything
+	// is read, so a token holding a legitimate org grant never reaches the case at all.
+	it("refuses a machine credential, before it reads anything", async () => {
+		injected = { userId: ADMIN, orgId: TENANT };
 		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(
 			/machine credential/,
 		);

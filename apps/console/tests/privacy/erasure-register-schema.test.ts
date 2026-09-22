@@ -114,19 +114,66 @@ describe("the erasure register against the schema", () => {
 	// The executor runs the register's array order verbatim. Where a reference carries no
 	// ON DELETE, Postgres refuses to delete the parent while a child points at it, so a child's
 	// rule has to come first. The register had `profiles` before `cli_logins`.
+	//
+	// DERIVED FROM THE SCHEMA, not a hand-written pair list. The two pairs this replaces were the
+	// two blocking edges that exist TODAY; a hand-written list says nothing about the next erase
+	// rule, and the ordering it protects is exactly the kind a new rule gets wrong. Walking the
+	// foreign keys asks the question the constraint will actually ask.
 	it("erases a child before the parent it references with no ON DELETE", () => {
 		const eraseOrder = ERASURE_RULES.filter((r) => r.disposition === "erase").map(
 			(r) => r.table,
 		);
-		const before = (child: string, parent: string) => {
-			const c = eraseOrder.indexOf(child);
-			const p = eraseOrder.indexOf(parent);
-			expect(c, `${child} is not erased`).toBeGreaterThanOrEqual(0);
-			expect(p, `${parent} is not erased`).toBeGreaterThanOrEqual(0);
-			expect(c, `${child} must be erased before ${parent}`).toBeLessThan(p);
-		};
-		before("cli_logins", "profiles");
-		before("oauth_access_token", "oauth_refresh_token");
+		// `undefined` is Postgres's default NO ACTION, which blocks exactly like `restrict`.
+		const blocks = (onDelete: string | undefined) =>
+			onDelete === undefined || onDelete === "no action" || onDelete === "restrict";
+
+		const edges: [string, string][] = [];
+		for (const child of eraseOrder) {
+			const table = TABLES.get(child);
+			if (!table) continue;
+			for (const fk of getTableConfig(table).foreignKeys) {
+				const ref = fk.reference();
+				const parent = getTableConfig(ref.foreignTable).name;
+				if (parent === child) continue;
+				if (eraseOrder.includes(parent) && blocks(fk.onDelete)) {
+					edges.push([child, parent]);
+				}
+			}
+		}
+		// The harness has to have found something, or every assertion below is vacuous — and a
+		// vacuous ordering test is how the `profiles`/`cli_logins` inversion survived.
+		expect(edges.length).toBeGreaterThan(0);
+		for (const [child, parent] of edges) {
+			expect(
+				eraseOrder.indexOf(child),
+				`${child} references ${parent} with no ON DELETE, so it must be erased first`,
+			).toBeLessThan(eraseOrder.indexOf(parent));
+		}
+	});
+
+	// The other half of the same constraint, and the half no ordering can fix: a table OUTSIDE the
+	// erase set that points at one INSIDE it with a blocking rule makes the delete impossible
+	// however the register is ordered. Today the only inbound references cascade
+	// (`agent_threads`) or set null (`profiles` ← `cli_service_tokens`); a new blocking one is a
+	// rule that has to be added, not reordered.
+	it("has no blocking reference into an erased table from outside the erase set", () => {
+		const eraseSet = new Set(
+			ERASURE_RULES.filter((r) => r.disposition === "erase").map((r) => r.table),
+		);
+		const offenders: string[] = [];
+		for (const [name, table] of TABLES) {
+			if (eraseSet.has(name)) continue;
+			for (const fk of getTableConfig(table).foreignKeys) {
+				const parent = getTableConfig(fk.reference().foreignTable).name;
+				const onDelete = fk.onDelete;
+				const blocks =
+					onDelete === undefined ||
+					onDelete === "no action" ||
+					onDelete === "restrict";
+				if (eraseSet.has(parent) && blocks) offenders.push(`${name} → ${parent}`);
+			}
+		}
+		expect(offenders).toEqual([]);
 	});
 
 	// The `profiles` rule claims a consequence beyond its own table: erasing that row revokes every

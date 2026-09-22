@@ -284,7 +284,12 @@ describe("applying a plan", () => {
 });
 
 describe("the live-resources refusal", () => {
-	const clear = { projects: 0, environments: 0, cloudConnections: 0 };
+	const clear = {
+		projects: 0,
+		environments: 0,
+		cloudConnections: 0,
+		soleOwnedOrganizations: 0,
+	};
 
 	it("is clear only when all three counts are zero", () => {
 		expect(residencyIsClear(clear)).toBe(true);
@@ -296,7 +301,12 @@ describe("the live-resources refusal", () => {
 	// A refusal the subject cannot act on restarts the correspondence inside a statutory month, so
 	// the message has to name what is there AND what clears it.
 	it("names every kind that is still there, and the action that clears it", () => {
-		const message = describeResidency({ projects: 2, environments: 1, cloudConnections: 3 });
+		const message = describeResidency({
+			...clear,
+			projects: 2,
+			environments: 1,
+			cloudConnections: 3,
+		});
 		expect(message).toContain("2 projects");
 		expect(message).toContain("1 environment that");
 		expect(message).toContain("3 connected cloud accounts");

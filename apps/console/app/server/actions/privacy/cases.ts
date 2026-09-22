@@ -24,11 +24,13 @@
 // an executor behind it, it is "any account may destroy any other account's data by quoting a
 // reference". See {@link authorizeCase} for what replaced it and what each ground proves.
 //
-// The residual gap is named rather than papered over: a case that belongs to no organization and
-// to no account — the request that arrives by email from a former user — has no console authority
-// that can decide it. Those reach the controller directly, and the platform-admin surface for them
-// is `apps/admin`, behind Cloudflare Access and `PLATFORM_ADMIN_EMAILS`. It is not built here, so
-// these steps refuse such a case instead of admitting whoever asked.
+// The residual gap is named rather than papered over: a case that belongs to NO ORGANIZATION —
+// the request that arrives by email from a former user, and equally every self-serve request,
+// because a personal org is recorded as none — has no console authority that can decide it. Those
+// reach the controller directly, and the platform-admin surface for them is `apps/admin`, behind
+// Cloudflare Access and `PLATFORM_ADMIN_EMAILS`. It is not built here, so these steps refuse such
+// a case instead of admitting whoever asked — including the subject, who may read their own case
+// and decide nothing on it. See {@link authorizeCase} for why the subject is not the second party.
 //
 // Every write goes through getServiceDb: the tables are service-role only (RLS with no app policy),
 // because a case may concern someone who is in no organization at all and an owner-scoped policy
@@ -190,22 +192,37 @@ type PrivacyCaseRow = NonNullable<Awaited<ReturnType<typeof caseByReference>>>;
  * succeeds for every signed-in user and says nothing whatever about the case the next line then
  * loads by reference, cross-tenant, on the RLS-bypassing service connection.
  *
- * TWO GROUNDS, either sufficient, and each one is a statement ABOUT THE CASE:
+ * THE CONTROLLER GROUND, which every step that RECORDS A DECISION requires: `org:edit` in
+ * `case.organizationId` — the case's org, not the caller's. {@link authorizeInOrg} refuses a
+ * substituted org rather than enforcing the verb wherever the session happens to point (#3863),
+ * which is what makes this a statement about the named org rather than about the caller's default
+ * one.
  *
- *   · THE SUBJECT'S OWN. `actor.userId === case.subjectUserId`. Strictly stronger than the verb it
- *     replaces — `org:edit` on one's personal org is a permission every account holds over itself,
- *     whereas being the subject is a fact about this row. This is the ground the self-serve request
- *     (`self-serve.ts`, #4875/#4878) lands on: those cases carry no organization, because a
- *     personal org is recorded as none.
- *   · THE TENANT THE CASE WAS RAISED IN. `org:edit` in `case.organizationId` — the case's org, not
- *     the caller's. {@link authorizeInOrg} refuses a substituted org rather than enforcing the verb
- *     wherever the session happens to point (#3863), which is what makes this a statement about the
- *     named org rather than about the caller's default one.
+ * THE SUBJECT GROUND, `actor.userId === case.subjectUserId`, is OFF by default and exactly one
+ * caller turns it on: `privacyCaseHistory`, which shows a person their own case. It is off
+ * everywhere else because every other step here writes a CONTROLLER'S decision into an append-only
+ * ledger — the identity check, the extension, the hold, the refusal and the erasure itself. A
+ * subject recording any of those about themselves is a second party that never existed, and for
+ * `fulfilErasure` it is worse than that: this module is `"use server"`, so the step is a POST
+ * endpoint whether or not the product calls it (nothing does), and `requestMyErasure` hands the
+ * browser a reference to a case it has already marked identity-verified. Admitting the subject
+ * there would make an irreversible erasure reachable in ONE unconfirmed POST — with no
+ * confirmation dialog, no `destructive-actions.yaml` row and no e2e coverage, while
+ * `account-settings-dialog.tsx` promises the opposite in as many words.
  *
- * Anything else is refused, INCLUDING a reference that matches no case: the two answers are one
- * `ForbiddenError` on purpose, so enumerating references cannot tell a caller with no standing
- * which of them exist. An operator's typo pays a worse message for that; a reference is quoted in
- * correspondence, and correspondence is forwarded.
+ * ⚠️ THE CONSEQUENCE, STATED RATHER THAN DISCOVERED: a case with NO organization — which is every
+ * self-serve request, because a personal org is recorded as none — can now be decided by nobody in
+ * the console. That is the same residual gap the module header names, reached from the other side:
+ * those are controller-level requests, and the controller's surface is `apps/admin`. An erasure
+ * that needs a second party and has none is refused, not quietly performed by the first.
+ *
+ * Anything else is refused, INCLUDING a reference that matches no case: the answers are one
+ * `ForbiddenError` with one message on purpose, so enumerating references cannot tell a caller
+ * with no standing which of them exist. An operator's typo pays a worse message for that; a
+ * reference is quoted in correspondence, and correspondence is forwarded. ⚠️ The MESSAGES are
+ * uniform; the LATENCY is not — the org ground costs two further queries before it refuses, so a
+ * caller timing the two can still tell them apart. Closing that needs a constant-time path this
+ * does not have, and saying otherwise would claim a property the code lacks.
  *
  * AND ONLY FROM A BROWSER SESSION. An actor injected by `runWithActor` — the MCP / API-token path
  * — is refused before either ground is considered, the same rule `requestMyErasure` applies for
@@ -220,6 +237,7 @@ type PrivacyCaseRow = NonNullable<Awaited<ReturnType<typeof caseByReference>>>;
  */
 async function authorizeCase(
 	reference: string,
+	{ subjectMayAct = false }: { subjectMayAct?: boolean } = {},
 ): Promise<{ actor: Actor; c: PrivacyCaseRow }> {
 	if (getInjectedActor()) {
 		throw new ForbiddenError(
@@ -232,23 +250,33 @@ async function authorizeCase(
 	// reference reaches the database at all.
 	const actor = await currentActor();
 	const c = await caseByReference(reference);
-	if (c && c.subjectUserId && c.subjectUserId === actor.userId) {
+	if (subjectMayAct && c && c.subjectUserId && c.subjectUserId === actor.userId) {
 		return { actor, c };
 	}
 	if (c?.organizationId) {
-		// Throws ForbiddenError of its own when the caller does not administer that organization.
-		const scoped = await authorizeInOrg(
-			"edit",
-			{ type: "org", id: c.organizationId },
-			c.organizationId,
-		);
-		return { actor: scoped, c };
+		try {
+			return {
+				actor: await authorizeInOrg(
+					"edit",
+					{ type: "org", id: c.organizationId },
+					c.organizationId,
+				),
+				c,
+			};
+		} catch (err) {
+			// Rethrown as THIS module's refusal, not the guard's. `authorizeInOrg`'s own
+			// ForbiddenError says "not scoped to organization <id>" and carries the case's
+			// organization id — which is a fact about a case the caller has just been told it may
+			// not see. Only a ForbiddenError is converted: a database failure inside the guard must
+			// keep propagating as an error rather than being reported as a denial.
+			if (!(err instanceof ForbiddenError)) throw err;
+		}
 	}
 	throw new ForbiddenError(
 		"edit",
 		{ type: "org" },
-		"this privacy request is not yours and belongs to no organization you administer; a " +
-			"controller-level request is handled through the platform-admin surface, not the console",
+		"this privacy request is not yours to decide; a controller-level request is handled " +
+			"through the platform-admin surface, not the console",
 	);
 }
 
@@ -425,7 +453,7 @@ export async function fulfilErasure(
 	const subject = { userId: c.subjectUserId, personalOrgId: c.subjectUserId };
 
 	return db.transaction(async (tx) => {
-		const residency = await findLiveResidency(tx, subject.personalOrgId);
+		const residency = await findLiveResidency(tx, subject);
 		if (!residencyIsClear(residency)) {
 			const message = describeResidency(residency);
 			await tx
@@ -441,6 +469,7 @@ export async function fulfilErasure(
 						projects: residency.projects,
 						environments_not_destroyed: residency.environments,
 						cloud_connections: residency.cloudConnections,
+						sole_owned_organizations: residency.soleOwnedOrganizations,
 					},
 				},
 				actor.userId,
@@ -538,13 +567,15 @@ export async function refusePrivacyCase(
  * It took no argument and had no gate at all before #4854 — and every export of a `"use server"`
  * module is a POST endpoint whether or not anything in the product calls it, so this one answered
  * every open case in the deployment, across every tenant, to anyone who asked. It now requires
- * `org:view` and returns only the cases that org raised plus the caller's own, which is the same
- * pair of grounds {@link authorizeCase} proves for a single case. A controller-wide list is not
+ * `org:edit` and returns only the cases that org raised plus the caller's own. The verb matches
+ * {@link authorizeCase}'s deliberately: `org:view` is held by every viewer in the organization,
+ * and "who here has an open privacy request" is not a viewer's business — the bar for a row is the
+ * same whether it is read one at a time or in a list. A controller-wide list is not
  * available from the console and is not made available here: that is the platform-admin surface,
  * and alerting that needs the whole deployment reads the database directly.
  */
 export async function overduePrivacyCases(now = new Date()) {
-	const actor = await authorize("view", { type: "org" });
+	const actor = await authorize("edit", { type: "org" });
 	return getServiceDb()
 		.select({
 			reference: privacyCase.reference,
@@ -574,7 +605,9 @@ export async function overduePrivacyCases(now = new Date()) {
  * who could quote or guess a reference.
  */
 export async function privacyCaseHistory(reference: string) {
-	const { c } = await authorizeCase(reference);
+	// The ONE step the subject may take on their own case. It writes nothing and discloses nothing
+	// but their own record, which is the thing a data-subject request exists to give them.
+	const { c } = await authorizeCase(reference, { subjectMayAct: true });
 	return getServiceDb()
 		.select()
 		.from(privacyCaseEvent)
@@ -599,7 +632,7 @@ export async function privacyCaseHistory(reference: string) {
  * `privacy_erasure_tombstone` directly, which is where a controller-wide operation belongs.
  */
 export async function unreplayedTombstones() {
-	const actor = await authorize("view", { type: "org" });
+	const actor = await authorize("edit", { type: "org" });
 	return getServiceDb()
 		.select(getTableColumns(privacyErasureTombstone))
 		.from(privacyErasureTombstone)

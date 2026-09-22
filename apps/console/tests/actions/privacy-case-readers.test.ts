@@ -88,7 +88,7 @@ beforeEach(() => {
 describe("overduePrivacyCases", () => {
 	it("is gated, and asks only for cases the caller has standing over", async () => {
 		await overduePrivacyCases(new Date("2026-09-22T00:00:00.000Z"));
-		expect(authorize).toHaveBeenCalledWith("view", { type: "org" });
+		expect(authorize).toHaveBeenCalledWith("edit", { type: "org" });
 		// The two grounds, as a predicate: the caller's organization, or their own case.
 		expect(eqPairs()).toContainEqual([privacyCase.organizationId, ORG]);
 		expect(eqPairs()).toContainEqual([privacyCase.subjectUserId, CALLER]);
@@ -106,7 +106,7 @@ describe("unreplayedTombstones", () => {
 	// from the case it names. Left-joined, so a tombstone whose case is gone is not the caller's.
 	it("is gated, and scopes through the case the tombstone names", async () => {
 		await unreplayedTombstones();
-		expect(authorize).toHaveBeenCalledWith("view", { type: "org" });
+		expect(authorize).toHaveBeenCalledWith("edit", { type: "org" });
 		expect(eqPairs()).toContainEqual([
 			privacyCase.reference,
 			privacyErasureTombstone.caseReference,
