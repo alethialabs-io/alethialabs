@@ -480,7 +480,7 @@ describe("get_org_usage", () => {
 			usedMinutes: 120,
 			includedMinutes: 500,
 			overageMinutes: 0,
-			overageCost: 0,
+			overageCost: { minor: 0, currency: "usd" },
 			pct: 0.24,
 			runningJobs: 2,
 			maxConcurrentJobs: 5,
@@ -510,7 +510,7 @@ describe("get_org_usage", () => {
 			usedMinutes: 30,
 			includedMinutes: 0,
 			overageMinutes: 30,
-			overageCost: 1.5,
+			overageCost: { minor: 150, currency: "usd" },
 			pct: Number.POSITIVE_INFINITY,
 			runningJobs: 0,
 			maxConcurrentJobs: null,
@@ -579,7 +579,7 @@ describe("get_billing_summary", () => {
 			state: "active",
 			seats: 5,
 			memberCount: 3,
-			unitAmountUsd: 20,
+			unitAmount: { minor: 2000, currency: "usd" },
 			cancelAtPeriodEnd: false,
 			currentPeriodEnd: "2026-08-01",
 			canManage: true,
@@ -595,6 +595,8 @@ describe("get_billing_summary", () => {
 			state: "active",
 			seats: 5,
 			member_count: 3,
+			unit_amount: 2000,
+			currency: "usd",
 			unit_amount_usd: 20,
 			cancel_at_period_end: false,
 			current_period_end: "2026-08-01",
@@ -603,5 +605,52 @@ describe("get_billing_summary", () => {
 		expect(out).not.toHaveProperty("stripeCustomerId");
 		expect(out).not.toHaveProperty("defaultCard");
 		expect(out).not.toHaveProperty("canManage");
+	});
+
+	// THE DEFECT #4176 WAS OPENED FOR, at the one surface where the field name is a published
+	// contract rather than an internal one. A EUR subscription used to put euros in a field called
+	// `unit_amount_usd`, and the model had nothing else to read. Now the amount is in the
+	// `unit_amount` + `currency` pair, and the deprecated field goes NULL rather than lying —
+	// which is the assertion that fails if someone "simplifies" it back to a straight passthrough.
+	it("gives a EUR subscription the currency-carrying pair and nulls the deprecated USD field", async () => {
+		vi.mocked(getBillingSummary).mockResolvedValue({
+			hosted: true,
+			hasOrg: true,
+			plan: "team",
+			status: "active",
+			state: "active",
+			seats: 5,
+			memberCount: 3,
+			unitAmount: { minor: 1800, currency: "eur" },
+			cancelAtPeriodEnd: false,
+			currentPeriodEnd: "2026-08-01",
+			canManage: true,
+		} as never);
+		const out = (await run(readTools().get_billing_summary, {})) as Record<string, unknown>;
+		expect(out.unit_amount).toBe(1800);
+		expect(out.currency).toBe("eur");
+		expect(out.unit_amount_usd).toBeNull();
+	});
+
+	// A CUSTOM/UNKNOWN price is null in all three, so a consumer cannot tell "no price" apart
+	// from "zero" by accident — `unit_amount: 0` is a real free plan and must stay distinct.
+	it("reports a custom price as null in every amount field", async () => {
+		vi.mocked(getBillingSummary).mockResolvedValue({
+			hosted: true,
+			hasOrg: true,
+			plan: "enterprise",
+			status: "active",
+			state: "active",
+			seats: null,
+			memberCount: 3,
+			unitAmount: null,
+			cancelAtPeriodEnd: false,
+			currentPeriodEnd: null,
+			canManage: true,
+		} as never);
+		const out = (await run(readTools().get_billing_summary, {})) as Record<string, unknown>;
+		expect(out.unit_amount).toBeNull();
+		expect(out.currency).toBeNull();
+		expect(out.unit_amount_usd).toBeNull();
 	});
 });

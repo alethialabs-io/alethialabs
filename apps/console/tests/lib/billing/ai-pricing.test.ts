@@ -42,9 +42,10 @@ describe("getAiPlanPrice — pre-cutover fallback (degrades cleanly)", () => {
 
 		const plus = await getAiPlanPrice("ai_plus");
 		expect(retrieve).not.toHaveBeenCalled();
-		// Catalog placeholder for AI Plus ($20 / mo, €18).
-		expect(plus.unitAmountUsd).toBe(20);
-		expect(plus.unitAmountEur).toBe(18);
+		// Catalog placeholder for AI Plus ($20 / mo, €18). MINOR units, each with its currency
+		// attached — #4176 part (b) retired the `unitAmountUsd` / `unitAmountEur` pair.
+		expect(plus.amounts.usd).toEqual({ minor: 2000, currency: "usd" });
+		expect(plus.amounts.eur).toEqual({ minor: 1800, currency: "eur" });
 		expect(plus.label).toBe("$20 / mo");
 	});
 
@@ -54,7 +55,7 @@ describe("getAiPlanPrice — pre-cutover fallback (degrades cleanly)", () => {
 
 		const max = await getAiPlanPrice("ai_max");
 		expect(retrieve).not.toHaveBeenCalled();
-		expect(max.unitAmountUsd).toBe(100);
+		expect(max.amounts.usd).toEqual({ minor: 10000, currency: "usd" });
 		expect(max.label).toBe("$100 / mo");
 	});
 
@@ -64,7 +65,7 @@ describe("getAiPlanPrice — pre-cutover fallback (degrades cleanly)", () => {
 
 		const free = await getAiPlanPrice("ai_free");
 		expect(retrieve).not.toHaveBeenCalled();
-		expect(free.unitAmountUsd).toBe(0);
+		expect(free.amounts.usd).toEqual({ minor: 0, currency: "usd" });
 		expect(free.label).toBe("Free");
 	});
 });
@@ -87,16 +88,17 @@ describe("getAiPlanPrice — live Stripe amount (post-cutover)", () => {
 		expect(retrieve).toHaveBeenCalledWith("price_ai_plus", {
 			expand: ["currency_options"],
 		});
-		// Live amount overrides the catalog placeholder.
-		expect(plus.unitAmountUsd).toBe(25);
-		expect(plus.unitAmountEur).toBe(23);
+		// Live amount overrides the catalog placeholder, and it is Stripe's number UNCHANGED:
+		// the `/ 100` that used to sit here (undone by a `* 100` in the hook) is gone.
+		expect(plus.amounts.usd).toEqual({ minor: 2500, currency: "usd" });
+		expect(plus.amounts.eur).toEqual({ minor: 2300, currency: "eur" });
 		expect(plus.label).toBe("$25 / mo");
 	});
 
 	it("falls back to the catalog when the Stripe lookup throws (never throws itself)", async () => {
 		retrieve.mockRejectedValue(new Error("stripe down"));
 		const max = await getAiPlanPrice("ai_max");
-		expect(max.unitAmountUsd).toBe(100); // catalog placeholder
+		expect(max.amounts.usd).toEqual({ minor: 10000, currency: "usd" }); // catalog placeholder
 		expect(max.label).toBe("$100 / mo");
 	});
 });
@@ -109,7 +111,7 @@ describe("getAllAiPrices", () => {
 		const map = await getAllAiPrices();
 		expect(Object.keys(map).sort()).toEqual(["ai_free", "ai_max", "ai_plus"]);
 		expect(map.ai_free.label).toBe("Free");
-		expect(map.ai_plus.unitAmountUsd).toBe(20);
-		expect(map.ai_max.unitAmountUsd).toBe(100);
+		expect(map.ai_plus.amounts.usd).toEqual({ minor: 2000, currency: "usd" });
+		expect(map.ai_max.amounts.usd).toEqual({ minor: 10000, currency: "usd" });
 	});
 });

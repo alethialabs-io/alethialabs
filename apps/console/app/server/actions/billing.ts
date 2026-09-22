@@ -44,6 +44,7 @@ import {
 import type { PayerCapacity } from "@repo/legal/commerce";
 import { countBillableSeats } from "@/lib/billing/seats";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
+import { type Money, money } from "@repo/format";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { currencyFromRequest } from "@/lib/billing/currency";
 import { resolvePlanEntitlements } from "@/lib/billing/plan";
@@ -136,23 +137,25 @@ export interface BillingSummary {
 	/** Current members in the org — the "used" side of the seats meter. */
 	memberCount: number;
 	/**
-	 * The actual per-seat (or flat) monthly USD the org is billed — read live from the
-	 * subscription's Stripe price (so a grandfathered sub shows its real amount), or the
-	 * live plan price when there's no sub. null = custom/unknown. Stripe is authoritative;
-	 * never compute the displayed amount from the catalog.
+	 * The actual per-seat (or flat) monthly amount the org is billed, in MINOR units WITH ITS
+	 * CURRENCY — read live from the subscription's Stripe price (so a grandfathered sub shows its
+	 * real amount), or the live plan price when there's no sub. null = custom/unknown. Stripe is
+	 * authoritative; never compute the displayed amount from the catalog.
 	 *
-	 * DESPITE THE NAME, the live-subscription branch reads the price in whatever currency the
-	 * subscription was created in — a EUR subscription puts euros here. {@link currency} says which;
-	 * retiring the `*Usd` name is #4176's part (b), not this field's doc.
+	 * THIS WAS `unitAmountUsd: number` PLUS A SEPARATE `currency: string` (#4176 part b). The name
+	 * was false from the day the live-subscription branch read the price's own currency — a EUR
+	 * subscription put euros in a field called `Usd` — and the separate `currency` was a second
+	 * field a renderer had to remember to read. It is one value now, because the two halves were
+	 * only ever meaningful together.
+	 *
+	 * IT ALSO DROPPED A `/ 100`. The old field held MAJOR units, divided out of Stripe's
+	 * `unit_amount` by a hardcoded 100 right here and multiplied back up by a hardcoded 100 three
+	 * renders later in `billing-panel.tsx`. The two cancelled for a two-decimal currency and
+	 * nothing else: a ¥124,000 subscription would have travelled as 1240 and rendered as ¥124,000
+	 * only because the second 100 undid the first. Minor units all the way through means the
+	 * conversion has no halves to keep in step.
 	 */
-	unitAmountUsd: number | null;
-	/**
-	 * ISO 4217 code (Stripe's lower case) that {@link unitAmountUsd} is quoted in: the live
-	 * subscription price's own `currency` when that branch set the amount, otherwise `"usd"` — the
-	 * plan-price fallback reads `LivePlanPrice.unitAmountUsd`, which is the price's USD option.
-	 * Rendering the amount without this is how a EUR plan showed a dollar sign (#4176).
-	 */
-	currency: string;
+	unitAmount: Money | null;
 }
 
 /** Resolves the active org's billing state for display (read-only; any member). */
@@ -181,8 +184,7 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 		billing?.currentPeriodEnd?.toISOString() ?? null;
 	// Authoritative price: the subscription's OWN flat (non-metered) Stripe price — this
 	// reflects what the org is actually charged, including grandfathered amounts.
-	let unitAmountUsd: number | null = null;
-	let currency = "usd";
+	let unitAmount: Money | null = null;
 	if (billing?.stripeSubscriptionId && isStripeConfigured()) {
 		try {
 			const sub = await getStripe().subscriptions.retrieve(
@@ -199,8 +201,10 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 			// the period end — a lapsed sub shows no renewal/cancellation date.
 			const live = status === "active" || status === "trialing";
 			if (live && typeof flat?.price.unit_amount === "number") {
-				unitAmountUsd = flat.price.unit_amount / 100;
-				currency = flat.price.currency;
+				// Stripe's `unit_amount` is already minor units, and so is `Money.minor` — no
+				// conversion, which is the point of #4176 part (b). The currency is the price's
+				// own, whatever Stripe says it is; nothing here narrows it.
+				unitAmount = money(flat.price.unit_amount, flat.price.currency);
 			}
 			currentPeriodEnd =
 				live && flat?.current_period_end
@@ -210,9 +214,14 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 			// Subscription unreadable (deleted upstream) — fall back to the DB row.
 		}
 	}
-	// No live sub price (or no sub yet) → fall back to the plan's live Stripe price.
-	if (unitAmountUsd === null && plan !== "community") {
-		unitAmountUsd = (await getPlanPrice(plan)).unitAmountUsd;
+	// No live sub price (or no sub yet) → fall back to the plan's live Stripe price, in the
+	// currency that price is denominated in. `amounts[currency]` rather than a `usd` field: the
+	// fallback used to read `LivePlanPrice.unitAmountUsd` and label it `"usd"` by hand, which is
+	// the same assumption one layer up. An org with no live sub sees the plan's base-currency
+	// price; which currency it will actually be BILLED in is settled at checkout, not here.
+	if (unitAmount === null && plan !== "community") {
+		const price = await getPlanPrice(plan);
+		unitAmount = price.amounts[price.currency] ?? null;
 	}
 
 	return {
@@ -226,8 +235,7 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 		cancelAtPeriodEnd,
 		seats: billing?.seats ?? null,
 		memberCount,
-		unitAmountUsd,
-		currency,
+		unitAmount,
 	};
 }
 
