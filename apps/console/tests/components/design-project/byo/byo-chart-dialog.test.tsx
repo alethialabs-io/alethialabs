@@ -307,9 +307,37 @@ describe("ByoChartDialog — the worked example resolves", () => {
 // What it buys is the half no offline test can reach — a repository can be renamed, made private or
 // deleted without any file in this monorepo changing, and every assertion above would stay green
 // over an example that 404s. Run it with ALETHIA_CHECK_LIVE_EXAMPLES=1 whenever you touch these
-// constants; #4910 puts it on a schedule, which is the only thing that makes it notice rot nobody
-// went looking for.
+// constants.
+//
+// #4910 puts it on a schedule — the `live-worked-examples` job in `.github/workflows/
+// workflow-health.yml`, daily. TWO THINGS THERE DEPEND ON THIS FILE'S SHAPE, and both fail CLOSED:
+//
+//   1. the job reads vitest's JSON report and requires at least two tests whose `fullName` begins
+//      with the describe title below to have RUN and PASSED. Rename that title, delete a test, or
+//      forget the env var, and the job is BLIND — which it reports as a failure, never as a pass.
+//   2. it also requires the run to have skipped NOTHING. `describe.runIf(false)` reports its tests
+//      as `skipped` while the FILE reports `passed` and vitest exits 0 — that exact combination is
+//      the vacuous green the issue is about, so a non-zero skip count reds the job on its own.
+//
+// So the coupling is a name, and breaking the name costs a red job rather than a silent pass.
 const LIVE = process.env.ALETHIA_CHECK_LIVE_EXAMPLES === "1";
+
+/**
+ * The GitHub API headers to probe with: a bearer token when one is in the environment, nothing
+ * otherwise.
+ *
+ * WHY. GitHub's anonymous API budget is 60 requests/hour per SOURCE IP, and a hosted Actions runner
+ * shares its egress IP with every other job on that host — so an unauthenticated probe can be
+ * refused (403) for a reason that has nothing to do with the example, which would file a rot report
+ * about a repository that is perfectly fine. A token lifts the budget WITHOUT weakening the
+ * question: the starter chart lives in a different repository, so a token scoped to this one can
+ * still only read it while it is PUBLIC — which is precisely what the assertion is. Absent locally,
+ * where the budget is the developer's own and two calls do not trouble it.
+ */
+function githubHeaders(): Record<string, string> {
+	const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+	return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 /** Narrows a registry's token response to the bearer token it granted, or `undefined` when it
  * granted none — which is how a registry says "not anonymously, you don't". */
@@ -324,13 +352,15 @@ describe.runIf(LIVE)("ByoChartDialog — the worked example, fetched for real", 
 		// Derived from the constant, never retyped: a copy here could agree with itself while the
 		// dialog showed something else.
 		const slug = new URL(STARTER_CHART_REPO_URL).pathname.replace(/^\//, "");
-		const repo = await fetch(`https://api.github.com/repos/${slug}`);
+		const headers = githubHeaders();
+		const repo = await fetch(`https://api.github.com/repos/${slug}`, { headers });
 		expect(repo.status).toBe(200);
 		const meta: unknown = await repo.json();
 		expect(meta).toMatchObject({ private: false, is_template: true });
 
 		const chart = await fetch(
 			`https://api.github.com/repos/${slug}/contents/${STARTER_CHART_PATH}/Chart.yaml`,
+			{ headers },
 		);
 		expect(chart.status).toBe(200);
 	}, 30_000);
