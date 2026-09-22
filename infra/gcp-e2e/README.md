@@ -130,7 +130,7 @@ refresh cannot see a resource that is not in state.
 
 ```bash
 tofu import 'google_pubsub_topic_iam_member.e2e_budget_publisher[0]' \
-  "projects/itgix-adp/topics/alethia-e2e-nightly-budget-alerts roles/pubsub.publisher serviceAccount:billing-budget-alert@system.gserviceaccount.com"
+  "projects/${GCP_E2E_PROJECT_ID}/topics/alethia-e2e-nightly-budget-alerts roles/pubsub.publisher serviceAccount:billing-budget-alert@system.gserviceaccount.com"
 ```
 
 The `[0]` is not optional — the resource is `count`-gated on `budget_publisher_binding_enabled`.
@@ -142,7 +142,7 @@ uncreatable. It was unaddressable — that was the wrong name. Verify before imp
 
 ```bash
 gcloud pubsub topics get-iam-policy \
-  projects/itgix-adp/topics/alethia-e2e-nightly-budget-alerts
+  projects/${GCP_E2E_PROJECT_ID}/topics/alethia-e2e-nightly-budget-alerts
 ```
 
 **Why this matters more than a tidy state file:** gcp has NO pre-apply spend ceiling —
