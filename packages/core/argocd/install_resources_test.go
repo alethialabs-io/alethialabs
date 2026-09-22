@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
 )
 
 // milliCPU and mebibytes are DELIBERATELY NARROW parsers, not a re-implementation of Kubernetes
@@ -104,23 +106,55 @@ func TestInstallResourceValuesSetNoLimits(t *testing.T) {
 	}
 }
 
-// TestInstallResourceValuesFitTheSmallestFloorNode is the half that stops the fix becoming the next
-// defect: a request too large for the node turns a badly-running pod into a permanently Pending one,
-// which is strictly worse than what is being fixed.
+// TestInstallResourceValuesFitTheSmallestNodeTheProductOFFERS is the half that stops the fix
+// becoming the next defect: a request too large for the node turns a badly-running pod into a
+// permanently Pending one, which is strictly worse than what is being fixed.
 //
-// Judged against the SMALLEST node the floor runs on, computed from GKE's published reservation
-// formula rather than from the constants under test — 25% of the first 4 GiB of memory plus a 100
-// MiB eviction threshold, and a flat 1060 mCPU on every E2 shared-core type. For a gcp `e2-medium`
-// (2 shared vCPU, 4096 MiB) that is ~940m and ~2972 MiB allocatable.
+// ── This test USED to be wrong, and the way it was wrong is the point ──
 //
-// The bound is a QUARTER of allocatable, and it is deliberately loose. The claim being defended is
-// only "this cannot make a running pod Pending"; a tight bound would be a working-set assertion, and
-// nobody has measured repo-server's working set on this node — the workflow's gcp shape says so.
-func TestInstallResourceValuesFitTheSmallestFloorNode(t *testing.T) {
-	const (
-		e2MediumAllocatableMilliCPU = 2*1000 - 1060
-		e2MediumAllocatableMiB      = 4096 - 4096/4 - 100
-	)
+// It hardcoded `e2-medium` as "the smallest node the floor runs on" and asserted each request was
+// under a QUARTER of that node's allocatable. 100m is 11% of 940m, so it passed — and then e2e run
+// 35499891484 put this very pod into Pending on that very node. A quarter of ALLOCATABLE was never
+// the right bound, because allocatable is not free: on that run GKE's own system pods had taken more
+// than 840m of the 940m before ArgoCD asked for anything.
+//
+// Two changes follow from that. The node is no longer a literal — it is whatever
+// `catalog.ControlPlaneNodeFit` says is the smallest GCP shape the product will now deploy onto, so
+// this test cannot go on measuring against a shape the product has stopped offering. And the claim
+// is stated honestly: a quarter of allocatable is a SANITY ceiling on the request, not a proof that
+// the pod schedules. What actually keeps the pod off a node it does not fit on is the node-fit gate
+// in the provisioner, which refuses the apply; this test only stops the request itself growing into
+// the thing that breaks a node which would otherwise have been fine.
+func TestInstallResourceValuesFitTheSmallestNodeTheProductOFFERS(t *testing.T) {
+	c := catalog.MustLoad()
+
+	// Derived, not typed: the smallest gcp shape whose verdict is OK. If the catalog's shapes
+	// change, this moves with them.
+	var smallest catalog.Instance
+	var smallestAlloc int
+	for _, in := range c.Compute["gcp"].Instances {
+		fit := c.ControlPlaneNodeFit("gcp", in.Value)
+		if fit.Verdict != catalog.FitOK {
+			continue
+		}
+		if smallest.Value == "" || fit.AllocatableCPUMilli < smallestAlloc {
+			smallest, smallestAlloc = in, fit.AllocatableCPUMilli
+		}
+	}
+	if smallest.Value == "" {
+		t.Fatal("no gcp shape in the catalog passes the control-plane fit check — this test has lost its subject, and the product has nothing to deploy onto")
+	}
+	// A deliberately PESSIMISTIC memory allocatable: GKE's steepest reservation tier (25%, which it
+	// applies to the first 4 GiB) charged against the WHOLE node, plus the 100 MiB eviction
+	// threshold. The real figure is higher, because the tiers above 4 GiB reserve 20% and then 10%.
+	//
+	// The approximation is one-directional on purpose. This is a CEILING on a request, so
+	// understating the node can only make the bound stricter, never looser — and modelling the real
+	// tiers would mean modelling which of them applies, which changed at node-pool version 1.37 and
+	// would put a version-dependent formula in a test that has no way to know the version.
+	memMiB := int64(smallest.MemoryGB * 1024)
+	allocMiB := memMiB - memMiB/4 - 100
+
 	repo := parseResourceValues(t)["repoServer"]
 	if repo.Resources == nil {
 		t.Fatal("no resources block at all")
@@ -129,17 +163,36 @@ func TestInstallResourceValuesFitTheSmallestFloorNode(t *testing.T) {
 	cpu := milliCPU(t, repo.Resources.Requests["cpu"])
 	mem := mebibytes(t, repo.Resources.Requests["memory"])
 
-	if limit := int64(e2MediumAllocatableMilliCPU / 4); cpu > limit {
-		t.Errorf("the cpu request is %dm, over a quarter of an e2-medium's ~%dm allocatable (%dm) — a request this large competes with kube-system for the node rather than joining it",
-			cpu, int64(e2MediumAllocatableMilliCPU), limit)
+	if limit := int64(smallestAlloc / 4); cpu > limit {
+		t.Errorf("the cpu request is %dm, over a quarter of a %s's ~%dm allocatable (%dm) — a request this large competes with kube-system for the node rather than joining it",
+			cpu, smallest.Value, smallestAlloc, limit)
 	}
-	if limit := int64(e2MediumAllocatableMiB / 4); mem > limit {
-		t.Errorf("the memory request is %d MiB, over a quarter of an e2-medium's ~%d MiB allocatable (%d MiB) — the pod could go Pending, which is worse than the starvation being fixed",
-			mem, int64(e2MediumAllocatableMiB), limit)
+	if limit := allocMiB / 4; mem > limit {
+		t.Errorf("the memory request is %d MiB, over a quarter of a %s's ~%d MiB allocatable (%d MiB) — the pod could go Pending, which is worse than the starvation being fixed",
+			mem, smallest.Value, allocMiB, limit)
 	}
 	// A zero request is not a small request: it is the BestEffort class this file exists to leave,
 	// and it would pass every ceiling above.
 	if cpu <= 0 || mem <= 0 {
 		t.Errorf("a request of %dm / %d MiB leaves the container BestEffort — the ceilings above cannot see that, because zero is under all of them", cpu, mem)
+	}
+}
+
+// TestTheSHAPETHATFAILEDIsNowRefusedByTheProduct is the regression that ties this file to the run
+// that falsified its old comment.
+//
+// The comment here used to end "which cannot turn a running pod into a Pending one on any node the
+// product offers". That sentence is now TRUE, and it is true because the product stopped offering
+// the node — not because anything in this file changed. This test is what makes that dependency
+// visible: if `e2-medium` ever becomes deployable again, the claim above silently reverts to being
+// false, and this reds instead.
+func TestTheSHAPETHATFAILEDIsNowRefusedByTheProduct(t *testing.T) {
+	c := catalog.MustLoad()
+
+	if fit := c.ControlPlaneNodeFit("gcp", "e2-medium"); fit.Verdict != catalog.FitTooSmall {
+		t.Errorf("e2-medium is %s — the node that put argocd-repo-server into Pending in run 35499891484 is deployable again, and this file's claim about Pending pods is false once more", fit.Verdict)
+	}
+	if def := c.Compute["gcp"].DefaultInstance; c.ControlPlaneNodeFit("gcp", def).Verdict == catalog.FitTooSmall {
+		t.Errorf("the gcp default is %q, a shape this pod cannot schedule on — a user who changes nothing gets the failure", def)
 	}
 }

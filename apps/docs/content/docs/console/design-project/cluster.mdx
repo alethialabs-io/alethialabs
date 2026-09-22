@@ -54,6 +54,20 @@ A single instance type is selected from a dropdown, with each option's label sho
 | Memory | r5.large | n2-highmem-2 | Standard_E2s_v5 |
 | GPU | g4dn.xlarge | a2-highgpu-1g | Standard_NC4as_T4_v3 |
 
+<Callout type="warn">
+On GCP, `e2-medium` and `n1-standard-1` cannot run the cluster add-ons, and a deploy onto either is
+refused before it spends anything.
+
+GKE reserves a flat 1060 millicores on every shared-core E2 machine type, and 6% of a single-core
+node. Both shapes therefore leave 940 millicores for your pods — and GKE's own system DaemonSets,
+plus the Calico network-policy controller the cluster runs, take almost all of it. A cluster on one
+of these shapes comes up looking healthy, then never finishes installing GitOps and never enforces
+network policy.
+
+`e2-standard-2` is the smallest GCP shape that works, and it is the default. It has the same two
+vCPU on the spec sheet and a little over twice the usable CPU.
+</Callout>
+
 The environment's real monthly cost comes from Infracost when you run a plan, shown in the cost chip on the canvas. See [Cost Estimation](/concepts/cost-estimation).
 
 ## Node Scaling
