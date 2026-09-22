@@ -4,17 +4,15 @@
 // Pure filter plumbing for Settings · Access — the console filter standard's "normalize" step
 // (lib/query/README.md → "Server-side filters").
 //
-// KNOWN DEVIATION from step 5/6 of the standard, recorded rather than hidden:
-// `listAccessGrants(projectId?)` takes no search / scope / role filter and returns no facet
-// counts, and the server-action layer is owned by another lane. So the ORG-SCOPED universe is
-// fetched once under `qk.accessGrants(org, {projectId})` — the only axis the action understands
-// — and the remaining axes are applied here, over that universe. The facet-count invariant
-// ("options must not disappear as you select them") still holds, because the counts below are
-// computed over the UNFILTERED rows. What is not yet true is that filtering is server-side; a
-// grants list is bounded per org, so this is correct today and wrong at scale. Follow-up: give
-// `listAccessGrants` an `AccessGrantQuery` + facets, then delete `filterGrants`.
+// The deviation this file used to record — the org-scoped universe fetched once under
+// `qk.accessGrants(org, {projectId})` and the remaining axes applied HERE, because
+// `listAccessGrants(projectId?)` took no other filter — is closed (#4890).
+// `getAccessGrantsPage(q)` narrows in SQL and counts the scope/role/effect facets over the
+// UNFILTERED grants of the same scope, so `filterGrants` and `accessFacetCounts` are gone and
+// this module is the normalize step, the display vocabulary, and nothing else.
 
-import type { AccessGrantRow } from "@/app/server/actions/grants";
+import type { AccessGrantQuery } from "@/lib/queries/access-grants";
+import type { FacetOption } from "@/lib/queries/facets";
 
 /** The Access grants list's filter state (a type alias, for the store's `Record` constraint). */
 export type AccessFilters = {
@@ -65,28 +63,19 @@ export function reachLabel(resourceType: string): string {
 	}
 }
 
-/** The facet value a grant's role column falls under: its role name, or its permission key. */
-export function grantRoleKey(g: AccessGrantRow): string {
-	return g.roleName ?? (g.permissionKey ? `permission:${g.permissionKey}` : "—");
-}
-
 /** The label for a role facet value produced by {@link grantRoleKey}. */
 export function grantRoleLabel(key: string): string {
 	return key.startsWith("permission:") ? key.slice("permission:".length) : key;
 }
 
 /**
- * The stable query object placed in `qk.accessGrants`. Only `projectId` reaches the server
- * today; the rest of the filters are in the key so a future server-side implementation can
- * start honouring them without any call site changing.
+ * The stable query object placed in `qk.accessGrants` AND handed to `getAccessGrantsPage()`.
+ *
+ * An ALIAS of the builder's own query type rather than a second declaration of the same five
+ * fields: the key and the server read take the identical object, and two shapes that must agree
+ * are a pair that can stop agreeing.
  */
-export interface NormalizedAccessQuery {
-	projectId?: string;
-	search?: string;
-	scopes?: string[];
-	roles?: string[];
-	effects?: string[];
-}
+export type NormalizedAccessQuery = AccessGrantQuery;
 
 /** Sorted, deduped copy of a selection — or undefined when empty. */
 function normalizeList(values: string[]): string[] | undefined {
@@ -114,51 +103,13 @@ export function normalizeAccessQuery(
 }
 
 /**
- * Apply the client-side half of the query to the fetched universe. Pure, so the predicate is
- * testable without a component. `scopeLabel` resolves a grant's scoped resource to its display
- * name so the search matches what the row actually shows.
+ * A facet's options as the `Record<value, count>` the bars read.
+ *
+ * The bars index by value (and `Object.keys` the role facet, whose values are open-ended), so
+ * the server's ordered option list is reshaped here rather than at four call sites.
  */
-export function filterGrants(
-	rows: AccessGrantRow[],
-	query: NormalizedAccessQuery,
-	scopeLabel: (g: AccessGrantRow) => string,
-): AccessGrantRow[] {
-	const q = query.search?.toLowerCase();
-	const scopes = query.scopes ? new Set(query.scopes) : null;
-	const roles = query.roles ? new Set(query.roles) : null;
-	const effects = query.effects ? new Set(query.effects) : null;
-	return rows.filter((g) => {
-		if (scopes && !scopes.has(g.resourceType)) return false;
-		if (roles && !roles.has(grantRoleKey(g))) return false;
-		if (effects && !effects.has(g.effect)) return false;
-		if (q && !`${g.principalLabel} ${scopeLabel(g)}`.toLowerCase().includes(q))
-			return false;
-		return true;
-	});
-}
-
-/** One facet's option counts over the unfiltered universe. */
-function countBy<T>(rows: T[], key: (row: T) => string): Record<string, number> {
+export function facetCounts(options: FacetOption[]): Record<string, number> {
 	const counts: Record<string, number> = {};
-	for (const row of rows) {
-		const k = key(row);
-		counts[k] = (counts[k] ?? 0) + 1;
-	}
+	for (const o of options) counts[o.value] = o.count;
 	return counts;
-}
-
-/**
- * Facet counts over the UNFILTERED grants, so no option disappears as you select it — the
- * invariant step 6 of the standard exists to protect.
- */
-export function accessFacetCounts(all: AccessGrantRow[]): {
-	scopes: Record<string, number>;
-	roles: Record<string, number>;
-	effects: Record<string, number>;
-} {
-	return {
-		scopes: countBy(all, (g) => g.resourceType),
-		roles: countBy(all, grantRoleKey),
-		effects: countBy(all, (g) => g.effect),
-	};
 }

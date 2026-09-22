@@ -37,6 +37,7 @@ import {
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
+import { PageToolbar } from "@repo/ui/page-toolbar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
 	type DateRange,
@@ -224,6 +225,15 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 				</Empty>
 			) : (
 				<>
+					{/* The result count, through the count pill — the console filter standard's
+					    place for it now that the console has no page titles (lib/query/README.md,
+					    "Visual grammar"). It counts the rows the current filters MATCH; `total`
+					    above is the unfiltered universe and is what tells onboarding apart from a
+					    filter that excludes everything. */}
+					<PageToolbar
+						description="Every provision, deploy and destroy this organization has run."
+						count={page.isPending ? null : rows.length}
+					/>
 					<FilterBar
 						end={
 							<FilterBarReset
