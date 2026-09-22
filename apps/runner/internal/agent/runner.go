@@ -358,6 +358,22 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 	}
 
 	if claim.CloudIdentity != nil {
+		// #3348: the record/process disagreement is reported HERE, at claim time, rather than
+		// inferred from an IMDS 404 after a doomed credential refresh. A refusal is only raised
+		// when the claim's own payload PROVES the job cannot work (a keyless connection handed to
+		// a runner that cannot federate); otherwise this is a warning in front of the reader and
+		// the real credential call still returns the verdict. See operator_credentials.go.
+		if finding, ok := cloudIdentityPreflight(claim.CloudIdentity, w.config.Operator); ok {
+			fmt.Fprintln(stderrLogger, finding.Message)
+			if finding.Refuse {
+				jlog.Error("refusing job at claim time: operator cannot use this cloud identity",
+					"operator", w.config.Operator, "provider", claim.CloudIdentity.Provider)
+				_ = w.api.UpdateJobStatus(job.ID, "FAILED", finding.Message, nil)
+				return fmt.Errorf("operator %q cannot use the %s cloud identity this job was claimed with",
+					w.config.Operator, claim.CloudIdentity.Provider)
+			}
+		}
+
 		switch types.CloudProvider(claim.CloudIdentity.Provider) {
 		case types.CloudProviderAws:
 			// Managed runners have NO ambient AWS identity (the Hetzner fleet injects no keys), so they
