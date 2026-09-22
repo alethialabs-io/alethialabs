@@ -109,6 +109,65 @@ resource "azurerm_role_assignment" "state_writers" {
   principal_id         = each.value
 }
 
+# ── Access logging (#4903) ────────────────────────────────────────────────────────────────────
+#
+# Versioning answers "can I get the old state back"; this answers "who read or wrote it". For an
+# account holding an Entra application's configuration and three subscription role assignments,
+# the second question is the one an incident asks.
+#
+# DESTINATION: a Log Analytics workspace, not an archive storage account. Azure Monitor can archive
+# diagnostic logs to a storage account, and that is the cheaper destination per GB — but it would
+# mean a SECOND storage account, and this account exists precisely because
+# `shared_access_key_enabled = false` is the wall we are relying on. A workspace has no key to
+# reason about, the volume here is a handful of blob operations per apply, and it is queryable,
+# which an archived JSON blob in another container is not. At this volume the PerGB2018 ingestion
+# charge is fractions of a euro a month — the workspace's existence is not itself billable.
+#
+# THIS WORKSPACE MUST NOT BE THE DESTINATION FOR ITS OWN DIAGNOSTICS, and it has none configured
+# for that reason: a workspace that logs its own ingestion turns one write into an unbounded
+# stream. The chain terminates here, on purpose.
+resource "azurerm_log_analytics_workspace" "tfstate_access" {
+  name                = var.state_log_workspace_name
+  resource_group_name = azurerm_resource_group.tfstate.name
+  location            = azurerm_resource_group.tfstate.location
+  sku                 = "PerGB2018"
+  retention_in_days   = var.access_log_retention_days
+
+  tags = local.tags
+
+  # Same reasoning as the state account, one step removed: an audit trail that one command can
+  # delete is not an audit trail. `retention_in_days` is what keeps it bounded, so nothing needs
+  # to destroy the workspace to control it.
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# The diagnostic setting is attached to the BLOB SERVICE (`/blobServices/default`), not to the
+# account. Account-scoped settings carry only `Transaction`-style metrics; the StorageRead /
+# StorageWrite / StorageDelete log categories — the ones that name the caller and the blob — exist
+# only on the service resource.
+resource "azurerm_monitor_diagnostic_setting" "tfstate_blob_access" {
+  name                       = "state-access"
+  target_resource_id         = "${azurerm_storage_account.tfstate.id}/blobServices/default"
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.tfstate_access.id
+
+  enabled_log {
+    category = "StorageRead"
+  }
+
+  enabled_log {
+    category = "StorageWrite"
+  }
+
+  enabled_log {
+    category = "StorageDelete"
+  }
+
+  # No `enabled_metric` block. Transaction metrics say how MUCH happened; they do not say who, and
+  # they are the bulk of the ingestion volume. This setting exists for the caller identity.
+}
+
 # A stack that nobody can write state for is worse than one with local state, because the failure
 # looks like a backend bug. Say it out loud at plan time instead.
 check "state_has_at_least_one_writer" {

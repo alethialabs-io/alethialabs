@@ -14,3 +14,10 @@ project_id = "alethia-e2e-nightly"
 
 # How many superseded state generations to keep.
 # noncurrent_state_versions_kept = 30
+
+# The access-log sink (#4903) is a SECOND bucket, always named `<state bucket>-logs`. It has no
+# override of its own — if that name is taken, change state_bucket_name above and both move.
+
+# How long usage-log shards are kept (30-3650). 90 days, not the 30 used for state generations:
+# an unauthorized state read is noticed by its consequences, weeks later.
+# access_log_retention_days = 90
