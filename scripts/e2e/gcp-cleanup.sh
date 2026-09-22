@@ -29,9 +29,14 @@
 #     live in the run's VPC) are swept by a SECONDARY filter bound to THIS run's GKE cluster / VPC
 #     name — discovered from the tofu-labelled cluster, and (if the cluster is already gone, the
 #     likeliest hard-kill point) reconstructed from any leftover GKE-named instance/MIG whose name
-#     embeds the unique `-<ENV>-`. The VPC name is `vpc-<short>-<ENV>-<project>` and the GKE name is
-#     `gke-<short>-<ENV>-<project>` (infra/templates/project/gcp/locals.tf), so every secondary
-#     binding still embeds this run's unique ENV — never project-wide.
+#     embeds the unique `-<ENV>-`. The GKE name is `gke-<short>-<ENV>-<project>`
+#     (infra/templates/project/gcp/locals.tf). The VPC name is a DIFFERENT shape and is NOT that one
+#     with the prefix swapped — it is `<project>-<ENV>-vpc`
+#     (infra/templates/project/gcp/modules/vpc-network/main.tf, `local.network_name`). This file
+#     asserted `vpc-<short>-<ENV>-<project>` for as long as it existed, which no template has ever
+#     produced (#4918); resolve_network below asks the CLUSTER for its network first and only falls
+#     back to a name, and `--self-test` renders the template's own local to pin the shape.
+#     Every secondary binding still embeds this run's unique ENV — never project-wide.
 #   * Refuses to run without a specific, plausibly-unique ENV + an explicit region; rejects
 #     shared/prod values; asserts a non-empty scope before every mutating call; and — the last line
 #     of defence — a leak NEVER exits green: verify_swept re-lists BOTH scopes (label/name-FILTERED)
@@ -177,7 +182,7 @@ fi
 PID_LABEL="e2e-${ENV}"
 CLUSTER=""         # discovered below (gke-<short>-<ENV>-<project>); may be found via ENV-embed fallback
 CLUSTER_LOCATION="" # the cluster's zone or region (zonal in T2)
-NETWORK=""         # the run's VPC name (vpc-<short>-<ENV>-<project>) — secondary bind for LB/firewall
+NETWORK=""          # the run's VPC name (<project>-<ENV>-vpc) — secondary bind for LB/firewall
 
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
 if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
@@ -221,8 +226,31 @@ assert_scope() {
 # looks_gone <stderr-text> — true if a gcloud delete error means the resource is already absent
 # (idempotency: eventual consistency can list an already-deleted resource; a NotFound on delete is
 # success, not failure). The task's canonical strings plus gcloud's phrasings.
+#
+# ⚠️ `could not fetch resource` USED TO BE IN THIS LIST AND MUST NEVER GO BACK (#4918). It is not a
+# reason — it is the generic banner `gcloud compute` prints above EVERY API error on a mutating
+# call, including the in-use refusal:
+#
+#   ERROR: (gcloud.compute.networks.delete) Could not fetch resource:
+#    - The network resource 'projects/…/networks/alethia-nl-<ENV>-vpc' is already being used by …
+#
+# Matching the banner classified that as "already gone". Observed on nightly 35705203097: the GKE
+# cluster survived its own delete, so its network and its private subnet could not be removed — and
+# the sweeper printed `subnet alethia-nl-…-private already gone` and `network alethia-nl-…-vpc
+# already gone` over two resources that were both still standing.
+#
+# The reason this direction matters and the other does not: a false "gone" is SILENT. The delete is
+# never retried, and verify_swept demotes surviving networks to a `::notice::` — which on that very
+# run was never even PRINTED, because verify_swept `return 1`s on the first billable leak (the
+# surviving cluster) before it reaches the residue block. So the only record that the VPC outlived
+# the sweep was a line claiming it had not. A false "not gone", by contrast, costs five retries, a
+# WARN, and a verify pass that answers the question authoritatively.
+#
+# So this list stays SPECIFIC, and a phrase that is a WRAPPER rather than a REASON does not belong
+# in it. Every entry below names why the resource is absent; `could not fetch resource` names only
+# that gcloud was about to say something.
 looks_gone() {
-	printf '%s' "$1" | grep -Eqi 'was not found|does not exist|notFound|not found|could not fetch resource|no longer exists'
+	printf '%s' "$1" | grep -Eqi 'was not found|does not exist|notFound|not found|no longer exists'
 }
 
 # retry_delete <human> <cmd...> — delete with backoff. "Already gone" = success. NEVER returns
@@ -257,12 +285,75 @@ retry_delete() {
 # ── Scope-locked discovery. Every list is label- or name-FILTERED; none ever returns an unscoped
 #    project-wide list. ──
 
-# list_gke_clusters — "name<TAB>location" for GKE clusters carrying THIS run's project-id label.
+# list_gke_clusters — "name<TAB>location<TAB>network" for GKE clusters carrying THIS run's
+# project-id label. `network` is the cluster's OWN record of which VPC it sits in — the one binding
+# that is not a re-derivation of somebody else's naming rule (#4918).
 list_gke_clusters() {
 	assert_scope
 	gc_list gke-cluster container clusters list \
 		--filter="resourceLabels.alethia_project-id=${PID_LABEL}" \
-		--format="value(name,location)"
+		--format="value(name,location,network)"
+}
+
+# ── template_network_name <project_name> <env> — the VPC name THIS TEMPLATE creates.
+#
+# ONE place, mirroring infra/templates/project/gcp/modules/vpc-network/main.tf:
+#
+#     network_name = "${var.project_name}-${var.environment}-vpc"
+#
+# and `--self-test` RENDERS that line out of the module and asserts this function against the
+# result, so the copy cannot drift from its original in silence. It is a fallback, not the primary:
+# resolve_network asks the cluster first, precisely because a name convention is re-derived by a
+# reader while a resource's `network` field is written by the thing that created it. ──
+template_network_name() {
+	printf '%s-%s-vpc' "$1" "$2"
+}
+
+# ── resolve_network — THIS run's VPC name, by a ladder that ends at a name rather than starting at
+#    one. Every rung is re-checked by network_in_scope before it is accepted.
+#
+#      1. the labelled GKE cluster's own `network` field     (no convention at all)
+#      2. the ENV-embedding name filter list_networks uses   (ask the cloud, no convention either)
+#      3. template_network_name <PROJECT_NAME> <ENV>         (the template's rule, stated ONCE)
+#
+#    A convention is last on purpose. Rungs 1 and 2 read a name the cloud is holding; rung 3 is a
+#    reader re-deriving one, which is the shape that produced #4918 in the first place. It earns its
+#    place only because rung 2 answers "" both when there is genuinely no network AND when the list
+#    call FAILED (gc_list records that as unverifiable and hands back nothing).
+#
+#    Rung 2 was `grep -E "^vpc-.*-${ENV}-"` — the primary's wrong assumption written a second time,
+#    so the safety net shared the exact mistake it existed to catch. It now reuses the SAME
+#    `name~-${ENV}-` predicate that list_networks and verify_swept already run against the real
+#    project, which nightly 35705203097 proves matches the real name. ──
+network_in_scope() { # <candidate> — fail-closed: a binding that is not provably this run's is none
+	case "$1" in
+	*"-${ENV}-"*) return 0 ;;
+	esac
+	return 1
+}
+
+resolve_network() { # <cluster-network-field>
+	local cand="${1:-}"
+	# The cluster's field is a bare network name on GKE, but accept a full selfLink defensively and
+	# take its basename — a URL would make build_lb_filter's `network~/<x>$` anchor nonsense.
+	cand="${cand##*/}"
+	if [ -n "$cand" ] && network_in_scope "$cand"; then
+		printf '%s' "$cand"
+		return 0
+	fi
+	cand="$(list_networks | head -n1 || true)"
+	if [ -n "$cand" ] && network_in_scope "$cand"; then
+		printf '%s' "$cand"
+		return 0
+	fi
+	if [ -n "$PROJECT_NAME" ]; then
+		cand="$(template_network_name "$PROJECT_NAME" "$ENV")"
+		if network_in_scope "$cand"; then
+			printf '%s' "$cand"
+			return 0
+		fi
+	fi
+	printf ''
 }
 
 # ── Discover THIS run's GKE cluster (for the out-of-band secondary sweeps) + its VPC. First the
@@ -270,11 +361,12 @@ list_gke_clusters() {
 #    reconstruct the name from any leftover GKE-named node instance/MIG whose name embeds the unique
 #    `-<ENV>-`. Never guessed, never broadened past this run's ENV. ──
 discover_cluster() {
-	local line cand
+	local line cand cluster_net=""
 	line="$(list_gke_clusters | head -n1)"
 	if [ -n "$line" ]; then
 		CLUSTER="$(printf '%s' "$line" | awk '{print $1}')"
 		CLUSTER_LOCATION="$(printf '%s' "$line" | awk '{print $2}')"
+		cluster_net="$(printf '%s' "$line" | awk '{print $3}')"
 	else
 		# Fallback: scan node instance names for our unique ENV. GKE node VMs are named
 		# gke-<cluster>-<nodepool>-<hash>-<rand>, and cluster == gke-<short>-<ENV>-<project>, so a
@@ -290,14 +382,11 @@ discover_cluster() {
 		fi
 		[ -n "$cand" ] && CLUSTER="$cand"
 	fi
+	NETWORK="$(resolve_network "$cluster_net")"
 	if [ -n "$CLUSTER" ]; then
-		# The VPC shares the cluster's <short>-<ENV>-<project> tail (vpc- vs gke- prefix).
-		NETWORK="vpc-${CLUSTER#gke-}"
-		echo "  · cluster (secondary scope): ${CLUSTER}${CLUSTER_LOCATION:+ @ ${CLUSTER_LOCATION}}  · vpc: ${NETWORK}"
+		echo "  · cluster (secondary scope): ${CLUSTER}${CLUSTER_LOCATION:+ @ ${CLUSTER_LOCATION}}  · vpc: ${NETWORK:-<unresolved>}"
 	else
 		# No cluster ⇒ still try to bind LB/network residue to a VPC named with our ENV.
-		NETWORK="$(gc_list network compute networks list --format="value(name)" |
-			grep -E "^vpc-.*-${ENV}-" | head -n1 || true)"
 		echo "  · no GKE cluster found for ENV ${ENV} (already gone, or nothing out-of-band to sweep)${NETWORK:+ · vpc: ${NETWORK}}"
 	fi
 }
@@ -1023,7 +1112,118 @@ if [ "$SELF_TEST" = "1" ]; then
 		st_fails=$((st_fails + 1))
 		;;
 	esac
-	unset -f gc
+
+	# ── #4918: THE VPC NAME, ASSERTED AGAINST THE ONE THE TEMPLATE PRODUCES. ─────────────────────
+	#
+	# The defect was a hand-written copy of a naming convention that no template has ever produced
+	# (`vpc-<short>-<ENV>-<project>`; the real one is `<project>-<ENV>-vpc`). A test that pinned a
+	# LITERAL would be a THIRD hand-written copy of the same convention, and would have been written
+	# wrong by the same reasoning that wrote the code wrong. So the expected value is RENDERED out of
+	# the module's own `local.network_name` line, substituting the two variables networking.tf hands
+	# it. Change the template's shape and this test moves with it.
+	#
+	# It FAILS — loudly, counted — when that line cannot be found, rather than comparing against an
+	# empty expectation: a locate-then-check test that silently locates nothing is the shape that
+	# reports green over the thing it was written to catch.
+	st_tpl="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/infra/templates/project/gcp/modules/vpc-network/main.tf"
+	st_tpl_expr=""
+	if [ -f "$st_tpl" ]; then
+		st_tpl_expr="$(sed -nE 's/^[[:space:]]*network_name[[:space:]]*=[[:space:]]*"(.*)"[[:space:]]*$/\1/p' "$st_tpl" | head -n1)"
+	fi
+	st_want=""
+	if [ -z "$st_tpl_expr" ]; then
+		echo "  ✗ local.network_name could not be read out of ${st_tpl} — every VPC-name assertion below would compare against nothing" >&2
+		st_fails=$((st_fails + 1))
+	else
+		st_want="$(printf '%s' "$st_tpl_expr" |
+			sed -e "s/\${var\.project_name}/alethia-nl/g" -e "s/\${var\.environment}/${ENV}/g")"
+		st_got="$(template_network_name alethia-nl "$ENV")"
+		if [ "$st_want" = "$st_got" ]; then
+			echo "  ✓ the sweeper's VPC name is the one the template renders (${st_got})"
+		else
+			echo "  ✗ the sweeper's VPC name is the one the template renders — template says '${st_want}', sweeper says '${st_got}'" >&2
+			st_fails=$((st_fails + 1))
+			st_want=""
+		fi
+	fi
+
+	# ── …and the whole RESOLUTION LADDER, rung by rung. A ladder whose rungs are never exercised
+	#    separately is one rung with three comments: the old fallback shared the primary's single
+	#    wrong assumption precisely because nothing ever asked it a question the primary had missed.
+	#
+	#    This stub answers the three listings discover_cluster can reach INDEPENDENTLY, so a rung can
+	#    be starved without starving the others. ──
+	ST_CLUSTERS="" ST_NETWORKS="" ST_INSTANCES=""
+	gc() {
+		case "${1:-} ${2:-} ${3:-}" in
+		"container clusters list") printf '%s\n' "$ST_CLUSTERS" ;;
+		"compute networks list") printf '%s\n' "$ST_NETWORKS" ;;
+		"compute instances list") printf '%s\n' "$ST_INSTANCES" ;;
+		*) : ;;
+		esac
+		return 0
+	}
+	st_net_case() { # <name> <clusters output> <networks output> <PROJECT_NAME> <expected NETWORK>
+		probe_reset
+		ST_CLUSTERS="$2" ST_NETWORKS="$3" ST_INSTANCES=""
+		PROJECT_NAME="$4"
+		CLUSTER="" CLUSTER_LOCATION="" NETWORK=""
+		discover_cluster >/dev/null 2>&1 || true
+		if [ "$NETWORK" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected vpc '$5', got '${NETWORK}'" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	if [ -n "$st_want" ]; then
+		# Rung 1. THE CASE THAT WOULD HAVE CAUGHT IT: a live labelled cluster, whose own `network`
+		# field names the VPC. The old code never read that field — it rebuilt the name from the
+		# CLUSTER's and produced `vpc-ew3-${ENV}-alethia-nl`, which is what the nightly printed.
+		# The networks listing is deliberately stocked with a decoy, so a rung that quietly fell
+		# through to the cloud list could not pass this.
+		st_net_case "the run's VPC is read off the labelled cluster, not rebuilt from its name" \
+			"gke-ew3-${ENV}-alethia-nl	europe-west3-a	${st_want}" \
+			"decoy-${ENV}-vpc" "alethia-nl" "$st_want"
+		# Rung 2. The cluster answered but named no network (a partially-described cluster) — ask the
+		# cloud, with the SAME `-<ENV>-` predicate the delete pass uses. The old fallback anchored on
+		# `^vpc-` and could not have matched this name at all.
+		st_net_case "…and with no network on the cluster, the ENV-scoped listing answers" \
+			"gke-ew3-${ENV}-alethia-nl	europe-west3-a" \
+			"$st_want" "alethia-nl" "$st_want"
+		# Rung 3. Nothing to read anywhere (an empty answer is also what a FAILED listing returns) —
+		# only here is the template's convention re-derived, and it must render the template's shape.
+		st_net_case "…and with nothing to read, the template's own convention renders it" \
+			"" "" "alethia-nl" "$st_want"
+	fi
+	# Scope lock, which is the reason this resolves to a NAME rather than to whatever it was handed:
+	# NETWORK becomes `network~/<name>$` in build_lb_filter, so accepting `default` would point the
+	# out-of-band load-balancer sweep at every front-end in the project's shared default VPC. A
+	# binding that does not embed this run's ENV is not this run's, and is refused.
+	st_net_case "a VPC that does not embed this run's ENV (default) is REFUSED, not scoped on" \
+		"gke-ew3-${ENV}-alethia-nl	europe-west3-a	default" "" "" ""
+	unset -f gc st_net_case
+
+	# ── #4918, the second half: `could not fetch resource` is gcloud's BANNER, not a reason. ──────
+	# Asserted in both directions — dropping the banner must not stop a genuine NotFound being
+	# tolerated, or every eventually-consistent re-list would turn a clean teardown red.
+	st_gone_case() { # <name> <stderr text> <expect gone: yes|no>
+		local got=no
+		looks_gone "$2" && got=yes
+		if [ "$got" = "$3" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected looks_gone=$3, got ${got}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_gone_case "an in-use refusal is NOT 'already gone' (it is the resource REFUSING to be deleted)" \
+		"ERROR: (gcloud.compute.networks.delete) Could not fetch resource:
+ - The network resource 'projects/p/global/networks/alethia-nl-${ENV}-vpc' is already being used by 'projects/p/regions/europe-west3/subnetworks/alethia-nl-${ENV}-private'" no
+	st_gone_case "…and a genuine NotFound still is" \
+		"ERROR: (gcloud.compute.networks.delete) Could not fetch resource:
+ - The resource 'projects/p/global/networks/alethia-nl-${ENV}-vpc' was not found" yes
+	unset -f st_gone_case
 
 	if [ "$st_fails" -ne 0 ]; then
 		echo "✗ gcp-cleanup.sh self-test: ${st_fails} failure(s)" >&2
