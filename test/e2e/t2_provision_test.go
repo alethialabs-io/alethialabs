@@ -360,6 +360,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		}
 		t.Logf("#845 fabric-demo node-shape guard (warning): %s", msg)
 	}
+	// #3855 cause B: can what we install actually RUN on this shape? Asked FIRST of the pre-spend
+	// checks because it is the cheapest by far — no network, no CLI, no credential, just the product's
+	// own catalog. Run 35499891484 passed every other guard here and still burned its whole budget:
+	// the e2-medium it bought could not schedule argocd-repo-server, and could not schedule GKE's own
+	// calico-typha either, so NetworkPolicy was never enforced on that cluster. Hard under REQUIRE;
+	// silent on any shape the catalog cannot model, which is most of them.
+	if fatal, msg := t2RequireControlPlaneNodeFit(provider, full); msg != "" {
+		if fatal {
+			t.Fatalf("pre-spend %s", msg)
+		}
+		t.Logf("pre-spend %s", msg)
+	}
 	// PRE-SPEND capacity preflight: the two guards above ask whether the shape is big enough
 	// for what this run asserts; this one asks whether the cloud will sell us that shape HERE.
 	// On 2026-08-25 two hetzner runs died five minutes into a paid apply because cx33 has

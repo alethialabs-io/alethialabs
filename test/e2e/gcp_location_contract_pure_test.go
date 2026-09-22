@@ -42,16 +42,21 @@ func TestGCPNightlyLocationContract(t *testing.T) {
 			path: filepath.Join(root, ".github", "workflows", "e2e-nightly.yml"),
 			// A node pool's counts are PER ZONE, so regional europe-west3 was delivering 3x what it
 			// declared, and #3566 restated 3/6/3 on e2-small to keep the zonal switch capacity-neutral.
-			// #3855 then showed that shape is why gcp's floor is the only red one: argocd-repo-server
-			// never renders one manifest inside a ~900 Mi slot. What is pinned now is the RESHAPE —
-			// 1 x e2-medium instead of 3 x e2-small.
+			// #3855 then showed that shape is why gcp's floor is the only red one.
 			//
 			// THE INSTANCE TYPE IS PART OF THE PIN, and it was not before. That is the correction, not
 			// an addition: with the location zonal the counts are literal, so `1/2/1` alone says
 			// nothing about what is bought — 1/2/1 on an e2-small is a THIRD of the capacity at the
 			// very numbers this contract would have accepted. Pinning the pair is what makes a silent
 			// shrink impossible in whichever PR happens to touch this line, which is the whole job.
-			want: []string{`"instance_types":["e2-medium"],"node_min_size":1,"node_max_size":2,"node_desired_size":1`},
+			//
+			// The literal moved from `e2-medium` to `e2-standard-2` with #3855 cause B. #4179's own
+			// run (35499891484) measured that e2-small and e2-medium both allocate 940m — they are
+			// both shared-core E2 and both pay GKE's flat 1060 mCPU reservation — and that 940m could
+			// schedule neither argocd-repo-server nor GKE's own calico-typha. This pin is only the
+			// STRING; what makes the shape correct is TestGCPFloorShapeCanHostTheControlPlane below,
+			// which asks the product's own catalog rather than trusting this literal.
+			want: []string{`"instance_types":["e2-standard-2"],"node_min_size":1,"node_max_size":2,"node_desired_size":1`},
 		},
 		{
 			name: "Firestore derives its regional default from the zonal cluster location",

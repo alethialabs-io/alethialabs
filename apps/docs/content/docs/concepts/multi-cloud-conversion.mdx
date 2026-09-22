@@ -37,7 +37,7 @@ If no mapping exists, the target provider's default region is used, and a warnin
 
 ### Cluster
 
-- **Instance types**: Mapped via `INSTANCE_TYPE_MAP` (e.g., `t3.medium` → `e2-medium` → `Standard_B2s`). Unmapped types generate a warning.
+- **Instance types**: Mapped via `INSTANCE_TYPE_MAP` (e.g., `t3.medium` → `e2-standard-2` → `Standard_B2s`). Unmapped types generate a warning. A mapping never targets a machine type too small to run the cluster add-ons, so a conversion to GCP can land on a larger node than the capability match alone would pick.
 - **Kubernetes version**: Reset to the target provider's default (versions differ across providers)
 - **Autoscaler**: Key name converted in `provider_config` (`enable_karpenter` → `enable_autopilot` → `enable_cluster_autoscaler`)
 

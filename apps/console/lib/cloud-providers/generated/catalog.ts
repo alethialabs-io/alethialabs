@@ -416,7 +416,7 @@ export const CATALOG: Catalog = {
 				]
 			},
 			"gcp": {
-				"default_instance": "e2-medium",
+				"default_instance": "e2-standard-2",
 				"default_k8s_version": "1.35",
 				"k8s_versions": [
 					"1.35",
@@ -2242,7 +2242,7 @@ export const AUTOSCALER: Record<CloudProviderSlug, AutoscalerMeta> = {
 /** Default instance type per provider (used for new project forms). */
 export const DEFAULT_INSTANCE_TYPE: Record<CloudProviderSlug, string> = {
 		"aws": "t3.medium",
-		"gcp": "e2-medium",
+		"gcp": "e2-standard-2",
 		"azure": "Standard_D2s_v5",
 		"hetzner": "cax11",
 		"alibaba": "ecs.g6.large"
@@ -2262,7 +2262,7 @@ export const INSTANCE_TYPE_MAP: Record<CloudProviderSlug, Record<CloudProviderSl
 		"aws": {
 			"aws": {},
 			"gcp": {
-				"t3.medium": "e2-medium",
+				"t3.medium": "e2-standard-2",
 				"t3.large": "e2-standard-2",
 				"t3.xlarge": "e2-standard-4",
 				"m5a.large": "n2-standard-2",
@@ -2401,10 +2401,10 @@ export const INSTANCE_TYPE_MAP: Record<CloudProviderSlug, Record<CloudProviderSl
 				"cx33": "t3.large"
 			},
 			"gcp": {
-				"cax11": "e2-medium",
+				"cax11": "e2-standard-2",
 				"cax21": "e2-standard-2",
 				"cax31": "e2-standard-4",
-				"cx23": "e2-medium",
+				"cx23": "e2-standard-2",
 				"cx33": "e2-standard-2"
 			},
 			"azure": {
