@@ -38,8 +38,17 @@ export type ErasureRequestResult =
  * to the privacy inbox.
  *
  * This is the account dialog's "Request deletion" button. It OPENS A CASE and erases nothing. It
- * does not call `fulfilErasure` — a person fulfils the case through the steps in `cases.ts`, and
- * `fulfilErasure` itself has no executor yet (#4854). The copy at the call site says the same.
+ * does not call `fulfilErasure` — a person fulfils the case through the steps in `cases.ts`. Since
+ * #4854 that step really does erase rows, which is a reason to keep the two apart and not a reason
+ * to join them.
+ *
+ * ⚠️ AND THE AUTHORIZATION LAYER NOW AGREES, which it did not at first. `fulfilErasure` is gated on
+ * standing over the CASE and the SUBJECT IS NOT ONE OF THE GROUNDS — an erasure needs a second
+ * party. That is separation of duty and it was added because the first version of the gate admitted
+ * the subject: this module hands the browser a reference to a case it has already marked
+ * identity-verified, and `cases.ts` is `"use server"`, so an irreversible erasure would have been
+ * one unconfirmed POST away — with no confirmation dialog, no `destructive-actions.yaml` row and no
+ * e2e, while the copy at the call site promised a person reviews it.
  *
  * What makes it safe to expose without `org:edit`, each with what enforces it:
  *
