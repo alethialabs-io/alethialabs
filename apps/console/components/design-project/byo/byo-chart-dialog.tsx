@@ -68,6 +68,34 @@ interface ByoChartDialogProps {
 	onAttached?: (chartId: string) => void;
 }
 
+// ── THE WORKED EXAMPLE ───────────────────────────────────────────────────────────────────────────
+//
+// Every example string this dialog shows names something that EXISTS and can be fetched. It used to
+// name `acme/payments-helm` and `oci://ghcr.io/acme/payments` (#4114): a user's first meeting with
+// the BYO contract handed them a repository that 404s, so the one thing they could do with the
+// example — paste it and watch it converge — was the one thing it could not do.
+//
+// These are not shaped placeholders. Change one and you must change it to something that still
+// resolves; `tests/components/design-project/byo/byo-chart-dialog.test.tsx` pins each value, refuses
+// a re-invented `acme/`-style example anywhere in this file, and — under
+// ALETHIA_CHECK_LIVE_EXAMPLES=1 — fetches all three for real.
+
+/** The public starter chart a user with no chart of their own can paste. A GitHub *template*
+ * repository, so "Use this template" gives them their own copy. */
+export const STARTER_CHART_REPO_URL =
+	"https://github.com/alethialabs-io/alethia-starter-chart";
+
+/** Where `Chart.yaml` lives in that repository. `chart`, NOT the conventional `charts/<name>` — the
+ * starter repo holds exactly one chart, so nesting it under a plural directory would be a path the
+ * user copies and which then resolves to nothing. */
+export const STARTER_CHART_PATH = "chart";
+
+/** The OCI example. It is NOT the starter chart: that repository publishes no OCI artifact today, so
+ * naming `oci://ghcr.io/alethialabs-io/…` would re-commit #4114's defect under our own org. podinfo
+ * is the reference public OCI Helm chart, pullable anonymously, and — checked, not assumed — renders
+ * only namespaced, non-RBAC resources, so it also satisfies the default-deny BYO AppProject a user
+ * would be pasting it into. Swap it for ours the day the starter chart ships an OCI release. */
+export const EXAMPLE_OCI_CHART_REF = "oci://ghcr.io/stefanprodan/charts/podinfo";
 
 const SOURCE_OPTIONS = [
 	{
@@ -88,8 +116,9 @@ const STEPS: Record<ChartSource, readonly string[]> = {
 	oci: ["Source", "Registry", "Version", "Review"],
 };
 
-/** Derives a default chart name from the repo URL's last path segment (`acme/payments-helm` →
- * `payments-helm`; `oci://ghcr.io/acme/payments` → `payments`), so the user rarely types one. */
+/** Derives a default chart name from the repo URL's last path segment
+ * (`alethialabs-io/alethia-starter-chart` → `alethia-starter-chart`;
+ * `oci://ghcr.io/stefanprodan/charts/podinfo` → `podinfo`), so the user rarely types one. */
 function defaultNameFromRepo(repoUrl: string): string {
 	const tail = repoUrl.replace(/\.git$/, "").split("/").filter(Boolean).pop() ?? "";
 	return tail || "chart";
@@ -282,7 +311,7 @@ export function ByoChartDialog({
 										value={field.value}
 										onChange={field.onChange}
 										label="Chart repository"
-										placeholder="https://github.com/acme/payments-helm"
+										placeholder={STARTER_CHART_REPO_URL}
 										required
 									/>
 								)}
@@ -290,10 +319,19 @@ export function ByoChartDialog({
 							{errors.repoUrl ? (
 								<p className="text-xs text-destructive">{errors.repoUrl.message}</p>
 							) : (
-								<p className="text-xs text-muted-foreground">
-									From the git providers you&apos;ve linked. No provider yet? The selector offers
-									a connect step — identity comes from your existing connectors, no new login.
-								</p>
+								<>
+									<p className="text-xs text-muted-foreground">
+										From the git providers you&apos;ve linked. No provider yet? The selector
+										offers a connect step — identity comes from your existing connectors, no new
+										login.
+									</p>
+									<p className="text-xs text-muted-foreground">
+										No chart of your own yet? Switch the selector to manual entry and paste{" "}
+										<code>{STARTER_CHART_REPO_URL}</code> — a public starter chart that honours
+										the BYO contract, with its chart at{" "}
+										<code>{STARTER_CHART_PATH}</code>.
+									</p>
+								</>
 							)}
 						</div>
 					)}
@@ -304,7 +342,7 @@ export function ByoChartDialog({
 							<Input
 								id="byo-chart-oci"
 								{...register("repoUrl")}
-								placeholder="oci://ghcr.io/acme/payments"
+								placeholder={EXAMPLE_OCI_CHART_REF}
 								className="font-mono"
 								aria-invalid={errors.repoUrl ? true : undefined}
 								autoFocus
@@ -326,7 +364,7 @@ export function ByoChartDialog({
 							<Input
 								id="byo-chart-path"
 								{...register("chartPath")}
-								placeholder="charts/payments"
+								placeholder={STARTER_CHART_PATH}
 								className="font-mono"
 								aria-invalid={errors.chartPath ? true : undefined}
 								autoFocus
@@ -335,7 +373,9 @@ export function ByoChartDialog({
 								<p className="text-xs text-destructive">{errors.chartPath.message}</p>
 							) : (
 								<p className="text-xs text-muted-foreground">
-									The directory inside the repo that contains <code>Chart.yaml</code>.
+									The directory inside the repo that contains <code>Chart.yaml</code> —{" "}
+									<code>{STARTER_CHART_PATH}</code> in the starter chart, often{" "}
+									<code>charts/&lt;name&gt;</code> in a repo that holds several.
 								</p>
 							)}
 						</div>
