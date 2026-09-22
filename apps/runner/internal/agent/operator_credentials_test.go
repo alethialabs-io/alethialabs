@@ -304,11 +304,19 @@ func TestAmbientCredentialSources(t *testing.T) {
 	}
 }
 
-// The provider arrives from the wire. A claim that spelled it "AWS" must not silently fall out of
-// the check — the operator gate in runner.go matches case-insensitively via types.CloudProvider.
-func TestPreflightNormalisesTheProviderFromTheWire(t *testing.T) {
-	if _, ok := preflightCloudIdentity(&CloudIdentity{Provider: " AWS "}, "self", emptyEnv, noFiles); !ok {
-		t.Error("a provider with different case/spacing must still be checked")
+// runner.go's credential switch is an EXACT match over types.CloudProvider's lowercase values and
+// has no default clause, so a provider string that is not one of them activates no credential path
+// at all. Warning that such a job "will read AMBIENT credentials" would be a confident wrong answer
+// about a job that reads none, so the comparison here is exact too — this check must be
+// co-extensive with the branch it explains, never wider.
+func TestPreflightMatchesTheProviderExactlyLikeTheCredentialSwitch(t *testing.T) {
+	if _, ok := preflightCloudIdentity(&CloudIdentity{Provider: "aws"}, "self", emptyEnv, noFiles); !ok {
+		t.Fatal("the canonical provider value must be checked")
+	}
+	for _, p := range []string{"AWS", " aws ", "Aws", "gcp ", ""} {
+		if f, ok := preflightCloudIdentity(&CloudIdentity{Provider: p}, "self", emptyEnv, noFiles); ok {
+			t.Errorf("%q activates no credential path in runner.go, so nothing here applies to it; got %+v", p, f)
+		}
 	}
 }
 

@@ -244,11 +244,17 @@ type claimFinding struct {
 // irrelevant); azure and alibaba, which have NO operator branch and are always keyless; and the
 // token clouds, which carry their own credential. That asymmetry is #3348's own table and is the
 // reason this keys off providerCredentialSource rather than off the provider list.
+//
+// The provider is compared EXACTLY, with no lower-casing or trimming, because runner.go's switch
+// is an exact match over types.CloudProvider's lowercase values and carries no default clause. A
+// provider string that does not match one of them activates NO credential path at all, so warning
+// that it "will read AMBIENT credentials" would be a confident wrong answer about a job that reads
+// none. Being co-extensive with the branch it explains is the point; being wider is a defect.
 func preflightCloudIdentity(ci *CloudIdentity, operator string, getenv func(string) string, fileExists func(string) bool) (claimFinding, bool) {
 	if ci == nil || !takesAmbientPath(operator) {
 		return claimFinding{}, false
 	}
-	provider := strings.ToLower(strings.TrimSpace(ci.Provider))
+	provider := ci.Provider
 	if _, gated := providerCredentialSource[provider]; !gated {
 		return claimFinding{}, false
 	}
