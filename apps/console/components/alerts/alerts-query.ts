@@ -3,26 +3,25 @@
 
 // Pure, client-safe filter/query plumbing for the Alerts hub — the console filter
 // standard's "normalize" step (lib/query/README.md → "Server-side filters"). No React
-// and no DB imports: types only, so this file is unit-testable on its own and can be
-// lifted behind a server action unchanged.
+// and no DB imports: types only, so this file is unit-testable on its own.
 //
-// The alerts surface is RSC-fed: `getAlertsBootstrap()` hands the client the whole
-// channel/policy/delivery universe in one payload and has no filtered sibling, so the
-// resolve step below runs against that universe in memory rather than over the wire.
-// Everything up to it is the documented pipeline — store → URL sync → debounce →
-// normalize — and the normalized objects are exactly what `qk.alertChannels(org, q)` /
-// `qk.alertPolicies(org, q)` are shaped to key, so moving the resolve server-side is a
-// swap of `filter*()` for a `queryFn`, not a rewrite. See alerts-filters.ts.
+// The RESOLVE step is not here any more (#4890). It used to be — `filter*()` narrowed the
+// bootstrap's universe in memory, because the three server-side siblings existed since #2899
+// and nothing called them — and every filtered view of a panel therefore shared one cache
+// entry. `alerts-filters.ts` now keys `qk.alert*(org, query)` on the normalized objects below
+// and `getAlert*Page(query)` resolves them in SQL, with the facet counts coming from each
+// builder's own UNFILTERED pass.
+//
+// So what is left is exactly the normalize step and the vocabulary around it: the filter
+// shapes, their defaults, the status/kind buckets a row falls in, and the human labels for
+// those buckets. The labels stay client-side because they are what the USER calls a status,
+// and alerts-status.ts reads the same maps for the same values.
 
 import type {
 	ChannelDTO,
 	DeliveryDTO,
 	PolicyDTO,
 } from "@/app/server/actions/alerts";
-import {
-	CHANNEL_TYPE_META,
-	CHANNEL_TYPE_ORDER,
-} from "@/components/alerts/channel-meta";
 import type { AlertDeliveryStatus } from "@/lib/db/schema/enums";
 
 // ── Facets ─────────────────────────────────────────────────────────────────────
@@ -37,44 +36,10 @@ export interface FacetCount {
 	count: number;
 }
 
-/** Tally one keyed dimension over a collection, dropping keys nothing maps to. */
-function tally<T>(rows: T[], keyOf: (row: T) => string): Map<string, number> {
-	const counts = new Map<string, number>();
-	for (const row of rows) {
-		const key = keyOf(row);
-		counts.set(key, (counts.get(key) ?? 0) + 1);
-	}
-	return counts;
-}
-
-/**
- * Order a tally by a fixed value order, keeping only values present in the universe.
- * Generic over the value union so the label lookups stay exhaustive without a cast.
- */
-function orderedFacet<V extends string>(
-	counts: Map<string, number>,
-	order: readonly V[],
-	labelOf: (value: V) => string,
-): FacetCount[] {
-	return order
-		.filter((value) => (counts.get(value) ?? 0) > 0)
-		.map((value) => ({
-			value,
-			label: labelOf(value),
-			count: counts.get(value) ?? 0,
-		}));
-}
-
 /** Sorted, deduped copy of a selection — or undefined when empty. */
 function normalizeList(values: string[]): string[] | undefined {
 	if (values.length === 0) return undefined;
 	return [...new Set(values)].sort();
-}
-
-/** True when the needle appears in any of the haystacks (case-insensitive). */
-function matches(needle: string, haystacks: (string | null | undefined)[]): boolean {
-	const q = needle.toLowerCase();
-	return haystacks.some((h) => (h ?? "").toLowerCase().includes(q));
 }
 
 // ── Channels ───────────────────────────────────────────────────────────────────
@@ -136,44 +101,6 @@ export function normalizeChannelsQuery(
 	const status = normalizeList(filters.status);
 	if (status) query.status = status;
 	return query;
-}
-
-/** Resolve the normalized channel query against a channel universe. */
-export function filterChannels(
-	channels: ChannelDTO[],
-	query: NormalizedChannelsQuery,
-): ChannelDTO[] {
-	const types = query.types ? new Set(query.types) : null;
-	const status = query.status ? new Set(query.status) : null;
-	return channels.filter((c) => {
-		if (types && !types.has(c.type)) return false;
-		if (status && !status.has(channelStatusKey(c))) return false;
-		if (
-			query.search &&
-			!matches(query.search, [c.name, c.type, CHANNEL_TYPE_META[c.type].name])
-		)
-			return false;
-		return true;
-	});
-}
-
-/** Channel facet options + counts over the unfiltered universe. */
-export function channelFacets(channels: ChannelDTO[]): {
-	types: FacetCount[];
-	status: FacetCount[];
-} {
-	return {
-		types: orderedFacet(
-			tally(channels, (c) => c.type),
-			CHANNEL_TYPE_ORDER,
-			(value) => CHANNEL_TYPE_META[value].name,
-		),
-		status: orderedFacet(
-			tally(channels, channelStatusKey),
-			CHANNEL_STATUS_VALUES,
-			(value) => CHANNEL_STATUS_LABEL[value],
-		),
-	};
 }
 
 // ── Policies ───────────────────────────────────────────────────────────────────
@@ -250,66 +177,11 @@ export function normalizePoliciesQuery(
 	return query;
 }
 
-/** Resolve the normalized policy query against a policy universe. */
-export function filterPolicies(
-	policies: PolicyDTO[],
-	query: NormalizedPoliciesQuery,
-): PolicyDTO[] {
-	const status = query.status ? new Set(query.status) : null;
-	const kinds = query.kinds ? new Set(query.kinds) : null;
-	const channels = query.channels ? new Set(query.channels) : null;
-	return policies.filter((p) => {
-		if (status && !status.has(policyStatusKey(p))) return false;
-		if (kinds && !kinds.has(policyKindKey(p))) return false;
-		if (channels && !p.channelIds.some((id) => channels.has(id))) return false;
-		if (query.search && !matches(query.search, [p.name, p.description]))
-			return false;
-		return true;
-	});
-}
-
-/**
- * Policy facet options + counts over the unfiltered universe. The channel facet
- * enumerates every configured channel (not only the routed-to ones) so a policy's
- * destination can be picked before any policy uses it.
- */
-export function policyFacets(
-	policies: PolicyDTO[],
-	channels: ChannelDTO[],
-): { status: FacetCount[]; kinds: FacetCount[]; channels: FacetCount[] } {
-	const routed = new Map<string, number>();
-	for (const p of policies)
-		for (const id of new Set(p.channelIds))
-			routed.set(id, (routed.get(id) ?? 0) + 1);
-
-	return {
-		status: orderedFacet(
-			tally(policies, policyStatusKey),
-			POLICY_STATUS_VALUES,
-			(value) => POLICY_STATUS_LABEL[value],
-		),
-		kinds: orderedFacet(
-			tally(policies, policyKindKey),
-			POLICY_KIND_VALUES,
-			(value) => POLICY_KIND_LABEL[value],
-		),
-		channels: channels.map((c) => ({
-			value: c.id,
-			label: c.name,
-			count: routed.get(c.id) ?? 0,
-		})),
-	};
-}
-
 // ── Activity (delivery ledger) ─────────────────────────────────────────────────
 
-/** Delivery statuses, in the order the ledger's chip row presents them. */
-export const DELIVERY_STATUS_ORDER: AlertDeliveryStatus[] = [
-	"sent",
-	"pending",
-	"failed",
-	"dead",
-];
+// The chip row's ORDER is no longer declared here. `lib/queries/alerts-lists.ts` orders the
+// status facet as it counts it, and a second copy of that order on this side is a thing that
+// can disagree with the list the user is looking at.
 
 /** Human labels for the delivery status facet and the ledger's Status column. */
 export const DELIVERY_STATUS_LABEL: Record<AlertDeliveryStatus, string> = {
@@ -347,31 +219,4 @@ export function normalizeActivityQuery(
 	const status = normalizeList(filters.status);
 	if (status) query.status = status;
 	return query;
-}
-
-/** Resolve the normalized activity query against a delivery universe. */
-export function filterDeliveries(
-	deliveries: DeliveryDTO[],
-	query: NormalizedActivityQuery,
-): DeliveryDTO[] {
-	const status = query.status ? new Set(query.status) : null;
-	return deliveries.filter((d) => {
-		if (status && !status.has(d.status)) return false;
-		if (query.search && !matches(query.search, [d.title, d.event_key]))
-			return false;
-		return true;
-	});
-}
-
-/** Delivery facet options + counts over the unfiltered universe. */
-export function activityFacets(deliveries: DeliveryDTO[]): {
-	status: FacetCount[];
-} {
-	return {
-		status: orderedFacet(
-			tally(deliveries, (d) => d.status),
-			DELIVERY_STATUS_ORDER,
-			(value) => DELIVERY_STATUS_LABEL[value],
-		),
-	};
 }

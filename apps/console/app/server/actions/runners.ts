@@ -10,6 +10,12 @@ import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb, withActorScope, type Tx } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { queryProvisionedHours } from "@/lib/queries/runner-usage";
+import {
+	type RunnersPage,
+	type RunnersQuery,
+	runnersPage,
+} from "@/lib/queries/runners";
+import type { RunnerWithRelease } from "@/lib/query/resource-fetchers";
 import { generateRunnerToken } from "@/lib/runners/auth";
 import {
 	isRunnerDeployProvider,
@@ -109,6 +115,44 @@ export async function getManagedRunnerUsage(): Promise<Record<string, number>> {
 	return Object.fromEntries(
 		rows.map((r) => [r.runner_id, r.provisioned_hours]),
 	);
+}
+
+/**
+ * The runner grid's PAGE read (#4890): the org's runners narrowed by `query`, plus
+ * cloud/region/version facet counts over every runner the actor can see — the console filter
+ * standard's steps 5 + 6 (lib/query/README.md). Key it with `qk.runnersPage(org, q)`.
+ *
+ * The universe is composed from the same three reads `fetchRunnersData()` uses — the RLS path
+ * for the org's own runners, the service path for the platform's managed fleet (`[]` on
+ * hosted), and the managed-hours ledger — and the narrowing happens over that composition
+ * (`lib/queries/runners.ts` says why it is not one SQL statement). It does NOT read the latest
+ * release, which is that function's fourth call and belongs to the Versions changelog rather
+ * than to a row. Being ONE round trip rather than the four `fetchRunnersData` makes from the
+ * browser (it is bundled into a client hook, so each action it calls is an RPC) is a side
+ * benefit.
+ *
+ * `getRunnersWithReleases()` / `getManagedRunnersWithReleases()` above are unchanged and keep
+ * their callers: this is the `getJobs()` / `getJobsPage()` split, not a replacement.
+ *
+ * Authorization is theirs — each read authorizes `view` on `runner` for itself — so no actor
+ * is resolved here that they do not resolve again.
+ */
+export async function getRunnersPage(
+	query: RunnersQuery = {},
+): Promise<RunnersPage<RunnerWithRelease>> {
+	const [own, managed, usage] = await Promise.all([
+		getRunnersWithReleases(),
+		getManagedRunnersWithReleases(),
+		getManagedRunnerUsage(),
+	]);
+	const all: RunnerWithRelease[] = [...own, ...managed].map((r) => ({
+		...r,
+		provisioned_hours: r.operator === "managed" ? (usage[r.id] ?? 0) : null,
+	}));
+
+	// The narrowing and the facet pass are `runnersPage`'s, not this function's: composing the
+	// universe is what needs an actor, and resolving a query over it is what needs a test.
+	return runnersPage(all, query);
 }
 
 /** The most recent runner release, or null. */

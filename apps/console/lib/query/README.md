@@ -145,8 +145,26 @@ the bar. Radix `Select`s and stat-card strips are
 banned from filter bars.
 
 The evidence page is the reference implementation; jobs (`getJobsPage` + `useJobsFilters`),
-runners (`useRunnerFilters`), and activity (`useActivityQuery`, the cursor-paginated
-infinite variant — the cursor is the `pageParam`, never part of the key) follow it (#578).
+runners (`getRunnersPage` + `useRunnerFilters`), and activity (`useActivityQuery`, the
+cursor-paginated infinite variant — the cursor is the `pageParam`, never part of the key)
+follow it (#578).
+
+**All fifteen surfaces are on it, and `pnpm check:filter-standard` GATES that** (#4890). It
+used to print a per-surface score and exit 0 — which is how ten of the fifteen came to blank
+their list on a filter change with every check in the repository green. A surface that fails
+F1–F6 now fails the check, and the census it scores is floored from below so the finding
+cannot be silenced by deleting the surface. A deviation that genuinely cannot conform yet goes
+in that script's `FILTER_STANDARD_DEBT` with an owner and a mechanism — it is empty today, and
+it is checked in both directions, so an entry that outlives its finding fails too.
+
+**One surface resolves its query in memory, deliberately, and says so.** A runner row is a
+composition of the RLS read (the org's own runners) and the service read (the platform's
+managed fleet, `[]` on hosted), not a table's row, so `getRunnersPage()` narrows over the
+composed universe rather than in SQL (`lib/queries/runners.ts`). What does NOT change is step
+6: the facet pass is handed the whole universe and never the query, and
+`tests/lib/queries/runners-page.test.ts` asserts the option set does not shrink as the query
+narrows. Reach for this shape only when the universe is genuinely composed; a single table's
+list page filters in SQL.
 
 **The URL→RSC variant (blessed for RSC-rendered grids).** The org overview keeps its
 `searchParams → RSC → props` model instead of store→key→`useQuery`, and that is the
@@ -172,8 +190,18 @@ polling.
 | Route | Resource | Status |
 | --- | --- | --- |
 | `~/jobs`, `~/jobs/[id]` | jobs | query (pilot) |
-| `~/runners` | runners + fleet | query |
+| `~/runners` | runners + fleet | query — the grid is `getRunnersPage(q)` (#4890) |
 | `~/clusters` | clusters | query |
 | `~/` overview, switcher, palette | projects | query |
 | `[project]` | pricing + cloud resources | query |
-| `~/connectors`, `~/alerts`, `~/new`, settings/* | (server-rendered already) | RSC + `loading.tsx` |
+| `~/alerts` | channels · policies · deliveries | RSC bootstrap for the page, query per filtered LIST (#4890) |
+| settings/* | teams · members · access · roles · sso · activity | RSC + `loading.tsx`; every filtered list is a query |
+| `~/connectors`, `~/new` | (server-rendered already) | RSC + `loading.tsx` |
+
+The alerts row is the one worth reading twice. `getAlertsBootstrap()` is still the route's
+one-round-trip RSC read and still what the panels select and cross-reference against — the
+entitlement, `canManage`, the event catalog, the channel a policy routes to. What moved onto
+the pipeline is the three FILTERED lists. Because their rows now come off the TanStack cache,
+a mutation reporting success through `router.refresh()` has to invalidate `["alerts"]` as
+well: the refresh re-runs the RSC and the cache does not hear it, which is the exact failure
+#2878 refused this conversion over.

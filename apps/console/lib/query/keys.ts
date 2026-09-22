@@ -22,7 +22,17 @@ export const qk = {
 	job: (org: string, id: string) => ["jobs", org, "detail", id] as const,
 	jobStatus: (org: string, id: string) =>
 		["jobs", org, "detail", id, "status"] as const,
+	/** The UNFILTERED runner universe (`fetchRunnersData`) — the add-runner dialog's read. */
 	runners: (org: string) => ["runners", org] as const,
+	/**
+	 * The runners GRID's filtered page, parameterized by the normalized filter query.
+	 *
+	 * A second name rather than an optional argument on `runners` above, because the two
+	 * carry different payloads — `RunnersData` (runners + the latest release) against a
+	 * `RunnersPage` (rows + counts + facets). `["runners", org]` still invalidates both.
+	 */
+	runnersPage: (org: string, query: unknown) =>
+		["runners", org, "page", query] as const,
 	clusters: (org: string) => ["clusters", org] as const,
 	fleet: (org: string) => ["fleet", org] as const,
 	addons: (projectId: string, environmentId?: string | null) =>
@@ -89,6 +99,10 @@ export const qk = {
 		query ? (["alerts", "channels", org, query] as const) : (["alerts", "channels", org] as const),
 	alertPolicies: (org: string, query?: unknown) =>
 		query ? (["alerts", "policies", org, query] as const) : (["alerts", "policies", org] as const),
+	alertDeliveries: (org: string, query?: unknown) =>
+		query
+			? (["alerts", "deliveries", org, query] as const)
+			: (["alerts", "deliveries", org] as const),
 	connectors: (org: string, query?: unknown) =>
 		query ? (["connectors", org, query] as const) : (["connectors", org] as const),
 	teams: (org: string, query?: unknown) =>

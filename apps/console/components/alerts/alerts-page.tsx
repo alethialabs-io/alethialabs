@@ -23,6 +23,7 @@ import {
 	ShieldAlert,
 	Webhook,
 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import type { AlertsBootstrap } from "@/app/server/actions/alerts";
@@ -45,6 +46,7 @@ const SECTIONS: AlertsSection[] = ["policies", "channels", "activity"];
 
 export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 	const router = useRouter();
+	const queryClient = useQueryClient();
 	const { alerting } = bootstrap;
 	const setActive = useAlertsSection((s) => s.setActive);
 	const setSelectedPolicyId = useAlertsSection((s) => s.setSelectedPolicyId);
@@ -52,9 +54,9 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 	const visible = useRef<Map<string, boolean>>(new Map());
 
 	// The console filter standard, resolved once for the whole hub (see alerts-filters.ts).
-	const policiesView = usePoliciesView(bootstrap.policies, bootstrap.channels);
-	const channelsView = useChannelsView(bootstrap.channels);
-	const activityView = useActivityView(bootstrap.deliveries);
+	const policiesView = usePoliciesView(alerting);
+	const channelsView = useChannelsView(alerting);
+	const activityView = useActivityView(alerting);
 
 	// Scroll-spy: the top-most in-view section drives the sidebar highlight. Also honour a
 	// deep-link hash (e.g. arriving at …/alerts#channels) once on mount.
@@ -95,7 +97,15 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 		);
 	}
 
-	const refresh = () => router.refresh();
+	// A write on this hub has to reach BOTH halves of it. `router.refresh()` re-runs the RSC and
+	// gives the page a new `bootstrap` — the entitlement, `canManage`, the catalogs, the
+	// universes the panels select against — while the three filtered lists come off the TanStack
+	// cache, which a refresh cannot see. #2878 refused converting the lists precisely because
+	// only the first half would have run; invalidating the hub's key prefix is the other half.
+	const refresh = () => {
+		router.refresh();
+		void queryClient.invalidateQueries({ queryKey: ["alerts"] });
+	};
 	const scrollTo = (id: AlertsSection) => {
 		document
 			.getElementById(id)
@@ -128,7 +138,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 					className="mb-4"
 					title={sectionTitle(ShieldAlert, "Policies")}
 					description="A policy watches a set of events and routes them to channels."
-					count={policiesView.rows.length}
+					count={policiesView.count}
 					actions={<DocsLink href="/docs/console/alerts#policies" />}
 				/>
 				<PoliciesPanel
@@ -144,7 +154,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 					className="mb-4"
 					title={sectionTitle(Webhook, "Channels")}
 					description="Channels are where alerts go — webhooks, Slack, Rocket.Chat or email."
-					count={channelsView.rows.length}
+					count={channelsView.count}
 					actions={<DocsLink href="/docs/console/alerts#channels" />}
 				/>
 				<ChannelsPanel
@@ -160,10 +170,10 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 					className="mb-4"
 					title={sectionTitle(Activity, "Activity")}
 					description="The delivery ledger — every notification routed, with retry status."
-					count={activityView.rows.length}
+					count={activityView.count}
 					actions={<DocsLink href="/docs/console/alerts#activity" />}
 				/>
-				<ActivityPanel bootstrap={bootstrap} view={activityView} />
+				<ActivityPanel view={activityView} />
 			</section>
 		</div>
 	);
