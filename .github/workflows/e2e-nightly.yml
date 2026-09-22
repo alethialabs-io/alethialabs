@@ -80,7 +80,7 @@ on:
           - alibaba
         default: hetzner
       region:
-        description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, gcp europe-west3-a, azure westeurope, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1. NOTE gcp takes a ZONE: a bare region makes the GKE cluster regional, which multiplies every node count by the zone count AND skips the capacity preflight."
+        description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, azure westeurope, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1. NOTE gcp takes a ZONE: a bare region makes the GKE cluster regional, which multiplies every node count by the zone count AND skips the capacity preflight — so a region is REFUSED here rather than accepted. gcp blank ⇒ one of vars.E2E_GCP_ZONES (default europe-west3-a/-b/-c) is chosen per run, rotating on run id + attempt so a GCE_STOCKOUT does not red the leg every night (#3855); naming a zone PINS it and disables the rotation."
         type: string
         default: ""
       dimension:
@@ -490,6 +490,11 @@ jobs:
           case "$PROVIDER" in
             hetzner) DEFAULT_REGION="nbg1" ;;
             aws)     DEFAULT_REGION="us-east-1" ;;
+            # gcp's is a PROVISIONAL default only. The "Pick the gcp zone" step below re-resolves
+            # E2E_REGION from a rotating fallback list once the WIF credentials exist, because a
+            # single hardcoded zone is what made a transient GCE_STOCKOUT a nightly red (#3855).
+            # It stays europe-west3-a here so a gcp run that never reaches that step — a gate
+            # green-skip — reads exactly as it always did.
             gcp)     DEFAULT_REGION="europe-west3-a" ;;
             azure)   DEFAULT_REGION="westeurope" ;;
             alibaba) DEFAULT_REGION="eu-central-1" ;;
@@ -883,6 +888,49 @@ jobs:
       - name: Install gcloud CLI
         if: steps.gate.outputs.run == 'true' && matrix.provider == 'gcp'
         uses: google-github-actions/setup-gcloud@v3
+
+      # ── GCP ZONE FALLBACK (#3855). Re-resolve E2E_REGION for gcp from a LIST of zones instead of
+      #    the single one the compute step defaulted to. Runs here and not there because it talks to
+      #    the cloud, and the credentials only exist from the two steps above.
+      #
+      #    WHY: the gcp floor died on cloud CAPACITY in europe-west3-a in four of the last ten
+      #    nightlies — 35580334231 and 35074442209 with an explicit `[GCE_STOCKOUT]`, 34824956659 and
+      #    34681889191 with the same pool worded regionally. Each burned ~35 minutes inside GKE's IGM
+      #    wait and leaked the PVC disks the reaper then swept. A stockout is transient and
+      #    zone-local; pinning the leg to one zone is what turned it into a nightly red.
+      #
+      #    THE PREFLIGHT CANNOT SEE THIS, and that is structural rather than a gap. `gcloud compute
+      #    machine-types list` is a CATALOGUE query — on 35580334231 it said PROCEED ("458 available
+      #    type(s)") ninety seconds before the apply was refused for want of one of them. Compute
+      #    Engine publishes no stock API; the only questions that reflect stock are a VM or
+      #    reservation create, and the e2e SA holds container.admin but NOT compute.instances.create
+      #    (infra/gcp-e2e/e2e-nightly.tf), so it cannot ask them either. The whole argument, with the
+      #    numbers, is on test/e2e/t2_gcp_zone.go.
+      #
+      #    SO THIS DOES NOT DETECT A STOCKOUT. It stops betting the leg on one zone: the candidates
+      #    rotate on run id + attempt, so consecutive nights draw different zones AND `re-run failed
+      #    jobs` lands somewhere new. It does not retry inside a run — a second apply is another ~35m
+      #    of IGM wait plus a ~46m provision, which a floor leg's own ~100m go-timeout cannot contain.
+      #
+      #    STILL ZONAL, AND CHECKED. Every candidate must be zone-shaped; a region is REFUSED, not
+      #    accepted, because a regional GKE cluster's node counts are PER ZONE — europe-west3 would
+      #    deliver 3 nodes where the floor declares 1, at 3x the compute bill (#3566). Zones of one
+      #    region are priced identically, so rotating costs exactly nothing.
+      #
+      #    A dispatch that names a `region` PINS it: it is used verbatim, nothing is rotated, and the
+      #    run's own pre-spend preflight still checks it. Override the list with vars.E2E_GCP_ZONES. ──
+      - name: Pick the gcp zone (stockout fallback)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'gcp'
+        working-directory: test/e2e
+        env:
+          E2E_GCP_ZONES: ${{ vars.E2E_GCP_ZONES }}
+          PINNED_REGION: ${{ github.event.inputs.region }}
+        run: |
+          set -euo pipefail
+          GOWORK=off go run ./cmd/gcpzone \
+            -zones "$E2E_GCP_ZONES" \
+            -pinned "$PINNED_REGION" \
+            -cluster-json "${ALETHIA_E2E_CLUSTER_JSON:-}" >> "$GITHUB_ENV"
 
       # ── Azure: federated (OIDC) login — no client secret. Only runs for the azure provider once a
       #    maintainer has applied infra/azure-e2e + set the three E2E_AZURE_* vars; otherwise the gate
