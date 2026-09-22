@@ -4,7 +4,7 @@
 // The single source of truth for plans — name, price (label + numeric unit), tagline,
 // the short highlights for compact cards, and the grouped "What's included" breakdown
 // for the rich plan chooser. Shared by the console billing UI and the marketing pricing
-// page so the copy never drifts. `priceLabel` + `priceMonthlyUsd` drive display and
+// page so the copy never drifts. `priceLabel` + `priceMonthly` drive display and
 // in-app math (e.g. seats × unit); the authoritative CHARGE amount still lives in Stripe
 // (STRIPE_PRICE_*). Keep the label and the number in step (they sit in the same entry).
 //
@@ -15,13 +15,46 @@
 /** The billing plan tiers, matching the `billing_plan` pgEnum in the console schema. */
 export type PlanId = "community" | "team" | "enterprise";
 
-/** Currencies we present + charge in. USD is the default; EU customers are billed in EUR. */
-export type SupportedCurrency = "usd" | "eur";
+/**
+ * Every currency we present + charge in. USD is the default; EU customers are billed in EUR.
+ *
+ * THE ARRAY IS THE ONLY LITERAL and {@link SupportedCurrency} is derived from it, for the reason
+ * `packages/format/src/minor-units.ts` gives about its own list: a union and an array that are
+ * typed out separately are two transcriptions of one fact, and the one nobody iterates goes stale
+ * silently. Consumers that need to walk the currencies — `liveAmounts` in the console's
+ * `lib/billing/pricing.ts`, and the divisor test that guards `formatPriceLabel` below — read this,
+ * so widening the product to a third currency is one edit and reds everything that must be
+ * revisited.
+ */
+export const SUPPORTED_CURRENCIES = ["usd", "eur"] as const;
+
+/** The currencies the product sells in. Derived — see {@link SUPPORTED_CURRENCIES}. */
+export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
 
 /** Narrows an external currency code to the currencies the product currently sells. */
 export function asSupportedCurrency(code: string): SupportedCurrency | null {
-	return code === "usd" || code === "eur" ? code : null;
+	return SUPPORTED_CURRENCIES.find((c) => c === code) ?? null;
 }
+
+/**
+ * An amount per currency, in MINOR units — `{ usd: 2000, eur: 1800 }` is $20 / €18.
+ *
+ * This replaces the `priceMonthlyUsd` / `priceMonthlyEur` field PAIR that #4176 catalogued
+ * (part b). Two named fields are a currency written into a TYPE, which is how a field called
+ * `unitAmountUsd` ended up holding euros one layer up; a key IS the currency, so a consumer that
+ * reads `amounts[currency]` cannot read the wrong one, and adding a third currency adds a key
+ * rather than a field, a branch and a fallback.
+ *
+ * MINOR UNITS, matching `Money.minor` in `@repo/format` and Stripe's `unit_amount`. The catalog
+ * held MAJOR units (20, 18) until part (b), and every consumer multiplied them back up by a
+ * hardcoded 100 — `planUnitAmountCents`, `useLivePlanPrice`, the checkout form and the marketing
+ * fallback label all carried their own copy of that `* 100`. They are gone; the number the
+ * catalog states is the number Stripe is given.
+ *
+ * `Partial`, because Enterprise has no numeric price at all ("Let's talk") and a missing key is
+ * how it says so. An entry that quotes USD and not EUR is legal and means exactly that.
+ */
+export type PriceByCurrency = Partial<Record<SupportedCurrency, number>>;
 
 /** A titled group of features for the "What's included" slice. */
 export interface PlanFeatureGroup {
@@ -40,18 +73,15 @@ export interface PlanCatalogEntry {
 	name: string;
 	/** Display price (the authoritative amount is the Stripe price). */
 	priceLabel: string;
-	/** Per-period USD unit for in-app math — per **seat** when `perSeat`, flat otherwise.
-	 *  `undefined` = custom / "Let's talk" (Enterprise). Keep in step with `priceLabel`. */
-	priceMonthlyUsd?: number;
-	/** Per-period EUR unit (FX-adjusted from USD; billed to EU customers). Same shape as
-	 *  `priceMonthlyUsd`; `undefined` = custom. Tune independently of the USD figure. */
-	priceMonthlyEur?: number;
-	/** Whether `priceMonthlyUsd` is multiplied by the seat count (per-seat billing). */
+	/** Per-period unit for in-app math, in MINOR units per currency — per **seat** when
+	 *  `perSeat`, flat otherwise. Absent = custom / "Let's talk" (Enterprise). Keep in step
+	 *  with `priceLabel`; the EUR figure is tuned independently of the USD one. */
+	priceMonthly?: PriceByCurrency;
+	/** Whether `priceMonthly` is multiplied by the seat count (per-seat billing). */
 	perSeat?: boolean;
-	/** Monthly usage credit (USD) included with the plan — offsets metered charges. */
-	includedCreditUsd?: number;
-	/** Same included usage credit, in EUR (for EU-billed customers). */
-	includedCreditEur?: number;
+	/** Monthly usage credit included with the plan, MINOR units per currency — offsets
+	 *  metered charges. */
+	includedCredit?: PriceByCurrency;
 	tagline: string;
 	/** Paid tier (has a Stripe price) vs the free community baseline. */
 	paid: boolean;
@@ -72,8 +102,7 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		id: "community",
 		name: "Hobby",
 		priceLabel: "Free",
-		priceMonthlyUsd: 0,
-		priceMonthlyEur: 0,
+		priceMonthly: { usd: 0, eur: 0 },
 		tagline: "Your own Projects — just you.",
 		paid: false,
 		highlights: [
@@ -101,11 +130,9 @@ export const PLAN_CATALOG: PlanCatalogEntry[] = [
 		id: "team",
 		name: "Pro",
 		priceLabel: "$20 / seat / mo",
-		priceMonthlyUsd: 20,
-		priceMonthlyEur: 18,
+		priceMonthly: { usd: 2000, eur: 1800 },
 		perSeat: true,
-		includedCreditUsd: 20,
-		includedCreditEur: 18,
+		includedCredit: { usd: 2000, eur: 1800 },
 		tagline: "Collaborate in a shared organization.",
 		paid: true,
 		popular: true,
@@ -223,24 +250,30 @@ export function planMeta(plan: PlanId): PlanCatalogEntry {
 /**
  * The plan's per-unit charge in the smallest currency unit (cents) — what Stripe's
  * `unit_amount` expects — for the given currency (default USD). Derived from the catalog
- * SSOT (`priceMonthlyUsd` / `priceMonthlyEur`) so the created Stripe price can never drift
- * from the advertised one. Throws for custom/free plans with no numeric price (Enterprise).
+ * SSOT (`priceMonthly`) so the created Stripe price can never drift from the advertised one.
+ * Throws for custom/free plans with no numeric price (Enterprise).
+ *
+ * A LOOKUP AND NO ARITHMETIC since #4176 part (b): `priceMonthly` holds minor units, so this
+ * reads the number rather than deriving it. The `Math.round(amount * 100)` it used to carry was
+ * the first of four copies of that conversion, and the one that fed Stripe.
  */
 export function planUnitAmountCents(
 	plan: PlanId,
 	currency: SupportedCurrency = "usd",
 ): number {
-	const meta = planMeta(plan);
-	const amount = currency === "eur" ? meta.priceMonthlyEur : meta.priceMonthlyUsd;
+	const amount = planMeta(plan).priceMonthly?.[currency];
 	if (amount == null) {
 		throw new Error(`Plan "${plan}" has no ${currency.toUpperCase()} price.`);
 	}
-	return Math.round(amount * 100);
+	return amount;
 }
 
-/** The plan's monthly included usage credit in cents (0 when none). */
-export function planIncludedCreditCents(plan: PlanId): number {
-	return Math.round((planMeta(plan).includedCreditUsd ?? 0) * 100);
+/** The plan's monthly included usage credit in minor units for `currency` (0 when none). */
+export function planIncludedCreditCents(
+	plan: PlanId,
+	currency: SupportedCurrency = "usd",
+): number {
+	return planMeta(plan).includedCredit?.[currency] ?? 0;
 }
 
 // ── Currency resolution (shared by the console billing flow + the marketing pricing page) ──
@@ -284,10 +317,8 @@ export interface AiPlanCatalogEntry {
 	name: string;
 	/** Display price (the authoritative amount is the Stripe AI price). `undefined` = free. */
 	priceLabel: string;
-	/** Monthly USD amount (the Stripe-provisioning SSOT). `0` = free. */
-	priceMonthlyUsd?: number;
-	/** Monthly EUR amount (for EU-billed customers). Keep in step with the USD figure. */
-	priceMonthlyEur?: number;
+	/** Monthly amount in MINOR units per currency (the Stripe-provisioning SSOT). `0` = free. */
+	priceMonthly?: PriceByCurrency;
 	tagline: string;
 	/** Whether this tier is a paid AI subscription (has a Stripe price). */
 	paid: boolean;
@@ -304,8 +335,7 @@ export const AI_PLAN_CATALOG: AiPlanCatalogEntry[] = [
 		id: "ai_free",
 		name: "AI Free",
 		priceLabel: "Free",
-		priceMonthlyUsd: 0,
-		priceMonthlyEur: 0,
+		priceMonthly: { usd: 0, eur: 0 },
 		tagline: "Included with every workspace.",
 		paid: false,
 		advisor: "Everyday help from Elench",
@@ -319,8 +349,7 @@ export const AI_PLAN_CATALOG: AiPlanCatalogEntry[] = [
 		id: "ai_plus",
 		name: "AI Plus",
 		priceLabel: "$20 / mo",
-		priceMonthlyUsd: 20,
-		priceMonthlyEur: 18,
+		priceMonthly: { usd: 2000, eur: 1800 },
 		tagline: "For teams that work with Elench every day.",
 		paid: true,
 		advisor: "Deeper planning and review",
@@ -335,8 +364,7 @@ export const AI_PLAN_CATALOG: AiPlanCatalogEntry[] = [
 		id: "ai_max",
 		name: "AI Max",
 		priceLabel: "$100 / mo",
-		priceMonthlyUsd: 100,
-		priceMonthlyEur: 90,
+		priceMonthly: { usd: 10000, eur: 9000 },
 		tagline: "Our most capable Elench, with the most room to work.",
 		paid: true,
 		advisor: "Deep reasoning on demand",
@@ -363,25 +391,24 @@ export function aiPlanMeta(tier: AiPlanId): AiPlanCatalogEntry {
 /**
  * The AI tier's per-month charge in the smallest currency unit (cents) for the given
  * currency (default USD) — what Stripe's `unit_amount` expects. Sourced from the catalog
- * SSOT (`priceMonthlyUsd` / `priceMonthlyEur`) so the provisioned Stripe AI price never
- * drifts from the advertised one. Throws for the free tier (no numeric price).
+ * SSOT (`priceMonthly`) so the provisioned Stripe AI price never drifts from the advertised
+ * one. Throws for the free tier (no numeric price).
  */
 export function aiPlanUnitAmountCents(
 	tier: AiPlanId,
 	currency: SupportedCurrency = "usd",
 ): number {
-	const meta = aiPlanMeta(tier);
-	const amount = currency === "eur" ? meta.priceMonthlyEur : meta.priceMonthlyUsd;
+	const amount = aiPlanMeta(tier).priceMonthly?.[currency];
 	if (amount == null) {
 		throw new Error(`AI tier "${tier}" has no ${currency.toUpperCase()} price.`);
 	}
-	return Math.round(amount * 100);
+	return amount;
 }
 
 // ── Live-price formatting ────────────────────────────────────────────────────────
 // The authoritative price amount lives in Stripe; both the console and the marketing
 // site read it live and render it with these shared helpers (so a "$29 / seat / mo"
-// label is formatted identically everywhere). The catalog's priceLabel/priceMonthlyUsd
+// label is formatted identically everywhere). The catalog's priceLabel/priceMonthly
 // are the FALLBACK used only when Stripe isn't configured / the lookup fails.
 
 /** Minimal currency-symbol map; falls back to the uppercase ISO code + space. */
@@ -403,37 +430,50 @@ export function shortInterval(interval: string | undefined | null): string {
  *
  * NOT `@repo/format`'s `formatMoney`, and not a duplicate of it either: this is a compact price
  * LABEL that deliberately drops `.00`, where that one is a billing-table amount that deliberately
- * never does. Two registers, same name, and the name is the confusing part.
+ * never does. Two registers, and until #4176's part (b) they also shared a NAME, which is what
+ * made the difference invisible at a call site — `formatMoney` imported from `@repo/plan-catalog`
+ * and `formatMoney` imported from `@repo/format` read identically and answer differently. Hence
+ * `formatPriceLabel`: the register is now in the name.
  *
- * IT CARRIES #3581's DIVISOR DEFECT, UNFIXED. The `/ 100` below is unconditional, and `currency` is
- * a `string` fed straight from a live Stripe `Price` — `apps/console/lib/billing/pricing.ts:69`,
- * `apps/marketing/lib/billing/pricing-display.ts:57` and `use-live-plan-price.ts` all pass
- * `price.currency` through — so a zero-decimal price would render at 1/100 of its value here, the
- * same way a zero-decimal invoice did in `@repo/format` before #3581. `unitAmountUsd` in that same
- * `pricing.ts` divides by 100 a second time, on the numeric path. Tracked as #4096.
+ * ── #4096, AND WHAT IS ACTUALLY TRUE ABOUT THE `/ 100` ───────────────────────────────────────
  *
- * It is unreachable for the same reason and by a shorter path: `apps/console/scripts/stripe-setup.ts`
- * creates USD and EUR prices only, and `SupportedCurrency` above is `"usd" | "eur"`.
+ * The doc that stood here until part (b) said this function "carries #3581's divisor defect,
+ * unfixed", because "`currency` is a `string` fed straight from a live Stripe `Price`". That was
+ * FALSE WHEN WRITTEN and the signature one line below it says so: the parameter is
+ * `SupportedCurrency`, not `string`, and every caller narrows through `asSupportedCurrency` before
+ * it gets here. `"usd"` and `"eur"` are both two-decimal for a Stripe CHARGE, so the unconditional
+ * `/ 100` is correct for EVERY input this function's type admits — not unreachable-in-practice,
+ * which is what the old text claimed, but right.
  *
- * IT IS NOT FIXED HERE because the fix is `stripeChargeDivisor` from `@repo/format`, and sharing it
- * needs `@repo/plan-catalog` to gain a dependency this package has never had — it has no runtime
- * deps at all — which rewrites `pnpm-lock.yaml` and adds a workspace edge into `apps/marketing`,
- * which does not carry `@repo/format` today. Transcribing Stripe's table a second time HERE is the
- * failure mode `packages/format/src/minor-units.ts` exists to prevent, so the choice is a dependency
- * change or nothing, and a dependency change does not belong in a formatter bug fix.
+ * WHAT WOULD MAKE IT WRONG is widening `SupportedCurrency` to a zero-decimal code (JPY, KRW) or a
+ * three-decimal one (BHD). That is a real possibility — the maintainer's step-6 ruling on #4176 is
+ * "render any currency Stripe returns as-is" — so the claim is now ENFORCED rather than asserted:
+ * `apps/console/tests/lib/billing/supported-currency-divisor.test.ts` asserts
+ * `stripeChargeDivisor(c) === 100` for every member of `SupportedCurrency`, and goes red on the
+ * commit that widens the union rather than on the invoice that renders 100x wrong. The console is
+ * where that test lives because the console is the one workspace that depends on BOTH packages.
+ *
+ * THE DIVISOR IS STILL NOT SHARED, deliberately. Taking `stripeChargeDivisor` from `@repo/format`
+ * needs `@repo/plan-catalog` to gain a runtime dependency it has never had, which rewrites
+ * `pnpm-lock.yaml`; transcribing Stripe's table a second time here is the failure mode
+ * `packages/format/src/minor-units.ts` exists to prevent. The test above buys the safety without
+ * buying either.
+ *
+ * @param unitAmountCents the amount in MINOR units, as `priceMonthly` and Stripe hold it.
+ * @param currency one of the currencies the product sells in.
  */
-export function formatMoney(unitAmountCents: number, currency: SupportedCurrency): string {
+export function formatPriceLabel(unitAmountCents: number, currency: SupportedCurrency): string {
 	const symbol = CURRENCY_SYMBOL[currency] ?? `${currency.toUpperCase()} `;
 	const amount = unitAmountCents / 100;
 	const value = Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
 	return `${symbol}${value}`;
 }
 
-/** Format a Stripe price into a per-seat label like "$29 / seat / mo". */
+/** Format a Stripe price (MINOR units) into a per-seat label like "$29 / seat / mo". */
 export function formatSeatPrice(
 	unitAmountCents: number,
 	currency: SupportedCurrency,
 	interval: string | undefined | null,
 ): string {
-	return `${formatMoney(unitAmountCents, currency)} / seat / ${shortInterval(interval)}`;
+	return `${formatPriceLabel(unitAmountCents, currency)} / seat / ${shortInterval(interval)}`;
 }
