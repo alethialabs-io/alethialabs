@@ -96,3 +96,39 @@ variable "state_retention_days" {
     error_message = "state_retention_days must be between 7 and 365 (Azure's own bounds for blob soft delete)."
   }
 }
+
+variable "state_log_workspace_name" {
+  description = "Log Analytics workspace receiving the state account's blob access logs (#4903). Unlike the storage account, this name is unique only within the resource group, so the default needs no escape hatch — but it is a variable because the resource group is."
+  type        = string
+  default     = "alethia-tfstate-access"
+
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9-]{2,61}[a-zA-Z0-9]$", var.state_log_workspace_name))
+    error_message = "state_log_workspace_name must be 4-63 characters of letters, digits and hyphens, not starting or ending with a hyphen (Azure's rule for a Log Analytics workspace name)."
+  }
+}
+
+variable "access_log_retention_days" {
+  description = <<-EOT
+    How long blob StorageRead/StorageWrite/StorageDelete records are kept in the workspace. This is
+    the forensic window for "who read or wrote the e2e state".
+
+    90 rather than the 30 used for `state_retention_days`, and the difference is deliberate.
+    `state_retention_days` is sized for "I deleted the state blob this month and want it back"; an
+    access question is not noticed that way. An unauthorized read of this state shows up as its
+    CONSEQUENCES — a client id that moved, a role assignment that appeared — which surface weeks
+    later, and a log that has already expired answers nothing.
+
+    30 is Azure's floor for a PerGB2018 workspace, and the first 31 days of retention are included
+    in the ingestion price; days 32-90 are billed per GB-month. The stacks are applied by hand a
+    handful of times a year, so the workspace holds kilobytes and that difference is fractions of a
+    euro. Do not tune this down for cost.
+  EOT
+  type        = number
+  default     = 90
+
+  validation {
+    condition     = var.access_log_retention_days >= 30 && var.access_log_retention_days <= 730
+    error_message = "access_log_retention_days must be between 30 and 730 (Azure's own bounds for Log Analytics interactive retention)."
+  }
+}
