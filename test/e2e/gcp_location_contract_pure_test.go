@@ -38,6 +38,24 @@ func TestGCPNightlyLocationContract(t *testing.T) {
 			want: []string{`gcp)     DEFAULT_REGION="europe-west3-a" ;;`},
 		},
 		{
+			// #3855: that default is now PROVISIONAL — the step below re-resolves it from a
+			// rotating zone list, because pinning the leg to one zone is what turned a transient
+			// GCE_STOCKOUT into a nightly red four times in ten runs.
+			//
+			// This case exists because the contract above would stay GREEN if the step were
+			// deleted: the literal it pins is the fallback, so reverting to one hardcoded zone
+			// looks exactly like the fixed state from where that assertion stands. The zone-shape
+			// rule itself is enforced at runtime by ParseGCPZones and pinned offline by
+			// TestDefaultGCPZonesAreZonesAndParse; what is pinned HERE is only that the workflow
+			// still calls the picker at all.
+			name: "the nightly re-resolves the gcp zone from a fallback list, not one hardcoded zone",
+			path: filepath.Join(root, ".github", "workflows", "e2e-nightly.yml"),
+			want: []string{
+				`- name: Pick the gcp zone (stockout fallback)`,
+				`go run ./cmd/gcpzone`,
+			},
+		},
+		{
 			name: "the nightly gcp floor pins the whole node shape, instance type included",
 			path: filepath.Join(root, ".github", "workflows", "e2e-nightly.yml"),
 			// A node pool's counts are PER ZONE, so regional europe-west3 was delivering 3x what it
