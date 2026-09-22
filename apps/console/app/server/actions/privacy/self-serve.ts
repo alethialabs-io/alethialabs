@@ -38,8 +38,16 @@ export type ErasureRequestResult =
  * to the privacy inbox.
  *
  * This is the account dialog's "Request deletion" button. It OPENS A CASE and erases nothing. It
- * does not call `fulfilErasure` — a person fulfils the case through the steps in `cases.ts`, and
- * `fulfilErasure` itself has no executor yet (#4854). The copy at the call site says the same.
+ * does not call `fulfilErasure` — a person fulfils the case through the steps in `cases.ts`. Since
+ * #4854 that step really does erase rows, which is a reason to keep the two apart and not a reason
+ * to join them.
+ *
+ * ⚠️ AND NOT BECAUSE THE SUBJECT WOULD BE REFUSED THERE. `fulfilErasure` is gated on standing over
+ * the CASE, and being its subject is one of the two grounds — so nothing in the authorization layer
+ * would stop this action calling it. What keeps them apart is a decision, not a permission: the
+ * request is reviewed by a person, the copy at the call site says a request was sent to the privacy
+ * team and never that anything was deleted, and #4875 makes the case reach that team as it is
+ * opened. Wiring the button to fulfilment would make all three false at once.
  *
  * What makes it safe to expose without `org:edit`, each with what enforces it:
  *
