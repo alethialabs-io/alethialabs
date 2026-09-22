@@ -575,67 +575,119 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 			// `overflow: clip` ancestor) hangs, times the test out and records NO verdict — where
 			// the catch below would have withheld it WITH the step that could not be taken.
 			await opener.click({ timeout: 8_000 });
-			if (kind === "menu") await confirmMenuOpened(page, opener);
+			if (kind === "menu") await openMenu(page, opener);
 			await page.waitForTimeout(300);
-		} catch {
+		} catch (err) {
 			await attachReachEvidence(page, entry.id, `${kind}: ${name}`);
-			return `reach step {${kind}: "${name}"} could not be taken on ${entry.route}`;
+			// A step that failed for a reason we MEASURED says it. Everything else — a locator that
+			// never went visible, a click that timed out — keeps the generic sentence, because the
+			// exception carries no observation worth relaying.
+			const why = err instanceof ReachStepFailed ? ` — ${err.message}` : "";
+			return `reach step {${kind}: "${name}"} could not be taken on ${entry.route}${why}`;
 		}
 	}
 	return null;
 }
 
-/** How many times a `menu:` step clicks a trigger that still reports itself closed. */
+/** How many times a `menu:` step clicks a trigger that has not opened a menu. */
 const MENU_OPEN_ATTEMPTS = 3;
 
 /**
- * Make sure a `menu:` step's click actually OPENED the menu, re-clicking a trigger that still
- * reports itself closed.
+ * A reach step that could not be taken, for a reason the run OBSERVED.
  *
- * A click that leaves the trigger reporting itself closed did nothing, and nothing fails when that
- * happens: the next thing that looks is `resolveTrigger`, which waits 8s for a menu item that was
- * never rendered and withholds with "not rendered … for this persona" — true about the page, silent
- * about the reason. This check turns that one case into a second click. It is generic: every `menu:`
- * step in destructive-actions.yaml opens a Base UI `DropdownMenuTrigger`.
- *
- * It is NOT an explanation of `members.suspend` withholding on promotion job 105748557794 (#4852).
- * What that job shows: the reach step was TAKEN (a reach failure words its reason differently), the
- * test took 9.3s where its five siblings took 2.6s — the 8s settle in `resolveTrigger` — and
- * `members.remove`, which opens the same "Manage member" menu and reads an item rendered beside
- * Suspend in it (members-table.tsx renders Suspend for every non-suspended, non-owner member row),
- * was measured twelve seconds earlier. What it does not show is why the menu was shut: the job kept
- * no trace of the page. A click landing before hydration is NOT a candidate on this route —
- * members/page.tsx prefetches nothing, `MembersTable` fetches its rows client-side with `useQuery`,
- * so no "Manage member" trigger exists until React has hydrated and the fetch has resolved. Still
- * open, and NOT covered here: the table's rows are keyed by index (`DataTable` sets no `getRowId`)
- * and re-render as the invites, collaboration and session queries resolve at different times, so a
- * re-render or remount between the click and the read could drop a menu that DID open. This loop
- * sees that only if the trigger still reads "false" when first checked; a menu that opens and closes
- * later still withholds, with its old reason. Ruled out: a member changing state between tests —
- * this file never presses a confirm, and the leg runs one worker, in file order, with no retries.
- *
- * The signal is the trigger's own `aria-expanded`. Base UI's menu trigger renders it as the STRING
- * "false" while closed and "true" while open (floating-ui-react/hooks/useRole.js, role "menu"), so
- * "false" after a click is positive evidence the menu is shut and a second click can only open it.
- * A trigger with no `aria-expanded` at all is some other widget: it is left alone rather than
- * clicked again, because a second click on an unknown toggle may close what the first one opened.
- * This never throws — a menu that never opens still reaches `resolveTrigger` and is withheld there,
- * with the reason it had before.
+ * `walkReach`'s catch says "could not be taken" and nothing else, which is right for an exception
+ * that carries no observation — a locator that never went visible, a click that timed out. When the
+ * step failed on something the step itself measured, that measurement is the finding, so it is
+ * carried here and appended to the reason.
  */
-async function confirmMenuOpened(page: Page, trigger: Locator): Promise<void> {
+class ReachStepFailed extends Error {}
+
+/** Is a menu open on the page right now? The one question `openMenu` and the withhold both ask. */
+function openMenuLocator(page: Page): Locator {
+	return page.locator('[role="menu"]:visible').first();
+}
+
+/**
+ * A `menu:` step's POSTCONDITION: a menu is open. Not "the trigger says it is".
+ *
+ * ── WHY THE TRIGGER'S OWN WORD IS NOT ENOUGH (#4852) ────────────────────────────────────────────
+ *
+ * The first version of this (#4855) read the trigger's `aria-expanded` and re-clicked while it said
+ * the string "false". Everything else — "true", the attribute absent, the attribute UNREADABLE —
+ * was treated as "opened", and the function never failed the step. That leaves two holes, and
+ * `members.suspend` withheld on promotion job 105748557794 through one of them:
+ *
+ *   · `getAttribute` on an element React has just replaced REJECTS, the read was caught into `null`,
+ *     and `null` is not `"false"`, so the loop returned as though the menu were up. A re-render
+ *     around the click therefore looked identical to a successful open.
+ *   · A menu that opened and was then dropped by a LATER re-render was never looked at again. The
+ *     check ran once, immediately after the click; `resolveTrigger` then waited 8s for an item that
+ *     no longer existed and withheld with "not rendered … for this persona" — a sentence about the
+ *     PERSONA, and the persona had nothing to do with it.
+ *
+ * What job 105748557794 licenses, and it is a deduction rather than a guess: `members-table.tsx`
+ * renders `Suspend` for EXACTLY the rows whose trigger is named "Manage member …" — the same
+ * condition (`kind === "member"`, not `owner`, not `suspended`) decides both — so a reach that took
+ * `{menu: "Manage member"}` cannot have opened a menu without `Suspend` in it. The item was absent
+ * for the full 8s settle, while `members.remove` (the item BESIDE it in that same menu) and
+ * `members.reactivate` were measured on the same page in the same run. So the menu was not open
+ * when the item was read. Which of the two holes it went through is not recorded — the job kept no
+ * trace of the page — and both are closed here.
+ *
+ * ── WHAT THIS ASKS INSTEAD ──────────────────────────────────────────────────────────────────────
+ *
+ * Is a `[role="menu"]` visible? Every `menu:` step in `destructive-actions.yaml` opens a Base UI
+ * `Menu.Trigger`, whose popup carries `role="menu"` (`packages/ui/src/dropdown-menu.tsx` →
+ * `@base-ui-components/react/menu`), so the menu itself can answer, and an unreadable trigger no
+ * longer counts as a yes.
+ *
+ * The re-click keeps its old licence, and the reason is unchanged: only an explicit
+ * `aria-expanded="false"` is positive evidence that the click did nothing. A trigger with no
+ * `aria-expanded` — or one that says "true" while no popup is up — is left alone, because a second
+ * click on it could close what the first one opened.
+ *
+ * And it now FAILS the step. A `menu:` step that opened no menu was never taken, and saying so is
+ * the difference between a finding that names itself and one that blames the persona.
+ */
+async function openMenu(page: Page, trigger: Locator): Promise<void> {
+	const menu = openMenuLocator(page);
+	const isUp = (): Promise<boolean> => menu.waitFor({ state: "visible", timeout: 2_000 }).then(() => true).catch(() => false);
 	// null when the trigger cannot be read — including when an open modal menu has hidden the page
-	// behind it from the accessibility tree — and null is never "false", so it ends the loop.
+	// behind it from the accessibility tree, and when a re-render has replaced the element.
 	const expanded = (): Promise<string | null> => trigger.getAttribute("aria-expanded", { timeout: 1_000 }).catch(() => null);
+	// `walkReach` has already clicked once.
+	let clicks = 1;
 	for (let attempt = 1; attempt <= MENU_OPEN_ATTEMPTS; attempt++) {
-		const deadline = Date.now() + 2_000;
-		let state = await expanded();
-		while (state === "false" && Date.now() < deadline) {
-			await page.waitForTimeout(100);
-			state = await expanded();
-		}
-		if (state !== "false" || attempt === MENU_OPEN_ATTEMPTS) return;
+		if (await isUp()) return;
+		if ((await expanded()) !== "false" || attempt === MENU_OPEN_ATTEMPTS) break;
 		await trigger.click({ timeout: 8_000 }).catch(() => {});
+		clicks++;
 	}
+	if (await menu.isVisible().catch(() => false)) return;
+	throw new ReachStepFailed(`the trigger was clicked ${clicks} time(s) and no menu opened`);
+}
+
+/**
+ * Say so when the item is missing because the MENU is shut, rather than because the persona cannot
+ * see it.
+ *
+ * `resolveTrigger` reads the whole page and reports what it found there: "not rendered … for this
+ * persona". For a control behind a `menu:` step that sentence is only true while the menu is open,
+ * and a menu can be dropped by a re-render between `walkReach` returning and the count being taken
+ * — after every check `openMenu` can make. The two are different findings with different fixes, so
+ * they get different words; the observation comes first and the amendment is appended, never
+ * substituted, because what the run SAW is still that the item was not on the page.
+ *
+ * Evidence is attached on this path for the same reason `attachReachEvidence` exists: a withheld
+ * control fails no test, so Playwright keeps nothing, and #4852 spent two PRs on a cause nobody
+ * could look at.
+ */
+async function amendForClosedMenu(page: Page, entry: ControlEntry, reason: string): Promise<string> {
+	const step = [...(entry.reach ?? [])].reverse().find((s) => typeof s.menu === "string");
+	if (!step?.menu || !reason.includes("is not rendered")) return reason;
+	if (await openMenuLocator(page).isVisible().catch(() => false)) return reason;
+	await attachReachEvidence(page, entry.id, `menu: ${step.menu}`);
+	return `${reason} — and no menu was open when the item was read, so the menu opened by {menu: "${step.menu}"} was lost between the reach and the count; the item's absence says nothing about the persona`;
 }
 
 /**
@@ -955,7 +1007,7 @@ for (const entry of CONTROLS) {
 
 		const resolved = await resolveTrigger(page, entry, url);
 		if ("withhold" in resolved) {
-			withholdWithFixture(entry, resolved.withhold);
+			withholdWithFixture(entry, await amendForClosedMenu(page, entry, resolved.withhold));
 			return;
 		}
 		const trigger = resolved.locator;
@@ -1386,8 +1438,7 @@ test("self-test — `walkReach` resolves a step INSIDE the open overlay, not the
 
 test("self-test — a `menu:` step re-clicks a trigger whose first click was LOST, so the item is measured", async ({ page }) => {
 	// A trigger whose first click does nothing and which still says `aria-expanded="false"`. Without
-	// the re-click the item is never rendered and `resolveTrigger` withholds "not rendered". This pins
-	// the loop's behaviour; it is not a reproduction of #4852, whose cause is unobserved.
+	// the re-click the item is never rendered and `resolveTrigger` withholds "not rendered".
 	await page.setContent(`
 		<main>
 			<button aria-label="Manage member Audit Active Colleague" aria-haspopup="menu" aria-expanded="false"
@@ -1411,13 +1462,89 @@ test("self-test — a `menu:` step re-clicks a trigger whose first click was LOS
 test("self-test — a `menu:` step does NOT re-click a trigger that carries no `aria-expanded`", async ({ page }) => {
 	// A toggle that states nothing about its own state may have opened on the first click; a second
 	// click would close it again. The re-click is licensed only by an explicit "false".
+	//
+	// The step still FAILS, because no menu opened — and that is the point of the pair: the licence
+	// to click again and the verdict on whether the step was taken are different questions, and
+	// answering the second one "yes" because we declined to ask again is how #4852 reached
+	// `resolveTrigger` with a shut menu and a sentence about the persona.
 	await page.setContent(`
 		<main>
 			<button aria-label="Stateless toggle" onclick="this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1)">…</button>
 		</main>`);
 	const entry: ControlEntry = { ...selfTestEntry("Delete"), reach: [{ menu: "Stateless toggle" }] };
-	expect(await walkReach(page, entry)).toBeNull();
+	expect(await walkReach(page, entry)).toContain("clicked 1 time(s) and no menu opened");
 	await expect(page.getByRole("button", { name: "Stateless toggle" })).toHaveAttribute("data-clicks", "1");
+});
+
+test("self-test — a trigger that SAYS it is open while no menu is up fails the `menu:` step", async ({ page }) => {
+	// The hole #4852 went through. `aria-expanded` is the trigger's own word, and the first version
+	// of this check believed anything that was not the literal string "false" — including "true"
+	// from a trigger whose popup a re-render had just taken away, and including the `null` a read
+	// of a replaced element yields. Both then read as "the menu is open" and the step was taken.
+	//
+	// So: the menu answers, not the trigger. The trigger below is never re-clicked (its word is not
+	// "false", and a second click on an open toggle would close it), and the step is still reported
+	// as not taken, with the count it measured.
+	await page.setContent(`
+		<main>
+			<button aria-label="Manage member Audit Active Colleague" aria-haspopup="menu" aria-expanded="true"
+				onclick="this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1)">…</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Suspend"), control: { role: "menuitem", name: "Suspend" }, reach: [{ menu: "Manage member" }] };
+	const failure = await walkReach(page, entry);
+	expect(failure, "a `menu:` step that opened no menu was not taken, whatever the trigger says about itself").not.toBeNull();
+	expect(failure).toContain(`reach step {menu: "Manage member"} could not be taken`);
+	expect(failure).toContain("clicked 1 time(s) and no menu opened");
+	await expect(page.getByRole("button", { name: /Manage member/ })).toHaveAttribute("data-clicks", "1");
+});
+
+test("self-test — a menu LOST after the reach withholds naming the menu, not the persona", async ({ page }) => {
+	// The other half of #4852: the menu opens, the step is legitimately taken, and it is gone by the
+	// time the item is counted — a re-render of a row-keyed table is enough. `resolveTrigger` can
+	// only report what is on the page ("not rendered … for this persona"), which is true and is
+	// about the wrong thing: the persona could see the item perfectly well a moment earlier.
+	await page.setContent(`
+		<main>
+			<button aria-label="Manage member Audit Active Colleague" aria-haspopup="menu" aria-expanded="false"
+				onclick="
+					this.setAttribute('aria-expanded', 'true');
+					const menu = document.createElement('div');
+					menu.id = 'row-menu';
+					menu.setAttribute('role', 'menu');
+					menu.innerHTML = '<div role=&quot;menuitem&quot; tabindex=&quot;-1&quot;>Suspend</div>';
+					document.body.appendChild(menu);
+				">…</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Suspend"), control: { role: "menuitem", name: "Suspend" }, reach: [{ menu: "Manage member" }] };
+	expect(await walkReach(page, entry), "the menu WAS open while the step ran — the step was taken").toBeNull();
+	// The re-render, driven rather than timed: a `setTimeout` racing `walkReach`'s own settle would
+	// make this test assert whichever side won, which is the thing it is here to stop happening.
+	await page.evaluate(() => {
+		document.getElementById("row-menu")?.remove();
+		document.querySelector("button")?.setAttribute("aria-expanded", "false");
+	});
+	const resolved = await resolveTrigger(page, entry, "about:self-test", 1_000);
+	expect("withhold" in resolved, "the item really is gone, so the verdict is still withheld").toBe(true);
+	if (!("withhold" in resolved)) return;
+	const amended = await amendForClosedMenu(page, entry, resolved.withhold);
+	expect(amended, "the observation is kept").toContain("is not rendered at about:self-test");
+	expect(amended, "and the finding names the menu it lost").toContain(`the menu opened by {menu: "Manage member"} was lost between the reach and the count`);
+});
+
+test("self-test — a control whose item is genuinely absent from an OPEN menu keeps the persona reason", async ({ page }) => {
+	// The other direction, and the one that keeps the amendment honest: a menu that is open and
+	// simply does not carry the item is exactly the finding `resolveTrigger` words, and adding a
+	// sentence about a lost menu to it would manufacture a cause. An amendment that fires either
+	// way says nothing.
+	await page.setContent(`
+		<main>
+			<div role="menu"><div role="menuitem" tabindex="-1">Reactivate</div></div>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Suspend"), control: { role: "menuitem", name: "Suspend" }, reach: [{ menu: "Manage member" }] };
+	const resolved = await resolveTrigger(page, entry, "about:self-test", 1_000);
+	if (!("withhold" in resolved)) throw new Error("premise: `Suspend` is not in this menu, so the verdict must be withheld");
+	const amended = await amendForClosedMenu(page, entry, resolved.withhold);
+	expect(amended, "nothing was lost — the menu is right there").toBe(resolved.withhold);
 });
 
 // ── the floor's own test ────────────────────────────────────────────────────────────────────────
