@@ -21,9 +21,12 @@
 //
 //  1. THIS IS ABANDONED CODE, NOT UNBUILT GROUNDWORK. #4110 argued that nothing in the console
 //     ever referenced a template flow, which is "never built" rather than "built and dropped".
-//     `git log -S ContainerPlatformSelector --all` says otherwise: it was added on 2025-12-07
-//     as the node-shape picker inside a "Platform & EKS" card (cluster version, node groups,
-//     auto-scaling), and it was last rendered by `components/create-project/create-project-form.tsx`,
+//     `git log -S ContainerPlatformSelector --all` says otherwise. It was added on 2025-12-07
+//     (`2fcaaed1f`) as a "Container Platform" picker bound to `formData.containerPlatform` in
+//     `configuration-form.tsx`; by 2026-05-30 (`e3fc19a5d`) it sat inside a "Platform & EKS" card
+//     beside `EksVersionSelector` — cluster version, node groups, auto-scaling. So it is a
+//     COMPUTE-shape picker by origin, in both of those homes. It was last rendered by
+//     `components/create-project/create-project-form.tsx`,
 //     whose own doc comment read "Templates reuse {@link ContainerPlatformSelector}". That render
 //     went away on 2026-07-29 in #1304, when `~/new` became the two-step source chooser. So
 //     Custom's "You choose all template repositories" is a 2026-07 copy edit onto a compute
