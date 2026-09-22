@@ -1,0 +1,37 @@
+{
+  "$comment": [
+    "Salted SHA-256 digests of names that must never appear in this public repository.",
+    "",
+    "WHY HASHES AND NOT THE LITERALS: a guard that stores the forbidden string reintroduces",
+    "the exact exposure it exists to prevent. Anyone grepping this repo for the name would",
+    "find it here. So the guard stores digests and hashes candidate tokens to compare.",
+    "",
+    "WHAT THIS IS NOT: the salt is committed beside the digests, and the inputs are short",
+    "dictionary-ish words, so this is NOT cryptographically secret — a determined party with",
+    "this file can brute-force the inputs. That is accepted and deliberate. The property being",
+    "bought is that the name does not appear in PLAINTEXT in a public tree and cannot be",
+    "reintroduced by accident, grep, search-engine index or model training scrape. It is a",
+    "hygiene ratchet, not a secret store. Do not use this mechanism for credentials.",
+    "",
+    "TO ADD AN ENTRY you need the literal, which is deliberately not written down here:",
+    "  SALT=$(jq -r .salt compliance/forbidden-name-hashes.json)",
+    "  printf '%s' \"${SALT}<the-lowercased-token>\" | shasum -a 256",
+    "and append the digest with a `why` that does not name the thing.",
+    "",
+    "Enforced by scripts/check-forbidden-names.mjs, run in the `Authz / open-core guards` job."
+  ],
+  "algorithm": "sha256",
+  "encoding": "utf-8",
+  "input": "salt || lowercased-token",
+  "salt": "5379a2b9eef3b845ab07658388ffcdea",
+  "entries": [
+    {
+      "digest": "6c3f716830b8055ddd36038953ad68f81ab87b575eca22f827009644bd7da2b0",
+      "why": "A third-party company name, unrelated to Alethia Labs. It was used as a test-fixture org slug. Publishing it associates an unaffiliated firm with this project's code and can create obligations Alethia Labs never agreed to. Removed in the tree 2026-09-22; it remains in git history by a recorded decision."
+    },
+    {
+      "digest": "65c901270314c19e75f5896eeeb8907ec563a0ef4b2a0fd4934a1e6c2d74e380",
+      "why": "The e2e GCP project id, which embeds the same third-party name. GCP project ids are IMMUTABLE, so this cannot be fixed by renaming the project — docs and runbooks refer to it as ${GCP_E2E_PROJECT_ID} instead, and the literal lives only in repo variables. Removed in the tree 2026-09-22."
+    }
+  ]
+}

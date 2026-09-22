@@ -32,9 +32,9 @@ committed but was never applied, so a gcp floor run dies inside `secrets-encrypt
 #2258 describes. Verified live:
 
 ```bash
-gcloud projects get-iam-policy itgix-adp \
+gcloud projects get-iam-policy ${GCP_E2E_PROJECT_ID} \
   --flatten="bindings[].members" \
-  --filter="bindings.members:alethia-e2e-nightly@itgix-adp.iam.gserviceaccount.com" \
+  --filter="bindings.members:alethia-e2e-nightly@${GCP_E2E_PROJECT_ID}.iam.gserviceaccount.com" \
   --format="value(bindings.role)"     # → no cloudkms.admin
 ```
 
@@ -46,7 +46,7 @@ that is the risk `e2e-state-migration.md` warns about, and this plan does not ca
 cd infra/gcp-e2e
 tofu init -input=false
 tofu plan -input=false \
-  -var 'project_id=itgix-adp' \
+  -var 'project_id=${GCP_E2E_PROJECT_ID}' \
   -var 'billing_account_id=012128-F87F79-AAE313' \
   -var 'e2e_github_environment=e2e-dev' \
   -out=tfplan

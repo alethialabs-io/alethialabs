@@ -8,7 +8,7 @@
 // The gcp floor leg died three times in ten nightlies on cloud CAPACITY in europe-west3-a, the
 // single zone the workflow hardcoded:
 //
-//	35580334231 (09-21)  GCE_STOCKOUT: "The zone 'projects/itgix-adp/zones/europe-west3-a' does
+//	35580334231 (09-21)  GCE_STOCKOUT: "The zone 'projects/${GCP_E2E_PROJECT_ID}/zones/europe-west3-a' does
 //	                     not have enough resources available to fulfill the request."
 //	35074442209 (09-16)  the same GCE_STOCKOUT, same zone
 //	34824956659 (09-14)  "Google Compute Engine does not have enough resources available to
