@@ -342,7 +342,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		mergeProviderConfig(tfvars, r.ProviderConfig, awsRootReserved...)
 	}
 
-	if inst := resolveInstanceTypes("aws", config.Cluster); len(inst) > 0 {
+	if inst := ResolveInstanceTypes("aws", config.Cluster); len(inst) > 0 {
 		tfvars["eks_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {
