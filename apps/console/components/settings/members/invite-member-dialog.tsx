@@ -20,6 +20,7 @@ import {
 import { FormProvider, useFieldArray, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import { formatMoney } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import {
   Dialog,
@@ -199,13 +200,18 @@ export function InviteMemberDialog({
     }
   };
 
+  // The amount comes through as a `Money` and is rendered by `formatMoney` (#4176 part b). It
+  // used to be a bare `ctx.unitAmountUsd` with a literal `$` written in front of it, which is
+  // the exact shape `pnpm check:shared-surface` matches — and it went unmatched because a `$`
+  // typed into JSX TEXT is not the `` `$${…}` `` template the matcher reads. A EUR org was told
+  // its seats cost dollars.
   const seatBanner =
-    ctx?.hosted && ctx.unitAmountUsd != null ? (
+    ctx?.hosted && ctx.unitAmount != null ? (
       <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">
           {ctx.memberCount} {ctx.memberCount === 1 ? "seat" : "seats"} in use
         </span>{" "}
-        · ${ctx.unitAmountUsd}/seat — each new member adds a seat to your
+        · {formatMoney(ctx.unitAmount)}/seat — each new member adds a seat to your
         subscription.
       </p>
     ) : null;

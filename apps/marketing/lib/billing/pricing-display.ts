@@ -29,12 +29,17 @@ function getStripe(): Stripe | null {
 /** Per-seat Team labels in each supported currency, e.g. `{ usd: "$20 / seat / mo", … }`. */
 export type TeamPriceLabels = Record<SupportedCurrency, string>;
 
-/** The catalog fallback label for a currency (Stripe unconfigured / lookup failed). */
+/** The catalog fallback label for a currency (Stripe unconfigured / lookup failed).
+ *
+ *  `priceMonthly` is MINOR units since #4176 part (b), so the `Math.round(eur * 100)` that used
+ *  to sit here — the marketing site's own copy of a conversion the console carried twice more —
+ *  is gone. USD keeps its hand-written `priceLabel` because that string is the advertised copy,
+ *  not a rendering of the number beside it. */
 function fallbackLabel(currency: SupportedCurrency): string {
 	const meta = planMeta("team");
 	if (currency === "usd") return meta.priceLabel;
-	const eur = meta.priceMonthlyEur;
-	return eur != null ? formatSeatPrice(Math.round(eur * 100), "eur", "month") : meta.priceLabel;
+	const eur = meta.priceMonthly?.eur;
+	return eur != null ? formatSeatPrice(eur, "eur", "month") : meta.priceLabel;
 }
 
 /**

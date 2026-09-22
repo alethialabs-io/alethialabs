@@ -36,6 +36,7 @@
 
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { money } from "@repo/format";
 import { aiPlanMeta, planMeta } from "@repo/plan-catalog";
 import type { LiveAiPriceMap, LivePlanPriceMap } from "@/lib/billing/pricing";
 
@@ -57,22 +58,21 @@ import {
 // that happened to match the fallback could not tell the two apart.
 const planPrices: LivePlanPriceMap = {
 	community: {
-		unitAmountUsd: 0,
-		unitAmountEur: 0,
+		amounts: { usd: money(0, "usd"), eur: money(0, "eur") },
 		currency: "usd",
 		interval: "month",
 		label: "ignored — the hook re-derives the label",
 	},
 	team: {
-		unitAmountUsd: 25,
-		unitAmountEur: 22,
+		amounts: { usd: money(2500, "usd"), eur: money(2200, "eur") },
 		currency: "usd",
 		interval: "month",
 		label: "ignored — the hook re-derives the label",
 	},
 	enterprise: {
-		unitAmountUsd: null,
-		unitAmountEur: null,
+		// No key at all, which is how `LivePriceAmounts` says "custom / Let's talk" — the old
+		// `unitAmountUsd: null` pair could not distinguish that from "zero".
+		amounts: {},
 		currency: "usd",
 		interval: "month",
 		label: "ignored — the hook re-derives the label",
@@ -81,15 +81,13 @@ const planPrices: LivePlanPriceMap = {
 
 const aiPrices: LiveAiPriceMap = {
 	ai_free: {
-		unitAmountUsd: 0,
-		unitAmountEur: 0,
+		amounts: { usd: money(0, "usd"), eur: money(0, "eur") },
 		currency: "usd",
 		interval: "month",
 		label: "ignored — the hook re-derives the label",
 	},
 	ai_plus: {
-		unitAmountUsd: 25,
-		unitAmountEur: 22,
+		amounts: { usd: money(2500, "usd"), eur: money(2200, "eur") },
 		currency: "usd",
 		interval: "month",
 		label: "ignored — the hook re-derives the label",
@@ -101,8 +99,7 @@ const aiPrices: LiveAiPriceMap = {
 	// are 0 or null and there is nothing else to be; `team`, `ai_plus` and now `ai_max` are what
 	// discriminate.
 	ai_max: {
-		unitAmountUsd: 100,
-		unitAmountEur: 88,
+		amounts: { usd: money(10000, "usd"), eur: money(8800, "eur") },
 		currency: "usd",
 		interval: "month",
 		label: "ignored — the hook re-derives the label",
@@ -119,7 +116,9 @@ describe("useLivePlanPrice", () => {
 		// Nothing was written, so the catalog value is the whole answer and `loading` stays true.
 		expect(result.current.loading).toBe(true);
 		expect(result.current.label).toBe(planMeta("team").priceLabel);
-		expect(result.current.unitAmount).toBe(planMeta("team").priceMonthlyUsd);
+		expect(result.current.unitAmount).toEqual(
+			money(planMeta("team").priceMonthly?.usd ?? -1, "usd"),
+		);
 		expect(result.current.currency).toBe("usd");
 	});
 
@@ -139,7 +138,7 @@ describe("useLivePlanPrice", () => {
 		await waitFor(() => expect(result.current.loading).toBe(false));
 
 		expect(result.current.label).toBe("$25 / seat / mo");
-		expect(result.current.unitAmount).toBe(25);
+		expect(result.current.unitAmount).toEqual(money(2500, "usd"));
 		// ONE MORE call proves the previous test's rejection reset the module cache — had `pending`
 		// stayed as the rejected promise, this mount would have re-subscribed to it and never
 		// resolved. That reset (`pending = null; throw e`) has no other observable.
@@ -189,7 +188,7 @@ describe("useLiveAiPrice", () => {
 		await waitFor(() => expect(result.current.loading).toBe(false));
 
 		expect(result.current.label).toBe("$25 / mo");
-		expect(result.current.unitAmount).toBe(25);
+		expect(result.current.unitAmount).toEqual(money(2500, "usd"));
 		expect(vi.mocked(getLiveAiPrices).mock.calls.length).toBe(before + 1);
 	});
 
@@ -202,7 +201,7 @@ describe("useLiveAiPrice", () => {
 		// A live amount of 0 is the free tier: it keeps its catalog word, never "$0 / mo".
 		const free = renderHook(() => useLiveAiPrice("ai_free"));
 		await waitFor(() => expect(free.result.current.loading).toBe(false));
-		expect(free.result.current.unitAmount).toBe(0);
+		expect(free.result.current.unitAmount).toEqual(money(0, "usd"));
 		expect(free.result.current.label).toBe(aiPlanMeta("ai_free").priceLabel);
 
 		expect(vi.mocked(getLiveAiPrices).mock.calls.length).toBe(before);
@@ -241,6 +240,6 @@ describe("useLiveAiPrice", () => {
 		// Then the live row arrives and replaces the catalog fallback — the `if (active)` guard's
 		// TRUE branch on the second effect.
 		await waitFor(() => expect(result.current.loading).toBe(false));
-		expect(result.current.unitAmount).toBe(100);
+		expect(result.current.unitAmount).toEqual(money(10000, "usd"));
 	});
 });
