@@ -65,9 +65,20 @@ func resolveK8sVersion(provider, configVersion string) string {
 	return ""
 }
 
-// resolveInstanceTypes returns the concrete provider instance type list for the cluster.
+// ResolveInstanceTypes returns the concrete provider instance type list for the cluster.
 // Prefers explicit InstanceTypes; otherwise resolves NodeSize to the nearest catalog SKU.
-func resolveInstanceTypes(provider string, cl types.ProjectClusterConfig) []string {
+//
+// EXPORTED because it is the only answer to "which machine types will this deploy actually buy",
+// and more than the providers need that answer. provisioner's node-fit gate (#3855 cause B) has to
+// ask the SAME question this file answers: it originally read `Cluster.InstanceTypes` directly and
+// was therefore blind to every project using the abstract, cloud-indifferent NodeSize — the path
+// this codebase PREFERS. A gcp `node_size` of 2 vCPU / 4 GiB resolves here to `e2-medium`, the one
+// shape measured unable to host the control plane, and the gate never saw it.
+//
+// So there is one resolver and both callers use it. A second copy in the gate would be a second
+// source of truth that drifts the first time this precedence changes, and the drift would be
+// silent: the gate would go on passing while checking a machine type the deploy does not buy.
+func ResolveInstanceTypes(provider string, cl types.ProjectClusterConfig) []string {
 	if len(cl.InstanceTypes) > 0 {
 		return cl.InstanceTypes
 	}
