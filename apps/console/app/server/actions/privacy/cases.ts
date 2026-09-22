@@ -37,6 +37,7 @@
 
 import { and, desc, eq, getTableColumns, isNull, lt, or } from "drizzle-orm";
 import { z } from "zod";
+import { getInjectedActor } from "@/lib/authz/actor-context";
 import { authorize, authorizeInOrg, currentActor } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
@@ -159,7 +160,13 @@ const referenceSchema = z
 	.trim()
 	.regex(/^DSR-[0-9A-F]{8}$/, "Not a privacy request reference.");
 
-/** Loads a case by reference, or throws. Says nothing about who may act on it. */
+/**
+ * Loads a case by reference, or null when nothing matches. Says nothing about who may act on it.
+ *
+ * Null rather than a throw so {@link authorizeCase} can answer "no such reference" and "not yours"
+ * identically; a reference the schema rejects still throws, because that is a malformed argument
+ * and not a lookup that missed.
+ */
 async function caseByReference(reference: string) {
 	const [c] = await getServiceDb()
 		.select()
@@ -175,8 +182,9 @@ type PrivacyCaseRow = NonNullable<Awaited<ReturnType<typeof caseByReference>>>;
 /**
  * Loads the case a handling step names AND proves the caller has standing over THAT case.
  *
- * This is the whole authorization decision for `cases.ts`, in one place because it was previously
- * in six and proved nothing in any of them (#4854). What was there — `authorize("edit", { type:
+ * This is the whole authorization decision for `cases.ts`, in one place because it used to be in
+ * six — five of them a gate that proved nothing, and `privacyCaseHistory` no gate at all (#4854).
+ * What the five had — `authorize("edit", { type:
  * "org" })` — enforces `org:edit` in the caller's OWN ambient scope. Every account owns a personal
  * organization (its id IS the user id) and the built-in `owner` role is `"*"`, so that call
  * succeeds for every signed-in user and says nothing whatever about the case the next line then
@@ -199,12 +207,27 @@ type PrivacyCaseRow = NonNullable<Awaited<ReturnType<typeof caseByReference>>>;
  * which of them exist. An operator's typo pays a worse message for that; a reference is quoted in
  * correspondence, and correspondence is forwarded.
  *
+ * AND ONLY FROM A BROWSER SESSION. An actor injected by `runWithActor` — the MCP / API-token path
+ * — is refused before either ground is considered, the same rule `requestMyErasure` applies for
+ * the same reason: the maintainer's ruling on #4273 is that an authenticated console SESSION meets
+ * the identity bar for acting on a person's privacy case, and it says nothing about a machine
+ * credential, so a token does not inherit it. Stated once here rather than left to fall out of
+ * `authorizeInOrg` reading the session — that would refuse a token on the tenant ground by
+ * accident while the subject ground admitted it.
+ *
  * It does NOT re-check identity verification, the case kind or a legal hold — those are the
  * caller's own preconditions and each step states its own.
  */
 async function authorizeCase(
 	reference: string,
 ): Promise<{ actor: Actor; c: PrivacyCaseRow }> {
+	if (getInjectedActor()) {
+		throw new ForbiddenError(
+			"edit",
+			{ type: "org" },
+			"a privacy request is acted on from a signed-in console session, not by a machine credential",
+		);
+	}
 	// The session first, and the lookup second: an unauthenticated caller is turned away before a
 	// reference reaches the database at all.
 	const actor = await currentActor();

@@ -38,6 +38,11 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorizeInOrg: (...a: unknown[]) => authorizeInOrg(...a),
 	currentActor: () => currentActor(),
 }));
+/** The MCP / API-token path's actor, when one is in scope. `undefined` is a browser session. */
+let injected: { userId: string; orgId: string } | undefined;
+vi.mock("@/lib/authz/actor-context", () => ({
+	getInjectedActor: () => injected,
+}));
 
 const ADMIN = "99999999-9999-9999-9999-999999999999";
 const SUBJECT = "11111111-1111-1111-1111-111111111111";
@@ -190,6 +195,7 @@ beforeEach(() => {
 	residency = { projects: 0, environments: 0, cloudConnections: 0 };
 	rowsPerStatement = 4;
 	caseFound = true;
+	injected = undefined;
 	authorize.mockReset();
 	authorizeInOrg.mockReset();
 	currentActor.mockReset();
@@ -437,6 +443,20 @@ describe("standing over the case", () => {
 	it("reads nothing at all when there is no session", async () => {
 		currentActor.mockRejectedValue(new Error("Unauthorized"));
 		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(/Unauthorized/);
+		expect(calls).toEqual([]);
+	});
+
+	// The MCP / API-token path. `requestMyErasure` refuses an injected actor for the same reason
+	// and this is the destructive end of the same process: the #4273 ruling binds the identity bar
+	// to a console SESSION, and a machine credential does not inherit it. Refused BEFORE the
+	// subject ground is considered — a token acting as the subject would otherwise satisfy it.
+	it("refuses a machine credential even when it acts as the subject", async () => {
+		caseRow.organizationId = null;
+		injected = { userId: SUBJECT, orgId: SUBJECT };
+		currentActor.mockResolvedValue({ userId: SUBJECT, orgId: SUBJECT });
+		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(
+			/machine credential/,
+		);
 		expect(calls).toEqual([]);
 	});
 });
