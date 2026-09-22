@@ -111,7 +111,7 @@ describe("convertProjectConfig — cluster instance types", () => {
 			"aws",
 			"gcp",
 		);
-		expect(data.cluster.instance_types).toEqual(["c2-standard-4", "e2-medium"]);
+		expect(data.cluster.instance_types).toEqual(["c2-standard-4", "e2-standard-2"]);
 		// none of the mapped types produced a warning
 		expect(
 			byComponent(warnings, "Cluster").filter((w) => w.severity === "warning"),

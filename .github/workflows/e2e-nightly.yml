@@ -640,66 +640,69 @@ jobs:
           case "$PROVIDER" in
             hetzner) SHAPE="" ;;
             aws)     SHAPE='{"instance_types":["t3.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20,"provider_config":{"enable_karpenter":true}}'; NET='{"single_nat_gateway":true}' ;;
-            # RESHAPED FOR #3855 — FEWER, BIGGER NODES. The axis that matters is PER NODE, not total.
+            # RESHAPED AGAIN FOR #3855 CAUSE B — THE AXIS IS CPU, AND IT WAS NEVER MEMORY.
             #
-            # History, because the numbers only read correctly with it: a node pool's
-            # initial_node_count and autoscaling min/max are PER ZONE, and gcp used to run REGIONAL
-            # (europe-west3 = 3 zones), so the declared 1/2/1 was really delivering 3/6/3. #3566 made
-            # the location zonal and restated 3/6/3 so the numbers became literal at exactly the cost
-            # already proven — the location fix, tested alone. Its comment then reserved this change:
-            # "Shrinking the floor is a separate change with its own evidence: ArgoCD's fit in
-            # ~800-900Mi of allocatable has never been measured." It still has not been measured, and
-            # this does NOT shrink the floor to fit that unmeasured number — it retires the question
-            # by making the largest schedulable slot BIGGER than any of the three it replaces.
+            # The floor node here is not only a test fixture. `packages/core/catalog/catalog.json`
+            # is the SAME inventory a customer picks from, and `e2-medium` was its gcp
+            # `default_instance` — so this line and the product's out-of-the-box GCP cluster were
+            # the same shape. That is why this moved to the shape the product now defaults to,
+            # rather than to whatever the harness could scrape by on.
             #
-            # The evidence #3566 asked for is #3855: two nightlies on the SAME sha (33605830312 and
-            # 33731101952) both died at `argocd-ready` with `addon-byo-e2e` never completing ONE
-            # manifest render — a kube-dns timeout resolving `argo-cd-argocd-repo-server` the first
-            # night, repo-server's own gRPC DeadlineExceeded the second. In the same runs aws
-            # (t3.large, 8 GiB) and azure (Standard_D2s_v3, 8 GiB) passed the SAME assertion on the
-            # SAME BYO chart — each on ONE node. gcp is the only cloud whose floor node is under
-            # 4 GiB, and the only one whose floor is red.
+            # HISTORY, because the numbers only read correctly with it. #3566 made the location
+            # zonal (a node pool's initial_node_count and autoscaling min/max are PER ZONE, so a
+            # regional gcp was silently delivering 3/6/3 at the declared 1/2/1). #4179 then replaced
+            # 3 x e2-small with 1 x e2-medium, doubling the per-node MEMORY slot, and separately
+            # gave argocd-repo-server its first resource request (100m/256Mi).
             #
-            # Per node, from GKE's published reservation formula (25% of the first 4 GiB of memory
-            # plus a 100 MiB eviction threshold; a flat 1060 mCPU on every E2 SHARED-CORE type):
+            # WHAT #4179's OWN RUN THEN SHOWED. Run 35499891484 (2026-09-20) is the first nightly
+            # that executed that shape, and it is the honest test the previous comment here asked
+            # for. Its answer was not about memory:
             #
-            #   was    3 x e2-small   2 GiB ea.  ~1436 MiB allocatable per node, ~800-900 Mi once
-            #                                    the GKE system DaemonSets are placed — three times
-            #   now    1 x e2-medium  4 GiB      ~2972 MiB allocatable, ~2.4 GiB after the same
-            #                                    DaemonSets, which are now placed ONCE
+            #   allocatable cpu: 940m   allocatable memory: 2866840Ki   (BOTH nodes)
             #
-            # Per-node CPU does not move at all: e2-small and e2-medium both have 2 shared cores and
-            # both pay the same flat 1060 mCPU reservation, so allocatable stays ~940m either way.
-            # The reshape is therefore ~2x the memory in the slot that matters, at no CPU cost to it.
+            #   argo-cd-argocd-repo-server   Pending  0/2 nodes are available: 2 Insufficient cpu
+            #                                         NotTriggerScaleUp: 1 max node group size reached
+            #   calico-typha-6bd76746-fphst  Pending  (21m, never scheduled)
+            #   calico-typha-6bd76746-t7jzz  Pending  (19m, never scheduled)
+            #   calico-node-{pl296,qhn8p}    0/1 Running
             #
-            # Total cluster memory FALLS, 6 GiB -> 4 GiB. Stated, not hidden — and it is the wrong
-            # axis: argocd-repo-server is one pod that must fit on one node, and a ~900 Mi slot is
-            # what it does not fit in. Node count 3 -> 1 also matches aws and azure, which is the
-            # count the floor is green at everywhere it IS green; max 2 stays as their safety valve.
-            # Nothing in the floor path needs a second node: the harness asserts >= 1 Ready node
-            # (HasReadyNode), heavyMinNodes=3 and fabricDemoMinNodes=2 are both gated off here, and
-            # no chart the floor installs (ArgoCD + external-secrets-operator + reloader) sets a
-            # required anti-affinity, a topology spread or a PDB.
+            # 2.8 GiB was ample — #4179's memory half worked. The CPU half never moved: `e2-small`
+            # and `e2-medium` are BOTH shared-core E2, both pay GKE's flat 1060 mCPU reservation,
+            # and both therefore allocate 940m. Adding a 100m request to a node with under 100m free
+            # converted a starving pod into an UNSCHEDULABLE one.
             #
-            # THE COUNTER-EVIDENCE, because it belongs next to the claim. versions.go:146 measured
-            # this pool and recorded that FIVE OF THE SEVEN ArgoCD pods already landed on ONE of the
-            # three e2-smalls — so the 3-node spread was not buying separation, which is the strongest
-            # argument for this reshape and also its warning: the pile-up moves from 5 of 7 to 7 of 7,
-            # onto ONE 20 GB pd-standard disk whose concurrent pull throughput was measured at
-            # ~43 KB/s (run 33156252646). The disk is DELIBERATELY not touched in the same change:
-            # it is the second lever the repo already names, and moving both at once means a green
-            # run cannot say which one did it. If this stays red, the disk is next.
+            # AND IT WAS NEVER JUST OURS. calico-typha is the control plane of the network-policy
+            # addon `infra/templates/project/gcp/modules/gke/main.tf` turns on, and whose comment
+            # names it as the mechanism behind namespace-placement tenant isolation (#1012). With no
+            # Typha replica schedulable, Felix logged `Didn't find any ready Typha instances` and
+            # `[FATAL] Typha discovery enabled but discovery failed` on both nodes, and calico-node
+            # never went Ready. NetworkPolicy was not being enforced, the apply was green, and
+            # nothing said so. An `e2-medium` GKE node cannot run the addons GKE ITSELF installs.
             #
-            # COST (europe-west3, on-demand list, compute only): e2-small $0.0216/h, e2-medium
-            # $0.0432/h — the E2 shared-core ladder is exactly proportional — so 3 x $0.0216 =
-            # $0.0648/h becomes $0.0432/h, 33% CHEAPER, plus two fewer 20 GB pd-standard disks.
-            # Matching the green clouds' 8 GiB instead means 1 x e2-standard-2 at $0.0863/h: +33%,
-            # a spend increase, and therefore the maintainer's call rather than this change.
+            # SO: 1 x e2-standard-2. Same 2 vCPU on the spec sheet, 1930m allocatable instead of
+            # 940m, because a DEDICATED-core node pays 6% of the first core and 1% of the second
+            # rather than the flat 1060m. Memory goes 4 GiB -> 8 GiB, matching aws (t3.large) and
+            # azure (Standard_D2s_v3), the two clouds whose floor is green on this same assertion.
             #
-            # THIS IS NOT A CLAIM THAT #3855 IS FIXED. 4 GiB is still HALF of what aws and azure use,
-            # and no offline check can settle whether ArgoCD converges in it. One paid gcp floor run
-            # is the only honest test.
-            gcp)     SHAPE='{"instance_types":["e2-medium"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
+            # COST (europe-west3, on-demand list, compute only): e2-medium $0.0432/h ->
+            # e2-standard-2 $0.0863/h, +$0.0431/h. A floor leg runs ~46 minutes, so ~+$0.03 per
+            # nightly, ~+$0.99 a month. The #4179 comment flagged this as "a spend increase and
+            # therefore the maintainer's call"; it is stated here at its measured size rather than
+            # as a percentage, because +100% of three cents is the same three cents.
+            #
+            # WHAT PINS THIS, so it cannot drift back. `catalog.ControlPlaneNodeFit` computes a GKE
+            # shape's allocatable CPU offline and refuses anything at or below the measured 940m;
+            # the provisioner's node-fit gate refuses such an apply before it spends; and
+            # `t2RequireControlPlaneNodeFit` refuses this leg's own shape in seconds, for free,
+            # before the capacity preflight, so this line can never again buy a node the product
+            # would not sell a customer.
+            #
+            # STILL NOT A CLAIM THAT #3855 IS FIXED. 1930m is above the one value measured to be
+            # insufficient; nobody has measured what ArgoCD actually needs, and no offline check
+            # can. The remaining known lever is the 20 GB pd-standard disk (versions.go:146 measured
+            # ~43 KB/s of concurrent pull throughput on it) — deliberately untouched here, so a
+            # green run can say which change did it.
+            gcp)     SHAPE='{"instance_types":["e2-standard-2"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}' ;;
             # Standard_B2s (v1) is NOT offered by AKS on a modern subscription: a real apply fails with
             # "The VM size of Standard_B2s is not allowed in your subscription" — only the v2/v3+
             # generations are served. (`az vm list-skus` disagrees and reports B2s unrestricted; AKS is
