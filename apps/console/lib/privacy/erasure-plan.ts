@@ -179,7 +179,13 @@ export const ERASURE_RULES: readonly ErasureRule[] = [
 		table: "profiles",
 		subjectColumn: "id",
 		disposition: "erase",
-		reason: "The subject's own profile — their email, name and avatar. Nothing outside their account depends on it.",
+		reason:
+			"The subject's own profile — their email, name and avatar. Nothing outside their account " +
+			"depends on it, and one thing depends on it going: cli_service_tokens.created_by " +
+			"references this row ON DELETE SET NULL, and verifyCliToken (lib/cli/auth.ts) REFUSES a " +
+			"token whose minting profile is gone. So erasing this row revokes every service token the " +
+			"subject ever minted, which is why the register does not list that table — the credential " +
+			"dies here, and the token row survives as the audit record its schema comment asks for.",
 	},
 
 	// ── pseudonymize ─────────────────────────────────────────────────────────────────────────────

@@ -129,6 +129,33 @@ describe("the erasure register against the schema", () => {
 		before("oauth_access_token", "oauth_refresh_token");
 	});
 
+	// The `profiles` rule claims a consequence beyond its own table: erasing that row revokes every
+	// service token the subject minted. Half of that is this constraint; the other half is
+	// `verifyCliToken` refusing a token whose `createdBy` is null, which
+	// `tests/lib/cli/service-token-pin.test.ts` already locks. Asserted because it is the reason
+	// `cli_service_tokens` is absent from the register, and an absence justified by an unchecked
+	// sentence is how a live credential outlives the account it speaks for.
+	it("revokes the subject's service tokens by erasing the profile they point at", () => {
+		const profilesRule = ERASURE_RULES.find((r) => r.table === "profiles");
+		expect(profilesRule?.disposition).toBe("erase");
+		expect(profilesRule?.subjectColumn).toBe("id");
+		const fk = getTableConfig(
+			TABLES.get("cli_service_tokens") ?? ({} as PgTable),
+		).foreignKeys.map((f) => {
+			const ref = f.reference();
+			return {
+				columns: ref.columns.map(columnSqlName),
+				table: getTableConfig(ref.foreignTable).name,
+				onDelete: f.onDelete,
+			};
+		});
+		expect(fk).toContainEqual({
+			columns: ["created_by"],
+			table: "profiles",
+			onDelete: "set null",
+		});
+	});
+
 	// The reason this executor pseudonymizes the account row instead of deleting it. Both
 	// constraints are deliberate and both must keep holding, because either one alone turns a
 	// `DELETE FROM "user"` into a silent loss (the cascade) or a hard failure (the restrict).
