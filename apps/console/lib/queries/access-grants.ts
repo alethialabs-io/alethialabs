@@ -88,7 +88,7 @@ export interface AccessGrantsPage {
 	};
 }
 
-/** The role-facet value a grant falls under (the mirror of the client's `grantRoleKey`). */
+/** The role-facet value a grant falls under — the value the Roles combobox sends back. */
 function roleKey(roleName: string | null, permissionKey: string | null): string {
 	if (roleName) return roleName;
 	return permissionKey ? `${PERMISSION_PREFIX}${permissionKey}` : NO_ROLE;

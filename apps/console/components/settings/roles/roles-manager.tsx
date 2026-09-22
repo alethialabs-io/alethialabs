@@ -111,7 +111,15 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 
 	// Custom roles are filtered SERVER-SIDE by search (listRoles); the kind facet is a pure
 	// show/hide over two fixed buckets, so it never needs to reach the server.
-	const { data: customAll = [], isFetching } = useRolesQuery(query.search);
+	// `isPlaceholderData` is the other half of the hook's `keepPreviousData`
+	// (lib/query/README.md, step 5): the rail keeps the previous search's roles while the next
+	// one loads, and the dim below is what says they are stale. Keeping them silently renders
+	// the previous answer as the current one.
+	const {
+		data: customAll = [],
+		isFetching,
+		isPlaceholderData,
+	} = useRolesQuery(query.search);
 	const custom = showsKind(query, "custom") ? customAll : [];
 	const invalidate = useInvalidateRoles();
 
@@ -202,7 +210,12 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 			</FilterBar>
 
 			{/* master-detail */}
-			<div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
+			<div
+				className={cn(
+					"grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]",
+					isPlaceholderData && "opacity-60 transition-opacity",
+				)}
+			>
 				{/* rail */}
 				<div className="rounded-lg border border-border bg-surface p-2 shadow-sm">
 					{/* The Kind facet hides a whole bucket rather than emptying it — an

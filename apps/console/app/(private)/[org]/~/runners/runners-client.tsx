@@ -17,7 +17,6 @@ import { RunnerCard, RunnerCardSkeleton } from "@/components/runners/runner-card
 import { type RunnerRow } from "@/components/runners/runner-actions";
 import {
 	RunnersToolbar,
-	matchesRunnerFilters,
 	type RunnerFacetOption,
 } from "@/components/runners/runners-toolbar";
 import { RunnersPager } from "@/components/runners/runners-pager";
@@ -27,10 +26,15 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import {
 	DEFAULT_RUNNER_FILTERS,
+	normalizeRunnersQuery,
 	useRunnerFilters,
 } from "@/lib/stores/use-runner-filters";
 import { PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
-import { useRunnersQuery, type ActiveJob } from "@/lib/query/use-runners-query";
+import { SectionHeading } from "@repo/ui/section-heading";
+import { cn } from "@repo/ui/utils";
+import { ANY_CLOUD } from "@/lib/queries/runners";
+import type { ActiveJob } from "@/lib/query/use-runners-query";
+import { useRunnersPageQuery } from "@/lib/query/use-runners-page-query";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { useJobsQuery } from "@/lib/query/use-jobs-query";
 import {
@@ -54,13 +58,6 @@ const RUNNER_JOB_TYPES = new Set<PublicProvisionJobType>([
 ]);
 
 export function RunnersClient() {
-	const {
-		data: runnersData,
-		isPending: isLoading,
-		isError,
-		refetch,
-	} = useRunnersQuery();
-	const runners = runnersData?.runners ?? [];
 	// Deployment-mode + entitlement gating. Self-managed operators see everything; hosted tenants
 	// need the byoRunners entitlement (Pro+) for the runner surface, and never see managed pools.
 	const isHosted = useIsHosted();
@@ -99,10 +96,23 @@ export function RunnersClient() {
 		[economics],
 	);
 
-	// The console filter standard (#578): zustand store + URL sync + debounced search.
+	// The console filter standard (#578), now end to end: zustand store → URL sync → debounced
+	// search → normalize → the TanStack key → the SERVER's filtered read. The narrowing and the
+	// facet tally used to happen in this component over the whole universe (#4890).
 	const filters = useRunnerFilters((s) => s.filters);
 	useFilterUrlSync(useRunnerFilters, DEFAULT_RUNNER_FILTERS);
 	const search = useDebouncedValue(filters.search, 300);
+	const query = useMemo(
+		() => normalizeRunnersQuery(filters, search),
+		[filters, search],
+	);
+	const {
+		data: runnersPage,
+		isPending: isLoading,
+		isError,
+		isPlaceholderData,
+		refetch,
+	} = useRunnersPageQuery(query);
 	const [page, setPage] = useState(1);
 
 	// Pool editor dialog: null pool = create, a row = edit.
@@ -112,7 +122,7 @@ export function RunnersClient() {
 	// Reset to the first page whenever the result set changes shape.
 	useEffect(() => {
 		setPage(1);
-	}, [search, filters]);
+	}, [query]);
 
 	const openCreatePool = () => {
 		setEditingPool(null);
@@ -153,51 +163,42 @@ export function RunnersClient() {
 		return map;
 	}, [activeJobs]);
 
-	const runnerRows: RunnerRow[] = useMemo(
-		() => runners.map((w) => ({ ...w, activeJob: jobsByRunner.get(w.id) ?? null })),
-		[runners, jobsByRunner],
+	// The SERVER's rows, joined to their in-flight lifecycle job — the one column a filtered
+	// read cannot resolve, because it comes off the jobs query rather than the runner row.
+	const filtered: RunnerRow[] = useMemo(
+		() =>
+			(runnersPage?.rows ?? []).map((w) => ({
+				...w,
+				activeJob: jobsByRunner.get(w.id) ?? null,
+			})),
+		[runnersPage, jobsByRunner],
 	);
+	/** Every runner the actor can see — "no runners yet", as opposed to "none match". */
+	const total = runnersPage?.total ?? 0;
 
-	// Filter facets with counts over the UNFILTERED runner set (the standard: options never
-	// disappear as you select them — the whole universe is already loaded on this page).
+	// Facet options from the builder's own pass over the UNFILTERED universe. Only the labels
+	// are resolved here: the server counts values, and what a provider or a version is CALLED
+	// is a client constant.
 	const facets = useMemo(() => {
-		const clouds = new Map<string, number>();
-		const regions = new Map<string, number>();
-		const versions = new Map<string, number>();
-		const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
-		for (const r of runnerRows) {
-			if (!r.supported_providers || r.supported_providers.length === 0) bump(clouds, "any");
-			else for (const p of r.supported_providers) bump(clouds, p);
-			if (r.location) bump(regions, r.location);
-			const v = r.runner_releases?.version ?? r.version;
-			if (v) bump(versions, v);
-		}
-		const cloudOptions: CloudFilterOption[] = [...clouds.entries()]
-			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([value, count]) => ({
-				value,
-				label:
-					value === "any" ? "Any" : (lookup(PROVIDER_LABELS, value) ?? value.toUpperCase()),
-				count,
-			}));
-		const asOptions = (m: Map<string, number>, label: (v: string) => string): RunnerFacetOption[] =>
-			[...m.entries()].map(([value, count]) => ({ value, label: label(value), count }));
+		const clouds: CloudFilterOption[] = (runnersPage?.facets.clouds ?? []).map((o) => ({
+			value: o.value,
+			label:
+				o.value === ANY_CLOUD
+					? "Any"
+					: (lookup(PROVIDER_LABELS, o.value) ?? o.value.toUpperCase()),
+			count: o.count,
+		}));
+		const plain = (
+			options: { value: string; count: number }[],
+			label: (v: string) => string,
+		): RunnerFacetOption[] =>
+			options.map((o) => ({ value: o.value, label: label(o.value), count: o.count }));
 		return {
-			clouds: cloudOptions,
-			regions: asOptions(regions, (v) => v).sort((a, b) => a.value.localeCompare(b.value)),
-			versions: asOptions(versions, (v) => `v${v}`).sort((a, b) =>
-				b.value.localeCompare(a.value),
-			),
+			clouds,
+			regions: plain(runnersPage?.facets.regions ?? [], (v) => v),
+			versions: plain(runnersPage?.facets.versions ?? [], (v) => `v${v}`),
 		};
-	}, [runnerRows]);
-
-	const filtered = useMemo(() => {
-		const q = search.trim().toLowerCase();
-		return runnerRows.filter((r) => {
-			if (q && !r.name.toLowerCase().includes(q)) return false;
-			return matchesRunnerFilters(r, filters);
-		});
-	}, [runnerRows, search, filters]);
+	}, [runnersPage]);
 
 	const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
 	const safePage = Math.min(page, pageCount);
@@ -280,16 +281,16 @@ export function RunnersClient() {
 
 				{/* Right column — runners. */}
 				<div className="min-w-0 space-y-4">
-					<div className="flex items-center justify-between gap-3">
-						<div className="flex items-baseline gap-2">
-								<span className="font-display text-ui-lg font-semibold tracking-tight">Runners</span>
-							{/* The count pill shows the RESULT count (the standard) — never "N of M" prose. */}
-								<span className="rounded-full border px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground">
-								{filtered.length}
-							</span>
-						</div>
-						<AddRunnerButton />
-					</div>
+					{/* The section heading and its result count come from the shared primitives. Both
+					    were hand-rolled here — a `font-display text-ui-lg` span for the heading and a
+					    bordered `rounded-full` span for the pill, the latter under a comment claiming
+					    it WAS "the count pill (the standard)". A second copy of a primitive is how two
+					    list pages come to disagree about what a count looks like. */}
+					<SectionHeading
+						title="Runners"
+						count={isLoading ? null : (runnersPage?.resultCount ?? 0)}
+						actions={<AddRunnerButton />}
+					/>
 
 					<RunnersToolbar
 						cloudOptions={facets.clouds}
@@ -308,18 +309,21 @@ export function RunnersClient() {
 								</Button>
 							}
 						/>
-					) : isLoading && runners.length === 0 ? (
+					) : isLoading ? (
 						<div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))]">
 							{[1, 2, 3, 4].map((i) => (
 								<RunnerCardSkeleton key={i} />
 							))}
 						</div>
-					) : runnerRows.length === 0 ? (
+					) : total === 0 ? (
 						<EmptyRunners />
 					) : filtered.length === 0 ? (
 						<EmptyState title="No runners match your filters." className="py-12" />
 					) : (
-						<>
+						/* The filter standard's `isPlaceholderData` dim: these cards are the PREVIOUS
+						   query's answer, kept so the grid does not blank on a filter change and
+						   marked so they are not read as the current one. */
+						<div className={cn(isPlaceholderData && "opacity-60 transition-opacity")}>
 							<div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(340px,1fr))]">
 								{pageItems.map((runner) => (
 									<RunnerCard
@@ -335,7 +339,7 @@ export function RunnersClient() {
 								total={filtered.length}
 								onPageChange={setPage}
 							/>
-						</>
+						</div>
 					)}
 				</div>
 			</div>

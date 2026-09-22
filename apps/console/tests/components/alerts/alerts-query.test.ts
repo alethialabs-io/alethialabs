@@ -3,9 +3,14 @@
 
 // The Alerts hub's filter/query plumbing (components/alerts/alerts-query.ts +
 // alerts-status.ts + lib/stores/use-alerts-filters.ts): the normalize step's
-// key-stability guarantees, the resolve step, the facet-over-the-UNFILTERED-universe
-// rule the console filter standard requires, and the drift guards keeping the
-// client-side value lists in lockstep with the alert_* DB enums.
+// key-stability guarantees, the status/kind bucketing the badges and the chip labels
+// read, and the drift guards keeping the client-side value lists in lockstep with the
+// alert_* DB enums.
+//
+// The RESOLVE step and the facet-over-the-UNFILTERED-universe rule are NOT here any more.
+// #4890 moved both into SQL, so they are asserted where they now live: the per-builder
+// behaviour in tests/lib/queries/alerts-lists.test.ts, and the two-pass invariant itself in
+// tests/lib/queries/filter-standard-facets.test.ts, which drives all three alert builders.
 
 import { describe, expect, it } from "vitest";
 import type {
@@ -15,21 +20,15 @@ import type {
 } from "@/app/server/actions/alerts";
 import { CHANNEL_TYPE_ORDER } from "@/components/alerts/channel-meta";
 import {
-	activityFacets,
 	CHANNEL_STATUS_VALUES,
-	channelFacets,
 	channelStatusKey,
 	DEFAULT_ACTIVITY_FILTERS,
 	DEFAULT_CHANNEL_FILTERS,
 	DEFAULT_POLICY_FILTERS,
-	DELIVERY_STATUS_ORDER,
-	filterChannels,
-	filterDeliveries,
-	filterPolicies,
+	DELIVERY_STATUS_LABEL,
 	normalizeActivityQuery,
 	normalizeChannelsQuery,
 	normalizePoliciesQuery,
-	policyFacets,
 	policyKindKey,
 	policyStatusKey,
 } from "@/components/alerts/alerts-query";
@@ -172,8 +171,11 @@ describe("drift guards", () => {
 		);
 	});
 
-	it("orders every alert_delivery_status from the DB enum", () => {
-		expect([...DELIVERY_STATUS_ORDER].sort()).toEqual(
+	it("labels every alert_delivery_status the DB enum can produce", () => {
+		// The chip ROW's order moved to lib/queries/alerts-lists.ts with the facet that
+		// produces it (#4890); what stays client-side is the label map, and the drift this
+		// guards is a new enum value arriving with no human string for it.
+		expect(Object.keys(DELIVERY_STATUS_LABEL).sort()).toEqual(
 			[...alertDeliveryStatus.enumValues].sort(),
 		);
 	});
@@ -247,143 +249,6 @@ describe("normalize (query-key stability)", () => {
 		expect(
 			normalizeActivityQuery({ search: "", status: ["dead", "sent", "dead"] }),
 		).toEqual({ status: ["dead", "sent"] });
-	});
-});
-
-describe("filterChannels", () => {
-	it("returns the whole universe for an empty query", () => {
-		expect(filterChannels(CHANNELS, {})).toHaveLength(CHANNELS.length);
-	});
-
-	it("matches search against name, type slug and transport label", () => {
-		expect(filterChannels(CHANNELS, { search: "security" }).map((c) => c.id)).toEqual([
-			"c3",
-		]);
-		expect(filterChannels(CHANNELS, { search: "slack" }).map((c) => c.id)).toEqual([
-			"c1",
-			"c3",
-		]);
-		// "Google Chat" is ONLY the transport's display name — neither the row's name
-		// ("Team room") nor its type slug ("googlechat") contains that string.
-		expect(
-			filterChannels(CHANNELS, { search: "Google Chat" }).map((c) => c.id),
-		).toEqual(["c5"]);
-	});
-
-	it("intersects type and status selections", () => {
-		expect(
-			filterChannels(CHANNELS, { types: ["slack"], status: ["verified"] }).map(
-				(c) => c.id,
-			),
-		).toEqual(["c1"]);
-	});
-
-	it("treats a status selection as a union across its values", () => {
-		expect(
-			filterChannels(CHANNELS, { status: ["paused", "unverified"] }).map((c) => c.id),
-		).toEqual(["c2", "c3"]);
-	});
-});
-
-describe("filterPolicies", () => {
-	it("matches search against name and description", () => {
-		expect(filterPolicies(POLICIES, { search: "pdp" }).map((p) => p.id)).toEqual([
-			"p2",
-		]);
-	});
-
-	it("filters by status and by kind", () => {
-		expect(filterPolicies(POLICIES, { status: ["off"] }).map((p) => p.id)).toEqual([
-			"p3",
-		]);
-		expect(filterPolicies(POLICIES, { kinds: ["security"] }).map((p) => p.id)).toEqual(
-			["p2"],
-		);
-	});
-
-	it("keeps a policy routing to ANY selected channel", () => {
-		expect(filterPolicies(POLICIES, { channels: ["c2"] }).map((p) => p.id)).toEqual([
-			"p2",
-		]);
-		expect(filterPolicies(POLICIES, { channels: ["c1"] }).map((p) => p.id)).toEqual([
-			"p1",
-			"p2",
-		]);
-		// A channel nothing routes to filters everything out rather than matching all.
-		expect(filterPolicies(POLICIES, { channels: ["c4"] })).toEqual([]);
-	});
-});
-
-describe("filterDeliveries", () => {
-	it("filters the ledger by status and free text", () => {
-		expect(filterDeliveries(DELIVERIES, { status: ["failed"] }).map((d) => d.id)).toEqual(
-			["d2"],
-		);
-		expect(filterDeliveries(DELIVERIES, { search: "webhook" }).map((d) => d.id)).toEqual(
-			["d2", "d3"],
-		);
-		expect(
-			filterDeliveries(DELIVERIES, { search: "job.failed" }).map((d) => d.id),
-		).toEqual(["d2"]);
-	});
-});
-
-describe("facets are computed over the UNFILTERED universe", () => {
-	it("counts channel transports and states across every row", () => {
-		const facets = channelFacets(CHANNELS);
-		expect(facets.types).toEqual([
-			{ value: "slack", label: "Slack", count: 2 },
-			{ value: "email", label: "Email", count: 1 },
-			{ value: "webhook", label: "Webhook", count: 1 },
-			{ value: "googlechat", label: "Google Chat", count: 1 },
-		]);
-		expect(facets.status).toEqual([
-			{ value: "verified", label: "Verified", count: 3 },
-			{ value: "unverified", label: "Not verified", count: 1 },
-			{ value: "paused", label: "Paused", count: 1 },
-		]);
-	});
-
-	it("omits values no row has, so the bar never offers a dead option", () => {
-		const facets = channelFacets([opsSlack]);
-		expect(facets.types.map((o) => o.value)).toEqual(["slack"]);
-		expect(facets.status.map((o) => o.value)).toEqual(["verified"]);
-	});
-
-	it("does not shrink when a selection is applied — the standard's rule", () => {
-		const all = channelFacets(CHANNELS);
-		const narrowed = filterChannels(CHANNELS, { types: ["slack"] });
-		expect(narrowed).toHaveLength(2);
-		// Facets are a function of the universe, never of the resolved rows.
-		expect(channelFacets(CHANNELS)).toEqual(all);
-		expect(channelFacets(narrowed)).not.toEqual(all);
-	});
-
-	it("offers every configured channel as a policy facet, routed-to or not", () => {
-		const facets = policyFacets(POLICIES, CHANNELS);
-		expect(facets.channels).toEqual([
-			{ value: "c1", label: "Ops Slack", count: 2 },
-			{ value: "c2", label: "On-call mail", count: 1 },
-			{ value: "c3", label: "Security Slack", count: 0 },
-			{ value: "c4", label: "Audit sink", count: 0 },
-			{ value: "c5", label: "Team room", count: 0 },
-		]);
-		expect(facets.status).toEqual([
-			{ value: "enabled", label: "Enabled", count: 2 },
-			{ value: "off", label: "Off", count: 1 },
-		]);
-		expect(facets.kinds).toEqual([
-			{ value: "security", label: "Security", count: 1 },
-			{ value: "operational", label: "Operational", count: 2 },
-		]);
-	});
-
-	it("counts a delivery ledger by status in presentation order", () => {
-		expect(activityFacets(DELIVERIES).status).toEqual([
-			{ value: "sent", label: "Sent", count: 1 },
-			{ value: "failed", label: "Failed", count: 1 },
-			{ value: "dead", label: "Dead", count: 1 },
-		]);
 	});
 });
 

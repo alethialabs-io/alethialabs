@@ -129,42 +129,6 @@ export function RunnersToolbar({
 	);
 }
 
-/** Pure predicate: does a runner pass the active filters? Exported so the page reuses the
- *  exact operator/cloud/region/version semantics the chips imply. */
-export function matchesRunnerFilters(
-	runner: {
-		status: string | null;
-		operator: string;
-		provisioning: string | null;
-		supported_providers: string[] | null;
-		location: string | null;
-		version: string | null;
-		runner_releases: { version: string } | null;
-	},
-	filters: RunnerFilters,
-): boolean {
-	if (filters.statuses.length && !filters.statuses.includes(runner.status ?? "OFFLINE")) {
-		return false;
-	}
-	if (filters.operators.length) {
-		const key =
-			runner.operator === "managed" ? "managed" : (runner.provisioning ?? "registered");
-		if (!filters.operators.includes(key)) return false;
-	}
-	if (filters.clouds.length) {
-		const providers = runner.supported_providers;
-		const matched =
-			!providers || providers.length === 0
-				? filters.clouds.includes("any")
-				: providers.some((p) => filters.clouds.includes(p));
-		if (!matched) return false;
-	}
-	if (filters.regions.length && !(runner.location && filters.regions.includes(runner.location))) {
-		return false;
-	}
-	if (filters.versions.length) {
-		const v = runner.runner_releases?.version ?? runner.version;
-		if (!v || !filters.versions.includes(v)) return false;
-	}
-	return true;
-}
+// The predicate that used to live here moved to `lib/queries/runners.ts` with the filtering
+// itself (#4890). A filter BAR is the wrong home for "does this row match": the bar renders
+// the selections, the SERVER decides what they select.
