@@ -10,24 +10,35 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ByoChartDialog } from "@/components/design-project/byo/byo-chart-dialog";
+import {
+	ByoChartDialog,
+	EXAMPLE_OCI_CHART_REF,
+	STARTER_CHART_PATH,
+	STARTER_CHART_REPO_URL,
+} from "@/components/design-project/byo/byo-chart-dialog";
 
 const { attachByoChart } = vi.hoisted(() => ({ attachByoChart: vi.fn() }));
 vi.mock("@/app/server/actions/byo-charts", () => ({
 	attachByoChart: (input: unknown) => attachByoChart(input),
 }));
 
+// The stub forwards `placeholder` on purpose: the real selector renders it as the empty trigger's
+// label, so it is the example the user actually reads, and a stub that dropped it would make the
+// worked-example assertions below pass over a dialog showing nothing.
 vi.mock("@/components/repository-selector", () => ({
 	RepositorySelector: ({
 		value,
 		onChange,
+		placeholder,
 	}: {
 		value: string;
 		onChange: (v: string) => void;
+		placeholder?: string;
 	}) => (
 		<input
 			aria-label="Chart repository"
 			value={value}
+			placeholder={placeholder}
 			onChange={(e) => onChange(e.target.value)}
 		/>
 	),
@@ -175,4 +186,172 @@ describe("ByoChartDialog — git source", () => {
 			id: "payments-helm",
 		});
 	});
+});
+
+// ── THE WORKED EXAMPLE IS REAL (#4114) ───────────────────────────────────────────────────────────
+//
+// The dialog is where a user first meets the BYO chart contract, and it used to meet them with
+// `acme/payments-helm` and `oci://ghcr.io/acme/payments` — neither of which resolves. The fix is
+// only worth as much as what stops it rotting back, so there are three layers here and they answer
+// different questions:
+//
+//   1. the constants are what we verified      — an exact pin, fails on any edit
+//   2. nothing ELSE repository-shaped is shown — a sweep of every step of both branches, so a
+//      newly invented example reds even in a step nobody thought to pin
+//   3. the pinned things still exist           — opt-in, because it needs the network
+//
+// Layer 2 is the one that matters: layer 1 only sees the values someone remembered to list, and a
+// future step with its own fictional placeholder would sail past it. Note the test fixtures ABOVE
+// keep their `acme` values deliberately — a fixture is an input to an assertion, not a suggestion
+// to a user, and only what the dialog SHOWS is swept.
+
+/** Every repository-shaped example currently on screen — rendered text plus placeholder attributes,
+ * which is where this dialog puts most of them. An input's typed `value` is excluded on purpose:
+ * that is the user's own text, not the product's example. */
+function shownRepoExamples(): string[] {
+	const placeholders = Array.from(document.body.querySelectorAll("[placeholder]")).map(
+		(el) => el.getAttribute("placeholder") ?? "",
+	);
+	const sources = [document.body.textContent ?? "", ...placeholders];
+	return sources.flatMap(
+		(s) => s.match(/(?:https?:\/\/[^\s"'<>)]*github[^\s"'<>)]*|oci:\/\/[^\s"'<>)]+)/g) ?? [],
+	);
+}
+
+describe("ByoChartDialog — the worked example resolves", () => {
+	it("pins the repository, chart path and OCI reference that were verified", () => {
+		// Changed one of these? Then fetch the new value before you change the line — the point of
+		// the issue is that the example is copy-pasteable, and only a real fetch says whether it is.
+		expect(STARTER_CHART_REPO_URL).toBe(
+			"https://github.com/alethialabs-io/alethia-starter-chart",
+		);
+		// `chart`, not `charts/<name>`: the starter repo holds one chart at the top level.
+		expect(STARTER_CHART_PATH).toBe("chart");
+		expect(EXAMPLE_OCI_CHART_REF).toBe("oci://ghcr.io/stefanprodan/charts/podinfo");
+	});
+
+	it("offers the starter repository and its chart path on the git branch", async () => {
+		const user = userEvent.setup();
+		renderDialog();
+
+		await user.click(next());
+		expect(screen.getByLabelText(/chart repository/i)).toHaveAttribute(
+			"placeholder",
+			STARTER_CHART_REPO_URL,
+		);
+		// And says it out loud, for the user who has no chart of their own to select.
+		expect(screen.getByText(/no chart of your own yet/i)).toBeInTheDocument();
+
+		await user.type(screen.getByLabelText(/chart repository/i), STARTER_CHART_REPO_URL);
+		await user.click(next());
+		expect(screen.getByLabelText(/chart path/i)).toHaveAttribute(
+			"placeholder",
+			STARTER_CHART_PATH,
+		);
+	});
+
+	it("offers a pullable chart reference on the OCI branch", async () => {
+		const user = userEvent.setup();
+		renderDialog();
+
+		await user.click(screen.getByRole("radio", { name: /OCI registry/i }));
+		await user.click(next());
+		expect(screen.getByLabelText(/chart reference/i)).toHaveAttribute(
+			"placeholder",
+			EXAMPLE_OCI_CHART_REF,
+		);
+	});
+
+	it("shows no repository example but those two, on any step of either branch", async () => {
+		const user = userEvent.setup();
+		const seen: string[] = [];
+		const sweep = () => seen.push(...shownRepoExamples());
+
+		// Git: Source → Repository → Chart path → Ref → Review.
+		const git = renderDialog();
+		sweep();
+		await user.click(next());
+		sweep();
+		await user.type(screen.getByLabelText(/chart repository/i), STARTER_CHART_REPO_URL);
+		await user.click(next());
+		sweep();
+		await user.type(screen.getByLabelText(/chart path/i), STARTER_CHART_PATH);
+		await user.click(next());
+		sweep();
+		await user.click(next());
+		sweep();
+		git.unmount();
+
+		// OCI: Source → Registry → Version → Review.
+		renderDialog();
+		await user.click(screen.getByRole("radio", { name: /OCI registry/i }));
+		await user.click(next());
+		sweep();
+		await user.type(screen.getByLabelText(/chart reference/i), EXAMPLE_OCI_CHART_REF);
+		await user.click(next());
+		sweep();
+		await user.click(next());
+		sweep();
+
+		// The sweep must have SEEN something, or an empty result would read as a clean one.
+		expect(seen.length).toBeGreaterThan(0);
+		const allowed = new Set([STARTER_CHART_REPO_URL, EXAMPLE_OCI_CHART_REF]);
+		// Listed, not counted: a failure has to name the invented example, not just deny a total.
+		expect([...new Set(seen)].filter((e) => !allowed.has(e))).toEqual([]);
+		expect(document.body.textContent ?? "").not.toMatch(/acme/i);
+	});
+});
+
+// Opt-in, and OFF by default: the unit suite is hermetic (vitest.config.ts: "no external services,
+// runs everywhere"), and a test that reds because GitHub is slow would teach people to ignore it.
+// What it buys is the half no offline test can reach — a repository can be renamed, made private or
+// deleted without any file in this monorepo changing, and every assertion above would stay green
+// over an example that 404s. Run it with ALETHIA_CHECK_LIVE_EXAMPLES=1 whenever you touch these
+// constants; #4910 puts it on a schedule, which is the only thing that makes it notice rot nobody
+// went looking for.
+const LIVE = process.env.ALETHIA_CHECK_LIVE_EXAMPLES === "1";
+
+/** Narrows a registry's token response to the bearer token it granted, or `undefined` when it
+ * granted none — which is how a registry says "not anonymously, you don't". */
+function bearerTokenOf(body: unknown): string | undefined {
+	if (typeof body !== "object" || body === null || !("token" in body)) return undefined;
+	const { token } = body;
+	return typeof token === "string" ? token : undefined;
+}
+
+describe.runIf(LIVE)("ByoChartDialog — the worked example, fetched for real", () => {
+	it("the starter repository is public, a template, and holds Chart.yaml at the offered path", async () => {
+		// Derived from the constant, never retyped: a copy here could agree with itself while the
+		// dialog showed something else.
+		const slug = new URL(STARTER_CHART_REPO_URL).pathname.replace(/^\//, "");
+		const repo = await fetch(`https://api.github.com/repos/${slug}`);
+		expect(repo.status).toBe(200);
+		const meta: unknown = await repo.json();
+		expect(meta).toMatchObject({ private: false, is_template: true });
+
+		const chart = await fetch(
+			`https://api.github.com/repos/${slug}/contents/${STARTER_CHART_PATH}/Chart.yaml`,
+		);
+		expect(chart.status).toBe(200);
+	}, 30_000);
+
+	it("the OCI chart reference is pullable with no credential", async () => {
+		const ref = EXAMPLE_OCI_CHART_REF.replace(/^oci:\/\//, "");
+		const [host, ...rest] = ref.split("/");
+		const path = rest.join("/");
+		const auth = await fetch(
+			`https://${host}/token?scope=repository:${path}:pull&service=${host}`,
+		);
+		expect(auth.status).toBe(200);
+		const granted: unknown = await auth.json();
+		// A registry answers an anonymous token request for a repository nobody may pull with an
+		// `errors` body and no token, so the token's presence IS the assertion.
+		const token = bearerTokenOf(granted);
+		expect(token).toEqual(expect.any(String));
+
+		const tags = await fetch(`https://${host}/v2/${path}/tags/list?n=1`, {
+			headers: { Authorization: `Bearer ${token}` },
+		});
+		expect(tags.status).toBe(200);
+	}, 30_000);
 });
