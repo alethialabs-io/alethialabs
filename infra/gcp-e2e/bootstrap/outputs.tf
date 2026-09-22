@@ -10,3 +10,8 @@ output "state_bucket_url" {
   description = "gs:// URL of the state bucket — use it to list generations when verifying a migration."
   value       = google_storage_bucket.tofu_state.url
 }
+
+output "state_log_bucket" {
+  description = "The GCS bucket receiving the state bucket's usage logs (#4903). Not a backend target — nothing puts state here. Read it with `gcloud storage ls gs://<this>/` when you need to know who touched state."
+  value       = google_storage_bucket.tofu_state_logs.name
+}
