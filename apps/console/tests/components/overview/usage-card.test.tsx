@@ -7,6 +7,7 @@
 // the "% used" caption beside it must not contradict that by saying "0% used".
 
 import { render, screen } from "@testing-library/react";
+import { money } from "@repo/format";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
 	AiUsageSummary,
@@ -35,7 +36,7 @@ const usage = (over: Partial<UsageReport> = {}): UsageReport => ({
 	usedMinutes: 0.9433333333333334,
 	includedMinutes: 200,
 	overageMinutes: 0,
-	overageCost: 0,
+	overageCost: money(0, "usd"),
 	pct: 0.9433333333333334 / 200,
 	approaching: false,
 	overLimit: false,
@@ -61,8 +62,7 @@ const billing = (over: Partial<BillingSummary> = {}): BillingSummary => ({
 	cancelAtPeriodEnd: false,
 	seats: null,
 	memberCount: 3,
-	unitAmountUsd: null,
-	currency: "usd",
+	unitAmount: null,
 	...over,
 });
 

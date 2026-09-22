@@ -14,6 +14,7 @@ import {
 	PAID_AI_PLANS,
 	PAID_PLANS,
 	PLAN_CATALOG,
+	planIncludedCreditCents,
 	planMeta,
 	planUnitAmountCents,
 } from "../src/index";
@@ -49,23 +50,37 @@ describe("PLAN_CATALOG invariants", () => {
 	it("marks Pro as per-seat with an included usage credit", () => {
 		const team = planMeta("team");
 		expect(team.perSeat).toBe(true);
-		expect(team.priceMonthlyUsd).toBeGreaterThan(0);
-		expect(team.includedCreditUsd).toBeGreaterThan(0);
+		expect(team.priceMonthly?.usd).toBeGreaterThan(0);
+		expect(team.includedCredit?.usd).toBeGreaterThan(0);
 	});
 
 	it("prices Pro in both USD and EUR", () => {
 		const team = planMeta("team");
-		expect(team.priceMonthlyEur).toBeGreaterThan(0);
+		expect(team.priceMonthly?.eur).toBeGreaterThan(0);
 		// EUR is FX-adjusted, not parity.
-		expect(team.priceMonthlyEur).not.toBe(team.priceMonthlyUsd);
+		expect(team.priceMonthly?.eur).not.toBe(team.priceMonthly?.usd);
 	});
 });
 
 describe("planUnitAmountCents", () => {
 	it("returns the per-currency amount in cents (default USD)", () => {
-		expect(planUnitAmountCents("team")).toBe((planMeta("team").priceMonthlyUsd ?? 0) * 100);
+		// `priceMonthly` is MINOR units since #4176 part (b), so this is a LOOKUP and the
+		// `* 100` both sides of it used to carry is gone.
+		expect(planUnitAmountCents("team")).toBe(planMeta("team").priceMonthly?.usd);
 		expect(planUnitAmountCents("team", "usd")).toBe(planUnitAmountCents("team"));
-		expect(planUnitAmountCents("team", "eur")).toBe((planMeta("team").priceMonthlyEur ?? 0) * 100);
+		expect(planUnitAmountCents("team", "eur")).toBe(planMeta("team").priceMonthly?.eur);
+	});
+
+	// THE UNIT IS THE THING THIS PINS, and an identity against the catalog cannot: if every
+	// number in `priceMonthly` were divided by 100 tomorrow, the two assertions above would
+	// still pass and Stripe would be told to charge 20 cents a seat. A literal is the only
+	// assertion that fails on that, and it fails at the place the amount is SENT.
+	it("hands Stripe minor units — $20 / seat is 2000, not 20", () => {
+		expect(planUnitAmountCents("team")).toBe(2000);
+		expect(planUnitAmountCents("team", "eur")).toBe(1800);
+		expect(planIncludedCreditCents("team")).toBe(2000);
+		expect(planIncludedCreditCents("team", "eur")).toBe(1800);
+		expect(planIncludedCreditCents("community")).toBe(0);
 	});
 
 	it("throws for a plan without a numeric price (Enterprise)", () => {
@@ -90,21 +105,21 @@ describe("AI plan catalog (final pricing)", () => {
 	it("prices AI Plus at $20 / mo (€18)", () => {
 		const plus = aiPlanMeta("ai_plus");
 		expect(plus.priceLabel).toBe("$20 / mo");
-		expect(plus.priceMonthlyUsd).toBe(20);
-		expect(plus.priceMonthlyEur).toBe(18);
+		expect(plus.priceMonthly?.usd).toBe(2000);
+		expect(plus.priceMonthly?.eur).toBe(1800);
 	});
 
 	it("prices AI Max at $100 / mo (€90)", () => {
 		const max = aiPlanMeta("ai_max");
 		expect(max.priceLabel).toBe("$100 / mo");
-		expect(max.priceMonthlyUsd).toBe(100);
-		expect(max.priceMonthlyEur).toBe(90);
+		expect(max.priceMonthly?.usd).toBe(10000);
+		expect(max.priceMonthly?.eur).toBe(9000);
 	});
 
 	it("keeps AI Free free", () => {
 		const free = aiPlanMeta("ai_free");
 		expect(free.paid).toBe(false);
-		expect(free.priceMonthlyUsd).toBe(0);
+		expect(free.priceMonthly?.usd).toBe(0);
 	});
 
 	it("never leaks model names into user-facing copy", () => {

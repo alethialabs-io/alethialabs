@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The plan's monthly "Included credit" (catalog `includedCreditUsd`) made real, via
+// The plan's monthly "Included credit" (catalog `includedCredit`) made real, via
 // Stripe Billing credit grants: a monetary credit scoped to metered prices that draws
 // down before the customer is invoiced for overage. Granted once per billing period
 // (idempotent on the period), expiring at period end so unused credit doesn't roll over.
@@ -17,12 +17,12 @@ import type Stripe from "stripe";
 import { isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
 import { planFromSubscription, planItem } from "@/lib/billing/sync";
-import { planMeta } from "@repo/plan-catalog";
+import { planIncludedCreditCents, planMeta } from "@repo/plan-catalog";
 
 /**
  * Ensures the subscription's current period has its plan's included usage credit (a
  * Stripe monetary credit grant scoped to metered usage). No-op unless Stripe is wired,
- * the sub is active, the plan has an `includedCreditUsd`, and no grant for this period
+ * the sub is active, the plan has an `includedCredit`, and no grant for this period
  * exists yet. Best-effort: errors are logged, never thrown.
  */
 export async function ensureIncludedCredit(sub: Stripe.Subscription): Promise<void> {
@@ -53,8 +53,13 @@ export async function ensureIncludedCredit(sub: Stripe.Subscription): Promise<vo
 		// so planForPriceId alone returns null and the org would silently get zero included credit.
 		const plan = planFromSubscription(sub, item?.price.id);
 		if (!plan) return;
-		const usd = planMeta(plan).includedCreditUsd ?? 0;
-		if (usd <= 0) return;
+		// MINOR units straight from the catalog (#4176 part b). It read `includedCreditUsd`, a
+		// major-unit field, and multiplied by 100 further down; `planIncludedCreditCents` is the
+		// one place that lookup lives now. The grant is denominated in USD because the credit
+		// ledger is — see the `usd` name, which is what this variable means rather than what a
+		// catalog field happened to be called.
+		const usdCents = planIncludedCreditCents(plan);
+		if (usdCents <= 0) return;
 
 		const periodEnd = item?.current_period_end;
 		const periodKey = String(item?.current_period_start ?? "");
@@ -83,7 +88,7 @@ export async function ensureIncludedCredit(sub: Stripe.Subscription): Promise<vo
 			category: "promotional",
 			amount: {
 				type: "monetary",
-				monetary: { currency: "usd", value: Math.round(usd * 100) },
+				monetary: { currency: "usd", value: usdCents },
 			},
 			applicability_config: { scope: { price_type: "metered" } },
 			...(periodEnd ? { expires_at: periodEnd } : {}),

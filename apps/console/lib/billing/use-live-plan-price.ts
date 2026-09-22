@@ -8,12 +8,14 @@
 // value as the synchronous fallback while loading / when Stripe isn't configured.
 
 import { useEffect, useState } from "react";
+import { type Money, money } from "@repo/format";
 import {
 	type AiPlanId,
 	aiPlanMeta,
 	type PlanId,
+	type PriceByCurrency,
 	type SupportedCurrency,
-	formatMoney,
+	formatPriceLabel,
 	formatSeatPrice,
 	planMeta,
 	shortInterval,
@@ -40,14 +42,35 @@ function loadPrices(): Promise<LivePlanPriceMap> {
 }
 
 export interface LivePlanPriceView {
-	/** Live per-seat/flat monthly amount in the selected currency (catalog fallback while
-	 *  loading); null = custom (Enterprise). */
-	unitAmount: number | null;
+	/** Live per-seat/flat monthly amount in the selected currency, MINOR units (catalog fallback
+	 *  while loading); null = custom (Enterprise).
+	 *
+	 *  A `Money` rather than a bare number since #4176 part (b), which is the point of that unit:
+	 *  the amount and the currency arrive at a consumer together, so a checkout summary cannot
+	 *  render this figure beside a symbol it chose for itself. `currency` below is the currency
+	 *  this view was ASKED for and is the same code — it stays because a null `unitAmount` still
+	 *  has to say which currency it has no amount in. */
+	unitAmount: Money | null;
 	/** The currency this view is priced in. */
 	currency: SupportedCurrency;
 	/** Formatted label for the selected currency, e.g. "€18 / seat / mo". */
 	label: string;
 	loading: boolean;
+}
+
+/**
+ * The catalog's own figure for one currency as a `Money` — the synchronous fallback both hooks
+ * show while the live map is in flight and when Stripe is unconfigured.
+ *
+ * `priceMonthly` is minor units, so there is nothing to convert; this exists to attach the
+ * currency, and to keep the `?.[currency]` lookup in one place rather than four.
+ */
+function catalogAmount(
+	prices: PriceByCurrency | undefined,
+	currency: SupportedCurrency,
+): Money | null {
+	const minor = prices?.[currency];
+	return minor == null ? null : money(minor, currency);
 }
 
 /**
@@ -84,16 +107,14 @@ export function useLivePlanPrice(
 	}, [plan]);
 
 	const unitAmount =
-		currency === "eur"
-			? (data?.unitAmountEur ?? meta.priceMonthlyEur ?? null)
-			: (data?.unitAmountUsd ?? meta.priceMonthlyUsd ?? null);
+		data?.amounts[currency] ?? catalogAmount(meta.priceMonthly, currency);
 	const interval = data?.interval ?? "month";
 	const label =
-		unitAmount == null
+		unitAmount === null
 			? meta.priceLabel
 			: meta.perSeat
-				? formatSeatPrice(Math.round(unitAmount * 100), currency, interval)
-				: `${formatMoney(Math.round(unitAmount * 100), currency)} / ${shortInterval(interval)}`;
+				? formatSeatPrice(unitAmount.minor, currency, interval)
+				: `${formatPriceLabel(unitAmount.minor, currency)} / ${shortInterval(interval)}`;
 
 	return { unitAmount, currency, label, loading: data === null };
 }
@@ -147,15 +168,13 @@ export function useLiveAiPrice(
 	}, [tier]);
 
 	const unitAmount =
-		currency === "eur"
-			? (data?.unitAmountEur ?? meta.priceMonthlyEur ?? null)
-			: (data?.unitAmountUsd ?? meta.priceMonthlyUsd ?? null);
+		data?.amounts[currency] ?? catalogAmount(meta.priceMonthly, currency);
 	const interval = data?.interval ?? "month";
 	// The free tier (unitAmount 0) shows its catalog label ("Free"), not "$0 / mo".
 	const label =
-		unitAmount == null || unitAmount === 0
+		unitAmount === null || unitAmount.minor === 0
 			? meta.priceLabel
-			: `${formatMoney(Math.round(unitAmount * 100), currency)} / ${shortInterval(interval)}`;
+			: `${formatPriceLabel(unitAmount.minor, currency)} / ${shortInterval(interval)}`;
 
 	return { unitAmount, currency, label, loading: data === null };
 }
