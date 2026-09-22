@@ -34,7 +34,7 @@ import { fileURLToPath } from "node:url";
 import {
 	aiPlanMeta,
 	aiPlanUnitAmountCents,
-	formatMoney,
+	formatPriceLabel,
 	planUnitAmountCents,
 } from "@repo/plan-catalog";
 import Stripe from "stripe";
@@ -52,7 +52,7 @@ const RUNNER_OVERAGE_CENTS_EUR = "1.1"; // €0.011 / minute (FX-adjusted from $
 const METER_EVENT = "alethia_runner_minutes"; // RUNNER_MINUTES_METER_EVENT
 const LK_PRO = "alethia_pro_monthly";
 const LK_METER_PRO = "alethia_runner_minutes_pro";
-const PRO_SEAT_LABEL = `${formatMoney(PRO_UNIT_AMOUNT, "usd")} / seat / mo`;
+const PRO_SEAT_LABEL = `${formatPriceLabel(PRO_UNIT_AMOUNT, "usd")} / seat / mo`;
 
 // ── Standalone AI subscription tiers — flat monthly `licensed` prices. Amounts come from
 // the catalog SSOT (@repo/plan-catalog `aiPlanUnitAmountCents`) — the final maintainer-
@@ -213,7 +213,7 @@ async function ensureFlatLicensedPrice(
 		await stripe.prices.update(existing.id, { active: false });
 		console.log(
 			`  ↻ reconciled ${lookupKey} to the catalog: archived ${existing.id} → ${created.id} ` +
-				`(${formatMoney(unitAmount, "usd")} / ${formatMoney(eurAmount, "eur")})`,
+				`(${formatPriceLabel(unitAmount, "usd")} / ${formatPriceLabel(eurAmount, "eur")})`,
 		);
 	}
 	return created;
@@ -260,7 +260,7 @@ async function main(): Promise<void> {
 	);
 	console.log(`✓ Pro product ${proProduct.id}`);
 	console.log(
-		`✓ Pro price   ${proPrice.id}  (${LK_PRO}, ${formatMoney(PRO_UNIT_AMOUNT, "usd")} / ${formatMoney(PRO_UNIT_AMOUNT_EUR, "eur")})`,
+		`✓ Pro price   ${proPrice.id}  (${LK_PRO}, ${formatPriceLabel(PRO_UNIT_AMOUNT, "usd")} / ${formatPriceLabel(PRO_UNIT_AMOUNT_EUR, "eur")})`,
 	);
 
 	// 2) Runner-minutes meter.
@@ -284,7 +284,7 @@ async function main(): Promise<void> {
 		`Alethia AI Plus — ${aiPlanMeta("ai_plus").priceLabel}`,
 	);
 	console.log(
-		`✓ AI Plus     ${aiPlusPrice.id}  (${LK_AI_PLUS}, ${formatMoney(AI_PLUS_UNIT_AMOUNT, "usd")} / ${formatMoney(AI_PLUS_UNIT_AMOUNT_EUR, "eur")})`,
+		`✓ AI Plus     ${aiPlusPrice.id}  (${LK_AI_PLUS}, ${formatPriceLabel(AI_PLUS_UNIT_AMOUNT, "usd")} / ${formatPriceLabel(AI_PLUS_UNIT_AMOUNT_EUR, "eur")})`,
 	);
 
 	const aiMaxProduct = await ensureProduct(stripe, "ai_max", "Alethia AI Max");
@@ -297,7 +297,7 @@ async function main(): Promise<void> {
 		`Alethia AI Max — ${aiPlanMeta("ai_max").priceLabel}`,
 	);
 	console.log(
-		`✓ AI Max      ${aiMaxPrice.id}  (${LK_AI_MAX}, ${formatMoney(AI_MAX_UNIT_AMOUNT, "usd")} / ${formatMoney(AI_MAX_UNIT_AMOUNT_EUR, "eur")})`,
+		`✓ AI Max      ${aiMaxPrice.id}  (${LK_AI_MAX}, ${formatPriceLabel(AI_MAX_UNIT_AMOUNT, "usd")} / ${formatPriceLabel(AI_MAX_UNIT_AMOUNT_EUR, "eur")})`,
 	);
 
 	// 5) Optional webhook endpoint (for the live runbook).

@@ -6,6 +6,7 @@
 // right affordance (paid → "Manage billing", Hobby → "Upgrade to Pro").
 
 import { render, screen } from "@testing-library/react";
+import { money } from "@repo/format";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
 	AiUsageSummary,
@@ -56,8 +57,7 @@ const summary = (over: Partial<BillingSummary> = {}): BillingSummary => ({
 	cancelAtPeriodEnd: false,
 	seats: 5,
 	memberCount: 3,
-	unitAmountUsd: 20,
-	currency: "usd",
+	unitAmount: money(2000, "usd"),
 	...over,
 });
 
@@ -65,7 +65,7 @@ const usage: UsageReport = {
 	usedMinutes: 320,
 	includedMinutes: 500,
 	overageMinutes: 0,
-	overageCost: 0,
+	overageCost: money(0, "usd"),
 	pct: 0.64,
 	approaching: false,
 	overLimit: false,
@@ -100,22 +100,19 @@ const ai: AiUsageSummary = {
 
 const aiPrices: LiveAiPriceMap = {
 	ai_free: {
-		unitAmountUsd: 0,
-		unitAmountEur: 0,
+		amounts: { usd: money(0, "usd"), eur: money(0, "eur") },
 		currency: "usd",
 		interval: "month",
 		label: "Free",
 	},
 	ai_plus: {
-		unitAmountUsd: 20,
-		unitAmountEur: 18,
+		amounts: { usd: money(2000, "usd"), eur: money(1800, "eur") },
 		currency: "usd",
 		interval: "month",
 		label: "$20 / mo",
 	},
 	ai_max: {
-		unitAmountUsd: 100,
-		unitAmountEur: 90,
+		amounts: { usd: money(10000, "usd"), eur: money(9000, "eur") },
 		currency: "usd",
 		interval: "month",
 		label: "$100 / mo",

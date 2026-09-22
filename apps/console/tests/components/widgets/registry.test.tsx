@@ -60,6 +60,10 @@ const FIXTURES: Record<string, { output: unknown; expectText: string }> = {
 		output: { tier: "ai_free", session_used: 3, session_budget: 10, weekly_used: 5, weekly_budget: 50, purchased_balance: 0 },
 		expectText: "ai_free",
 	},
+	// DELIBERATELY THE PRE-#4176 SHAPE — `unit_amount_usd` alone, no `unit_amount`/`currency`
+	// pair. This is exactly what `thread_widgets.data` holds for every billing widget pinned
+	// before part (b), and the fixture exists to prove those rows still parse and still render.
+	// The currency half is covered by its own case below.
 	get_billing_summary: {
 		output: { plan: "team", status: "active", seats: 5, member_count: 3, unit_amount_usd: 20, current_period_end: "2026-08-01" },
 		expectText: "team",
@@ -93,6 +97,38 @@ describe("WIDGET_REGISTRY", () => {
 			expect(container).toBeEmptyDOMElement();
 		});
 	}
+
+	// ── THE BILLING WIDGET'S TWO SNAPSHOT SHAPES (#4176 part b) ─────────────────────────────
+	//
+	// A widget's output is PERSISTED (`thread_widgets.data`), so the tool's wire shape has a
+	// second reader that no amount of type-checking reaches: rows written months ago. The
+	// registry has to render both, and "both" is not a thing one fixture can assert.
+	describe("get_billing_summary — old and new snapshots both render their amount", () => {
+		const def = WIDGET_REGISTRY.get_billing_summary;
+		const base = { plan: "team", status: "active", seats: 5, member_count: 3, current_period_end: "2026-08-01" };
+
+		it("renders a pre-pair snapshot from the deprecated USD field", () => {
+			if (!def) throw new Error("no get_billing_summary widget");
+			render(<def.Body output={{ ...base, unit_amount_usd: 20 }} />);
+			expect(screen.getByText("$20.00")).toBeInTheDocument();
+		});
+
+		it("prefers the currency-carrying pair, and a EUR amount renders in euros", () => {
+			if (!def) throw new Error("no get_billing_summary widget");
+			render(<def.Body output={{ ...base, unit_amount: 1800, currency: "eur" }} />);
+			expect(screen.getByText("€18.00")).toBeInTheDocument();
+		});
+
+		// THE PREFERENCE ORDER ITSELF. A snapshot carrying both — which is what a row written
+		// after part (b) looks like — must read the pair, not the deprecated field. Without this
+		// case, a `seatAmount` that checked `unit_amount_usd` first would pass both cases above.
+		it("reads the pair, not the deprecated field, when a snapshot carries both", () => {
+			if (!def) throw new Error("no get_billing_summary widget");
+			render(<def.Body output={{ ...base, unit_amount: 1800, currency: "eur", unit_amount_usd: 20 }} />);
+			expect(screen.getByText("€18.00")).toBeInTheDocument();
+			expect(screen.queryByText("$20.00")).not.toBeInTheDocument();
+		});
+	});
 
 	it("maps part types to entries and sizes blocks by kind", () => {
 		expect(widgetDefForPartType("tool-list_jobs")?.title).toBe("Jobs");
