@@ -212,8 +212,25 @@ jobs:
             > demand-runs.json
           jq -c '.[]' demand-runs.json | while read -r r; do
             id=$(printf '%s' "$r" | jq -r '.databaseId')
+            # snake_case, because this is the REST endpoint and REST answers in snake_case (#4934).
+            # It was written in camelCase — `gh run view --json`'s spelling — so `.startedAt` was
+            # null on every job, the select was false for all of them, `jobs` was `[]` for all 60
+            # runs, and ci-demand.mjs refused the partial number. Correctly: it is the one thing in
+            # this chain that was working. The workflow whose job is noticing red pipelines was
+            # itself red on 2026-09-20, -21 and -22 over one word's casing. And there is no
+            # `gh`-shaped alternative — `gh run view --json jobs` exposes no per-job `createdAt` at
+            # all, so REST is the only place the wait exists. Verified against a live run: this jq
+            # returns `{"created_at":"…21:28:18Z","started_at":"…21:30:17Z"}` — a real 119s wait.
+            #
+            # THE OTHER TWO DEFECTS IN THESE LINES ARE DELIBERATELY LEFT TO #4934, not overlooked:
+            # `|| echo '[]'` still reports an API FAILURE as an absence of jobs (harmless while the
+            # jq was wrong for every run — this fix ACTIVATES it, so #4934 is now the next thing to
+            # do here), and `select(.started_at != .created_at)` still drops every zero-wait job.
+            # That second one is a METRIC decision: removing it would change what the number means
+            # and break comparability with the published 2026-09-03 figures (5,376 min waiting vs
+            # 1,802 executing, 35.6 min median), so it is not something to change in passing.
             jobs=$(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs?per_page=100" \
-                     --jq '[.jobs[] | select(.startedAt != null and .startedAt != .createdAt) | {created_at:.createdAt, started_at:.startedAt}]' 2>/dev/null || echo '[]')
+                     --jq '[.jobs[] | select(.started_at != null and .started_at != .created_at) | {created_at, started_at}]' 2>/dev/null || echo '[]')
             printf '%s' "$r" | jq -c --argjson j "$jobs" \
               '{id:.databaseId, name, event, head_branch:.headBranch, conclusion, created_at:.createdAt, jobs:$j}'
           done | jq -s '.' > demand.json
