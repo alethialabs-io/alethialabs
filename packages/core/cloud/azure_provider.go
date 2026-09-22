@@ -256,7 +256,7 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		mergeProviderConfig(tfvars, r.ProviderConfig, azureRootReserved...)
 	}
 
-	if inst := resolveInstanceTypes("azure", config.Cluster); len(inst) > 0 {
+	if inst := ResolveInstanceTypes("azure", config.Cluster); len(inst) > 0 {
 		tfvars["aks_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {

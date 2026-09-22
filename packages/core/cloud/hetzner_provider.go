@@ -121,7 +121,7 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// amd64 default (cpx22 = 2 vCPU / 4 GB). cax11 (ARM) is capacity-unreliable and
 	// cpx11 is retired, so an amd64 shared-vCPU type is the reliably-provisionable default.
 	workerType := "cpx22"
-	if inst := resolveInstanceTypes("hetzner", config.Cluster); len(inst) > 0 {
+	if inst := ResolveInstanceTypes("hetzner", config.Cluster); len(inst) > 0 {
 		workerType = inst[0]
 	}
 

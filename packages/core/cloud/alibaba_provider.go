@@ -244,7 +244,7 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		mergeProviderConfig(tfvars, cache.ProviderConfig, alibabaRootReserved...)
 	}
 
-	if inst := resolveInstanceTypes("alibaba", config.Cluster); len(inst) > 0 {
+	if inst := ResolveInstanceTypes("alibaba", config.Cluster); len(inst) > 0 {
 		tfvars["ack_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {
