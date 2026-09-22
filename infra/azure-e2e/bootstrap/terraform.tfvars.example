@@ -41,3 +41,11 @@ state_writer_principal_ids = ["00000000-0000-0000-0000-000000000000"]
 
 # Soft-delete recovery window for state blobs and containers, in days (7-365).
 # state_retention_days = 30
+
+# Log Analytics workspace receiving the state account's blob access logs (#4903). Unique within the
+# resource group only, so the default rarely needs changing.
+# state_log_workspace_name = "alethia-tfstate-access"
+
+# How long those access records are kept (30-730). 90 days, not the 30 used for state soft-delete:
+# an unauthorized state read is noticed by its consequences, weeks later.
+# access_log_retention_days = 90
