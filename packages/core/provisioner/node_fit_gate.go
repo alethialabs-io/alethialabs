@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
+	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -19,6 +20,15 @@ import (
 // and then spent roughly thirty-five minutes failing to install ArgoCD, on a cluster whose
 // NetworkPolicy enforcement had silently never started either. The user's first and only signal was
 // `ArgoCD install failed` at the end, against a bill they had already incurred.
+//
+// ── WHICH shape is checked, and why that is not the obvious field ──
+//
+// The gate asks cloud.ResolveInstanceTypes, not `Cluster.InstanceTypes`. Its first version read the
+// field, and that left the defect fully reachable through the path this product PREFERS: a project
+// that describes its cluster with the cloud-indifferent `node_size` pins no instance type at all,
+// so the gate returned "nothing to check" and the resolver went on to pick `e2-medium` for a gcp
+// `node_size` of 2 vCPU / 4 GiB — the exact shape run 35499891484 measured failing. A guard on the
+// legacy field only is a guard most projects walk straight past.
 //
 // Everything about that is avoidable offline. catalog.ControlPlaneNodeFit computes the shape's
 // allocatable CPU from GKE's published reservation formula and compares it to the one shape that
@@ -76,12 +86,28 @@ func nodeFitBlock(provider string, config *types.ProjectConfig, dryRun bool) nod
 	if config == nil {
 		return nodeFitFinding{}
 	}
-	// A project that pins no machine type gets the template's own default, which this gate has no
-	// view of — resolveInstanceTypes returns nil in that case and never substitutes the catalog
-	// default. Checking the catalog default here would be checking a value the deploy will not use.
-	if len(config.Cluster.InstanceTypes) == 0 {
+	// WHICH machine types this deploy will actually buy — asked of cloud.ResolveInstanceTypes, the
+	// same function the providers use to build their tfvars, so the gate cannot check one shape
+	// while the apply buys another.
+	//
+	// This is deliberately NOT `config.Cluster.InstanceTypes`, and the difference is the whole
+	// reason this line exists. That field is the LEGACY, explicit override; the preferred way to
+	// describe a cluster here is the cloud-indifferent `node_size`, which the resolver maps to the
+	// nearest catalog SKU. On gcp a `node_size` of 2 vCPU / 4 GiB resolves to `e2-medium` — exactly
+	// the shape run 35499891484 measured unable to host the control plane. Reading the raw field
+	// left every abstract project unguarded, which is most of them.
+	//
+	// An empty result means the project pins nothing AND has no node_size, so the deploy takes the
+	// TEMPLATE's own default (gcp: `e2-standard-4`). That default is not this gate's to check: it
+	// lives in the .tf files, not the catalog, and checking a catalog value the deploy will not use
+	// would be worse than checking nothing.
+	instanceTypes := cloud.ResolveInstanceTypes(provider, config.Cluster)
+	if len(instanceTypes) == 0 {
 		return nodeFitFinding{}
 	}
+	// Did the user name this shape, or did we pick it for them? It changes what the message has to
+	// say: "e2-medium is too small" is baffling to somebody who never typed `e2-medium`.
+	resolvedFromNodeSize := len(config.Cluster.InstanceTypes) == 0
 
 	c, err := catalog.Load()
 	if err != nil {
@@ -94,7 +120,7 @@ func nodeFitBlock(provider string, config *types.ProjectConfig, dryRun bool) nod
 	// place a pod on ANY of them, so one too-small entry is enough to reproduce the defect — and it
 	// would be the hardest version of it to diagnose, because most pods would schedule.
 	var refused []catalog.NodeFit
-	for _, instanceType := range config.Cluster.InstanceTypes {
+	for _, instanceType := range instanceTypes {
 		if fit := c.ControlPlaneNodeFit(provider, instanceType); fit.Verdict == catalog.FitTooSmall {
 			refused = append(refused, fit)
 		}
@@ -109,6 +135,13 @@ func nodeFitBlock(provider string, config *types.ProjectConfig, dryRun bool) nod
 		if fit.Suggestion != "" {
 			fmt.Fprintf(&b, "\n    Use %q instead — the smallest shape in the catalog with room for the add-ons.", fit.Suggestion)
 		}
+	}
+	if resolvedFromNodeSize {
+		// Without this line the refusal names a machine type the user has never seen, in a project
+		// whose entire point was not having to know provider machine types. Say where it came from
+		// and give them the two ways out: ask for more, or pin the shape yourself.
+		fmt.Fprintf(&b, "\n    This shape was not pinned — it is what `node_size` (%s) resolves to on %s. "+
+			"Raise `node_size`, or pin `instance_types` explicitly.", nodeSizeSummary(config.Cluster.NodeSize), provider)
 	}
 	findings := b.String()
 
@@ -125,6 +158,17 @@ func nodeFitBlock(provider string, config *types.ProjectConfig, dryRun bool) nod
 				findings, SkipNodeFitGateEnv),
 		}
 	}
+}
+
+// nodeSizeSummary renders the abstract request a refused shape was resolved FROM, so the message
+// can quote it back. Nil is reachable in principle — a caller could pin nothing and carry no
+// node_size, and the resolver would return nothing for it — so it is handled rather than assumed
+// away; the gate is on the live deploy path and must not panic to report a finding.
+func nodeSizeSummary(ns *types.NodeSize) string {
+	if ns == nil {
+		return "unset"
+	}
+	return fmt.Sprintf("%g vCPU / %g GiB", ns.VCPU, ns.MemoryGB)
 }
 
 // skipNodeFitGate reads the escape hatch. Any non-empty value that is not an explicit falsehood

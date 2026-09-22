@@ -69,13 +69,13 @@ func TestResolveCacheNodeType(t *testing.T) {
 
 // TestResolveInstanceTypes: abstract node size resolves; explicit list wins.
 func TestResolveInstanceTypes(t *testing.T) {
-	got := resolveInstanceTypes("aws", types.ProjectClusterConfig{
+	got := ResolveInstanceTypes("aws", types.ProjectClusterConfig{
 		NodeSize: &types.NodeSize{VCPU: 2, MemoryGB: 4},
 	})
 	if len(got) != 1 || got[0] != "t3.medium" {
 		t.Errorf("aws 2/4 = %v, want [t3.medium]", got)
 	}
-	got = resolveInstanceTypes("gcp", types.ProjectClusterConfig{
+	got = ResolveInstanceTypes("gcp", types.ProjectClusterConfig{
 		InstanceTypes: []string{"e2-standard-4"},
 	})
 	if len(got) != 1 || got[0] != "e2-standard-4" {

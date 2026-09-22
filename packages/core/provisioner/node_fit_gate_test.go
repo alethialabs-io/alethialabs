@@ -108,6 +108,69 @@ func TestNodeFitGateChecksEVERYPinnedTypeNotJustTheFirst(t *testing.T) {
 	}
 }
 
+// clusterWithNodeSize builds the ABSTRACT form of the same request: no machine type pinned, just
+// the cloud-indifferent capability the product prefers.
+func clusterWithNodeSize(vcpu, memoryGB float64) *types.ProjectConfig {
+	cfg := &types.ProjectConfig{}
+	cfg.Cluster.NodeSize = &types.NodeSize{VCPU: vcpu, MemoryGB: memoryGB}
+	return cfg
+}
+
+// TestNodeFitGateSeesTheShapeNODESIZEResolvesTo is the second half of #3855 cause B, and the half
+// the first fix missed.
+//
+// The gate originally read `Cluster.InstanceTypes`, so it returned "nothing to check" for every
+// project that describes its cluster the PREFERRED way — abstractly. cloud.ResolveInstanceTypes
+// then mapped a gcp `node_size` of 2 vCPU / 4 GiB onto `e2-medium`, the exact shape run
+// 35499891484 measured unable to host the control plane, and the apply proceeded. The guard existed
+// and the defect was still fully reachable; only the legacy spelling of it was covered.
+func TestNodeFitGateSeesTheShapeNODESIZEResolvesTo(t *testing.T) {
+	got := nodeFitBlock("gcp", clusterWithNodeSize(2, 4), false)
+
+	if !got.Blocked {
+		t.Fatalf("an abstract node_size that resolves to e2-medium was allowed through — the gate is blind to the path the product prefers: %+v", got)
+	}
+	if !strings.Contains(got.Message, "e2-medium") {
+		t.Errorf("the refusal does not name the shape that was actually resolved:\n%s", got.Message)
+	}
+	// A user who never typed `e2-medium` must be told where it came from, or the refusal is a
+	// non-sequitur about a machine type they have never heard of.
+	for _, want := range []string{"not pinned", "node_size", "2 vCPU / 4 GiB", "e2-standard-2"} {
+		if !strings.Contains(got.Message, want) {
+			t.Errorf("the refusal never mentions %q, so the user cannot tell why this shape was chosen or how to change it:\n%s", want, got.Message)
+		}
+	}
+}
+
+// TestNodeFitGateLeavesAGOODNodeSizeAlone. The companion to the case above: the abstract path must
+// not become a source of false refusals, or the fix trades one defect for a worse one.
+func TestNodeFitGateLeavesAGOODNodeSizeAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		provider       string
+		vcpu, memoryGB float64
+	}{
+		{"a gcp node_size with room to spare", "gcp", 2, 8},
+		{"a cloud whose reservations are not modelled", "aws", 2, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := nodeFitBlock(tc.provider, clusterWithNodeSize(tc.vcpu, tc.memoryGB), false)
+			if got.Blocked || got.Message != "" {
+				t.Errorf("refused a shape it has no evidence against: %+v", got)
+			}
+		})
+	}
+}
+
+// TestNodeFitGateExplainsPinnedShapesWithoutTheNodeSizeAside. The "we picked this for you" sentence
+// belongs ONLY on a shape the user did not choose. On a pinned one it would be false.
+func TestNodeFitGateExplainsPinnedShapesWithoutTheNodeSizeAside(t *testing.T) {
+	got := nodeFitBlock("gcp", clusterWith("e2-medium"), false)
+	if strings.Contains(got.Message, "not pinned") {
+		t.Errorf("a shape the user pinned explicitly is described as one we chose for them:\n%s", got.Message)
+	}
+}
+
 // TestNodeFitGateOverrideProceedsButSTILLSPEAKS. An escape hatch that also silences the finding
 // turns a recorded decision into an invisible one; the job log is the only place this is written
 // down.
