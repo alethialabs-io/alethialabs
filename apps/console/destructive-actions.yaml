@@ -906,7 +906,14 @@ controls:
     # inbox in the same transaction; a deployment with no inbox (self-managed, no PRIVACY_EMAIL)
     # opens no case (#4875). A person fulfils it. The id
     # keeps its name because the census and the gate ledger key on it, not because the control
-    # deletes: the real erasure executor is #4854, and when it lands this row moves again.
+    # deletes.
+    #
+    # THE EXECUTOR LANDED (#4854) AND THIS ROW DID NOT MOVE, which is the answer and not an
+    # oversight. `fulfilErasure` really does delete and overwrite rows now — but it is gated on
+    # standing over the CASE, and the subject is deliberately NOT one of the grounds: an erasure
+    # needs a second party, so the person whose account it is cannot fulfil their own request.
+    # This control still only OPENS a request. If a self-service erasure is ever built it is a
+    # different mutation with its own row here, its own typed confirmation and its own e2e.
     mutation: requestMyErasure
     reach: [{ menu: "Account menu" }, { open: "Account settings" }]
     control: { role: button, name: "Request deletion" }

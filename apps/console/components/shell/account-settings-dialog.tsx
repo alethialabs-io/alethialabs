@@ -248,11 +248,13 @@ export function AccountSettingsDialog({
 					    PRIVACY CASE about the signed-in user, with identity recorded as verified by the session,
 					    and a person fulfils it. The case is emailed to the privacy inbox as it is opened, or it
 					    is not opened at all (#4875) — which is what lets the copy say it was "sent to the
-					    privacy team". It does not call `fulfilErasure`, which today writes a
-					    tombstone and deletes no row (#4854 tracks the executor). So the copy says a request is
-					    opened and never that anything was deleted — if the executor lands and this becomes a
-					    real erasure, the copy, `account.delete` in `destructive-actions.yaml` and
-					    `e2e/account-settings.spec.ts` all move with it.
+					    privacy team". It does not call `fulfilErasure` — which since #4854 DOES erase rows, and
+					    which REFUSES THE SUBJECT: fulfilment is gated on standing over the case and being its
+					    subject is not one of the grounds, because an erasure needs a second party. So the copy
+					    and the gate say the same thing — a request is opened, a person reviews it, and nothing
+					    is deleted at that moment. A self-service erasure would be a different mutation with its
+					    own row in `destructive-actions.yaml`, its own confirmation and its own
+					    `e2e/account-settings.spec.ts` coverage.
 
 					    The settings dialog CLOSES before the confirmation opens, rather than stacking the
 					    confirmation on top of it: `e2e/audit/destructive.spec.ts` finds the confirmation as the
