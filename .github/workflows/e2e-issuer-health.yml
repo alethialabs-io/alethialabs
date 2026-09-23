@@ -15,12 +15,13 @@
 #
 # THE SAME TRACKER MECHANISM as workflow-health.yml — ONE long-lived issue keyed on a LABEL
 # (`tracker:e2e-issuer-health`), never on the title (#3252), updated in place, closed when healthy, and
-# more than one match REPORTED rather than silently absorbed. Read that file's header for why each of
-# those is the way it is.
+# more than one match REPORTED rather than silently absorbed — plus one thing those trackers only
+# CLAIM: a new failure REOPENS the most recently closed tracker instead of filing a fresh issue, so
+# the history stays in one thread.
 #
 # THREE OUTCOMES, and only two of them are verdicts:
 #   0  healthy       → close the tracker if one is open
-#   2  findings      → open or update the tracker; the job stays GREEN (the issue is the signal —
+#   2  findings      → update, reopen or (first time only) create the tracker; the job stays GREEN (the issue is the signal —
 #                      a second red surface for the same fact is noise; workflow-health.yml's rule)
 #   *  blind         → the instrument could not look (unreadable pin, no openssl, moved tfvars). The
 #                      job FAILS: "I did not check" must never render as "fine" — and workflow-health's
@@ -40,24 +41,31 @@ on:
     - cron: "41 */6 * * *" # every six hours, off the hour
   workflow_dispatch:
 
+# Least privilege, per job (#5004 review): the job that runs repository code and touches the network
+# holds a read-only token and no persisted credential; only the job that files the tracker can write
+# issues, and it checks nothing out and runs no repository code.
 permissions:
   contents: read
-  issues: write # upsert the one tracking issue
 
 concurrency:
   group: e2e-issuer-health
   cancel-in-progress: true
 
 jobs:
-  health:
+  measure:
     name: Issuer health (discovery · JWKS · key age · TLS pin · latency)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      code: ${{ steps.health.outputs.code }}
+      report: ${{ steps.health.outputs.report }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # The instrument's own proof first: a check nobody has seen go red is indistinguishable from no
-      # check. Hermetic — fixtures plus a throwaway openssl CA.
+      # check. Hermetic — fixtures, a throwaway openssl CA and a loopback TLS server.
       - name: Self-test the health check
         run: node scripts/ci/check-e2e-issuer-health.mjs --self-test
 
@@ -72,58 +80,69 @@ jobs:
           code=0
           node scripts/ci/check-e2e-issuer-health.mjs --expected-url "$ISSUER_URL" > report.md || code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
+          delim="REPORT_$(openssl rand -hex 16)"
+          { echo "report<<$delim"; cat report.md; echo "$delim"; } >> "$GITHUB_OUTPUT"
           { echo '## E2E issuer health'; echo; cat report.md; } >> "$GITHUB_STEP_SUMMARY"
           if [ "$code" != "0" ] && [ "$code" != "2" ]; then
             echo "::error::the issuer health check could not look — this job is blind, not clean"
             exit 1
           fi
 
-      - name: Open or update the tracking issue
-        if: steps.health.outputs.code == '2'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TITLE: "e2e: the E2E assertion issuer is not healthy as the issuer four clouds trust"
-          LABEL: tracker:e2e-issuer-health
+  tracker:
+    name: Upsert the issuer health tracker
+    needs: measure
+    if: needs.measure.outputs.code == '0' || needs.measure.outputs.code == '2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write # the ONLY write this workflow holds
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      LABEL: tracker:e2e-issuer-health
+      TITLE: "e2e: the E2E assertion issuer is not healthy as the issuer four clouds trust"
+      CODE: ${{ needs.measure.outputs.code }}
+      REPORT: ${{ needs.measure.outputs.report }}
+    steps:
+      # ONE tracker for the life of the issuer. Open → edit it. None open → REOPEN the most recently
+      # updated closed one (so its history stays in one thread) and only create when none has ever
+      # existed. Keyed on the LABEL, never the title (workflow-health.yml's header, #3252); more than one
+      # open match is reported, not absorbed. Healthy → close the open one.
+      - name: Open, reopen, update or close the tracking issue
         run: |
           set -euo pipefail
-          {
-            cat report.md
-            printf '\n_Refreshed by `.github/workflows/e2e-issuer-health.yml` on %s. It closes itself once every check passes._\n' "$(date -u +%Y-%m-%dT%H:%MZ)"
-          } > body.md
-          # The label may not exist yet on a fresh repository; `gh issue create --label` refuses an
-          # unknown label, which would turn every finding into a failed step instead of an issue.
-          gh label create "$LABEL" --description "Upserted by e2e-issuer-health.yml" --color BFD4F2 2>/dev/null || true
-          # Keyed on the tracker label, never on the title — see workflow-health.yml's header. `--label`
-          # is also live where `--search` lags by minutes.
-          matches="$(gh issue list --state open --label "$LABEL" --limit 100 --json number -q '.[].number' 2>/dev/null || true)"
-          count="$(printf '%s' "$matches" | grep -c . || true)"
+          open="$(gh issue list --state open --label "$LABEL" --limit 100 --json number -q '.[].number')"
+          count="$(printf '%s' "$open" | grep -c . || true)"
           if [ "${count:-0}" -gt 1 ]; then
-            echo "::error title=duplicate tracking issues::more than one open issue carries \`$LABEL\`: $(printf '%s' "$matches" | tr '\n' ' ')— close all but one."
+            echo "::error title=duplicate tracking issues::more than one open issue carries \`$LABEL\`: $(printf '%s' "$open" | tr '\n' ' ')— close all but one."
             exit 1
           fi
-          existing="$(printf '%s' "$matches" | head -1)"
+          existing="$(printf '%s' "$open" | head -1)"
+          now="$(date -u +%Y-%m-%dT%H:%MZ)"
+
+          if [ "$CODE" = "0" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "Every issuer health check passes as of $now. Closing; the next failing run reopens this issue."
+              echo "closed #$existing"
+            fi
+            exit 0
+          fi
+
+          { printf '%s\n' "$REPORT"; printf '\n_Refreshed by `.github/workflows/e2e-issuer-health.yml` on %s. It closes itself once every check passes, and this same issue is reopened if one fails again._\n' "$now"; } > body.md
+          if [ -z "$existing" ]; then
+            # Most recently UPDATED closed tracker, from the REST API rather than `gh issue list`, which
+            # orders by creation.
+            existing="$(gh api "repos/$GH_REPO/issues?state=closed&labels=$LABEL&sort=updated&direction=desc&per_page=1" --jq '.[0].number // ""')"
+            if [ -n "$existing" ]; then
+              gh issue reopen "$existing" --comment "Reopened by e2e-issuer-health.yml at $now: a check failed again."
+              echo "reopened #$existing"
+            fi
+          fi
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --body-file body.md
             echo "updated #$existing"
           else
+            # `gh issue create --label` refuses an unknown label; create it on first use.
+            gh label create "$LABEL" --description "Upserted by e2e-issuer-health.yml" --color BFD4F2 2>/dev/null || true
             gh issue create --title "$TITLE" --label "wave:hygiene,$LABEL" --body-file body.md
-          fi
-
-      - name: Close it when the issuer is healthy
-        if: steps.health.outputs.code == '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          LABEL: tracker:e2e-issuer-health
-        run: |
-          set -euo pipefail
-          matches="$(gh issue list --state open --label "$LABEL" --limit 100 --json number -q '.[].number' 2>/dev/null || true)"
-          count="$(printf '%s' "$matches" | grep -c . || true)"
-          if [ "${count:-0}" -gt 1 ]; then
-            echo "::error title=duplicate tracking issues::more than one open issue carries \`$LABEL\`: $(printf '%s' "$matches" | tr '\n' ' ')— close all but one."
-            exit 1
-          fi
-          existing="$(printf '%s' "$matches" | head -1)"
-          if [ -n "$existing" ]; then
-            gh issue close "$existing" --comment "Every issuer health check passes as of $(date -u +%Y-%m-%dT%H:%MZ). Closing; this reopens itself if that changes."
-            echo "closed #$existing"
           fi
