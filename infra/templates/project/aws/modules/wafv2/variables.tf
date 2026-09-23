@@ -76,6 +76,30 @@ variable "custom_managed_waf_rule_groups" {
   default = []
 }
 
+variable "rate_limit_rules" {
+  description = <<-EOT
+    Rate-based rules, in the short four-field form. Added by #4320, which wired the root's
+    `waf_rate_limit_rules` — declared, carried to tfvars and read by nothing, so a rate limit a
+    caller asked for was simply never built.
+
+    Priorities share ONE space with `custom_rules` and the managed rule groups: WAFv2 rejects a Web
+    ACL containing two rules at the same priority, so a value here must not collide with one there.
+
+    `evaluation_window_sec` is optional; unset leaves WAF's own 300-second window. Anything richer
+    than these fields — a scope-down statement, forwarded-IP config, a custom aggregation key —
+    belongs in `custom_rules` as `statement.rate_based_statement` (examples/custom-rules.tfvars).
+  EOT
+  type = list(object({
+    name                  = string
+    priority              = number
+    limit                 = number
+    action                = optional(string, "block")
+    aggregate_key_type    = optional(string, "IP")
+    evaluation_window_sec = optional(number)
+  }))
+  default = []
+}
+
 variable "custom_rules" {
   description = <<-EOT
     List of custom WAF rules with full statement support. Each rule is a map with keys:

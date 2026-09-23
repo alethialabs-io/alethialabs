@@ -90,6 +90,14 @@ shipped `default = true`, so the template advertised Spot node pools it never pr
 credits a dead declaration exactly as much as a working knob; only the carrier rule
 (`check-offer-parity.mjs`) tells them apart.
 
+Three of those four have since been wired (`gke_enable_private_endpoint` by #4794; `gke_spot` and
+`gke_preemptible` earlier), and `gke_log_retention_days` is still dead — see the `dead:` section of
+`knob-exclusions.yaml`, which records why it is a maintainer decision rather than a lane's. The
+paragraph above is kept in the past tense it was written in because the ARGUMENT is what it is for:
+the counts in this table still cannot tell a dead declaration from a working knob, whichever
+particular variables happen to be dead this month. The live answer is
+`docs/testing/template-knobs.md`, which is generated.
+
 ## Top gaps to close for full parity (Phase A.2 backlog)
 
 Each needs: declare the variable in `variables.tf` **and** wire it into the component module. Mostly Azure,
