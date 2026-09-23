@@ -20,8 +20,15 @@ e2e_github_environment = "e2e-dev"
 account_id             = "5767983785483306"
 
 # ---- E2E assertion broker trust (#4226) ----
-# null = NOT trusted yet, and deliberately written down rather than left to the default: once the
-# maintainer has chosen the broker's origin (#4547) and deployed it, THIS line is where the origin
-# goes, in a reviewed PR. Passing it with -var at apply time instead would leave the next bare apply
-# reading null — which removes the trust. See docs/testing/e2e-federation-apply-runbook.md.
-e2e_broker_issuer_url = null
+# The broker's origin, chosen by the maintainer on 2026-09-23: the Cloudflare custom domain that
+# infra/e2e-issuer binds to the Worker. It must equal that stack's `hostname` byte for byte, and
+# `node scripts/ci/check-e2e-issuer-health.mjs --static` (ci.yml, the always-run `Authz / open-core
+# guards` job — no path filter) fails the PR that lets the copies
+# drift. Committed here, never passed with -var at apply time: the next bare apply would read the old
+# value and rewrite or REMOVE the trust.
+#
+# Committing it is inert until someone applies this stack, and that apply must come LAST — after the
+# issuer serves at this origin (infra/e2e-issuer/README.md, the runbook). Any apply of this stack from
+# here on creates the broker trust, so an unrelated apply must wait for the issuer too, or set this
+# back to null in the same reviewed PR. See docs/testing/e2e-federation-apply-runbook.md.
+e2e_broker_issuer_url = "https://e2e-issuer.alethialabs.io"

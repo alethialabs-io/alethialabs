@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Static validation for the infra/e2e-issuer stack (the E2E assertion issuer's Workers Custom Domain
+# and CAA set, #4226). Credential-free by design: the stack is APPLIED MANUALLY by the maintainer with
+# a zone-scoped Cloudflare token (infra/e2e-issuer/README.md), so there is deliberately NO apply job
+# here and no Cloudflare or state credential ever touches a run (safe on contributor PRs).
+#
+# iac-checks runs `tofu test` because the stack ships checks.tftest.hcl — mocked providers, which is
+# where every validation, precondition and check in the stack is shown to FIRE.
+
+name: Infra - E2E issuer
+
+on:
+  pull_request:
+    paths:
+      - "infra/e2e-issuer/**"
+      # main.tf reads the Worker's name out of wrangler.jsonc, so a change there changes this plan.
+      - "apps/e2e-issuer/wrangler.jsonc"
+      - "infra/.trivyignore"
+      - "infra/.tflint.hcl"
+      - "infra/.trivy.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/e2e-issuer/**"
+      - "apps/e2e-issuer/wrangler.jsonc"
+
+# `github.ref`, not the PR number: this also fires on `push`, where the number renders empty and every
+# push to `main` would share one group (infra-aws-oidc.yml records the same trap).
+concurrency:
+  group: infra-e2e-issuer-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: infra/e2e-issuer
+  TOFU_VERSION: "1.10.10"
+
+jobs:
+  validate:
+    name: Validate + IaC checks (no backend, no secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu validate
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      # The five committed copies of the issuer origin are compared in ci.yml's always-run guards job
+      # (`check-e2e-issuer-health.mjs --static`), NOT here: this workflow is path-filtered, so an edit to
+      # one trust stack's tfvars would skip it.
+
+      - name: IaC checks (fmt + tflint + Trivy + tofu test)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}
