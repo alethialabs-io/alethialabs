@@ -176,7 +176,14 @@ function checkBothSitesCarryTheGuard() {
  * So: no `--jq` argument in board-pr.sh may run a REGEX at all (`test`/`match`/`capture`/`sub`/
  * `gsub`/`scan`/`splits`). Matching the guard's NAME is not enough — the first broken site took
  * its pattern through a `$kws` parameter the caller composed, so its text never said
- * NEGATION_GUARD. One engine for every regex in the file is the rule that has no such gap.
+ * NEGATION_GUARD. So the rule reads STRUCTURE, in two halves:
+ *   · a `--jq` span that calls a regex builtin literally, and
+ *   · a DOUBLE-QUOTED `--jq` argument that expands a shell variable (`--jq "$filter"`,
+ *     `--jq "[… $BOARD_PR_STRIP_CODE …]"`) — the filter text is then decided on another line,
+ *     where this check cannot read it, so it is refused rather than trusted.
+ * A single-quoted filter cannot expand anything, so what it runs is exactly what is written here.
+ * Known boundary: a filter assembled so that the `--jq` flag itself sits in a variable
+ * (`args=(--jq …); gh "${args[@]}"`) is not seen. Nothing in the file does that today.
  * The span read is from `--jq` to the end of its command (`2>/dev/null` or the next blank line);
  * a `--jq` inside a shell comment is skipped, since a comment can only name the flag.
  * @param {string} [source] board-pr.sh's text — injectable so the self-test can prove this fails.
@@ -199,8 +206,14 @@ export function checkNoLookbehindThroughGhJq(source) {
 		const rest = text.slice(m.index);
 		const end = rest.search(/2>\/dev\/null|\n\s*\n/);
 		const span = end === -1 ? rest : rest.slice(0, end);
-		if (/\b(?:test|match|capture|sub|gsub|scan|splits)\s*\(/.test(span)) {
-			const line = text.slice(0, m.index).split("\n").length;
+		const line = text.slice(0, m.index).split("\n").length;
+		if (/^--jq\s+"[^"]*\$[A-Za-z_{]/.test(span.replace(/\\"/g, ""))) {
+			failures.push(
+				`  ${LIB}:${line}: a \`gh --jq\` filter is double-quoted and expands a shell variable, so its\n` +
+					"    text is decided elsewhere and cannot be checked. gh's --jq is gojq (Go RE2), which rejects\n" +
+					"    the negation lookbehind. Fetch with gh --json and filter with the standalone `jq`.",
+			);
+		} else if (/\b(?:test|match|capture|sub|gsub|scan|splits)\s*\(/.test(span)) {
 			failures.push(
 				`  ${LIB}:${line}: a \`gh --jq\` filter runs a regex. gh's --jq is gojq (Go RE2), which\n` +
 					"    rejects the negation lookbehind, so such a call fails and the fail-closed callers report\n" +
@@ -304,6 +317,9 @@ function selfTest() {
 		'  gh pr list --json body \\\n    --jq "[.[] | test(\\"(?i)($kws) *#$n\\")] | length" \\\n    2>/dev/null\n';
 	if (checkNoLookbehindThroughGhJq(shipped).length !== 1) {
 		failures.push("checkNoLookbehindThroughGhJq does not catch the parameter-borne gh --jq regex #4945 shipped");
+	}
+	if (checkNoLookbehindThroughGhJq('  f="$(build_filter)"\n  gh pr list --json body --jq "$f" 2>/dev/null\n').length !== 1) {
+		failures.push("checkNoLookbehindThroughGhJq does not catch a filter passed in a shell variable");
 	}
 	if (checkNoLookbehindThroughGhJq('  gh issue view 1 --json state --jq .state 2>/dev/null\n').length !== 0) {
 		failures.push("checkNoLookbehindThroughGhJq flags a plain `gh --jq` that runs no regex");
