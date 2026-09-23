@@ -132,8 +132,15 @@ async function settleOrgHandoff(page: Page, timeoutMs: number): Promise<"gate" |
  * and no journey here can expose.
  */
 async function throughTermsToOverview(page: Page, timeoutMs: number): Promise<void> {
-	if ((await settleOrgHandoff(page, timeoutMs)) === "gate") {
-		const submit = page.getByRole("button", { name: ACCEPTANCE_LABELS.submit });
+	await settleOrgHandoff(page, timeoutMs);
+	// The URL alone cannot decide it: the hand-off can land on /{org} for a moment BEFORE the
+	// layout redirects to the gate, and run 35932135625 read that moment as "overview" and then
+	// stood on the gate. So wait for what only one side renders — the gate's submit button, or the
+	// in-shell breadcrumb the gate (outside the shell) never has — and decide on that.
+	const submit = page.getByRole("button", { name: ACCEPTANCE_LABELS.submit });
+	const shell = page.getByRole("navigation", { name: "breadcrumb" });
+	await expect(submit.or(shell).first()).toBeVisible({ timeout: timeoutMs });
+	if (await submit.isVisible()) {
 		await page
 			.getByText(new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i"))
 			.first()
@@ -141,6 +148,7 @@ async function throughTermsToOverview(page: Page, timeoutMs: number): Promise<vo
 		await expect(submit).toBeEnabled();
 		await submit.click();
 		await page.waitForURL((url) => isOrgOverview(url), { timeout: timeoutMs });
+		await expect(shell).toBeVisible({ timeout: timeoutMs });
 	}
 }
 
