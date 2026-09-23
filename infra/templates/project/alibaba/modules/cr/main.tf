@@ -130,7 +130,7 @@ resource "alicloud_cr_scan_rule" "this" {
 # What that costs, stated so nobody mistakes it for a finding: this refusal rests on an ASSUMPTION.
 # If an observation later shows the rule does scan without a VPC endpoint, this guard removed a
 # working feature, and the fix is to delete this resource and record the evidence in the research
-# doc. Do NOT "fix" it by attaching a VPC instead — §3.5 of that doc: VPC access-control quota
+# doc. Do NOT "fix" it by attaching a VPC instead — §6 of that doc: VPC access-control quota
 # starts at 0, is set only through the create-only `vpc_quota`, and an already-provisioned registry
 # fails with INSTANCE_ACCESS_VPC_LIMIT_EXCEED with no in-place Terraform path.
 #
