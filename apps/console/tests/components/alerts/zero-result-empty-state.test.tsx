@@ -18,6 +18,7 @@ import type {
 	PolicyDTO,
 } from "@/app/server/actions/alerts";
 import type {
+	ActivityView,
 	ChannelsView,
 	PoliciesView,
 } from "@/components/alerts/alerts-filters";
@@ -50,9 +51,11 @@ vi.mock("@/lib/query/use-classification-query", () => ({
 	useAssignmentMutations: () => ({ assign: vi.fn(), unassign: vi.fn() }),
 }));
 
+import { ActivityPanel } from "@/components/alerts/activity-panel";
 import { ChannelsPanel } from "@/components/alerts/channels-panel";
 import { PoliciesPanel } from "@/components/alerts/policies-panel";
 import {
+	useAlertActivityFilters,
 	useAlertChannelFilters,
 	useAlertPolicyFilters,
 } from "@/lib/stores/use-alerts-filters";
@@ -115,6 +118,7 @@ describe("alerts rails: a filter that matches nothing", () => {
 	beforeEach(() => {
 		useAlertChannelFilters.getState().reset();
 		useAlertPolicyFilters.getState().reset();
+		useAlertActivityFilters.getState().reset();
 	});
 
 	it("the channels rail renders the shared empty state, and Reset clears the filters", async () => {
@@ -156,4 +160,54 @@ describe("alerts rails: a filter that matches nothing", () => {
 		await user.click(screen.getByRole("button", { name: "Reset filters" }));
 		expect(useAlertPolicyFilters.getState().filters.search).toBe("");
 	});
+
+	it("the activity ledger renders the shared empty state, and Reset clears the filters", async () => {
+		useAlertActivityFilters.getState().set("search", "zqxvjk");
+		const user = userEvent.setup();
+		const { container } = render(<ActivityPanel view={noActivity} />);
+
+		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
+		expect(screen.getByText("No activity matches")).toBeInTheDocument();
+		// Run 35848311879's F10 FAIL on ~/alerts was this table's empty ROW — the one hand-rolled
+		// message left once both rails used the shared state. Read the way F10 reads it.
+		expect(handRolledNoResults(container)).toEqual([]);
+
+		await user.click(screen.getByRole("button", { name: "Reset filters" }));
+		expect(useAlertActivityFilters.getState().filters.search).toBe("");
+	});
+
+	it("an unfiltered empty ledger says 'nothing yet', and offers no Reset", () => {
+		const { container } = render(<ActivityPanel view={noActivity} />);
+		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
+		expect(screen.getByText("No activity yet")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Reset filters" })).toBeNull();
+		expect(handRolledNoResults(container)).toEqual([]);
+	});
 });
+
+/** The empty activity view: no deliveries on this page of the ledger. */
+const noActivity: ActivityView = {
+	rows: [],
+	count: 0,
+	facets: { status: [] },
+	stale: false,
+};
+
+/**
+ * Every element OUTSIDE the shared empty state whose own text reads as a "no results" message —
+ * the rule `e2e/audit/filters.ts` `readEmptyState()` applies in the browser, minus its visibility
+ * test (jsdom has no layout).
+ */
+function handRolledNoResults(root: HTMLElement): string[] {
+	const found: string[] = [];
+	for (const el of root.querySelectorAll("*")) {
+		if (el.closest('[data-slot="empty"]') !== null) continue;
+		const own = [...el.childNodes]
+			.filter((n) => n.nodeType === Node.TEXT_NODE)
+			.map((n) => n.textContent ?? "")
+			.join(" ")
+			.trim();
+		if (/^no\b.{0,60}\b(results?|match(es)?|found)\b/i.test(own)) found.push(own);
+	}
+	return found;
+}
