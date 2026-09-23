@@ -32,7 +32,64 @@
 # phrasing on GitHub was invisible to the guard, leaving units claimable while a PR was closing
 # them. coordinate.sh's close-shipped path already had the correct enumeration; the guard carried
 # the broken shorthand. One protocol, two copies, one of them wrong — the reason this file exists.
+# ── A NEGATED KEYWORD IS NOT A KEYWORD (#3855) ────────────────────────────────────────────────
+# The lookbehinds reject "does not close #n", "doesn't close #n", "never closes #n", "cannot close
+# #n". Without them, a PR body EXPLAINING why it does not close an issue reads as a closing PR —
+# which here means `has_closing_pr` answers true and `claim-work.sh` silently refuses to hand the
+# unit out, forever, with nothing to see. The same defect in the CLOSING direction lives in
+# .github/workflows/close-on-dev-merge.yml, where it wrongly closed #3855 TWICE in one day; that
+# one was noticed because an issue visibly shut, and this one would not have been.
+#
+# Keep IDENTICAL to the pattern in that workflow — scripts/check-closing-keyword-parsers.mjs fails
+# the build when they drift. These run through jq's Oniguruma, which supports lookbehind; plain
+# ERE `grep` does not, which is why neither site uses grep any more.
 BOARD_PR_CLOSING_KW='(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved) +'
+
+# ── A NEGATED KEYWORD IS NOT A KEYWORD (#3855) ────────────────────────────────────────────────
+# Composed ONTO the vocabulary above by the matchers, never baked INTO it. That split is
+# load-bearing and I got it wrong first: `BOARD_PR_CLOSING_KW` is a VOCABULARY, and two other
+# readers parse it as a plain alternation to extract the keyword LIST —
+# `coordinate.sh:closing_keywords_json()` strips `^(`/`)$` and splits on `|`, and
+# `scripts/ci/check-pr-scope.mjs:102` matches `/^BOARD_PR_CLOSING_KW='\(([^)]+)\)/`. Prefixing the
+# lookbehinds directly made the first capture `?<!not `, which
+# `scope-overlap.mjs:579 closingRefsIn` then compiled into
+# `/\b(?:?<!not)\s+#(\d+)\b/gi` → "SyntaxError: Nothing to repeat", taking the whole
+# `Authz / open-core guards` job down. Four consumers, two contracts: keep them apart.
+#
+# What it rejects: "does not close #n", "doesn't close #n", "never closes #n", "cannot close #n".
+# Without it a PR body EXPLAINING why it does not close an issue reads as a closing PR — here that
+# makes `has_closing_pr` answer true, so `claim-work.sh` silently refuses to hand the unit out,
+# forever, with nothing to see. The same defect in the CLOSING direction lives in
+# .github/workflows/close-on-dev-merge.yml, where it wrongly closed #3855 TWICE in one day; that
+# one was noticed because an issue visibly shut, and this one would not have been.
+#
+# Keep IDENTICAL to the guard in that workflow — scripts/check-closing-keyword-parsers.mjs fails
+# the build when they drift. These run through jq's Oniguruma, which supports lookbehind; plain
+# ERE `grep` does not, which is why neither site uses grep any more.
+# Three families, and they are here because each one CLOSED A REAL ISSUE:
+#   negation        "does not close #n" / "doesn't" / "never closes" / "cannot close"
+#                   → #3855, twice on 2026-09-22 (#4919 16:54Z, #4924 21:41Z)
+#   relative clause "that is what closes #n" — grammatically a closing reference; only the
+#                   surrounding meaning says otherwise
+#                   → #3348, closed by #4940's own sentence explaining it used `Refs` not `Closes`
+# The third family cannot be a lookbehind at all — see BOARD_PR_STRIP_CODE below.
+BOARD_PR_NEGATION_GUARD='(?<!not )(?<!n.t )(?<!never )(?<!what )(?<!that )(?<!which )'
+
+# ── A QUOTED KEYWORD IS NOT AN ASSERTED ONE ───────────────────────────────────────────────────
+# Strips fenced blocks and inline code before matching. A keyword inside backticks is being
+# NAMED, not used — and unlike the two families above this is mechanically decidable, so it is
+# preprocessing rather than a guess.
+#
+# It is here because #4110 was closed by this line in #4935's body:
+#
+#     ## ⚠️ Changed from `Closes #4110` to `Refs #4110` — deliberately
+#
+# …the note explaining that the reference had been changed FROM `Closes` so the issue would STAY
+# OPEN. The PR said `Refs`. The prose quoting the old form closed it anyway.
+#
+# Fenced first, then inline: a ``` block may contain single backticks, and stripping inline spans
+# first would leave the fence's content exposed.
+BOARD_PR_STRIP_CODE='gsub("(?s)```.*?```"; " ") | gsub("`[^`\n]*`"; " ")'
 # LINKING: this PR is BUILDING the issue without finishing it — the phrasing a PR uses when it
 # delivers one tier of a multi-tier unit (#1414 "Part of #1268", #1408 "Part of #1389"). Kept to an
 # explicit list on purpose: matching a bare "#1389" anywhere would let an incidental "similar to
@@ -53,7 +110,8 @@ _board_pr_matching() { # <n> <state-filter> <kw-alternation> -> prints count | r
   local n="$1" states="$2" kws="$3"
   gh pr list --state all --limit 20 --search "#$n" --json number,state,body,title \
     --jq "[.[] | select($states)
-               | select((.body + \" \" + .title) | test(\"(?i)($kws) *#$n\\\\b\"))] | length" \
+               | select((.body + \" \" + .title) | $BOARD_PR_STRIP_CODE
+                          | test(\"(?i)($kws) *#$n\\\\b\"))] | length" \
     2>/dev/null
 }
 
@@ -62,7 +120,7 @@ _board_pr_matching() { # <n> <state-filter> <kw-alternation> -> prints count | r
 # that didn't link). Searches title AND body.
 has_closing_pr() { # <n> -> 0 = a PR closes it (or we couldn't tell) · 1 = definitely none
   local n="$1" out
-  if ! out="$(_board_pr_matching "$n" '.state=="OPEN" or .state=="MERGED"' "$BOARD_PR_CLOSING_KW")"; then
+  if ! out="$(_board_pr_matching "$n" '.state=="OPEN" or .state=="MERGED"' "$BOARD_PR_NEGATION_GUARD$BOARD_PR_CLOSING_KW")"; then
     echo "⚠ could not check PRs for #$n (gh failed) — treating as taken." >&2
     return 0
   fi
@@ -130,8 +188,8 @@ stalled_pr_ref() { # <n> <ttl> -> prints e.g. "#1461 (CONFLICTING, idle 8h)" or 
   local n="$1" ttl="$2" now rows
   now="$(date -u +%s)"
   rows="$(gh pr list --state open --limit 20 --search "#$n" --json number,mergeable,updatedAt,body,title \
-    --jq "[.[] | select((.body + \" \" + .title)
-              | test(\"(?i)($BOARD_PR_CLOSING_KW|$BOARD_PR_LINKING_KW) *#$n\\\\b\"))]
+    --jq "[.[] | select((.body + \" \" + .title) | $BOARD_PR_STRIP_CODE
+              | test(\"(?i)($BOARD_PR_NEGATION_GUARD$BOARD_PR_CLOSING_KW|$BOARD_PR_LINKING_KW) *#$n\\\\b\"))]
           | .[] | \"\\(.number)\\t\\(.mergeable)\\t\\(.updatedAt)\"" 2>/dev/null)" || return 0
   [ -z "$rows" ] && return 0
   local pr mergeable ts upd idle

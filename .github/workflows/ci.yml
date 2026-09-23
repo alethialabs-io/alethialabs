@@ -963,6 +963,15 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-forbidden-names.mjs --self-test
+      # #3855 was auto-closed TWICE on 2026-09-22 — at 16:54Z and again at 21:41Z — by PR bodies
+      # saying they did NOT close it. Both parsers carried the defect; only the destructive one
+      # was visible. This fails the build if either loses its negation guard, or if the two drift.
+      - name: A negated closing keyword does not close an issue
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:closing-keyword-parsers
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-closing-keyword-parsers.mjs --self-test
       - name: Console shared surface (@repo/format, @repo/ui/page-header) is not hand-rolled
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:shared-surface
