@@ -242,7 +242,10 @@ export function analyse({ workflowText, resolverText, hetznerTypes }) {
 				continue;
 			}
 			if (spec.dispatchOnlyWaiver) {
-				const standing = [...branch.matchAll(/\b(vars|secrets|env)\.[A-Za-z0-9_]+/g)].map((m) => m[0]);
+				// The WHOLE expression, not the provider branch: a waiver written BEFORE the
+				// `matrix.provider == …` test (`vars.X != 'true' && matrix.provider == 'alibaba' && …`)
+				// sits outside the branch text and switches the refusal off just as well (PR #4977 review).
+				const standing = [...expr.matchAll(/\b(vars|secrets|env)\.[A-Za-z0-9_]+/g)].map((m) => m[0]);
 				if (standing.length > 0) {
 					failures.push(
 						`R3 ${p}: ${env} can be switched off by ${[...new Set(standing)].join(", ")}, which also applies to every SCHEDULED run. ` +
@@ -451,6 +454,9 @@ function runSelfTest() {
 		const r = run(fixture({ prepaid: `matrix.provider == 'alibaba' && ${standing} != 'true' && '1' || ''` }));
 		assert(`a prepaid waiver through ${standing.split(".")[0]}.* FAILS R3`, has(r, "R3 alibaba:") && has(r, "R1 alibaba:"), JSON.stringify(r.failures));
 	}
+	// ...including a waiver placed BEFORE the provider test, outside the provider branch's text.
+	const leading = run(fixture({ prepaid: `vars.E2E_ALIBABA_ALLOW_PREPAID != 'true' && matrix.provider == 'alibaba' && '1' || ''` }));
+	assert("a standing waiver placed BEFORE the provider test FAILS R3", has(leading, "R3 alibaba:"), JSON.stringify(leading.failures));
 	assert("...while the dispatch-input waiver passes", !has(today, "R3"));
 
 	// R4 — the cap vs what the e2e provisions.

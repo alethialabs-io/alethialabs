@@ -1845,9 +1845,13 @@ jobs:
           #    KEYED ON E2E_HEAVY_SHAPE, NOT E2E_FULL_BAR. The ceiling has to follow the SHAPE it is
           #    pricing: `maxconfig` and `addons` now provision the heavy pool too, and pricing them
           #    against the $300 floor ceiling would hard-fail the pre-apply cost guard on aws before
-          #    the run started. Same expression as the node-shape override above, on purpose. ──
+          #    the run started. Same expression as the node-shape override above, on purpose.
+          #    ALSO RAISED WHEN THE FABRIC DEMO IS ON: `vars.E2E_FABRIC_DEMO` reaches the SCHEDULED
+          #    nightly and loads the bigger demo shape with E2E_HEAVY_SHAPE=false — priced against
+          #    $300 it would be refused on every gcp/azure/aws leg (PR #4977 review). `!= ''` is the
+          #    same test the job/step caps use. ──
           INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
-          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (env.E2E_HEAVY_SHAPE == 'true' && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || matrix.provider == 'gcp' && (env.E2E_HEAVY_SHAPE == 'true' && (vars.E2E_GCP_COST_CEILING_FULL_USD || '600') || (vars.E2E_GCP_COST_CEILING_USD || '300')) || matrix.provider == 'azure' && (env.E2E_HEAVY_SHAPE == 'true' && (vars.E2E_AZURE_COST_CEILING_FULL_USD || '600') || (vars.E2E_AZURE_COST_CEILING_USD || '300')) || '' }}
+          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || matrix.provider == 'gcp' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_GCP_COST_CEILING_FULL_USD || '600') || (vars.E2E_GCP_COST_CEILING_USD || '300')) || matrix.provider == 'azure' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_AZURE_COST_CEILING_FULL_USD || '600') || (vars.E2E_AZURE_COST_CEILING_USD || '300')) || '' }}
           # ── Pre-apply SHAPE controls for the clouds Infracost cannot price (#2385). Read by the
           #    runner (stage.go spendPolicyFromEnv) and enforced after the plan, before the apply.
           #
