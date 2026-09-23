@@ -669,6 +669,16 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/fetches per keystroke reported F10 PASS/);
 	});
 
+	test("F8 — the control names the arm when the slow bar stops declaring its placeholder busy", async ({ page }) => {
+		test.setTimeout(300_000);
+		// #4980. Without `aria-busy` the placeholder is indistinguishable from an answer by stillness —
+		// which is what `settle()` used to accept. The arm must go red when the page stops saying so,
+		// or the busy wait could be deleted and the control would still read green.
+		const mutant = FILTERS_FIXTURE.replace('document.querySelector("main").setAttribute("aria-busy", "true");', "");
+		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
+		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/loads slowly under aria-busy reported F8 FAIL/);
+	});
+
 	test("F8–F9 — the control names the arm when the one-kind bar gains an option that narrows", async ({ page }) => {
 		test.setTimeout(300_000);
 		// Give the one-kind bar a second kind: an option now narrows, the in-memory counts move, and the
