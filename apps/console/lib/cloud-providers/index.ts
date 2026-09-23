@@ -51,7 +51,6 @@ export {
 export {
 	effectiveCapacityMode,
 	effectiveCapacityModeForCloud,
-	normalizeCapacityMode,
 	type NosqlCapacityMode,
 } from "./nosql-capacity";
 export {
