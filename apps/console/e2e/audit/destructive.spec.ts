@@ -116,8 +116,12 @@ interface ControlEntry {
 	dialog_title?: string;
 	/** For `confirm: undo`: the key chord that takes the action back (`Meta+Z`). */
 	undo?: { shortcut?: string };
-	/** For `confirm: staged`: the save bar's two buttons — the one that decides, and the way out. */
-	staged?: { save?: string; discard?: string };
+	/**
+	 * For `confirm: staged`: the save bar's two buttons — the one that decides, and the way out —
+	 * and `table`, the table the save REWRITES IN PLACE. The row-count fingerprint cannot see an
+	 * update, so the spec hashes this table's rows for the org before the click and after Discard.
+	 */
+	staged?: { save?: string; discard?: string; table?: string };
 	fixture?: string;
 	persona?: string;
 	status?: string;
@@ -472,6 +476,32 @@ async function fingerprint(): Promise<Map<string, number>> {
 }
 
 /**
+ * A content hash of one table's rows for one org — the "nothing was persisted" check for a
+ * `confirm: staged` control.
+ *
+ * A staged control's save is an UPDATE in place (`updateChannel` rewrites a channel's `config`),
+ * so {@link fingerprint}'s row counts are identical whether or not the change was saved, and its
+ * mutation is a server action the request deny-list cannot attribute. Hashing every column of the
+ * org's rows sees the update. Scoped to `org_id` so another org's writes cannot move it; the table
+ * name comes from the registry and is checked against the catalogue before it is interpolated.
+ * Returns `null` when the table has no such name or no `org_id` column — the caller treats that as
+ * a finding, never as "unchanged". `rows` is returned so the caller can refuse an EMPTY scope: two
+ * hashes of zero rows are equal whatever happened, which would make this check unable to fail.
+ */
+async function stagedContent(table: string, orgId: string): Promise<{ rows: number; hash: string } | null> {
+	const sql = db();
+	const cols = await sql<{ column_name: string }[]>`
+		SELECT column_name FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = ${table} AND column_name = 'org_id'`;
+	if (cols.length === 0) return null;
+	const rows = await sql.unsafe<{ n: number; h: string }[]>(
+		`SELECT count(*)::int AS n, md5(coalesce(string_agg(t::text, E'\n' ORDER BY t::text), '')) AS h FROM public."${table}" t WHERE t.org_id = $1`,
+		[orgId],
+	);
+	return { rows: rows[0].n, hash: rows[0].h };
+}
+
+/**
  * Tables the console's own BACKGROUND WORK grows while a dialog is open, with who grows them.
  *
  * The fingerprint is table-agnostic, so it also counts writes nobody clicked for. Measured on this
@@ -763,9 +793,10 @@ async function observeUndo(page: Page, entry: ControlEntry): Promise<Observed> {
  * The draft's save bar IS the confirmation, so it is held to what a dialog is held to: the button
  * that decides (`staged.save`) must appear and is ASSERTED, never pressed; the way out
  * (`staged.discard`) is the one button pressed, and the control must come back — a discard that
- * does not restore what was staged is no way out at all. The row fingerprint the caller takes
- * afterwards is the "nothing was persisted" half. `recipients-editor.tsx`'s chip is the first
- * entry of this shape (#4939).
+ * does not restore what was staged is no way out at all. The "nothing was persisted" half is
+ * {@link stagedContent}, taken by the caller before the click and after this returns — NOT the row
+ * fingerprint, which counts rows and so cannot see the in-place update a staged save performs.
+ * `recipients-editor.tsx`'s chip is the first entry of this shape (#4939).
  */
 async function observeStaged(page: Page, entry: ControlEntry, trigger: Locator): Promise<Observed> {
 	const save = entry.staged?.save;
@@ -1042,6 +1073,17 @@ for (const entry of CONTROLS) {
 
 		// ── both observations start BEFORE the click.
 		const before = await fingerprint();
+		// A staged control's save updates in place, which the row counts cannot see; its table is
+		// hashed as well. A registry entry that names no table is a finding, not a skipped check.
+		const stagedTable = entry.confirm === "staged" ? entry.staged?.table : undefined;
+		if (entry.confirm === "staged") {
+			expect(stagedTable, `${entry.id}: a \`confirm: staged\` entry must name \`staged.table\` — without it nothing can see the in-place save`).toBeTruthy();
+		}
+		const stagedBefore = stagedTable ? await stagedContent(stagedTable, ctx.owner.orgId) : null;
+		if (stagedTable) {
+			expect(stagedBefore, `${entry.id}: \`staged.table: ${stagedTable}\` is not a public table with an org_id column`).not.toBeNull();
+			expect(stagedBefore?.rows ?? 0, `${entry.id}: the org has no \`${stagedTable}\` rows, so the content hash cannot see a save — the fixture is not in the audit org`).toBeGreaterThan(0);
+		}
 		const watch = watchMutations(page);
 
 		await trigger.click();
@@ -1099,8 +1141,13 @@ for (const entry of CONTROLS) {
 		const after = await fingerprint();
 		const moved = diffFingerprints(before, after);
 
-		// A staged control's way out was pressed exactly as a dialog's Cancel is, so the same row
-		// fingerprint carries the "nothing was persisted" half for it.
+		// A staged control's way out was pressed exactly as a dialog's Cancel is. Its "nothing was
+		// persisted" half is the content hash of `staged.table` — the save is an update in place,
+		// which the row counts below cannot see. The counts still run, for anything else it moved.
+		if (stagedTable) {
+			const stagedAfter = await stagedContent(stagedTable, ctx.owner.orgId);
+			expect(stagedAfter?.hash, `${entry.id}: Discard was pressed and the org's \`${stagedTable}\` rows still changed — the staged edit was persisted before Save`).toBe(stagedBefore?.hash);
+		}
 		if (expectsDialog || entry.confirm === "staged") {
 			// ── WHAT EACH OBSERVATION CAN AND CANNOT PROVE ──────────────────────────────────
 			//

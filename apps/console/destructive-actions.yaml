@@ -45,9 +45,10 @@
 #   control         the trigger, by accessible role + name (never a CSS class)
 #   confirm         alert-dialog | confirm-dialog | popover | undo | staged | none
 #                   `staged`: the click only stages the change in an edit draft, and a save bar
-#                   decides it. `staged: {save, discard}` names that bar's two buttons; the spec
-#                   asserts Save appears (never presses it), presses Discard, and requires the
-#                   control back and no row moved. (#4939)
+#                   decides it. `staged: {save, discard, table}` names that bar's two buttons
+#                   and the table its save updates in place; the spec asserts Save appears (never
+#                   presses it), presses Discard, requires the control back, and requires the org's
+#                   rows in `table` byte-identical before the click and after Discard. (#4939)
 #   confirm_action  the destructive button's label — the ONE control the spec never clicks
 #   dialog_title    what the dialog says, so a renamed dialog is a finding rather than a pass
 #   fixture         what the spec must seed for the control to render
@@ -432,7 +433,9 @@ controls:
     # email channel carries `ops@e2e.test` (e2e/helpers/seed-alerts.ts).
     control: { role: button, name: "Remove recipient <address>" }
     confirm: staged
-    staged: { save: "Save changes", discard: "Discard" }
+    # `table`: the save is an UPDATE of this table's row, so the spec hashes the org's rows before
+    # the click and after Discard — the row-count fingerprint cannot see an update in place.
+    staged: { save: "Save changes", discard: "Discard", table: alert_channels }
     fixture: alert-channel
     persona: team
     status: confirmed
