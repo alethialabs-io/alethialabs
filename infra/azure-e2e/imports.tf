@@ -18,8 +18,9 @@
 # with both values as read live on 2026-08-25 and recorded in
 # docs/testing/e2e-federation-apply-runbook.md §3. `eb0f6831-…` is the application's OBJECT id,
 # not its client id (the client id — the E2E_AZURE_CLIENT_ID repo variable — is `ea04b39b-…`);
-# the ID's first segment must be the object id. Neither value was re-read for this PR — no
-# Azure call was made — so if either is stale the import fails loudly at plan time rather than
+# the ID's first segment must be the object id, and it is now taken from `azuread_application.e2e`
+# rather than written in (see the `id` line). The credential id was not re-read for this PR — no
+# Azure call was made — so if it is stale the import fails loudly at plan time rather than
 # adopting the wrong object.
 #
 # `for_each` keys the import on the SAME condition that creates the resource: with
@@ -33,5 +34,10 @@ import {
   for_each = contains(keys(local.federated_subjects), "env") ? toset(["env"]) : toset([])
 
   to = azuread_application_federated_identity_credential.github[each.key]
-  id = "/applications/eb0f6831-ef39-4a5a-ab87-899661c36f14/federatedIdentityCredential/eae3cf58-1f19-4270-9bb1-7c46e0f94a12"
+  # The application segment is DERIVED from the application this stack manages, not written in.
+  # With the application in state this renders `/applications/eb0f6831-…`, exactly as before. With
+  # it NOT in state (the local state file lost — #4903's risk) its id is unknown at plan time, so
+  # the plan REFUSES rather than adopting the live credential under a config that would then force
+  # a replacement — which, applied, deletes the live `e2e-dev` credential.
+  id = "${azuread_application.e2e.id}/federatedIdentityCredential/eae3cf58-1f19-4270-9bb1-7c46e0f94a12"
 }
