@@ -1071,8 +1071,13 @@ export function reviewFromBranchRules(rules, branch) {
  * protect-staging rely on today). `required_approving_review_count` absent, or either one set to
  * anything but a literal, is an ERROR: this script would otherwise be reporting a number it made up.
  *
+ * It also reads WHICH BRANCHES each ruleset targets (`target`, `enforcement`, and
+ * `conditions.ref_name`), because GitHub enforces the MERGE of every active ruleset that targets a
+ * branch — see `hclReviewByBranch`. A `ref_name` list that is not string literals is an ERROR, for
+ * the same reason a non-literal count is.
+ *
  * @param {string} mainText
- * @returns {{name: string, review: {pullRequestRules: number, requiredApprovingReviewCount: number, requireCodeOwnerReview: boolean, requiredReviewers: number}}[]}
+ * @returns {{name: string, target: string | null, enforcement: string | null, include: string[], exclude: string[], review: {pullRequestRules: number, requiredApprovingReviewCount: number, requireCodeOwnerReview: boolean, requiredReviewers: number}}[]}
  */
 export function parseHclReview(mainText) {
 	const src = stripHclComments(mainText);
@@ -1082,18 +1087,24 @@ export function parseHclReview(mainText) {
 		const nextBlock = src.indexOf('resource "github_repository_ruleset"', re.lastIndex);
 		const body = src.slice(m.index, nextBlock < 0 ? src.length : nextBlock);
 		const name = /\bname\s*=\s*"([^"]+)"/.exec(body)?.[1] ?? m[1];
-		const blocks = [];
-		const open = /\bpull_request\s*\{/g;
-		for (let p = open.exec(body); p; p = open.exec(body)) {
-			let depth = 1;
-			let i = open.lastIndex;
-			for (; i < body.length && depth > 0; i++) {
-				if (body[i] === "{") depth++;
-				else if (body[i] === "}") depth--;
-			}
-			if (depth !== 0) throw new Error(`${MAIN}: the \`pull_request\` block in ruleset \`${name}\` is never closed.`);
-			blocks.push(body.slice(open.lastIndex, i - 1));
-		}
+		const blocks = hclBlocks(body, "pull_request", name);
+		const target = /\btarget\s*=\s*"([^"]+)"/.exec(body)?.[1] ?? null;
+		const enforcement = /\benforcement\s*=\s*"([^"]+)"/.exec(body)?.[1] ?? null;
+		const refName = hclBlocks(hclBlocks(body, "conditions", name).join("\n"), "ref_name", name).join("\n");
+		const refList = (key) => {
+			const raw = new RegExp(`\\b${key}\\s*=\\s*(\\[[^\\]]*\\]|\\S+)`).exec(refName)?.[1];
+			if (raw === undefined) return [];
+			if (!raw.startsWith("[")) throw new Error(`${MAIN}: ruleset \`${name}\`'s \`ref_name.${key}\` is \`${raw}\`; only a list of string literals is modelled.`);
+			const inner = raw.slice(1, -1).trim();
+			if (inner === "") return [];
+			return inner.split(",").map((s) => s.trim()).filter((s) => s !== "").map((s) => {
+				const lit = /^"([^"]*)"$/.exec(s);
+				if (!lit) throw new Error(`${MAIN}: ruleset \`${name}\`'s \`ref_name.${key}\` carries \`${s}\`; only string literals are modelled.`);
+				return lit[1];
+			});
+		};
+		const include = refList("include");
+		const exclude = refList("exclude");
 		let requiredApprovingReviewCount = 0;
 		let requireCodeOwnerReview = false;
 		let requiredReviewers = 0;
@@ -1106,10 +1117,56 @@ export function parseHclReview(mainText) {
 			requireCodeOwnerReview = requireCodeOwnerReview || owner === "true";
 			requiredReviewers += (b.match(/\brequired_reviewers\s*\{/g) ?? []).length;
 		}
-		out.push({ name, review: { pullRequestRules: blocks.length, requiredApprovingReviewCount, requireCodeOwnerReview, requiredReviewers } });
+		out.push({ name, target, enforcement, include, exclude, review: { pullRequestRules: blocks.length, requiredApprovingReviewCount, requireCodeOwnerReview, requiredReviewers } });
 	}
 	if (out.length === 0) throw new Error(`${MAIN}: no \`github_repository_ruleset\` resources found to read review requirements from.`);
 	return out;
+}
+
+/**
+ * The bodies of every `<name> { … }` block in `text`, brace-matched (comments already stripped).
+ *
+ * @param {string} text
+ * @param {string} block
+ * @param {string} ruleset only for the error message
+ * @returns {string[]}
+ */
+function hclBlocks(text, block, ruleset) {
+	const bodies = [];
+	const open = new RegExp(`\\b${block}\\s*\\{`, "g");
+	for (let p = open.exec(text); p; p = open.exec(text)) {
+		let depth = 1;
+		let i = open.lastIndex;
+		for (; i < text.length && depth > 0; i++) {
+			if (text[i] === "{") depth++;
+			else if (text[i] === "}") depth--;
+		}
+		if (depth !== 0) throw new Error(`${MAIN}: the \`${block}\` block in ruleset \`${ruleset}\` is never closed.`);
+		bodies.push(text.slice(open.lastIndex, i - 1));
+	}
+	return bodies;
+}
+
+/**
+ * Whether one `ref_name` pattern names `branch`, as GitHub evaluates it: `~ALL`, `~DEFAULT_BRANCH`,
+ * or `refs/heads/<fnmatch>` where `*` stays inside one path segment and `**` crosses them. Anything
+ * else THROWS — a pattern this does not model must not silently read as "does not target".
+ *
+ * @param {string} pattern
+ * @param {string} branch
+ * @param {string} defaultBranch the repository's default branch (`main` here)
+ * @returns {boolean}
+ */
+export function refPatternTargets(pattern, branch, defaultBranch = "main") {
+	if (pattern === "~ALL") return true;
+	if (pattern === "~DEFAULT_BRANCH") return branch === defaultBranch;
+	if (!pattern.startsWith("refs/heads/")) throw new Error(`${MAIN}: the ref_name pattern \`${pattern}\` is not modelled (only \`~ALL\`, \`~DEFAULT_BRANCH\` and \`refs/heads/…\`).`);
+	const glob = pattern.slice("refs/heads/".length);
+	const rx = glob
+		.split("**")
+		.map((part) => part.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*"))
+		.join(".*");
+	return new RegExp(`^${rx}$`).test(branch);
 }
 
 /**
@@ -1120,10 +1177,13 @@ export function parseHclReview(mainText) {
  * @param {{rulesets: {name: string, branch: string, review: object}[], hcl: {name: string, review: object}[]}} args
  */
 export function compareLiveReview({ rulesets, hcl }) {
+	// Per BRANCH, not per ruleset name: `rules/branches/<branch>` is the merge of every active
+	// ruleset targeting it, so the HCL side must be the same merge (PR #4966 review).
+	const declaredByBranch = hclReviewByBranch(hcl, rulesets.map((rs) => rs.branch));
 	return rulesets.map((rs) => {
-		const declared = hcl.find((h) => h.name === rs.name)?.review ?? null;
+		const declared = declaredByBranch.get(rs.branch) ?? null;
 		const drift = [];
-		if (!declared) drift.push(`infra/github declares no ruleset named \`${rs.name}\``);
+		if (!declared) drift.push(`infra/github declares no active ruleset targeting \`${rs.branch}\``);
 		else {
 			for (const k of ["requireCodeOwnerReview", "requiredApprovingReviewCount", "requiredReviewers"]) {
 				if (declared[k] !== rs.review[k]) drift.push(`\`${REVIEW_FIELD[k]}\` is ${String(rs.review[k])} live but ${String(declared[k])} in the HCL`);
@@ -1247,12 +1307,39 @@ export function reportLiveClaims(evaluated) {
 	return { lines, drift };
 }
 
-/** Branch → declared review, joining main.tf's ruleset names to the branches they protect. */
-export function hclReviewByBranch(hcl) {
+/**
+ * Branch → the review the HCL declares for it: the MERGE of every active branch ruleset whose
+ * `ref_name` conditions target that branch, strictest wins — the same merge GitHub applies and
+ * `reviewFromBranchRules` reads back from `rules/branches/<branch>`. Counts take the max, the
+ * code-owner flag is true if ANY ruleset sets it, path-scoped reviewers add up.
+ *
+ * Reading only the ruleset NAMED `protect-<branch>` was wrong the moment the control lands as its own
+ * ruleset — the natural shape of the #4942 fix: the HCL would declare it and still read as refuted,
+ * and the applied result would read as permanent drift. A ruleset in `evaluate` or `disabled` mode
+ * enforces nothing and does not appear in the live merge, so it is left out here too.
+ *
+ * @param {ReturnType<typeof parseHclReview>} hcl
+ * @param {string[]} branches the branches to answer for (default: the three protected ones)
+ * @returns {Map<string, {pullRequestRules: number, requiredApprovingReviewCount: number, requireCodeOwnerReview: boolean, requiredReviewers: number, rulesets: string[]}>}
+ */
+export function hclReviewByBranch(hcl, branches = RULESET_BRANCHES.map(([b]) => b)) {
 	const byBranch = new Map();
-	for (const [branch, name] of RULESET_BRANCHES) {
-		const h = hcl.find((x) => x.name === name);
-		if (h) byBranch.set(branch, h.review);
+	for (const branch of branches) {
+		const targeting = hcl.filter(
+			(h) =>
+				h.target === "branch" &&
+				h.enforcement === "active" &&
+				h.include.some((p) => refPatternTargets(p, branch)) &&
+				!h.exclude.some((p) => refPatternTargets(p, branch)),
+		);
+		if (targeting.length === 0) continue;
+		byBranch.set(branch, {
+			pullRequestRules: targeting.reduce((n, h) => n + h.review.pullRequestRules, 0),
+			requiredApprovingReviewCount: Math.max(...targeting.map((h) => h.review.requiredApprovingReviewCount)),
+			requireCodeOwnerReview: targeting.some((h) => h.review.requireCodeOwnerReview),
+			requiredReviewers: targeting.reduce((n, h) => n + h.review.requiredReviewers, 0),
+			rulesets: targeting.map((h) => h.name),
+		});
 	}
 	return byBranch;
 }
@@ -1704,7 +1791,58 @@ resource "github_repository_ruleset" "staging" {
 			P("the captured live rules and the real HCL agree on review (as measured 2026-09-23)", cmp.every((r) => r.drift.length === 0), JSON.stringify(cmp));
 			const hclOwner = parseHclReview(fs.readFileSync(MAIN, "utf8").replace("require_code_owner_review       = false", "require_code_owner_review       = true"));
 			P("...and an HCL that declares code-owner review on main is reported as drift against the capture", compareLiveReview({ rulesets: lr.rulesets, hcl: hclOwner }).some((r) => r.name === "protect-main" && r.drift.some((d) => /require_code_owner_review/.test(d))));
+
+			// THE CONTROL AS ITS OWN RULESET (PR #4966 review) — the natural shape of the #4942 fix.
+			// `rules/branches/dev` returns the MERGE of every ruleset on dev, so the HCL side must be
+			// merged too; reading only `protect-dev` got both directions wrong.
+			const ownRuleset = `
+resource "github_repository_ruleset" "dev_codeowners" {
+  name        = "codeowners-dev"
+  repository  = var.repository
+  target      = "branch"
+  enforcement = "active"
+  conditions {
+    ref_name {
+      include = ["refs/heads/dev"]
+      exclude = []
+    }
+  }
+  rules {
+    pull_request {
+      required_approving_review_count = 1
+      require_code_owner_review       = true
+    }
+  }
+}
+`;
+			const hclPlus = parseHclReview(fs.readFileSync(MAIN, "utf8") + ownRuleset);
+			const plusDev = hclReviewByBranch(hclPlus).get("dev");
+			P("a separate ruleset targeting dev is MERGED into dev's declared review", plusDev?.requireCodeOwnerReview === true && plusDev?.requiredApprovingReviewCount === 1 && plusDev?.rulesets.length === 2, JSON.stringify(plusDev));
+			P("...and main's declared review is untouched by it", hclReviewByBranch(hclPlus).get("main")?.requireCodeOwnerReview === false);
+			// (1) PR time: the dev claim now HOLDS against the HCL, so its acknowledgement must fail.
+			const prTime = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null), reviewByBranch: hclReviewByBranch(hclPlus) }), "infra/github (the HCL)");
+			P("...so at PR time the dev claim HOLDS and its stale acknowledgement fails", prTime.failures.some((f) => /e2e-dev-compensating-control/.test(f) && /now HOLDS/.test(f)), JSON.stringify(prTime.failures));
+			// (2) After the apply: live dev carries the second ruleset's pull_request rule too.
+			const appliedDev = clone(cap.dev);
+			const ownRule = clone(appliedDev.find((x) => x.type === "pull_request"));
+			ownRule.parameters.require_code_owner_review = true;
+			ownRule.parameters.required_approving_review_count = 1;
+			ownRule.ruleset_id = 2;
+			appliedDev.push(ownRule);
+			const applied = readLiveRulesets("x/y", (a) => (a[1].endsWith("/dev") ? JSON.stringify(appliedDev) : liveRun(a)));
+			const appliedCmp = compareLiveReview({ rulesets: applied.rulesets ?? [], hcl: hclPlus });
+			P("...and once applied, live dev and the merged HCL AGREE — no permanent review drift", appliedCmp.length === 3 && appliedCmp.every((r) => r.drift.length === 0), JSON.stringify(appliedCmp.map((r) => [r.name, r.drift])));
+			// Only ACTIVE rulesets bind: the same ruleset in evaluate mode must not count.
+			const evalMode = hclReviewByBranch(parseHclReview(fs.readFileSync(MAIN, "utf8") + ownRuleset.replace('enforcement = "active"', 'enforcement = "evaluate"'))).get("dev");
+			P("...but a ruleset in `evaluate` mode is NOT merged in", evalMode?.requireCodeOwnerReview === false && evalMode?.rulesets.length === 1, JSON.stringify(evalMode));
+			const allRefs = hclReviewByBranch(parseHclReview(fs.readFileSync(MAIN, "utf8") + ownRuleset.replace('["refs/heads/dev"]', '["~ALL"]')));
+			P("...a `~ALL` ruleset targets every protected branch", ["dev", "staging", "main"].every((b) => allRefs.get(b)?.requireCodeOwnerReview === true));
+			const excluded = hclReviewByBranch(parseHclReview(fs.readFileSync(MAIN, "utf8") + ownRuleset.replace('["refs/heads/dev"]', '["~ALL"]').replace("exclude = []", 'exclude = ["refs/heads/main"]')));
+			P("...and an `exclude` removes a branch from it", excluded.get("main")?.requireCodeOwnerReview === false && excluded.get("dev")?.requireCodeOwnerReview === true);
+			P("a ref_name list that is not literals is an error", throws(() => parseHclReview(fs.readFileSync(MAIN, "utf8") + ownRuleset.replace('["refs/heads/dev"]', "var.branches"))));
 		}
+		P("ref patterns: a `*` stays inside one segment, `**` crosses them", refPatternTargets("refs/heads/release/*", "release/1") && !refPatternTargets("refs/heads/release/*", "release/1/x") && refPatternTargets("refs/heads/release/**", "release/1/x") && !refPatternTargets("refs/heads/dev", "develop"));
+		P("ref patterns: an unmodelled pattern throws rather than reading as 'not targeted'", throws(() => refPatternTargets("refs/tags/v*", "dev")));
 		P("a non-literal count in the HCL is an error", throws(() => parseHclReview('resource "github_repository_ruleset" "x" {\n name = "p"\n rules {\n pull_request {\n required_approving_review_count = var.n\n }\n }\n}')));
 		P("an absent count in a pull_request block is an error", throws(() => parseHclReview('resource "github_repository_ruleset" "x" {\n name = "p"\n rules {\n pull_request {\n dismiss_stale_reviews_on_push = true\n }\n }\n}')));
 
