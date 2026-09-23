@@ -1196,6 +1196,16 @@ export function compareLiveReview({ rulesets, hcl }) {
 		if (rs.review === null) return { name: rs.name, branch: rs.branch, live: null, hcl: declared, drift, unreadable: rs.reviewError ?? "unknown error" };
 		if (!declared) drift.push(`infra/github declares no active ruleset targeting \`${rs.branch}\``);
 		else {
+			// PRESENCE first: a deleted live `pull_request` rule reads as false/0/0 — which is exactly
+			// what the HCL declares today — so without this the field comparison below reports
+			// agreement while pushes no longer need a PR at all (PR #4966 review, second pass).
+			if ((declared.pullRequestRules > 0) !== (rs.review.pullRequestRules > 0)) {
+				drift.push(
+					rs.review.pullRequestRules > 0
+						? "a `pull_request` rule is live but the HCL declares none"
+						: "the HCL declares a `pull_request` rule but none is live — pushes to this branch no longer need a PR",
+				);
+			}
 			for (const k of ["requireCodeOwnerReview", "requiredApprovingReviewCount", "requiredReviewers"]) {
 				if (declared[k] !== rs.review[k]) drift.push(`\`${REVIEW_FIELD[k]}\` is ${String(rs.review[k])} live but ${String(declared[k])} in the HCL`);
 			}
@@ -1814,6 +1824,8 @@ resource "github_repository_ruleset" "staging" {
 			P("the REAL main.tf yields a review block for all three rulesets", ["protect-dev", "protect-staging", "protect-main"].every((n) => hcl.find((h) => h.name === n)?.review.pullRequestRules === 1), JSON.stringify(hcl));
 			const cmp = compareLiveReview({ rulesets: lr.rulesets, hcl });
 			P("the captured live rules and the real HCL agree on review (as measured 2026-09-23)", cmp.every((r) => r.drift.length === 0), JSON.stringify(cmp));
+			const noPr = lr.rulesets.map((rs) => (rs.branch === "dev" ? { ...rs, review: { ...rs.review, pullRequestRules: 0 } } : rs));
+			P("a live `pull_request` rule that was DELETED is drift, though false/0/0 matches the HCL's values", compareLiveReview({ rulesets: noPr, hcl }).some((r) => r.branch === "dev" && r.drift.some((d) => /none is live/.test(d))));
 			const hclOwner = parseHclReview(fs.readFileSync(MAIN, "utf8").replace("require_code_owner_review       = false", "require_code_owner_review       = true"));
 			P("...and an HCL that declares code-owner review on main is reported as drift against the capture", compareLiveReview({ rulesets: lr.rulesets, hcl: hclOwner }).some((r) => r.name === "protect-main" && r.drift.some((d) => /require_code_owner_review/.test(d))));
 
