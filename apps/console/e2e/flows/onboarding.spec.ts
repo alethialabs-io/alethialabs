@@ -125,6 +125,11 @@ async function settleOrgHandoff(page: Page, timeoutMs: number): Promise<"gate" |
  * when it engages. The gate is data-dependent — it shows only where a legal document is awaiting
  * acceptance (app/server/actions/legal.ts · getPendingAcceptance) — so a journey that is NOT about
  * the gate must pass it either way. The gate's own behaviour is asserted by the clickwrap test.
+ *
+ * Walking past the gate asserts NOTHING about what it says or records. A first signup is shown
+ * "Our Terms have changed" and its acceptance is stored with context "reacceptance"
+ * (accept-terms-form.tsx) — an open product question on #5009 that this helper does not settle
+ * and no journey here can expose.
  */
 async function throughTermsToOverview(page: Page, timeoutMs: number): Promise<void> {
 	if ((await settleOrgHandoff(page, timeoutMs)) === "gate") {
