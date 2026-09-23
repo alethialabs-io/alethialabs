@@ -227,9 +227,9 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/dashboard/[[...rest]]` · | 211 | all N/A | 2/3 · 0.67 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.94** · 0 withheld of 38 |
 | `/[org]/~/alerts` | 303 | 2/4 · 0.50 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **0.94** · 0 withheld of 38 |
 | `/[org]/~/settings/general` | 220 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/8 · 0.88 | **0.96** · 0 withheld of 38 |
-| `/[org]/[project]/architecture` | 411 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/8 · 0.88 | **0.96** · 1 withheld of 38 |
+| `/[org]/[project]/architecture` | 413 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/8 · 0.88 | **0.96** · 1 withheld of 38 |
 | `/[org]/[project]/environments` | 244 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **0.96** · 1 withheld of 38 |
-| `/[org]/[project]/settings/preview` | 226 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/8 · 0.88 | **0.96** · 1 withheld of 38 |
+| `/[org]/[project]/settings/preview` | 266 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/8 · 0.88 | **0.96** · 1 withheld of 38 |
 | `/[org]/~/jobs/[id]` | 233 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **0.96** · 1 withheld of 38 |
 | `/[org]/~/settings/members` | 298 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | **0.97** · 0 withheld of 38 |
 | `/[org]` | 294 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |

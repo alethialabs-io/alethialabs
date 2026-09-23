@@ -327,7 +327,7 @@ H2: it hand-writes its own `<h2>`.
 | **R5** | axe reports zero serious or critical violations, **in both themes** | `scanRouteThemes()` returns none at `wcag2a`/`wcag2aa` in **light and dark**, each violation naming its theme, and both themes applied and painted differently | never |
 | **R6** | zero console errors, zero failed requests | nothing on `console.error`, no response ≥ 400 | never |
 | **R7** | interactive within budget | p95 under the route's recorded budget | never |
-| **R8** | every enabled control does something | every enabled `button`, same-origin `a[href]` and depth-1 `menuitem` in `main` — plus the shell chrome, measured once under `/[org]` — produces, within **1 000 ms** of activation, a navigation, a new overlay, a DOM mutation in `main`, an `aria-expanded\|pressed\|selected\|checked` flip, a network request, a download, a new tab or a `role=status` toast | `redirect-only`, `no-enabled-controls` |
+| **R8** | every enabled control does something | every enabled `button`, same-origin `a[href]` and depth-1 `menuitem` in `main` — plus the shell chrome, measured once under `/[org]` — produces, within **1 000 ms** of activation, a navigation, a new overlay, a DOM mutation in `main`, an `aria-expanded\|pressed\|selected\|checked` flip, a network request, a download, a new tab or a toast (`role=status`, `role=alert`, or sonner's role-less `[data-sonner-toast]`, which renders outside `main`) | `redirect-only`, `no-enabled-controls` |
 
 **R8 IS MEASURED WITHOUT EVER PRESSING A CONFIRM.** `e2e/audit/inert.ts`'s `activate()` refuses to
 click while a dialog or an alertdialog is open, and a confirm button exists nowhere else — so the

@@ -760,7 +760,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"redirectOnly": false,
-			"surfaceFiles": 411,
+			"surfaceFiles": 413,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1232,7 +1232,7 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"redirectOnly": false,
-			"surfaceFiles": 226,
+			"surfaceFiles": 266,
 			"families": {
 				"S": {
 					"instrumented": 4,

@@ -18,7 +18,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
-import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
+import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, STATUS_SELECTOR_WITHOUT_SONNER, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
 import { hitTest } from "./overlays";
 import {
 	controlFixture,
@@ -424,6 +424,19 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		const mutant = CONTROL_FIXTURE.replace('<div><button aria-pressed="true">Pressed toggle</button></div>', '<div><button aria-pressed="true">Pressed toggle</button><button aria-pressed="false">Sibling</button></div>');
 		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
 		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/pressed toggle reported "already-current"/);
+	});
+
+	test("R8 — the control names the toast arm when a sonner toast stops counting as an effect", async ({ page }) => {
+		// #4996. Sonner's toast carries no role and renders outside `main`: without `[data-sonner-toast]`
+		// in the status selector the toast button reads inert, which is how `Design with the agent`
+		// on `~/new` was filed "did nothing" while it toasted.
+		expect((await interactionControl(page, CONTROL_FIXTURE, { statusSelector: STATUS_SELECTOR_WITHOUT_SONNER })).join(" ")).toMatch(
+			/sonner toast button reported null/,
+		);
+		// And the fixture half: a toaster that renders nothing must not read as a toast.
+		const mutant = CONTROL_FIXTURE.replace('li.setAttribute("data-sonner-toast", "");', "");
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/sonner toast button reported null/);
 	});
 
 	test("R8 — enumerating at domcontentloaded sees the skeleton; waiting for readiness sees the page", async ({ page }) => {
