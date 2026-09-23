@@ -4,6 +4,7 @@
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { getInjectedActor } from "@/lib/authz/actor-context";
+import { UnauthorizedError } from "./errors";
 
 /**
  * Reads the current Better Auth session, tolerating a failed lookup. A stale/expired token that the
@@ -31,7 +32,7 @@ export async function requireOwner(): Promise<string> {
 	const injected = getInjectedActor();
 	if (injected) return injected.userId;
 	const session = await safeGetSession();
-	if (!session?.user) throw new Error("Unauthorized");
+	if (!session?.user) throw new UnauthorizedError();
 	return session.user.id;
 }
 
@@ -67,7 +68,7 @@ export async function getOwnerScope(): Promise<OwnerScope> {
 		};
 	}
 	const session = await safeGetSession();
-	if (!session?.user) throw new Error("Unauthorized");
+	if (!session?.user) throw new UnauthorizedError();
 	return {
 		userId: session.user.id,
 		sessionId: session.session.id,
