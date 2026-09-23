@@ -57,10 +57,21 @@ override_data {
   }
 }
 
-# The committed posture: terraform.tfvars sets the issuer to null, so nothing is created and the trust
-# document holds the GitHub statement alone.
+# Every enabling run below reads the fixture pin for the mocked origin. The committed pin
+# (infra/e2e-issuer/tls-ca-pin.json) is for the real host and is checked against the committed
+# e2e_broker_issuer_url by `node scripts/ci/check-e2e-issuer-health.mjs --static` instead.
+variables {
+  broker_tls_pin_path = "testdata/tls-ca-pin.json"
+}
+
+# Trust OFF: with the issuer unset nothing is created and the trust document holds the GitHub statement
+# alone. Set explicitly — terraform.tfvars now carries the real origin (#4226), so the default posture
+# is no longer "off".
 run "unset_plans_no_broker_trust" {
   command = plan
+  variables {
+    e2e_broker_issuer_url = null
+  }
 
   assert {
     condition = alltrue([
@@ -106,10 +117,11 @@ run "set_appends_an_exact_second_statement" {
     condition = alltrue([
       alicloud_ims_oidc_provider.e2e_broker[0].issuance_limit_time == 1,
       alicloud_ims_oidc_provider.e2e_broker[0].client_ids == toset(["sts.aliyuncs.com"]),
-      # The CA cert only, never the leaf.
-      alicloud_ims_oidc_provider.e2e_broker[0].fingerprints == toset(["2222222222222222222222222222222222222222"]),
+      # The REVIEWED pin, not the plan-time chain: 4444… is pinned (staged for a rotation) though the
+      # mock serves only 2222…, and the leaf (3333…) is never pinned.
+      alicloud_ims_oidc_provider.e2e_broker[0].fingerprints == toset(["2222222222222222222222222222222222222222", "4444444444444444444444444444444444444444"]),
     ])
-    error_message = "the broker provider must pin the audience, the narrowest issuance limit and the CA fingerprint only."
+    error_message = "the broker provider must pin the audience, the narrowest issuance limit and exactly the committed CA fingerprints."
   }
 }
 
@@ -159,4 +171,52 @@ run "a_built_provider_arn_that_drifts_is_reported" {
     error_message = "the broker statement must name the provider by the ARN built from plan-time values, not by the resource's computed arn."
   }
   expect_failures = [check.e2e_broker_provider_arn_matches]
+}
+
+# ── The committed TLS pin gates the enabling plan (#4226, maintainer ruling 2026-09-23) ───────────────
+
+run "an_empty_pin_is_unappliable" {
+  command = plan
+  variables {
+    e2e_broker_issuer_url = "https://alethia-e2e-issuer.example.workers.dev"
+    broker_tls_pin_path   = "testdata/empty/tls-ca-pin.json"
+  }
+  expect_failures = [alicloud_ims_oidc_provider.e2e_broker]
+}
+
+# Cloudflare re-issued the host from a CA the pin does not name: refuse to write a pin RAM would reject.
+run "a_served_ca_outside_the_pin_is_unappliable" {
+  command = plan
+  variables {
+    e2e_broker_issuer_url = "https://alethia-e2e-issuer.example.workers.dev"
+    broker_tls_pin_path   = "testdata/other-ca/tls-ca-pin.json"
+  }
+  expect_failures = [alicloud_ims_oidc_provider.e2e_broker]
+}
+
+run "a_pin_for_another_origin_is_unappliable" {
+  command = plan
+  variables {
+    e2e_broker_issuer_url = "https://e2e-issuer.example.org"
+  }
+  expect_failures = [alicloud_ims_oidc_provider.e2e_broker]
+}
+
+# The committed posture: the real origin with the committed pin. While that pin is still empty (before
+# the runbook's --print-pin step) the enabling plan must refuse; once populated, the mocked chain
+# (2222…) is not the real one and it still refuses — so this run holds in both states.
+run "the_committed_origin_needs_a_reviewed_pin" {
+  command = plan
+  variables {
+    broker_tls_pin_path = "../e2e-issuer/tls-ca-pin.json"
+  }
+  expect_failures = [alicloud_ims_oidc_provider.e2e_broker]
+}
+
+run "a_pin_path_that_is_not_a_pin_is_refused" {
+  command = plan
+  variables {
+    broker_tls_pin_path = "terraform.tfvars"
+  }
+  expect_failures = [var.broker_tls_pin_path]
 }
