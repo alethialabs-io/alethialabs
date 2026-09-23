@@ -96,8 +96,11 @@ resource "alicloud_cr_ee_repo" "this" {
 #
 # Plan-green is NOT proof a scan runs. Alibaba couples batch scanning to an instance VPC and
 # leaves the AUTO trigger's prerequisite undocumented in both languages
-# (docs/research/alibaba-cr-scan-rule-vpc.md) — the runtime proof, push an image and observe a
-# scan result, is owed by the alibaba e2e nightly (#2061/#2101).
+# (docs/research/alibaba-cr-scan-rule-vpc.md), and this module attaches NO VPC endpoint to the
+# instance. So every rule below is exactly the configuration nobody has observed scanning — which
+# is why `terraform_data.vulnerability_scanning_unproven` further down refuses the switch at plan
+# (#2283). The rule is kept, not deleted: it is the wiring the day an observation proves it scans,
+# and deleting the guard is then the whole fix.
 resource "alicloud_cr_scan_rule" "this" {
   # `alicloud_cr_scan_rule` is in the provider since 1.265.0, inside the module's >= 1.283 floor.
   for_each = { for name, repo in var.repos : name => repo if repo.vulnerability_scanning }
@@ -113,4 +116,42 @@ resource "alicloud_cr_scan_rule" "this" {
   # ForceNew — pinned to VUL (vulnerability). Never thread a canvas switch through this argument:
   # flipping it would replace the rule, and SBOM is a different product than the switch promises.
   scan_type = "VUL"
+}
+
+# ── The vulnerability-scanning refusal (#2283). ────────────────────────────────────────────────
+#
+# The question #2265 left open: does an AUTO `alicloud_cr_scan_rule` actually scan on a Basic
+# instance with NO VPC endpoint? Alibaba's docs cannot answer it (docs/research/alibaba-cr-scan-rule-vpc.md
+# §3), and it has never been observed: the Alibaba account is disabled (`UserDisable`, 2026-09-22)
+# and unfunded, so neither the direct probe nor the nightly can run. The maintainer ruled on
+# 2026-09-23 to ship the fallback #2265 named WITHOUT the probe: refuse at plan, naming the field,
+# rather than plan a rule that is green whether or not a scan ever runs.
+#
+# What that costs, stated so nobody mistakes it for a finding: this refusal rests on an ASSUMPTION.
+# If an observation later shows the rule does scan without a VPC endpoint, this guard removed a
+# working feature, and the fix is to delete this resource and record the evidence in the research
+# doc. Do NOT "fix" it by attaching a VPC instead — §6 of that doc: VPC access-control quota
+# starts at 0, is set only through the create-only `vpc_quota`, and an already-provisioned registry
+# fails with INSTANCE_ACCESS_VPC_LIMIT_EXCEED with no in-place Terraform path.
+#
+# A `terraform_data` precondition, NOT a `check`, for the reason the gcp twin (#1844,
+# checks_registry.tf there) gives: a check only warns and never blocks an apply, and a warning
+# reproduces the exact failure this exists to prevent — switch ON, nothing scanned, run green.
+# `count`, so a project with every switch OFF — every existing project — plans nothing new here.
+locals {
+  # Named once so the count and the condition cannot disagree about what "requested" means.
+  vulnerability_scanning_requested = anytrue([for _, repo in var.repos : repo.vulnerability_scanning])
+}
+
+resource "terraform_data" "vulnerability_scanning_unproven" {
+  count = local.vulnerability_scanning_requested ? 1 : 0
+
+  lifecycle {
+    precondition {
+      # Always false when this instance exists: the refusal is unconditional for a requested scan,
+      # because the module has no VPC endpoint under which the rule could be called proven.
+      condition     = !local.vulnerability_scanning_requested
+      error_message = "ALI-CR-SCAN-001: a container registry asks for vulnerability_scanning (container_registries.vulnerability_scanning), but on Alibaba that plans an AUTO alicloud_cr_scan_rule on a Basic CR instance with no VPC endpoint — a configuration nobody has observed scanning, and one Alibaba's docs do not settle (docs/research/alibaba-cr-scan-rule-vpc.md, #2283). Apply blocked fail-closed rather than shipping a switch that may scan nothing. Turn vulnerability scanning off for this registry; the switch returns once a real apply shows a scan result."
+    }
+  }
 }
