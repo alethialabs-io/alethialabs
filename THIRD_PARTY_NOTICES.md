@@ -7,8 +7,8 @@ reviewed from clean production artifacts before each public release.
 
 | Component | Use | Licence | Required action |
 |---|---|---|---|
-| Space Grotesk | Brand/display font | SIL Open Font License 1.1 | Retain OFL text and copyright notice |
-| Geist / Geist Mono | Interface fonts | SIL Open Font License 1.1 | Retain OFL text and copyright notice |
+| Space Grotesk | Brand/display font, vendored (`latin` subset) in `packages/brand/src/fonts/` | SIL Open Font License 1.1 | Retain OFL text and copyright notice: `packages/brand/src/fonts/OFL-SpaceGrotesk.txt` |
+| Geist / Geist Mono | Interface fonts, vendored (`latin` subsets) in `packages/brand/src/fonts/` | SIL Open Font License 1.1 | Retain OFL text and copyright notice: `packages/brand/src/fonts/OFL-Geist.txt`, `OFL-GeistMono.txt` |
 | Noto Sans | Text font where bundled | SIL Open Font License 1.1 | Retain OFL text and copyright notice |
 | Lucide | Interface icons | ISC | Retain copyright and licence notice |
 | Base UI / Radix / shadcn-derived components | UI primitives | Upstream permissive terms | Retain applicable notices and modification records |
