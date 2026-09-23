@@ -14,6 +14,7 @@ import type { ByoChartState, ChartWorkloadState } from "@/app/server/actions/byo
 import type { IacGroup } from "@/lib/canvas/iac-inventory";
 import {
 	normalizeKeylessAuth,
+	normalizeManagedCertificate,
 	normalizeWafEnabled,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
@@ -290,9 +291,12 @@ function normalizeWafAcrossNodes(nodes: CanvasNode[]): CanvasNode[] {
 	let changed = false;
 	const next = nodes.map((n) => {
 		if (n.data.kind !== "dns") return n;
-		const config = normalizeWafEnabled(
-			n.data.config,
-			n.data.provider ?? projectProvider,
+		// The Managed TLS switch beside it is withheld on Alibaba for the same reason and by the same
+		// mechanism (#4320), so one pass over the DNS node clears both.
+		const provider = n.data.provider ?? projectProvider;
+		const config = normalizeManagedCertificate(
+			normalizeWafEnabled(n.data.config, provider),
+			provider,
 		);
 		if (config === n.data.config) return n;
 		changed = true;

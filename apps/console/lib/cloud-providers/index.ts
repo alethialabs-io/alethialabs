@@ -45,6 +45,10 @@ export {
 	normalizeWafEnabled,
 } from "./waf";
 export {
+	managedCertificateUnavailableReason,
+	normalizeManagedCertificate,
+} from "./managed-certificate";
+export {
 	effectiveCapacityMode,
 	effectiveCapacityModeForCloud,
 	normalizeCapacityMode,

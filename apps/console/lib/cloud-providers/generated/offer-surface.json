@@ -122,7 +122,9 @@
 				"alibaba",
 				"hetzner"
 			],
-			"unavailableOn": {},
+			"unavailableOn": {
+				"alibaba": "Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate."
+			},
 			"notOfferedOn": []
 		},
 		{

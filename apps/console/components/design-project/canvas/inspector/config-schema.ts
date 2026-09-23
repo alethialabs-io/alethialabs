@@ -18,6 +18,7 @@ import {
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
 	keylessUnavailableReason,
+	managedCertificateUnavailableReason,
 	NODE_DISK,
 	NOSQL,
 	wafUnavailableReason,
@@ -1850,6 +1851,12 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "managed_certificate",
 						type: "switch",
 						label: "Managed TLS certificate",
+						// Gated with a reason, the WAF switch's pattern below, rather than hidden: a
+						// recorded provider ceiling on Alibaba (#4320 — `ceiling:` in the knob ledger,
+						// #1824). See lib/cloud-providers/managed-certificate.ts.
+						requiresProvider: true,
+						unavailableWhen: (_config, { provider }) =>
+							managedCertificateUnavailableReason(provider),
 					},
 						{
 						key: "waf_enabled",
