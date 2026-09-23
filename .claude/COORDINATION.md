@@ -34,6 +34,15 @@ like #530). You already built and debugged this for provisioning — this reuses
   - `needs:design` / `needs:human` — a UI unit awaiting the human/Claude-Design pipeline.
   - `epic` — an umbrella/tracking issue. **Never directly built or claimed**: it is decomposed
     into sub-issues, and claiming it would collide with every one of them.
+- **A LABEL IS THE PROTECTION. A SENTENCE SAYING SO IS NOT.** `claim-work.sh` filters on labels and
+  reads no prose, so a body that opens "NOT AGENT-BUILDABLE … `needs:human` keeps this out of
+  `claim-work.sh`'s autonomous picking" installs **nothing** — and #4112, which said exactly that
+  over `wave:hygiene, lane:docs, class:backend`, therefore sat at the TOP of `--class backend`'s
+  ready queue, inviting an agent to "create" three repositories that already existed. Writing the
+  sentence is the easy half; **add the label**. `scripts/coordinate.sh --report` now names every
+  board unit whose body claims a protection label it does not carry, and `claim-work.sh` warns when
+  the unit it just handed you is one of them (it warns rather than skips: only a human can say which
+  side of a prose-vs-label disagreement is right).
 - The issue **body** declares machine-read lines. Each must start its own line at column 0 — the
   parsers scan the whole body, so writing one of these tokens in prose (even inside backticks, even
   in a sentence saying the line was removed) re-declares it. That has already happened once, on
