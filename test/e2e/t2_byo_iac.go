@@ -276,7 +276,30 @@ func (s byoIacSource) validate() error {
 // Every job in the leg (deploy, drift ×3, heal, destroy) is built from THIS one function, so their
 // ProviderTfvars and their pinned commit can never disagree — which is what lets the drift jobs'
 // refresh-only plans reconcile the deploy's exact recorded state.
+// ⚠️ `region` ARRIVES AS A ZONE ON GCP and is normalized here (#4951). `ALETHIA_E2E_REGION` holds a
+// zone for gcp deliberately — GKE needs one — so `resolveT2Region` hands this function
+// `europe-west3-a`, and a customer module that asks for a REGION gets a zone. Measured on run
+// 35789927722: `google_storage_bucket.drift_probe` took `location = "europe-west3-a"` and GCS
+// answered `Error 400: The specified location constraint is not valid.` after the cluster had
+// provisioned and ArgoCD had converged 4/4.
+//
+// It is normalized HERE rather than in the customer module because the key is named `region` and
+// the harness should put a region in it. Requiring every BYO-IaC customer to undo our zone is the
+// wrong direction: their module is theirs, and it is right to trust the field's name.
+//
+// `GCPRegionOf` is idempotent, so this stays correct if a region is ever passed directly.
+//
+// ⚠️ THE `provider == "gcp"` GUARD IS DEFENSIVE, NOT LOAD-BEARING TODAY, and saying so is the point.
+// Measured by mutation: dropping the guard and normalizing for EVERY provider leaves the tests
+// green, because no current provider's region ends in `-<letter>` — aws and alibaba end in a digit
+// (`us-east-1`, `eu-central-1`), azure has no dash at all (`westeurope`), hetzner is `nbg1`. The
+// guard costs one line and protects against a future region shaped like a zone; it is kept for
+// that, not because anything proves it necessary now. A comment claiming otherwise would be the
+// wrong-comment-on-correct-code defect this file is already full of examples of.
 func buildByoIacSnapshot(project, env, provider, region string, src byoIacSource) map[string]any {
+	if provider == "gcp" {
+		region = GCPRegionOf(region)
+	}
 	return map[string]any{
 		"id":                "e2e-" + env + "-byoiac",
 		"project_name":      project,
