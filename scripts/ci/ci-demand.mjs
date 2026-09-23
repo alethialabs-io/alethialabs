@@ -61,9 +61,46 @@
 //   node scripts/ci/ci-demand.mjs --input runs-with-jobs.json
 //   node scripts/ci/ci-demand.mjs --self-test
 //
-// The input is a JSON array of {id, name, event, head_branch, conclusion, created_at, jobs:[…]}.
-// `.github/workflows/workflow-health.yml` collects it; keeping fetch out of this file is what makes
-// the classifier testable without a network.
+// The input is a JSON array of {id, name, event, head_branch, conclusion, created_at, jobs}, where
+// `jobs` is an array of {conclusion, created_at, started_at} — or **null**, meaning the collector
+// could not read that run. `.github/workflows/workflow-health.yml` collects it; keeping fetch out of
+// this file is what makes the classifier testable without a network.
+//
+// ── THREE WAYS TO HAVE NO WAIT, AND THEY ARE NOT THE SAME NUMBER (#4934) ──
+//
+// A run contributes no wait for three reasons that a single counter cannot tell apart, and the
+// difference is the whole reading:
+//
+//   never got a runner    it asked and was starved              — the WORST case
+//   nothing to dispatch   every job was `skipped`               — it asked for nothing
+//   could not be read     the jobs API call failed              — we did not look
+//
+// Until #4934 all three collapsed into `neverDispatched`, and the third did not even reach this
+// file: the collector's `|| echo '[]'` turned a failed API call into "this run had no jobs", so a
+// partial collection outage biased the sample downward with no signal at all. They are now three
+// counters, and `render` prints all three every time, including the zeros — "0 could not be read"
+// is a result, and its absence is not.
+//
+// `skipped` is the one that was measured. Sampled 2026-09-23 over the same 60 runs the collector
+// takes: 266 jobs, of which 89 had `started_at == created_at` and **all 89 were `skipped`** — not
+// one executed job in the sample had a zero wait. Six runs were entirely skipped, and this file
+// reported all six as "never got a runner": a 7× overstatement of starvation (7 reported, 1 real)
+// applying the worst-case label to runs that never asked for a runner at all.
+//
+// ── COMPARABILITY WITH THE PUBLISHED FIGURES: CHECKED, NOT ASSUMED ──
+//
+// The 2026-09-03 numbers quoted at the top were produced under the old timestamp predicate, so
+// #4934 ran both pipelines over one identical 60-run fetch before changing anything. The wait
+// distribution came out THE SAME TO EVERY DIGIT — 141 root jobs, median 0.3 min, p90 4.2, max 8.3,
+// 38% instant, fully-dispatched 0.3 / 2.7 — because on real data `started_at == created_at` and
+// `conclusion == "skipped"` selected the same 89 jobs. **The published waiting/executing/median
+// figures remain comparable across this change.**
+//
+// ONE REPORTED NUMBER DOES MOVE, and it moves because it was wrong: "never got a runner" read 7 on
+// that sample and now reads 1, with the other 6 named as "nothing to dispatch". The old 7 was the
+// sum of two unlike things. A reader comparing a nightly summary from before 2026-09-23 to one
+// after must not read that drop as CI capacity improving — nothing about the repo changed, the
+// counter stopped conflating starvation with runs that asked for nothing.
 
 /** Where a run came from. The buckets are the levers — each one is fixed differently. */
 export function origin(run) {
@@ -80,15 +117,38 @@ export function origin(run) {
 }
 
 /**
+ * A job that never asked for a runner: GitHub's conclusion for one whose `if:` was false, or whose
+ * `needs:` did not run. It is created and "started" without ever being dispatched, so its wait is a
+ * timestamp artefact and not a measurement of anything.
+ *
+ * THIS REPLACED A TIMESTAMP COINCIDENCE, and the distinction is the point. The collector used to
+ * exclude these with `select(.started_at != .created_at)` — right about today's data by accident,
+ * wrong about what it was asking. Measured over 60 runs / 266 jobs on 2026-09-23 the two predicates
+ * agreed EXACTLY (89 jobs, 89 skipped, no disagreement in either direction), which is why this
+ * change does not move the published numbers. But they agree only while GitHub never dispatches a
+ * real job inside one second of creating it: the moment it does, the timestamp form silently
+ * discards a genuine zero wait — the metric's own best case — and reads the repo as worse than it
+ * is. Asking for the conclusion asks the question we actually mean, and it cannot drift.
+ *
+ * It also belongs HERE and not in the collector's jq. In YAML it was a predicate with no test; in
+ * this file the self-test pins it, and pins that a real sub-second wait is still counted.
+ */
+export function skipped(job) {
+	return job.conclusion === "skipped";
+}
+
+/**
  * Wait, in seconds, for each job that was ready the moment the run was created — [] when the run
- * has no job that ever started (queued, cancelled before dispatch, or a fixture with no timings).
+ * has no job that ever started (queued, cancelled before dispatch, every job skipped, a run the
+ * collector could not read, or a fixture with no timings).
  *
  * An empty array is not a zero wait and must never be averaged as one: a run that never got a
  * runner is the worst case, not the best, and folding it in as 0 makes a starved sample read as an
- * instant one.
+ * instant one. `summarise` is what tells the four empty cases apart; this function only declines to
+ * invent a number for any of them.
  */
 export function rootWaits(run) {
-	const timed = (run.jobs ?? []).filter((j) => j.created_at && j.started_at);
+	const timed = (run.jobs ?? []).filter((j) => j.created_at && j.started_at && !skipped(j));
 	if (timed.length === 0) return [];
 	const earliest = Math.min(...timed.map((j) => Date.parse(j.created_at)));
 	return timed
@@ -131,6 +191,33 @@ export function summarise(runs) {
 	const byOrigin = {};
 	for (const r of runs) byOrigin[origin(r)] = (byOrigin[origin(r)] ?? 0) + 1;
 
+	// `jobs: null` is the collector saying "I could not read this run". It is deliberately not
+	// `jobs: []`, which says "I read it and it had none" — the two were the same value until #4934,
+	// which is how an API failure got to look like an absence.
+	const unreadable = runs.filter((r) => r.jobs === null).length;
+	// COUNT AND REPORT rather than fail on the first one, because this step is the LAST thing in the
+	// job that files the red-pipeline report and its own comment commits it to cutting only itself:
+	// hard-failing on one transient 502 in 60 would trade a small bias for a guaranteed outage, and
+	// that outage is exactly what #4934 cost three nights running. But a sample that is mostly holes
+	// is not a sample — a number presented as covering 60 runs while describing fewer than half of
+	// them is the "clean bill of health from no data" this file exists to refuse. So the reported
+	// counter is the safety property and this is only the backstop, at the one line that needs no
+	// guessing: the reported number would describe fewer runs than it doesn't.
+	if (unreadable * 2 > runs.length) {
+		throw new Error(
+			`ci-demand: ${unreadable} of ${runs.length} run(s) could not be read — the jobs API call ` +
+				"failed for a majority of the sample. Any wait computed from the remainder would be " +
+				"reported as this repo's CI demand while describing less than half of it.",
+		);
+	}
+
+	// A run whose every job was `skipped` asked for nothing, so it did not fail to get a runner —
+	// it never wanted one. Counting it as never-dispatched put the metric's worst-case label on its
+	// most trivial case, 6 times in 60 when measured.
+	const nothingToDispatch = runs.filter(
+		(r) => Array.isArray(r.jobs) && r.jobs.length > 0 && r.jobs.every(skipped),
+	).length;
+
 	// Pooled across the sample: every job that was ready when its run was created.
 	const waits = runs.flatMap(rootWaits);
 	const dispatched = runs.map(runFullyDispatched).filter((w) => w !== null);
@@ -138,7 +225,9 @@ export function summarise(runs) {
 		throw new Error(
 			`ci-demand: ${runs.length} run(s) and not one job with both created_at and started_at. ` +
 				"The wait cannot be computed, and reporting the composition alone would read as a " +
-				"clean bill of health for the number that actually matters.",
+				"clean bill of health for the number that actually matters. " +
+				`(${unreadable} run(s) could not be read; ${nothingToDispatch} had every job skipped — ` +
+				"if those account for the sample, this is a collection failure, not a quiet repo.)",
 		);
 	}
 	const cancelled = runs.filter((r) => r.conclusion === "cancelled").length;
@@ -146,8 +235,13 @@ export function summarise(runs) {
 		runs: runs.length,
 		byOrigin,
 		cancelledPct: Math.round((cancelled * 100) / runs.length),
-		// Runs with no timing at all. Reported, never folded into the wait as a zero.
-		neverDispatched: runs.length - dispatched.length,
+		// The three ways to contribute no wait, kept apart. Each is reported, and none is ever
+		// folded into the wait as a zero. They are disjoint by construction — an unreadable run and
+		// an all-skipped run both yield no rootWaits, so neither can also be in `dispatched` — which
+		// is what keeps `neverDispatched` from going negative or double-counting.
+		neverDispatched: runs.length - dispatched.length - unreadable - nothingToDispatch,
+		nothingToDispatch,
+		unreadable,
 		rootJobs: waits.length,
 		waitSeconds: {
 			median: percentile(waits, 0.5),
@@ -169,7 +263,14 @@ export function summarise(runs) {
 export function render(s) {
 	const o = Object.entries(s.byOrigin).sort((a, b) => b[1] - a[1]);
 	const lines = [
-		`**${s.runs} runs** · ${s.cancelledPct}% cancelled · ${s.neverDispatched} never got a runner`,
+		`**${s.runs} runs** · ${s.cancelledPct}% cancelled`,
+		"",
+		// All three every time, zeros included. "0 could not be read" is a result; a line that
+		// appears only when it is non-zero leaves its absence meaning either "none" or "not asked",
+		// and this instrument's whole subject is telling those apart.
+		`- **${s.neverDispatched}** asked for a runner and never got one`,
+		`- **${s.nothingToDispatch}** had nothing to dispatch — every job skipped, so no wait to measure`,
+		`- **${s.unreadable}** could not be read — the jobs API call failed, so these are missing, not empty`,
 		"",
 		"| origin | runs | share |",
 		"|---|---:|---:|",
@@ -197,6 +298,7 @@ function selfTest() {
 	};
 	const run = (head, jobs, extra = {}) => ({ head_branch: head, jobs, ...extra });
 	const job = (created, started) => ({ created_at: created, started_at: started });
+	const skippedJob = (at) => ({ created_at: at, started_at: at, conclusion: "skipped" });
 
 	ok("a merge-group run is speculative", origin(run("mergify/merge-queue/abc", [], { event: "merge_group" })) === "speculative");
 	ok("...a promotion PR's head is an integration branch", origin(run("dev", [])) === "promotion-pr" && origin(run("staging", [])) === "promotion-pr");
@@ -238,6 +340,25 @@ function selfTest() {
 	ok("a run with no started job yields no wait, never a 0", JSON.stringify(rootWaits(run("f", [{ created_at: "x" }]))) === "[]");
 	ok("...and an empty job list too", runFullyDispatched(run("f", [])) === null);
 
+	// ⭐ #4934 · A SKIPPED job never asked for a runner, so its zero is a timestamp artefact. The
+	// collector used to strip these with `select(.started_at != .created_at)` — a coincidence that
+	// held for all 266 jobs measured, and holds only until GitHub dispatches something inside one
+	// second. Both halves are pinned: the artefact is excluded, and a REAL zero wait survives.
+	ok(
+		"a SKIPPED job's zero is not counted as an instant dispatch",
+		JSON.stringify(rootWaits(run("f", [
+			job("2026-01-01T00:00:00Z", "2026-01-01T00:10:00Z"),
+			skippedJob("2026-01-01T00:00:00Z"),
+		]))) === "[600]",
+	);
+	ok(
+		"...but a job that REALLY started in the same second still counts — the exclusion is about the conclusion, not the clock",
+		JSON.stringify(rootWaits(run("f", [
+			{ created_at: "2026-01-01T00:00:00Z", started_at: "2026-01-01T00:00:00Z", conclusion: "success" },
+		]))) === "[0]",
+	);
+	ok("...and a run the collector could not read yields no wait rather than throwing", JSON.stringify(rootWaits(run("f", null))) === "[]");
+
 	const sample = [
 		run("feat/a", [job("2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z")]),
 		run("dev", [job("2026-01-01T00:00:00Z", "2026-01-01T00:10:00Z")]),
@@ -251,6 +372,31 @@ function selfTest() {
 	ok("the median wait ignores the never-dispatched run rather than scoring it 0", s.waitSeconds.median === 600);
 	ok("...and `instantPct` separates 'started at once' from 'median happens to be low'", s.waitSeconds.instantPct === 33);
 
+	// ⭐ #4934 · THE THREE EMPTY CASES ARE THREE COUNTERS. Before this they were one, so "we could
+	// not read 6 of these" and "6 of these were starved of runners" were the same sentence — and the
+	// first was not even reachable, because the collector answered an API failure with `[]`.
+	const mixed = [
+		run("feat/ok", [job("2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z")]),
+		run("feat/starved", [{ created_at: "2026-01-01T00:00:00Z" }]),
+		run("feat/all-skipped", [skippedJob("2026-01-01T00:00:00Z"), skippedJob("2026-01-01T00:00:00Z")]),
+		run("feat/unreadable", null),
+	];
+	const m = summarise(mixed);
+	ok("a starved run is 'never got a runner'", m.neverDispatched === 1, `was ${m.neverDispatched}`);
+	ok("...a run whose every job was skipped is NOT — it asked for nothing", m.nothingToDispatch === 1, `was ${m.nothingToDispatch}`);
+	ok("...a run the collector could not read is neither — it is missing, not empty", m.unreadable === 1, `was ${m.unreadable}`);
+	ok(
+		"...and the four classes account for the whole sample exactly once each",
+		m.neverDispatched + m.nothingToDispatch + m.unreadable + 1 === m.runs,
+	);
+	// The refusal. Under half unreadable is reported and survives; over half is not a sample.
+	ok("a minority of unreadable runs is reported, not fatal — one 502 must not cost the night's measurement", summarise([...mixed, run("feat/ok2", [job("2026-01-01T00:00:00Z", "2026-01-01T00:02:00Z")])]).unreadable === 1);
+	raises(
+		"...but a MAJORITY of unreadable runs raises rather than reporting a number about runs nobody read",
+		() => summarise([run("feat/ok", [job("2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z")]), run("a", null), run("b", null)]),
+		"could not be read",
+	);
+
 	// THE REFUSALS. Both are states that would otherwise render as a healthy repo.
 	raises("an EMPTY sample raises rather than reporting zero demand", () => summarise([]), "the sample is empty");
 	raises(
@@ -260,6 +406,21 @@ function selfTest() {
 	);
 
 	ok("render names the capacity signal", render(s).includes("Runner wait"));
+	// Zeros included, deliberately: a line that appears only when non-zero leaves its absence
+	// meaning either "none" or "nobody asked", which is the ambiguity this unit exists to remove.
+	const rm = render(m);
+	ok(
+		"...and renders the three empty cases as three distinct lines",
+		rm.includes("asked for a runner and never got one") &&
+			rm.includes("nothing to dispatch") &&
+			rm.includes("could not be read"),
+	);
+	ok(
+		"...printing a zero rather than omitting the line",
+		render(summarise([
+			run("feat/ok", [job("2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z")]),
+		])).includes("**0** could not be read"),
+	);
 
 	if (fails > 0) { console.error(`\nci-demand self-test: ${fails} failure(s)`); process.exit(1); }
 	console.log("\nself-test: all passed");

@@ -200,7 +200,9 @@ jobs:
       # already spends most of its 10-minute budget on sequential GitHub API calls; if demand sampling
       # consumes the remainder, it must cut only itself, never the report this workflow exists to file.
       # It does NOT gate on the value: a demand number is a trend, and failing the build on it would be
-      # a guess at the threshold. The collector still fails loudly on an empty or untimed sample.
+      # a guess at the threshold. The collector still fails loudly on an empty or untimed sample, and
+      # since #4934 on a sample the jobs API mostly could not be read — a COLLECTION failure is not a
+      # value, and it is the one thing here that must never render as a quiet repo.
       - name: CI demand — how much CI we ask for, and how long we wait for it
         env:
           GH_TOKEN: ${{ github.token }}
@@ -222,15 +224,41 @@ jobs:
             # all, so REST is the only place the wait exists. Verified against a live run: this jq
             # returns `{"created_at":"…21:28:18Z","started_at":"…21:30:17Z"}` — a real 119s wait.
             #
-            # THE OTHER TWO DEFECTS IN THESE LINES ARE DELIBERATELY LEFT TO #4934, not overlooked:
-            # `|| echo '[]'` still reports an API FAILURE as an absence of jobs (harmless while the
-            # jq was wrong for every run — this fix ACTIVATES it, so #4934 is now the next thing to
-            # do here), and `select(.started_at != .created_at)` still drops every zero-wait job.
-            # That second one is a METRIC decision: removing it would change what the number means
-            # and break comparability with the published 2026-09-03 figures (5,376 min waiting vs
-            # 1,802 executing, 35.6 min median), so it is not something to change in passing.
-            jobs=$(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs?per_page=100" \
-                     --jq '[.jobs[] | select(.started_at != null and .started_at != .created_at) | {created_at, started_at}]' 2>/dev/null || echo '[]')
+            # THE OTHER TWO DEFECTS IN THESE LINES ARE FIXED BY #4934, and both fixes are the same
+            # move: STOP DECIDING ANYTHING HERE. This is a jq expression inside YAML — nothing can
+            # test it, so every judgement it made was a judgement no assertion could catch. It now
+            # fetches and classifies nothing; ci-demand.mjs, which has a --self-test, does both.
+            #
+            #   1. `|| echo '[]'` reported an API FAILURE as an absence of jobs. It is now `null`,
+            #      which is a value ci-demand.mjs can tell apart from `[]` — "I could not read this
+            #      run" and "this run had no jobs" were literally the same JSON before. The step
+            #      still does not die on one bad call (see below); the collector counts them and
+            #      ci-demand.mjs refuses only when a MAJORITY of the sample is holes.
+            #   2. `select(.started_at != .created_at)` dropped every job whose timestamps matched.
+            #      Measured over these same 60 runs on 2026-09-23: 266 jobs, 89 with matching
+            #      timestamps, and all 89 were `skipped` — so the predicate meant "skipped" and said
+            #      "same second". It now passes `conclusion` through and ci-demand.mjs asks for
+            #      `skipped` directly. The two agreed on every job in the sample, so THE PUBLISHED
+            #      2026-09-03 FIGURES REMAIN COMPARABLE; what changes is that a real job dispatched
+            #      inside one second is no longer silently discarded as a best case.
+            #
+            # stderr goes to a file, never into `$jobs`: `gh` writes warnings on stderr for
+            # SUCCESSFUL calls too, so folding it into the value would poison a good read.
+            if jobs=$(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs?per_page=100" \
+                        --jq '[.jobs[] | {conclusion, created_at, started_at}]' 2>demand-err.txt); then
+              :
+            else
+              # Reported, not swallowed and not fatal. This step is the LAST in the job that files
+              # the red-pipeline report, so one transient 502 must cut only the measurement, never
+              # the report — and `jobs=null` is what carries "unread" all the way to the summary.
+              #
+              # >&2 IS LOAD-BEARING, not tidiness. This loop's stdout IS the data stream — it feeds
+              # `jq -s` below — so a diagnostic printed to stdout is parsed as a run and kills the
+              # whole step on the first failed call, turning "one run was unreadable" into "no
+              # measurement at all". Caught by running this exact block against a stubbed `gh`.
+              echo "::warning::ci-demand: could not read jobs for run $id — $(tr '\n' ' ' < demand-err.txt)" >&2
+              jobs=null
+            fi
             printf '%s' "$r" | jq -c --argjson j "$jobs" \
               '{id:.databaseId, name, event, head_branch:.headBranch, conclusion, created_at:.createdAt, jobs:$j}'
           done | jq -s '.' > demand.json
