@@ -27,7 +27,11 @@
 //   --preflight --expected-url <url>
 //                          BEFORE a deploy: refuse to deploy unless the origin is the committed one,
 //                          is not a workers.dev origin while wrangler.jsonc disables workers.dev, and
-//                          already routes to this Worker. Exit 0 go · 1 no-go, with the reason.
+//                          already routes to this Worker. Exit 0 go · 1 no-go, with the reason ·
+//                          3 MIGRATION PENDING: the variable is a well-formed https://*.workers.dev
+//                          origin that is not the committed one — the known waiting state between
+//                          merging the custom-domain change and runbook step 3. The workflow skips the
+//                          deploy with a notice for exactly this, and stays red for every exit-1 case.
 //   --static               HERMETIC. The committed copies of the issuer origin agree: the stack's
 //                          hostname, tls-ca-pin.json, and the four trust stacks' e2e_broker_issuer_url.
 //                          And tls-ca-pin.json is well formed. Exit 0 · 1.
@@ -492,6 +496,36 @@ export function preflightProblems({ url, committedUrl, workersDev, probe }) {
 	return out;
 }
 
+/** The preflight's exit code for the one neutral refusal: the custom-domain migration is pending. */
+export const PREFLIGHT_MIGRATION_PENDING = 3;
+
+/**
+ * PURE. Is this refusal EXACTLY the pending custom-domain migration, rather than an error?
+ * True only when the variable is a well-formed (bare https) `*.workers.dev` origin, the committed
+ * origin is a well-formed non-workers.dev origin, and the two differ. Every other refusal — an unset
+ * or malformed variable, a foreign non-workers.dev origin, the committed origin not routing to the
+ * Worker — is an error and must stay red (#5004 review).
+ */
+export function isMigrationPending({ url, committedUrl }) {
+	return (
+		isBareOrigin(url) &&
+		/\.workers\.dev$/.test(url) &&
+		isBareOrigin(committedUrl) &&
+		!/\.workers\.dev$/.test(committedUrl) &&
+		url !== committedUrl
+	);
+}
+
+/**
+ * PURE. The preflight's whole decision.
+ * @returns {{ verdict: "go" | "pending" | "refused", problems: string[] }}
+ */
+export function preflightVerdict(input) {
+	const problems = preflightProblems(input);
+	if (problems.length === 0) return { verdict: "go", problems };
+	return { verdict: isMigrationPending(input) ? "pending" : "refused", problems };
+}
+
 // ── self-test ───────────────────────────────────────────────────────────────────────────────────
 
 async function selfTest() {
@@ -625,6 +659,28 @@ async function selfTest() {
 	ok(preflightProblems({ url: "https://alethia-e2e-issuer.x.workers.dev", committedUrl: U, workersDev: false, probe: probe200 }).some((p) => /workers_dev/.test(p)), "no-go: workers.dev origin with workers_dev off");
 	ok(preflightProblems({ url: `${U}/`, committedUrl: U, workersDev: false, probe: probe200 }).length > 0, "no-go: a trailing slash");
 	ok(preflightProblems({ url: undefined, committedUrl: U, workersDev: false, probe: probe200 }).length > 0, "no-go: an unset variable");
+
+	console.log("preflight verdict (only the exact pending-migration signature is neutral):");
+	const WD = "https://alethia-e2e-issuer.x.workers.dev";
+	const verdict = (url, probe = probe200, committedUrl = U) => preflightVerdict({ url, committedUrl, workersDev: false, probe }).verdict;
+	ok(verdict(U) === "go", "go: committed origin, routed");
+	ok(verdict(WD) === "pending", "pending: a well-formed workers.dev origin that is not the committed one");
+	ok(verdict(WD, { status: 0, body: "", error: "ENOTFOUND" }) === "pending", "pending does not depend on the probe");
+	ok(verdict(undefined) === "refused", "refused (red): an unset variable");
+	ok(verdict("") === "refused", "refused (red): an empty variable");
+	ok(verdict(`${WD}/`) === "refused", "refused (red): a workers.dev origin with a trailing slash is malformed, not pending");
+	ok(verdict("http://alethia-e2e-issuer.x.workers.dev") === "refused", "refused (red): a plain-http workers.dev origin is malformed, not pending");
+	ok(verdict("https://Alethia-E2E-Issuer.x.workers.dev") === "refused", "refused (red): an upper-case workers.dev origin is malformed, not pending");
+	ok(verdict(`${WD}:8443`) === "refused", "refused (red): a workers.dev origin with a port is malformed, not pending");
+	ok(verdict(`${WD}/.well-known/openid-configuration`) === "refused", "refused (red): a workers.dev URL with a path is malformed, not pending");
+	ok(verdict("https://evil.workers.dev.example.com") === "refused", "refused (red): a host that merely CONTAINS workers.dev is foreign, not pending");
+	ok(verdict("https://issuer.example.com") === "refused", "refused (red): a foreign non-workers.dev origin");
+	ok(verdict("https://e2e-issuer-old.alethialabs.io") === "refused", "refused (red): another alethialabs.io origin");
+	ok(verdict(U, { status: 0, body: "", error: "ENOTFOUND" }) === "refused", "refused (red): the committed origin does not route (step 3 before step 2)");
+	ok(verdict(U, { status: 522, body: "<html>" }) === "refused", "refused (red): the committed origin answers with something other than the Worker (broken binding)");
+	ok(verdict(WD, probe200, "https://other.y.workers.dev") === "refused", "refused (red): a committed workers.dev origin makes another workers.dev origin foreign, not pending");
+	ok(verdict(WD, probe200, WD) === "refused", "refused (red): the committed origin itself being workers.dev with workers_dev off is an error, not pending");
+	ok(PREFLIGHT_MIGRATION_PENDING !== 0 && PREFLIGHT_MIGRATION_PENDING !== 1, "the pending exit code is distinct from go (0) and refused (1)");
 
 	console.log("static:");
 	const files = {
@@ -763,8 +819,17 @@ async function main() {
 
 	if (argv.includes("--preflight")) {
 		const workersDev = readWorkersDev(readRepo(PATHS.wrangler));
-		const probe = isBareOrigin(url) ? await timedGet(`${url}/.well-known/openid-configuration`) : { status: 0, body: "" };
-		const problems = preflightProblems({ url, committedUrl, workersDev, probe });
+		// A pending migration is decided without the network: the verdict does not read the probe then.
+		const probe = isBareOrigin(url) && !isMigrationPending({ url, committedUrl }) ? await timedGet(`${url}/.well-known/openid-configuration`) : { status: 0, body: "" };
+		const { verdict, problems } = preflightVerdict({ url, committedUrl, workersDev, probe });
+		if (verdict === "pending") {
+			// Not an error: the maintainer-owned waiting state. A notice, never ::error — the workflow
+			// skips the deploy and succeeds, and the live workers.dev issuer is untouched.
+			console.log(
+				`::notice title=e2e issuer deploy skipped — custom-domain migration pending::E2E_ISSUER_URL is still ${url}; the committed origin is ${committedUrl}. See infra/e2e-issuer/README.md steps 2–4. Deploy skipped; the live workers.dev issuer is untouched.`,
+			);
+			process.exit(PREFLIGHT_MIGRATION_PENDING);
+		}
 		if (problems.length) {
 			for (const p of problems) console.error(`::error title=e2e issuer deploy refused::${p}`);
 			process.exit(1);

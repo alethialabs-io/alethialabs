@@ -94,10 +94,18 @@ the custom domain is not declared in `wrangler.jsonc`, a deploy never needs them
 Do the steps in this order. Each one says how you know it worked. Nothing before step 7 changes any
 cloud trust.
 
-**0. Merge the PR.** This is safe before anything else: the deploy that the merge triggers is refused
+**0. Merge the PR.** This is safe before anything else: the deploy that the merge triggers is skipped
 by its preflight (`E2E_ISSUER_URL` is still the `workers.dev` origin, and `wrangler.jsonc` turns
-`workers.dev` off). The live Worker keeps serving at `workers.dev`, unchanged. Expect that one red
-*Deploy E2E assertion issuer* run, with the reason in its annotations.
+`workers.dev` off). The live Worker keeps serving at `workers.dev`, unchanged. The *Deploy E2E
+assertion issuer* run is **green, not red**: it carries a *custom-domain migration pending* notice and
+a job-summary paragraph that says the deploy was skipped. Every matching push to `dev` (including each
+`pnpm-lock.yaml` change) does the same until step 3, so waiting between steps is safe.
+
+That skip covers exactly one state: the variable is a well-formed `https://*.workers.dev` origin that
+is not the committed one. Every other preflight refusal is a red run with the reason in its
+annotations. These include an unset or malformed variable, an origin that is neither `workers.dev` nor
+the committed one, and the committed origin not routing to the Worker. The last one happens when step 3
+is done before step 2, or when the custom-domain binding breaks later.
 
 **1. Create the token** (above). Check that the host has no record yet — a CNAME there blocks the
 custom domain:

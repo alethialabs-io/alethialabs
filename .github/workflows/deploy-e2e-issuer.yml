@@ -25,7 +25,18 @@
 # secret, at whatever origin it already serves. If the preflight then refuses the code deploy (e.g.
 # between merging the custom-domain change and finishing its runbook), a rotation dispatch skips the
 # code deploy with a warning, and still verifies that every uploaded kid is PUBLISHED at the
-# configured origin. A push-triggered code deploy that the preflight refuses fails, as it should.
+# configured origin.
+#
+# A PENDING MIGRATION IS A SKIP, NOT A FAILURE (#5004 review). Between merging the custom-domain change
+# and runbook step 3, E2E_ISSUER_URL is still the workers.dev origin, and every matching push (a
+# pnpm-lock.yaml change lands about twice a week) would otherwise red this workflow — and
+# workflow-health.yml would report the same fact a second time — for as long as the maintainer's manual
+# steps wait. The protection is `if: steps.preflight.outputs.go == 'true'` on the deploy and verify
+# steps, not the exit code, so the preflight's distinct exit 3 (exactly: a well-formed *.workers.dev
+# origin that differs from the committed one) writes go=false, emits a notice and a job-summary
+# paragraph, and the job succeeds. EVERY other refusal stays red: an unset or malformed variable, a
+# foreign origin, or the committed origin not routing to the Worker (step 3 before step 2, a broken
+# binding).
 
 name: Deploy E2E assertion issuer
 
@@ -97,6 +108,16 @@ jobs:
           node scripts/ci/check-e2e-issuer-health.mjs --preflight --expected-url "$ISSUER_URL" || code=$?
           if [ "$code" = "0" ]; then echo "go=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           echo "go=false" >> "$GITHUB_OUTPUT"
+          # 3 = custom-domain migration pending (the script's notice names it). Neutral: nothing is deployed.
+          if [ "$code" = "3" ]; then
+            {
+              echo "### E2E issuer: custom-domain migration pending"
+              echo ""
+              echo "\`E2E_ISSUER_URL\` is still a \`workers.dev\` origin, not the committed custom domain. Custom-domain migration pending — see \`infra/e2e-issuer/README.md\` step 2–4; deploy skipped, live workers.dev issuer untouched."
+              if [ "$ROTATION" = "true" ]; then echo ""; echo "The rotated key set WAS uploaded to the running Worker; the next step verifies it is published."; fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ "$ROTATION" = "true" ]; then
             echo "::warning title=code deploy skipped::the preflight refused the code deploy (reason above). The rotated key set WAS uploaded to the running Worker; the next step verifies it is published."
             exit 0
