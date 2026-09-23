@@ -510,5 +510,199 @@
       "gaps": [],
       "board": []
     }
+  ],
+  "_protectionComment": "Hand-authored contract for board_asserted_protection in scripts/lib/board-pr.sh — the ONE predicate behind coordinate.sh's asserted-protection report and claim-work.sh's claim-time warning. `finds` is the list of issue numbers the predicate must report for that board, written by hand and NEVER computed from the predicate: a fixture derived from the value under test agrees with itself and proves nothing. Cases 1-2 are #4112 and its correctly-labelled sibling #4113 as they really stood on 2026-09-22.",
+  "protectionCases": [
+    {
+      "name": "the #4112 shape: asserts NOT AGENT-BUILDABLE and `needs:human`, carries neither",
+      "finds": [
+        4112
+      ],
+      "board": [
+        {
+          "number": 4112,
+          "title": "templates: create the three public starter repos and set is_template",
+          "labels": [
+            {
+              "name": "wave:hygiene"
+            },
+            {
+              "name": "lane:docs"
+            },
+            {
+              "name": "class:backend"
+            }
+          ],
+          "body": "NOT AGENT-BUILDABLE. Creating repositories under `alethialabs-io` and setting `is_template: true`\nare org-admin acts against GitHub, not a diff, and `needs:human` keeps this out of\n`claim-work.sh`'s autonomous picking."
+        }
+      ]
+    },
+    {
+      "name": "the same assertion WITH the label is not a finding",
+      "finds": [],
+      "board": [
+        {
+          "number": 4113,
+          "title": "templates: the deploy assertion",
+          "labels": [
+            {
+              "name": "wave:hygiene"
+            },
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "needs:human"
+            }
+          ],
+          "body": "NOT AGENT-BUILDABLE. The epic's bar is do not announce a template that has not been deployed."
+        }
+      ]
+    },
+    {
+      "name": "THE BOUND: an issue with no `class:` label is not claimable, so it is not asked",
+      "finds": [],
+      "board": [
+        {
+          "number": 2945,
+          "title": "overnight sweep report",
+          "labels": [],
+          "body": "Refreshed overnight. All 33 open `needs:human` units were read and each carries its reason."
+        },
+        {
+          "number": 4264,
+          "title": "release-gate epic",
+          "labels": [
+            {
+              "name": "epic"
+            },
+            {
+              "name": "wave:release-gate"
+            }
+          ],
+          "body": "- The Delete Account ruling is made (#4273): wire it behind a ConfirmDialog. `needs:human` removed."
+        }
+      ]
+    },
+    {
+      "name": "a CLOSED fence is not an assertion — the decompose snippet pastes one at column zero",
+      "finds": [],
+      "board": [
+        {
+          "number": 5001,
+          "title": "a unit that pasted the seeding snippet",
+          "labels": [
+            {
+              "name": "class:backend"
+            }
+          ],
+          "body": "Ordinary unit.\n\n```bash\ngh issue create --label needs:human --title \"$T\"\n```\n\nNothing else."
+        }
+      ]
+    },
+    {
+      "name": "an UNTERMINATED fence leaves the rest in play — over-reporting is the safe direction",
+      "finds": [
+        5002
+      ],
+      "board": [
+        {
+          "number": 5002,
+          "title": "a unit with one stray backtick run",
+          "labels": [
+            {
+              "name": "class:backend"
+            }
+          ],
+          "body": "Ordinary unit.\n\n```bash\ngh issue list\n\nAnd for the record `needs:human` keeps this out of the autonomous queue."
+        }
+      ]
+    },
+    {
+      "name": "bare-word `epic` prose is NOT matched — six of six board uses were English",
+      "finds": [],
+      "board": [
+        {
+          "number": 4287,
+          "title": "a lane unit under an epic",
+          "labels": [
+            {
+              "name": "class:backend"
+            },
+            {
+              "name": "lane:docs"
+            }
+          ],
+          "body": "Part of the release-gate epic: #4264. The epic's bar is stated there."
+        }
+      ]
+    },
+    {
+      "name": "backticked `blocked` is NOT matched — the unblock pass owns that label, and #3612 discusses other units",
+      "finds": [],
+      "board": [
+        {
+          "number": 3612,
+          "title": "cli epic status",
+          "labels": [
+            {
+              "name": "class:backend"
+            }
+          ],
+          "body": "#3662 -> #3663 -> #3664 are all correctly `blocked` behind it. Every `blocked` label here is honest."
+        }
+      ]
+    },
+    {
+      "name": "the assertion is case-insensitive",
+      "finds": [
+        5003
+      ],
+      "board": [
+        {
+          "number": 5003,
+          "title": "lowercase assertion",
+          "labels": [
+            {
+              "name": "class:ui"
+            }
+          ],
+          "body": "This is not agent-buildable; it needs a maintainer decision."
+        }
+      ]
+    },
+    {
+      "name": "a body-less issue is skipped, not crashed on, and does not hide its neighbour",
+      "finds": [
+        5005
+      ],
+      "board": [
+        {
+          "number": 5004,
+          "title": "no body",
+          "labels": [
+            {
+              "name": "class:backend"
+            }
+          ],
+          "body": null
+        },
+        {
+          "number": 5005,
+          "title": "asserts after it",
+          "labels": [
+            {
+              "name": "class:backend"
+            }
+          ],
+          "body": "`needs:human` — a maintainer must rule on this first."
+        }
+      ]
+    },
+    {
+      "name": "an empty board is examined and clean, not an error",
+      "finds": [],
+      "board": []
+    }
   ]
 }

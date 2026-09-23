@@ -26,6 +26,25 @@ import {
 import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
+import { invitation, member } from "@/lib/db/schema";
+
+/**
+ * The columns an `order by` call names, read out of drizzle's SQL chunks.
+ *
+ * `asc(col)` builds an SQL fragment whose `queryChunks` hold the Column object itself, so the
+ * assertion can name the column rather than a rendered string — which would pin the dialect's
+ * quoting instead of the decision.
+ */
+function orderedColumns(call: unknown[]): unknown[] {
+	return call.flatMap((term) =>
+		term !== null &&
+		typeof term === "object" &&
+		"queryChunks" in term &&
+		Array.isArray(term.queryChunks)
+			? term.queryChunks
+			: [],
+	);
+}
 
 /**
  * A drizzle-ish chain whose builders all return the chain and whose every awaited terminal
@@ -35,6 +54,7 @@ import { getServiceDb } from "@/lib/db";
 function mockDb(resultSets: unknown[][]) {
 	const queue = [...resultSets];
 	const setSpy = vi.fn();
+	const orderBySpy = vi.fn();
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
 		select: () => db,
@@ -44,6 +64,14 @@ function mockDb(resultSets: unknown[][]) {
 		where: () => db,
 		limit: () => db,
 		groupBy: () => db,
+		// Recorded, not merely accepted. The two list reads must stay ORDERED — an unordered list
+		// re-orders under a refetch on the same data, which re-keys the members table and takes an
+		// open row menu with it (#4852) — and nothing else in this suite can see an `order by` go
+		// missing, because the mock returns the rows it was handed either way.
+		orderBy: (...a: unknown[]) => {
+			orderBySpy(...a);
+			return db;
+		},
 		update: () => db,
 		set: (...a: unknown[]) => {
 			setSpy(...a);
@@ -53,7 +81,7 @@ function mockDb(resultSets: unknown[][]) {
 			resolve(queue.length ? (queue.shift() ?? []) : []),
 	});
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
-	return { setSpy };
+	return { setSpy, orderBySpy };
 }
 
 beforeEach(() => {
@@ -152,9 +180,36 @@ describe("getMembers", () => {
 		// `member` matches no option and renders blank.
 		expect(linus?.role).toBe("viewer");
 	});
+
+	it("orders the member rows TOTALLY, so the same data cannot come back in two orders", async () => {
+		// #4852. Without an `order by`, Postgres may return these rows however the plan produces
+		// them, and two reads of unchanged data can disagree. The members table renders the list
+		// positionally, so a re-ordered refetch re-keys it and closes whatever a row's cell was
+		// rendering — the Manage menu the destructive audit had just opened.
+		//
+		// TOTAL matters: `created_at` alone ties for rows seeded in the same statement (every e2e
+		// fixture), and a tie is exactly as unordered as no clause at all.
+		const { orderBySpy } = mockDb([[], []]);
+		await getMembers();
+		expect(orderBySpy).toHaveBeenCalledTimes(1);
+		expect(orderedColumns(orderBySpy.mock.calls[0])).toEqual(
+			expect.arrayContaining([member.createdAt, member.id]),
+		);
+	});
 });
 
 describe("getInvitations", () => {
+	it("orders the invitation rows TOTALLY, for the same reason the member rows are ordered", async () => {
+		// The members table concatenates both reads into one list, so either one shuffling re-keys
+		// the whole table.
+		const { orderBySpy } = mockDb([[]]);
+		await getInvitations();
+		expect(orderBySpy).toHaveBeenCalledTimes(1);
+		expect(orderedColumns(orderBySpy.mock.calls[0])).toEqual(
+			expect.arrayContaining([invitation.createdAt, invitation.id]),
+		);
+	});
+
 	it("short-circuits to an empty list in the personal scope without touching the db", async () => {
 		vi.mocked(currentActor).mockResolvedValue({
 			orgId: "user-1",

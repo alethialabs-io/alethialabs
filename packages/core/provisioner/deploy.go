@@ -558,6 +558,31 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		fmt.Fprintln(stdout, "Running in dry-run (plan) mode")
 	}
 
+	// NODE FIT (#3855). Deliberately the EARLIEST gate in this function — before the temp dir, the
+	// template copy, `tofu init` and the plan — because unlike the cost, verify and compat gates it
+	// needs nothing from the plan to reach its verdict. It reads an embedded catalog and answers in
+	// microseconds, and the whole point is that a user hears "this node cannot run the add-ons, use
+	// e2-standard-2" in the first seconds of the job rather than after a successful apply and
+	// thirty-five minutes of ArgoCD not converging. A refusal here has created nothing to tear down.
+	//
+	// BYO IaC is excluded for the same reason ValidateConfig is: a customer's own module owns its
+	// node pool, and our reading of `cluster.instance_types` says nothing about what it builds.
+	//
+	// The namespace and vcluster placements need no exclusion here, and that is worth saying rather
+	// than leaving to be rediscovered: the placement dispatch above RETURNS for all of them, so
+	// everything reaching this line is placementDedicated — the only path that provisions a node
+	// pool of its own. A namespace env's cluster node carries an instance type it will never buy,
+	// and refusing a deploy over it would be refusing a project that works.
+	if !byoIac {
+		if finding := nodeFitBlock(provider.Name(), vc, params.DryRun); finding.Message != "" {
+			if finding.Blocked {
+				telemetry.GateBlocked(ctx, provider.Name())
+				return nil, fmt.Errorf("%s", finding.Message)
+			}
+			fmt.Fprintln(stdout, finding.Message)
+		}
+	}
+
 	tmpRoot, err := os.MkdirTemp("", "alethia-deploy-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %w", err)

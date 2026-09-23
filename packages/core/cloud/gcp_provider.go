@@ -325,7 +325,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		mergeProviderConfig(tfvars, t.ProviderConfig, gcpRootReserved...)
 	}
 
-	if inst := resolveInstanceTypes("gcp", config.Cluster); len(inst) > 0 {
+	if inst := ResolveInstanceTypes("gcp", config.Cluster); len(inst) > 0 {
 		tfvars["gke_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {

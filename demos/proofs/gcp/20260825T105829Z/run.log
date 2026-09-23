@@ -64,9 +64,9 @@ Running OpenTofu plan...
 data.google_project_service.cloudkms[0]: Reading...
 data.google_client_config.default: Reading...
 data.google_project.current: Reading...
-data.google_client_config.default: Read complete after 0s [id=projects/itgix-adp/regions/europe-west3/zones/]
-data.google_project.current: Read complete after 0s [id=projects/itgix-adp]
-data.google_project_service.cloudkms[0]: Read complete after 4s [id=itgix-adp/cloudkms.googleapis.com]
+data.google_client_config.default: Read complete after 0s [id=projects/REDACTED-PROJECT/regions/europe-west3/zones/]
+data.google_project.current: Read complete after 0s [id=projects/REDACTED-PROJECT]
+data.google_project_service.cloudkms[0]: Read complete after 4s [id=REDACTED-PROJECT/cloudkms.googleapis.com]
 
 OpenTofu used the selected providers to generate the following execution
 plan. Resource actions are indicated with the following symbols:
@@ -109,7 +109,7 @@ OpenTofu will perform the following actions:
       + id       = (known after apply)
       + location = "europe-west3"
       + name     = "kms-ew3-32836114196-1-alethia-nl"
-      + project  = "itgix-adp"
+      + project  = "REDACTED-PROJECT"
     }
 
   # google_service_account.external_dns[0] will be created
@@ -117,11 +117,11 @@ OpenTofu will perform the following actions:
       + account_id   = "extdns-d7a3ffea"
       + disabled     = false
       + display_name = "external-dns (alethia-nl)"
-      + email        = "extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+      + email        = "extdns-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com"
       + id           = (known after apply)
-      + member       = "serviceAccount:extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+      + member       = "serviceAccount:extdns-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com"
       + name         = (known after apply)
-      + project      = "itgix-adp"
+      + project      = "REDACTED-PROJECT"
       + unique_id    = (known after apply)
     }
 
@@ -130,11 +130,11 @@ OpenTofu will perform the following actions:
       + account_id   = "extsec-d7a3ffea"
       + disabled     = false
       + display_name = "external-secrets (alethia-nl)"
-      + email        = "extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+      + email        = "extsec-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com"
       + id           = (known after apply)
-      + member       = "serviceAccount:extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+      + member       = "serviceAccount:extsec-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com"
       + name         = (known after apply)
-      + project      = "itgix-adp"
+      + project      = "REDACTED-PROJECT"
       + unique_id    = (known after apply)
     }
 
@@ -142,7 +142,7 @@ OpenTofu will perform the following actions:
   + resource "google_service_account_iam_member" "cert_manager_wi" {
       + etag               = (known after apply)
       + id                 = (known after apply)
-      + member             = "serviceAccount:itgix-adp.svc.id.goog[cert-manager/cert-manager]"
+      + member             = "serviceAccount:REDACTED-PROJECT.svc.id.goog[cert-manager/cert-manager]"
       + role               = "roles/iam.workloadIdentityUser"
       + service_account_id = (known after apply)
     }
@@ -151,7 +151,7 @@ OpenTofu will perform the following actions:
   + resource "google_service_account_iam_member" "external_dns_wi" {
       + etag               = (known after apply)
       + id                 = (known after apply)
-      + member             = "serviceAccount:itgix-adp.svc.id.goog[external-dns/external-dns-sa]"
+      + member             = "serviceAccount:REDACTED-PROJECT.svc.id.goog[external-dns/external-dns-sa]"
       + role               = "roles/iam.workloadIdentityUser"
       + service_account_id = (known after apply)
     }
@@ -160,7 +160,7 @@ OpenTofu will perform the following actions:
   + resource "google_service_account_iam_member" "external_secrets_wi" {
       + etag               = (known after apply)
       + id                 = (known after apply)
-      + member             = "serviceAccount:itgix-adp.svc.id.goog[external-secrets-operator/external-secrets-operator-sa]"
+      + member             = "serviceAccount:REDACTED-PROJECT.svc.id.goog[external-secrets-operator/external-secrets-operator-sa]"
       + role               = "roles/iam.workloadIdentityUser"
       + service_account_id = (known after apply)
     }
@@ -228,7 +228,7 @@ OpenTofu will perform the following actions:
       + node_version                             = (known after apply)
       + operation                                = (known after apply)
       + private_ipv6_google_access               = (known after apply)
-      + project                                  = "itgix-adp"
+      + project                                  = "REDACTED-PROJECT"
       + remove_default_node_pool                 = true
       + resource_labels                          = {
           + "alethia_project-id" = "e2e-32836114196-1"
@@ -396,7 +396,7 @@ OpenTofu will perform the following actions:
       + vertical_pod_autoscaling (known after apply)
 
       + workload_identity_config {
-          + workload_pool = "itgix-adp.svc.id.goog"
+          + workload_pool = "REDACTED-PROJECT.svc.id.goog"
         }
     }
 
@@ -414,7 +414,7 @@ OpenTofu will perform the following actions:
       + node_count                  = (known after apply)
       + node_locations              = (known after apply)
       + operation                   = (known after apply)
-      + project                     = "itgix-adp"
+      + project                     = "REDACTED-PROJECT"
       + version                     = (known after apply)
 
       + autoscaling {
@@ -492,7 +492,7 @@ OpenTofu will perform the following actions:
       + name               = "alethia-nl-32836114196-1-vpc-allow-health-checks"
       + network            = (known after apply)
       + priority           = 1000
-      + project            = "itgix-adp"
+      + project            = "REDACTED-PROJECT"
       + self_link          = (known after apply)
       + source_ranges      = [
           + "130.211.0.0/22",
@@ -519,7 +519,7 @@ OpenTofu will perform the following actions:
       + name               = "alethia-nl-32836114196-1-vpc-allow-internal"
       + network            = (known after apply)
       + priority           = 1000
-      + project            = "itgix-adp"
+      + project            = "REDACTED-PROJECT"
       + self_link          = (known after apply)
       + source_ranges      = [
           + "10.0.0.0/16",
@@ -562,7 +562,7 @@ OpenTofu will perform the following actions:
       + name               = "alethia-nl-32836114196-1-psa"
       + network            = (known after apply)
       + prefix_length      = 16
-      + project            = "itgix-adp"
+      + project            = "REDACTED-PROJECT"
       + purpose            = "VPC_PEERING"
       + self_link          = (known after apply)
       + terraform_labels   = {
@@ -585,7 +585,7 @@ OpenTofu will perform the following actions:
       + network_firewall_policy_enforcement_order = "AFTER_CLASSIC_FIREWALL"
       + network_id                                = (known after apply)
       + numeric_id                                = (known after apply)
-      + project                                   = "itgix-adp"
+      + project                                   = "REDACTED-PROJECT"
       + routing_mode                              = "REGIONAL"
       + self_link                                 = (known after apply)
     }
@@ -596,7 +596,7 @@ OpenTofu will perform the following actions:
       + id                 = (known after apply)
       + name               = "alethia-nl-32836114196-1-router"
       + network            = (known after apply)
-      + project            = "itgix-adp"
+      + project            = "REDACTED-PROJECT"
       + region             = "europe-west3"
       + self_link          = (known after apply)
 
@@ -623,7 +623,7 @@ OpenTofu will perform the following actions:
       + name                                = "alethia-nl-32836114196-1-nat"
       + nat_ip_allocate_option              = "AUTO_ONLY"
       + nat_ips                             = (known after apply)
-      + project                             = "itgix-adp"
+      + project                             = "REDACTED-PROJECT"
       + region                              = "europe-west3"
       + router                              = "alethia-nl-32836114196-1-router"
       + source_subnetwork_ip_ranges_to_nat  = "ALL_SUBNETWORKS_ALL_IP_RANGES"
@@ -655,7 +655,7 @@ OpenTofu will perform the following actions:
       + network                    = (known after apply)
       + private_ip_google_access   = true
       + private_ipv6_google_access = (known after apply)
-      + project                    = "itgix-adp"
+      + project                    = "REDACTED-PROJECT"
       + purpose                    = (known after apply)
       + region                     = "europe-west3"
       + self_link                  = (known after apply)
@@ -696,7 +696,7 @@ OpenTofu will perform the following actions:
       + network                    = (known after apply)
       + private_ip_google_access   = (known after apply)
       + private_ipv6_google_access = (known after apply)
-      + project                    = "itgix-adp"
+      + project                    = "REDACTED-PROJECT"
       + purpose                    = (known after apply)
       + region                     = "europe-west3"
       + self_link                  = (known after apply)
@@ -728,16 +728,16 @@ Changes to Outputs:
   + cloud_storage_publicly_readable_buckets = []
   + custom_secret_ids                       = {}
   + custom_secret_names                     = {}
-  + external_dns_service_account            = "extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
-  + external_secrets_service_account        = "extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+  + external_dns_service_account            = "extdns-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com"
+  + external_secrets_service_account        = "extsec-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com"
   + gar_pull_gsa_email                      = ""
-  + gcp_project_id                          = "itgix-adp"
+  + gcp_project_id                          = "REDACTED-PROJECT"
   + gke_cluster_ca_certificate              = (sensitive value)
   + gke_cluster_endpoint                    = (sensitive value)
   + gke_cluster_name                        = "gke-ew3-32836114196-1-alethia-nl"
   + network_self_link                       = (known after apply)
   + private_subnet_self_link                = (known after apply)
-  + project_id                              = "itgix-adp"
+  + project_id                              = "REDACTED-PROJECT"
   + region_short                            = "ew3"
 
 Warning: Deprecated attribute
@@ -774,20 +774,20 @@ google_service_account.external_dns[0]: Creating...
 google_kms_key_ring.gke_secrets[0]: Creating...
 module.vpc_network[0].google_compute_network.vpc: Creating...
 google_service_account.external_secrets[0]: Creating...
-google_kms_key_ring.gke_secrets[0]: Creation complete after 1s [id=projects/itgix-adp/locations/europe-west3/keyRings/kms-ew3-32836114196-1-alethia-nl]
+google_kms_key_ring.gke_secrets[0]: Creation complete after 1s [id=projects/REDACTED-PROJECT/locations/europe-west3/keyRings/kms-ew3-32836114196-1-alethia-nl]
 google_kms_crypto_key.gke_secrets[0]: Creating...
-google_kms_crypto_key.gke_secrets[0]: Creation complete after 2s [id=projects/itgix-adp/locations/europe-west3/keyRings/kms-ew3-32836114196-1-alethia-nl/cryptoKeys/gke-secrets]
+google_kms_crypto_key.gke_secrets[0]: Creation complete after 2s [id=projects/REDACTED-PROJECT/locations/europe-west3/keyRings/kms-ew3-32836114196-1-alethia-nl/cryptoKeys/gke-secrets]
 google_kms_crypto_key_iam_member.gke_secrets[0]: Creating...
-google_kms_crypto_key_iam_member.gke_secrets[0]: Creation complete after 5s [id=projects/itgix-adp/locations/europe-west3/keyRings/kms-ew3-32836114196-1-alethia-nl/cryptoKeys/gke-secrets/roles/cloudkms.cryptoKeyEncrypterDecrypter/serviceAccount:service-432436016123@container-engine-robot.iam.gserviceaccount.com]
+google_kms_crypto_key_iam_member.gke_secrets[0]: Creation complete after 5s [id=projects/REDACTED-PROJECT/locations/europe-west3/keyRings/kms-ew3-32836114196-1-alethia-nl/cryptoKeys/gke-secrets/roles/cloudkms.cryptoKeyEncrypterDecrypter/serviceAccount:service-432436016123@container-engine-robot.iam.gserviceaccount.com]
 google_service_account.external_dns[0]: Still creating... [10s elapsed]
 module.vpc_network[0].google_compute_network.vpc: Still creating... [10s elapsed]
 google_service_account.external_secrets[0]: Still creating... [10s elapsed]
-google_service_account.external_dns[0]: Creation complete after 15s [id=projects/itgix-adp/serviceAccounts/extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com]
+google_service_account.external_dns[0]: Creation complete after 15s [id=projects/REDACTED-PROJECT/serviceAccounts/extdns-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com]
 module.vpc_network[0].google_compute_network.vpc: Still creating... [20s elapsed]
 google_service_account.external_secrets[0]: Still creating... [20s elapsed]
-google_service_account.external_secrets[0]: Creation complete after 27s [id=projects/itgix-adp/serviceAccounts/extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com]
+google_service_account.external_secrets[0]: Creation complete after 27s [id=projects/REDACTED-PROJECT/serviceAccounts/extsec-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com]
 module.vpc_network[0].google_compute_network.vpc: Still creating... [30s elapsed]
-module.vpc_network[0].google_compute_network.vpc: Creation complete after 32s [id=projects/itgix-adp/global/networks/alethia-nl-32836114196-1-vpc]
+module.vpc_network[0].google_compute_network.vpc: Creation complete after 32s [id=projects/REDACTED-PROJECT/global/networks/alethia-nl-32836114196-1-vpc]
 module.vpc_network[0].google_compute_subnetwork.public: Creating...
 module.vpc_network[0].google_compute_router.router: Creating...
 module.vpc_network[0].google_compute_global_address.private_service_access: Creating...
@@ -800,30 +800,30 @@ module.vpc_network[0].google_compute_firewall.allow_health_checks: Still creatin
 module.vpc_network[0].google_compute_firewall.allow_internal: Still creating... [10s elapsed]
 module.vpc_network[0].google_compute_global_address.private_service_access: Still creating... [10s elapsed]
 module.vpc_network[0].google_compute_subnetwork.private: Still creating... [10s elapsed]
-module.vpc_network[0].google_compute_global_address.private_service_access: Creation complete after 11s [id=projects/itgix-adp/global/addresses/alethia-nl-32836114196-1-psa]
+module.vpc_network[0].google_compute_global_address.private_service_access: Creation complete after 11s [id=projects/REDACTED-PROJECT/global/addresses/alethia-nl-32836114196-1-psa]
 module.vpc_network[0].google_service_networking_connection.private_vpc: Creating...
-module.vpc_network[0].google_compute_subnetwork.public: Creation complete after 12s [id=projects/itgix-adp/regions/europe-west3/subnetworks/alethia-nl-32836114196-1-public]
+module.vpc_network[0].google_compute_subnetwork.public: Creation complete after 12s [id=projects/REDACTED-PROJECT/regions/europe-west3/subnetworks/alethia-nl-32836114196-1-public]
 module.vpc_network[0].google_compute_router.router: Still creating... [20s elapsed]
 module.vpc_network[0].google_compute_firewall.allow_health_checks: Still creating... [20s elapsed]
 module.vpc_network[0].google_compute_subnetwork.private: Still creating... [20s elapsed]
 module.vpc_network[0].google_compute_firewall.allow_internal: Still creating... [20s elapsed]
-module.vpc_network[0].google_compute_router.router: Creation complete after 21s [id=projects/itgix-adp/regions/europe-west3/routers/alethia-nl-32836114196-1-router]
+module.vpc_network[0].google_compute_router.router: Creation complete after 21s [id=projects/REDACTED-PROJECT/regions/europe-west3/routers/alethia-nl-32836114196-1-router]
 module.vpc_network[0].google_compute_router_nat.nat: Creating...
 module.vpc_network[0].google_service_networking_connection.private_vpc: Still creating... [10s elapsed]
 module.vpc_network[0].google_compute_firewall.allow_health_checks: Still creating... [30s elapsed]
 module.vpc_network[0].google_compute_firewall.allow_internal: Still creating... [30s elapsed]
 module.vpc_network[0].google_compute_subnetwork.private: Still creating... [30s elapsed]
 module.vpc_network[0].google_compute_router_nat.nat: Still creating... [10s elapsed]
-module.vpc_network[0].google_compute_firewall.allow_internal: Creation complete after 31s [id=projects/itgix-adp/global/firewalls/alethia-nl-32836114196-1-vpc-allow-internal]
+module.vpc_network[0].google_compute_firewall.allow_internal: Creation complete after 31s [id=projects/REDACTED-PROJECT/global/firewalls/alethia-nl-32836114196-1-vpc-allow-internal]
 module.vpc_network[0].google_service_networking_connection.private_vpc: Still creating... [20s elapsed]
-module.vpc_network[0].google_compute_subnetwork.private: Creation complete after 32s [id=projects/itgix-adp/regions/europe-west3/subnetworks/alethia-nl-32836114196-1-private]
-module.vpc_network[0].google_compute_router_nat.nat: Creation complete after 12s [id=itgix-adp/europe-west3/alethia-nl-32836114196-1-router/alethia-nl-32836114196-1-nat]
+module.vpc_network[0].google_compute_subnetwork.private: Creation complete after 32s [id=projects/REDACTED-PROJECT/regions/europe-west3/subnetworks/alethia-nl-32836114196-1-private]
+module.vpc_network[0].google_compute_router_nat.nat: Creation complete after 12s [id=REDACTED-PROJECT/europe-west3/alethia-nl-32836114196-1-router/alethia-nl-32836114196-1-nat]
 module.vpc_network[0].google_compute_firewall.allow_health_checks: Still creating... [40s elapsed]
-module.vpc_network[0].google_compute_firewall.allow_health_checks: Creation complete after 41s [id=projects/itgix-adp/global/firewalls/alethia-nl-32836114196-1-vpc-allow-health-checks]
+module.vpc_network[0].google_compute_firewall.allow_health_checks: Creation complete after 41s [id=projects/REDACTED-PROJECT/global/firewalls/alethia-nl-32836114196-1-vpc-allow-health-checks]
 module.vpc_network[0].google_service_networking_connection.private_vpc: Still creating... [30s elapsed]
 module.vpc_network[0].google_service_networking_connection.private_vpc: Still creating... [40s elapsed]
 module.vpc_network[0].google_service_networking_connection.private_vpc: Still creating... [50s elapsed]
-module.vpc_network[0].google_service_networking_connection.private_vpc: Creation complete after 52s [id=https%3A%2F%2Fwww.googleapis.com%2Fcompute%2Fv1%2Fprojects%2Fitgix-adp%2Fglobal%2Fnetworks%2Falethia-nl-32836114196-1-vpc:servicenetworking.googleapis.com]
+module.vpc_network[0].google_service_networking_connection.private_vpc: Creation complete after 52s [id=https%3A%2F%2Fwww.googleapis.com%2Fcompute%2Fv1%2Fprojects%2FREDACTED-PROJECT%2Fglobal%2Fnetworks%2Falethia-nl-32836114196-1-vpc:servicenetworking.googleapis.com]
 module.gke[0].google_container_cluster.cluster: Creating...
 module.gke[0].google_container_cluster.cluster: Still creating... [10s elapsed]
 module.gke[0].google_container_cluster.cluster: Still creating... [20s elapsed]
@@ -871,7 +871,7 @@ module.gke[0].google_container_cluster.cluster: Still creating... [7m10s elapsed
 module.gke[0].google_container_cluster.cluster: Still creating... [7m20s elapsed]
 module.gke[0].google_container_cluster.cluster: Still creating... [7m30s elapsed]
 module.gke[0].google_container_cluster.cluster: Still creating... [7m40s elapsed]
-module.gke[0].google_container_cluster.cluster: Creation complete after 7m46s [id=projects/itgix-adp/locations/europe-west3/clusters/gke-ew3-32836114196-1-alethia-nl]
+module.gke[0].google_container_cluster.cluster: Creation complete after 7m46s [id=projects/REDACTED-PROJECT/locations/europe-west3/clusters/gke-ew3-32836114196-1-alethia-nl]
 module.gke[0].google_container_node_pool.default[0]: Creating...
 module.gke[0].google_container_node_pool.default[0]: Still creating... [10s elapsed]
 module.gke[0].google_container_node_pool.default[0]: Still creating... [20s elapsed]
@@ -893,13 +893,13 @@ module.gke[0].google_container_node_pool.default[0]: Still creating... [2m50s el
 module.gke[0].google_container_node_pool.default[0]: Still creating... [3m0s elapsed]
 module.gke[0].google_container_node_pool.default[0]: Still creating... [3m10s elapsed]
 module.gke[0].google_container_node_pool.default[0]: Still creating... [3m20s elapsed]
-module.gke[0].google_container_node_pool.default[0]: Creation complete after 3m27s [id=projects/itgix-adp/locations/europe-west3/clusters/gke-ew3-32836114196-1-alethia-nl/nodePools/gke-ew3-32836114196-1-alethia-n-e238cb6]
+module.gke[0].google_container_node_pool.default[0]: Creation complete after 3m27s [id=projects/REDACTED-PROJECT/locations/europe-west3/clusters/gke-ew3-32836114196-1-alethia-nl/nodePools/gke-ew3-32836114196-1-alethia-n-e238cb6]
 google_service_account_iam_member.external_dns_wi[0]: Creating...
 google_service_account_iam_member.cert_manager_wi[0]: Creating...
 google_service_account_iam_member.external_secrets_wi[0]: Creating...
-google_service_account_iam_member.external_dns_wi[0]: Creation complete after 4s [id=projects/itgix-adp/serviceAccounts/extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:itgix-adp.svc.id.goog[external-dns/external-dns-sa]]
-google_service_account_iam_member.external_secrets_wi[0]: Creation complete after 4s [id=projects/itgix-adp/serviceAccounts/extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:itgix-adp.svc.id.goog[external-secrets-operator/external-secrets-operator-sa]]
-google_service_account_iam_member.cert_manager_wi[0]: Creation complete after 7s [id=projects/itgix-adp/serviceAccounts/extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:itgix-adp.svc.id.goog[cert-manager/cert-manager]]
+google_service_account_iam_member.external_dns_wi[0]: Creation complete after 4s [id=projects/REDACTED-PROJECT/serviceAccounts/extdns-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:REDACTED-PROJECT.svc.id.goog[external-dns/external-dns-sa]]
+google_service_account_iam_member.external_secrets_wi[0]: Creation complete after 4s [id=projects/REDACTED-PROJECT/serviceAccounts/extsec-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:REDACTED-PROJECT.svc.id.goog[external-secrets-operator/external-secrets-operator-sa]]
+google_service_account_iam_member.cert_manager_wi[0]: Creation complete after 7s [id=projects/REDACTED-PROJECT/serviceAccounts/extdns-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:REDACTED-PROJECT.svc.id.goog[cert-manager/cert-manager]]
 
 Apply complete! Resources: 24 added, 0 changed, 0 destroyed.
 
@@ -911,16 +911,16 @@ cloud_storage_public_access_prevention = {}
 cloud_storage_publicly_readable_buckets = []
 custom_secret_ids = {}
 custom_secret_names = {}
-external_dns_service_account = "extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
-external_secrets_service_account = "extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+external_dns_service_account = "extdns-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com"
+external_secrets_service_account = "extsec-d7a3ffea@REDACTED-PROJECT.iam.gserviceaccount.com"
 gar_pull_gsa_email = ""
-gcp_project_id = "itgix-adp"
+gcp_project_id = "REDACTED-PROJECT"
 gke_cluster_ca_certificate = <sensitive>
 gke_cluster_endpoint = <sensitive>
 gke_cluster_name = "gke-ew3-32836114196-1-alethia-nl"
-network_self_link = "https://www.googleapis.com/compute/v1/projects/itgix-adp/global/networks/alethia-nl-32836114196-1-vpc"
-private_subnet_self_link = "https://www.googleapis.com/compute/v1/projects/itgix-adp/regions/europe-west3/subnetworks/alethia-nl-32836114196-1-private"
-project_id = "itgix-adp"
+network_self_link = "https://www.googleapis.com/compute/v1/projects/REDACTED-PROJECT/global/networks/alethia-nl-32836114196-1-vpc"
+private_subnet_self_link = "https://www.googleapis.com/compute/v1/projects/REDACTED-PROJECT/regions/europe-west3/subnetworks/alethia-nl-32836114196-1-private"
+project_id = "REDACTED-PROJECT"
 region_short = "ew3"
 Getting OpenTofu outputs...
 Configuring kubeconfig for GKE cluster gke-ew3-32836114196-1-alethia-nl...

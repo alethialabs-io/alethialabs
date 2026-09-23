@@ -60,9 +60,16 @@ func TestFabricDemoNodeShapeGuard(t *testing.T) {
 	})
 
 	t.Run("hard-fails on the nightly's actual floor shape", func(t *testing.T) {
-		// THE REGRESSION. This is verbatim the gcp floor shape from e2e-nightly.yml's `Compute cluster
-		// shape` step — the shape the demo really ran on. It declares no node_size, so before this
-		// guard existed nothing looked at capacity at all.
+		// THE REGRESSION: the gcp floor shape the demo really ran on when this trap was found. It
+		// declares no node_size, so before this guard existed nothing looked at capacity at all.
+		//
+		// This literal is HISTORICAL and is deliberately not chased. It said "verbatim the gcp floor
+		// shape" and was already wrong — the workflow moved e2-small → e2-medium in #4179 and
+		// e2-medium → e2-standard-2 in #3855 cause B, while nothing here parses the YAML, so nobody
+		// had to notice. What this case asserts is that a shape of THIS SIZE is refused for a
+		// fabric-demo run; re-pointing it at whatever the floor is today would make it re-assert the
+		// same thing about a different number, and would red the day the floor legitimately grows
+		// past the demo's own requirement. Keeping it fixed is what keeps it a regression test.
 		enableFabricDemo(t)
 		var cluster map[string]any
 		if err := json.Unmarshal([]byte(`{"instance_types":["e2-small"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":20}`), &cluster); err != nil {

@@ -19,6 +19,7 @@
     "container-registry",
     "observability",
     "repositories",
+    "starter-templates",
     "bring-your-own-charts",
     "bring-your-own-iac",
     "cost-sidebar"

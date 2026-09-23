@@ -46,9 +46,32 @@ export function ProjectShell({
 
 	return (
 		<EnvironmentStatusProvider value={envStatus.data ?? EMPTY_ENVIRONMENT_STATUS}>
-			{/* One viewport less the topbar — `SHELL_VIEWPORT` reads the shell's header height, where
-			    this used to reserve 3.5rem (56px) against a 53px topbar and overflowed by 3px. */}
-			<div className={cn("-m-4 flex sm:-m-6 lg:-m-8 xl:-m-10", SHELL_VIEWPORT)}>
+			{/* THE CANVAS IS PINNED TO ONE VIEWPORT; A DOCUMENT IS NOT.
+			    `SHELL_VIEWPORT` is one viewport less the topbar — it reads the shell's header
+			    height, where this used to reserve 3.5rem (56px) against a 53px topbar and
+			    overflowed by 3px. A pan/zoom board needs that pin: it has to fill exactly the
+			    space it is given and scroll nothing.
+
+			    A document view must NOT have it, and that is RUBRIC.md R3 — "exactly one scroll
+			    container, and it is the shell's". Pinning this frame to the viewport makes
+			    `AppShell`'s `<main className="flex-1 overflow-y-auto">` un-overflowable (its only
+			    child is exactly its own height), so the `overflow-y-auto` that used to sit on the
+			    document wrapper below became the page's ONE scroller and it was not `<main>`. That
+			    is invisible until a project view grows past the viewport — every project document
+			    route happened to fit, so nothing reported it until #4914 added the jobs count
+			    toolbar and pushed `/[org]/[project]/jobs` 18–50px over at 768/1280/1440/1920.
+			    Un-pinned, the document flows in `<main>` exactly as every `/[org]/~/…` route does,
+			    which is the console's one scrolling pattern rather than a second one.
+
+			    The `-m-4 … -m-10` / `p-4 … p-10` round trip stays on both branches: it cancels
+			    AppShell's gutter (which the canvas needs gone) and re-applies it for a document, so
+			    the two branches share one frame and a document's gutter is the console's. */}
+			<div
+				className={cn(
+					"-m-4 flex sm:-m-6 lg:-m-8 xl:-m-10",
+					onArchitecture && SHELL_VIEWPORT,
+				)}
+			>
 				<div className="relative min-w-0 flex-1">
 					{/* Architecture fills the board full-bleed — a pan/zoom canvas has no document
 					    width, and centring it inside CONTENT_FRAME would leave gutters the board is
@@ -57,7 +80,7 @@ export function ProjectShell({
 					{onArchitecture ? (
 						<div className="h-full">{children}</div>
 					) : (
-						<div className="h-full overflow-y-auto p-4 sm:p-6 lg:p-8 xl:p-10">
+						<div className="p-4 sm:p-6 lg:p-8 xl:p-10">
 							<div className={CONTENT_FRAME}>{children}</div>
 						</div>
 					)}

@@ -7,6 +7,9 @@
 #   reclaim  stale leases (a dead instance's claim → freed, like #534 orphan-reclaim)
 #   unblock  recompute the `blocked` label from each issue's `blocked-by:` line
 #   report   per-wave board status + collisions to eyeball + UI units awaiting the human +
+#            units whose BODY asserts a protection label they do not CARRY (#4112: "NOT
+#            AGENT-BUILDABLE … `needs:human` keeps this out of claim-work.sh" over labels that
+#            never included it — so the unit led the autonomous ready queue) +
 #            possibly-shipped units (open, but a MERGED PR ALREADY EDITED FILES THE UNIT'S `scope:`
 #            CLAIMS — de-stale the board; a mention alone is suppressed, and counted, not reported)
 #
@@ -21,6 +24,7 @@
 #   scripts/coordinate.sh --close-shipped # close open board units a MERGED PR CLOSES (kw + #n)
 #   scripts/coordinate.sh --init-labels   # create/refresh the board's label set (once)
 #   scripts/coordinate.sh --self-test     # offline: board-body parser + scope/shipped report wiring
+#                                         #          + the asserted-protection predicate and renderer
 #
 # --close-shipped is the manual BACKSTOP for the close-on-dev-merge Action: it reclaims/unblocks
 # NOTHING, but for each open, still-claimable board unit that a MERGED PR CLOSES — a closing
@@ -180,6 +184,138 @@ closing_keywords_json() {
     | tr '|' '\n' \
     | jq -Rn '[inputs | gsub("^[[:space:]]+|[[:space:]]+$";"") | select(length > 0)]' 2>/dev/null \
     || printf '[]'
+}
+
+# ── asserted protection: a body that claims a label the issue does not carry ─────────────────────
+#
+# The PREDICATE is not written here — it is `board_asserted_protection` in scripts/lib/board-pr.sh,
+# sourced by this file AND by claim-work.sh, for the reason that file's header states: one board
+# protocol, several call sites, and a drift between them is a silent false-ALLOW. The two callers
+# ask the same question at different moments — this one across the whole board as a health fact,
+# claim-work.sh about the single unit it is one command away from handing to a builder.
+#
+# This function's only job is RENDERING, and specifically making the three outcomes distinguishable:
+# found · examined and clean · could not examine. `board_asserted_protection` returns 4 for the
+# third, and a report that printed nothing for it would be the exact silence #4115 was filed for.
+#
+# Reads the board JSON on stdin. Never fails the caller: an advisory that can red a read-only
+# report is a worse failure than the one it reports.
+asserted_protection_report() {
+  local rows rc=0
+  echo "  ── asserted protection (a body claiming a label the issue does not carry) ──"
+  rows="$(board_asserted_protection)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "  ⚠ asserted protection NOT CHECKED: the board could not be examined (jq missing, or the"
+    echo "    board JSON did not parse). This is unmeasured, not a clean board."
+    return 0
+  fi
+  if [ -z "$rows" ]; then
+    echo "  ✓ examined: every board unit whose body names a protection label carries it."
+    return 0
+  fi
+  while IFS=$'\t' read -r n asserted claimed labels; do
+    [ -n "$n" ] || continue
+    echo "  ⚠ #$n says \"$asserted\" — claiming the \`$claimed\` label it does NOT carry. Labels: [$labels]."
+  done <<<"$rows"
+  echo "     The protection is a FICTION: claim-work.sh filters on LABELS and reads no prose, so this"
+  echo "     unit is in the autonomous ready queue exactly as if the body said nothing (#4112)."
+  echo "     Fix by adding the label, or by deleting the sentence that claims it — not by ignoring this."
+  return 0
+}
+
+# Exercise board_asserted_protection against the hand-authored contract, AND pin the label set
+# claim-work.sh actually filters on.
+#
+# THE PIN IS THE HALF THAT DOES NOT AGE. The matcher deliberately covers `needs:human` and the prose
+# form and NOT the rest of claim-work.sh's exclusion set (board-pr.sh states the measurement behind
+# each omission). That is a decision about TODAY's labels, and a decision like that is exactly what
+# goes stale in silence: add a new exclusion label to the ready filter and this matcher would keep
+# reporting a clean board while a whole new class of assertion went unchecked — the "conformance
+# table pins only what it CONTAINS" shape. So the suite READS the filter and fails when it changes,
+# which turns an invisible drift into one deliberate decision at the moment it is introduced.
+run_asserted_protection_self_test() {
+  local fixtures="scripts/lib/board-body-fixtures.json" fails=0 checks=0 cases fixture name board want got rc
+  [ -f "$fixtures" ] || { echo "missing $fixtures" >&2; exit 1; }
+  cases="$(jq -c '.protectionCases[]' "$fixtures")" || {
+    echo "self-test: could not read .protectionCases[] from $fixtures — unreadable fixtures are a" >&2
+    echo "  FAILURE, not an empty suite." >&2
+    exit 1
+  }
+
+  while IFS= read -r fixture; do
+    [ -n "$fixture" ] || continue
+    name="$(jq -r '.name' <<<"$fixture")"
+    board="$(jq -c '.board' <<<"$fixture")"
+    want="$(jq -r '.finds | map(tostring) | join(" ")' <<<"$fixture")"
+    rc=0
+    got="$(printf '%s' "$board" | board_asserted_protection | cut -f1 | paste -sd' ' -)" || rc=$?
+    checks=$((checks + 1))
+    if [ "$rc" -ne 0 ]; then
+      echo "FAIL - protection: $name — the predicate could not examine a well-formed board (rc=$rc)" >&2
+      fails=$((fails + 1))
+    elif [ "$got" = "$want" ]; then
+      echo "ok   - protection: $name"
+    else
+      echo "FAIL - protection: $name: want '$want' got '$got'" >&2
+      fails=$((fails + 1))
+    fi
+  done <<<"$cases"
+
+  # "Could not examine" must be DISTINGUISHABLE from "examined and found nothing" — the whole
+  # reason the predicate has a 4 rather than printing an empty result and exiting 0.
+  checks=$((checks + 1))
+  rc=0
+  printf 'not json at all' | board_asserted_protection >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -eq 4 ]; then
+    echo "ok   - protection: an unparseable board returns 4, not a clean 0"
+  else
+    echo "FAIL - protection: an unparseable board returned $rc — a board we could not read must not read as clean" >&2
+    fails=$((fails + 1))
+  fi
+
+  # The renderer, not just the predicate: a NOT-CHECKED board must never print the clean marker.
+  # CAPTURE FIRST, then grep. `… | asserted_protection_report | grep -q` looks equivalent and is
+  # not: under `pipefail` grep -q exits on its first match, SIGPIPEs the renderer, and the pipeline
+  # reports 141 — so the condition read FALSE while the renderer was doing exactly the right thing.
+  local rendered
+  checks=$((checks + 1))
+  rendered="$(printf 'not json at all' | asserted_protection_report)"
+  if grep -qF "NOT CHECKED" <<<"$rendered" && ! grep -qF "✓ examined" <<<"$rendered"; then
+    echo "ok   - protection: the report renders NOT CHECKED and withholds the clean marker"
+  else
+    echo "FAIL - protection: an unexaminable board did not render as NOT CHECKED" >&2
+    fails=$((fails + 1))
+  fi
+
+  # The two constants are parallel arrays; a mismatch would silently mis-name the claimed label.
+  checks=$((checks + 1))
+  if [ "$(tr '|' '\n' <<<"$BOARD_PROTECTION_ASSERTIONS" | wc -l)" = "$(tr '|' '\n' <<<"$BOARD_PROTECTION_LABELS" | wc -l)" ]; then
+    echo "ok   - protection: every assertion names exactly one label"
+  else
+    echo "FAIL - protection: BOARD_PROTECTION_ASSERTIONS and BOARD_PROTECTION_LABELS differ in length" >&2
+    fails=$((fails + 1))
+  fi
+
+  # ── the pin ──
+  local filter_labels expected_labels
+  filter_labels="$(sed -n '/^ready=/,/sort_by/p' scripts/claim-work.sh \
+    | grep -oE 'index\("[^"]+"\)\|not' | sed -E 's/index\("([^"]+)"\).*/\1/' | sort -u | paste -sd' ' -)"
+  expected_labels="blocked claimed epic needs:human"
+  checks=$((checks + 1))
+  if [ "$filter_labels" = "$expected_labels" ]; then
+    echo "ok   - protection: claim-work.sh still excludes exactly [$expected_labels]"
+  else
+    echo "FAIL - protection: claim-work.sh's ready filter now excludes [$filter_labels], not [$expected_labels]." >&2
+    echo "       A label was added to or removed from the autonomous exclusion set. DECIDE whether a body" >&2
+    echo "       can assert the new one in prose — if it can, add it to BOARD_PROTECTION_ASSERTIONS in" >&2
+    echo "       scripts/lib/board-pr.sh WITH the measurement that justifies it; if it cannot, update" >&2
+    echo "       expected_labels here and say why. Do not just make this line green." >&2
+    fails=$((fails + 1))
+  fi
+
+  [ "$checks" -gt 0 ] || { echo "self-test: the protection suite asserted NOTHING — that is a failure, not a pass." >&2; exit 1; }
+  [ "$fails" -eq 0 ] || { echo "self-test: $fails of $checks protection check(s) FAILED" >&2; exit 1; }
+  echo "self-test: all $checks protection checks passed"
 }
 
 # Exercise the shell parser against the contract shared with the dashboard parser.
@@ -645,6 +781,7 @@ if [ "$MODE" = "self-test" ]; then
   run_shipped_wiring_self_test
   run_lease_read_self_test
   run_tmpfile_self_test
+  run_asserted_protection_self_test
   exit 0
 fi
 
@@ -910,6 +1047,10 @@ else
   echo "  ✓ mutex:migration: $migc claimed (a collision needs 2 or more)."
 fi
 printf '%s' "$board" | scope_collision_report
+
+# A body that asserts a protection the issue does not carry. Advisory, mutates nothing, and it
+# prints a verdict in all three states — see asserted_protection_report.
+printf '%s' "$board" | asserted_protection_report
 
 # UI awaiting the human.
 uis="$(echo "$board" | jq -r '[.[]|select(.labels|map(.name)|index("class:ui"))|select(.labels|map(.name)|index("needs:design") or (.labels|map(.name)|index("needs:human")))|"#\(.number) \(.title)"][]' 2>/dev/null || true)"

@@ -12,7 +12,7 @@
 import { Info } from "lucide-react";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { formatDate, formatMoney } from "@repo/format";
+import { formatDate, formatMoney, scaleMoney } from "@repo/format";
 import {
 	type BillingSummary,
 	cancelSubscription,
@@ -154,15 +154,17 @@ export function BillingPanel() {
 	}
 
 	const meta = planMeta(summary.plan);
-	// The unit price is Stripe-authoritative (summary.unitAmountUsd = the subscription's
-	// actual price), never the catalog. Per-seat plans bill unit × seats; a null unit
+	// The unit price is Stripe-authoritative (summary.unitAmount = the subscription's actual
+	// price), never the catalog. Per-seat plans bill unit × seats; a null unit
 	// (Enterprise/custom, or community) → `monthly` is null and we show meta.priceLabel.
 	const seatCount = summary.seats ?? Math.max(1, summary.memberCount);
-	// `unitAmountUsd` is MAJOR units (the action divides Stripe's `unit_amount` by 100),
-	// while `formatMoney` takes MINOR units on purpose — so every render below multiplies
-	// back up by 100. Passing the dollars straight in would print $0.20 for a $20 plan.
-	const unit = summary.unitAmountUsd;
-	const monthly = unit === null ? null : meta.perSeat ? unit * seatCount : unit;
+	// NO CONVERSION AND NO CURRENCY LITERAL BELOW (#4176 part b). `unitAmount` is a `Money` in
+	// minor units, which is what `formatMoney` takes, so the `* 100` this file used to apply at
+	// three renders is gone along with the `/ 100` in `getBillingSummary` it existed to undo.
+	// `scaleMoney` carries the currency through the seat multiplication, so the per-seat line and
+	// the monthly total cannot end up rendered in different currencies.
+	const unit = summary.unitAmount;
+	const monthly = unit === null ? null : meta.perSeat ? scaleMoney(unit, seatCount) : unit;
 	const { state } = summary;
 	// The Hobby tier is the free baseline — its card shows only the plan name + tagline + an
 	// Upgrade CTA (no lifecycle badge, no price figure). Only paid tiers show state + price.
@@ -179,7 +181,7 @@ export function BillingPanel() {
 	const showNextCharge =
 		(state === "active" || state === "trialing") &&
 		monthly !== null &&
-		monthly > 0 &&
+		monthly.minor > 0 &&
 		Boolean(summary.currentPeriodEnd);
 
 	return (
@@ -229,22 +231,22 @@ export function BillingPanel() {
 										meta.priceLabel
 									) : (
 										<>
-											{formatMoney(monthly * 100)}
+											{formatMoney(monthly)}
 											<span className="font-mono text-ui-sm font-normal text-text-tertiary">
 												/mo
 											</span>
 										</>
 									)}
 								</div>
-								{meta.perSeat && unit !== null && monthly !== null && monthly > 0 && (
+								{meta.perSeat && unit !== null && monthly !== null && monthly.minor > 0 && (
 									<div className="font-mono text-ui-2xs text-text-tertiary">
-										{formatMoney(unit * 100)}/seat · {seatCount} seat
+										{formatMoney(unit)}/seat · {seatCount} seat
 										{seatCount === 1 ? "" : "s"}
 									</div>
 								)}
 								{showNextCharge && monthly !== null && summary.currentPeriodEnd && (
 									<div className="font-mono text-ui-2xs text-text-tertiary">
-										next charge {formatMoney(monthly * 100)} ·{" "}
+										next charge {formatMoney(monthly)} ·{" "}
 										{formatDate(summary.currentPeriodEnd)}
 									</div>
 								)}

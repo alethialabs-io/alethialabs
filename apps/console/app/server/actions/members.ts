@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import type { Money } from "@repo/format";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import {
 	getBillingSummary,
 	getCollaborationAccess,
@@ -68,7 +69,16 @@ export async function getMembers(): Promise<MemberRow[]> {
 		})
 		.from(member)
 		.innerJoin(user, eq(member.userId, user.id))
-		.where(eq(member.organizationId, actor.orgId));
+		.where(eq(member.organizationId, actor.orgId))
+		// ORDERED, because the caller renders it as a LIST and re-reads it. A `select` with no
+		// `order by` licenses Postgres to return the rows however the plan happens to produce them,
+		// and the same query can answer differently on the same data — so the members table's rows
+		// could re-order under a refetch with nothing in the org having changed. That is a visible
+		// defect on its own (rows moving under the pointer) and it is the one #4852 bills: a
+		// re-ordered list re-keys the table, and anything a row's cell is rendering — a row's open
+		// Manage menu — goes with it. Join order is the column a reader would expect; `id` breaks
+		// the tie so the order is TOTAL, which is what "deterministic" needs.
+		.orderBy(asc(member.createdAt), asc(member.id));
 
 	if (rows.length === 0) {
 		// Personal workspace: you are the sole owner.
@@ -201,7 +211,10 @@ export async function getInvitations(): Promise<InvitationRow[]> {
 				eq(invitation.organizationId, actor.orgId),
 				eq(invitation.status, "pending"),
 			),
-		);
+		)
+		// The other half of the members table's rows, ordered for the same reason as `getMembers()`
+		// above: the two lists are concatenated into one table, so either one shuffling re-keys it.
+		.orderBy(asc(invitation.createdAt), asc(invitation.id));
 
 	return rows.map((r) => ({
 		id: r.id,
@@ -261,8 +274,10 @@ export interface InviteContext {
 	plan: BillingPlan;
 	/** Members currently occupying a seat (the seat banner's "in use"). */
 	memberCount: number;
-	/** Per-seat (or flat) monthly USD, for the seat-cost banner. null = unknown/custom. */
-	unitAmountUsd: number | null;
+	/** Per-seat (or flat) monthly amount WITH its currency, MINOR units, for the seat-cost
+	 *  banner. null = unknown/custom. Mirrored straight from {@link BillingSummary.unitAmount};
+	 *  the banner used to read a `*Usd` number and write its own `$` in front of it (#4176). */
+	unitAmount: Money | null;
 	roles: InviteRoleOption[];
 	/** Lowercased emails of existing members (already in the org). */
 	existingEmails: string[];
@@ -325,7 +340,7 @@ export async function getInviteContext(): Promise<InviteContext> {
 		hosted: billing.hosted,
 		plan: billing.plan,
 		memberCount: billing.memberCount,
-		unitAmountUsd: billing.unitAmountUsd,
+		unitAmount: billing.unitAmount,
 		roles: [...INVITE_ROLES],
 		existingEmails,
 		pendingEmails,

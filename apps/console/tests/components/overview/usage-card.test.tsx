@@ -7,6 +7,7 @@
 // the "% used" caption beside it must not contradict that by saying "0% used".
 
 import { render, screen } from "@testing-library/react";
+import { money } from "@repo/format";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
 	AiUsageSummary,
@@ -35,7 +36,7 @@ const usage = (over: Partial<UsageReport> = {}): UsageReport => ({
 	usedMinutes: 0.9433333333333334,
 	includedMinutes: 200,
 	overageMinutes: 0,
-	overageCost: 0,
+	overageCost: money(0, "usd"),
 	pct: 0.9433333333333334 / 200,
 	approaching: false,
 	overLimit: false,
@@ -61,7 +62,7 @@ const billing = (over: Partial<BillingSummary> = {}): BillingSummary => ({
 	cancelAtPeriodEnd: false,
 	seats: null,
 	memberCount: 3,
-	unitAmountUsd: null,
+	unitAmount: null,
 	...over,
 });
 
@@ -91,14 +92,14 @@ beforeEach(() => {
 
 describe("UsageCard runner-minutes readout", () => {
 	it("renders a sub-minute float as '<1 min', never '0.943'", async () => {
-		render(<UsageCard orgSlug="itgix" projectCount={4} />);
+		render(<UsageCard orgSlug="acme" projectCount={4} />);
 
 		expect(await screen.findByText("<1 min / 200 min")).toBeInTheDocument();
 		expect(screen.queryByText(/0\.943/)).not.toBeInTheDocument();
 	});
 
 	it("does not say '0% used' when something HAS run", async () => {
-		render(<UsageCard orgSlug="itgix" projectCount={4} />);
+		render(<UsageCard orgSlug="acme" projectCount={4} />);
 
 		expect(await screen.findByText("<1% used")).toBeInTheDocument();
 		expect(screen.queryByText("0% used")).not.toBeInTheDocument();
@@ -106,7 +107,7 @@ describe("UsageCard runner-minutes readout", () => {
 
 	it("still says '0% used' and '0 min' when the allowance is genuinely untouched", async () => {
 		vi.mocked(getOrgUsage).mockResolvedValue(usage({ usedMinutes: 0, pct: 0 }));
-		render(<UsageCard orgSlug="itgix" projectCount={4} />);
+		render(<UsageCard orgSlug="acme" projectCount={4} />);
 
 		expect(await screen.findByText("0 min / 200 min")).toBeInTheDocument();
 		expect(screen.getByText("0% used")).toBeInTheDocument();
@@ -116,7 +117,7 @@ describe("UsageCard runner-minutes readout", () => {
 		vi.mocked(getOrgUsage).mockResolvedValue(
 			usage({ usedMinutes: 135.4, pct: 135.4 / 200 }),
 		);
-		render(<UsageCard orgSlug="itgix" projectCount={4} />);
+		render(<UsageCard orgSlug="acme" projectCount={4} />);
 
 		expect(await screen.findByText("2h 15m / 200 min")).toBeInTheDocument();
 		expect(screen.getByText("68% used")).toBeInTheDocument();
@@ -132,7 +133,7 @@ describe("UsageCard runner-minutes readout", () => {
 				pct: 1.25,
 			}),
 		);
-		render(<UsageCard orgSlug="itgix" projectCount={4} />);
+		render(<UsageCard orgSlug="acme" projectCount={4} />);
 
 		expect(await screen.findByText("4h 10m / 200 min")).toBeInTheDocument();
 		expect(screen.getByText("125% used")).toBeInTheDocument();

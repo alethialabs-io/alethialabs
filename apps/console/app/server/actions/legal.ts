@@ -17,10 +17,12 @@ import {
 	type PayerCapacity,
 } from "@repo/legal/commerce";
 import { LEGAL_DOCUMENTS } from "@repo/legal/documents";
-import { authorize, currentActor } from "@/lib/authz/guard";
+import { authorize, authorizeInOrg, currentActor } from "@/lib/authz/guard";
 import {
 	acceptanceRequiredDocuments,
 	hasAcceptedCurrentDocuments,
+	type PaidConversionRefusal,
+	paidConversionStatus,
 } from "@/lib/billing/eligibility";
 import { getServiceDb } from "@/lib/db";
 import { legalAcceptance, organizationBilling } from "@/lib/db/schema";
@@ -182,6 +184,35 @@ const declarePayerSchema = z.object({
 export type DeclarePayerInput = z.input<typeof declarePayerSchema>;
 
 /**
+ * Refuses a declaration whose attestation does not match its capacity, in BOTH directions.
+ *
+ * The forbidden half is the one worth stating. An organization declaration without an attestation
+ * was already refused below; a CONSUMER declaration carrying one used to be quietly normalised to
+ * null, which is the same failure shape the rest of this file exists to avoid — a record that
+ * silently says something other than what the payer submitted. A consumer has nothing to bind, so
+ * an attestation on that declaration means the form and the payer disagree about which legal regime
+ * is being entered, and the right answer to a disagreement about the regime is to stop.
+ *
+ * Shared by `declarePayer` (which writes) and `payerConversionStatus` (which does not), so the
+ * preview a purchase sheet renders cannot accept a shape the write would then reject.
+ */
+function assertAttestationMatchesCapacity(parsed: {
+	capacity: PayerCapacity;
+	authorityAttestation: string | null;
+}): void {
+	if (parsed.capacity === "organization" && !parsed.authorityAttestation) {
+		throw new Error(
+			"State the role under which you can bind this organization — a purchase on its behalf needs it.",
+		);
+	}
+	if (parsed.capacity === "consumer" && parsed.authorityAttestation) {
+		throw new Error(
+			"An individual purchase binds nobody but you, so it cannot carry an attestation of authority.",
+		);
+	}
+}
+
+/**
  * Records WHO is paying and from WHERE — the two facts the paid-conversion gate needs before an
  * order exists.
  *
@@ -190,20 +221,28 @@ export type DeclarePayerInput = z.input<typeof declarePayerSchema>;
  * needs someone to say they can bind it; a consumer declaration must NOT carry one, since there is
  * nothing to bind and storing a role there would make the record ambiguous about which regime
  * applied.
+ *
+ * @param input The declared facts — capacity, ISO-2 billing country, and the attestation.
+ * @param opts.orgId The organization to record the declaration ON, when it is not the ambient one.
+ *   NAMED, not ambient, for exactly the reason `startProTrial` and `linkSubscriptionToNewOrg` take
+ *   one (#4133): the create-org purchase sheet runs from a page inside the CURRENT org and declares
+ *   for the org it has just created, so under URL-wins the ambient scope is the OLD org and the
+ *   declaration would land on it — recording a capacity and a country against a payer who never
+ *   gave them, while the new org stays undeclared and is refused at its next conversion. Optional
+ *   because the upgrade sheet genuinely is on the org it is declaring for.
  */
 export async function declarePayer(
 	input: DeclarePayerInput,
+	opts?: { orgId?: string },
 ): Promise<{ capacity: PayerCapacity; billingCountry: string }> {
 	const parsed = declarePayerSchema.parse(input);
-	const actor = await authorize("manage_billing", { type: "billing" });
+	const actor = opts?.orgId
+		? await authorizeInOrg("manage_billing", { type: "billing" }, opts.orgId)
+		: await authorize("manage_billing", { type: "billing" });
 	if (actor.orgId === actor.userId) {
 		throw new Error("Create an organization before setting up billing.");
 	}
-	if (parsed.capacity === "organization" && !parsed.authorityAttestation) {
-		throw new Error(
-			"State the role under which you can bind this organization — a purchase on its behalf needs it.",
-		);
-	}
+	assertAttestationMatchesCapacity(parsed);
 	const authorityAttestation =
 		parsed.capacity === "organization" ? parsed.authorityAttestation : null;
 
@@ -232,6 +271,42 @@ export async function declarePayer(
 		});
 	}
 	return { capacity: parsed.capacity, billingCountry: parsed.billingCountry };
+}
+
+/**
+ * The gate's verdict on a purchase made under these declared facts — asked BEFORE any money moves,
+ * and writing nothing.
+ *
+ * It exists because a refusal that reaches the customer as an exception is a refusal they cannot
+ * act on. Every conversion action throws `PaidConversionNotAllowedError` across the server-action
+ * boundary, where the class is gone and the message is redacted in a production build, so the
+ * purchase sheets could only render a generic sentence — the one that said "Billing may not be
+ * configured on this deployment" for a rule the product itself was enforcing (#4633). Asking first,
+ * over a RETURN value, is the only way the sheet can say which of the four preconditions failed.
+ *
+ * It is not a second implementation of the rule and must never become one: `paidConversionStatus`
+ * calls the same `assertPaidConversionAllowed` the sale does and catches, so a preview that says
+ * "allowed" and a conversion that refuses cannot disagree about anything but timing. It is also not
+ * a substitute for the gate — nothing here authorises a sale, and the conversion action re-asks.
+ *
+ * Takes the facts rather than reading them, so the create-org sheet — where no organization exists
+ * yet, and therefore no row to read them from — gets the same answer as the upgrade sheet.
+ */
+export async function payerConversionStatus(
+	input: DeclarePayerInput,
+): Promise<
+	| { allowed: true }
+	| { allowed: false; reason: PaidConversionRefusal; message: string }
+> {
+	const parsed = declarePayerSchema.parse(input);
+	assertAttestationMatchesCapacity(parsed);
+	const actor = await currentActor();
+	return paidConversionStatus({
+		userId: actor.userId,
+		organizationId: actor.orgId,
+		capacity: parsed.capacity,
+		billingCountry: parsed.billingCountry,
+	});
 }
 
 /** The declared payer facts for the active org, or nulls when nothing has been declared. */

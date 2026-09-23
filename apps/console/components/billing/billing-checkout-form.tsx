@@ -32,8 +32,8 @@ import {
   type TaxIdType,
   taxIdOption,
 } from "@/lib/billing/tax-ids";
-import { formatMoney } from "@repo/format";
-import type { SupportedCurrency } from "@repo/plan-catalog";
+import { formatMoney, type Money, money } from "@repo/format";
+import type { PriceByCurrency, SupportedCurrency } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Checkbox } from "@repo/ui/checkbox";
 import { CountrySelect } from "@repo/ui/country-select";
@@ -62,10 +62,10 @@ import { cn } from "@repo/ui/utils";
  */
 export interface CheckoutMeta {
   name: string;
-  priceMonthlyUsd?: number;
-  priceMonthlyEur?: number;
-  includedCreditUsd?: number;
-  includedCreditEur?: number;
+  /** Per-currency monthly amount in MINOR units (`PlanCatalogEntry.priceMonthly`). */
+  priceMonthly?: PriceByCurrency;
+  /** Per-currency included usage credit in MINOR units. Absent = none. */
+  includedCredit?: PriceByCurrency;
 }
 
 /** The billing details the form collects and hands back on a confirmed charge. */
@@ -117,30 +117,24 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 /**
- * The catalog and Stripe hand this form MAJOR units (29, 0.5); `formatMoney` takes minor ones.
+ * The catalog figure for one currency as a `Money`, and zero when there is none.
  *
- * `Math.round` so a float price (29.99 * 100 is 2998.9999…) cannot land a fraction of a cent in
- * an argument documented as an integer.
+ * THE `* 100` THIS FILE USED TO CARRY IS GONE (#4176 part b). The catalog handed it MAJOR units
+ * (29, 0.5) and `formatMoney` takes minor ones, so a `toCents` sat in the middle rounding a float
+ * price; `priceMonthly` and `includedCredit` are minor units at the source now, so there is
+ * nothing to round and nothing to convert. A zero is still a real amount — an included member
+ * renders `$0.00`, not a blank — which is why this returns a `Money` rather than null.
  *
- * This file used to carry its own `money()`, which picked the symbol from a two-entry `€`/`$`
+ * This file used to carry its own `money()` too, which picked the symbol from a two-entry `€`/`$`
  * table and glued it onto `toLocaleString("en-US")`. It rendered `$29` where every other billing
  * surface renders `$29.00`, and because the symbol was a VARIABLE rather than a literal, no
  * `$`-in-front-of-an-interpolation guard could see it.
- *
- * `SupportedCurrency` is `"usd" | "eur"` — both two-decimal for charges, so the zero-decimal
- * split `formatMoney` now applies (Stripe's charge table, see `packages/format/src/minor-units.ts`)
- * resolves to a divisor of 100 either way and cannot change what this file renders. It is stated
- * as a property of the TYPE rather than of `formatMoney`, because `formatMoney` no longer has the
- * limitation this sentence used to cite — it divides by the charge divisor now, and the reason
- * this call site is safe is that its currency union cannot reach the other branch.
  */
-function toCents(amount: number): number {
-  return Math.round(amount * 100);
-}
-
-/** ISO 4217 for `@repo/format`; `SupportedCurrency` is the lower-case Stripe spelling. */
-function isoCode(currency: SupportedCurrency): string {
-  return currency.toUpperCase();
+function catalogMoney(
+  prices: PriceByCurrency | undefined,
+  currency: SupportedCurrency,
+): Money {
+  return money(prices?.[currency] ?? 0, currency);
 }
 
 interface BillingCheckoutFormProps {
@@ -148,8 +142,9 @@ interface BillingCheckoutFormProps {
   clientSecret: string;
   /** Catalog display fields — drives the name, included credit, and price copy. */
   meta: CheckoutMeta;
-  /** Live per-seat price (in `currency`) from Stripe — authoritative; falls back to the catalog. */
-  unitAmount?: number | null;
+  /** Live per-seat price from Stripe — authoritative; falls back to the catalog. MUST be quoted
+   *  in `currency` below; one that is not is ignored (see the resolution in the body). */
+  unitAmount?: Money | null;
   /** The billing currency (drives the money formatting + fallback). */
   currency: SupportedCurrency;
   /** Owner email for the "1 member" summary row. */
@@ -212,25 +207,27 @@ export function BillingCheckoutForm({
 
   // Stripe-authoritative seat price in the selected currency (catalog fallback while it
   // loads / offline).
-  const unit =
-    unitAmount ??
-    (currency === "eur" ? meta.priceMonthlyEur : meta.priceMonthlyUsd) ??
-    0;
-  const credit =
-    (currency === "eur" ? meta.includedCreditEur : meta.includedCreditUsd) ?? 0;
+  //
+  // THE `unitAmount` PROP IS ONLY USED WHEN IT IS IN `currency`. `useLivePlanPrice(plan, currency)`
+  // returns the amount for the currency it was asked for, so the two agree by construction — but
+  // "by construction" is a property of the CALLER, and this form is the one place both values are
+  // in scope. A mismatch now falls back to the catalog figure for the selected currency instead
+  // of printing a euro amount under a dollar total, which is the class of failure #4176 is about.
+  const live = unitAmount != null && unitAmount.currency === currency ? unitAmount : null;
+  const unit = live ?? catalogMoney(meta.priceMonthly, currency);
+  const credit = catalogMoney(meta.includedCredit, currency);
+  const included = money(0, currency);
   // Order summary line items — base product + (per-seat plans only) the included member at $0.
   const lineItems = [
     { label: meta.name, cost: unit },
-    ...(showMembers ? [{ label: "1 member", cost: 0, member: true }] : []),
+    ...(showMembers ? [{ label: "1 member", cost: included, member: true }] : []),
   ];
-  const total = lineItems.reduce((s, li) => s + li.cost, 0);
-  // Minor units and the ISO code, resolved ONCE: every figure this form prints goes through
-  // `formatMoney` from these three, so no two rows of the order summary can disagree about the
-  // symbol, the separators or the decimals.
-  const code = isoCode(currency);
-  const unitCents = toCents(unit);
-  const creditCents = toCents(credit);
-  const totalCents = toCents(total);
+  // Summed in MINOR units and re-attached to `currency`, so the total is in the same currency as
+  // every line above it by construction rather than by a third variable everyone has to pass.
+  const total = money(
+    lineItems.reduce((sum, li) => sum + li.cost.minor, 0),
+    currency,
+  );
 
   const submitting = form.formState.isSubmitting;
   const cardOptions = { style, showIcon: true } as const;
@@ -293,7 +290,7 @@ export function BillingCheckoutForm({
           )}
         >
           {/* included credit */}
-          {credit > 0 && (
+          {credit.minor > 0 && (
             <div className="flex items-center justify-between rounded-lg border border-border px-4 py-3">
               <div className="flex items-center gap-2 text-ui-md text-text-secondary">
                 <span className="font-medium text-text-primary">
@@ -317,7 +314,7 @@ export function BillingCheckoutForm({
                 </Tooltip>
               </div>
               <span className="font-mono text-ui-md text-text-primary">
-                {formatMoney(creditCents, code)}
+                {formatMoney(credit)}
               </span>
             </div>
           )}
@@ -450,7 +447,7 @@ export function BillingCheckoutForm({
           {/* legal paragraph */}
           <p className="text-ui-xs leading-relaxed text-text-tertiary">
             By clicking {submitLabel ?? "Create"}, you authorize a charge of{" "}
-            {formatMoney(totalCents, code)} now and the same amount each month until
+            {formatMoney(total)} now and the same amount each month until
             you cancel. Any applicable tax is estimated and finalized on your
             invoice.
           </p>
@@ -467,7 +464,7 @@ export function BillingCheckoutForm({
             <div className="flex items-center justify-between px-4 py-3 text-ui-sm">
               <span className="font-medium text-text-primary">{meta.name}</span>
               <span className="font-mono text-ui-sm text-text-secondary">
-                {formatMoney(unitCents, code)}
+                {formatMoney(unit)}
               </span>
             </div>
 
@@ -490,7 +487,7 @@ export function BillingCheckoutForm({
                     1 member
                   </span>
                   <span className="font-mono text-ui-sm text-text-secondary">
-                    {formatMoney(0, code)}
+                    {formatMoney(included)}
                   </span>
                 </button>
                 {membersExpanded && ownerEmail && (
@@ -513,7 +510,7 @@ export function BillingCheckoutForm({
                 Total
               </span>
               <span className="font-display text-ui-xl font-semibold text-text-primary">
-                {formatMoney(totalCents, code)}
+                {formatMoney(total)}
                 <span className="font-mono text-ui-xs font-normal text-text-tertiary">
                   {" "}
                   / month
@@ -542,7 +539,7 @@ export function BillingCheckoutForm({
           >
             {submitting
               ? "Processing…"
-              : (submitLabel ?? `Create — ${formatMoney(totalCents, code)}`)}
+              : (submitLabel ?? `Create — ${formatMoney(total)}`)}
           </Button>
         </div>
       </form>

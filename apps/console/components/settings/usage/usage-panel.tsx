@@ -278,9 +278,11 @@ export function UsagePanel() {
 								!usage
 									? "managed runner usage this period"
 									: usage.overLimit
-										// `overageCost` is USD MAJOR units (lib/billing/usage.ts rounds it to
-										// cents), so it is scaled UP by 100 for formatMoney, which takes cents.
-										? `${formatMinutes(usage.overageMinutes)} over · ~${formatMoney(Math.round(usage.overageCost * 100))} overage`
+										// `overageCost` is a `Money` in MINOR units and carries its own currency
+										// (#4176 part b), so neither the `* 100` this line used to apply nor the
+										// `"USD"` literal it used to name is written here any more. The currency
+										// is decided once, where the rate is (`OVERAGE_RATE_PER_MIN`).
+										? `${formatMinutes(usage.overageMinutes)} over · ~${formatMoney(usage.overageCost)} overage`
 										: usage.approaching
 											? `${pctUsed}% used — approaching included`
 											: `${pctUsed}% of included · self-hosted is free`

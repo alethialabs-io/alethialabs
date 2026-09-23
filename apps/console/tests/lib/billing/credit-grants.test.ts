@@ -2,20 +2,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Included-credit Stripe grant (lib/billing/credit-grants.ts). Mocked boundary: stub Stripe +
-// plan lookups; assert every no-op guard, the period idempotency, the monetary amount math
-// (usd → cents), the metered scope, and the best-effort swallow.
+// plan lookups; assert every no-op guard, the period idempotency, the monetary amount (MINOR
+// units straight from the catalog since #4176 part b), the metered scope, and the best-effort
+// swallow.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
 
 vi.mock("@/lib/billing/config", () => ({ isStripeConfigured: vi.fn(), planForPriceId: vi.fn() }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: vi.fn() }));
-vi.mock("@repo/plan-catalog", () => ({ planMeta: vi.fn() }));
+vi.mock("@repo/plan-catalog", () => ({
+	planMeta: vi.fn(),
+	planIncludedCreditCents: vi.fn(),
+}));
 
 import { ensureIncludedCredit } from "@/lib/billing/credit-grants";
 import { isStripeConfigured, planForPriceId } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
-import { planMeta } from "@repo/plan-catalog";
+import { planIncludedCreditCents, planMeta } from "@repo/plan-catalog";
 
 function stripeWith(existing: Array<{ metadata?: Record<string, string> }> = []) {
 	const list = vi.fn(async () => ({ data: existing }));
@@ -41,7 +45,10 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(isStripeConfigured).mockReturnValue(true);
 	vi.mocked(planForPriceId).mockReturnValue("team" as never);
-	vi.mocked(planMeta).mockReturnValue({ name: "Team", includedCreditUsd: 25 } as never);
+	vi.mocked(planMeta).mockReturnValue({ name: "Team" } as never);
+	// MINOR units — the catalog holds cents now, so the grant is a pass-through and there is no
+	// `* 100` left in `credit-grants.ts` for this fixture to exercise.
+	vi.mocked(planIncludedCreditCents).mockReturnValue(2500);
 });
 
 describe("ensureIncludedCredit — happy path", () => {
@@ -52,7 +59,7 @@ describe("ensureIncludedCredit — happy path", () => {
 		expect(create).toHaveBeenCalledWith(
 			expect.objectContaining({
 				customer: "cus_1",
-				amount: { type: "monetary", monetary: { currency: "usd", value: 2500 } }, // 25 × 100
+				amount: { type: "monetary", monetary: { currency: "usd", value: 2500 } }, // $25.00
 				applicability_config: { scope: { price_type: "metered" } },
 				expires_at: 2000,
 				metadata: { period: "1000", organization_id: "org-1" },
@@ -156,7 +163,7 @@ describe("ensureIncludedCredit — no-op guards", () => {
 	});
 
 	it("skips when the plan has no included credit", async () => {
-		vi.mocked(planMeta).mockReturnValue({ name: "Hobby", includedCreditUsd: 0 } as never);
+		vi.mocked(planIncludedCreditCents).mockReturnValue(0);
 		const { create } = stripeWith([]);
 		await ensureIncludedCredit(sub());
 		expect(create).not.toHaveBeenCalled();

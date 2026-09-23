@@ -44,8 +44,20 @@ describe("the erasure register", () => {
 		for (const r of ERASURE_RULES.filter((x) => x.disposition === "pseudonymize")) {
 			expect(r.pseudonymize).toBeTruthy();
 			expect(r.pseudonymize?.length ?? 0).toBeGreaterThan(0);
-			// The identifying column must be among them, or the row stays linked to the subject.
-			expect(r.pseudonymize?.some((c) => c.column === r.subjectColumn)).toBe(true);
+			// The identifying column must be among them, or the row stays linked to the subject —
+			// UNLESS the rule declares why the key survives, which exactly one rule does and must:
+			// `user`'s subject column is the primary key the retained statutory records point at, so
+			// overwriting it would detach the records the register keeps on purpose. Checked in BOTH
+			// directions, because a declaration left behind on a rule that DOES overwrite its key
+			// would read as a second licensed exception (#4854). That the exception may only ever be
+			// a PRIMARY KEY is enforced in erasure-register-schema.test.ts, against the real column.
+			const overwritesSubject =
+				r.pseudonymize?.some((c) => c.column === r.subjectColumn) ?? false;
+			if (overwritesSubject) {
+				expect(r.keyRetainedBecause).toBeUndefined();
+			} else {
+				expect(r.keyRetainedBecause?.length ?? 0).toBeGreaterThan(40);
+			}
 		}
 	});
 

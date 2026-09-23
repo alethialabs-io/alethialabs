@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Borislav Borisov and contributors
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: Apache-2.0
 
 /**

@@ -8,18 +8,19 @@
 // fetch-into-useState + un-debounced `.includes()` filter and its banned stat-card strip; the
 // result count now lives in the page toolbar's count pill, which is where the standard puts it.
 //
-// Wired to the real backend: getTeams (name + members) + better-auth createTeam/removeTeam +
+// Wired to the real backend: getTeamsPage (rows + size facets, filtered in SQL) +
+// better-auth createTeam/removeTeam +
 // ManageTeamDialog (add/remove members). The design's per-team description, stored slug and
 // role-tag have no backend yet — omitted and tracked in
 // dataroom/spec/features/settings-design-port.md.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Users } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { getTeams, type TeamRow } from "@/app/server/actions/teams";
+import type { TeamRow } from "@/app/server/actions/teams";
 import { DataTable } from "@/components/data-table";
 import { settingsControl, settingsControlSize } from "@/components/settings/settings-ui";
 import {
@@ -51,17 +52,15 @@ import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { authClient } from "@/lib/auth/client";
-import { qk } from "@/lib/query/keys";
+import { useTeamsPageQuery } from "@/lib/query/use-teams-query";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useTeamsFilters } from "@/lib/stores/use-settings-filters";
 import { cn } from "@repo/ui/utils";
 import {
 	DEFAULT_TEAMS_FILTERS,
-	filterTeams,
 	normalizeTeamsQuery,
 	TEAM_SIZE_OPTIONS,
-	teamsFacetCounts,
 } from "./teams-filters";
 import { ManageTeamDialog } from "./manage-team-dialog";
 
@@ -99,16 +98,19 @@ export function TeamsList() {
 	const [manage, setManage] = useState<TeamRow | null>(null);
 	const [deleting, setDeleting] = useState<TeamRow | null>(null);
 
-	// The UNFILTERED universe. `getTeams()` takes no filters (see teams-filters.ts), so the
-	// base key holds every team and the narrowing happens below — which also means the facet
-	// counts are over everything, never over the current result.
-	const teamsQuery = useQuery({
-		queryKey: qk.teams(org),
-		queryFn: () => getTeams(),
-	});
-	const all = useMemo(() => teamsQuery.data ?? [], [teamsQuery.data]);
-	const rows = useMemo(() => filterTeams(all, query), [all, query]);
-	const counts = useMemo(() => teamsFacetCounts(all), [all]);
+	// Filtered SERVER-SIDE: `getTeamsPage(q)` narrows in SQL and returns the size facet counted
+	// over the org's UNFILTERED teams, so an option never disappears as you select it. The
+	// normalized query IS the key, and `keepPreviousData` (in the hook) keeps the table's rows
+	// across a filter change — `isPlaceholderData` is what marks them stale while the next
+	// answer loads.
+	const teamsQuery = useTeamsPageQuery(query);
+	const rows = useMemo(() => teamsQuery.data?.rows ?? [], [teamsQuery.data]);
+	const total = teamsQuery.data?.total ?? 0;
+	const counts = useMemo(() => {
+		const byBucket: Record<string, number> = {};
+		for (const o of teamsQuery.data?.facets.sizes ?? []) byBucket[o.value] = o.count;
+		return byBucket;
+	}, [teamsQuery.data]);
 
 	const invalidate = useCallback(() => {
 		void qc.invalidateQueries({ queryKey: ["teams", org] });
@@ -338,20 +340,20 @@ export function TeamsList() {
 
 			{/* table */}
 			{rows.length === 0 ? (
-				!entitled && all.length === 0 ? (
+				!entitled && total === 0 ? (
 					<FeatureUpsell feature="teams" />
 				) : (
 					<EmptyState
 						className="border border-border bg-surface-sunken"
 						icon={<Users />}
-						title={all.length === 0 ? "No teams yet" : "No matching teams"}
+						title={total === 0 ? "No teams yet" : "No matching teams"}
 						description={
-							all.length === 0
+							total === 0
 								? "Create one to grant access to a group of members at once."
 								: "No team matches these filters."
 						}
 						action={
-							all.length === 0 ? undefined : (
+							total === 0 ? undefined : (
 								<Button variant="outline" size="sm" onClick={reset}>
 									Clear filters
 								</Button>
@@ -360,7 +362,13 @@ export function TeamsList() {
 					/>
 				)
 			) : (
-				<DataTable columns={columns} data={rows} pageSize={10} />
+				<div
+					className={cn(
+						teamsQuery.isPlaceholderData && "opacity-60 transition-opacity",
+					)}
+				>
+					<DataTable columns={columns} data={rows} pageSize={10} />
+				</div>
 			)}
 
 			{manage && (

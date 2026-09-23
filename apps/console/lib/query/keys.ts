@@ -22,7 +22,17 @@ export const qk = {
 	job: (org: string, id: string) => ["jobs", org, "detail", id] as const,
 	jobStatus: (org: string, id: string) =>
 		["jobs", org, "detail", id, "status"] as const,
+	/** The UNFILTERED runner universe (`fetchRunnersData`) — the add-runner dialog's read. */
 	runners: (org: string) => ["runners", org] as const,
+	/**
+	 * The runners GRID's filtered page, parameterized by the normalized filter query.
+	 *
+	 * A second name rather than an optional argument on `runners` above, because the two
+	 * carry different payloads — `RunnersData` (runners + the latest release) against a
+	 * `RunnersPage` (rows + counts + facets). `["runners", org]` still invalidates both.
+	 */
+	runnersPage: (org: string, query: unknown) =>
+		["runners", org, "page", query] as const,
 	clusters: (org: string) => ["clusters", org] as const,
 	fleet: (org: string) => ["fleet", org] as const,
 	addons: (projectId: string, environmentId?: string | null) =>
@@ -48,8 +58,18 @@ export const qk = {
 	/** Activity log, parameterized by the normalized filter query (sans cursor — the
 	 * cursor is the infinite query's pageParam, never part of the key). */
 	activity: (org: string, query: unknown) => ["activity", org, query] as const,
-	/** Org member rows (filter facets + name resolution on activity). */
-	members: (org: string) => ["members", org] as const,
+	/**
+	 * Org member rows.
+	 *
+	 * Two shapes under one prefix, exactly as `jobs` / `jobsPage`: with no `query` this is the
+	 * UNFILTERED universe read (`getMembers()`) that the activity log's name resolution and the
+	 * manage-team dialog share; WITH one it is the members PAGE (`getMembersPage(q)` → rows,
+	 * invitations and facets over the unfiltered universe). The page always passes its
+	 * normalized query — `{}` when pristine — so the two payload shapes can never land on the
+	 * same key, while `["members", org]` still invalidates both.
+	 */
+	members: (org: string, query?: unknown) =>
+		query ? (["members", org, query] as const) : (["members", org] as const),
 	ssoProviders: (org: string, filter?: unknown) =>
 		filter
 			? (["sso", "providers", org, filter] as const)
@@ -79,6 +99,10 @@ export const qk = {
 		query ? (["alerts", "channels", org, query] as const) : (["alerts", "channels", org] as const),
 	alertPolicies: (org: string, query?: unknown) =>
 		query ? (["alerts", "policies", org, query] as const) : (["alerts", "policies", org] as const),
+	alertDeliveries: (org: string, query?: unknown) =>
+		query
+			? (["alerts", "deliveries", org, query] as const)
+			: (["alerts", "deliveries", org] as const),
 	connectors: (org: string, query?: unknown) =>
 		query ? (["connectors", org, query] as const) : (["connectors", org] as const),
 	teams: (org: string, query?: unknown) =>

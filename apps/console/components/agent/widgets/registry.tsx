@@ -11,7 +11,7 @@
 
 import type { ComponentType } from "react";
 import { z } from "zod";
-import { formatMinutes, formatMoney } from "@repo/format";
+import { formatMinutes, formatMoney, money, moneyFromMajor } from "@repo/format";
 import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
 import type { WidgetKind } from "@/types/jsonb.types";
 import {
@@ -86,6 +86,14 @@ const billingOut = z.object({
 	status: z.string().nullable(),
 	seats: z.number().nullish(),
 	member_count: z.number().nullish(),
+	// BOTH SHAPES PARSE, and both are `nullish` on purpose. `unit_amount` + `currency` is what
+	// `get_billing_summary` emits now (#4176 part b); `unit_amount_usd` is what every widget
+	// pinned before it emitted, and `thread_widgets.data` holds those snapshots forever. A schema
+	// that required the new pair would fail to parse an old row, and `parses()` below is what
+	// decides whether a widget renders at all — so the whole card would disappear rather than one
+	// line of it. Neither field is an anchor, so neither can make a foreign object parse.
+	unit_amount: z.number().nullish(),
+	currency: z.string().nullish(),
 	unit_amount_usd: z.number().nullish(),
 	current_period_end: str,
 });
@@ -126,13 +134,36 @@ function rowsDetail(n: number): string {
 }
 
 /**
- * A billed amount, or an em dash when the widget has none.
+ * A billed amount from a `*_usd` wire field, or an em dash when the widget has none.
  *
- * `overage_cost_usd` and `unit_amount_usd` are MAJOR units — dollars — and `formatMoney` takes
- * minor on purpose, so the conversion is spelled out once here rather than guessed at each caller.
+ * Those fields are MAJOR units — dollars — and `formatMoney` takes minor on purpose, so the
+ * conversion is spelled out once here rather than guessed at each caller. `moneyFromMajor` asks
+ * the charge divisor rather than assuming 100; for USD that is 100 either way, and the point is
+ * that the assumption is not re-typed at a fourth site.
+ *
+ * WHAT THIS IS STILL FOR, after #4176 part (b) gave the billing widget a currency: `get_org_usage`'s
+ * `overage_cost_usd`, whose name is TRUE (the overage rate is a USD constant — see
+ * `lib/billing/usage.ts`), and billing snapshots pinned BEFORE the pair existed, which hold only
+ * the old key. Reading those as USD is not a guess: it is what the tool recorded them as.
  */
 function usd(v: number | null | undefined): string {
-	return typeof v === "number" ? formatMoney(Math.round(v * 100)) : "—";
+	return typeof v === "number" ? formatMoney(moneyFromMajor(v, "USD")) : "—";
+}
+
+/**
+ * The billing widget's per-seat amount: the currency-carrying pair when the snapshot has one,
+ * the deprecated USD-only field when it does not.
+ *
+ * The preference order is the migration, and it runs in this direction because a snapshot that
+ * has `unit_amount` was produced by the tool that also emits `currency` — so the pair is always
+ * complete when it is present, and the fallback is only ever reached by a row recorded before
+ * either field existed.
+ */
+function seatAmount(b: { unit_amount?: number | null; currency?: string | null; unit_amount_usd?: number | null }): string {
+	if (typeof b.unit_amount === "number" && typeof b.currency === "string") {
+		return formatMoney(money(b.unit_amount, b.currency));
+	}
+	return usd(b.unit_amount_usd);
 }
 
 /** Projects list body. */
@@ -235,7 +266,7 @@ function BillingBody({ output }: WidgetBodyProps) {
 				{ label: "Plan", value: b.plan ?? "—" },
 				{ label: "Status", value: b.status ?? "—" },
 				{ label: "Seats", value: `${b.member_count ?? 0} / ${b.seats ?? 0}` },
-				{ label: "Per seat", value: usd(b.unit_amount_usd) },
+				{ label: "Per seat", value: seatAmount(b) },
 			]}
 		/>
 	);

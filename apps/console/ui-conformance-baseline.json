@@ -381,15 +381,15 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 11,
-			"fail": 5,
+			"pass": 16,
+			"fail": 0,
 			"na": 24,
 			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {},
-			"score": 0.6875
+			"score": 1
 		},
 		"F4": {
 			"family": "F",
@@ -409,29 +409,29 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 12,
-			"fail": 4,
+			"pass": 16,
+			"fail": 0,
 			"na": 24,
 			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {},
-			"score": 0.75
+			"score": 1
 		},
 		"F6": {
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 5,
-			"fail": 11,
+			"pass": 16,
+			"fail": 0,
 			"na": 24,
 			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {},
-			"score": 0.3125
+			"score": 1
 		},
 		"F7": {
 			"family": "F",
@@ -613,7 +613,7 @@
 		{
 			"route": "/[org]",
 			"redirectOnly": false,
-			"surfaceFiles": 287,
+			"surfaceFiles": 289,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -731,7 +731,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"redirectOnly": false,
-			"surfaceFiles": 400,
+			"surfaceFiles": 406,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -908,7 +908,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 223,
+			"surfaceFiles": 224,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -940,11 +940,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -957,11 +957,11 @@
 				}
 			},
 			"overall": {
-				"pass": 31,
-				"fail": 1,
+				"pass": 32,
+				"fail": 0,
 				"na": 1,
 				"notMeasured": 5,
-				"score": 0.9688
+				"score": 1
 			}
 		},
 		{
@@ -1026,7 +1026,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 216,
+			"surfaceFiles": 217,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1058,11 +1058,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1075,11 +1075,11 @@
 				}
 			},
 			"overall": {
-				"pass": 32,
-				"fail": 1,
+				"pass": 33,
+				"fail": 0,
 				"na": 0,
 				"notMeasured": 5,
-				"score": 0.9697
+				"score": 1
 			}
 		},
 		{
@@ -1117,11 +1117,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1134,11 +1134,11 @@
 				}
 			},
 			"overall": {
-				"pass": 32,
-				"fail": 1,
+				"pass": 33,
+				"fail": 0,
 				"na": 0,
 				"notMeasured": 5,
-				"score": 0.9697
+				"score": 1
 			}
 		},
 		{
@@ -1321,7 +1321,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"redirectOnly": false,
-			"surfaceFiles": 293,
+			"surfaceFiles": 297,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1353,11 +1353,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 4,
-					"fail": 3,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.5714
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1370,11 +1370,11 @@
 				}
 			},
 			"overall": {
-				"pass": 27,
-				"fail": 5,
+				"pass": 30,
+				"fail": 2,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 0.8438
+				"score": 0.9375
 			}
 		},
 		{
@@ -1557,7 +1557,7 @@
 		{
 			"route": "/[org]/~/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 222,
+			"surfaceFiles": 223,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1589,11 +1589,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1606,17 +1606,17 @@
 				}
 			},
 			"overall": {
-				"pass": 31,
-				"fail": 1,
+				"pass": 32,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 0.9688
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"redirectOnly": false,
-			"surfaceFiles": 226,
+			"surfaceFiles": 228,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1675,7 +1675,7 @@
 		{
 			"route": "/[org]/~/new",
 			"redirectOnly": false,
-			"surfaceFiles": 363,
+			"surfaceFiles": 371,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1734,7 +1734,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"redirectOnly": false,
-			"surfaceFiles": 274,
+			"surfaceFiles": 279,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1766,11 +1766,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 3,
-					"fail": 3,
+					"pass": 6,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 4,
-					"score": 0.5
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1783,11 +1783,11 @@
 				}
 			},
 			"overall": {
-				"pass": 28,
-				"fail": 3,
+				"pass": 31,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 5,
-				"score": 0.9032
+				"score": 1
 			}
 		},
 		{
@@ -1852,7 +1852,7 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 215,
+			"surfaceFiles": 216,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1884,11 +1884,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1901,11 +1901,11 @@
 				}
 			},
 			"overall": {
-				"pass": 31,
-				"fail": 1,
+				"pass": 32,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 0.9688
+				"score": 1
 			}
 		},
 		{
@@ -1943,11 +1943,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1960,17 +1960,17 @@
 				}
 			},
 			"overall": {
-				"pass": 30,
-				"fail": 1,
+				"pass": 31,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 4,
-				"score": 0.9677
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/settings/billing",
 			"redirectOnly": false,
-			"surfaceFiles": 197,
+			"surfaceFiles": 199,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2029,7 +2029,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"redirectOnly": false,
-			"surfaceFiles": 196,
+			"surfaceFiles": 194,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2061,11 +2061,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -2078,11 +2078,11 @@
 				}
 			},
 			"overall": {
-				"pass": 30,
-				"fail": 1,
+				"pass": 31,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 4,
-				"score": 0.9677
+				"score": 1
 			}
 		},
 		{
@@ -2206,7 +2206,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"redirectOnly": false,
-			"surfaceFiles": 224,
+			"surfaceFiles": 225,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2238,11 +2238,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 5,
-					"fail": 2,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.7143
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -2255,11 +2255,11 @@
 				}
 			},
 			"overall": {
-				"pass": 29,
-				"fail": 2,
+				"pass": 31,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 4,
-				"score": 0.9355
+				"score": 1
 			}
 		},
 		{
@@ -2297,11 +2297,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -2314,11 +2314,11 @@
 				}
 			},
 			"overall": {
-				"pass": 31,
-				"fail": 1,
+				"pass": 32,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 0.9688
+				"score": 1
 			}
 		},
 		{
@@ -2356,11 +2356,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -2373,17 +2373,17 @@
 				}
 			},
 			"overall": {
-				"pass": 32,
-				"fail": 1,
+				"pass": 33,
+				"fail": 0,
 				"na": 1,
 				"notMeasured": 4,
-				"score": 0.9697
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/settings/teams",
 			"redirectOnly": false,
-			"surfaceFiles": 217,
+			"surfaceFiles": 220,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2415,11 +2415,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 5,
-					"fail": 2,
+					"pass": 7,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.7143
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -2432,11 +2432,11 @@
 				}
 			},
 			"overall": {
-				"pass": 30,
-				"fail": 2,
+				"pass": 32,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 0.9375
+				"score": 1
 			}
 		},
 		{
@@ -2710,11 +2710,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 5,
-					"fail": 2,
+					"pass": 6,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 3,
-					"score": 0.7143
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 8,
@@ -2727,11 +2727,11 @@
 				}
 			},
 			"overall": {
-				"pass": 30,
-				"fail": 2,
+				"pass": 31,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 0.9375
+				"score": 0.9688
 			}
 		},
 		{
@@ -2796,7 +2796,7 @@
 		{
 			"route": "/[org]/~/usage",
 			"redirectOnly": false,
-			"surfaceFiles": 187,
+			"surfaceFiles": 189,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -4032,8 +4032,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useJobsFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4451,14 +4450,13 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useAccessFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -4649,14 +4647,13 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -5444,8 +5441,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F3",
-			"verdict": "FAIL",
-			"detail": "useAlertPolicyFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry · useAlertChannelFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry · useAlertActivityFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5455,14 +5451,12 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useAlertPolicyFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`) · useAlertChannelFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`) · useAlertActivityFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useAlertPolicyFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change · useAlertChannelFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change · useAlertActivityFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -6258,8 +6252,7 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useJobsFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -6858,8 +6851,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "F3",
-			"verdict": "FAIL",
-			"detail": "useRunnerFilters: no `normalize*Query()` — the filters reach the server (and the cache key) in whatever shape the store holds them"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -6869,14 +6861,12 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useRunnerFilters: no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useRunnerFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -7289,14 +7279,13 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useAccessFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -7488,14 +7477,13 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -7893,14 +7881,13 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -8488,8 +8475,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "F3",
-			"verdict": "FAIL",
-			"detail": "useMembersFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -8504,14 +8490,13 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useMembersFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -8704,14 +8689,13 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useRolesFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -8903,14 +8887,13 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useSsoFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -9086,8 +9069,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F3",
-			"verdict": "FAIL",
-			"detail": "useTeamsFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -9102,8 +9084,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F6",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: `keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one · useTeamsFilters: no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -10105,8 +10086,7 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F3",
-			"verdict": "FAIL",
-			"detail": "useSupportFilters: the normalized query object is not in the TanStack key: every `qk.*()` call in this surface's neighbourhood takes the org and nothing else, so every filtered view shares one cache entry"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",

@@ -18,6 +18,7 @@
 import { formatDistance } from "date-fns";
 
 import { stripeChargeDivisor } from "./minor-units";
+import { type Money, money } from "./money";
 
 // Re-exported, not merely used: the charge divisor is a FACT about Stripe that any surface
 // holding a Stripe amount needs, and a second transcription of it elsewhere in the repo is the
@@ -28,6 +29,11 @@ import { stripeChargeDivisor } from "./minor-units";
 // publishes it into the conformance table so Go's copy can be held to it; neither the generator
 // nor anything else may re-type the codes. Same rule about the `format` prefix applies.
 export { stripeChargeDivisor, STRIPE_ZERO_DECIMAL_CHARGE } from "./minor-units";
+
+// The money VALUE type and its constructors (#4176 part b). Same rule as above about the `format`
+// prefix — none of these names begins with it, so the conformance generator demands no table
+// section for them, and correctly: they carry no rendering. `money.ts` says why the type exists.
+export { type Money, money, moneyFromMajor, scaleMoney } from "./money";
 
 /** Locale for every Intl call here. Fixed, so output cannot vary by where the code runs. */
 const LOCALE = "en-GB";
@@ -222,13 +228,41 @@ export function formatBytes(bytes: number): string {
  * third currency reaches a Stripe charge today. `invoices.currency` is free `text()` mirrored from
  * Stripe, so the day one is added, it reaches here.
  *
+ * CURRENCY IS REQUIRED (#4176). It used to default to `"USD"`, and nine call sites took that
+ * default without saying so — among them the billing page's plan price, which rendered a EUR
+ * subscription with a dollar sign. The type checker is what enforces this now: a call with one
+ * argument does not compile, so a caller has to name where its currency came from, even when the
+ * answer is a literal `"USD"` read off a field that is USD by construction.
+ *
+ * ── TWO FORMS, ONE NAME (#4176 part b) ───────────────────────────────────────────────────────
+ *
+ * `formatMoney(value)` takes a {@link Money}, which carries its own currency, and is the form to
+ * PREFER: naming a currency at the render site is only as good as the variable it reads, and the
+ * field that started #4176 was called `unitAmountUsd` and held euros. `formatMoney(cents,
+ * currency)` stays for the sites where the amount and the code genuinely arrive as two columns —
+ * `invoices.total` beside `invoices.currency` — and for the conformance table, whose rows are a
+ * pair and whose Go counterpart takes a pair.
+ *
+ * It is an OVERLOAD rather than a second exported function, and that is not a style choice:
+ * `apps/console/scripts/gen-format-conformance.ts` requires every `format*` export to have a
+ * conformance section or an `EXCLUDED` entry, so a `formatMoneyValue` would have demanded a Go
+ * mirror for a function that is one field read away from this one.
+ *
+ * The implementation takes a TUPLE UNION so both forms are total — there is no unreachable
+ * default and no runtime refusal to leave uncovered. `args.length` discriminates it.
+ *
  * @param cents amount in minor units, as Stripe quotes a charge in this currency.
- * @param currency ISO 4217 code; defaults to USD.
+ * @param currency ISO 4217 code, either case — the one the amount was quoted in.
  */
-export function formatMoney(cents: number, currency = "USD"): string {
-	const amount = Number.isFinite(cents) ? cents / stripeChargeDivisor(currency) : 0;
+export function formatMoney(value: Money): string;
+export function formatMoney(cents: number, currency: string): string;
+export function formatMoney(...args: [value: Money] | [cents: number, currency: string]): string {
+	const value: Money = args.length === 2 ? money(args[0], args[1]) : args[0];
+	const amount = Number.isFinite(value.minor)
+		? value.minor / stripeChargeDivisor(value.currency)
+		: 0;
 	// No explicit decimals: a billed amount keeps the currency's own (2 for USD, 0 for JPY).
-	return money(amount, currency);
+	return renderCurrency(amount, value.currency);
 }
 
 /**
@@ -256,7 +290,7 @@ export type MonthlyRateStyle = "estimate" | "exact";
  * tables, where money is stored in minor units. This takes major units because a monthly estimate
  * comes from `projects.estimated_monthly_cost` and the plan's cost result, which are `numeric`
  * columns holding dollars. Passing one to the other is off by 100 either way, so the two names
- * carry the unit — `formatMoney(1250)` and `formatMonthlyRate(12.5)` are the same money.
+ * carry the unit — `formatMoney(1250, "USD")` and `formatMonthlyRate(12.5)` are the same money.
  *
  * CENTS ARE ALWAYS SHOWN. The first cut of this function dropped them above $100, on the argument
  * that they are fake precision on an estimate. That argument is true of a lone headline and false
@@ -328,17 +362,17 @@ export function formatMonthlyRate(amount: number, style: MonthlyRateStyle = "est
 	// That is a refusal, not an oversight — this function renders absolute costs, and a signed
 	// amount has a register of its own in `formatMonthlyDelta` rather than a branch in this one.
 	if (!Number.isFinite(amount) || amount <= 0) {
-		return `${money(0, currency, style === "exact" ? undefined : 0)}${suffix}`;
+		return `${renderCurrency(0, currency, style === "exact" ? undefined : 0)}${suffix}`;
 	}
 	// ROUNDED ONCE, AT THE CURRENCY'S OWN PLACES, BEFORE THE `<1` TEST — `minorUnits` here,
 	// `decimalsFor` in Go. This line read `Math.round(amount * 100) / 100` until #3899, which is the
 	// right scale for USD and the wrong one for every currency whose minor unit is not two places:
-	// it rounded a JPY amount to cents JPY does not have, and then `money` rounded that result a
+	// it rounded a JPY amount to cents JPY does not have, and then `renderCurrency` rounded that result a
 	// SECOND time to whole yen. `12.496` came out `¥13/mo` against Go's `¥12/mo`, and `0.6` came out
 	// `<¥1/mo` against Go's `¥1/mo` — the second one is worse than a wrong digit, because it is the
 	// register ADMITTING it does not know about a value that rounds cleanly to one whole unit.
 	//
-	// `money` rounds again at the same places, which is idempotent and is the point: the rule lives
+	// `renderCurrency` rounds again at the same places, which is idempotent and is the point: the rule lives
 	// in one function and this call site only has to name the places its own BRANCH asks about.
 	//
 	// KNOWN GAP, and #3899 WIDENED it rather than opening it. `minorUnits` asks Intl; Go's
@@ -357,8 +391,8 @@ export function formatMonthlyRate(amount: number, style: MonthlyRateStyle = "est
 	// the six today, and the conformance table deliberately covers two-decimal currencies only, so
 	// neither language's answer is pinned as the contract.
 	const rounded = roundHalfAwayFromZero(amount, minorUnits(currency));
-	if (style === "estimate" && rounded < 1) return `<${money(1, currency, 0)}${suffix}`;
-	return `${money(rounded, currency)}${suffix}`;
+	if (style === "estimate" && rounded < 1) return `<${renderCurrency(1, currency, 0)}${suffix}`;
+	return `${renderCurrency(rounded, currency)}${suffix}`;
 }
 
 /**
@@ -417,32 +451,32 @@ export function formatMonthlyDelta(amount: number, style: MonthlyRateStyle = "es
 	// One spelling of "no change", reached by two routes: a literal zero and a magnitude that
 	// rounds to one. Both must be UNSIGNED and both must drop the minor units, so they are one
 	// string built once rather than two branches that could drift.
-	const noChange = `${money(0, currency, 0)}${suffix}`;
+	const noChange = `${renderCurrency(0, currency, 0)}${suffix}`;
 	if (!Number.isFinite(amount) || amount === 0) return noChange;
 
 	// `undefined` keeps the currency's own decimals (2 for USD, 0 for JPY) — the same choice
 	// `formatMoney` and `formatMonthlyRate` make, so the three cannot disagree about JPY.
 	const decimals = style === "estimate" ? 0 : undefined;
 
-	// THE MAGNITUDE IS HANDED OVER UNROUNDED ON PURPOSE — `money` rounds it, once, at the places it
+	// THE MAGNITUDE IS HANDED OVER UNROUNDED ON PURPOSE — `renderCurrency` rounds it, once, at the places it
 	// is about to print. Until #3899 this line carried its own copy of that arithmetic, because
-	// `money` did not yet round and each caller had to remember to. Two of the three forgot or got
-	// the scale wrong; this one was right, which is exactly why its reasoning moved into `money`
+	// `renderCurrency` did not yet round and each caller had to remember to. Two of the three forgot or got
+	// the scale wrong; this one was right, which is exactly why its reasoning moved into `renderCurrency`
 	// rather than being deleted. See {@link roundHalfAwayFromZero} for why the rounding is
 	// deliberately lossier than Intl's, and why the register's OWN places are the right scale
 	// rather than a fixed 100.
 	//
 	// What still belongs HERE is the `decimals` argument: this register's precision is a property
 	// of the STYLE — whole units for an estimate, minor units for an exact figure — and passing it
-	// is what makes `money` round at 0 places for `+$13/mo`. `formatMonthlyRate` never differs in
+	// is what makes `renderCurrency` round at 0 places for `+$13/mo`. `formatMonthlyRate` never differs in
 	// precision between its registers and so never passes one.
-	const magnitude = money(Math.abs(amount), currency, decimals);
+	const magnitude = renderCurrency(Math.abs(amount), currency, decimals);
 	// Compared as RENDERED, not as a number, because "does this round to zero" is a question about
 	// the currency's own decimals — which Intl holds and this module deliberately does not
 	// duplicate. A DISPLAY table here is how #3581's near-miss fix would have got its second half.
 	// `minorUnits` above obeys the same rule: it ASKS Intl rather than tabulating. `minor-units.ts`
 	// tabulates the OTHER question — the charge divisor — and is a separate file for that reason.
-	if (magnitude === money(0, currency, decimals)) return noChange;
+	if (magnitude === renderCurrency(0, currency, decimals)) return noChange;
 
 	return `${amount < 0 ? "-" : "+"}${magnitude}${suffix}`;
 }
@@ -466,7 +500,7 @@ export function formatMonthlyDelta(amount: number, style: MonthlyRateStyle = "es
  *
  * @param decimals fixed fraction digits; omit to keep the currency's own.
  */
-function money(amount: number, currency: string, decimals?: number): string {
+function renderCurrency(amount: number, currency: string, decimals?: number): string {
 	const digits = decimals === undefined ? {} : { minimumFractionDigits: decimals, maximumFractionDigits: decimals };
 	return new Intl.NumberFormat(LOCALE, {
 		style: "currency",
@@ -524,7 +558,7 @@ const minorUnitsByCurrency = new Map<string, number>();
  * numbers the same number by construction.
  */
 function minorUnits(currency: string): number {
-	// MEMOISED because #3899 moved this onto the hot path. `money` is the one Intl call every money
+	// MEMOISED because #3899 moved this onto the hot path. `renderCurrency` is the one Intl call every money
 	// function goes through, and it now asks this question on every invocation where the caller did
 	// not fix the decimals — so `formatMonthlyRate` went from building one `Intl.NumberFormat` per
 	// call to three, and `formatMonthlyDelta("exact")` to four. Measured on Node: 13.0 µs → 41.5 µs

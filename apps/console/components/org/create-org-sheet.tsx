@@ -4,8 +4,19 @@
 
 // Create a paid Pro organization — a two-column purchase modal:
 //   • LEFT (persistent): the "What's included" checklist (PlanChecklist).
-//   • RIGHT (progressive): State 1 = team name → State 2 = the shared BillingCheckoutForm
-//     (split-card payment). Then a third "invite" view after the org exists.
+//   • RIGHT (progressive): State 1 = team name → State 2 = the payer declaration → State 3 =
+//     the shared BillingCheckoutForm (split-card payment). Then a fourth "invite" view after
+//     the org exists.
+//
+// THE DECLARATION STEP EXISTS BECAUSE THIS PATH HAS NO ROW TO READ IT FROM (#4633). Every other
+// conversion reads `organization_billing.payer_capacity`; here the organization does not exist
+// yet, so `createNewOrgSubscriptionIntent` takes the payer facts as a PARAMETER — one this sheet
+// never passed, which refused every create-a-paid-team attempt at the eligibility gate. They are
+// declared before the intent, carried through payment, persisted by `linkSubscriptionToNewOrg`,
+// and completed with the authority attestation by `declarePayer` once the org exists.
+//
+// The TRIAL branch is deliberately untouched: a card-less trial is not a paid conversion, does
+// not pass the gate, and has no purchase for a declaration to be made at the moment of.
 // The org is created ONLY after the card is confirmed (deferred create:
 // createNewOrgSubscriptionIntent → confirmCardPayment → linkSubscriptionToNewOrg), so a
 // Stripe failure can never orphan an org. If the account still holds its one trial, a
@@ -30,6 +41,7 @@ import {
 	setCustomerBillingAddress,
 	startProTrial,
 } from "@/app/server/actions/billing";
+import { declarePayer, payerConversionStatus } from "@/app/server/actions/legal";
 import { updateOrgPrimaryAddress } from "@/app/server/actions/org-settings";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
 import {
@@ -37,6 +49,10 @@ import {
 	BillingCheckoutForm,
 	type CollectedBilling,
 } from "@/components/billing/billing-checkout-form";
+import {
+	PayerDeclarationForm,
+	type PayerDeclaration,
+} from "@/components/billing/payer-declaration-form";
 import {
 	Field,
 	InviteView,
@@ -73,7 +89,7 @@ const schema = z.object({
 });
 type FormData = z.infer<typeof schema>;
 
-type View = "name" | "pay" | "invite";
+type View = "name" | "declare" | "pay" | "invite";
 
 interface CreateOrgSheetProps {
 	open: boolean;
@@ -110,6 +126,12 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const [currency, setCurrency] = useState<SupportedCurrency>("usd");
 	const [switchingCurrency, setSwitchingCurrency] = useState(false);
 	const [checkoutOrgName, setCheckoutOrgName] = useState("");
+	// The payer facts, declared before the intent and carried all the way to the org that does not
+	// exist yet. Null until the customer answers — nothing here is defaulted.
+	const [declaration, setDeclaration] = useState<PayerDeclaration | null>(null);
+	const [declaring, setDeclaring] = useState(false);
+	/** The gate's own sentence when it refused this declaration, shown on the declaration step. */
+	const [refusal, setRefusal] = useState<string | null>(null);
 	const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
 	const [createdSlug, setCreatedSlug] = useState("");
 	// Payment succeeded but the org create / link then failed — offer a retry (no second
@@ -150,6 +172,9 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setSubscriptionId(null);
 		setCreatedOrgId(null);
 		setCreatedSlug("");
+		setDeclaration(null);
+		setDeclaring(false);
+		setRefusal(null);
 		setNeedsSetupRetry(false);
 		setLastBilling(null);
 		setIsTrialOrg(false);
@@ -208,9 +233,13 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	}
 
 	/**
-	 * Step 1 → step 2. Trial-eligible accounts go straight to the card-less trial panel
-	 * (no Stripe intent); everyone else opens a subscription intent and gets the payment
-	 * form. Validation (name + slug availability) runs before either branch.
+	 * Step 1 → step 2. Trial-eligible accounts go straight to the card-less trial panel (no
+	 * Stripe intent, and no declaration — a trial is not a purchase); everyone else goes to the
+	 * payer declaration, which is what the intent needs. Validation (name + slug availability)
+	 * runs before either branch.
+	 *
+	 * NO INTENT IS OPENED HERE ANY MORE. It used to be, without payer facts, and the eligibility
+	 * gate refused every one of them.
 	 */
 	async function continueToCheckout() {
 		if (busy) return;
@@ -223,17 +252,9 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				setView("pay");
 				return;
 			}
-			const intent = await createNewOrgSubscriptionIntent("team", {
-				orgName: data.name,
-				priorSubscriptionId: subscriptionId ?? undefined,
-				customerId: customerId ?? undefined,
-			});
-			setSubscriptionId(intent.subscriptionId);
-			setCustomerId(intent.customerId);
-			setClientSecret(intent.clientSecret);
-			setCurrency(intent.currency);
 			setCheckoutOrgName(data.name);
-			setView("pay");
+			setRefusal(null);
+			setView("declare");
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Something went wrong");
 		} finally {
@@ -241,10 +262,58 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		}
 	}
 
+	/**
+	 * Step 2 → step 3. Asks the gate whether a sale under these declared facts is permitted, then
+	 * opens the subscription intent CARRYING them.
+	 *
+	 * The verdict is asked for over a return value rather than inferred from a thrown intent,
+	 * because `createNewOrgSubscriptionIntent` refuses by throwing and the reason does not survive
+	 * the server-action boundary — the customer would get "Something went wrong" for a decision the
+	 * product made on purpose and can explain.
+	 *
+	 * The facts are NOT written here. There is no organization yet, so there is no row to write
+	 * them on; `linkSubscriptionToNewOrg` persists the capacity and country at the moment one
+	 * exists, and `declarePayer` completes the record with the attestation.
+	 */
+	async function handleDeclare(next: PayerDeclaration) {
+		if (declaring) return;
+		setDeclaring(true);
+		setRefusal(null);
+		try {
+			const verdict = await payerConversionStatus(next);
+			if (!verdict.allowed) {
+				setRefusal(verdict.message);
+				return;
+			}
+			const intent = await createNewOrgSubscriptionIntent("team", {
+				orgName: checkoutOrgName,
+				priorSubscriptionId: subscriptionId ?? undefined,
+				customerId: customerId ?? undefined,
+				payer: {
+					capacity: next.capacity,
+					billingCountry: next.billingCountry,
+				},
+			});
+			setSubscriptionId(intent.subscriptionId);
+			setCustomerId(intent.customerId);
+			setClientSecret(intent.clientSecret);
+			setCurrency(intent.currency);
+			setDeclaration(next);
+			setView("pay");
+		} catch (e) {
+			setRefusal(
+				e instanceof Error ? e.message : "Couldn't start the purchase — try again.",
+			);
+		} finally {
+			setDeclaring(false);
+		}
+	}
+
 	/** Switch the checkout currency by re-creating the intent for the same org (Stripe locks
-	 *  a sub's currency). Reuses the customer + cancels the prior incomplete sub. */
+	 *  a sub's currency). Reuses the customer + cancels the prior incomplete sub. The declared
+	 *  payer rides along: the new intent passes the same gate the first one did. */
 	async function changeCurrency(next: SupportedCurrency) {
-		if (next === currency || switchingCurrency || !checkoutOrgName) return;
+		if (next === currency || switchingCurrency || !checkoutOrgName || !declaration) return;
 		setSwitchingCurrency(true);
 		try {
 			const intent = await createNewOrgSubscriptionIntent("team", {
@@ -252,6 +321,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				priorSubscriptionId: subscriptionId ?? undefined,
 				customerId: customerId ?? undefined,
 				currency: next,
+				payer: {
+					capacity: declaration.capacity,
+					billingCountry: declaration.billingCountry,
+				},
 			});
 			setSubscriptionId(intent.subscriptionId);
 			setCustomerId(intent.customerId);
@@ -315,6 +388,12 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			if (!subscriptionId || !customerId) {
 				throw new Error("Missing payment reference — please retry.");
 			}
+			if (!declaration) {
+				// Unreachable from the UI (the declaration is what opened the intent), and a throw
+				// rather than a silent skip because the alternative is a paid org whose payer was
+				// never recorded — refused at its very next conversion, with nothing to say why.
+				throw new Error("Missing the payer declaration — please retry.");
+			}
 			try {
 				await setCustomerBillingAddress({
 					customerId,
@@ -341,7 +420,20 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				if (!org) return;
 				orgId = org.id;
 			}
-			await linkSubscriptionToNewOrg({ orgId, subscriptionId, customerId });
+			await linkSubscriptionToNewOrg({
+				orgId,
+				subscriptionId,
+				customerId,
+				payer: {
+					capacity: declaration.capacity,
+					billingCountry: declaration.billingCountry,
+				},
+			});
+			// Completes the record with the attestation, which `linkSubscriptionToNewOrg` does not
+			// carry. NAMED org, never ambient: this sheet is open on a page inside the CURRENT org,
+			// so an ambient declaration would land on the old one — the #4133 failure, which is
+			// silent here because both writes would succeed.
+			await declarePayer(declaration, { orgId });
 			await fetchWorkspace();
 			if (billing.useAsPrimary) {
 				try {
@@ -384,7 +476,8 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		}
 	}
 
-	const heading = view === "pay" ? `Create ${name || "team"}` : "Create a team";
+	const heading =
+		view === "pay" || view === "declare" ? `Create ${name || "team"}` : "Create a team";
 
 	return (
 		<Sheet open={open} onOpenChange={handleOpenChange}>
@@ -398,7 +491,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 					Create a Pro team, pay, and invite your teammates.
 				</SheetDescription>
 
-				{(view === "name" || view === "pay") && (
+				{(view === "name" || view === "declare" || view === "pay") && (
 					<PurchaseLayout
 						meta={meta}
 						heading={heading}
@@ -415,6 +508,14 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 								busy={busy}
 								ready={offer !== null}
 								onContinue={() => void continueToCheckout()}
+							/>
+						) : view === "declare" ? (
+							<PayerDeclarationForm
+								busy={declaring}
+								refusal={refusal}
+								submitLabel="Continue to payment"
+								onBack={() => setView("name")}
+								onDeclare={(d) => void handleDeclare(d)}
 							/>
 						) : needsSetupRetry ? (
 							<RetrySetup
@@ -436,7 +537,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 										<button
 											type="button"
 											onClick={() => {
-												setView("name");
+												// Back to the DECLARATION, not the name: it is the step
+												// immediately behind this one, and re-declaring is how a
+												// payer corrects a capacity or country they got wrong.
+												setView("declare");
 												setClientSecret(null);
 											}}
 											className="text-left text-ui-sm text-text-tertiary transition-colors hover:text-text-primary"

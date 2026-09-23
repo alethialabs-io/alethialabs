@@ -114,6 +114,26 @@ export function DataTable<TData extends { id?: string }, TValue>({
 	const table = useReactTable({
 		data,
 		columns,
+		// A ROW'S IDENTITY IS ITS `id`, NOT ITS POSITION.
+		//
+		// TanStack's default row id is the row's INDEX, and `row.id` is what this file keys both
+		// `<TableRow>` and `<TableCell>` on. So when `data` is re-fetched in a different order — or
+		// a row is inserted anywhere but the end — React reconciles position against position: the
+		// cell at index 3 keeps its component instance and is handed a different row's data, and a
+		// cell that renders `null` for one row kind (the owner's in `members-table.tsx`) unmounts
+		// the cell that moved into its place. Anything living inside a cell dies with it, and an
+		// open popup is the case that costs: the console's row menus are Base UI menus rendered by
+		// the cell, so a re-order silently closes one mid-interaction.
+		//
+		// `TData extends { id?: string }` was already this component's contract, and `selectedRowId`
+		// already compares against `row.original.id` — so the id was the identity everywhere except
+		// the place that decides what React keeps. The index fallback is for the callers whose rows
+		// carry none; those keep exactly the old behaviour.
+		//
+		// #4852 is the bill: `members.suspend` withheld on a promotion run with its menu shut, and
+		// `apps/console/e2e/audit/destructive.spec.ts` could only report it as "not rendered … for
+		// this persona".
+		getRowId: (row, index) => row.id ?? String(index),
 		getCoreRowModel: getCoreRowModel(),
 		getSortedRowModel: getSortedRowModel(),
 		getPaginationRowModel: getPaginationRowModel(),
