@@ -76,7 +76,7 @@ export const TEMPLATE_OPTIONS: readonly TemplateOption[] = [
 			url: "https://github.com/alethialabs-io/alethia-starter-ai",
 		},
 		nextStep:
-			"Enable the cert-manager add-on first. Its add-ons go in the apps repository and its workloads in a bring-your-own chart.",
+			"KServe needs cert-manager, which Alethia installs only when the DNS component has a domain and Managed TLS certificate switched on. Set that first; its add-ons go in the apps repository and its workloads in a bring-your-own chart.",
 	},
 	{
 		id: "custom",
