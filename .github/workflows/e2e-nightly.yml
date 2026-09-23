@@ -281,12 +281,24 @@ jobs:
     # says "this environment". That is deliberate: the branch list becomes an auditable control that
     # can be tightened without a `tofu apply`.
     #
-    # THE COMPENSATING CONTROL, and the reason this is safe at all: a ruleset on `dev` requiring
-    # CODEOWNERS review for `.github/workflows/**` and `infra/**`. Widening to `dev` is only dangerous
-    # because Mergify auto-lands PRs there and CODEOWNERS is advisory off `main`/`staging`; two globs
-    # remove exactly that path — a PR editing the file that HOLDS the credential — and leave every other
-    # lane autonomous. Required *reviewers* on the environment are deliberately NOT set: that would put
-    # a human in every run, which is the thing being removed.
+    # WHAT BOUNDS THE WIDENING, and what does NOT (#4942). The controls that exist:
+    #   - the trigger: this workflow runs only on `schedule` / `workflow_dispatch`, never on a PR event,
+    #     so no fork or PR can mint the token (scripts/check-workflow-oidc-isolation.mjs fails CI
+    #     otherwise), and a dispatch needs write access to the repository;
+    #   - the environment's deployment-branch policy above (`dev` only). It is configured by hand in
+    #     GitHub, not in infra/github, and repository admins can bypass it;
+    #   - each cloud's trust admits the environment subject only as an exact `assertion.sub` equality
+    #     (the `checks.tf` in infra/aws-oidc, gcp-e2e, azure-e2e and alibaba-e2e);
+    #   - cost is capped separately (the pre-apply spend policy and the job timeouts below). Those live
+    #     in this same file, so they limit what an UNCHANGED run can cost, not what a changed one does.
+    # What does NOT exist is any required review of a change to this file. No ruleset on `dev`,
+    # `staging` or `main` requires a code-owner review or any approval (`require_code_owner_review =
+    # false`, 0 approvals, infra/github/main.tf), and CODEOWNERS only requests one. Mergify auto-lands
+    # a conflict-free, green PR into `dev`, so a PR that edits this job — the file that HOLDS the
+    # credential path — can land with no human review, and the next dispatch from `dev` runs it under
+    # `e2e-dev`. That gap is accepted as-is by maintainer ruling on #4942 (2026-09-23). Required
+    # *reviewers* on the environment are deliberately NOT set either: that would put a human in every
+    # run, which is the thing the widening removes.
     environment: ${{ github.event_name == 'workflow_dispatch' && 'e2e-dev' || '' }}
     # Hard cost cap: even if every finer timeout failed, the job cannot bill past this.
     # Raised 60→90 to fit the opt-in day-2 SOAK window (BYOC A0.3): the base

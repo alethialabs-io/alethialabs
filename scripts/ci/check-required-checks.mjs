@@ -999,8 +999,15 @@ export function readObservedJobs(repo, { perWorkflow = 8, run = (args) => execFi
 //   requiring CODEOWNERS review for `.github/workflows/**` and `infra/**`". .github/CODEOWNERS says
 //   enforcement "comes from the branch protection rulesets on `main`/`staging`". The live rulesets
 //   carry `require_code_owner_review: false` and `required_approving_review_count: 0` on ALL THREE
-//   branches, and infra/github/main.tf declares the same. Both documents are false, and they also
-//   disagree with each other.
+//   branches, and infra/github/main.tf declares the same. Both documents were false, and they also
+//   disagreed with each other.
+//
+// RESOLVED 2026-09-23 by maintainer ruling on #4942: correct the documents, add no control. Both
+// sentences were rewritten to say what is enforced, and their three records were deleted from
+// REVIEW_CLAIMS, which is now EMPTY. The mechanism stays: the next document that claims a review
+// control gets a record here, and is measured rather than believed. The self-test exercises the
+// mechanism against `FIXTURE_REVIEW_CLAIMS` (the three historical records, over the historical text),
+// and asserts that none of those sentences has come back into the real files.
 //
 // So this section does two things, and neither is a decision:
 //
@@ -1016,8 +1023,9 @@ export function readObservedJobs(repo, { perWorkflow = 8, run = (args) => execFi
 // it says (a record whose text has gone fails, so the list cannot outlive its subject) and that each
 // is measured against the ruleset rather than believed.
 //
-// WHY A FALSE CLAIM IS A WARNING AT PR TIME AND NOT A FAILURE. Both claims are false TODAY, and the
-// fix — add the control, or withdraw the sentence — is the maintainer's (#4942 item 1). Failing here
+// WHY A FALSE CLAIM IS A WARNING AT PR TIME AND NOT A FAILURE. Both #4942 claims were false for a
+// while before the fix — add the control, or withdraw the sentence — was chosen, and that choice is the
+// maintainer's. Failing here
 // would red every PR into dev over a decision no PR author can make. So a false claim that carries an
 // `acknowledged` issue is a warning in-tree and a finding in the `--live` report; a false claim
 // WITHOUT one fails; and an acknowledgement on a claim that now HOLDS fails too, so the ledger only
@@ -1033,7 +1041,15 @@ export function readObservedJobs(repo, { perWorkflow = 8, run = (args) => execFi
  * Enumerated places the tree CLAIMS a review control exists. Each `text` must match the file's
  * prose (comment markers and line breaks folded away — see `foldProse`).
  */
-export const REVIEW_CLAIMS = [
+/** @type {typeof FIXTURE_REVIEW_CLAIMS} */
+export const REVIEW_CLAIMS = [];
+
+/**
+ * The three records #4942 carried, kept for the self-test only: they exercise every verdict the
+ * mechanism can reach, and the self-test asserts that none of their sentences is back in the tree.
+ * They are NOT evaluated against the real files at PR time.
+ */
+const FIXTURE_REVIEW_CLAIMS = [
 	{
 		id: "codeowners-header",
 		file: ".github/CODEOWNERS",
@@ -1059,6 +1075,30 @@ export const REVIEW_CLAIMS = [
 		acknowledged: "#4942",
 	},
 ];
+
+/**
+ * The text the #4942 records were written against, verbatim as it stood before the correction, so the
+ * self-test can drive the mechanism without the real files still carrying a false sentence.
+ */
+const HISTORICAL_CLAIM_TEXT = new Map([
+	[".github/CODEOWNERS", [
+		"# Code owners — auto-requested as reviewers on PRs that touch matching paths.",
+		"# Required-review enforcement comes from the branch protection rulesets on",
+		"# `main`/`staging` (see deploy/prod/README.md). Replace @bobikenobi12 with an",
+		"# @alethialabs-io/<team> once teams exist.",
+		"",
+	].join("\n")],
+	[".github/workflows/e2e-nightly.yml", [
+		"jobs:",
+		"  provision:",
+		"    # THE COMPENSATING CONTROL, and the reason this is safe at all: a ruleset on `dev` requiring",
+		"    # CODEOWNERS review for `.github/workflows/**` and `infra/**`. Widening to `dev` is only dangerous",
+		"    # because Mergify auto-lands PRs there and CODEOWNERS is advisory off `main`/`staging`; two globs",
+		"    # remove exactly that path — a PR editing the file that HOLDS the credential — and leave every other",
+		"    # lane autonomous.",
+		"",
+	].join("\n")],
+]);
 
 /**
  * Fold a file into one line of prose, dropping each line's indentation and leading comment markers,
@@ -1275,7 +1315,7 @@ const REVIEW_FIELD = {
  * required, `unverified` when only path-scoped reviewers exist (not evaluated — see the header),
  * `refuted` when neither. The claim's verdict is the worst of its branches.
  *
- * @param {{claims: typeof REVIEW_CLAIMS, readFile: (f: string) => string | null, reviewByBranch: Map<string, object>}} args
+ * @param {{claims: typeof FIXTURE_REVIEW_CLAIMS, readFile: (f: string) => string | null, reviewByBranch: Map<string, object>}} args
  */
 export function evaluateReviewClaims({ claims, readFile, reviewByBranch }) {
 	return claims.map((claim) => {
@@ -1869,7 +1909,7 @@ resource "github_repository_ruleset" "staging" {
 		const badCmp = compareLiveReview({ rulesets: badDev.rulesets ?? [], hcl: fs.existsSync(MAIN) ? parseHclReview(fs.readFileSync(MAIN, "utf8")) : [] });
 		P("...and compareLiveReview reports it as UNREADABLE, not as drift and not as agreement", badCmp.find((r) => r.name === "protect-dev")?.unreadable !== null && badCmp.find((r) => r.name === "protect-dev")?.drift.length === 0, JSON.stringify(badCmp.find((r) => r.name === "protect-dev")));
 		P("...and still compares the status checks for the same branch", compareLive({ rulesets: badDev.rulesets ?? [], hclAll: ["x"], devExcluded: [] }).length === 3);
-		const blindClaims = evaluateReviewClaims({ claims: REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: () => "a ruleset on `dev` requiring CODEOWNERS review for `.github/workflows/**` and `infra/**`", reviewByBranch: new Map((badDev.rulesets ?? []).map((r) => [r.branch, r.review])) }).find((e) => e.claim.id === "e2e-dev-compensating-control");
+		const blindClaims = evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: () => "a ruleset on `dev` requiring CODEOWNERS review for `.github/workflows/**` and `infra/**`", reviewByBranch: new Map((badDev.rulesets ?? []).map((r) => [r.branch, r.review])) }).find((e) => e.claim.id === "e2e-dev-compensating-control");
 		P("...a claim on the unreadable branch is UNVERIFIED (not refuted) and does not set drift", blindClaims?.verdict === "unverified" && reportLiveClaims([blindClaims]).drift === false, JSON.stringify(blindClaims));
 		P("no pull_request rule at all reads as zero rules, not an error", reviewFromBranchRules(cap.dev.filter((x) => x.type !== "pull_request"), "dev").pullRequestRules === 0);
 
@@ -1912,7 +1952,7 @@ resource "github_repository_ruleset" "dev_codeowners" {
 			P("a separate ruleset targeting dev is MERGED into dev's declared review", plusDev?.requireCodeOwnerReview === true && plusDev?.requiredApprovingReviewCount === 1 && plusDev?.rulesets.length === 2, JSON.stringify(plusDev));
 			P("...and main's declared review is untouched by it", hclReviewByBranch(hclPlus).get("main")?.requireCodeOwnerReview === false);
 			// (1) PR time: the dev claim now HOLDS against the HCL, so its acknowledgement must fail.
-			const prTime = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null), reviewByBranch: hclReviewByBranch(hclPlus) }), "infra/github (the HCL)");
+			const prTime = compareReviewClaims(evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS, readFile: (f) => HISTORICAL_CLAIM_TEXT.get(f) ?? null, reviewByBranch: hclReviewByBranch(hclPlus) }), "infra/github (the HCL)");
 			P("...so at PR time the dev claim HOLDS and its stale acknowledgement fails", prTime.failures.some((f) => /e2e-dev-compensating-control/.test(f) && /now HOLDS/.test(f)), JSON.stringify(prTime.failures));
 			// (2) After the apply: live dev carries the second ruleset's pull_request rule too.
 			const appliedDev = clone(cap.dev);
@@ -1941,45 +1981,55 @@ resource "github_repository_ruleset" "dev_codeowners" {
 		// The claims, against the REAL documents and the captured live rules.
 		const liveByBranch = new Map(lr.rulesets.map((r) => [r.branch, r.review]));
 		const realRead = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
-		if (REVIEW_CLAIMS.every((c) => fs.existsSync(c.file))) {
-			const ev = evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: realRead, reviewByBranch: liveByBranch });
-			P("every enumerated claim is FOUND in the real file (wrapped across comment lines)", ev.every((e) => e.line !== null), JSON.stringify(ev.map((e) => [e.claim.id, e.verdict])));
+		// The #4942 records against the HISTORICAL text: the mechanism, exercised on every verdict.
+		const histRead = (f) => HISTORICAL_CLAIM_TEXT.get(f) ?? null;
+		if (FIXTURE_REVIEW_CLAIMS.every((c) => fs.existsSync(c.file))) {
+			// THE CORRECTION HOLDS: every #4942 sentence is gone from the real file (a record over the real
+			// tree reads STALE), and the live REVIEW_CLAIMS list raises nothing against the real tree.
+			const nowReal = evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS, readFile: realRead, reviewByBranch: liveByBranch });
+			P("#4942: none of the corrected sentences is back in the real files", nowReal.every((e) => e.verdict === "stale"), JSON.stringify(nowReal.map((e) => [e.claim.id, e.verdict, e.line])));
+			P("the live REVIEW_CLAIMS raise no failure against the real tree", compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: realRead, reviewByBranch: liveByBranch }), "the live ruleset").failures.length === 0);
+			// MUTATION CONTROL for the first assertion: put one sentence back and it must be FOUND.
+			const reverted = (f) => (f === ".github/CODEOWNERS" ? `${histRead(f)}${realRead(f)}` : realRead(f));
+			P("...and a sentence put back into the real file IS found (so 'stale' above is measured)", evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS.slice(0, 1), readFile: reverted, reviewByBranch: liveByBranch })[0]?.verdict === "refuted");
+			const ev = evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS, readFile: histRead, reviewByBranch: liveByBranch });
+			P("every #4942 record is FOUND in its historical text (wrapped across comment lines)", ev.every((e) => e.line !== null), JSON.stringify(ev.map((e) => [e.claim.id, e.verdict])));
 			const ch = ev.find((e) => e.claim.id === "codeowners-header");
 			P("CODEOWNERS' claim is located on its line 2", ch?.line === 2, String(ch?.line));
 			P("...and against the captured rules every claim is REFUTED — the #4942 finding, reproduced", ev.every((e) => e.verdict === "refuted"), JSON.stringify(ev.map((e) => [e.claim.id, e.verdict])));
 			const inTree = compareReviewClaims(ev, "the live ruleset");
-			P("acknowledged false claims warn rather than fail", inTree.failures.length === 0 && inTree.notes.length === REVIEW_CLAIMS.length, JSON.stringify(inTree));
+			P("acknowledged false claims warn rather than fail", inTree.failures.length === 0 && inTree.notes.length === FIXTURE_REVIEW_CLAIMS.length, JSON.stringify(inTree));
 			P("...and the warning names the branch and the missing field", inTree.notes.some((n) => /`main`: `require_code_owner_review: false`/.test(n)), JSON.stringify(inTree.notes));
-			const unack = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: realRead, reviewByBranch: liveByBranch }), "the live ruleset");
-			P("an UNacknowledged false claim is a failure", unack.failures.length === REVIEW_CLAIMS.length, JSON.stringify(unack.failures));
+			const unack = compareReviewClaims(evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: histRead, reviewByBranch: liveByBranch }), "the live ruleset");
+			P("an UNacknowledged false claim is a failure", unack.failures.length === FIXTURE_REVIEW_CLAIMS.length, JSON.stringify(unack.failures));
 			// Flip the captured dev flag: the dev claim now holds, so its acknowledgement is stale.
 			const fixedDev = new Map(liveByBranch);
 			fixedDev.set("dev", reviewFromBranchRules(flipped, "dev"));
-			const afterFix = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: realRead, reviewByBranch: fixedDev }), "the live ruleset");
+			const afterFix = compareReviewClaims(evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS, readFile: histRead, reviewByBranch: fixedDev }), "the live ruleset");
 			P("a claim that now HOLDS but is still acknowledged fails — the ledger only shrinks", afterFix.failures.some((f) => /e2e-dev-compensating-control/.test(f) && /now HOLDS/.test(f)), JSON.stringify(afterFix.failures));
 			// A path-scoped reviewer rule is not evaluated, so it must not read as holding.
 			const scoped = new Map(liveByBranch);
 			scoped.set("dev", { ...liveByBranch.get("dev"), requiredReviewers: 1 });
-			const sc = evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: realRead, reviewByBranch: scoped }).find((e) => e.claim.id === "e2e-dev-compensating-control");
+			const sc = evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS, readFile: histRead, reviewByBranch: scoped }).find((e) => e.claim.id === "e2e-dev-compensating-control");
 			P("path-scoped reviewers make a claim UNVERIFIED, never 'holds'", sc?.verdict === "unverified", JSON.stringify(sc));
 			// The record must not outlive its sentence: correct the CODEOWNERS text and the record fails.
-			const corrected = (f) => (f === ".github/CODEOWNERS" ? realRead(f).replace("Required-review enforcement comes from", "Review is advisory; nothing enforces it on") : realRead(f));
-			const st = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: corrected, reviewByBranch: liveByBranch }), "the live ruleset");
+			const corrected = (f) => (f === ".github/CODEOWNERS" ? histRead(f).replace("Required-review enforcement comes from", "Review is advisory; nothing enforces it on") : histRead(f));
+			const st = compareReviewClaims(evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS, readFile: corrected, reviewByBranch: liveByBranch }), "the live ruleset");
 			P("a corrected sentence makes its record STALE, and that fails", st.failures.some((f) => /codeowners-header/.test(f) && /no longer in the file/.test(f)), JSON.stringify(st.failures));
-			P("a record naming a missing file fails", compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS.slice(0, 1), readFile: () => null, reviewByBranch: liveByBranch }), "x").failures.some((f) => /does not exist/.test(f)));
+			P("a record naming a missing file fails", compareReviewClaims(evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS.slice(0, 1), readFile: () => null, reviewByBranch: liveByBranch }), "x").failures.some((f) => /does not exist/.test(f)));
 
 			// THE --live EXIT (PR #4966 review). Exit 2 opens a tracker issue that says it closes on an
 			// apply; an acknowledged claim the HCL refutes too can never be cleared by one, so counting
 			// it held that issue open forever. As captured today: every claim refuted, every one
 			// acknowledged — and the claim half must NOT set drift.
 			const liveNow = reportLiveClaims(ev);
-			P("--live: acknowledged refuted claims are REPORTED but do not set the drift exit", liveNow.drift === false && liveNow.lines.filter((l) => /does NOT have this control/.test(l)).length === REVIEW_CLAIMS.length, JSON.stringify(liveNow));
+			P("--live: acknowledged refuted claims are REPORTED but do not set the drift exit", liveNow.drift === false && liveNow.lines.filter((l) => /does NOT have this control/.test(l)).length === FIXTURE_REVIEW_CLAIMS.length, JSON.stringify(liveNow));
 			// The other direction, so the assertion above cannot pass against a reader that never drifts.
-			const liveUnack = reportLiveClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: realRead, reviewByBranch: liveByBranch }));
+			const liveUnack = reportLiveClaims(evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: histRead, reviewByBranch: liveByBranch }));
 			P("--live: an UNacknowledged refuted claim DOES set the drift exit", liveUnack.drift === true, JSON.stringify(liveUnack));
-			const liveStale = reportLiveClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: corrected, reviewByBranch: liveByBranch }));
+			const liveStale = reportLiveClaims(evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS, readFile: corrected, reviewByBranch: liveByBranch }));
 			P("--live: a STALE record is reported as a tree problem, not live drift", liveStale.drift === false && liveStale.lines.some((l) => /codeowners-header/.test(l) && /tree problem/.test(l)), JSON.stringify(liveStale));
-			const liveHolds = reportLiveClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: realRead, reviewByBranch: fixedDev }));
+			const liveHolds = reportLiveClaims(evaluateReviewClaims({ claims: FIXTURE_REVIEW_CLAIMS, readFile: histRead, reviewByBranch: fixedDev }));
 			P("--live: an acknowledged claim that now HOLDS says its acknowledgement is stale", liveHolds.lines.some((l) => /holds/.test(l) && /acknowledged: "#4942"/.test(l)), JSON.stringify(liveHolds.lines));
 		} else {
 			console.log("skip - the real-claim assertions need the claimed files; run the self-test from the repo root");

@@ -1,7 +1,9 @@
 # Code owners — auto-requested as reviewers on PRs that touch matching paths.
-# Required-review enforcement comes from the branch protection rulesets on
-# `main`/`staging` (see deploy/prod/README.md). Replace @bobikenobi12 with an
-# @alethialabs-io/<team> once teams exist.
+# This file only REQUESTS a review; nothing REQUIRES one. The rulesets on `dev`,
+# `staging` and `main` (infra/github/main.tf) all set
+# `require_code_owner_review = false` and `required_approving_review_count = 0`,
+# so a PR on any of those branches can merge with no code-owner approval (#4942).
+# Replace @bobikenobi12 with an @alethialabs-io/<team> once teams exist.
 
 # Default owner for everything.
 *                           @bobikenobi12
