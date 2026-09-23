@@ -82,25 +82,43 @@ cloud, which #2385 tracks:
 
 1. Confirm `infracost breakdown` produces a `Summary` for that cloud's plan **at all**.
 2. Only then wire that cloud's ceiling variables.
-3. Only then move it out of `UNPRICED_EXEMPTIONS`.
 
-Today the ceiling is wired for **aws** and resolves to `''` — disabled — for gcp, azure, alibaba and
-hetzner. That is a deliberate, recorded state, not an oversight.
+**#2385 took that order in reverse for gcp and azure, deliberately, and it is worth knowing why.**
+Step 1 could not happen on its own: `apps/runner/internal/agent/runner.go` hands an apply its
+`INFRACOST_API_KEY` only when the ceiling is `> 0`, so no gcp or azure apply had ever been priced —
+the ceiling is what makes the estimate exist. Both are now wired like aws
+(`E2E_{GCP,AZURE}_COST_CEILING_USD` / `_FULL_USD`, defaults 300 / 600). The first watched dispatch
+per cloud is therefore the proof of step 1, and the failure it can produce is a **red leg**, never a
+spend: raise the variable, or fix the pricing, before reading a red there as a platform defect.
+
+hetzner and alibaba have no Infracost pricing at all, so they are controlled on the plan's SHAPE
+instead — see the next two sections.
 
 ### A monthly-USD ceiling cannot see a prepaid resource
 
 alibaba's `infra/templates/project/alibaba/modules/cr` creates `alicloud_cr_ee_instance` with
 `payment_type = "Subscription"`, bought **per run** because `instance_name` carries the environment.
-A monthly rate ceiling is structurally blind to it. The control that matters there is the sweep
-failing on a survivor — not a dollar figure — which is why alibaba's entry in `UNPRICED_EXEMPTIONS`
-says so rather than pretending a ceiling would help.
+A monthly rate ceiling is structurally blind to it. So alibaba is controlled by a **pre-apply
+refusal** instead: `ALETHIA_SPEND_REFUSE_PREPAID` makes `packages/core/provisioner/spend_policy.go`
+refuse any planned `payment_type = "Subscription"` / `instance_charge_type = "PrePaid"` before
+apply. It is on for every alibaba leg, schedules included. ACR Enterprise Edition has no
+pay-as-you-go model, so an alibaba `maxconfig`/`full` leg is refused unless the dispatch ticks
+`alibaba_allow_prepaid` — a per-run input, never a variable. The #2340 sweep still matters for the
+runs that tick it.
+
+hetzner is controlled the same way: `ALETHIA_SPEND_HCLOUD_SERVER_TYPES` is an allowlist of server
+types (default `cpx22,cpx32,cx33` — exactly what the e2e provisions), and a planned `hcloud_server`
+outside it is refused before apply.
 
 ### The guard that stops this regressing
 
-`scripts/check-e2e-spend-guard.mjs` runs in CI and enforces, in both directions, that a **scheduled**
-run resolving to the full bar fails the build unless every cloud in the scheduled matrix is priced
-or carries a declared exemption. An exemption is an accepted risk on a *dispatched, watched* run and
-deliberately does **not** satisfy the scheduled rule.
+`scripts/check-e2e-spend-guard.mjs` runs in CI and fails the build unless every cloud in the
+scheduled matrix carries a pre-apply spend control — a cost-ceiling branch with a real default, or
+its shape control — whether or not a full-bar cron exists. There is no exemption list any more
+(#2385 removed it). The guard also refuses a prepaid waiver that a schedule could reach (`vars.`,
+`secrets.`, `env.`), and checks that the hetzner cap still admits every server type the e2e
+provisions. It does **not** read the proof log, so a green guard is not permission to restore the
+full-bar cron: that still needs a committed full-bar PASS row per cloud.
 
 ---
 
@@ -163,8 +181,8 @@ Neither is reclaimed automatically beyond those mechanisms, and nothing else wil
 
 - Is the question answerable without spending? Fix the instrument first.
 - Is this the cheapest dimension that could answer it?
-- Is the cloud **priced**, if this is a full bar? If not, is it a watched dispatch with an
-  exemption, and are you actually watching?
+- Is this the first priced run on gcp/azure, or an alibaba run with `alibaba_allow_prepaid`
+  ticked? Then you are the control — are you actually watching?
 - Is it one cloud, or did you just matrix five?
 - After it finishes: did teardown report `done`, and did the next reaper run agree?
 
