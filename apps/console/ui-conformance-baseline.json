@@ -31,8 +31,8 @@
 	},
 	"live": {
 		"source": {
-			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35872640708",
-			"commit": "b417c13e18b30f0785234e7896cc0528d1ea93f8"
+			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35896826914",
+			"commit": "633ca6efaa4e888b773157f691b3543a06961bd8"
 		},
 		"sections": {
 			"routes": {
@@ -86,13 +86,8 @@
 		"debt": {
 			"F8": {
 				"owner": "#4999",
-				"why": "ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, read from the count pill). The fresh tab kept the param but no narrowed count was read back, so Reset was never reached. The cell PASSED in run 35867789835 and FAILED in run 35872640708 with the members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and `~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while the URL is unread or the rows are placeholder data.",
+				"why": "ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, read from the count pill). The fresh tab kept the param but no narrowed count was read back; Reset was correct in run 35896826914. The cell PASSED in run 35867789835 and FAILED in runs 35872640708 and 35896826914, with the members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and `~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while the URL is unread or the rows are placeholder data.",
 				"fail": 1
-			},
-			"R8": {
-				"owner": "#4996",
-				"why": "FOUR routes, six controls with no state attribute whose click showed nothing within 1 000 ms: `Fit view` on `[project]/architecture`, `Link GitHub`/`Link GitLab`/`Link Bitbucket` on `[project]/settings/preview` and on `~/new`, `Design with the agent` on `~/new`, and `Transfer` on `~/settings/general`. The three pick-one buttons the previous row also named (`Runner minutes` on both usage pages, the theme toggle's `System`) PASS in run 35872640708, so they are gone from this row.",
-				"fail": 4
 			}
 		}
 	},
@@ -476,9 +471,9 @@
 			},
 			"notMeasuredReasons": {
 				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 3,
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 2,
+				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 2,
 				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
-				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1,
 				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
 			},
 			"score": 0.875
@@ -497,9 +492,9 @@
 			},
 			"notMeasuredReasons": {
 				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 3,
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 2,
+				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 2,
 				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
-				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1,
 				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
 			},
 			"score": 1
@@ -625,9 +620,8 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"debt": "#4996",
-			"pass": 31,
-			"fail": 4,
+			"pass": 35,
+			"fail": 0,
 			"na": 5,
 			"notMeasured": 0,
 			"naReasons": {
@@ -635,7 +629,7 @@
 				"no-enabled-controls": 1
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8857
+			"score": 1
 		}
 	},
 	"routes": [
@@ -801,19 +795,19 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 1,
+				"pass": 26,
+				"fail": 0,
 				"na": 11,
 				"notMeasured": 1,
-				"score": 0.9615
+				"score": 1
 			}
 		},
 		{
@@ -1273,19 +1267,19 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 1,
+				"pass": 26,
+				"fail": 0,
 				"na": 11,
 				"notMeasured": 1,
-				"score": 0.9615
+				"score": 1
 			}
 		},
 		{
@@ -1745,19 +1739,19 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 23,
-				"fail": 2,
+				"pass": 24,
+				"fail": 1,
 				"na": 13,
 				"notMeasured": 0,
-				"score": 0.92
+				"score": 0.96
 			}
 		},
 		{
@@ -2217,19 +2211,19 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 25,
+				"fail": 0,
 				"na": 13,
 				"notMeasured": 0,
-				"score": 0.96
+				"score": 1
 			}
 		},
 		{
@@ -3563,8 +3557,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "1 enabled control did nothing within 1000ms — of 7 controls enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -4680,13 +4673,13 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -5177,8 +5170,7 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "3 enabled controls did nothing within 1000ms — of 7 controls enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -6772,8 +6764,7 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "4 enabled controls did nothing within 1000ms — of 11 controls enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -7482,13 +7473,13 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -8384,8 +8375,7 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "1 enabled control did nothing within 1000ms — of 8 controls enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/general",
@@ -8490,7 +8480,7 @@
 			"route": "/[org]/~/settings/members",
 			"predicate": "F8",
 			"verdict": "FAIL",
-			"detail": "reload() kept the param but not the narrowed list; Reset left a filter param in the URL — 1 later step not reached"
+			"detail": "reload() kept the param but not the narrowed list"
 		},
 		{
 			"route": "/[org]/~/settings/members",
