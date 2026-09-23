@@ -38,20 +38,43 @@ func TestGCPNightlyLocationContract(t *testing.T) {
 			want: []string{`gcp)     DEFAULT_REGION="europe-west3-a" ;;`},
 		},
 		{
+			// #3855: that default is now PROVISIONAL — the step below re-resolves it from a
+			// rotating zone list, because pinning the leg to one zone is what turned a transient
+			// GCE_STOCKOUT into a nightly red four times in ten runs.
+			//
+			// This case exists because the contract above would stay GREEN if the step were
+			// deleted: the literal it pins is the fallback, so reverting to one hardcoded zone
+			// looks exactly like the fixed state from where that assertion stands. The zone-shape
+			// rule itself is enforced at runtime by ParseGCPZones and pinned offline by
+			// TestDefaultGCPZonesAreZonesAndParse; what is pinned HERE is only that the workflow
+			// still calls the picker at all.
+			name: "the nightly re-resolves the gcp zone from a fallback list, not one hardcoded zone",
+			path: filepath.Join(root, ".github", "workflows", "e2e-nightly.yml"),
+			want: []string{
+				`- name: Pick the gcp zone (stockout fallback)`,
+				`go run ./cmd/gcpzone`,
+			},
+		},
+		{
 			name: "the nightly gcp floor pins the whole node shape, instance type included",
 			path: filepath.Join(root, ".github", "workflows", "e2e-nightly.yml"),
 			// A node pool's counts are PER ZONE, so regional europe-west3 was delivering 3x what it
 			// declared, and #3566 restated 3/6/3 on e2-small to keep the zonal switch capacity-neutral.
-			// #3855 then showed that shape is why gcp's floor is the only red one: argocd-repo-server
-			// never renders one manifest inside a ~900 Mi slot. What is pinned now is the RESHAPE —
-			// 1 x e2-medium instead of 3 x e2-small.
+			// #3855 then showed that shape is why gcp's floor is the only red one.
 			//
 			// THE INSTANCE TYPE IS PART OF THE PIN, and it was not before. That is the correction, not
 			// an addition: with the location zonal the counts are literal, so `1/2/1` alone says
 			// nothing about what is bought — 1/2/1 on an e2-small is a THIRD of the capacity at the
 			// very numbers this contract would have accepted. Pinning the pair is what makes a silent
 			// shrink impossible in whichever PR happens to touch this line, which is the whole job.
-			want: []string{`"instance_types":["e2-medium"],"node_min_size":1,"node_max_size":2,"node_desired_size":1`},
+			//
+			// The literal moved from `e2-medium` to `e2-standard-2` with #3855 cause B. #4179's own
+			// run (35499891484) measured that e2-small and e2-medium both allocate 940m — they are
+			// both shared-core E2 and both pay GKE's flat 1060 mCPU reservation — and that 940m could
+			// schedule neither argocd-repo-server nor GKE's own calico-typha. This pin is only the
+			// STRING; what makes the shape correct is TestGCPFloorShapeCanHostTheControlPlane below,
+			// which asks the product's own catalog rather than trusting this literal.
+			want: []string{`"instance_types":["e2-standard-2"],"node_min_size":1,"node_max_size":2,"node_desired_size":1`},
 		},
 		{
 			name: "Firestore derives its regional default from the zonal cluster location",

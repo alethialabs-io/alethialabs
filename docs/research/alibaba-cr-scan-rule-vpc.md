@@ -15,6 +15,35 @@ because on one table the English page is not merely thinner — it is **wrong** 
 
 ---
 
+## Status 2026-09-23 — the fallback shipped UNPROBED (#2283)
+
+Q1 below is **still unresolved**. Nothing in this section is an observation; it records a
+decision taken without one.
+
+- **What shipped.** `infra/templates/project/alibaba/modules/cr/main.tf` now refuses
+  `container_registries.vulnerability_scanning = true` at plan, through a `terraform_data`
+  precondition (`terraform_data.vulnerability_scanning_unproven`, error code `ALI-CR-SCAN-001`).
+  It is the fallback #2265 named for the "it does not scan" branch — the gcp #1844 shape — and it
+  uses a precondition rather than a `check` because a check only warns and never blocks an apply.
+  The `alicloud_cr_scan_rule` wiring stays in the module; with the guard in place it can never be
+  applied. `infra/templates/project/alibaba/checks_registry.tftest.hcl` proves the refusal fires,
+  including with one scanning repository among several, and that switching every repository OFF
+  plans no guard and no rule.
+- **Why without the probe.** Both routes in §3.5 were closed. The Alibaba account is disabled
+  (`aliyun oss ls` → `403 UserDisable`, measured 2026-09-22 — an account-level state no credential
+  changes), so the direct probe cannot run at any price. The alibaba leg of the e2e nightly was
+  muted on 2026-09-19 when the maintainer ruled that Alibaba will not be funded. On 2026-09-23 the
+  maintainer ruled to ship the refusal without the probe. The reasoning: a switch that plans green
+  whether or not anything scans is strictly worse than one refused honestly. `check-offer-parity.mjs`
+  and the old ON-position tftest were both green on wiring alone.
+- **What it costs.** The refusal rests on an **assumption**. If an observation later shows that an
+  AUTO rule does scan on a Basic instance with zero linked VPCs, the refusal removed a working
+  feature. The fix is then to delete `terraform_data.vulnerability_scanning_unproven`, restore an
+  ON-position tftest that asserts the rule's shape, and record the evidence here. Do **not** make
+  the refusal pass by attaching a VPC — §6: on an already-provisioned registry that fails with
+  `INSTANCE_ACCESS_VPC_LIMIT_EXCEED`, and Terraform has no in-place fix.
+- **What would reopen it.** The account is re-enabled and funded, and the §3.5 observation is made.
+
 ## The two answers, up front
 
 **Q1 — does a per-repository `AUTO` scan rule require the CR instance to have a VPC?**
@@ -215,6 +244,9 @@ evidence that distinguishes the two readings, and — as #1895 already argued �
 `check-offer-parity.mjs` is not it: a `REPO`-scoped rule satisfies the carrier probe's L4 emit and L5
 read whether or not a scan ever runs.
 
+As of 2026-09-23 this observation cannot be made: the account is disabled and the nightly leg is
+muted. The template refuses the switch at plan until someone makes it (see "Status" at the top).
+
 ---
 
 ## 4. What Alibaba's product docs do settle
@@ -402,7 +434,7 @@ partial", not "stubbed" and not "withdrawn".
 
 | # | Question | What would settle it |
 |---|---|---|
-| 1 | Does a `REPO`-scoped `AUTO` `VUL` scan rule actually scan on push when the instance has **zero** linked VPCs? | A real apply: `CreateScanRule(AUTO)` on a Basic instance with no VPC → push a matching tag → poll `GetRepoTagScanStatus` / `ListRepoTagScanResult`. Main-gated in this repo. No doc page answers it; the API reference has no prerequisite note and no error-code table. |
+| 1 | Does a `REPO`-scoped `AUTO` `VUL` scan rule actually scan on push when the instance has **zero** linked VPCs? | A real apply: `CreateScanRule(AUTO)` on a Basic instance with no VPC → push a matching tag → poll `GetRepoTagScanStatus` / `ListRepoTagScanResult`. Main-gated in this repo. No doc page answers it; the API reference has no prerequisite note and no error-code table. **Still unobserved.** Since 2026-09-23 the template refuses the switch at plan on the pessimistic reading (see "Status" at the top); the probe cannot run while the account is `UserDisable`. |
 | 2 | Does `CreateScanRule` *error* without a VPC, or return success and no-op? | Same apply. `errorCodes` for the operation is empty; `INSTANCE_ACCESS_VPC_LIMIT_EXCEED` attaches to the VPC-attach call, not to this one. |
 | 3 | What is a Basic instance's VPC access-control quota *exactly* — 0, or some small included number? | Alibaba says 「初始配额可能为 0」 ("may be 0") and never states an included figure, while stating included figures for repo and namespace quotas. `GetInstanceUsage` returns `VpcQuota`/`VpcUsage` for a live instance and would answer it in one call. |
 | 4 | Does `image_scanner = "DISABLE"` correspond to a real product state? | Not documented anywhere in Alibaba's product docs; the code is a BSS purchase parameter, and ACR's API has no `CreateInstance`/`UpdateInstance` operation at all (119 operations in the 2018-12-01 metadata, neither present). Would need a purchase-time experiment or Alibaba support. |

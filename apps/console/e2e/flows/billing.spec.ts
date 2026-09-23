@@ -219,8 +219,8 @@ test.describe("Billing settings — Pro trial (team)", () => {
 		await team.page.goto(billingPath(team.orgSlug));
 		await expect(team.page.getByRole("heading", { name: "Current plan" })).toBeVisible({ timeout: 30_000 });
 		// meta.perSeat → "$20/seat · 1 seat" line beneath the monthly total. The UNIT is
-		// Stripe-authoritative (summary.unitAmountUsd is the subscription's real price), so this
-		// line existing at all means the trial's price came back from the test-mode API.
+		// Stripe-authoritative (summary.unitAmount is the subscription's real price, with its own
+		// currency), so this line existing at all means the trial's price came back from test-mode.
 		await expect(team.page.getByText(/\/seat ·/)).toBeVisible();
 	});
 

@@ -32,9 +32,9 @@ committed but was never applied, so a gcp floor run dies inside `secrets-encrypt
 #2258 describes. Verified live:
 
 ```bash
-gcloud projects get-iam-policy itgix-adp \
+gcloud projects get-iam-policy ${GCP_E2E_PROJECT_ID} \
   --flatten="bindings[].members" \
-  --filter="bindings.members:alethia-e2e-nightly@itgix-adp.iam.gserviceaccount.com" \
+  --filter="bindings.members:alethia-e2e-nightly@${GCP_E2E_PROJECT_ID}.iam.gserviceaccount.com" \
   --format="value(bindings.role)"     # → no cloudkms.admin
 ```
 
@@ -46,7 +46,7 @@ that is the risk `e2e-state-migration.md` warns about, and this plan does not ca
 cd infra/gcp-e2e
 tofu init -input=false
 tofu plan -input=false \
-  -var 'project_id=itgix-adp' \
+  -var 'project_id=${GCP_E2E_PROJECT_ID}' \
   -var 'billing_account_id=012128-F87F79-AAE313' \
   -var 'e2e_github_environment=e2e-dev' \
   -out=tfplan
@@ -95,16 +95,22 @@ gh-oidc-env   repo:alethialabs-io/alethialabs:environment:e2e-dev
 gh-oidc-ref   repo:alethialabs-io/alethialabs:ref:refs/heads/main
 ```
 
-Adopt it instead. After the import the plan should be **empty**, which is the actual goal of #2462 —
-state agreeing with the account.
+Adopt it instead. **The import is now declarative**: `infra/azure-e2e/imports.tf` carries an
+`import {}` block with the ID below, so the next plan shows `1 to import` for
+`github["env"]` instead of `1 to add`, and the apply that follows adopts the credential rather
+than colliding with it. Do **not** also run `tofu import` by hand — the block does it. After that
+apply the plan should be **empty**, which is the actual goal of #2462 — state agreeing with the
+account.
+
+The ID the block uses (application OBJECT id / credential id, both read live on 2026-08-25):
+`/applications/eb0f6831-ef39-4a5a-ab87-899661c36f14/federatedIdentityCredential/eae3cf58-1f19-4270-9bb1-7c46e0f94a12`
 
 ```bash
 cd infra/azure-e2e
 tofu init -input=false
-tofu import \
-  'azuread_application_federated_identity_credential.github["env"]' \
-  '/applications/eb0f6831-ef39-4a5a-ab87-899661c36f14/federatedIdentityCredential/eae3cf58-1f19-4270-9bb1-7c46e0f94a12'
-# then confirm it is a no-op:
+# expect: azuread_application_federated_identity_credential.github["env"] will be imported,
+# and no create for it. Then `tofu apply` with the same -var flags, and re-plan to confirm
+# it is a no-op:
 tofu plan -input=false \
   -var 'subscription_id=32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae' \
   -var 'github_repo=alethialabs-io/alethialabs' \
@@ -143,7 +149,7 @@ empty. There is no IAM diff.
 |---|---|---|
 | `gcp-e2e` | apply | `gcp/floor` and everything above it — currently dies at `secrets-encryption.tf` |
 | `alibaba-e2e` | apply | alibaba dispatch-from-`dev` at all, plus its CMK path |
-| `azure-e2e` | import | nothing today; prevents the next apply colliding |
+| `azure-e2e` | import (declarative, `imports.tf`) | nothing today; prevents the next apply colliding |
 | `aws-oidc` | — | already authoritative |
 
 ## A trap that cost a session

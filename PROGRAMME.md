@@ -97,6 +97,12 @@ overtaken is more useful than a gap.
   that one path and leave every other lane autonomous. Required _reviewers_ stay off — that would
   reintroduce a human in every run, which is the thing being removed. The cron keeps its `main`-only
   ref subject, so scheduled spend does not widen at all.
+  **Amended 2026-09-23 (#4942): that ruleset was never created.** No ruleset (`dev`, `staging`,
+  `main`) sets `require_code_owner_review` to true (`main` sets false explicitly; `dev` and `staging`
+  take the provider default) and all require 0 approvals, and CODEOWNERS is advisory on
+  all three branches, not only off `main`. The maintainer ruled to correct the docs rather than add
+  the control, so a PR editing `e2e-nightly.yml` can land on `dev` with no human review. What does
+  bound the widening is listed at the `environment:` line of `.github/workflows/e2e-nightly.yml`.
 
 - **D2 · 2026-08-17 · The parity axis is the 19 canvas `NodeKind`s; the proof axis is the 11
   provisionable kinds.** The 19 are what the product offers and what `alethia project component
@@ -243,7 +249,7 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 
 ## Where the programme actually is
 
-**22 of 35 proof cells are proven.** 1 failing · 1 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
+**23 of 35 proof cells are proven.** 1 failing · 0 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -251,7 +257,7 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 
 | cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 | CLI-driven |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
+| **aws** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 | **gcp** | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 | **azure** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 | **alibaba** | · | · | · | · | · | · | · |
@@ -261,7 +267,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 <details><summary>Every cell that has any evidence at all</summary>
 
-- `aws/floor` **contested** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T125612Z` — but #4771 is OPEN and was filed 2026-09-18, AFTER the 2026-08-28 run that proved it
+- `aws/floor` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T125612Z`
 - `aws/maxconfig` **proven** — ledger 2026-08-26, bundle `demos/proofs/aws/20260826T114712Z`
 - `aws/addons` **proven** — ledger 2026-08-30, bundle `demos/proofs/aws/20260830T100243Z`
 - `aws/gitops` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T142417Z`
@@ -290,13 +296,12 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`aws/floor`** — contested. ledger 2026-08-28, bundle `demos/proofs/aws/20260828T125612Z` — but #4771 is OPEN and was filed 2026-09-18, AFTER the 2026-08-28 run that proved it
+**`gcp/floor`** — failing. ledger 2026-09-02
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
 <details><summary>The next 10</summary>
 
-1. `aws/floor` — contested
 1. `gcp/floor` — failing
 1. `alibaba/floor` — never_run
 1. `alibaba/maxconfig` — never_run
@@ -306,6 +311,7 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 1. `alibaba/day2` — never_run
 1. `aws/cli-demo` — never_run
 1. `gcp/cli-demo` — never_run
+1. `azure/cli-demo` — never_run
 
 </details>
 
@@ -342,11 +348,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35430876309 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 35430876309 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 35430876309 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35430876309 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 35430876309 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 35837730584 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 35837730584 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 35837730584 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ⛔ **unwired** | a gate-off proof was recorded — run 35837730584 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 35837730584 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -368,68 +374,49 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 |---|---|---|:---:|
 | `gcp/floor` | failing | #3855 | open |
 
-### ⚠️ Contested — proven by the ledger, contradicted by a red
-
-A nightly that goes red files an **issue** and writes **no ledger row**. So from the ledger's point of view that failure never happened, and a cell proven earlier stays ✅ forever: PASS is durable, a later FAIL is invisible. That makes the grid a **high-water mark** presented as current state, in the one direction that overstates — which is the thing this whole file exists to prevent.
-
-| cell | proven by a run dated | red | filed | red's state |
-|---|:---:|---|:---:|---|
-| `aws/floor` | 2026-08-28 | #4771 | 2026-09-18 | open |
-
-`contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the run, and guessing either way is worse than naming the contradiction. It claims only what is derivable — the two sources disagree, so the ✅ is not trustworthy right now.
-
-**Two human acts clear it, and either one is fine:** close the issue if that run was a flake, or append a `FAIL` row for it if it was not. The next derivation picks the answer up.
-
-A row marked **closed … inside this refresh window** is a red that was filed and closed between two snapshots, so it was never in anybody's `open_issues` and no derivation ever saw it. It is shown once, here, and clears on the next refresh — the closing act has already happened. That is the whole of it: a red is evidence whether or not its issue is still open, and `0 failing` is a claim about **today**.
-
 
 ### Orphan reaper — nothing standing
 
-**0 of 5 clouds are verified clean.** A real reclaim result stays current for 48 hours.
+**3 of 5 clouds are verified clean.** A real reclaim result stays current for 48 hours.
 
 A run that reclaimed an orphan may still finish clean; the incident counts remain visible. Dry runs, skipped gates, failed or missing logs, unverifiable checks and unattributable resources never count as clean.
 
 | cloud | state | durable evidence |
 |---|:---:|---|
-| **aws** | ? indeterminate | no durable reclaim result |
-| **gcp** | ? indeterminate | no durable reclaim result |
-| **azure** | ? indeterminate | no durable reclaim result |
-| **alibaba** | ? indeterminate | no durable reclaim result |
-| **hetzner** | ? indeterminate | no durable reclaim result |
+| **aws** | ✅ clean | run 35862438380 at 2026-09-23T12:56:49Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
+| **gcp** | ✅ clean | run 35862438380 at 2026-09-23T12:56:49Z found no orphan runs and verified clean |
+| **azure** | ✅ clean | run 35862438380 at 2026-09-23T12:56:49Z found no orphan runs and verified clean |
+| **alibaba** | ? indeterminate | run 35862438380 at 2026-09-23T12:56:49Z skipped its cloud gate |
+| **hetzner** | ? indeterminate | run 35862438380 at 2026-09-23T12:56:49Z found 1 unattributable resource(s) |
 
 ### Blocked on a human
 
-- #4854 — security(privacy): fulfilErasure erases nothing — build the erasure executor, and make the register match the schema
-- #4771 — e2e nightly: aws RED (floor · after proof capture)
-- #4740 — cost(e2e): 10 orphan pvc-* disks have stood in gcp europe-west3 since 2026-08-29 — 158 GB the reaper never reclaimed
-- #4642 — infra(github): the live rulesets enforce 10 of the 19 contexts protect-main declares — all seven release-gate legs are unenforced
-- #4583 — audit(grants): find existing rows with an org kind and a resource id — grants someone believed were scoped, and are not
-- #4547 — infra(e2e-issuer): the assertion issuer has never deployed — CLOUDFLARE_API_TOKEN is unset in the e2e-issuer environment
-- #4395 — chore(promote): the orphan reaper has published nothing in 8 green runs — MVP predicate #6 is unsatisfiable until staging reaches main
+- **`alibaba` cannot provision** — `E2E_ALIBABA_ROLE_ARN` is not set, so the leg green-skips.
+- #4990 — templates(ai): the AI starter tells users to enable a cert-manager add-on that no longer exists — and KServe has no cert-manager without a managed certificate
+- #4942 — security(e2e-dev): the OIDC widening's compensating control does not exist — CODEOWNERS is advisory on every branch
+- #4923 — epic(ownership): ALETHIA LABS EDPK takes possession — chain of title, the notices that disagree, the ee/ repository boundary, and public-repo licensing
+- #4903 — infra(e2e): all three e2e IAM stacks have NO remote state — one laptop holds the only copy, and their declared backends do not exist
 - #4374 — infra(cp-hetzner): adopt the live Cloudflare email routing — import the 11 resources and set the inputs in one change
-- #4326 — cost(sandbox): the alethia-sandbox project has no server and still bills — delete the leftover snapshots and the unassigned IP
 - #4287 — maintainer(release-gate): the first /console-prod-qa run on production, and its report PR
 - #4286 — maintainer(release-gate): Stripe test secrets, the tofu apply that makes the gate required, and three deliberately red dispatches
-- #4177 — ci(mergify): batch_size: 5 is INERT — it lives only on dev, and Mergify reads its config from main
-- #4114 — console: the BYO chart dialog offers fictional acme/* repos as its worked example
+- #4226 — infra(e2e-issuer): establish four-cloud trust for broker assertions
 - #4113 — templates: no template is announced until it has been deployed once — REAL CLOUD SPEND, not agent-buildable
-- #4112 — templates: create the three public starter repos and set is_template — ORG ADMIN, not agent-buildable
 - #3907 — legal(assets): the nine third-party marks already shipping were never cleared — and the test that disqualified harbor applies to them
 - #3855 — e2e nightly: gcp RED (floor)
-- #3549 — ci: the live branch rulesets do not require what infra/github says they do
+- #3754 — fix(authz): members stuck ungranted by the toOrgRole gap are not backfilled — and a naive backfill would restore revoked access
 - #3524 — e2e(addons): remove external-dns from addOnExclusions once a paid gcp/azure addons run is green
 - #3438 — release(runner): `release-runner` has never once succeeded — the ECR repo it pushes to does not exist, and nothing creates it
 - #3348 — AWS and GCP cannot be provisioned in production: the deployed runner runs as `self` with no ambient credentials, and the error names EC2 IMDS
-- #3292 — infra: ssh_allowed_cidrs defaults to 0.0.0.0/0 on three boxes, two of which CI applies unattended
 - #3038 — feat(e2e): the CLI demo bar proves reachability, not the demo — drive a real provision through the real binary
 - #2759 — ci: workflows red on every recent run
 - #2545 — e2e nightly: alibaba RED (floor)
-- #2482 — release: the console never learns about a new CLI version — the notification's credentials cannot mint from a tag
-- #2462 — infra(e2e): make the e2e-dev OIDC trust widening authoritative — four applies, currently hand-applied
+- #2462 — infra(e2e): adopt the hand-made Azure gh-oidc-env federated credential — the one outstanding step of the e2e-dev trust widening
 - #2385 — feat(e2e): price the full bar on gcp/azure/alibaba/hetzner, so a schedule can be restored
 - #2384 — e2e nightly: alibaba RED (full-bar)
 - #2283 — probe(alibaba-cr): does an AUTO scan rule fire with no VPC endpoint? (#2265 shipped the wiring, not the proof)
 - #1513 — feat(keyless): GA — default-on rollout and delete ALETHIA_KEYLESS_DB_AUTH_ENABLED
+- #1450 — test(e2e): azure-mysql keyless real-apply on Azure (main-gated)
+- #1268 — test(e2e): cross-account keyless cloud-SM in-cluster read — AWS/GCP/Azure/Alibaba (main-gated)
 - #845 — test(fabric): W-h prove enterprise-demo on all 4 partner clouds (acceptance gate)
 
 ### Debt ratchets
@@ -438,7 +425,7 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 |---|---|
 | `infra/offer-exclusions.yaml` | exclusions: 26 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/config-carriage-exclusions.yaml` | exclusions: 31 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
-| `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 301 · uniform: 13 |
+| `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 299 · uniform: 13 |
 | `apps/console/e2e/gate-baseline.json` | failed: 24 · fixme: 4 · skip: 1 |
 
 ### Provenance
@@ -453,7 +440,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-09-19T10:48:19Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-09-23T13:54:00Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 

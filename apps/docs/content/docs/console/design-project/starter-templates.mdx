@@ -1,0 +1,110 @@
+---
+title: Starter Templates
+description: Three public template repositories you can copy to start an apps repository, a bring-your-own Helm chart, or a full AI stack — and which of Alethia's two trust levels each one targets.
+---
+
+# Starter Templates
+
+Alethia publishes three public template repositories. Each is a working starting point for one
+thing you can point an environment at, and each is small on purpose: every path in it is a path the
+product actually reads.
+
+They are templates, not forks. Use the **Use this template** button to create your own copy. None
+of them reports back to Alethia.
+
+## The three repositories
+
+| Repository | What it is | Trust level |
+|---|---|---|
+| [alethia-starter-apps](https://github.com/alethialabs-io/alethia-starter-apps) | An apps repository ArgoCD syncs your manifests from | Apps repository |
+| [alethia-starter-chart](https://github.com/alethialabs-io/alethia-starter-chart) | A bring-your-own Helm chart Alethia installs as an add-on | Bring-your-own chart |
+| [alethia-starter-ai](https://github.com/alethialabs-io/alethia-starter-ai) | A retrieval-augmented generation stack that spans both | Both |
+
+All three are licensed Apache-2.0. Each carries a `TEMPLATE_VERSION` file and a semantic-version
+`CHANGELOG.md`. A change to a chart's `values.schema.json` is a major bump, because that file is
+the interface your values are written against.
+
+## The two trust levels
+
+Your manifests run under one of two ArgoCD projects. They are not the same shape, and which one
+applies is decided by how you attach the code — not by what the code does.
+
+| | Apps repository | Bring-your-own chart |
+|---|---|---|
+| Cluster-scoped resources | Any kind | None |
+| `Role`, `RoleBinding`, `ServiceAccount` | Allowed | Blocked |
+| Source repositories | Any | Only the one you configured |
+
+<Callout type="warn">
+  A chart that installs CustomResourceDefinitions cannot be a bring-your-own chart. A
+  CustomResourceDefinition is cluster-scoped, so the project rejects it. This is a limit on what a
+  chart **creates**, not on what it is for. Many database charts ship an operator and are blocked
+  for that reason alone.
+</Callout>
+
+## alethia-starter-apps
+
+An apps repository. Point an environment at your copy and three Applications converge: the root,
+`apps-dev` and `apps-staging`.
+
+| Path | What it is for |
+|---|---|
+| `kustomization.yaml` | The root manifest. Without one, the root Application manages nothing |
+| `namespace.yaml` | The namespace the root delivers into |
+| `base/` | The application, defined once |
+| `overlays/dev/`, `overlays/staging/` | Discovered automatically; become `apps-dev` and `apps-staging` |
+| `addons/` | Keeps the `addons` Application out of ComparisonError |
+
+To use it:
+
+<Steps>
+<Step>Create your own repository from the template.</Step>
+<Step>Open the environment, go to **Repositories**, and set **ArgoCD apps repository** to your new
+repository. Leave **Overlay path** empty.</Step>
+<Step>Deploy.</Step>
+</Steps>
+
+For what an apps repository must contain, and what Alethia commits back into it, see
+[Repositories](/console/design-project/repositories).
+
+## alethia-starter-chart
+
+A bring-your-own Helm chart. It renders a Deployment, a Service and a ConfigMap. Every one of them
+is namespaced and none of them is RBAC, which is the contract a bring-your-own chart must meet.
+
+The repository mechanises that contract in `hack/check-byo-contract.sh`. Run it against your own
+chart before you attach it, and the build fails if a change breaks the contract.
+
+<Steps>
+<Step>Create your own repository from the template.</Step>
+<Step>In Alethia, go to **Add-ons → Bring your own chart**.</Step>
+<Step>Set **Chart repository** to your repository, **Chart path** to `chart`, and **Ref** to `HEAD`
+or a tag.</Step>
+<Step>Deploy. Alethia creates the namespace, registers a per-repository credential, and applies the
+chart.</Step>
+</Steps>
+
+For the safety scan and how a chart's workloads appear on the canvas, see
+[Bring Your Own Helm Charts](/console/design-project/bring-your-own-charts).
+
+## alethia-starter-ai
+
+A retrieval-augmented generation stack: a vector database, a CPU embedding server, CPU inference,
+model serving and job queueing. It is also the worked example of where the line between the two
+trust levels falls.
+
+It splits across both:
+
+| Component | Goes in | Why |
+|---|---|---|
+| KServe, Kueue, the GPU operator | `addons/`, the apps repository | They install CustomResourceDefinitions, which are cluster-scoped |
+| Qdrant, embeddings, inference, the RAG application | `chart/`, a bring-your-own chart | A Deployment, a Service and a PersistentVolumeClaim are none of the blocked kinds |
+
+Qdrant is the instructive case. It is a database, and it could have gone on either side. What puts
+it in the chart is that this particular chart ships no operator.
+
+<Callout type="warn">
+  **This template provisions no GPU.** It runs CPU-only by default. A GPU node pool is the most
+  expensive thing you can provision by accident, so enabling one is a deliberate change you commit
+  yourself. See the `gpu/` directory in the repository.
+</Callout>

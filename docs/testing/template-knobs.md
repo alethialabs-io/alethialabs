@@ -18,10 +18,10 @@ provisioned.
 | Cloud | knobs | reachable | settable (offered) | declared-and-dead |
 |---|---:|---:|---:|---:|
 | alibaba | 63 | 45 | 11 | 1 |
-| aws | 159 | 122 | 52 | 4 |
-| azure | 90 | 64 | 24 | 4 |
-| gcp | 104 | 84 | 34 | 3 |
-| hetzner | 37 | 27 | 4 | 3 |
+| aws | 159 | 122 | 52 | 0 |
+| azure | 88 | 62 | 22 | 2 |
+| gcp | 104 | 84 | 34 | 1 |
+| hetzner | 37 | 27 | 4 | 2 |
 
 **knobs** = root variables the root module declares, plus the object attributes a leaf component's item
 passthrough reaches. **reachable** = a `provider_config` merge lands on it. **settable** = reachable, and neither
@@ -34,7 +34,7 @@ argument — the shape a raw variable count cannot tell from a working knob.
 | Component | alibaba | aws | azure | gcp | hetzner |
 |---|---:|---:|---:|---:|---:|
 | bucket | 0 / 2 | 3 / 16 | 0 / 7 | 4 / 11 | 0 / 10 |
-| cache | 0 / 6 | 5 / 18 | 3 / 6 | 3 / 11 | — |
+| cache | 0 / 6 | 5 / 18 | 1 / 4 | 3 / 11 | — |
 | cluster | 9 / 17 | 11 / 21 | 11 / 18 | 13 / 21 | 2 / 11 |
 | database | 0 / 8 | 4 / 11 | 3 / 11 | 7 / 14 | — |
 | dns | 1 / 5 | 7 / 16 | 4 / 8 | 3 / 7 | 2 / 5 |
@@ -63,18 +63,9 @@ Each cell is **settable / declared**. A `—` means the cloud declares nothing t
 | Cloud | Component | Knob | Declared at |
 |---|---|---|---|
 | alibaba | dns | `alidns_managed_certificate` | infra/templates/project/alibaba/variables.tf:240 |
-| aws | cache | `redis_cloudwatch_logs_enabled` | infra/templates/project/aws/variables.tf:631 |
-| aws | cache | `redis_cluster_mode_enabled` | infra/templates/project/aws/variables.tf:591 |
-| aws | dns | `waf_rate_limit_rules` | infra/templates/project/aws/variables.tf:420 |
-| aws | secret | `keepers` | infra/templates/project/aws/variables.tf:739 |
-| azure | cache | `azure_cache_capacity` | infra/templates/project/azure/variables.tf:362 |
-| azure | cache | `azure_cache_family` | infra/templates/project/azure/variables.tf:356 |
-| azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:477 |
-| azure | nosql | `billing_mode` | infra/templates/project/azure/variables.tf:432 |
-| gcp | cache | `memorystore_auth_enabled` | infra/templates/project/gcp/variables.tf:392 |
+| azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:478 |
+| azure | nosql | `billing_mode` | infra/templates/project/azure/variables.tf:433 |
 | gcp | cluster | `gke_log_retention_days` | infra/templates/project/gcp/variables.tf:267 |
-| gcp | database | `cloud_sql_default_username` | infra/templates/project/gcp/variables.tf:358 |
-| hetzner | bucket | `cors_origins` | infra/templates/project/hetzner/variables.tf:258 |
 | hetzner | bucket | `encryption_enabled` | infra/templates/project/hetzner/variables.tf:258 |
 | hetzner | dns | `dns_hosted_zone` | infra/templates/project/hetzner/variables.tf:244 |
 

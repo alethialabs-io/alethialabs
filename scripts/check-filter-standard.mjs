@@ -154,17 +154,30 @@
 // list that decays. A URL sync that EXISTS and cannot be followed is a problem here, not an empty
 // param list: the live pass would read that as a surface that writes nothing.
 //
-// ── WHAT THIS FILE FAILS ON, AND WHAT IT ONLY REPORTS ────────────────────────────────────────
+// ── WHAT THIS FILE FAILS ON ──────────────────────────────────────────────────────────────────
 //
 // It exits 1 on a BROKEN DERIVATION — no surfaces, no builders, a store nobody reads, a builder
-// nobody drives and nobody declared, a stale `F7_UNDRIVEN` row, an unreadable console tree. It
-// does NOT exit 1 on a non-conforming surface, and that is a division of labour rather than a
-// softness: the per-surface F1–F6 verdicts are scored per ROUTE by
-// `apps/console/scripts/audit-report.mjs` into `ui-conformance-baseline.json`, which CI diffs
-// against the tree on every PR. A conformance regression therefore reds as a stale artifact
-// naming the route it moved, which is a better failure than a wall of findings with no owner.
-// The census is printed on every run, pass or fail, so a collapse this file's floors cannot see
-// is visible in the diff of two CI logs.
+// nobody drives and nobody declared, a stale `F7_UNDRIVEN` row, an unreadable console tree.
+//
+// AND, as of #4890, on a NON-CONFORMING SURFACE: any F1–F6 FAIL not declared in
+// `FILTER_STANDARD_DEBT` fails the run (`checkConformance`). It used to only score them, on the
+// stated ground that `apps/console/scripts/audit-report.mjs` joins the same verdicts per ROUTE
+// into `ui-conformance-baseline.json`, which CI diffs against the tree. That division of labour
+// is exactly how F6 reached 5 of 15 with every check in this repository green: the baseline
+// diff reds on a CHANGE, and a defect already recorded in it is, to that instrument, the
+// expected value. Nothing anywhere failed because ten list pages blanked. The baseline is still
+// generated and still diffed — it is the per-route record — but the enforcement is here, where
+// the predicate is, and it names the SURFACE rather than the route the surface happens to sit on.
+//
+// The two are checked from the same `scoreSurface()` call, so they cannot disagree.
+//
+// ── AND WHAT HOLDS THE GATE UP ───────────────────────────────────────────────────────────────
+//
+// A per-item gate is greenest when it has no items, and this one derives its own items. So the
+// census is FLOORED (see `FLOORS`) and the floors are checked BEFORE the per-surface verdicts:
+// deleting a surface to silence its finding reds the run with the count it fell to. The census
+// is also printed on every run, pass or fail, so a collapse the floors do not cover is still
+// visible in the diff of two CI logs.
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -194,6 +207,42 @@ const BUILDER_DIRS = ["apps/console/lib/queries", "apps/console/app/server/actio
 
 /** The F7 unit test — the instrument for the one predicate this file does not match. */
 export const F7_TEST = "apps/console/tests/lib/queries/filter-standard-facets.test.ts";
+
+/**
+ * CENSUS FLOORS — the answer to "was this greened by DELETING something?".
+ *
+ * Every F1–F6 finding is a FAILURE now (see {@link checkConformance}), and the cheapest way
+ * past a per-item gate is always to remove the item. A surface leaves this scan by having its
+ * `createFilterStore` call deleted; a builder leaves it by no longer returning facets. Neither
+ * is visible in a per-surface verdict — the surface simply stops being scored, and every
+ * remaining one still passes. A gate over a subject set it also derives is greenest when that
+ * set is EMPTY.
+ *
+ * So the counts are held from below. These are the numbers measured on `dev` at #4890, and they
+ * are a FLOOR, not an expectation: adding a list page raises the real count and leaves these
+ * alone, while deleting one reds this check with the count it fell to. Lowering a number here is
+ * a deliberate, reviewable line in a diff that says a console list page went away.
+ */
+export const FLOORS = /** @type {const} */ ({ surfaces: 15, builders: 8, driven: 6 });
+
+/**
+ * The per-surface F1–F6 findings that are KNOWN and allowed to still be there.
+ *
+ * IT IS EMPTY, and keeping it empty is the point: #4890 lifted every surface onto the standard,
+ * so there is nothing left to excuse. The table exists because the alternative to an empty
+ * ledger is no ledger, and then the only way to land a surface that cannot conform yet is to
+ * weaken the predicate for everyone.
+ *
+ * A row is `{predicates, owner, why}`, the owner is an OPEN issue that will remove it, and the
+ * `why` states the mechanism — never "not got to it yet". {@link checkConformance} checks it in
+ * BOTH directions, for the reason `F7_UNDRIVEN` already carries: an entry that OUTLIVES its
+ * finding is worse than a missing one, because it silently suppresses the next real regression
+ * on that surface forever. Fixing a surface therefore DELETES its row in the same commit, and
+ * the deletion is what proves the fix.
+ *
+ * @type {Record<string, {predicates: readonly string[], owner: string, why: string}>}
+ */
+export const FILTER_STANDARD_DEBT = {};
 
 /** `packages/ui/src` modules whose exports make up the sanctioned filter-bar vocabulary. */
 const UI_DIR = "packages/ui/src";
@@ -415,6 +464,43 @@ export function deriveSurfaces(sources) {
 				if (sources.has(hop) && !s.consumers.includes(hop)) s.consumers.push(hop);
 			}
 		}
+		// THE SECOND HOP, upwards: the module that RENDERS what a neighbourhood module resolved.
+		//
+		// Measured on `dev` (#4890): the alerts hub's three surfaces were scored FAIL on F5 — "no
+		// result count renders through `CountPill`" — while `components/alerts/alerts-page.tsx`
+		// renders `<SectionHeading count={policiesView.rows.length}>` for all three. The count was
+		// there, one module above the neighbourhood, and the verdict was about the scan.
+		//
+		// The console's convention is a view hook: a neighbourhood module exports
+		// `use<Resource>View(...)`, whose body reads the store, and the PAGE imports that hook and
+		// renders its rows and its count. So the hop is derived from that fact and nothing looser:
+		// an exported function in a neighbourhood module whose OWN BODY names this surface's store
+		// symbol, and then the modules that import THAT name from THAT module.
+		//
+		// Both halves are load-bearing. Without the body check, `alerts-filters.ts` would hand
+		// every importer of any of its exports to all three of its surfaces. Without the import
+		// check it would be a tree-wide search for a common name. Together they reach exactly the
+		// module that renders this surface's rows — measured: one module per alerts surface, and
+		// none at all for the twelve surfaces whose consumers export no such hook.
+		for (const file of [...s.consumers]) {
+			const text = sources.get(file) ?? "";
+			/** @type {string[]} */
+			const viewHooks = [];
+			for (const m of text.matchAll(/export (?:async )?function (\w+)\s*\(/g)) {
+				const body = functionBody(text, m.index, text.length);
+				if (new RegExp(`\\b${s.symbol}\\b`).test(body)) viewHooks.push(m[1]);
+			}
+			if (viewHooks.length === 0) continue;
+			for (const [other, otherText] of sources) {
+				if (other === file || s.consumers.includes(other) || other === s.file) continue;
+				for (const imp of otherText.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
+					if (resolveImport(other, imp[2], sources) !== file) continue;
+					const named = imp[1].split(",").map((n) => n.trim().split(/\s+as\s+/)[0].trim());
+					if (named.some((n) => viewHooks.includes(n))) s.consumers.push(other);
+				}
+			}
+		}
+		s.consumers = [...new Set(s.consumers)];
 		s.consumers.sort();
 	}
 	return surfaces;
@@ -789,6 +875,55 @@ const BANNED_IN_BAR = [
 /** "N of M" prose: two interpolations either side of a bare `of`. */
 const N_OF_M = /\{[^{}]+\}\s*of\s*\{[^{}]+\}/;
 
+/** A per-resource query hook — `lib/query/use-<resource>-query.ts`, the README's own table row. */
+const QUERY_HOP = /^apps\/console\/lib\/query\/use-[a-z0-9-]+-query\.ts$/;
+
+/**
+ * Does THIS module build a TanStack key that carries the surface's normalized query?
+ *
+ * This is one fact, used twice: it is F3's clause (b), and it is also what decides WHICH question
+ * F6 asks (see `scoreSurface`). It replaces "some `qk.*()` call in the neighbourhood takes more
+ * than one argument", which is a rendering of the thing and is wrong in both directions — measured
+ * on `dev`, both ways, in one scan:
+ *
+ *   * UNDER-reports. `components/support/cases/case-list.tsx` keys `qk.supportCases(query.bucket)`
+ *     — ONE argument, and it is the whole of what that surface sends the server (the other three
+ *     fields are a documented client-side refinement over the bucket's rows). Counting arguments
+ *     called the reference-quality surface a cache-sharing defect.
+ *   * OVER-reports. `components/settings/access/access-manager.tsx` keys
+ *     `qk.accessGrants(org, projectId ? { projectId } : undefined)` — two arguments, neither of
+ *     them the query. That surface fetches the scope's whole universe and narrows it in memory, so
+ *     every filtered view really does share one cache entry, and the arg count said PASS.
+ *
+ * So the test is PROVENANCE: an argument of the key call must be an identifier — or a member of
+ * one — bound from this module's own `normalize*Query(` call.
+ *
+ * The one place provenance cannot be read is the hop module, and it is admitted in its own terms:
+ * inside `lib/query/use-*-query.ts` the normalized object arrives as a PARAMETER with whatever
+ * name that hook chose (`qk.jobsPage(org, query)`, `qk.roles(org, q)`), the caller having
+ * normalized it a module away. That is the README's own division of labour — the page normalizes,
+ * the hook keys — and the surface only reaches such a module through the name-matched hop above,
+ * so a sibling resource's hook cannot lend its key here.
+ *
+ * @param {string} file repo-relative
+ * @param {string} text comment-stripped source
+ */
+export function keysOnQuery(file, text) {
+	const normalized = new Set(
+		[...text.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(?:useMemo\s*\(\s*\(\s*\)\s*=>)?\s*normalize\w*Query\s*\(/g)].map((m) => m[1]),
+	);
+	const hop = QUERY_HOP.test(file);
+	for (const m of text.matchAll(/qk\.\w+\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)) {
+		const args = m[1].split(",").map((a) => a.trim()).filter((a) => a !== "");
+		if (hop && args.length > 1) return true;
+		// Every identifier the argument list mentions; `query.bucket` and `active ? filter :
+		// undefined` both reduce to their roots, so a member read and a conditional both count.
+		const roots = [...m[1].matchAll(/([A-Za-z_$][\w$]*)/g)].map((i) => i[1]);
+		if (roots.some((r) => normalized.has(r))) return true;
+	}
+	return false;
+}
+
 /**
  * Score F1–F6 for one surface over its neighbourhood.
  *
@@ -840,11 +975,7 @@ export function scoreSurface(surface, sources, barPrimitives) {
 	// distinction the standard actually draws — "unsorted arrays fragment the cache" is about
 	// what is IN the key — and it survives the rename.
 	const normalizes = has(/normalize\w*Query\s*\(/);
-	const parameterisedKey = neighbourhood.some((file) =>
-		[...(sources.get(file) ?? "").matchAll(/qk\.\w+\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g)].some(
-			(m) => m[1].split(",").filter((a) => a.trim() !== "").length > 1,
-		),
-	);
+	const parameterisedKey = neighbourhood.some((file) => keysOnQuery(file, sources.get(file) ?? ""));
 	verdict(
 		"F3",
 		debounced && normalizes && parameterisedKey,
@@ -885,15 +1016,42 @@ export function scoreSurface(surface, sources, barPrimitives) {
 			: "no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)",
 	);
 
-	// F6 — keepPreviousData plus the dim. The URL→RSC variant is admitted in the README's own terms.
-	const kept = has(/keepPreviousData/);
+	// F6 — a filter change must not blank the list.
+	//
+	// The predicate is asked of the surfaces that CAN blank, and that is derived, not declared:
+	// a surface blanks on a filter change only if the filter change refetches, and it refetches
+	// only if its normalized query is in the TanStack key — `parameterisedKey`, the same fact F3
+	// clause (b) is about. Where it holds, `keepPreviousData` + the `opacity-60` dim on
+	// `isPlaceholderData` is required (or the URL→RSC variant `lib/query/README.md` blesses, which
+	// is admitted in the README's own terms: `useTransition`'s `isPending` "plays the
+	// keepPreviousData dim"). Where it does not, the rows are derived synchronously from an
+	// already-loaded universe, no fetch stands between the click and the new rows, and the list
+	// PROVABLY cannot blank.
+	//
+	// The old form asked every surface the same question and its negative form was false on seven
+	// of the fifteen — "the list unmounts to a skeleton on every filter change" was printed against
+	// surfaces where nothing refetches at all, which is what #4890 was written from. A guard that
+	// names a defect a page does not have is not a strict guard; it is a wrong one, and the fix it
+	// asks for (a `keepPreviousData` on a key the filters never touch) is dead code.
+	//
+	// THE ESCAPE IS CLOSED BY F3, and that is why the two are wired to one fact. The cheapest way
+	// to make F6 stop applying is to take the query out of the key — which is exactly what F3
+	// fails on, with the sharper finding ("every filtered view shares one cache entry"). A surface
+	// cannot buy silence here without buying a red there.
+	// The OPTION, not the name. A bare `/keepPreviousData/` is satisfied by the IMPORT of it —
+	// measured while mutation-testing this gate (#4890): deleting `placeholderData:
+	// keepPreviousData` from `use-teams-query.ts` left `import { keepPreviousData, useQuery }`
+	// behind, and the surface still passed F6 while its table had gone back to blanking. So the
+	// matcher is `lib/query/README.md`'s own prescription, verbatim, and a surface that reaches
+	// the same behaviour some other way is a second answer to a settled question.
+	const kept = has(/placeholderData\s*:\s*keepPreviousData\b/);
 	const dimmed = has(/isPlaceholderData/) && has(/opacity-60/);
 	const rscVariant = has(/useTransition\s*\(/) && has(/\bisPending\b/) && has(/opacity-60/);
 	verdict(
 		"F6",
-		(kept && dimmed) || rscVariant,
+		!parameterisedKey || (kept && dimmed) || rscVariant,
 		!kept
-			? "no `keepPreviousData` — the list unmounts to a skeleton on every filter change"
+			? "no `keepPreviousData` — this surface's filters ARE in its TanStack key, so a filter change refetches and the list unmounts to a skeleton while it does"
 			: "`keepPreviousData` without the `opacity-60` dim on `isPlaceholderData` — a stale list renders as a current one",
 	);
 
@@ -946,6 +1104,62 @@ export function checkF7Subject(builders, driven, undriven = F7_UNDRIVEN) {
 	return problems;
 }
 
+// ── the conformance gate ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Every way the per-surface conformance can be wrong, in both directions.
+ *
+ * @param {Surface[]} surfaces
+ * @param {Record<string, Record<string, {verdict: string, detail?: string}>>} perSurface
+ * @param {typeof FILTER_STANDARD_DEBT} [debt] injectable so `--self-test` drives both directions
+ *   over a fixture tree, which does not contain the console's real rows
+ * @returns {string[]} one line per problem
+ */
+export function checkConformance(surfaces, perSurface, debt = FILTER_STANDARD_DEBT) {
+	/** @type {string[]} */
+	const problems = [];
+	const known = new Set(surfaces.map((s) => s.symbol));
+
+	for (const s of surfaces) {
+		const declared = new Set(debt[s.symbol]?.predicates ?? []);
+		for (const [id, v] of Object.entries(perSurface[s.symbol] ?? {})) {
+			if (v.verdict !== "FAIL" || declared.has(id)) continue;
+			problems.push(
+				`${s.file}: \`${s.symbol}\` fails ${id} — ${v.detail} Fix the surface, or add ${id} to ` +
+					"`FILTER_STANDARD_DEBT` with an owner and the reason it stays. A filter surface that " +
+					"does not do what lib/query/README.md says is a second answer to a question the " +
+					"console already settled.",
+			);
+		}
+	}
+	for (const [symbol, row] of Object.entries(debt)) {
+		if (!known.has(symbol)) {
+			problems.push(
+				`FILTER_STANDARD_DEBT names \`${symbol}\`, which is not a filter surface in this tree. ` +
+					"Either it was renamed, or the surface is gone — delete the row in the same commit, " +
+					"because a declared finding whose subject no longer exists suppresses nothing and " +
+					"proves nothing.",
+			);
+			continue;
+		}
+		for (const id of row.predicates) {
+			const v = perSurface[symbol]?.[id];
+			if (v === undefined) {
+				problems.push(`FILTER_STANDARD_DEBT declares \`${symbol}\` ${id}, which this file does not score.`);
+				continue;
+			}
+			if (v.verdict !== "FAIL") {
+				problems.push(
+					`FILTER_STANDARD_DEBT still declares \`${symbol}\` ${id}, which now PASSES (${row.owner}). ` +
+						"Delete the row: an entry that outlives its finding suppresses the next real regression " +
+						"on this surface silently and forever.",
+				);
+			}
+		}
+	}
+	return problems;
+}
+
 // ── the scan ─────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -955,7 +1169,7 @@ export function checkF7Subject(builders, driven, undriven = F7_UNDRIVEN) {
  * @param {typeof F7_UNDRIVEN} [undriven] injectable so `--self-test` drives the whole pipeline
  *   over a fixture tree, which does not hold the console's two real exemptions
  */
-export function scan(io, undriven = F7_UNDRIVEN) {
+export function scan(io, undriven = F7_UNDRIVEN, debt = FILTER_STANDARD_DEBT, floors = FLOORS) {
 	const { sources, census, unterminated } = readConsole(io);
 
 	/** @type {string[]} */
@@ -1020,6 +1234,27 @@ export function scan(io, undriven = F7_UNDRIVEN) {
 	/** @type {Record<string, Record<string, {verdict: string, detail?: string}>>} */
 	const perSurface = {};
 	for (const s of surfaces) perSurface[s.symbol] = scoreSurface(s, sources, barPrimitives);
+
+	// The per-surface GATE, and the floors under the census it is computed from. The floors come
+	// FIRST because they are the question the gate cannot answer about itself: with every finding
+	// fixed by deleting its surface, `checkConformance` is silent and correct.
+	if (problems.length === 0) {
+		for (const [what, got, floor] of /** @type {[string, number, number][]} */ ([
+			["filter surface(s)", surfaces.length, floors.surfaces],
+			["facet-bearing server builder(s)", builders.length, floors.builders],
+			[`builder(s) driven by ${F7_TEST}`, driven.size, floors.driven],
+		])) {
+			if (got < floor) {
+				problems.push(
+					`the scan found ${got} ${what}, below this file's floor of ${floor}. Either a console list ` +
+						"page went away — in which case lower the number in `FLOORS`, in this diff, where a " +
+						"reviewer sees it — or the derivation stopped reaching them. A per-surface gate is " +
+						"greenest when its subject set is empty, which is why the count is held from below.",
+				);
+			}
+		}
+		problems.push(...checkConformance(surfaces, perSurface, debt));
+	}
 
 	// The params each surface writes — the live F8–F10 pass's subject detail. A surface whose URL
 	// sync EXISTS and cannot be followed is a broken read and is reported; one with no URL sync at
@@ -1202,9 +1437,15 @@ export function positiveControl() {
 	const CLIENT = "apps/console/components/widgets-client.tsx";
 	const STORE = "apps/console/lib/stores/use-widgets-filters.ts";
 
+	// The fixture tree holds ONE of each thing the console has fifteen, eight and six of, so
+	// `FLOORS` would refuse it on every control. The floors are a claim about the console, and
+	// they get their own control below — where the fixture is the SUBJECT of the floor rather
+	// than a casualty of it.
+	const NO_FLOORS = { surfaces: 0, builders: 0, driven: 0 };
+
 	/** @param {string} what @param {object} overrides @param {(v: Record<string, {verdict: string}>) => boolean} want */
 	const drive = (what, overrides, want) => {
-		const scanned = scan(fixtureIo(overrides), {});
+		const scanned = scan(fixtureIo(overrides), {}, {}, NO_FLOORS);
 		if (scanned.problems.length > 0 && Object.keys(overrides).length === 0) {
 			problems.push(`${what}: the clean fixture reported ${scanned.problems.length} problem(s) — ${scanned.problems[0]}`);
 			return;
@@ -1218,7 +1459,7 @@ export function positiveControl() {
 	};
 
 	const clean = fixtureIo();
-	const base = scan(clean, {});
+	const base = scan(clean, {}, {}, NO_FLOORS);
 	if (base.problems.length > 0) problems.push(`the clean fixture is not clean: ${base.problems.join(" | ")}`);
 	drive("the clean fixture passes every predicate", {}, (v) => PREDICATES.filter((p) => p !== "F7").every((p) => v[p].verdict === "PASS"));
 
@@ -1299,9 +1540,63 @@ export function positiveControl() {
 			[CLIENT]: clean.readFile(CLIENT).replace("useFilterUrlSync(useWidgetFilters, DEFAULTS);", "// useFilterUrlSync(useWidgetFilters, DEFAULTS);"),
 		}),
 		{},
+		{},
+		NO_FLOORS,
 	);
 	if (commented.perSurface.useWidgetFilters.F2.verdict !== "FAIL") {
 		problems.push("a COMMENTED-OUT `useFilterUrlSync(…)` satisfied F2 — comments are not being stripped before the matchers run.");
+	}
+
+	// ── THE GATE, in both directions (#4890) ──────────────────────────────────────────────────
+	//
+	// `checkConformance` is the thing that turned this file from a scoreboard into a check, and a
+	// gate with no positive control is indistinguishable from a gate that never fires. So: an
+	// undeclared finding must FAIL the run, a DECLARED one must not, and a declaration that
+	// outlives its finding must fail too — the direction that otherwise goes quiet forever.
+	const blanking = {
+		[CLIENT]: clean.readFile(CLIENT).replace('isPlaceholderData ? "opacity-60" : ""', '""'),
+	};
+	const undeclared = scan(fixtureIo(blanking), {}, {}, NO_FLOORS);
+	if (!undeclared.problems.some((p) => /`useWidgetFilters` fails F6/.test(p))) {
+		problems.push(
+			`an undeclared F6 finding did not fail the scan — it reported ${undeclared.problems.length} ` +
+				`problem(s): ${undeclared.problems.join(" | ")}. F1–F6 would be scored, not gated.`,
+		);
+	}
+	const DECLARED = { useWidgetFilters: { predicates: ["F6"], owner: "#0", why: "the control" } };
+	const declared = scan(fixtureIo(blanking), {}, DECLARED, NO_FLOORS);
+	if (declared.problems.length > 0) {
+		problems.push(`a DECLARED F6 finding still failed the scan: ${declared.problems.join(" | ")}`);
+	}
+	const outlived = scan(clean, {}, DECLARED, NO_FLOORS);
+	if (!outlived.problems.some((p) => /which now PASSES/.test(p))) {
+		problems.push(
+			"a declaration that OUTLIVED its finding did not fail the scan — the ledger would suppress " +
+				`the next real regression on that surface silently and forever. Got: ${outlived.problems.join(" | ")}`,
+		);
+	}
+	const ghost = scan(clean, {}, { useGhostFilters: { predicates: ["F6"], owner: "#0", why: "x" } }, NO_FLOORS);
+	if (!ghost.problems.some((p) => /which is not a filter surface in this tree/.test(p))) {
+		problems.push(`a declaration naming NO surface did not fail the scan: ${ghost.problems.join(" | ")}`);
+	}
+
+	// ── THE CENSUS FLOORS: the answer to greening the gate by DELETING the subject ────────────
+	//
+	// The escape the gate above cannot see: every per-surface verdict is derived, so removing the
+	// surface removes the finding and every survivor still passes. The floors are what makes that
+	// a red, and this drives the clean fixture against a floor one above what it holds.
+	for (const [what, floors, expect] of [
+		["surfaces", { ...NO_FLOORS, surfaces: 2 }, /found 1 filter surface\(s\), below this file's floor of 2/],
+		["builders", { ...NO_FLOORS, builders: 2 }, /found 1 facet-bearing server builder\(s\), below/],
+		["driven builders", { ...NO_FLOORS, driven: 2 }, /found 1 builder\(s\) driven by/],
+	]) {
+		const floored = scan(clean, {}, {}, floors);
+		if (!floored.problems.some((p) => expect.test(p))) {
+			problems.push(
+				`the ${what} floor did not refuse a census below it — a surface could be DELETED to ` +
+					`silence its finding. Got: ${floored.problems.join(" | ") || "no problems"}`,
+			);
+		}
 	}
 
 	// ── the vacuity floors, each one exercised ────────────────────────────────────────────────
@@ -1310,7 +1605,7 @@ export function positiveControl() {
 		/** @type {ReturnType<typeof scan>} */
 		let out;
 		try {
-			out = scan(fixtureIo(overrides), {});
+			out = scan(fixtureIo(overrides), {}, {}, NO_FLOORS);
 		} catch (err) {
 			if (!expect.test(String(err.message))) problems.push(`${what}: raised, but not about that — ${err.message}`);
 			return;
@@ -1341,7 +1636,7 @@ export function positiveControl() {
 
 	// The F7 test having no DRIVEN table at all must RAISE, not read as zero driven builders.
 	try {
-		scan(fixtureIo({ [F7_TEST]: "// nothing here" }), {});
+		scan(fixtureIo({ [F7_TEST]: "// nothing here" }), {}, {}, NO_FLOORS);
 		problems.push("an F7 test with no `DRIVEN` table was accepted — the subject check would then pass by finding nothing.");
 	} catch (err) {
 		if (!/no longer declares a `const DRIVEN` table/.test(String(err.message))) {
@@ -1349,7 +1644,7 @@ export function positiveControl() {
 		}
 	}
 	try {
-		scan(fixtureIo({ [F7_TEST]: null }), {});
+		scan(fixtureIo({ [F7_TEST]: null }), {}, {}, NO_FLOORS);
 		problems.push("a MISSING F7 test was accepted — F7 would then be scored from nothing.");
 	} catch (err) {
 		if (!/is missing/.test(String(err.message))) problems.push(`a missing F7 test raised the wrong error: ${err.message}`);
@@ -1358,7 +1653,7 @@ export function positiveControl() {
 	// ── the URL params a surface writes, for the live F8–F10 pass ─────────────────────────────
 	// Hand-expected: the fixture's defaults are `{ search: "", kinds: [] }`, so the answer is two
 	// params, one of them a facet and one the free text — written here, not computed.
-	const params = (io) => scan(io, {}).urlParams.useWidgetFilters;
+	const params = (io) => scan(io, {}, {}, NO_FLOORS).urlParams.useWidgetFilters;
 	const cleanParams = params(clean);
 	if (JSON.stringify(cleanParams.params) !== JSON.stringify([{ key: "search", param: "search", array: false }, { key: "kinds", param: "kinds", array: true }]) || cleanParams.search !== "search") {
 		problems.push(`the clean fixture's URL params read as ${JSON.stringify(cleanParams)} — expected search + kinds[], with \`search\` the free-text param.`);
@@ -1507,14 +1802,20 @@ function main() {
 			`(modules per root — ${roots}).`,
 	);
 	console.log(
-		"  F1–F6 are SCORED, not gated, here: `apps/console/scripts/audit-report.mjs` joins them to the route\n" +
-			"  set and CI diffs `apps/console/ui-conformance-baseline.json` against the tree, so a conformance\n" +
-			"  regression reds there naming the route it moved. What this check fails on is a broken subject set.",
+		"  F1–F6 GATE here as of #4890: a surface that fails one fails this check, unless the finding is\n" +
+			"  declared in `FILTER_STANDARD_DEBT` (empty, and meant to stay so). The census floors under that\n" +
+			"  gate are the answer to greening it by DELETING a surface. `apps/console/scripts/audit-report.mjs`\n" +
+			"  still joins the same verdicts to the route set for `ui-conformance-baseline.json`, which is now a\n" +
+			"  per-route RECORD of a thing already enforced rather than the only place it was noticed.",
 	);
-	for (const [symbol, verdicts] of Object.entries(scanned.perSurface)) {
-		const fails = Object.entries(verdicts).filter(([, v]) => v.verdict === "FAIL");
-		if (fails.length === 0) continue;
-		console.log(`  ${symbol}: ${fails.map(([id, v]) => `${id} — ${v.detail}`).join("\n      ")}`);
+	const declared = Object.entries(FILTER_STANDARD_DEBT);
+	if (declared.length > 0) {
+		console.log(
+			`  ${declared.length} declared deviation(s), each owned: ` +
+				declared
+					.map(([symbol, row]) => `${symbol} ${row.predicates.join("+")} (${row.owner})`)
+					.join(", "),
+		);
 	}
 }
 

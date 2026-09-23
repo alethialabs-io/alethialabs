@@ -3,12 +3,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Upgrade an EXISTING Hobby organization to Pro — the sibling of the create-org sheet,
-// minus the name step (the org already exists). It opens a subscription intent on the
-// ACTIVE org (createSubscriptionIntent), takes payment through the shared
+// minus the name step (the org already exists). It DECLARES the payer, opens a subscription
+// intent on the ACTIVE org (createSubscriptionIntent), takes payment through the shared
 // BillingCheckoutForm, then — since a paid org can now collaborate — drops into the
 // shared invite view. Best-effort billing-detail persistence mirrors the create flow.
 // Shares the two-column shell / invite view / primitives with the create sheet via
 // ./org-purchase-ui. Owner-gated server-side; refuses if a live subscription exists.
+//
+// THE DECLARATION IS A STEP, AND IT COMES FIRST (#4633). This sheet used to fire
+// createSubscriptionIntent from a `useEffect` the moment it opened — before its own form could
+// collect anything — and the eligibility gate refused every one of those calls for an undeclared
+// payer capacity. The customer then read "Billing may not be configured on this deployment",
+// which blamed the operator for a rule the product enforces. The intent is not opened until the
+// payer has been declared and the gate has been asked, in that order.
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -18,11 +25,16 @@ import {
 	saveTaxId,
 	updateBillingAddress,
 } from "@/app/server/actions/billing";
+import { declarePayer, payerConversionStatus } from "@/app/server/actions/legal";
 import {
 	billingAddressFrom,
 	BillingCheckoutForm,
 	type CollectedBilling,
 } from "@/components/billing/billing-checkout-form";
+import {
+	PayerDeclarationForm,
+	type PayerDeclaration,
+} from "@/components/billing/payer-declaration-form";
 import { updateOrgPrimaryAddress } from "@/app/server/actions/org-settings";
 import {
 	InviteView,
@@ -48,7 +60,7 @@ import {
 	SheetTitle,
 } from "@repo/ui/sheet";
 
-type View = "pay" | "invite";
+type View = "declare" | "pay" | "invite";
 
 interface UpgradeOrgSheetProps {
 	open: boolean;
@@ -58,9 +70,9 @@ interface UpgradeOrgSheetProps {
 }
 
 /**
- * The upgrade sheet for an existing Hobby org. Opens a payment intent for the active org
- * as soon as it's shown, pays through the shared checkout, then invites. The org must be
- * the active workspace (the server action is active-org-scoped).
+ * The upgrade sheet for an existing Hobby org. Declares the payer, opens a payment intent for
+ * the active org, pays through the shared checkout, then invites. The org must be the active
+ * workspace (the server action is active-org-scoped).
  */
 export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheetProps) {
 	const router = useRouter();
@@ -68,9 +80,17 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	const { data: session } = authClient.useSession();
 	const ownerEmail = session?.user?.email ?? "";
 
-	const [view, setView] = useState<View>("pay");
+	const [view, setView] = useState<View>("declare");
 	const [clientSecret, setClientSecret] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	// The declared payer facts. Null until the customer answers, and the intent effect below is
+	// gated on it — this is what keeps the conversion from being attempted undeclared.
+	const [declaration, setDeclaration] = useState<PayerDeclaration | null>(null);
+	const [declaring, setDeclaring] = useState(false);
+	// The gate's own sentence when it refused THIS declaration (a closed market, unaccepted terms),
+	// shown on the declaration step rather than swapped in for the whole sheet: the answer may be
+	// one the customer can change.
+	const [refusal, setRefusal] = useState<string | null>(null);
 	// `selected` is the explicit currency override (undefined = let the server geo-decide);
 	// `currency` is what the created intent actually used (Stripe locks it) — drives display.
 	const [selected, setSelected] = useState<SupportedCurrency | undefined>(undefined);
@@ -83,16 +103,21 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	const meta = planMeta("team");
 	const teamPrice = useLivePlanPrice("team", currency);
 
-	// Open a subscription intent for the active org the moment the sheet opens (and re-open it
-	// when the currency toggle changes — Stripe locks a sub's currency at creation). If a live
-	// subscription already exists the action throws — surfaced inline rather than as a form.
+	// Announce the attempt when the sheet opens, but open NOTHING: the subscription intent is an
+	// effect of the declaration, not of the sheet being visible.
 	useEffect(() => {
 		if (!open) return;
+		track("upgrade_started", { plan: "team", context: "upgrade_sheet" });
+	}, [open]);
+
+	// Open a subscription intent once the payer has been declared (and re-open it when the
+	// currency toggle changes — Stripe locks a sub's currency at creation). If a live
+	// subscription already exists the action throws — surfaced inline rather than as a form.
+	useEffect(() => {
+		if (!open || !declaration) return;
 		let active = true;
-		setView("pay");
 		setClientSecret(null);
 		setError(null);
-		track("upgrade_started", { plan: "team", context: "upgrade_sheet" });
 		createSubscriptionIntent("team", selected ? { currency: selected } : undefined)
 			.then((intent) => {
 				if (!active) return;
@@ -113,17 +138,56 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		return () => {
 			active = false;
 		};
-	}, [open, selected]);
+	}, [open, selected, declaration]);
 
 	function reset() {
-		setView("pay");
+		setView("declare");
 		setClientSecret(null);
 		setError(null);
+		setDeclaration(null);
+		setDeclaring(false);
+		setRefusal(null);
 		setSelected(undefined);
 		setCurrency("usd");
 		setInviteEmail("");
 		setInviteRole("operator");
 		setSent([]);
+	}
+
+	/**
+	 * Records the declaration, asks the gate whether it permits a sale, and only then moves to
+	 * payment.
+	 *
+	 * The order is the point. `declarePayer` FIRST and unconditionally: the capacity and country
+	 * are facts the payer gave us, and they stay true whether or not we may sell into that market
+	 * today — writing them is also what lifts `capacity_not_declared` for every later conversion
+	 * this org attempts. `payerConversionStatus` SECOND, because a refusal that arrives as a thrown
+	 * error from `createSubscriptionIntent` reaches this component with its reason erased, and the
+	 * customer would be shown the generic "billing may not be configured" sentence for a rule the
+	 * product itself enforces.
+	 */
+	async function handleDeclare(next: PayerDeclaration) {
+		if (declaring) return;
+		setDeclaring(true);
+		setRefusal(null);
+		try {
+			await declarePayer(next);
+			const verdict = await payerConversionStatus(next);
+			if (!verdict.allowed) {
+				setRefusal(verdict.message);
+				return;
+			}
+			setDeclaration(next);
+			setView("pay");
+		} catch (e) {
+			setRefusal(
+				e instanceof Error
+					? e.message
+					: "Couldn't record who this purchase is for — try again.",
+			);
+		} finally {
+			setDeclaring(false);
+		}
 	}
 
 	function handleOpenChange(next: boolean) {
@@ -201,7 +265,21 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 					Upgrade this organization to Pro and invite your teammates.
 				</SheetDescription>
 
-				{view === "pay" ? (
+				{view === "declare" ? (
+					<PurchaseLayout
+						meta={meta}
+						heading="Upgrade to Pro"
+						subheading="Tell us who this purchase is for, then add a payment method."
+						onClose={() => handleOpenChange(false)}
+					>
+						<PayerDeclarationForm
+							busy={declaring}
+							refusal={refusal}
+							submitLabel="Continue to payment"
+							onDeclare={(d) => void handleDeclare(d)}
+						/>
+					</PurchaseLayout>
+				) : view === "pay" ? (
 					<PurchaseLayout
 						meta={meta}
 						heading="Upgrade to Pro"

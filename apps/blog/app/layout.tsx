@@ -3,22 +3,13 @@
 
 import "./global.css";
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
+import { brandFontVariables } from "@repo/brand/fonts";
 import { ThemeProvider } from "next-themes";
 import type { ReactNode } from "react";
 import { Chrome } from "@repo/brand/site-chrome";
 import { ConsentProvider } from "@repo/brand/site-consent";
 import { SiteFooter } from "@repo/brand/site-footer";
 import { Header as SiteHeader } from "@repo/brand/site-header";
-
-// `--font-geist-sans`, not `--font-geist`: @repo/brand/tokens.css maps --font-sans to it.
-const geist = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
-const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" });
-const spaceGrotesk = Space_Grotesk({
-	subsets: ["latin"],
-	variable: "--font-space-grotesk",
-	weight: ["400", "500", "600", "700"],
-});
 
 export const metadata: Metadata = {
 	metadataBase: new URL("https://alethialabs.io"),
@@ -34,7 +25,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 	return (
 		<html
 			lang="en"
-			className={`${geist.variable} ${geistMono.variable} ${spaceGrotesk.variable}`}
+			className={brandFontVariables}
 			suppressHydrationWarning
 		>
 			<body className="min-h-screen flex flex-col bg-background text-foreground">

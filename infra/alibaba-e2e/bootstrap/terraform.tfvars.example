@@ -6,3 +6,11 @@ region = "eu-central-1"
 
 # OSS bucket names are globally unique — change this if the default is taken.
 # state_bucket_name = "alethia-tofu-state-e2e-alibaba"
+
+# The access-log sink (#4903) is a SECOND bucket in the same region, always named
+# `<state bucket>-logs`. It has no override of its own — if that name is taken, change
+# state_bucket_name above and both move.
+
+# How long access-log shards are kept (30-3650). 90 days: an unauthorized state read is noticed by
+# its consequences, weeks later.
+# access_log_retention_days = 90

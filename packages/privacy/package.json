@@ -13,18 +13,18 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
-    "react-hook-form": "^7.87.0",
-    "zod": "^4.5.4"
+    "react-hook-form": "^7.88.0",
+    "zod": "^4.6.5"
   },
   "peerDependencies": {
-    "react": "^19.2.8"
+    "react": "^19.3.0"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
-    "@types/react": "19.2.18",
+    "@types/react": "19.3.0",
     "eslint": "^9.39.5",
-    "react": "^19.2.8",
+    "react": "^19.3.0",
     "typescript": "5.9.3"
   }
 }

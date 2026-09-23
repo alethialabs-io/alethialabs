@@ -4,11 +4,11 @@
 // Pure filter plumbing for Settings · Members — the console filter standard's "normalize" step
 // (lib/query/README.md → "Server-side filters").
 //
-// KNOWN DEVIATION, recorded rather than hidden: `getMembers()` / `getInvitations()` take no
-// arguments and return no facet counts, and the server-action layer is owned by another lane.
-// The org's members + pending invitations are fetched once under `qk.members(org)` and narrowed
-// here. The facet-count invariant still holds (counts are over the UNFILTERED rows); the
-// filtering is not yet server-side. Follow-up: give `getMembers` a query + facets.
+// The deviation this file used to record — members and invitations fetched once under
+// `qk.members(org)` and narrowed HERE, because `getMembers()` took no query — is closed
+// (#4890). `getMembersPage(q)` narrows both record kinds in SQL and counts the status, role and
+// team facets over the org's unfiltered universe, so `filterMembers` and `membersFacetCounts`
+// are gone and this module is the normalize step and nothing else.
 
 /** The unified row the members table renders — a member or a pending invitation. */
 export interface MemberRowView {
@@ -100,42 +100,4 @@ export function normalizeMembersQuery(
 	const teams = normalizeList(filters.teams);
 	if (teams) query.teams = teams;
 	return query;
-}
-
-/** Apply the client-side half of the query to the fetched universe. Pure. */
-export function filterMembers(
-	rows: MemberRowView[],
-	query: NormalizedMembersQuery,
-): MemberRowView[] {
-	const q = query.search?.toLowerCase();
-	const statuses = query.statuses ? new Set(query.statuses) : null;
-	const roles = query.roles ? new Set(query.roles) : null;
-	const teams = query.teams ? new Set(query.teams) : null;
-	return rows.filter((r) => {
-		if (statuses && !statuses.has(r.status)) return false;
-		if (roles && !roles.has(r.role)) return false;
-		if (teams && !r.teams.some((t) => teams.has(t))) return false;
-		if (q && !`${r.name} ${r.meta}`.toLowerCase().includes(q)) return false;
-		return true;
-	});
-}
-
-/**
- * Facet counts over the UNFILTERED rows, so no option vanishes as you select it.
- * A member with several teams counts once per team — that is what a team facet means.
- */
-export function membersFacetCounts(all: MemberRowView[]): {
-	statuses: Record<string, number>;
-	roles: Record<string, number>;
-	teams: Record<string, number>;
-} {
-	const statuses: Record<string, number> = {};
-	const roles: Record<string, number> = {};
-	const teams: Record<string, number> = {};
-	for (const r of all) {
-		statuses[r.status] = (statuses[r.status] ?? 0) + 1;
-		roles[r.role] = (roles[r.role] ?? 0) + 1;
-		for (const t of r.teams) teams[t] = (teams[t] ?? 0) + 1;
-	}
-	return { statuses, roles, teams };
 }

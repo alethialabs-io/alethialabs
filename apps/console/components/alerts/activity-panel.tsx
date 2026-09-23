@@ -19,7 +19,7 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
-import type { AlertsBootstrap, DeliveryDTO } from "@/app/server/actions/alerts";
+import type { DeliveryDTO } from "@/app/server/actions/alerts";
 import { ActivityFilterBar } from "@/components/alerts/alerts-filter-bar";
 import type { ActivityView } from "@/components/alerts/alerts-filters";
 import { deliveryBadge } from "@/components/alerts/alerts-status";
@@ -29,6 +29,7 @@ import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { formatDate } from "@repo/format";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { StatusBadge } from "@repo/ui/status-badge";
+import { cn } from "@repo/ui/utils";
 
 /**
  * The stable empty map the classification query falls back to while it is in flight.
@@ -42,20 +43,19 @@ const NO_ASSIGNMENTS: Record<string, AssignedValue[]> = {};
 
 /** Delivery activity log. */
 export function ActivityPanel({
-	bootstrap,
 	view,
 }: {
-	bootstrap: AlertsBootstrap;
-	/** The filter standard's resolved view — rows, facets, active-filter count. */
+	/** The filter standard's resolved view — rows, facets, result count, staleness. */
 	view: ActivityView;
 }) {
-	const { deliveries } = bootstrap;
-	// One batched query hydrates every delivery row's classification chips (read-only).
+	const { rows, facets, stale } = view;
+	// One batched query hydrates every delivery row's classification chips (read-only). The
+	// ledger is filtered and windowed SERVER-side, so the subject set is the rows on screen —
+	// it used to be the bootstrap's whole 50-row window, which is neither.
 	const { data: classMap = NO_ASSIGNMENTS } = useAssignmentsForKind(
 		"alert_delivery",
-		deliveries.map((d) => d.id),
+		rows.map((d) => d.id),
 	);
-	const { rows, facets } = view;
 
 	const columns = useMemo<ColumnDef<DeliveryDTO>[]>(
 		() => buildColumns(classMap),
@@ -66,11 +66,16 @@ export function ActivityPanel({
 		<div>
 			<ActivityFilterBar facets={facets} />
 
-			<DataTable
-				columns={columns}
-				data={rows}
-				emptyMessage="No activity matches these filters."
-			/>
+			{/* `stale` is the filter standard's `isPlaceholderData` dim: these rows are the
+			    PREVIOUS query's answer, kept so the table does not blank, and marked so they are
+			    not read as the current one. */}
+			<div className={cn(stale && "opacity-60 transition-opacity")}>
+				<DataTable
+					columns={columns}
+					data={rows}
+					emptyMessage="No activity matches these filters."
+				/>
+			</div>
 		</div>
 	);
 }

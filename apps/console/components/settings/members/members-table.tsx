@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Settings · Members — stats + toolbar (tabs / search / role filter / invite) + a bulk
-// bar, over the shared DataTable (sortable + paginated). Real members (getMembers, with
-// team names) + pending invitations (getInvitations); inline role change, suspend/
+// bar, over the shared DataTable (sortable + paginated). Real members + pending invitations,
+// filtered SERVER-SIDE by `getMembersPage` (rows + facets); inline role change, suspend/
 // reactivate (real PDP grant revoke), remove, invite, cancel. The page header + gate
 // live in members/page.tsx.
 
@@ -14,11 +14,7 @@ import { MoreHorizontal, Plus, Shield, Users } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-  getInvitations,
-  getMembers,
-  setMemberSuspended,
-} from "@/app/server/actions/members";
+import { setMemberSuspended } from "@/app/server/actions/members";
 import { getCollaborationAccess } from "@/app/server/actions/billing";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { ClassificationControl } from "@/components/classification/classification-control";
@@ -29,7 +25,7 @@ import { InviteMemberDialog } from "@/components/settings/members/invite-member-
 import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import { qk } from "@/lib/query/keys";
+import { useMembersPageQuery } from "@/lib/query/use-members-query";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useMembersFilters } from "@/lib/stores/use-settings-filters";
 import { formatRelative } from "@repo/format";
@@ -61,11 +57,9 @@ import { userInitials } from "@/lib/user-display";
 import {
   ASSIGNABLE_ROLE_OPTIONS,
   DEFAULT_MEMBERS_FILTERS,
-  filterMembers,
   MEMBER_ROLE_FILTER_OPTIONS,
   MEMBER_STATUS_OPTIONS,
   type MemberRowView,
-  membersFacetCounts,
   normalizeMembersQuery,
 } from "./members-filters";
 
@@ -280,14 +274,12 @@ export function MembersTable() {
     setPending(action);
   }, []);
 
-  const membersQuery = useQuery({
-    queryKey: qk.members(org),
-    queryFn: () => getMembers(),
-  });
-  const invitesQuery = useQuery({
-    queryKey: ["members", org, "invitations"] as const,
-    queryFn: () => getInvitations(),
-  });
+  // Filtered SERVER-SIDE: `getMembersPage(q)` narrows members AND pending invitations in SQL
+  // and returns the status/role/team facets counted over the org's UNFILTERED universe, so an
+  // option never disappears as you select it. The normalized query IS the key, and
+  // `keepPreviousData` (in the hook) keeps the table's rows across a filter change —
+  // `isPlaceholderData` is what marks them stale while the next answer loads.
+  const page = useMembersPageQuery(query);
   // Inviting is the paid (Pro) value — viewing members is always open. The billing-backed
   // `canInvite` gate (card-backed/paid) decides whether the Invite button opens the form
   // or the Pro upsell; the server enforces it again in `beforeCreateInvitation`.
@@ -299,8 +291,10 @@ export function MembersTable() {
   const canInvite = collaboration.data?.canInvite ?? false;
   // Memoized, not `data ?? []` inline: a fresh `[]` every render would re-key the batched
   // classification query below on each paint while the fetch is still in flight.
-  const members = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
-  const invites = useMemo(() => invitesQuery.data ?? [], [invitesQuery.data]);
+  const members = useMemo(() => page.data?.members ?? [], [page.data]);
+  const invites = useMemo(() => page.data?.invitations ?? [], [page.data]);
+  /** Every member + pending invitation in the org — what tells onboarding from an empty filter. */
+  const total = page.data?.total ?? 0;
 
   const load = useCallback(() => {
     void qc.invalidateQueries({ queryKey: ["members", org] });
@@ -382,9 +376,21 @@ export function MembersTable() {
     rows.filter((r) => r.kind === "member").map((r) => r.refId),
   );
 
-  const filtered = useMemo(() => filterMembers(rows, query), [rows, query]);
-  // Facet counts are over the UNFILTERED rows, so an option cannot disappear as you select it.
-  const counts = useMemo(() => membersFacetCounts(rows), [rows]);
+  // The server already applied the query, so the rows ARE the result. The facet counts come
+  // from that read's second, unfiltered pass — never from these rows.
+  const filtered = rows;
+  const counts = useMemo(() => {
+    const tally = (options: { value: string; count: number }[]) => {
+      const out: Record<string, number> = {};
+      for (const o of options) out[o.value] = o.count;
+      return out;
+    };
+    return {
+      statuses: tally(page.data?.facets.statuses ?? []),
+      roles: tally(page.data?.facets.roles ?? []),
+      teams: tally(page.data?.facets.teams ?? []),
+    };
+  }, [page.data]);
   const activeFilters = countActiveFilters(filters, DEFAULT_MEMBERS_FILTERS);
 
   const toggle = useCallback((key: string) => {
@@ -657,7 +663,7 @@ export function MembersTable() {
     ...actionCols,
   ];
 
-  if (membersQuery.isPending) {
+  if (page.isPending) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-20 w-full" />
@@ -796,14 +802,14 @@ export function MembersTable() {
         <EmptyState
           className="border border-border bg-surface-sunken"
           icon={<Users />}
-          title={rows.length === 0 ? "No members yet" : "No matching members"}
+          title={total === 0 ? "No members yet" : "No matching members"}
           description={
-            rows.length === 0
+            total === 0
               ? "Invite a teammate to collaborate in this organization."
               : "No member or invitation matches these filters."
           }
           action={
-            rows.length === 0 ? undefined : (
+            total === 0 ? undefined : (
               <Button variant="outline" size="sm" onClick={reset}>
                 Clear filters
               </Button>
@@ -811,7 +817,11 @@ export function MembersTable() {
           }
         />
       ) : (
-        <DataTable columns={columns} data={filtered} pageSize={20} />
+        <div
+          className={page.isPlaceholderData ? "opacity-60 transition-opacity" : undefined}
+        >
+          <DataTable columns={columns} data={filtered} pageSize={20} />
+        </div>
       )}
 
       {/* The one confirmation every destructive control on this table passes through. It stays

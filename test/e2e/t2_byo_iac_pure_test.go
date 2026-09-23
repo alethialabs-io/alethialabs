@@ -99,7 +99,10 @@ func TestByoIacSourceValidate(t *testing.T) {
 // else in the build would notice a rename on either side.
 func TestByoIacSnapshotCarriesIacSource(t *testing.T) {
 	src := byoIacSource{RepoURL: "https://x/y", Ref: "main", Path: "iac/drift/gcp", CommitSHA: "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeee"}
-	snap := buildByoIacSnapshot("proj", "e2e1", "gcp", "europe-west4", src)
+	// A ZONE, because that is the shape production supplies (#4951). This fixture read
+	// `"europe-west4"` — a REGION — so it exercised the one input the harness never passes, and the
+	// test passed for two months over a defect that only a paid cloud run could surface.
+	snap := buildByoIacSnapshot("proj", "e2e1", "gcp", "europe-west4-b", src)
 
 	raw, err := json.Marshal(snap)
 	if err != nil {

@@ -34,7 +34,10 @@
     "check:addon-published-defaults": "bash scripts/addons/check-published-defaults.sh",
     "check:addon-resource-fit": "bash scripts/addons/check-resource-fit.sh",
     "check:destructive-actions": "node scripts/check-destructive-actions.mjs",
-    "check:shared-surface": "node scripts/check-shared-surface.mjs",
+    "check:forbidden-names": "node scripts/check-forbidden-names.mjs",
+    "check:no-network-fonts": "node scripts/check-no-network-fonts.mjs",
+    "check:closing-keyword-parsers": "node scripts/check-closing-keyword-parsers.mjs",
+		"check:shared-surface": "node scripts/check-shared-surface.mjs",
     "check:cli-surface": "node scripts/check-cli-surface.mjs",
     "gen:shared-surface": "node scripts/check-shared-surface.mjs --write",
     "check:console-routes": "node scripts/lib/console-routes.mjs --summary",
@@ -100,8 +103,8 @@
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
-    "prettier": "^3.9.6",
-    "turbo": "^2.10.12",
+    "prettier": "^3.9.7",
+    "turbo": "^2.10.13",
     "typescript": "5.9.3"
   },
   "packageManager": "pnpm@9.15.0",

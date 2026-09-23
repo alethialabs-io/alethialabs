@@ -411,6 +411,42 @@ fi
 
 echo "✓ Claimed #$pick — $title"
 echo "  instance: $INSTANCE   branch: $branch"
+
+# ── does this unit's own body assert a protection it does not carry? ─────────────────────────────
+#
+# THE MOMENT THIS EXISTS FOR. The ready filter above reads LABELS and not one word of the body, so
+# #4112 — whose first sentence is "NOT AGENT-BUILDABLE … `needs:human` keeps this out of
+# claim-work.sh's autonomous picking", over labels that did not include `needs:human` — sat at the
+# TOP of `--class backend`'s queue. The protection its author believed in was never installed.
+#
+# IT WARNS, IT DOES NOT SKIP, and that is deliberate. Only a human can say which side of a
+# prose-vs-label disagreement is right; auto-skipping would let one stray backticked mention make a
+# real unit permanently unpickable, turning a fail-OPEN into a silent fail-CLOSED. The claim stands
+# and the builder is told to settle it before building.
+#
+# The predicate is board_asserted_protection in scripts/lib/board-pr.sh — the same function
+# coordinate.sh reports the whole board with, so the two cannot drift into different answers.
+# Best-effort: a unit whose body we could not fetch or parse warns about that and nothing else.
+if pick_json="$(gh issue view "$pick" --json number,title,labels,body 2>/dev/null)"; then
+  pick_rows="$(printf '[%s]' "$pick_json" | board_asserted_protection)" || pick_rows="__UNCHECKED__"
+  if [ "$pick_rows" = "__UNCHECKED__" ]; then
+    echo "  ⚠ could not check whether this unit's body asserts a protection it lacks (jq missing or unparseable body)." >&2
+  elif [ -n "$pick_rows" ]; then
+    echo >&2
+    echo "  ⚠⚠ THIS UNIT'S BODY ASSERTS A PROTECTION IT DOES NOT CARRY." >&2
+    while IFS=$'\t' read -r _n _asserted _claimed _labels; do
+      [ -n "$_n" ] || continue
+      echo "     #$_n says \"$_asserted\", which claims the \`$_claimed\` label. Its labels: [$_labels]." >&2
+    done <<<"$pick_rows"
+    echo "     The filter that picked it reads labels, never prose, so the sentence protecting it did" >&2
+    echo "     NOTHING. Its author may have meant this to be off-limits to an autonomous builder (#4112)." >&2
+    echo "     SETTLE THIS BEFORE BUILDING — ask the maintainer. If the body is right, installing the" >&2
+    echo "     label is what makes the assertion true, and the claim comes off the same way the" >&2
+    echo "     reclaim pass takes one off (there is no --release flag; do not invent one):" >&2
+    echo "       gh issue edit $pick --add-label needs:human --remove-label claimed --remove-assignee @me" >&2
+    echo >&2
+  fi
+fi
 echo
 echo "Next:"
 echo "  pnpm wt $slug && cd ../wt-$slug"

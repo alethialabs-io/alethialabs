@@ -163,3 +163,12 @@ variable "edition" {
     error_message = "edition must be ENTERPRISE or ENTERPRISE_PLUS."
   }
 }
+
+# The BUILT_IN admin login. Null keeps the derived `<project_name>-user`, which is what every
+# instance built before #4320 has, and what the bootstrap Job (#722) reads out of the credentials
+# secret. Changing it on an existing instance REPLACES the user — see google_sql_user.default.
+variable "default_username" {
+  type        = string
+  default     = null
+  description = "Name of the BUILT_IN admin database user. Null derives it as \"<project_name>-user\" — the historical name, and the one the credentials secret and the keyless bootstrap Job carry."
+}

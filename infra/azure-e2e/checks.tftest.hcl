@@ -34,6 +34,12 @@ mock_provider "azuread" {
 variables {
   subscription_id         = "00000000-0000-0000-0000-000000000000"
   e2e_budget_alert_emails = []
+  # Overrides terraform.tfvars' "e2e-dev" so the `env` credential is NOT planned here. imports.tf
+  # adopts that credential with an import block, and OpenTofu (verified on 1.12.3) CRASHES when a
+  # test plan reaches an import: "Importing is not supported in testing context". With no `env`
+  # instance the import's for_each is empty and the plan never calls it — which also proves that
+  # branch plans cleanly. The cost: these runs cover the `ref` credential only.
+  e2e_github_environment = ""
 }
 
 # The committed posture: terraform.tfvars sets the issuer to null, so nothing is created.

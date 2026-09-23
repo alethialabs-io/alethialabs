@@ -15,3 +15,8 @@ output "state_container_name" {
   description = "Blob container holding the state blobs — backend.hcl's `container_name`."
   value       = azurerm_storage_container.tfstate.name
 }
+
+output "state_log_workspace_name" {
+  description = "Log Analytics workspace holding the state account's blob access logs (#4903). Not a backend target — nothing puts state here. Query `StorageBlobLogs` in it when you need to know who touched state."
+  value       = azurerm_log_analytics_workspace.tfstate_access.name
+}

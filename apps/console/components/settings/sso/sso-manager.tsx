@@ -78,8 +78,15 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 	const [editing, setEditing] = useState<SsoProviderRow | null>(null);
 	const [deleting, setDeleting] = useState<SsoProviderRow | null>(null);
 
-	// Filtered SERVER-SIDE by `listSsoProviders`.
-	const { data: providers = [], isFetching } = useSsoProvidersQuery(query);
+	// Filtered SERVER-SIDE by `listSsoProviders`. `isPlaceholderData` is the other half of the
+	// hook's `keepPreviousData` (lib/query/README.md, step 5): the rows stay while the next
+	// query loads, and the dim below says they are the PREVIOUS filter's answer. Keeping them
+	// without saying so renders a stale list as a current one.
+	const {
+		data: providers = [],
+		isFetching,
+		isPlaceholderData,
+	} = useSsoProvidersQuery(query);
 	// The UNFILTERED universe, purely for the facet counts — the base key, which the page
 	// prefetches. An option whose count came from the current result would disappear the
 	// moment you selected it, which is exactly what the standard forbids.
@@ -189,7 +196,12 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 					}
 				/>
 			) : (
-				<div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+				<div
+					className={cn(
+						"grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]",
+						isPlaceholderData && "opacity-60 transition-opacity",
+					)}
+				>
 					<div className="rounded-lg border border-border bg-surface p-2 shadow-sm">
 						{providers.map((p) => (
 							<button

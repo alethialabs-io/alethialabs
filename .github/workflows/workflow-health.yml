@@ -200,7 +200,9 @@ jobs:
       # already spends most of its 10-minute budget on sequential GitHub API calls; if demand sampling
       # consumes the remainder, it must cut only itself, never the report this workflow exists to file.
       # It does NOT gate on the value: a demand number is a trend, and failing the build on it would be
-      # a guess at the threshold. The collector still fails loudly on an empty or untimed sample.
+      # a guess at the threshold. The collector still fails loudly on an empty or untimed sample, and
+      # since #4934 on a sample the jobs API mostly could not be read — a COLLECTION failure is not a
+      # value, and it is the one thing here that must never render as a quiet repo.
       - name: CI demand — how much CI we ask for, and how long we wait for it
         env:
           GH_TOKEN: ${{ github.token }}
@@ -212,8 +214,51 @@ jobs:
             > demand-runs.json
           jq -c '.[]' demand-runs.json | while read -r r; do
             id=$(printf '%s' "$r" | jq -r '.databaseId')
-            jobs=$(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs?per_page=100" \
-                     --jq '[.jobs[] | select(.startedAt != null and .startedAt != .createdAt) | {created_at:.createdAt, started_at:.startedAt}]' 2>/dev/null || echo '[]')
+            # snake_case, because this is the REST endpoint and REST answers in snake_case (#4934).
+            # It was written in camelCase — `gh run view --json`'s spelling — so `.startedAt` was
+            # null on every job, the select was false for all of them, `jobs` was `[]` for all 60
+            # runs, and ci-demand.mjs refused the partial number. Correctly: it is the one thing in
+            # this chain that was working. The workflow whose job is noticing red pipelines was
+            # itself red on 2026-09-20, -21 and -22 over one word's casing. And there is no
+            # `gh`-shaped alternative — `gh run view --json jobs` exposes no per-job `createdAt` at
+            # all, so REST is the only place the wait exists. Verified against a live run: this jq
+            # returns `{"created_at":"…21:28:18Z","started_at":"…21:30:17Z"}` — a real 119s wait.
+            #
+            # THE OTHER TWO DEFECTS IN THESE LINES ARE FIXED BY #4934, and both fixes are the same
+            # move: STOP DECIDING ANYTHING HERE. This is a jq expression inside YAML — nothing can
+            # test it, so every judgement it made was a judgement no assertion could catch. It now
+            # fetches and classifies nothing; ci-demand.mjs, which has a --self-test, does both.
+            #
+            #   1. `|| echo '[]'` reported an API FAILURE as an absence of jobs. It is now `null`,
+            #      which is a value ci-demand.mjs can tell apart from `[]` — "I could not read this
+            #      run" and "this run had no jobs" were literally the same JSON before. The step
+            #      still does not die on one bad call (see below); the collector counts them and
+            #      ci-demand.mjs refuses only when a MAJORITY of the sample is holes.
+            #   2. `select(.started_at != .created_at)` dropped every job whose timestamps matched.
+            #      Measured over these same 60 runs on 2026-09-23: 266 jobs, 89 with matching
+            #      timestamps, and all 89 were `skipped` — so the predicate meant "skipped" and said
+            #      "same second". It now passes `conclusion` through and ci-demand.mjs asks for
+            #      `skipped` directly. The two agreed on every job in the sample, so THE PUBLISHED
+            #      2026-09-03 FIGURES REMAIN COMPARABLE; what changes is that a real job dispatched
+            #      inside one second is no longer silently discarded as a best case.
+            #
+            # stderr goes to a file, never into `$jobs`: `gh` writes warnings on stderr for
+            # SUCCESSFUL calls too, so folding it into the value would poison a good read.
+            if jobs=$(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs?per_page=100" \
+                        --jq '[.jobs[] | {conclusion, created_at, started_at}]' 2>demand-err.txt); then
+              :
+            else
+              # Reported, not swallowed and not fatal. This step is the LAST in the job that files
+              # the red-pipeline report, so one transient 502 must cut only the measurement, never
+              # the report — and `jobs=null` is what carries "unread" all the way to the summary.
+              #
+              # >&2 IS LOAD-BEARING, not tidiness. This loop's stdout IS the data stream — it feeds
+              # `jq -s` below — so a diagnostic printed to stdout is parsed as a run and kills the
+              # whole step on the first failed call, turning "one run was unreadable" into "no
+              # measurement at all". Caught by running this exact block against a stubbed `gh`.
+              echo "::warning::ci-demand: could not read jobs for run $id — $(tr '\n' ' ' < demand-err.txt)" >&2
+              jobs=null
+            fi
             printf '%s' "$r" | jq -c --argjson j "$jobs" \
               '{id:.databaseId, name, event, head_branch:.headBranch, conclusion, created_at:.createdAt, jobs:$j}'
           done | jq -s '.' > demand.json
@@ -313,5 +358,194 @@ jobs:
           existing="$(printf '%s' "$matches" | head -1)"
           if [ -n "$existing" ]; then
             gh issue close "$existing" --comment "Every ruleset now requires exactly what infra/github declares, as of $(date -u +%Y-%m-%d). Closing; this reopens itself if that changes."
+            echo "closed #$existing"
+          fi
+
+  # ── AND THE THIRD QUESTION NOBODY WAS ASKING: does the worked example still RESOLVE? (#4910) ───
+  #
+  # Same premise as both jobs above, third subject. #4114 replaced the BYO chart dialog's fictional
+  # `acme/*` examples with two real ones — the starter chart repository and a public OCI chart — and
+  # pinned them three ways: an exact pin of the constants, a sweep of every wizard step for any
+  # repository-shaped string that is not one of them, and an OPT-IN live fetch. The first two run in
+  # ci.yml on every PR. The third ran NOWHERE, and it is the only one that can answer the question
+  # the fix was actually about: a repository can be renamed, archived, made private or deleted with
+  # NO file in this monorepo changing, and the other two stay green over an example that 404s. A
+  # check nobody runs is a check that does not exist.
+  #
+  # THE VACUOUS GREEN IS THE WHOLE DIFFICULTY HERE, not an edge case. The live tests sit behind
+  # `describe.runIf(process.env.ALETHIA_CHECK_LIVE_EXAMPLES === "1")`. Run that file WITHOUT the
+  # variable — which is what a scheduled job that forgets to set it does — and vitest prints
+  # `Test Files 1 passed`, exits 0, and reports the two live tests as `skipped`. Measured, not
+  # supposed: 11 total, 9 passed, 2 pending, exit 0. A green run that fetched nothing. So the exit
+  # code is NOT the verdict in this job. The verdict is read out of vitest's JSON report:
+  #
+  #   ok     >= 2 live tests were PRESENT, RAN and PASSED, and the file skipped nothing
+  #   rot    the live tests ran and at least one FAILED  → open/update the tracking issue
+  #   blind  everything else — fewer than two live tests, any skip, a missing report, or a non-zero
+  #          exit with the live probes green — and that FAILS THE JOB, loudly. "I did not check"
+  #          must never render as "I checked and it is fine".
+  #
+  # The two ok-conditions are independent on purpose, because each sees what the other cannot: the
+  # COUNT catches the describe being renamed away, gutted or never collected, and the SKIP count
+  # catches the environment variable being dropped — which leaves the count intact and every one of
+  # them `skipped`. Either failure reds the job rather than passing it.
+  #
+  # WARNING, and it applies to this job more than to the two above because this job is NEW here:
+  # `schedule:` fires the DEFAULT branch's copy of this file. Until this has ridden dev → staging →
+  # main it runs on no schedule at all, and a green run on a feature branch is proof that the job
+  # WORKS, never that it is ARMED. `workflow_dispatch` against a branch is how to exercise it before
+  # then.
+  #
+  # A SEPARATE JOB, not a step in either above, so that no two of the three can blind each other.
+  live-worked-examples:
+    name: The console's worked examples still resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # `|| code=$?` rather than a bare call: a `run:` step is `bash -e`, and the FAILING run is
+      # precisely the one whose report the next step has to read. Nothing is judged here.
+      - name: Fetch the worked examples for real
+        id: live
+        env:
+          ALETHIA_CHECK_LIVE_EXAMPLES: "1"
+          # Lifts GitHub's 60-per-hour ANONYMOUS API budget, which a hosted runner's shared egress
+          # IP can exhaust for reasons that have nothing to do with the example — a 403 there would
+          # file a rot report about a repository that is perfectly healthy. It grants no new access:
+          # the starter chart is a DIFFERENT repository, which this token can read only while it is
+          # public, and "still public" is exactly the assertion.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          code=0
+          pnpm -F console exec vitest run \
+            tests/components/design-project/byo/byo-chart-dialog.test.tsx \
+            --reporter=json --outputFile="$GITHUB_WORKSPACE/live-examples.json" \
+            > "$GITHUB_WORKSPACE/live-examples.log" 2>&1 || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_WORKSPACE/live-examples.log"
+
+      - name: Verdict, read from the report rather than from the exit code
+        id: verdict
+        env:
+          VITEST_CODE: ${{ steps.live.outputs.code }}
+        run: |
+          set -euo pipefail
+          # The describe title the live tests live under. The coupling between this job and that
+          # file is a NAME, and it fails CLOSED: rename it and `ran` is 0, which is `blind`, which
+          # is a red job — never a quiet pass. The test file says so where the name is defined.
+          prefix='ByoChartDialog — the worked example, fetched for real'
+          report="$GITHUB_WORKSPACE/live-examples.json"
+          if [ ! -s "$report" ]; then
+            echo "::error title=blind::vitest wrote no JSON report, so this job checked NOTHING. That is not the same as finding nothing wrong."
+            tail -n 80 "$GITHUB_WORKSPACE/live-examples.log" || true
+            exit 1
+          fi
+          ran="$(jq --arg p "$prefix" '[.testResults[].assertionResults[]? | select(.fullName | startswith($p))] | length' "$report")"
+          passed="$(jq --arg p "$prefix" '[.testResults[].assertionResults[]? | select((.fullName | startswith($p)) and .status == "passed")] | length' "$report")"
+          skipped="$(jq '[(.numPendingTests // 0), (.numTodoTests // 0)] | add' "$report")"
+          echo "live probes present=$ran passed=$passed | skipped anywhere in the file=$skipped | vitest exit=${VITEST_CODE:-?}"
+          if [ "$ran" -lt 2 ] || [ "$skipped" != "0" ]; then
+            echo "::error title=blind::expected at least 2 live probes to RUN with nothing skipped; got ran=$ran skipped=$skipped. The examples were never fetched — this is a BROKEN check reporting green, which is the defect #4910 exists to remove. Look for a dropped ALETHIA_CHECK_LIVE_EXAMPLES, a renamed describe, or a moved test file."
+            tail -n 80 "$GITHUB_WORKSPACE/live-examples.log" || true
+            exit 1
+          fi
+          if [ "$passed" -lt "$ran" ]; then
+            echo "verdict=rot" >> "$GITHUB_OUTPUT"
+          elif [ "${VITEST_CODE:-1}" = "0" ]; then
+            echo "verdict=ok" >> "$GITHUB_OUTPUT"
+          else
+            # Every live probe passed and vitest still failed: an OFFLINE layer in the same file is
+            # red, so the pins and the probe disagree and this run cannot be read either way.
+            echo "::error title=blind::the live probes passed but vitest exited ${VITEST_CODE}. An offline layer in the same file is red, so this run says nothing trustworthy about the examples."
+            tail -n 80 "$GITHUB_WORKSPACE/live-examples.log" || true
+            exit 1
+          fi
+
+      - name: Open or update the rot issue
+        if: steps.verdict.outputs.verdict == 'rot'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "console: the BYO chart dialog's worked example no longer resolves"
+        run: |
+          set -euo pipefail
+          prefix='ByoChartDialog — the worked example, fetched for real'
+          # --body-file, and built with `printf` on SINGLE-quoted lines rather than a heredoc: a
+          # heredoc body has to sit at column 0 for bash and at the block-scalar indent for YAML,
+          # and those two cannot both be true — the first draft of this step took the whole file
+          # out with `Implicit keys need to be on a single line`. Single quotes also mean the
+          # backticks below are markdown, not command substitution.
+          #
+          # Code blocks are INDENTED rather than fenced: an indented continuation inside a
+          # double-quoted shell string carries its leading whitespace into the issue, and the report
+          # job above has that wart. This one does not inherit it.
+          {
+            printf '%s\n' \
+              'The BYO chart dialog hands a user a worked example to copy. It was fetched for real,' \
+              'and it did not answer. Until it does, the first thing a user meets in the' \
+              'bring-your-own-chart flow is an example that does not work.' \
+              ''
+            jq -r --arg p "$prefix" '
+              [.testResults[].assertionResults[]? | select((.fullName | startswith($p)) and .status != "passed")][]
+              | "### " + .title, "",
+                (((.failureMessages // ["(no failure message was recorded)"]) | join("\n") | split("\n") | map("    " + .))[]),
+                ""
+            ' "$GITHUB_WORKSPACE/live-examples.json"
+            printf '%s\n' \
+              'The three constants are exported from' \
+              '`apps/console/components/design-project/byo/byo-chart-dialog.tsx`. Fix the example' \
+              'there — fetch the new value BEFORE you write it down — and re-pin it in' \
+              '`apps/console/tests/components/design-project/byo/byo-chart-dialog.test.tsx`.' \
+              'Reproduce with:' \
+              '' \
+              '    ALETHIA_CHECK_LIVE_EXAMPLES=1 pnpm -F console exec vitest run tests/components/design-project/byo/byo-chart-dialog.test.tsx' \
+              ''
+            printf '_Refreshed by `.github/workflows/workflow-health.yml` on %s. It closes itself once the example resolves again._\n' "$(date -u +%Y-%m-%d)"
+          } > body.md
+          { echo '## Worked examples'; echo; cat body.md; } >> "$GITHUB_STEP_SUMMARY"
+          # Dedup by LABEL, never by title or by --search: the search index lags by minutes and a
+          # --search-only dedup has already filed a duplicate in this repo (#3252).
+          matches="$(gh issue list --state open --label "tracker:worked-example-rot" --limit 100 --json number -q '.[].number' 2>/dev/null || true)"
+          count="$(printf '%s' "$matches" | grep -c . || true)"
+          if [ "${count:-0}" -gt 1 ]; then
+            echo "::error title=duplicate tracking issues::more than one open issue carries \`tracker:worked-example-rot\`: $(printf '%s' "$matches" | tr '\n' ' ')— close all but one. Picking the first would absorb the duplicate instead of reporting it, which is how #3252 went unnoticed for three days."
+            exit 1
+          fi
+          existing="$(printf '%s' "$matches" | head -1)"
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file body.md
+            echo "updated #$existing"
+          else
+            gh issue create --title "$TITLE" --label "wave:hygiene,tracker:worked-example-rot" --body-file body.md
+          fi
+
+      - name: Close it once the example resolves again
+        if: steps.verdict.outputs.verdict == 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo '## Worked examples' >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "Fetched for real: every worked example the BYO chart dialog offers still resolves." >> "$GITHUB_STEP_SUMMARY"
+          # Keyed on the tracker label, never on the title — see the header.
+          matches="$(gh issue list --state open --label "tracker:worked-example-rot" --limit 100 --json number -q '.[].number' 2>/dev/null || true)"
+          count="$(printf '%s' "$matches" | grep -c . || true)"
+          if [ "${count:-0}" -gt 1 ]; then
+            echo "::error title=duplicate tracking issues::more than one open issue carries \`tracker:worked-example-rot\`: $(printf '%s' "$matches" | tr '\n' ' ')— close all but one. Picking the first would absorb the duplicate instead of reporting it, which is how #3252 went unnoticed for three days."
+            exit 1
+          fi
+          existing="$(printf '%s' "$matches" | head -1)"
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "The worked example was fetched for real and resolves, as of $(date -u +%Y-%m-%d). Closing; this reopens itself if that changes."
             echo "closed #$existing"
           fi

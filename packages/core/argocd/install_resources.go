@@ -38,17 +38,40 @@ import "fmt"
 //
 // ── What these numbers are, and what they are NOT ──
 //
-// They are NOT a measured working set, and nothing here should be read as one. ArgoCD's fit on this
-// node has never been measured — `.github/workflows/e2e-nightly.yml` says so at the gcp shape, and
-// one paid gcp floor run is the only thing that can settle it.
+// They are NOT a measured working set, and nothing here should be read as one. ArgoCD's WORKING SET
+// on a GKE node still has not been measured; what run 35499891484 settled is the other half of the
+// question — how much of such a node is free at all — and the answer was "less than 100m of 940m".
 //
 // What IS established is the CLASS, and it needs no measurement: repo-server has no request at all,
 // so it runs at the share floor. The change from "no request" to "any request" is categorical. Only
 // the MAGNITUDE is a judgement, so it is made the way a judgement with no number behind it should
-// be — the SMALLEST value that achieves the class change while staying comfortably schedulable on
-// the smallest node the floor runs on. A gcp `e2-medium` allocates ~940m CPU and ~2972 MiB after
-// GKE's reservations; 100m and 256Mi are ~11% and ~9% of that, which cannot turn a running pod into
-// a Pending one on any node the product offers.
+// be — the SMALLEST value that achieves the class change.
+//
+// ── A CORRECTION, because the sentence that used to stand here was FALSE ──
+//
+// This file used to argue the magnitude was safe like this: "A gcp `e2-medium` allocates ~940m CPU
+// and ~2972 MiB after GKE's reservations; 100m and 256Mi are ~11% and ~9% of that, which cannot turn
+// a running pod into a Pending one on any node the product offers."
+//
+// e2e run 35499891484 (2026-09-20) is that exact node, and it falsified that exact sentence:
+//
+//	argo-cd-argocd-repo-server   Pending   0/2 nodes are available: 2 Insufficient cpu
+//	                                       NotTriggerScaleUp: 1 max node group size reached
+//
+// The reasoning error is worth naming because it is easy to repeat: ALLOCATABLE IS NOT FREE. 940m is
+// what the kubelet offers the scheduler; what the scheduler has left is 940m minus everything GKE
+// has already placed on the node. On that run, a node the autoscaler had JUST created, carrying
+// nothing but GKE's own system pods, still could not admit 100m — so under 100m of the 940m was
+// free. A percentage of allocatable was never the right denominator, and 11% of the wrong
+// denominator is not a safety margin.
+//
+// Two things follow. First, the request stays as it is: it was never the defect. The node was, and
+// the smallest node the product offers on GCP is now `e2-standard-2` (~1930m allocatable), because
+// on the same run GKE's OWN calico-typha could not schedule on an `e2-medium` either, so
+// NetworkPolicy was not being enforced on that cluster at all. Second, the question "does this
+// request fit on the node this user picked" is no longer answered by a sentence in a comment:
+// catalog.ControlPlaneNodeFit answers it from the machine type, and provisioner's node-fit gate
+// refuses the apply before any of it is bought.
 //
 // REQUESTS ONLY, NO LIMITS, and the asymmetry is the whole design. A CPU limit would throttle
 // exactly the render this exists to let finish, and a memory limit would OOM-kill a large

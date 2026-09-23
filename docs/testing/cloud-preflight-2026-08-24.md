@@ -125,7 +125,7 @@ The cheap way to settle it is one floor dispatch.
 ## gcp — blocked, and this is the real reason the cell has never run
 
 ```
-$ gcloud container clusters list --project=itgix-adp
+$ gcloud container clusters list --project=${GCP_E2E_PROJECT_ID}
 ERROR: code=403 — This API method requires billing to be enabled.
 
 $ gcloud beta billing accounts describe 012128-F87F79-AAE313
@@ -133,17 +133,17 @@ displayName: My Billing Account
 open: false          ← the account is CLOSED
 ```
 
-`gcloud beta billing projects describe itgix-adp` reports `billingEnabled: true`, so the project
+`gcloud beta billing projects describe ${GCP_E2E_PROJECT_ID}` reports `billingEnabled: true`, so the project
 *is* linked — but it is linked to a **closed** billing account. Every billable API therefore 403s
 while the cheap metadata reads that most checks use keep succeeding, which is precisely how this
 stayed invisible: `compute.googleapis.com` and `container.googleapis.com` are both enabled, and
 listing networks works.
 
-**Nothing in the repo can fix this.** Until `itgix-adp` is attached to an open billing account (or
+**Nothing in the repo can fix this.** Until `${GCP_E2E_PROJECT_ID}` is attached to an open billing account (or
 the e2e stack is pointed at a different project), `gcp/floor` cannot run, and #2258 / #2099 have no
 achievable fix. It also means the #1871 billing-budget work cannot be validated here.
 
-**Action: attach an open billing account to `itgix-adp`, or nominate a different GCP project.**
+**Action: attach an open billing account to `${GCP_E2E_PROJECT_ID}`, or nominate a different GCP project.**
 
 > ### ✅ CLEARED 2026-08-25 — the maintainer attached an open billing account
 >
@@ -153,7 +153,7 @@ achievable fix. It also means the #1871 billing-budget work cannot be validated 
 > $ gcloud beta billing accounts describe 012128-F87F79-AAE313
 > open: true                                    ← was false
 >
-> $ gcloud container clusters list --project itgix-adp ; echo $?
+> $ gcloud container clusters list --project ${GCP_E2E_PROJECT_ID} ; echo $?
 > 0                                             ← was 403
 > ```
 >
@@ -268,7 +268,7 @@ catch it. Hetzner has the same shape, in a different provider's helper.
 
 Ranked by how much they unblock per minute spent:
 
-1. ~~**Attach an open GCP billing account to `itgix-adp`**~~ — **done 2026-08-25**, verified above.
+1. ~~**Attach an open GCP billing account to `${GCP_E2E_PROJECT_ID}`**~~ — **done 2026-08-25**, verified above.
 2. ~~**Create `AliyunCSDefaultRole`**~~ — **done 2026-08-25**, verified above. What replaces it on
    this list is smaller and is a *look*, not a change: **confirm a payment method is on file for
    Alibaba**. Everything else on that cloud is armed, and a zero balance with no payment method

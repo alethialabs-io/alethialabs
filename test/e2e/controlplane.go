@@ -26,6 +26,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -39,6 +40,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -86,11 +88,21 @@ type ControlPlane struct {
 	// written" are the same observation — and those mean opposite things about whether live
 	// infrastructure was orphaned. See the byo-iac state-cleared assertion.
 	stateClearedBy map[string]string
+
+	// cancelledJobs is what the runner heartbeat reports as server-side-cancelled
+	// (cancelled_job_ids), set by CancelJobOnHeartbeat. Guarded by mu. It is the harness's end of
+	// the product's cancel path: the runner cancels that job's context, and terraform-exec turns
+	// the cancel into a SIGINT to tofu (#3855).
+	cancelledJobs map[string]bool
 }
 
 type stateEntry struct {
 	state  []byte
 	locked bool
+	// lockInfo is the body the holder sent with its LOCK — OpenTofu's LockInfo JSON (ID,
+	// Operation, Who, Created). It is handed back to a contending LOCK so tofu can NAME the
+	// holder, the way the console's state proxy does (#3855).
+	lockInfo []byte
 }
 
 // NewControlPlane connects to Postgres (the migrated CI/dev database) and returns a
@@ -686,7 +698,34 @@ func (cp *ControlPlane) handleHeartbeat(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"cancelled_job_ids": []string{}})
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled_job_ids": cp.heartbeatCancelledJobs()})
+}
+
+// CancelJobOnHeartbeat makes every later runner heartbeat report jobID as cancelled server-side,
+// the way the console reports a job a user cancelled. The runner answers with its fallback cancel
+// path (applyHeartbeatCancels → the job context is cancelled → terraform-exec SIGINTs tofu), so
+// the in-flight tofu gets the one interrupt that reaches it: on Linux terraform-exec starts tofu in
+// its OWN process group, so a signal to the runner's group never does (#3855).
+func (cp *ControlPlane) CancelJobOnHeartbeat(jobID string) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	if cp.cancelledJobs == nil {
+		cp.cancelledJobs = map[string]bool{}
+	}
+	cp.cancelledJobs[jobID] = true
+}
+
+// heartbeatCancelledJobs is the sorted cancelled_job_ids a heartbeat answers with — never nil, so
+// the JSON is an empty array rather than null.
+func (cp *ControlPlane) heartbeatCancelledJobs() []string {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	ids := make([]string, 0, len(cp.cancelledJobs))
+	for id := range cp.cancelledJobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // handleWake serves the push-dispatch SSE stream: one wake to trigger an immediate
@@ -830,17 +869,67 @@ func (cp *ControlPlane) handleStateLock(w http.ResponseWriter, r *http.Request) 
 	switch r.Method {
 	case http.MethodPost: // LOCK
 		if e.locked {
-			w.WriteHeader(http.StatusConflict)
+			// 423 + the HOLDER's lock info, mirroring apps/console/app/api/jobs/[id]/state/lock.
+			// This used to be a bare 409 with no body, and tofu's http backend then reports
+			// "HTTP remote state already locked, failed to unmarshal body" and prints the
+			// CONTENDER's own lock info as if it were the holder's — on #3855's gcp floor that
+			// made a destroy blocked by the runner's stranded apply lock read as a destroy
+			// blocked by itself (same host, Created one second earlier).
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusLocked)
+			_, _ = w.Write(lockHolderBody(e.lockInfo))
 			return
 		}
+		b, _ := io.ReadAll(r.Body)
 		e.locked = true
+		e.lockInfo = b
 		w.WriteHeader(http.StatusOK)
 	case http.MethodDelete: // UNLOCK
 		e.locked = false
+		e.lockInfo = nil
 		w.WriteHeader(http.StatusOK)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// lockHolderBody is the 423 body for a contended LOCK: the holder's own lock info when it sent
+// one, else an empty JSON object — never an empty body, which tofu cannot unmarshal.
+func lockHolderBody(info []byte) []byte {
+	if len(bytes.TrimSpace(info)) == 0 {
+		return []byte("{}")
+	}
+	return info
+}
+
+// StateLockHolder reports whether jobID's state slot (following any alias) is locked, and the
+// lock info its holder sent. The teardown asks this AFTER the runner process is gone: a lock still
+// held then has no living owner (#3855).
+func (cp *ControlPlane) StateLockHolder(jobID string) ([]byte, bool) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	e := cp.states[cp.resolveStateKeyLocked(jobID)]
+	if e == nil || !e.locked {
+		return nil, false
+	}
+	return append([]byte(nil), e.lockInfo...), true
+}
+
+// ReleaseStrandedStateLock clears jobID's state lock and returns the lock info it carried. It is
+// the harness's `tofu force-unlock`, and it is only sound once every process that could hold the
+// lock is dead — the caller (t2QuiesceRunner) establishes that by killing the runner's whole
+// process group first. Reports false when there was no lock to release.
+func (cp *ControlPlane) ReleaseStrandedStateLock(jobID string) ([]byte, bool) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	e := cp.states[cp.resolveStateKeyLocked(jobID)]
+	if e == nil || !e.locked {
+		return nil, false
+	}
+	info := e.lockInfo
+	e.locked = false
+	e.lockInfo = nil
+	return info, true
 }
 
 // ─────────────────────────── receipt / teardown / kube helpers ───────────────────────────

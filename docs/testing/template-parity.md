@@ -56,8 +56,6 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `aws_managed_waf_rule_groups` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `azure_application_gateway_capacity` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `azure_application_gateway_enabled` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
-| `azure_cache_capacity` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
-| `azure_cache_family` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `azure_cache_multi_az` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `azure_cache_sku` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `azure_cache_sku_name` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |

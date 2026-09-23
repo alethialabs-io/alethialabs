@@ -1,0 +1,357 @@
+#!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// TWO parsers decide what a PR's closing keywords mean, and they must agree.
+//
+//   .github/workflows/close-on-dev-merge.yml   closes the issue      (destructive direction)
+//   scripts/lib/board-pr.sh  $BOARD_PR_CLOSING_KW                    (claimability direction)
+//
+// WHY THIS EXISTS, measured. Both carried the same defect: a bare keyword match, so prose ABOUT a
+// closing keyword read as one. FOUR issues were closed by it in a single day, in THREE shapes —
+// and every one of them was a sentence explaining that the PR did NOT close the thing:
+//
+//   NEGATION
+//   · 2026-09-22 16:54Z — #4919's "This does not close #3855." CLOSED #3855.
+//     The thread promised "A PR follows that makes a negated closing keyword stop closing an
+//     issue." No PR was opened.
+//   · 2026-09-22 21:41Z — #4924's "It does not close #3855" CLOSED #3855 again, five hours later.
+//
+//   RELATIVE CLAUSE — grammatically a closing reference; only the meaning says otherwise
+//   · #4940's "That is what closes #3348, which is why this says `Refs` and not `Closes`"
+//     CLOSED #3348 — the sentence stating it deliberately used `Refs`.
+//
+//   QUOTED KEYWORD — the keyword NAMED, not used
+//   · #4935's "Changed from `Closes #4110` to `Refs #4110` — deliberately" CLOSED #4110 — the note
+//     recording that the reference had been changed away from `Closes` so it would STAY OPEN.
+//
+// The first two families are lookbehinds. The third is not decidable that way and is handled by
+// stripping code spans before matching, which IS mechanically sound. The second parser is
+// the one nobody saw: in `board-pr.sh` the same text makes `has_closing_pr` answer true, so
+// `claim-work.sh` refuses to hand the unit out — silently, with no issue visibly shutting and
+// nothing to notice. A fix applied to one renderer and not the other is how this survives.
+//
+// So this guard checks BOTH, and checks that they are the SAME pattern. Fixing one and not the
+// other is the failure mode it exists to make impossible.
+//
+// WHAT IT DOES NOT CHECK, stated so this is not read as more than it is:
+//   · It does not parse the workflow's shell. It asserts the pattern STRING appears in it.
+//     A rewrite that stops using that pattern would pass this and still be wrong.
+//   · The lookbehinds are fixed-width by construction. "does not, in fact, close #n" is NOT
+//     rejected — only an immediately-preceding negator is. That bound is deliberate: a wider
+//     window starts rejecting real closing refs, and the safe direction here is to over-close
+//     nothing rather than to under-close everything.
+//   · `without closing #n` is not covered (gerund, not a listed tense).
+//
+// Usage:  node scripts/check-closing-keyword-parsers.mjs [--self-test]
+
+import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const WORKFLOW = ".github/workflows/close-on-dev-merge.yml";
+const LIB = "scripts/lib/board-pr.sh";
+
+/** The three lookbehinds both sites must carry, in order. */
+const GUARD = "(?<!not )(?<!n.t )(?<!never )(?<!what )(?<!that )(?<!which )";
+/** A keyword inside backticks is NAMED, not used. Not decidable by lookbehind — stripped first. */
+const STRIP = 'gsub("(?s)```.*?```"; " ")';
+/**
+ * A closing keyword must START its line. This SUBSUMES the lookbehinds: every false positive so
+ * far was mid-sentence prose ABOUT closing. Measured over 60 merged dev PRs — 28 own-line refs,
+ * 10 inline of which exactly 2 genuine and both line-initial — so it keeps 30/30 real and rejects
+ * 8/8 false. `(?m)` is MULTILINE in jq's engine, not dotall; verified both directions.
+ */
+const ANCHOR = '(?m)^[ \\t]*(?:[-*>][ \\t]*)*(?:[*][*])?';
+const KEYWORDS = "(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)";
+
+/**
+ * The shared corpus. `expect` is every issue number a correct parser returns, in order.
+ * Each row exists because it is a shape that actually occurs in this repo's PR bodies.
+ */
+const CORPUS = [
+	{ text: "Closes #4112", expect: [4112], why: "the ordinary case" },
+	{ text: "closes #1, fixes #2", expect: [1], why: "BEHAVIOUR CHANGE: only the line-initial ref closes. Measured over 60 merged dev PRs, ZERO lines carry two closing refs, so this costs nothing real — and the loss direction is the safe one (a human closes #2)" },
+	{ text: "Note: closes #7", expect: [], why: "BEHAVIOUR CHANGE: mid-sentence, so no longer closes. It was only ever in the corpus to prove a word CONTAINING 'not' does not trip the negation guard — which the line-initial row below now covers instead" },
+	{ text: "Note #7 is unrelated\nCloses #7", expect: [7], why: "…and the guard still must not reject a line-initial keyword merely because an earlier line contains 'Note'" },
+	{ text: "Fixes #99 and does not close #100", expect: [99], why: "one real, one negated, same line" },
+	{ text: "It does not close #3855", expect: [], why: "#4924 — closed #3855 at 21:41Z" },
+	{ text: "**This does not close #3855.**", expect: [], why: "#4919 — closed #3855 at 16:54Z" },
+	{ text: "doesn't close #10", expect: [], why: "contraction" },
+	{ text: "never closes #10", expect: [], why: "never" },
+	{ text: "cannot close #55", expect: [], why: "cannot — ends in 'not '" },
+	{ text: "This PR does not fix #42 either", expect: [], why: "a negated non-close tense" },
+	{ text: "That is what closes #3348, which is why this says Refs", expect: [], why: "#4940 — closed #3348: a relative clause, in the sentence saying it used Refs" },
+	{ text: "Changed from `Closes #4110` to `Refs #4110` — deliberately", expect: [], why: "#4935 — closed #4110: the keyword QUOTED in the note saying it had been changed away from Closes" },
+	{ text: "the commit that fixes #9", expect: [], why: "relative clause, other tense" },
+	{ text: "```\nCloses #999\n```\nCloses #5", expect: [5], why: "a fenced block is not an assertion; a line-initial ref after it still counts" },
+	{ text: "The last two were found the hard way: they closed #3348 and #4110 while open", expect: [], why: "#4945 — closed #3348 ELEVEN SECONDS after the previous fix merged, from the paragraph documenting the defect" },
+	{ text: "Closes #4910. Also fixes the outage tracked by #4934", expect: [4910], why: "GENUINE inline continuation — line-initial, must still close" },
+	{ text: "Closes #4114. Part of #2766.", expect: [4114], why: "likewise genuine (#4911)" },
+	{ text: "- Closes #4112", expect: [4112], why: "a list marker is still line-initial" },
+	{ text: "**Closes #4112**", expect: [4112], why: "bold is still line-initial" },
+	{ text: "| a | closes #77 | b |", expect: [], why: "a TABLE CELL is not a closing reference" },
+	{ text: "intro\nCloses #4112\nmore prose", expect: [4112], why: "line 2 — proves (?m) is present and means multiline" },
+	{ text: "", expect: [], why: "empty body must not throw" },
+];
+
+/** Run the canonical pattern through jq — the same engine both call sites use. */
+function refsOf(text) {
+	const program =
+		'$t | gsub("(?s)```.*?```"; " ") | gsub("`[^`\\n]*`"; " ") ' +
+		`| [ match("(?i)${ANCHOR}${GUARD}${KEYWORDS} +#([0-9]+)"; "g") | .captures[1].string ] ` +
+		`| map(tonumber) | unique`;
+	const out = execFileSync("jq", ["-rn", "--arg", "t", text, program], { encoding: "utf8" });
+	return JSON.parse(out.trim() || "[]");
+}
+
+function checkCorpus() {
+	const failures = [];
+	for (const row of CORPUS) {
+		let got;
+		try {
+			got = refsOf(row.text);
+		} catch (error) {
+			failures.push(`  threw on ${JSON.stringify(row.text)}: ${error.message}`);
+			continue;
+		}
+		if (JSON.stringify(got) !== JSON.stringify(row.expect)) {
+			failures.push(
+				`  ${JSON.stringify(row.text)}\n    expected [${row.expect}] got [${got}]  (${row.why})`,
+			);
+		}
+	}
+	return failures;
+}
+
+function checkBothSitesCarryTheGuard() {
+	const failures = [];
+	for (const path of [WORKFLOW, LIB]) {
+		let text;
+		try {
+			text = readFileSync(resolve(ROOT, path), "utf8");
+		} catch {
+			failures.push(`  ${path}: cannot read — the guard cannot vouch for a file it never saw`);
+			continue;
+		}
+		if (!text.includes(GUARD)) {
+			failures.push(
+				`  ${path}: does not carry the negation guard ${GUARD}\n` +
+					"    A negated keyword would be treated as a closing reference here.",
+			);
+		}
+		if (!text.includes(KEYWORDS)) {
+			failures.push(`  ${path}: does not carry the shared keyword alternation — the two have drifted`);
+		}
+		if (!text.includes("(?m)^[ \\t]*(?:[-*>][ \\t]*)*")) {
+			failures.push(
+				`  ${path}: does not anchor the keyword to the START OF A LINE.\n` +
+					"    Mid-sentence prose about closing would close an issue — which is how #3348 was\n" +
+					"    closed eleven seconds after the previous fix for this very defect merged.",
+			);
+		}
+		if (!text.includes(STRIP)) {
+			failures.push(
+				`  ${path}: does not strip fenced/inline code before matching.\n` +
+					"    A keyword QUOTED in backticks would be treated as asserted — which is how #4110\n" +
+					"    was closed by the very note recording that its reference had been changed to `Refs`.",
+			);
+		}
+	}
+	failures.push(...checkVocabularyStaysAPlainAlternation());
+	failures.push(...checkNoLookbehindThroughGhJq());
+	return failures;
+}
+
+/**
+ * The negation guard is a LOOKBEHIND, and only one of the two jq engines on a runner can run it.
+ * The standalone `jq` is Oniguruma and accepts `(?<!not )`. `gh --jq` is gojq, whose Go RE2 engine
+ * rejects it ("invalid named capture: `(?P<!not )…`"). #4945 composed the guard into two `gh --jq`
+ * filters in board-pr.sh; every call then failed, the fail-closed caller read the failure as
+ * "a PR closes this issue", and `claim-work.sh` refused to hand out ANY unit. Nothing went red —
+ * the only symptom was a board that could not be claimed.
+ *
+ * So: no `--jq` argument in board-pr.sh may run a REGEX at all (`test`/`match`/`capture`/`sub`/
+ * `gsub`/`scan`/`splits`). Matching the guard's NAME is not enough — the first broken site took
+ * its pattern through a `$kws` parameter the caller composed, so its text never said
+ * NEGATION_GUARD. So the rule reads STRUCTURE, in two halves:
+ *   · a `--jq` span that calls a regex builtin literally, and
+ *   · a DOUBLE-QUOTED `--jq` argument that expands a shell variable (`--jq "$filter"`,
+ *     `--jq "[… $BOARD_PR_STRIP_CODE …]"`) — the filter text is then decided on another line,
+ *     where this check cannot read it, so it is refused rather than trusted.
+ * A single-quoted filter cannot expand anything, so what it runs is exactly what is written here.
+ * Known boundary: a filter assembled so that the `--jq` flag itself sits in a variable
+ * (`args=(--jq …); gh "${args[@]}"`) is not seen. Nothing in the file does that today.
+ * The span read is from `--jq` to the end of its command (`2>/dev/null` or the next blank line);
+ * a `--jq` inside a shell comment is skipped, since a comment can only name the flag.
+ * @param {string} [source] board-pr.sh's text — injectable so the self-test can prove this fails.
+ * @returns {string[]} failures
+ */
+export function checkNoLookbehindThroughGhJq(source) {
+	let text = source;
+	if (text === undefined) {
+		try {
+			text = readFileSync(resolve(ROOT, LIB), "utf8");
+		} catch {
+			return [`  ${LIB}: cannot read`];
+		}
+	}
+	const failures = [];
+	for (const m of text.matchAll(/--jq\b/g)) {
+		// Comments NAME the flag (this very rule is documented in one); only code can run it.
+		const lineStart = text.lastIndexOf("\n", m.index) + 1;
+		if (/^\s*#/.test(text.slice(lineStart, m.index))) continue;
+		const rest = text.slice(m.index);
+		const end = rest.search(/2>\/dev\/null|\n\s*\n/);
+		const span = end === -1 ? rest : rest.slice(0, end);
+		const line = text.slice(0, m.index).split("\n").length;
+		if (/^--jq\s+"[^"]*\$[A-Za-z_{]/.test(span.replace(/\\"/g, ""))) {
+			failures.push(
+				`  ${LIB}:${line}: a \`gh --jq\` filter is double-quoted and expands a shell variable, so its\n` +
+					"    text is decided elsewhere and cannot be checked. gh's --jq is gojq (Go RE2), which rejects\n" +
+					"    the negation lookbehind. Fetch with gh --json and filter with the standalone `jq`.",
+			);
+		} else if (/\b(?:test|match|capture|sub|gsub|scan|splits)\s*\(/.test(span)) {
+			failures.push(
+				`  ${LIB}:${line}: a \`gh --jq\` filter runs a regex. gh's --jq is gojq (Go RE2), which\n` +
+					"    rejects the negation lookbehind, so such a call fails and the fail-closed callers report\n" +
+					"    every issue as taken. Fetch with gh --json and filter with the standalone `jq`.",
+			);
+		}
+	}
+	return failures;
+}
+
+/**
+ * `BOARD_PR_CLOSING_KW` is a VOCABULARY and must stay a plain alternation. FOUR consumers read it
+ * and they do not agree on what it is:
+ *
+ *   · board-pr.sh + close-on-dev-merge.yml  use it as a REGEX FRAGMENT
+ *   · coordinate.sh closing_keywords_json() strips `^(` / `)$` and splits on `|`  → a keyword LIST
+ *   · scripts/ci/check-pr-scope.mjs:102     matches /^BOARD_PR_CLOSING_KW='\(([^)]+)\)/
+ *
+ * The list-readers assume the value opens with `(` and closes at the FIRST `)`. Baking the negation
+ * lookbehinds into it therefore made the first capture `?<!not `, which
+ * `scope-overlap.mjs:579 closingRefsIn` compiled into `/\b(?:?<!not)\s+#(\d+)\b/gi` —
+ * "SyntaxError: Nothing to repeat" — taking the whole `Authz / open-core guards` job down.
+ *
+ * That is why the guard lives in its own `BOARD_PR_NEGATION_GUARD` and is COMPOSED at each matcher.
+ * This check exists so the next person who reaches for the obvious shortcut is stopped by a test
+ * rather than by a red required job.
+ */
+function checkVocabularyStaysAPlainAlternation() {
+	const failures = [];
+	let text;
+	try {
+		text = readFileSync(resolve(ROOT, LIB), "utf8");
+	} catch {
+		return [`  ${LIB}: cannot read`];
+	}
+
+	const assignment = /^BOARD_PR_CLOSING_KW='([^']*)'/m.exec(text);
+	if (assignment === null) {
+		return [
+			`  ${LIB}: could not find the BOARD_PR_CLOSING_KW assignment. Four consumers parse that ` +
+				"line; if it moved, move them with it rather than letting this check go quiet.",
+		];
+	}
+	const value = assignment[1];
+
+	// The shape the list-readers require: `(a|b|c) +` and nothing before the opening paren.
+	if (!/^\([a-z|]+\) \+$/.test(value)) {
+		failures.push(
+			`  ${LIB}: BOARD_PR_CLOSING_KW is ${JSON.stringify(value)}, which is not a plain\n` +
+				"    alternation of the form '(a|b|c) +'.\n" +
+				"    coordinate.sh and check-pr-scope.mjs parse this value as a keyword LIST by stripping\n" +
+				"    the outer parens — anything else silently becomes a broken regex downstream in\n" +
+				"    scope-overlap.mjs. Put matcher-only syntax in BOARD_PR_NEGATION_GUARD and compose it.",
+		);
+	}
+
+	// And the guard must exist as its own variable, or there is nothing to compose.
+	if (!/^BOARD_PR_NEGATION_GUARD='/m.test(text)) {
+		failures.push(
+			`  ${LIB}: BOARD_PR_NEGATION_GUARD is not defined. The negation guard must be a separate\n` +
+				"    variable composed onto the vocabulary, never baked into it.",
+		);
+	}
+	return failures;
+}
+
+/** Prove the corpus can FAIL: run it against the unguarded pattern and require the two regressions. */
+function selfTest() {
+	const failures = [];
+
+	const unguarded = (text) => {
+		const program =
+			`[ $t | match("(?i)${KEYWORDS} +#([0-9]+)"; "g") | .captures[1].string ] | map(tonumber) | unique`;
+		return JSON.parse(execFileSync("jq", ["-rn", "--arg", "t", text, program], { encoding: "utf8" }).trim() || "[]");
+	};
+
+	// 1 · the guarded pattern passes the whole corpus
+	const live = checkCorpus();
+	if (live.length > 0) {
+		failures.push(`the guarded pattern fails its own corpus:\n${live.join("\n")}`);
+	}
+
+	// 2 · the UNGUARDED pattern must reproduce the two real incidents — otherwise the corpus is
+	//     not exercising the defect and would pass over a reintroduction.
+	for (const row of CORPUS.filter((r) => r.expect.length === 0 && r.text.includes("#"))) {
+		const got = unguarded(row.text);
+		if (got.length === 0) {
+			failures.push(
+				`the corpus row ${JSON.stringify(row.text)} does not distinguish guarded from unguarded — ` +
+					"it would pass even with the defect reintroduced",
+			);
+		}
+	}
+
+	// 3 · both files carry the guard
+	failures.push(...checkBothSitesCarryTheGuard());
+
+	// 4 · the gh --jq check can FAIL: the exact shape #4945 shipped must be caught
+	// (the pattern arrives through a parameter, exactly as it did — the text never names the guard)
+	const shipped =
+		'  gh pr list --json body \\\n    --jq "[.[] | test(\\"(?i)($kws) *#$n\\")] | length" \\\n    2>/dev/null\n';
+	if (checkNoLookbehindThroughGhJq(shipped).length !== 1) {
+		failures.push("checkNoLookbehindThroughGhJq does not catch the parameter-borne gh --jq regex #4945 shipped");
+	}
+	if (checkNoLookbehindThroughGhJq('  f="$(build_filter)"\n  gh pr list --json body --jq "$f" 2>/dev/null\n').length !== 1) {
+		failures.push("checkNoLookbehindThroughGhJq does not catch a filter passed in a shell variable");
+	}
+	if (checkNoLookbehindThroughGhJq('  gh issue view 1 --json state --jq .state 2>/dev/null\n').length !== 0) {
+		failures.push("checkNoLookbehindThroughGhJq flags a plain `gh --jq` that runs no regex");
+	}
+
+	if (failures.length > 0) {
+		console.error("✗ check-closing-keyword-parsers self-test:");
+		for (const f of failures) console.error(`  ${f}`);
+		process.exit(1);
+	}
+	console.log(
+		`✓ check-closing-keyword-parsers self-test: ${CORPUS.length} corpus row(s); ` +
+			"every negated row is caught by the guard AND would be missed without it; both call sites carry it.",
+	);
+}
+
+function main() {
+	if (process.argv.includes("--self-test")) return selfTest();
+
+	const failures = [...checkBothSitesCarryTheGuard(), ...checkCorpus()];
+	if (failures.length > 0) {
+		console.error("✗ check-closing-keyword-parsers: a negated closing keyword would close an issue.\n");
+		for (const f of failures) console.error(f);
+		console.error(
+			"\nBoth parsers must carry the same negation guard. See #3855, closed twice in one day by\n" +
+				"PR bodies that said they did NOT close it.",
+		);
+		process.exit(1);
+	}
+	console.log(
+		`✓ check-closing-keyword-parsers: both call sites carry the negation guard, ${CORPUS.length} corpus row(s) agree.`,
+	);
+}
+
+main();

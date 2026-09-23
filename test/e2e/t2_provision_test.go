@@ -360,6 +360,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		}
 		t.Logf("#845 fabric-demo node-shape guard (warning): %s", msg)
 	}
+	// #3855 cause B: can what we install actually RUN on this shape? Asked FIRST of the pre-spend
+	// checks because it is the cheapest by far — no network, no CLI, no credential, just the product's
+	// own catalog. Run 35499891484 passed every other guard here and still burned its whole budget:
+	// the e2-medium it bought could not schedule argocd-repo-server, and could not schedule GKE's own
+	// calico-typha either, so NetworkPolicy was never enforced on that cluster. Hard under REQUIRE;
+	// silent on any shape the catalog cannot model, which is most of them.
+	if fatal, msg := t2RequireControlPlaneNodeFit(provider, full); msg != "" {
+		if fatal {
+			t.Fatalf("pre-spend %s", msg)
+		}
+		t.Logf("pre-spend %s", msg)
+	}
 	// PRE-SPEND capacity preflight: the two guards above ask whether the shape is big enough
 	// for what this run asserts; this one asks whether the cloud will sell us that shape HERE.
 	// On 2026-08-25 two hetzner runs died five minutes into a paid apply because cx33 has
@@ -427,6 +439,17 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Logf("seeded QUEUED DEPLOY job %s targeting %s template (cluster %s)", jobID, provider, clusterName)
 	}
 
+	// The runner process and its output, declared HERE so the teardown below can stop it first
+	// (#3855). nil until the runner has started.
+	var runnerProc *t2RunnerProc
+	var runnerOut bytes.Buffer
+	// The ALETHIA_E2E_T2_RUNNER_LOG file is closed by the teardown AFTER the runner has stopped,
+	// never by its own t.Cleanup: cleanups run LIFO and that one would be registered after the
+	// teardown, so it would close the file first and the runner would spend its stop grace writing
+	// into a closed file — losing the drain/cancel lines, and once the pipe filled, blocking on a
+	// write until it was SIGKILLed (PR #4973 review).
+	var runnerLogFile *os.File
+
 	// GUARANTEED graceful teardown — registered BEFORE launching the runner so a
 	// mid-deploy failure still tears the cluster down. The workflow's always() cleanup
 	// is the hard guarantee for a killed process; this is the in-process best effort.
@@ -449,6 +472,27 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		window := resolveT2TeardownTimeout(p)
 		dctx, dcancel := context.WithTimeout(context.Background(), window)
 		defer dcancel()
+
+		// ── STOP THE RUNNER BEFORE THE DESTROY, and release a lock it stranded (#3855). ──────────
+		// A deploy wait that expires leaves the runner's `tofu apply` mid-resource, HOLDING the
+		// state lock. It used to be stopped by SIGKILL to the runner alone, so tofu was never
+		// interrupted, never released the lock, and this destroy failed with "Error acquiring the
+		// state lock" (gcp run 35705203097). t2QuiesceRunner drains the runner and cancels the job
+		// on its heartbeat — the product's cancel path, the only one that interrupts tofu, which
+		// runs in its own process group — and, if the grace runs out, kills the runner and releases
+		// the dead holder's lock out loud. A resource tofu was creating and never recorded is still
+		// orphaned outside state; the workflow's always() sweeper is what removes it. The grace is
+		// spent inside this window rather than added to the budget ladder (t2RunnerStopGrace).
+		for _, line := range t2QuiesceRunner(runnerProc, t2RunnerStopGrace(window), cp, jobID) {
+			t.Log(line)
+		}
+		if runnerLogFile != nil {
+			_ = runnerLogFile.Close()
+		}
+		if runnerProc != nil && t.Failed() {
+			t.Logf("──── runner process output ────\n%s", runnerOut.String())
+		}
+
 		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, project, env, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
 			// The sweeper NAME follows the provider, and a window that EXPIRED is reported as a
 			// window rather than as a destroy error — the two are opposite findings that arrive
@@ -467,10 +511,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// ambient env (HCLOUD_TOKEN / AWS_* / GOOGLE_APPLICATION_CREDENTIALS / ARM_* /
 	// ALICLOUD_*) — the self-managed / ambient-token path. os.Environ() carries them all,
 	// so no per-provider token line is needed here. ──
-	var runnerOut bytes.Buffer
-	runnerCtx, killRunner := context.WithCancel(ctx)
-	defer killRunner()
-	cmd := exec.CommandContext(runnerCtx, runnerBin)
+	//
+	// NOT exec.CommandContext: its default Cancel is a SIGKILL to the runner alone, which is the
+	// stop that stranded #3855's state lock. The teardown above stops it (t2QuiesceRunner).
+	cmd := exec.Command(runnerBin)
 	cmd.Dir = stage
 	cmd.Env = append(os.Environ(),
 		"ALETHIA_WEB_ORIGIN="+cp.URL(),
@@ -503,15 +547,17 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	var runnerSink io.Writer = &runnerOut
 	if p := os.Getenv("ALETHIA_E2E_T2_RUNNER_LOG"); p != "" {
 		if f, ferr := os.Create(p); ferr == nil {
-			t.Cleanup(func() { _ = f.Close() })
+			runnerLogFile = f // closed by the teardown, after the runner stops — see its declaration
 			runnerSink = io.MultiWriter(&runnerOut, f)
 		}
 	}
 	cmd.Stdout = runnerSink
 	cmd.Stderr = runnerSink
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start runner process: %v", err)
+	proc, startErr := startT2RunnerProc(cmd)
+	if startErr != nil {
+		t.Fatalf("start runner process: %v", startErr)
 	}
+	runnerProc = proc
 
 	// The CLI's job must be CLAIMED, and that is asserted at its own layer rather than folded into
 	// the deploy wait. An unclaimed job sits QUEUED until the wait's full deadline and is then
@@ -520,13 +566,6 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if cliDemo != nil {
 		AssertCLIDemoJobClaimed(ctx, t, cp, cliDemo)
 	}
-	t.Cleanup(func() {
-		killRunner()
-		_ = cmd.Wait()
-		if t.Failed() {
-			t.Logf("──── runner process output ────\n%s", runnerOut.String())
-		}
-	})
 
 	// ── Wait (bounded) for the job to go terminal, then assert on the REAL DB rows. ──
 	// The DB block goes FIRST, before the runner output: the runner buffer is what the CI log

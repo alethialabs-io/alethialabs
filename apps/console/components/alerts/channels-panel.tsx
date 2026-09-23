@@ -82,7 +82,7 @@ export function ChannelsPanel({
 		"alert_channel",
 		channels.map((c) => c.id),
 	);
-	const { rows, facets } = view;
+	const { rows, facets, stale } = view;
 
 	const doDelete = async (c: ChannelDTO) => {
 		try {
@@ -125,7 +125,15 @@ export function ChannelsPanel({
 
 					{/* master-detail */}
 					<div className="flex flex-wrap items-start gap-4">
-						<div className="min-w-[290px] flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-sm">
+						{/* The filter standard's `isPlaceholderData` dim: while `stale` is true these rows are
+						    the PREVIOUS query's answer, kept so the rail does not blank on a filter change
+						    and marked so they are not read as the current one. */}
+						<div
+							className={cn(
+								"min-w-[290px] flex-1 overflow-hidden rounded-xl border border-border/60 bg-background shadow-sm",
+								stale && "opacity-60 transition-opacity",
+							)}
+						>
 							<div className="px-4 py-3 font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-tertiary">
 								Configured channels
 							</div>

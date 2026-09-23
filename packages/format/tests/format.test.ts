@@ -13,6 +13,9 @@ import {
 	formatMonthlyDelta,
 	formatMonthlyRate,
 	formatRelative,
+	money,
+	moneyFromMajor,
+	scaleMoney,
 	stripeChargeDivisor,
 } from "../src/index";
 
@@ -187,20 +190,79 @@ describe("formatBytes", () => {
 	});
 });
 
+describe("Money", () => {
+	// The type exists so an amount cannot travel without its currency (#4176 part b); these
+	// pin the three ways one is built and the one way it is combined.
+	it("money() holds minor units and the code it was given, unchanged", () => {
+		expect(money(1250, "usd")).toEqual({ minor: 1250, currency: "usd" });
+		// The CASE IS NOT NORMALISED. Stripe hands back lower case, the billing tables store
+		// what Stripe sent, and a round-trip through this type has to give back the row's own
+		// spelling — `formatMoney` upper-cases on the way into Intl instead.
+		expect(money(1250, "USD").currency).toBe("USD");
+	});
+
+	it("moneyFromMajor asks the CHARGE divisor, not a literal 100", () => {
+		expect(moneyFromMajor(20, "USD")).toEqual({ minor: 2000, currency: "USD" });
+		// JPY is zero-decimal for a charge: 500 yen IS 500 minor units. A hardcoded 100 here
+		// would make this 50,000 — the same class of error as #3581, one layer up.
+		expect(moneyFromMajor(500, "JPY")).toEqual({ minor: 500, currency: "JPY" });
+		// And UGX is the row that catches a table transcribed from Stripe's published list:
+		// it appears there AND in the Special cases table as two-decimal for charges.
+		expect(moneyFromMajor(5, "UGX")).toEqual({ minor: 500, currency: "UGX" });
+	});
+
+	it("moneyFromMajor rounds, because minor is documented as an integer", () => {
+		// 29.99 * 100 is 2998.9999999999995 in a double.
+		expect(moneyFromMajor(29.99, "USD").minor).toBe(2999);
+	});
+
+	it("scaleMoney multiplies the amount and carries the currency through", () => {
+		expect(scaleMoney(money(1800, "eur"), 5)).toEqual({ minor: 9000, currency: "eur" });
+		expect(scaleMoney(money(1800, "eur"), 0)).toEqual({ minor: 0, currency: "eur" });
+	});
+
+	// NOT ROUNDED HERE. A per-minute rate times a fractional minute is a real intermediate, and
+	// rounding twice (here and in `formatMoney`) is how a column stops adding up.
+	it("scaleMoney keeps a fractional minor unit for formatMoney to round once", () => {
+		expect(scaleMoney(money(1.2, "usd"), 2.5).minor).toBeCloseTo(3);
+	});
+});
+
 describe("formatMoney", () => {
+	// ── THE `Money` OVERLOAD (#4176 part b) ──────────────────────────────────────────────────
+	// One name, two forms: a `Money` (preferred — it carries its own currency) and the
+	// cents+code pair the conformance table and the two-column billing rows use. They must be
+	// the same function, not two that agree today.
+	it("renders a Money identically to the pair it is made of", () => {
+		expect(formatMoney(money(1250, "USD"))).toBe("$12.50");
+		expect(formatMoney(money(1250, "USD"))).toBe(formatMoney(1250, "USD"));
+		expect(formatMoney(money(124000, "jpy"))).toBe(formatMoney(124000, "jpy"));
+		// The divisor and the NaN clamp are reached through both forms, not just the pair one.
+		expect(formatMoney(money(124000, "JPY"))).toBe("¥124,000");
+		expect(formatMoney(money(Number.NaN, "USD"))).toBe("$0.00");
+	});
+
+
 	// The signature says cents because every bug here starts with 12.5 passed for 1250.
 	it("treats its input as MINOR units", () => {
-		expect(formatMoney(1250)).toBe("$12.50");
-		expect(formatMoney(0)).toBe("$0.00");
-		expect(formatMoney(99)).toBe("$0.99");
+		expect(formatMoney(1250, "USD")).toBe("$12.50");
+		expect(formatMoney(0, "USD")).toBe("$0.00");
+		expect(formatMoney(99, "USD")).toBe("$0.99");
 	});
 
 	it("honours a currency", () => {
 		expect(formatMoney(1250, "EUR")).toBe("€12.50");
 	});
 
+	// Stripe quotes `currency` in lower case, and the billing emails pass it straight through
+	// (#4176). Both halves have to read it: the divisor table and the Intl renderer.
+	it("reads Stripe's lower-case currency codes", () => {
+		expect(formatMoney(5800, "usd")).toBe("$58.00");
+		expect(formatMoney(124000, "jpy")).toBe("¥124,000");
+	});
+
 	it("does not render NaN into a billing table", () => {
-		expect(formatMoney(Number.NaN)).toBe("$0.00");
+		expect(formatMoney(Number.NaN, "USD")).toBe("$0.00");
 	});
 
 	// ── #3581 ────────────────────────────────────────────────────────────────────────────────
@@ -286,7 +348,7 @@ describe("formatMonthlyRate", () => {
 	// The unit split is the whole reason this is a second function. Same money, both spellings.
 	it("takes MAJOR units, where formatMoney takes minor", () => {
 		expect(formatMonthlyRate(12.5)).toBe("$12.50/mo");
-		expect(formatMoney(1250)).toBe("$12.50");
+		expect(formatMoney(1250, "USD")).toBe("$12.50");
 	});
 
 	// THE REGRESSION TEST. The first cut dropped cents above $100, which broke the one property a

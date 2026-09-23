@@ -355,10 +355,16 @@ variable "cloud_sql_authorized_networks" {
   description = "List of authorized networks that can connect to Cloud SQL"
 }
 
+# Default CHANGED "postgres" -> null by #4320, in the same commit that threaded it into
+# modules/cloud-sql. "postgres" was never what the instance got: the module hardcoded
+# `<project_name>-user`, so the knob named the admin login and could not change it. Wiring the old
+# default would have RENAMED the admin user on every existing instance — which on Cloud SQL means
+# replacing it, dropping the login the keyless bootstrap Job (#722) connects as along with its
+# grants. `null` resolves to that same derived name inside the module, so nothing deployed moves.
 variable "cloud_sql_default_username" {
   type        = string
-  default     = "postgres"
-  description = "Default database username"
+  default     = null
+  description = "Name of the BUILT_IN admin database user. Null (the default) derives \"<project_name>-user\" — the name every existing instance has and the one the credentials secret carries. Setting it on an EXISTING instance replaces the admin user."
 }
 
 #########################################################################
@@ -389,10 +395,16 @@ variable "memorystore_redis_version" {
   description = "Redis version for Memorystore"
 }
 
+# Default CHANGED false -> true by #4320, in the same commit that threaded it into
+# modules/memorystore. The two ends disagreed (root false, module true) and nothing threaded the
+# root value, so `true` is what every Memorystore instance this template has built is running.
+# Wiring the old `false` would have turned Redis AUTH off on every instance whose caller never set
+# the knob — a silent security regression dressed as a cleanup. Matching the module keeps every
+# deployed instance exactly as it is and makes an explicit `false` mean something for the first time.
 variable "memorystore_auth_enabled" {
   type        = bool
-  default     = false
-  description = "Whether AUTH is enabled for Memorystore"
+  default     = true
+  description = "Whether AUTH is enabled for Memorystore. Threaded into modules/memorystore (#4320); the default matches what every instance already runs."
 }
 
 variable "memorystore_transit_encryption_mode" {

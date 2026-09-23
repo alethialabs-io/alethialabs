@@ -184,8 +184,15 @@ resource "random_password" "db_password" {
 # GRANTs the Cloud SQL Admin API can't perform). It is NOT typed CLOUD_IAM_USER: that expects an IAM
 # principal email (this name isn't one) and would leave the instance with no password admin to
 # bootstrap grants. The APP stays keyless — it uses the separate CLOUD_IAM_SERVICE_ACCOUNT user below.
+#
+# The NAME was hardcoded to the derived form until #4320, while the root declared
+# `cloud_sql_default_username` (default "postgres") and threaded it nowhere — a knob that named the
+# admin login and could not change it. It is threaded now, and `null` (the root's new default)
+# keeps the derived name, because that name is load-bearing in two places a rename would break
+# quietly: the bootstrap Job reads it out of the credentials secret below, and an existing
+# instance's admin user is REPLACED when this name changes — the old login and its grants go away.
 resource "google_sql_user" "default" {
-  name     = "${var.project_name}-user"
+  name     = coalesce(var.default_username, "${var.project_name}-user")
   project  = var.project_id
   instance = google_sql_database_instance.this.name
   password = random_password.db_password.result

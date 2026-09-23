@@ -5,7 +5,7 @@
 // Settings · Access — an inheritance info-note, a stat strip (Grants / Org-wide /
 // Project-scoped), a toolbar (search · scope filter · Add grant), an inline
 // grant builder with a live preview, and the grants table on the shared DataTable
-// (sortable + paginated). Wired to grants.ts (listAccessGrants / getGrantOptions /
+// (sortable + paginated). Wired to grants.ts (getAccessGrantsPage / getGrantOptions /
 // assignGrant / revokeGrant). The page header lives in the settings shell; without the
 // Enterprise `customRoles` entitlement the surface stays visible and shows the upsell.
 
@@ -20,9 +20,9 @@ import {
   assignGrant,
   getGrantOptions,
   type GrantOptions,
-  listAccessGrants,
   revokeGrant,
 } from "@/app/server/actions/grants";
+import { useAccessGrantsPageQuery } from "@/lib/query/use-access-grants-query";
 import { lookup } from "@/lib/typed-object";
 import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
@@ -34,7 +34,6 @@ import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import { SettingsSelect } from "@/components/settings/settings-ui";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import { qk } from "@/lib/query/keys";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useAccessFilters } from "@/lib/stores/use-settings-filters";
 import {
@@ -66,10 +65,9 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import { userInitials } from "@/lib/user-display";
 import {
-  accessFacetCounts,
   DEFAULT_ACCESS_FILTERS,
   EFFECT_OPTIONS,
-  filterGrants,
+  facetCounts,
   grantRoleLabel,
   normalizeAccessQuery,
   reachLabel,
@@ -112,14 +110,10 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
   // Custom-scoped grants are Enterprise. Without the entitlement the server rejects these
   // (requireAccessAdmin), so both queries stay disabled and the upsell renders instead.
   //
-  // The key carries only `projectId` — the one axis `listAccessGrants` understands — so the
-  // fetched rows are the UNFILTERED universe for this scope, which is what the facet counts
-  // below must be computed over.
-  const grantsQuery = useQuery({
-    queryKey: qk.accessGrants(org, projectId ? { projectId } : undefined),
-    queryFn: () => listAccessGrants(projectId),
-    enabled: entitled,
-  });
+  // Filtered SERVER-SIDE (#4890): the whole normalized query is the key, `getAccessGrantsPage`
+  // narrows in SQL, and the scope/role/effect facets come back counted over the UNFILTERED
+  // grants of the same scope — so an option never disappears the moment it is selected.
+  const grantsQuery = useAccessGrantsPageQuery(query, entitled);
   const optionsQuery = useQuery({
     queryKey: ["access", "grant-options", org] as const,
     queryFn: () => getGrantOptions(),
@@ -156,20 +150,20 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
     }
   };
 
-  const all = useMemo(() => grantsQuery.data ?? [], [grantsQuery.data]);
-  /** The label the Scope column shows — the search must match what the row displays. */
-  const scopeLabel = useCallback(
-    (g: AccessGrantRow) =>
-      g.resourceType === "org"
-        ? "organization"
-        : resourceLabel(g.resourceType, g.resourceId),
-    [resourceLabel],
-  );
   const filtered = useMemo(
-    () => filterGrants(all, query, scopeLabel),
-    [all, query, scopeLabel],
+    () => grantsQuery.data?.rows ?? [],
+    [grantsQuery.data],
   );
-  const counts = useMemo(() => accessFacetCounts(all), [all]);
+  /** Every grant in this scope — what "no grants yet" means, as opposed to "none match". */
+  const total = grantsQuery.data?.total ?? 0;
+  const counts = useMemo(
+    () => ({
+      scopes: facetCounts(grantsQuery.data?.facets.scopes ?? []),
+      roles: facetCounts(grantsQuery.data?.facets.roles ?? []),
+      effects: facetCounts(grantsQuery.data?.facets.effects ?? []),
+    }),
+    [grantsQuery.data],
+  );
   const activeFilters = countActiveFilters(filters, DEFAULT_ACCESS_FILTERS);
 
   const columns = useMemo<ColumnDef<AccessGrantRow>[]>(
@@ -337,7 +331,7 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
           <PageToolbar
             className="mb-4"
             description="Who is granted what, and where it applies."
-            count={filtered.length}
+            count={grantsQuery.data?.resultCount ?? 0}
             actions={
               <Button size="sm" onClick={() => setCreating((v) => !v)}>
                 <Plus size={13} />
@@ -419,14 +413,14 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
             <EmptyState
               className="border border-border bg-surface-sunken"
               icon={<Shield />}
-              title={all.length === 0 ? "No grants yet" : "No matching grants"}
+              title={total === 0 ? "No grants yet" : "No matching grants"}
               description={
-                all.length === 0
+                total === 0
                   ? "Add a grant to bind a member or team to a role."
                   : "No grant matches these filters."
               }
               action={
-                all.length === 0 ? undefined : (
+                total === 0 ? undefined : (
                   <Button variant="outline" size="sm" onClick={reset}>
                     Clear filters
                   </Button>
@@ -434,7 +428,16 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
               }
             />
           ) : (
-            <DataTable columns={columns} data={filtered} pageSize={15} />
+            /* The filter standard's `isPlaceholderData` dim: these rows are the PREVIOUS
+               query's answer, kept so the table does not blank on a filter change and marked
+               so they are not read as the current one. */
+            <div
+              className={cn(
+                grantsQuery.isPlaceholderData && "opacity-60 transition-opacity",
+              )}
+            >
+              <DataTable columns={columns} data={filtered} pageSize={15} />
+            </div>
           )}
         </>
       )}

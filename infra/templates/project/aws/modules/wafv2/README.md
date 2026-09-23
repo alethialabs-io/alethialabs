@@ -87,7 +87,12 @@ Use `custom_managed_waf_rule_groups` to attach rule groups you already created i
 - `action` — `allow`, `block`, `count`, `captcha`, or `challenge`
 - `statement` — a map matching the Terraform `aws_wafv2_web_acl` rule `statement` schema (snake_case keys: `byte_match_statement`, `geo_match_statement`, `rate_based_statement`, `and_statement`, `or_statement`, `not_statement`, etc.)
 
-Rate limiting is expressed with `statement.rate_based_statement` (there is no separate variable for rate rules).
+Rate limiting has two forms, and both build real rules:
+
+- `rate_limit_rules` — the short form, a typed list of `{ name, priority, limit, action, aggregate_key_type, evaluation_window_sec }`. Added by #4320, which wired the root template's `waf_rate_limit_rules`; before that the root declared it, carried it to tfvars and no resource read it, so a rate limit a caller asked for was never built.
+- `custom_rules` with `statement.rate_based_statement` — for anything the four fields cannot say: a scope-down statement, a forwarded-IP config, a custom aggregation key. See `examples/custom-rules.tfvars`.
+
+Both lists share ONE priority space with each other and with the managed rule groups.
 
 Nested logical statements are supported with a practical depth limit (about two levels) as implemented in the module.
 

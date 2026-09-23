@@ -121,7 +121,7 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// amd64 default (cpx22 = 2 vCPU / 4 GB). cax11 (ARM) is capacity-unreliable and
 	// cpx11 is retired, so an amd64 shared-vCPU type is the reliably-provisionable default.
 	workerType := "cpx22"
-	if inst := resolveInstanceTypes("hetzner", config.Cluster); len(inst) > 0 {
+	if inst := ResolveInstanceTypes("hetzner", config.Cluster); len(inst) > 0 {
 		workerType = inst[0]
 	}
 
@@ -362,11 +362,20 @@ func hetznerS3Region(region string) string {
 }
 
 // buildHetznerBuckets maps the cloud-indifferent bucket configs to the shape the hetzner
-// template's `buckets` tfvar (and the minio provider) consumes. CORS is intentionally
-// carried through but the aminueza/minio provider does NOT apply it against Hetzner
-// (s3_compat_mode skips CORS) — it is ignored, never a failure. `encryption_enabled` is
-// likewise informational: Hetzner Object Storage encrypts at rest automatically and the
-// provider exposes no per-bucket toggle.
+// template's `buckets` tfvar (and the minio provider) consumes.
+//
+// CORS now BUILDS something (#4320): the template creates a minio_s3_bucket_cors rule for
+// any bucket that names an origin. The provider runs in s3_compat_mode, which names CORS
+// among the features it SKIPS rather than fails when a backend does not implement them, so
+// the request is honoured where Hetzner supports it and is a no-op where it is not — never
+// an apply failure. This comment used to say CORS was ignored outright, which was true of
+// the template as written and is no longer.
+//
+// `encryption_enabled` IS still informational and reaches no resource, and the reason is
+// the backend, not the provider: Hetzner Object Storage supports exactly one encryption
+// type, SSE-C (per-request customer-supplied keys), and has no bucket-level default-
+// encryption configuration for a resource to write. Objects are encrypted at rest either
+// way. Recorded against the knob in the template and in infra/templates/project/knob-exclusions.yaml.
 func buildHetznerBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {

@@ -33,8 +33,36 @@ variable "state_bucket_name" {
   default     = ""
 
   validation {
-    condition     = var.state_bucket_name == "" || can(regex("^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$", var.state_bucket_name))
-    error_message = "state_bucket_name must be empty (derive it) or a valid GCS bucket name of 3-63 characters."
+    # 3-58, not GCS's own 3-63. The access-log sink is named `<this>-logs` (main.tf) and has no
+    # override of its own, so that derivation is provable at construction time only if this leaves
+    # 5 characters of headroom. The derived form caps at 49, so the bound binds only on an
+    # explicit override — and this variable IS the escape hatch for a taken `-logs` name too.
+    condition     = var.state_bucket_name == "" || can(regex("^[a-z0-9][a-z0-9._-]{1,56}[a-z0-9]$", var.state_bucket_name))
+    error_message = "state_bucket_name must be empty (derive it) or a valid GCS bucket name of 3-58 characters — 5 short of GCS's 63, to leave room for the `-logs` access-log sink derived from it."
+  }
+}
+
+variable "access_log_retention_days" {
+  description = <<-EOT
+    How long GCS usage-log shards are kept in the sink bucket before the lifecycle rule deletes
+    them. This is the forensic window for "who read or wrote the e2e state".
+
+    90 rather than the 30 used for state generations, and the difference is deliberate. 30 is sized
+    for "I broke the state this week and want the previous generation"; an access question is not
+    noticed that way. An unauthorized read of this state shows up as its CONSEQUENCES — an
+    unexpected apply, an identity that moved — which surface weeks later, and a log that has
+    already expired answers nothing. A quarter is long enough to cover that gap.
+
+    The bill is not the reason to tune this down. The stacks are applied by hand a handful of times
+    a year, so the sink holds kilobytes; at GCS Standard EU pricing 90 days of it is a rounding
+    error against the state bucket itself. Raise it if you want a longer audit window.
+  EOT
+  type        = number
+  default     = 90
+
+  validation {
+    condition     = var.access_log_retention_days >= 30 && var.access_log_retention_days <= 3650
+    error_message = "access_log_retention_days must be between 30 and 3650 — under 30 days is not a forensic window for a resource touched a few times a year."
   }
 }
 

@@ -301,7 +301,11 @@ export function readTools(opts?: { environmentId?: string | null }) {
 					used_minutes: u.usedMinutes,
 					included_minutes: u.includedMinutes,
 					overage_minutes: u.overageMinutes,
-					overage_cost_usd: u.overageCost,
+					// MAJOR units, and the `_usd` is TRUE: `OVERAGE_RATE_PER_MIN` is a USD
+					// constant for every org, so unlike `unit_amount_usd` below there is no
+					// second currency for this field to be wrong about. No currency-carrying
+					// sibling is added for that reason — see `lib/billing/usage.ts`.
+					overage_cost_usd: u.overageCost.minor / 100,
 					pct: Number.isFinite(u.pct) ? u.pct : null,
 					running_jobs: u.runningJobs,
 					max_concurrent_jobs: u.maxConcurrentJobs,
@@ -333,10 +337,35 @@ export function readTools(opts?: { environmentId?: string | null }) {
 
 		get_billing_summary: tool({
 			description:
-				"Get the active org's plan/billing state: plan, lifecycle status, seats vs members, per-seat monthly amount, and current period end. Secret-free (no Stripe ids or card data). PDP-gated read.",
+				"Get the active org's plan/billing state: plan, lifecycle status, seats vs members, per-seat monthly amount, and current period end. The amount is `unit_amount` in MINOR units (cents) with its ISO code in `currency` — read those two together and never assume dollars. `unit_amount_usd` is a deprecated major-unit field kept for older pinned widgets; it is null unless the currency really is USD. Secret-free (no Stripe ids or card data). PDP-gated read.",
 			inputSchema: z.object({}),
 			execute: async () => {
 				const b = await getBillingSummary();
+				// ── THE WIRE NAME IS KEPT; THE AMOUNT MOVES TO A PAIR (#4176 part b) ───────────
+				//
+				// `unit_amount_usd` is not an internal field, so retiring it is a COMPATIBILITY
+				// question and not a rename. Two readers hold it and neither is this repo's type
+				// checker:
+				//
+				//   1. The model. A tool's output shape is part of the prompt contract, and a
+				//      renamed key in a replayed transcript is a field the assistant has already
+				//      reasoned about and can no longer find.
+				//   2. `thread_widgets.data` — a PERSISTED jsonb snapshot of exactly this object
+				//      (`lib/db/schema/widgets.ts`), re-parsed at render time by the zod schemas
+				//      in `components/agent/widgets/registry.tsx`. Every billing widget a user
+				//      has already pinned holds the old key. It is `nullish()`, so dropping the
+				//      key does not fail the parse — the row silently renders an em dash, which
+				//      is the worst of the available failures.
+				//
+				// So the key stays and the amount moves to `unit_amount` + `currency`, which is
+				// what the widget and the model are told to read. What DOES change is that the
+				// old key is no longer allowed to lie: it is emitted only when the currency is
+				// genuinely USD, because a EUR subscription put euros in a field named `_usd`
+				// and that is the defect #4176 was opened for. Already-pinned snapshots are
+				// unaffected either way — they render from whatever they recorded, exactly as
+				// they do today.
+				const unitAmount = b.unitAmount;
+				const isUsd = unitAmount !== null && unitAmount.currency.toLowerCase() === "usd";
 				return {
 					hosted: b.hosted,
 					has_org: b.hasOrg,
@@ -345,7 +374,12 @@ export function readTools(opts?: { environmentId?: string | null }) {
 					state: b.state,
 					seats: b.seats,
 					member_count: b.memberCount,
-					unit_amount_usd: b.unitAmountUsd,
+					/** MINOR units, paired with `currency`. Prefer this. */
+					unit_amount: unitAmount?.minor ?? null,
+					/** ISO 4217, Stripe's lower case. Null exactly when `unit_amount` is. */
+					currency: unitAmount?.currency ?? null,
+					/** DEPRECATED, major units, USD only. Kept for pinned widgets — see above. */
+					unit_amount_usd: isUsd ? unitAmount.minor / 100 : null,
 					cancel_at_period_end: b.cancelAtPeriodEnd,
 					current_period_end: b.currentPeriodEnd,
 				};

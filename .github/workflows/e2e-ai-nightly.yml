@@ -86,6 +86,15 @@ jobs:
       ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
       ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
       DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
+      # `next start` is production mode with no trusted ingress proxy in front of it. Since #3833,
+      # lib/auth/trusted-ip.ts 503s every production auth request that lacks a valid
+      # `cf-connecting-ip` — which a bare localhost console never receives — UNLESS the auth rate
+      # limiter is off. Without this the `setup` project's OTP send is refused, no code is ever
+      # logged, and `auth.setup.ts` times out at 30s; that is exactly how this job's first real run
+      # died (run 35842461565, #4967). Every other Playwright job that boots the console sets it
+      # (ci.yml, release-gate.yml); this one was skipped for want of a key when they were swept.
+      # Scoped to this job's throwaway console + database — production policy is untouched.
+      ALETHIA_AUTH_RATE_LIMIT: "0"
       # The real thing. Pinned to the cheapest tool-capable model for both roles so a
       # nightly run costs cents (the advisor upgrade is a paid-tier feature anyway).
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
