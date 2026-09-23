@@ -526,33 +526,33 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * the state it selects as `already-current`). The rows stay, owned by #4980, until an imported run
  * proves the cells — the import that clears them deletes them in the same commit.
  *
+ * THE THIRD IMPORT — run 35867789835 @ `d69e62699`, `audit` + `audit-interaction` of ONE run
+ * again, on #4980's branch. The `routes` and `permissions` sections reproduced all 387 verdicts
+ * key-for-key. All three #4980 cells are proven: F8 PASSES on `~/alerts` and `~/runners`, which
+ * leaves F8 failing nowhere, so its row is gone. `owner39` on `~/settings/roles` PASSES. R8's N/A
+ * `no-enabled-controls` fell from 9 routes to 1 (`/cli/login`), because the enumeration now waits
+ * for the page instead of reading its skeleton. The seven R8 FAILs below are what those newly
+ * measured pages show, and what a settled page no longer hides. None of them is a #4980 cell.
+ *
  * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
 export const LIVE_DEBT = /** @type {const} */ ({
-	F8: {
-		owner: "#4980",
-		why:
-			"TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and " +
-			"`~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param " +
-			"and reads the FULL count, while Reset is correct in both halves. Both cells PASSED in run " +
-			"35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between " +
-			"those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the " +
-			"URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data " +
-			"until the filtered fetch returns. `settle()` took two equal reads 300 ms apart as settled, so " +
-			"it could not tell a slow placeholder from an answer. #4980 fixes both halves; unproven until " +
-			"an imported run shows both cells PASS.",
-	},
 	R8: {
 		owner: "#4980",
 		why:
-			"ONE route, ONE control: `button \"owner39\"` on `~/settings/roles`, which is the built-in " +
-			"`owner` rail row, selected by default. Clicking the row that is already selected changes " +
-			"nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that " +
-			"could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a " +
-			"DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 had " +
-			"no rule for a control that is already in the state it selects. #4980 adds `aria-current` " +
-			"to the row and the rule to R8; unproven until an imported run shows the cell PASS.",
+			"SEVEN routes, and none is a cell #4980 named: `owner39` on `~/settings/roles` now PASSES, and " +
+			"`~/runners` and `[project]/architecture` are MEASURED (20 and 14 controls) where they were N/A " +
+			"from their loading skeletons. Waiting for the page to settle also removed the re-render that " +
+			"used to land inside a control's window and pass it, and revealed these. Two classes: " +
+			"(1) an exclusive-choice button ALREADY PRESSED, clicked again: `Runner minutes` on `~/usage` " +
+			"and `[project]/usage` (the metric group) and the theme menu's `System` on `/[org]`. These use " +
+			"`aria-pressed` for a one-of-N choice, and the #4980 rule excused only `aria-current`, " +
+			"`aria-selected` and a checked radio. (2) Controls with no state attribute whose click showed " +
+			"nothing within 1 000 ms: `Fit view` on `[project]/architecture` (the view is already fitted), " +
+			"`Link GitHub`/`Link GitLab`/`Link Bitbucket` on `[project]/settings/preview` and `~/new`, " +
+			"`Design with the agent` on `~/new`, and `Transfer` on `~/settings/general`. Each needs a " +
+			"product-or-instrument decision.",
 	},
 });
 

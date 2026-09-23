@@ -9,8 +9,8 @@
 	],
 	"version": 1,
 	"source": {
-		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35851828028",
-		"commit": "6bcf7425b0b429dc9a3f1dc53e703c04c852b429"
+		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35867789835",
+		"commit": "d69e62699fa68f63c18d0ab3eccc7904742954f5"
 	},
 	"runs": {
 		"routes": {
@@ -19,7 +19,7 @@
 			"persona": "the run's own owner",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names",
-			"runKey": "e2e-e2e-1790161296790-83930",
+			"runKey": "e2e-e2e-1790170646320-407569",
 			"records": [
 				{
 					"route": "/[org]",
@@ -1911,7 +1911,7 @@
 			"persona": "the `member` persona, compared against the owner of the same org",
 			"org": "a SECOND organisation, created by that spec and never touched by the primary run",
 			"covers": "only the org-only routes; the parameterised ones need a project the persona cannot be given",
-			"runKey": "e2e-e2e-audit-owner-1790161301044-1",
+			"runKey": "e2e-e2e-audit-owner-1790170650746-1",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2081,7 +2081,7 @@
 			"persona": "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
-			"runKey": "e2e-e2e-1790161339475-989113",
+			"runKey": "e2e-e2e-1790170686437-699541",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2104,271 +2104,271 @@
 				{
 					"route": "/[org]",
 					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]",
-					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "redirect-only"
-				},
-				{
-					"route": "/[org]/[project]/architecture",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/architecture",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/architecture",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/architecture",
-					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
-				},
-				{
-					"route": "/[org]/[project]/clusters",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/clusters",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/clusters",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/clusters",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]/environments",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/environments",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/environments",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/environments",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]/jobs",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]/jobs",
-					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
-				},
-				{
-					"route": "/[org]/[project]/jobs",
-					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
-				},
-				{
-					"route": "/[org]/[project]/jobs",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]/settings",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/settings",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/settings",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/settings",
-					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "redirect-only"
-				},
-				{
-					"route": "/[org]/[project]/settings/access",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]/settings/access",
-					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
-				},
-				{
-					"route": "/[org]/[project]/settings/access",
-					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
-				},
-				{
-					"route": "/[org]/[project]/settings/access",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]/settings/activity",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]/settings/activity",
-					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
-				},
-				{
-					"route": "/[org]/[project]/settings/activity",
-					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
-				},
-				{
-					"route": "/[org]/[project]/settings/activity",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]/settings/general",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/settings/general",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/settings/general",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/settings/general",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]/settings/preview",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/settings/preview",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/settings/preview",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/settings/preview",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/[project]/usage",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/usage",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/usage",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/[project]/usage",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/alerts",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/alerts",
-					"predicate": "F8",
 					"verdict": "FAIL",
-					"detail": "reload() kept the param but not the narrowed list"
+					"detail": "1 enabled control did nothing within 1000ms — of 50 controls enumerated on this route"
+				},
+				{
+					"route": "/[org]/[project]",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]",
+					"predicate": "R8",
+					"verdict": "N/A",
+					"reason": "redirect-only"
+				},
+				{
+					"route": "/[org]/[project]/architecture",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/architecture",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/architecture",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/architecture",
+					"predicate": "R8",
+					"verdict": "FAIL",
+					"detail": "1 enabled control did nothing within 1000ms — of 14 controls enumerated on this route"
+				},
+				{
+					"route": "/[org]/[project]/clusters",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/clusters",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/clusters",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/clusters",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/environments",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/environments",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/environments",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/environments",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/jobs",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/jobs",
+					"predicate": "F8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/jobs",
+					"predicate": "F9",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/jobs",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/settings",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/settings",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/settings",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/settings",
+					"predicate": "R8",
+					"verdict": "N/A",
+					"reason": "redirect-only"
+				},
+				{
+					"route": "/[org]/[project]/settings/access",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/settings/access",
+					"predicate": "F8",
+					"verdict": "NOT MEASURED",
+					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+				},
+				{
+					"route": "/[org]/[project]/settings/access",
+					"predicate": "F9",
+					"verdict": "NOT MEASURED",
+					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+				},
+				{
+					"route": "/[org]/[project]/settings/access",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/settings/activity",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/settings/activity",
+					"predicate": "F8",
+					"verdict": "NOT MEASURED",
+					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+				},
+				{
+					"route": "/[org]/[project]/settings/activity",
+					"predicate": "F9",
+					"verdict": "NOT MEASURED",
+					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+				},
+				{
+					"route": "/[org]/[project]/settings/activity",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/settings/general",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/settings/general",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/settings/general",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/settings/general",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/[project]/settings/preview",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/settings/preview",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/settings/preview",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/settings/preview",
+					"predicate": "R8",
+					"verdict": "FAIL",
+					"detail": "3 enabled controls did nothing within 1000ms — of 7 controls enumerated on this route"
+				},
+				{
+					"route": "/[org]/[project]/usage",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/usage",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/usage",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/[project]/usage",
+					"predicate": "R8",
+					"verdict": "FAIL",
+					"detail": "1 enabled control did nothing within 1000ms — of 6 controls enumerated on this route"
+				},
+				{
+					"route": "/[org]/~/alerts",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/alerts",
+					"predicate": "F8",
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/alerts",
@@ -2486,8 +2486,7 @@
 				{
 					"route": "/[org]/~/jobs/[id]",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/new",
@@ -2510,18 +2509,18 @@
 				{
 					"route": "/[org]/~/new",
 					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/runners",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/runners",
-					"predicate": "F8",
 					"verdict": "FAIL",
-					"detail": "reload() kept the param but not the narrowed list"
+					"detail": "4 enabled controls did nothing within 1000ms — of 11 controls enumerated on this route"
+				},
+				{
+					"route": "/[org]/~/runners",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/runners",
+					"predicate": "F8",
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/runners",
@@ -2531,8 +2530,7 @@
 				{
 					"route": "/[org]/~/runners",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings",
@@ -2621,8 +2619,7 @@
 				{
 					"route": "/[org]/~/settings/billing",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
@@ -2691,8 +2688,8 @@
 				{
 					"route": "/[org]/~/settings/general",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "FAIL",
+					"detail": "1 enabled control did nothing within 1000ms — of 8 controls enumerated on this route"
 				},
 				{
 					"route": "/[org]/~/settings/members",
@@ -2712,8 +2709,7 @@
 				{
 					"route": "/[org]/~/settings/members",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/roles",
@@ -2732,213 +2728,211 @@
 				},
 				{
 					"route": "/[org]/~/settings/roles",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/sso",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/sso",
+					"predicate": "F8",
+					"verdict": "NOT MEASURED",
+					"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+				},
+				{
+					"route": "/[org]/~/settings/sso",
+					"predicate": "F9",
+					"verdict": "NOT MEASURED",
+					"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+				},
+				{
+					"route": "/[org]/~/settings/sso",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/teams",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/teams",
+					"predicate": "F8",
+					"verdict": "NOT MEASURED",
+					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+				},
+				{
+					"route": "/[org]/~/settings/teams",
+					"predicate": "F9",
+					"verdict": "NOT MEASURED",
+					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+				},
+				{
+					"route": "/[org]/~/settings/teams",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/support",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/support/abuse",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/abuse",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/abuse",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/abuse",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/support/ask",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/ask",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/ask",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/ask",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/support/cases/[id]",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/cases/[id]",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/cases/[id]",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/cases/[id]",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/support/my-cases",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/support/my-cases",
+					"predicate": "F8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/support/my-cases",
+					"predicate": "F9",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/support/my-cases",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/support/submit",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/submit",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/submit",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/support/submit",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/usage",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/usage",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/usage",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/usage",
 					"predicate": "R8",
 					"verdict": "FAIL",
-					"detail": "1 enabled control did nothing within 1000ms — of 19 controls enumerated on this route"
-				},
-				{
-					"route": "/[org]/~/settings/sso",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/settings/sso",
-					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
-				},
-				{
-					"route": "/[org]/~/settings/sso",
-					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
-				},
-				{
-					"route": "/[org]/~/settings/sso",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/settings/teams",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/settings/teams",
-					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
-				},
-				{
-					"route": "/[org]/~/settings/teams",
-					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
-				},
-				{
-					"route": "/[org]/~/settings/teams",
-					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
-				},
-				{
-					"route": "/[org]/~/support",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/support/abuse",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/abuse",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/abuse",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/abuse",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/support/ask",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/ask",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/ask",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/ask",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/support/cases/[id]",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/cases/[id]",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/cases/[id]",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/cases/[id]",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/support/my-cases",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/support/my-cases",
-					"predicate": "F8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/support/my-cases",
-					"predicate": "F9",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/support/my-cases",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/support/submit",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/submit",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/submit",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/support/submit",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/usage",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/usage",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/usage",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/usage",
-					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"detail": "1 enabled control did nothing within 1000ms — of 7 controls enumerated on this route"
 				},
 				{
 					"route": "/cli/login",
