@@ -18,8 +18,9 @@ import (
 	"time"
 )
 
-// runT2FabricDemo drives the #845 acceptance gate on the Fabric the base run provisioned: assert the
-// base deploy is the prod tier's DEDICATED placement that owns this Fabric, place each
+// runT2FabricDemo drives the #845 acceptance gate on the Fabric the base run provisioned: check the
+// base deploy's snapshot is the prod tier's DEDICATED placement (which provisioned this Fabric by
+// construction — see the package comment), place each
 // tier as a namespace env syncing its OWN Kustomize overlay, place one tier as a vcluster env, prove
 // every placement genuinely CAUSED the artifacts it is credited with, re-prove the Fabric's drift
 // posture, and record the whole thing as a machine-readable verdict.
@@ -70,20 +71,21 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 	summary.FabricPlanSHA = strings.TrimSpace(p.planSHA)
 
 	// ── (P) The PROD tier — the DEDICATED placement that provisioned this Fabric ────────────────
-	//    Asserted from the base DEPLOY job's own rows, before any tenant is placed: its snapshot
-	//    must resolve to the dedicated path, its metadata must name this Fabric, and its receipt
-	//    must have verified. Cheap (two DB reads, no cloud time), so it runs first and a Fabric that
-	//    was not provisioned by a dedicated placement fails before a single tenant is seeded.
-	prodSnap, prodMeta, err := fabricDemoBaseJobRows(ctx, cp, p.deployJobID)
+	//    Checked from the base DEPLOY job's config_snapshot, before any tenant is placed: it must
+	//    resolve to the dedicated path. Cheap (one DB read, no cloud time), so it runs first and a
+	//    base deploy submitted as a namespace/vcluster placement fails before a tenant is seeded.
+	//    That the Fabric (p.fabricClust) and receipt (p.planSHA) belong to this job holds BY
+	//    CONSTRUCTION — both were read from its execution_metadata — so they are not re-checked.
+	prodSnap, err := fabricDemoBaseJobSnapshot(ctx, cp, p.deployJobID)
 	if err != nil {
 		t.Fatalf("fabric-demo: prod tier: %v", err)
 	}
-	prod, err := assertFabricDemoProd(p.deployJobID, prodSnap, prodMeta, p.fabricClust, summary.FabricPlanSHA)
+	prod, err := assertFabricDemoProd(p.deployJobID, prodSnap)
 	summary.Prod = prod
 	if err != nil {
 		t.Fatalf("fabric-demo: prod tier: %v", err)
 	}
-	t.Logf("fabric-demo: prod tier = DEDICATED placement (base DEPLOY %s, placement_mode=%s, stage label %q) owning Fabric %q with a verified receipt",
+	t.Logf("fabric-demo: prod tier = DEDICATED placement (base DEPLOY %s, placement_mode=%s, stage label %q); Fabric %q and its receipt come from that same job",
 		prod.DeployJob, prod.PlacementMode, prod.StageLabel, p.fabricClust)
 
 	timeout := fabricDemoTimeout()
@@ -310,20 +312,20 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 	t.Logf("fabric-demo (#845) PROVEN: %s", fabricDemoSummaryVerdict(summary))
 }
 
-// fabricDemoBaseJobRows reads the base DEPLOY job's config_snapshot and execution_metadata — the two
-// rows assertFabricDemoProd judges the prod tier's dedicated placement by. An empty job id is not an
+// fabricDemoBaseJobSnapshot reads the base DEPLOY job's config_snapshot — the column
+// assertFabricDemoProd judges the prod tier's dedicated placement by. An empty job id is not an
 // error here: assertFabricDemoProd refuses it with the reason, so the summary still records it.
-func fabricDemoBaseJobRows(ctx context.Context, cp *ControlPlane, jobID string) (snapshot, meta []byte, err error) {
+func fabricDemoBaseJobSnapshot(ctx context.Context, cp *ControlPlane, jobID string) (snapshot []byte, err error) {
 	if strings.TrimSpace(jobID) == "" {
-		return nil, nil, nil
+		return nil, nil
 	}
 	err = cp.pool.QueryRow(ctx,
-		`SELECT config_snapshot, execution_metadata FROM public.jobs WHERE id = $1`, jobID).
-		Scan(&snapshot, &meta)
+		`SELECT config_snapshot FROM public.jobs WHERE id = $1`, jobID).
+		Scan(&snapshot)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read base DEPLOY job %s rows: %w", jobID, err)
+		return nil, fmt.Errorf("read base DEPLOY job %s config_snapshot: %w", jobID, err)
 	}
-	return snapshot, meta, nil
+	return snapshot, nil
 }
 
 // kubeIdentsOf lists a kind and returns name → identity, for the causality baseline. ns == "" lists

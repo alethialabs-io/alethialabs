@@ -60,11 +60,23 @@
 // cluster, and therefore the only one that carries its own signed receipt.
 //
 // That used to be implicit: fabricDemoStage mapped a "prod" tier name and nothing ever placed or
-// asserted one. assertFabricDemoProd now makes it a checked claim — the base DEPLOY job's
-// config_snapshot must resolve to the dedicated path, its execution_metadata must name the very
-// Fabric the tenants landed on, and its receipt must have verified — and fabricDemoVerdictPass
-// cannot read green without it. fabricDemoTiers refuses a tier that maps to production, so prod can
-// never be quietly downgraded to a namespace tenant on somebody else's Fabric.
+// asserted one. Two things now hold it, and they are different KINDS of claim:
+//
+//   - CHECKED: assertFabricDemoProd reads the base DEPLOY job's config_snapshot and requires it to
+//     resolve to the dedicated path. That column is not where anything else in this gate came from,
+//     so a base deploy submitted as a namespace/vcluster placement fails here. Note the harness
+//     itself builds that snapshot, so in practice this pins the harness's own submission — it is a
+//     regression guard on what the run ASKED for, not an observation of the path the runner took.
+//   - BY CONSTRUCTION, not checked: that this placement owns the Fabric and carries the receipt.
+//     fabricDemoParams.fabricClust and .planSHA are both read from the SAME base job's
+//     execution_metadata (t2_provision_test.go), so re-reading that row and comparing it with them
+//     would compare a column with itself. The receipt is the one the base run already verified
+//     (VerifySignedReceipt) and the verdict already requires as FabricPlanSHA. The summary records
+//     neither as a separate prod-tier proof, because neither was separately proven.
+//
+// fabricDemoVerdictPass cannot read green without the checked half. fabricDemoTiers refuses a tier
+// that maps to production, so prod can never be quietly downgraded to a namespace tenant on somebody
+// else's Fabric.
 //
 // What this does NOT claim: that the prod Fabric hosts nothing else. "One Fabric per cloud" puts the
 // dev/staging tenants on the same cluster. A prod on a cluster SEPARATE from the tenants is a second
@@ -468,7 +480,9 @@ type FabricDemoVCluster struct {
 }
 
 // FabricDemoProd is the prod tier's result — the DEDICATED placement that provisioned the Fabric.
-// Every field is something assertFabricDemoProd read from the base job's own rows, never a constant.
+// Only Dedicated is a checked claim; the rest is recorded from the base job's config_snapshot. It
+// deliberately carries no "owns the Fabric" or "receipt verified" flag: both hold by construction
+// (see the package comment), and a boolean for them would print a tautology as a proof.
 type FabricDemoProd struct {
 	Tier  string `json:"tier"`  // fabricDemoProdTier
 	Stage string `json:"stage"` // fabricDemoStage(Tier) — the enum the tier maps to
@@ -477,20 +491,17 @@ type FabricDemoProd struct {
 	StageLabel    string `json:"stage_label"`
 	DeployJob     string `json:"deploy_job"`
 	PlacementMode string `json:"placement_mode"` // as resolved from the base snapshot; "" reads as dedicated
-	// Dedicated: the base snapshot resolves to the full-cluster path, not a namespace/vcluster one.
+	// Dedicated: the base snapshot resolves to the full-cluster path (provisioner.selectPlacementPath's
+	// rule), not a namespace/vcluster one.
 	Dedicated bool `json:"dedicated"`
-	// OwnsFabric: the base job's execution_metadata names the Fabric every tenant was placed on.
-	OwnsFabric bool `json:"owns_fabric"`
-	// ReceiptVerified: the base run verified a signed receipt over this placement's own plan.
-	ReceiptVerified bool `json:"receipt_verified"`
 }
 
-// assertFabricDemoProd checks the prod tier's DEDICATED placement from the base DEPLOY job's own
-// rows: its config_snapshot must resolve to the dedicated path (an empty or `dedicated`
-// placement_mode, exactly provisioner.selectPlacementPath's rule), its execution_metadata must name
-// the Fabric the tenants were placed on, and the base run must have verified its receipt (planSHA).
-// The result is filled as far as the checks got, so a failure still leaves an honest partial record.
-func assertFabricDemoProd(deployJobID string, snapshotJSON, metaJSON []byte, fabric, planSHA string) (FabricDemoProd, error) {
+// assertFabricDemoProd checks the prod tier's DEDICATED placement from the base DEPLOY job's
+// config_snapshot: its placement_mode must be empty or `dedicated`, exactly provisioner.
+// selectPlacementPath's rule. It does not re-check the Fabric's cluster name or receipt — those came
+// from the same job's execution_metadata, so a re-read could only agree with itself. The result is
+// filled as far as the checks got, so a failure still leaves an honest partial record.
+func assertFabricDemoProd(deployJobID string, snapshotJSON []byte) (FabricDemoProd, error) {
 	res := FabricDemoProd{Tier: fabricDemoProdTier, Stage: fabricDemoStage(fabricDemoProdTier), DeployJob: deployJobID}
 	if strings.TrimSpace(deployJobID) == "" {
 		return res, fmt.Errorf("no base DEPLOY job id — the prod tier's dedicated placement cannot be located, so it cannot be asserted")
@@ -518,29 +529,6 @@ func assertFabricDemoProd(deployJobID string, snapshotJSON, metaJSON []byte, fab
 		return res, fmt.Errorf("the prod tier's placement (base DEPLOY job %s) ran as placement_mode=%q — prod must be the DEDICATED placement that provisions its own Fabric", deployJobID, mode)
 	}
 	res.Dedicated = true
-
-	want := strings.TrimSpace(fabric)
-	if want == "" {
-		return res, fmt.Errorf("no Fabric cluster name to compare against — the prod placement's ownership of the Fabric cannot be asserted")
-	}
-	var meta struct {
-		ClusterName string `json:"cluster_name"`
-	}
-	if len(metaJSON) == 0 {
-		return res, fmt.Errorf("base DEPLOY job %s has no execution_metadata — nothing records which cluster it provisioned", deployJobID)
-	}
-	if err := json.Unmarshal(metaJSON, &meta); err != nil {
-		return res, fmt.Errorf("decode base DEPLOY job %s execution_metadata: %w", deployJobID, err)
-	}
-	if got := strings.TrimSpace(meta.ClusterName); got != want {
-		return res, fmt.Errorf("the prod placement (base DEPLOY job %s) provisioned cluster %q, but the tenants were placed on Fabric %q — the dedicated tier does not own the Fabric this gate measured", deployJobID, got, want)
-	}
-	res.OwnsFabric = true
-
-	if strings.TrimSpace(planSHA) == "" {
-		return res, fmt.Errorf("the prod placement carries no verified receipt — the dedicated tier is the one placement that runs tofu, so it must")
-	}
-	res.ReceiptVerified = true
 	return res, nil
 }
 
@@ -593,10 +581,11 @@ func fabricDemoVerdictPass(s FabricDemoSummary) bool {
 	if !v.Placed || !v.CausedByPlacement || v.ResourceCount == 0 || !v.Deregistered {
 		return false
 	}
-	// #845 also requires a dedicated-Fabric PROD placement. Without one proven dedicated, owning the
-	// Fabric and carrying its own verified receipt, the demo's top tier is unasserted.
+	// #845 also requires a dedicated-Fabric PROD placement. Without the base deploy proven to be the
+	// dedicated placement, the demo's top tier is unasserted. (Its receipt is FabricPlanSHA, required
+	// below — the same receipt, so it is not required twice.)
 	pr := s.Prod
-	if pr.Tier != fabricDemoProdTier || pr.Stage != fabricDemoStage(fabricDemoProdTier) || !pr.Dedicated || !pr.OwnsFabric || !pr.ReceiptVerified {
+	if pr.Tier != fabricDemoProdTier || pr.Stage != fabricDemoStage(fabricDemoProdTier) || !pr.Dedicated {
 		return false
 	}
 	if !s.ArgoNotReinstalled {
@@ -634,7 +623,7 @@ func fabricDemoSummaryVerdict(s FabricDemoSummary) string {
 	}
 	prod := "prod: n/a"
 	if s.Prod.Tier != "" {
-		prod = fmt.Sprintf("prod: %s(%s,dedicated=%t,owns-fabric=%t,receipt=%t)", s.Prod.Tier, s.Prod.Stage, s.Prod.Dedicated, s.Prod.OwnsFabric, s.Prod.ReceiptVerified)
+		prod = fmt.Sprintf("prod: %s(%s,dedicated=%t,stage_label=%s)", s.Prod.Tier, s.Prod.Stage, s.Prod.Dedicated, s.Prod.StageLabel)
 	}
 	drift := "drift: n/a"
 	if s.DriftChecked {

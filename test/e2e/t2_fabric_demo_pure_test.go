@@ -257,37 +257,33 @@ func TestFabricDemoProdTierMapping(t *testing.T) {
 	}
 }
 
-// TestAssertFabricDemoProd proves the prod tier assertion reads the base job's rows rather than
-// trusting a constant: the dedicated shape passes, and every way the base deploy could fail to be a
-// dedicated, Fabric-owning, receipted placement is refused with a partial record of how far it got.
+// TestAssertFabricDemoProd proves the prod tier assertion reads the base job's config_snapshot rather
+// than trusting a constant: the dedicated shape passes, and a base deploy that is not the dedicated
+// placement is refused with a partial record of how far the check got. It covers ONLY the snapshot:
+// the Fabric name and receipt come from the same job's execution_metadata and are not re-checked.
 func TestAssertFabricDemoProd(t *testing.T) {
-	const (
-		job    = "11111111-1111-1111-1111-111111111111"
-		fabric = "eks-euc1-run1-acme"
-	)
-	sha := strings.Repeat("b", 64)
+	const job = "11111111-1111-1111-1111-111111111111"
 	snap := func(extra string) []byte {
 		return []byte(`{"id":"e2e-run1","project_name":"acme","environment_stage":"run1"` + extra + `}`)
 	}
-	meta := []byte(`{"cluster_name":"` + fabric + `","cluster_ready":true}`)
 
 	t.Run("placement_mode absent is the dedicated path", func(t *testing.T) {
-		got, err := assertFabricDemoProd(job, snap(""), meta, fabric, sha)
+		got, err := assertFabricDemoProd(job, snap(""))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		want := FabricDemoProd{Tier: "prod", Stage: "production", StageLabel: "run1", DeployJob: job, PlacementMode: "dedicated", Dedicated: true, OwnsFabric: true, ReceiptVerified: true}
+		want := FabricDemoProd{Tier: "prod", Stage: "production", StageLabel: "run1", DeployJob: job, PlacementMode: "dedicated", Dedicated: true}
 		if got != want {
 			t.Fatalf("got %+v, want %+v", got, want)
 		}
 	})
 	t.Run("explicit dedicated passes", func(t *testing.T) {
-		if _, err := assertFabricDemoProd(job, snap(`,"placement_mode":" Dedicated "`), meta, fabric, sha); err != nil {
+		if _, err := assertFabricDemoProd(job, snap(`,"placement_mode":" Dedicated "`)); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 	t.Run("the result feeds a passing verdict", func(t *testing.T) {
-		got, err := assertFabricDemoProd(job, snap(""), meta, fabric, sha)
+		got, err := assertFabricDemoProd(job, snap(""))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -299,35 +295,33 @@ func TestAssertFabricDemoProd(t *testing.T) {
 	})
 
 	refuters := []struct {
-		name          string
-		jobID         string
-		snap, meta    []byte
-		fabric, sha   string
-		wantDedicated bool
-		wantContain   string
+		name        string
+		jobID       string
+		snap        []byte
+		wantMode    string
+		wantContain string
 	}{
-		{"no base job id", "", snap(""), meta, fabric, sha, false, "no base DEPLOY job id"},
-		{"empty snapshot", job, nil, meta, fabric, sha, false, "empty config_snapshot"},
-		{"malformed snapshot", job, []byte(`not json`), meta, fabric, sha, false, "decode"},
-		{"a namespace placement", job, snap(`,"placement_mode":"namespace"`), meta, fabric, sha, false, "DEDICATED"},
-		{"a vcluster placement", job, snap(`,"placement_mode":"vcluster"`), meta, fabric, sha, false, "DEDICATED"},
-		{"no fabric to compare", job, snap(""), meta, "  ", sha, true, "no Fabric"},
-		{"no execution metadata", job, snap(""), nil, fabric, sha, true, "no execution_metadata"},
-		{"provisioned a different cluster", job, snap(""), []byte(`{"cluster_name":"someone-else"}`), fabric, sha, true, "does not own"},
-		{"provisioned no cluster", job, snap(""), []byte(`{}`), fabric, sha, true, "does not own"},
-		{"no verified receipt", job, snap(""), meta, fabric, " ", true, "no verified receipt"},
+		{"no base job id", "", snap(""), "", "no base DEPLOY job id"},
+		{"empty snapshot", job, nil, "", "empty config_snapshot"},
+		{"malformed snapshot", job, []byte(`not json`), "", "decode"},
+		{"a namespace placement", job, snap(`,"placement_mode":"namespace"`), "namespace", "DEDICATED"},
+		{"a vcluster placement", job, snap(`,"placement_mode":"vcluster"`), "vcluster", "DEDICATED"},
+		{"an unknown placement", job, snap(`,"placement_mode":"shared"`), "shared", "DEDICATED"},
 	}
 	for _, c := range refuters {
 		t.Run("refutes/"+c.name, func(t *testing.T) {
-			got, err := assertFabricDemoProd(c.jobID, c.snap, c.meta, c.fabric, c.sha)
+			got, err := assertFabricDemoProd(c.jobID, c.snap)
 			if err == nil {
-				t.Fatalf("accepted %+v — the prod tier would read proven without being the dedicated, Fabric-owning, receipted placement", got)
+				t.Fatalf("accepted %+v — the prod tier would read proven without being the dedicated placement", got)
 			}
 			if !strings.Contains(err.Error(), c.wantContain) {
 				t.Errorf("error %q should mention %q", err.Error(), c.wantContain)
 			}
-			if got.Dedicated != c.wantDedicated {
-				t.Errorf("partial record Dedicated = %t, want %t — the summary must say how far the checks got", got.Dedicated, c.wantDedicated)
+			if got.Dedicated {
+				t.Error("a refused prod tier recorded Dedicated=true")
+			}
+			if got.PlacementMode != c.wantMode {
+				t.Errorf("partial record PlacementMode = %q, want %q — the summary must say what the base job ran as", got.PlacementMode, c.wantMode)
 			}
 			s := passingFabricDemoSummary()
 			s.Prod = got
@@ -587,7 +581,7 @@ func passingFabricDemoSummary() FabricDemoSummary {
 			{Tier: "staging", Namespace: "boutique-staging", Placed: true, TenantApp: "app-acme-boutique-staging", TenantProject: "tenant-acme-boutique-staging", SourcePath: fabricDemoOverlayPath("staging"), CausedByPlacement: true, Converged: true, ResourceCount: 3},
 		},
 		VCluster:           FabricDemoVCluster{Name: "e2e-vcdemo-run1", Tier: "staging", Placed: true, App: "vc-app", SourcePath: fabricDemoOverlayPath("staging"), CausedByPlacement: true, ResourceCount: 2, Deregistered: true},
-		Prod:               FabricDemoProd{Tier: "prod", Stage: "production", StageLabel: "run1", DeployJob: "job-1", PlacementMode: "dedicated", Dedicated: true, OwnsFabric: true, ReceiptVerified: true},
+		Prod:               FabricDemoProd{Tier: "prod", Stage: "production", StageLabel: "run1", DeployJob: "job-1", PlacementMode: "dedicated", Dedicated: true},
 		ArgoNotReinstalled: true,
 		ReceiptScope:       "fabric",
 		FabricPlanSHA:      strings.Repeat("a", 64),
@@ -618,8 +612,6 @@ func TestFabricDemoVerdictPass(t *testing.T) {
 		"argocd was reinstalled":            func(s *FabricDemoSummary) { s.ArgoNotReinstalled = false },
 		"no prod tier at all":               func(s *FabricDemoSummary) { s.Prod = FabricDemoProd{} },
 		"prod was not dedicated":            func(s *FabricDemoSummary) { s.Prod.Dedicated = false },
-		"prod does not own the fabric":      func(s *FabricDemoSummary) { s.Prod.OwnsFabric = false },
-		"prod has no verified receipt":      func(s *FabricDemoSummary) { s.Prod.ReceiptVerified = false },
 		"prod mapped to a non-prod stage":   func(s *FabricDemoSummary) { s.Prod.Stage = "development" },
 		"prod recorded under another tier":  func(s *FabricDemoSummary) { s.Prod.Tier = "staging" },
 		"no verified fabric receipt":        func(s *FabricDemoSummary) { s.FabricPlanSHA = "" },
@@ -654,7 +646,7 @@ func TestFabricDemoSummaryVerdict(t *testing.T) {
 
 	t.Run("passing", func(t *testing.T) {
 		got := fabricDemoSummaryVerdict(passingFabricDemoSummary())
-		for _, want := range []string{"✅", "prod: prod(production,dedicated=true,owns-fabric=true,receipt=true)", fabricDemoOverlayPath("dev"), "boutique-dev", "e2e-vcdemo-run1", "receipt(fabric)", "in_sync=true"} {
+		for _, want := range []string{"✅", "prod: prod(production,dedicated=true,stage_label=run1)", fabricDemoOverlayPath("dev"), "boutique-dev", "e2e-vcdemo-run1", "receipt(fabric)", "in_sync=true"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("verdict %q is missing %q", got, want)
 			}
