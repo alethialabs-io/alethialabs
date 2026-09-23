@@ -7,7 +7,7 @@
 // SERVER-SIDE (useRolesQuery) and created/edited through the AccordionForm RoleSheet. Built-ins
 // come from the bootstrap (registry); custom-role authoring is gated on the customRoles entitlement.
 
-import { Lock, Pencil, Plus, Shield, Trash2 } from "lucide-react";
+import { Lock, Pencil, Plus, SearchX, Shield, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -136,6 +136,10 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 		[builtin, query],
 	);
 	const activeFilters = countActiveFilters(filters, DEFAULT_ROLES_FILTERS);
+	// Filters are active and neither bucket kept a row. Read off the settled lists only: while a
+	// search is in flight `custom` is the previous answer, which is what the dim says.
+	const noMatches =
+		activeFilters > 0 && builtinList.length + custom.length === 0;
 
 	const selected =
 		[...builtin, ...custom].find((r) => r.id === selectedId) ?? builtin[0] ?? null;
@@ -209,7 +213,23 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 				<FilterBarReset count={activeFilters} onReset={reset} />
 			</FilterBar>
 
-			{/* master-detail */}
+			{/* Zero results: the shared empty state IN PLACE OF the master-detail, not a muted
+			    line in each rail bucket. The detail pane would otherwise keep showing a role the
+			    filters just excluded (`selected` falls back to the first built-in), and the audit's
+			    F10 reads `[data-slot="empty"]` for exactly this state (#4939). */}
+			{noMatches ? (
+				<EmptyState
+					className="border"
+					icon={<SearchX />}
+					title="No roles match"
+					description={`None of the ${builtin.length + customAll.length} roles match these filters.`}
+					action={
+						<Button variant="outline" size="sm" onClick={reset}>
+							Reset filters
+						</Button>
+					}
+				/>
+			) : (
 			<div
 				className={cn(
 					"grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]",
@@ -286,6 +306,7 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 					)}
 				</div>
 			</div>
+			)}
 
 			<RoleSheet
 				open={sheetOpen}

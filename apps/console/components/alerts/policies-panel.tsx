@@ -9,7 +9,7 @@
 // the caller can't manage; security
 // (authz.*) events are locked without the advancedAlerting entitlement.
 
-import { Bell, Plus, Trash2 } from "lucide-react";
+import { Bell, Plus, SearchX, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
@@ -39,6 +39,7 @@ import {
 import { PolicySheet } from "@/components/alerts/policy-sheet";
 import { isSeverity, toMinSeverity } from "@/components/alerts/policy-shared";
 import { ThrottleField } from "@/components/alerts/throttle-field";
+import { useAlertPolicyFilters } from "@/lib/stores/use-alerts-filters";
 import { useAlertsSection } from "@/lib/stores/use-alerts-section";
 import type { PolicyInput } from "@/lib/validations/alerts";
 import { Button } from "@repo/ui/button";
@@ -110,6 +111,7 @@ export function PoliciesPanel({
 	const selected =
 		policies.find((p) => p.id === selectedId) ?? policies[0] ?? null;
 	const { rows, facets, stale } = view;
+	const resetFilters = useAlertPolicyFilters((s) => s.reset);
 	// One batched query hydrates every rail row's classification chips.
 	const { data: classMap = {} } = useAssignmentsForKind(
 		"alert_rule",
@@ -246,9 +248,17 @@ export function PoliciesPanel({
 								Policies
 							</div>
 							{rows.length === 0 ? (
-								<div className="px-4 py-4 text-text-tertiary text-xs">
-									No policies match these filters.
-								</div>
+								// The shared empty state — see the twin in channels-panel.tsx (#4939).
+								<EmptyState
+									icon={<SearchX />}
+									title="No policies match"
+									description={`None of the ${policies.length} policies match these filters.`}
+									action={
+										<Button variant="outline" size="sm" onClick={resetFilters}>
+											Reset filters
+										</Button>
+									}
+								/>
 							) : (
 								/*
 								 * A single-select rail: a listbox of options, not a stack of buttons.

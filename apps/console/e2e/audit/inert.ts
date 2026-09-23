@@ -209,6 +209,7 @@ export type Effect =
 	| "aria-state"
 	| "toast"
 	| "download"
+	| "new-tab"
 	| "dom-mutation"
 	| "network"
 	| null;
@@ -226,6 +227,23 @@ export interface Observation {
 /** Collapse whitespace so a two-line button label is one name. */
 function normalise(text: string): string {
 	return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * A control's accessible name, in the order the accname algorithm reads it: `aria-label` first,
+ * then the text content.
+ *
+ * It read the TEXT first, and that inverted the one case where the two differ on purpose. The
+ * project danger row renders `<button aria-label="Delete project">Delete</button>` — the visible
+ * word is short because the row's title sits beside it, and the label carries the object. R8 read
+ * "Delete", found no ledger entry by that name, and filed `unregistered-destructive` against a
+ * control `destructive-actions.yaml` declares as `project.delete` (#4939). Playwright's `getByRole`,
+ * which `destructive.spec.ts` drives the same entry with, reads "Delete project" — so the two
+ * instruments disagreed about one button's name. `aria-labelledby` is not resolved here; no control
+ * this instrument enumerates carries one today, and it would need the referenced node's text.
+ */
+export function accessibleName(ariaLabel: string | null, text: string): string {
+	return normalise(ariaLabel ?? "") || normalise(text) || "(unnamed)";
 }
 
 /** What R8 treats as an activatable control, before any enabled/visible filtering. */
@@ -362,15 +380,20 @@ export async function enumerateControls(page: Page, scope: string, origin: Enume
 					ariaLabel: el.getAttribute("aria-label"),
 					text: el.textContent ?? "",
 					visible: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
+					// An `inert` subtree cannot be clicked, focused or found by assistive tech: the
+					// browser removes it from the interaction model outright. The message scroller's
+					// "Scroll to latest" is rendered `inert` (and faded out) whenever there is nothing
+					// to scroll to, and R8 used to click it and call the silence a finding (#4939).
+					inert: el.closest("[inert]") !== null,
 				};
 			}, undefined, { timeout: READ_TIMEOUT_MS })
 			.catch(() => null);
 		// A node that vanished between `count()` and the read is a page still settling, not a
 		// finding. It is skipped rather than recorded, and the route's `enumerated` count says so.
-		if (probed === null || !probed.visible) continue;
+		if (probed === null || !probed.visible || probed.inert) continue;
 
 		const role = probed.role ?? (probed.tag === "a" ? "link" : "button");
-		const name = normalise(probed.text) || normalise(probed.ariaLabel ?? "") || "(unnamed)";
+		const name = accessibleName(probed.ariaLabel, probed.text);
 
 		if (probed.nativeDisabled || probed.ariaDisabled === "true") {
 			disabled.push({
@@ -410,11 +433,8 @@ export async function resolve(page: Page, control: EnumeratedControl): Promise<L
 	if ((await nodes.count()) <= control.index) return null;
 	const node = nodes.nth(control.index);
 	const name = await node
-		.evaluate(
-			(el) => (el.textContent ?? "").replace(/\s+/g, " ").trim() || (el.getAttribute("aria-label") ?? "").trim() || "(unnamed)",
-			undefined,
-			{ timeout: READ_TIMEOUT_MS },
-		)
+		.evaluate((el) => ({ ariaLabel: el.getAttribute("aria-label"), text: el.textContent ?? "" }), undefined, { timeout: READ_TIMEOUT_MS })
+		.then((read) => accessibleName(read.ariaLabel, read.text))
 		.catch(() => null);
 	return name === control.name ? node : null;
 }
@@ -462,7 +482,7 @@ export interface ActivateOptions {
  * one is open.
  *
  * The effects are checked in ATTRIBUTABILITY ORDER, not in the rubric's listing order. A navigation,
- * a new overlay, an aria flip on the control itself, a toast and a download are all consequences of
+ * a new overlay, an aria flip on the control itself, a toast, a download and a new tab are all consequences of
  * this click. A DOM mutation anywhere in `<main>` and a network request are not necessarily, so
  * they are checked last — see this file's header.
  */
@@ -526,9 +546,20 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 	const onDownload = () => {
 		downloaded = true;
 	};
+	// A `target="_blank"` link opens a NEW page and leaves this one exactly as it was: no
+	// navigation, no overlay, no mutation. Without this listener every same-origin docs link in
+	// the console read as inert (#4939: "Docs" on ~/alerts, "What is classification?" on
+	// ~/settings/classification). The tab is closed at once — what it loads is not R8's question,
+	// for the reason an external link is never clicked at all.
+	let openedTab = false;
+	const onPopup = (popup: Page) => {
+		openedTab = true;
+		void popup.close().catch(() => {});
+	};
 	page.on("request", onRequest);
 	page.once("filechooser", onFileChooser);
 	page.once("download", onDownload);
+	page.on("popup", onPopup);
 
 	try {
 		// `force` because R8's question is "does this control do anything", not "is it hit-testable"
@@ -546,6 +577,10 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			}
 			if (downloaded) {
 				effect = "download";
+				break;
+			}
+			if (openedTab) {
+				effect = "new-tab";
 				break;
 			}
 			const now = await page
@@ -602,6 +637,7 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			if (Date.now() >= deadline) {
 				if (page.url() !== beforeUrl) effect = "navigation";
 				else if (downloaded) effect = "download";
+				else if (openedTab) effect = "new-tab";
 				break;
 			}
 			await page.waitForTimeout(POLL_MS);
@@ -626,6 +662,7 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 		page.off("request", onRequest);
 		page.off("filechooser", onFileChooser);
 		page.off("download", onDownload);
+		page.off("popup", onPopup);
 		await page.evaluate(() => window.__alethiaR8?.observer?.disconnect()).catch(() => {});
 	}
 }

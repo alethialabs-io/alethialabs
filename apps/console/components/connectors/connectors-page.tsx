@@ -161,11 +161,19 @@ export function ConnectorsPage({
 			),
 		placeholderData: keepPreviousData,
 		staleTime: 30_000,
-		// The pristine view is already on the wire as this RSC's props — seed it rather than
-		// re-fetching a list the page was rendered with.
-		initialData: isPristineQuery(query)
-			? () => buildConnectorsView(integrations, query, platformConfigured ?? {})
-			: undefined,
+		// The catalog is already on the wire as this RSC's props, and the selection over it is
+		// pure — so ANY query's first answer is seeded from them, not only the pristine one.
+		//
+		// It used to seed the pristine key alone. A pasted link (`?health=connected`) renders
+		// pristine first and hydrates the store from the URL in a mount effect, so the filtered
+		// key arrived with no data, `keepPreviousData` held the FULL list up while a server
+		// action re-read the whole catalog, and the page showed 42 rows under a URL that said 2
+		// (#4939, the audit's F8). The fetch still runs once the seed is stale.
+		initialData: () =>
+			buildConnectorsView(integrations, query, platformConfigured ?? {}),
+		// The seed is as old as the RSC render, not as old as this mount: a key first read
+		// long after the page loaded must not treat the props as a fresh answer.
+		initialDataUpdatedAt: isPristineQuery(query) ? undefined : 0,
 	});
 
 	/** Re-read the board after a mutation: the RSC props AND every cached connectors key. */
