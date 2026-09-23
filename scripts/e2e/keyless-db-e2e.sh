@@ -69,12 +69,33 @@ keyless_exclusion_reason() {
 # laptop mid-incident with nothing installed, and the field is written by keylessSummaryJSON with
 # a fixed shape (encoding/json, two-space indent).
 keyless_summary_verdict() {
-	local f="${1:-}"
-	[[ -n "$f" && -f "$f" ]] || return 0
-	sed -n 's/.*"verdict"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -n 1
+	keyless_summary_field "${1:-}" verdict
 }
 
-# keyless_classify_verdict <rc> <log> <summary.json> — the run's verdict: PASS | FAIL | BLOCKED.
+# keyless_summary_field <summary.json> <field> — one top-level string field, or "" when absent.
+keyless_summary_field() {
+	local f="${1:-}" field="${2:-}"
+	[[ -n "$f" && -f "$f" && -n "$field" ]] || return 0
+	sed -n "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$f" | head -n 1
+}
+
+# keyless_summary_mismatch <summary.json> <cloud> <engine> — prints what the summary measured when it
+# is NOT the cell the caller asked for, or nothing when it matches (or says nothing).
+#
+# The test picks its cloud from ALETHIA_E2E_PROVIDER, not from this script's argument. A value left
+# over in the shell from an earlier run would otherwise let `keyless-db-e2e.sh aws postgres` record a
+# gcp PASS as an aws PASS — the run path sets the variable itself now, and this is the check that the
+# summary agrees rather than the assumption that it must.
+keyless_summary_mismatch() {
+	local f="${1:-}" cloud="${2:-}" engine="${3:-}" got_p got_e
+	got_p="$(keyless_summary_field "$f" provider)"
+	got_e="$(keyless_summary_field "$f" engine)"
+	if [[ -n "$got_p" && "$got_p" != "$cloud" ]] || [[ -n "$got_e" && "$got_e" != "$engine" ]]; then
+		printf '%s/%s\n' "${got_p:-?}" "${got_e:-?}"
+	fi
+}
+
+# keyless_classify_verdict <rc> <log> <summary.json> [cloud engine] — the run's verdict: PASS | FAIL | BLOCKED.
 #
 # THE SUMMARY FILE IS THE AUTHORITY, not `go test`'s own exit line. test/e2e/t2_provision_test.go
 # calls runT2KeylessDB only under `if keylessOn`, and that function writes the summary from a
@@ -98,8 +119,15 @@ keyless_summary_verdict() {
 # The rule is now: a verdict is PASS only when the stage itself said PASS. Everything else is
 # BLOCKED (the stage never ran) or FAIL (it ran and did not pass, or the run around it broke).
 keyless_classify_verdict() {
-	local rc="${1:-1}" log="${2:-}" summary="${3:-}" scenario
+	local rc="${1:-1}" log="${2:-}" summary="${3:-}" cloud="${4:-}" engine="${5:-}" scenario
 	scenario="$(keyless_summary_verdict "$summary")"
+
+	# A summary for a DIFFERENT cell proves nothing about this one, whatever its verdict: this cell's
+	# stage did not run. BLOCKED, never PASS (and not FAIL — the other cell may be perfectly fine).
+	if [[ -n "$cloud" && -n "$(keyless_summary_mismatch "$summary" "$cloud" "$engine")" ]]; then
+		printf 'BLOCKED\n'
+		return 0
+	fi
 
 	if [[ -n "$scenario" ]]; then
 		# The stage ran and reported. A non-zero rc can only DOWNGRADE that verdict, never
@@ -164,6 +192,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
 	printf '{\n  "feature": "keyless-db-auth",\n  "verdict": "PASS"\n}\n' >"$tmp/pass.json"
 	printf '{\n  "feature": "keyless-db-auth",\n  "verdict": "FAIL",\n  "detail": "probe returned no rows"\n}\n' >"$tmp/fail.json"
 	printf '{\n  "feature": "keyless-db-auth"\n}\n' >"$tmp/noverdict.json"
+	printf '{\n  "feature": "keyless-db-auth",\n  "provider": "gcp",\n  "engine": "postgres",\n  "verdict": "PASS"\n}\n' >"$tmp/gcp-pass.json"
 	_t "summary verdict PASS parses" "$(keyless_summary_verdict "$tmp/pass.json")" "PASS"
 	_t "summary verdict FAIL parses" "$(keyless_summary_verdict "$tmp/fail.json")" "FAIL"
 	_t "summary with no verdict field reads empty" "$(keyless_summary_verdict "$tmp/noverdict.json")" ""
@@ -213,6 +242,18 @@ if [[ "${1:-}" == "--self-test" ]]; then
 		"$(keyless_classify_verdict 1 "$tmp/ok-no-keyless.log" "$tmp/fail.json")" "FAIL"
 	_t "stage FAIL is FAIL even at rc 0" \
 		"$(keyless_classify_verdict 0 "$tmp/ok-no-keyless.log" "$tmp/fail.json")" "FAIL"
+	# The summary must be for the cell asked for. A gcp PASS is not an aws PASS — the provider comes
+	# from ALETHIA_E2E_PROVIDER, which a stale shell could have set to something else.
+	_t "a PASS summary for another CLOUD is BLOCKED, not PASS" \
+		"$(keyless_classify_verdict 0 "$tmp/ok-no-keyless.log" "$tmp/gcp-pass.json" aws postgres)" "BLOCKED"
+	_t "a PASS summary for another ENGINE is BLOCKED, not PASS" \
+		"$(keyless_classify_verdict 0 "$tmp/ok-no-keyless.log" "$tmp/gcp-pass.json" gcp mysql)" "BLOCKED"
+	_t "a PASS summary for the SAME cell is PASS" \
+		"$(keyless_classify_verdict 0 "$tmp/ok-no-keyless.log" "$tmp/gcp-pass.json" gcp postgres)" "PASS"
+	_t "the mismatch names what was measured" \
+		"$(keyless_summary_mismatch "$tmp/gcp-pass.json" aws postgres)" "gcp/postgres"
+	_t "a matching summary reports no mismatch" \
+		"$(keyless_summary_mismatch "$tmp/gcp-pass.json" gcp postgres)" ""
 	# A summary that exists but carries no verdict is not a pass either.
 	_t "summary without a verdict is BLOCKED (stage wrote nothing usable)" \
 		"$(keyless_classify_verdict 0 "$tmp/ok-no-keyless.log" "$tmp/noverdict.json")" "BLOCKED"
@@ -307,14 +348,22 @@ else
 	# ALETHIA_E2E_KEYLESS_DB_SUMMARY is what makes the verdict knowable at all: writeKeylessSummary
 	# returns early when it is empty, and without the summary every real run would classify BLOCKED.
 	(
-		cd "$root/$dir" && ALETHIA_E2E_KEYLESS_DB=1 ALETHIA_E2E_KEYLESS_DB_ENGINE="$engine" \
+		cd "$root/$dir" && ALETHIA_E2E_PROVIDER="$cloud" \
+			ALETHIA_E2E_KEYLESS_DB=1 ALETHIA_E2E_KEYLESS_DB_ENGINE="$engine" \
 			ALETHIA_E2E_KEYLESS_DB_SUMMARY="$summary_json" \
 			GOWORK=off "${run[@]}"
 	) >"$log" 2>&1
 	rc=$?
-	verdict="$(keyless_classify_verdict "$rc" "$log" "$summary_json")"
+	verdict="$(keyless_classify_verdict "$rc" "$log" "$summary_json" "$cloud" "$engine")"
+	mismatch="$(keyless_summary_mismatch "$summary_json" "$cloud" "$engine")"
 	case "$verdict" in
-	BLOCKED) detail="keyless stage did not run (no summary written)" ;;
+	BLOCKED)
+		if [[ -n "$mismatch" ]]; then
+			detail="summary measured $mismatch, not $cloud/$engine — this cell did not run"
+		else
+			detail="keyless stage did not run (no summary written)"
+		fi
+		;;
 	esac
 	detail="${detail:-$(grep -E "keyless: |FAIL:|Error:|--- (PASS|FAIL)" "$log" | tail -1)}"
 fi
