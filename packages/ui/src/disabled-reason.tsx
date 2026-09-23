@@ -17,7 +17,7 @@
  * So the reason lives OUTSIDE the disabled element:
  *   - `DisabledReason` wraps a control in a focusable element that is the tooltip's trigger (hover
  *     AND keyboard focus open it), and points the control's and the wrapper's `aria-describedby` at a
- *     visually hidden copy of the reason, so a screen reader announces it on focus and in browse mode;
+ *     hidden copy of the reason, so a screen reader announces it on focus and in browse mode;
  *   - menu and command items cannot host a hover tooltip reliably (the item IS the hover target, and
  *     the menu closes around it), so they render the reason as visible secondary text in the item —
  *     the `disabledReason` prop on `ContextMenuItem`, `DropdownMenuItem` and `CommandItem`, built on
@@ -92,8 +92,13 @@ function DisabledReason({ reason, children, className }: DisabledReasonProps) {
       <TooltipContent>{reason}</TooltipContent>
       {/* Outside the wrapper, so focusing it announces the reason ONCE (as its description) rather
           than again as part of its content. The tooltip popup is not referenced: it exists only
-          while open, and an id that resolves only sometimes is not a description. */}
-      <span id={reasonId} className="sr-only">
+          while open, and an id that resolves only sometimes is not a description.
+          `hidden`, NOT `sr-only`: `aria-describedby` reads a hidden node's text all the same, and
+          `sr-only` is `position: absolute` against the nearest positioned ancestor — with none, the
+          viewport — so a copy placed below the fold inside the shell's scrolling <main> grew the
+          DOCUMENT's scroll height and gave `~/settings/general` a second scroll container (R3,
+          release-gate run 35915058781). */}
+      <span id={reasonId} hidden>
         {reason}
       </span>
     </Tooltip>
