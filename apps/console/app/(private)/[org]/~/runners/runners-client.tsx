@@ -101,7 +101,9 @@ export function RunnersClient() {
 	// facet tally used to happen in this component over the whole universe (#4890).
 	const filters = useRunnerFilters((s) => s.filters);
 	const urlRead = useFilterUrlSync(useRunnerFilters, DEFAULT_RUNNER_FILTERS);
-	const search = useDebouncedValue(filters.search, 300);
+	// Seeded from the URL, so a pasted `?search=…&versions=…` asks for the key the route
+	// prefetched first — not `{versions}` alone, which it did not (#4980 review).
+	const search = useDebouncedValue(filters.search, 300, { urlRead });
 	const query = useMemo(
 		() => normalizeRunnersQuery(filters, search),
 		[filters, search],

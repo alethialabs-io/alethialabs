@@ -129,7 +129,7 @@ export function useChannelsView(enabled = true): ChannelsView {
 		DEFAULT_CHANNEL_FILTERS,
 		CHANNEL_URL_PARAMS,
 	);
-	const search = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
+	const search = useDebouncedValue(filters.search, SEARCH_DEBOUNCE, { urlRead });
 	const query = useMemo(
 		() => normalizeChannelsQuery({ ...filters, search }),
 		[filters, search],
@@ -167,7 +167,7 @@ export function usePoliciesView(enabled = true): PoliciesView {
 		DEFAULT_POLICY_FILTERS,
 		POLICY_URL_PARAMS,
 	);
-	const search = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
+	const search = useDebouncedValue(filters.search, SEARCH_DEBOUNCE, { urlRead });
 	const query = useMemo(
 		() => normalizePoliciesQuery({ ...filters, search }),
 		[filters, search],
@@ -206,7 +206,7 @@ export function useActivityView(enabled = true): ActivityView {
 		DEFAULT_ACTIVITY_FILTERS,
 		ACTIVITY_URL_PARAMS,
 	);
-	const search = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
+	const search = useDebouncedValue(filters.search, SEARCH_DEBOUNCE, { urlRead });
 	const query = useMemo(
 		() => normalizeActivityQuery({ ...filters, search }),
 		[filters, search],
