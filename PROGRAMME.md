@@ -97,6 +97,12 @@ overtaken is more useful than a gap.
   that one path and leave every other lane autonomous. Required _reviewers_ stay off — that would
   reintroduce a human in every run, which is the thing being removed. The cron keeps its `main`-only
   ref subject, so scheduled spend does not widen at all.
+  **Amended 2026-09-23 (#4942): that ruleset was never created.** No ruleset (`dev`, `staging`,
+  `main`) sets `require_code_owner_review` to true (`main` sets false explicitly; `dev` and `staging`
+  take the provider default) and all require 0 approvals, and CODEOWNERS is advisory on
+  all three branches, not only off `main`. The maintainer ruled to correct the docs rather than add
+  the control, so a PR editing `e2e-nightly.yml` can land on `dev` with no human review. What does
+  bound the widening is listed at the `environment:` line of `.github/workflows/e2e-nightly.yml`.
 
 - **D2 · 2026-08-17 · The parity axis is the 19 canvas `NodeKind`s; the proof axis is the 11
   provisionable kinds.** The 19 are what the product offers and what `alethia project component
