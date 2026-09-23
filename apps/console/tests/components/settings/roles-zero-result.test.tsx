@@ -20,9 +20,25 @@ vi.mock("next/navigation", () => ({
 	useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock("@/app/server/actions/roles", () => ({ deleteRole: vi.fn(async () => {}) }));
-// The custom-role list is the server half; none exist in this org, and the search is settled.
+// The custom-role list is the server half. `rolesQuery` answers per search key, so a test can
+// model the universe (no search), a settled search, and a search still in flight on the
+// previous answer (`keepPreviousData` → isPlaceholderData).
+interface FakeRolesResult {
+	data: RoleRow[] | undefined;
+	isFetching: boolean;
+	isPending: boolean;
+	isPlaceholderData: boolean;
+}
+const rolesQuery = vi.hoisted(() => ({
+	answer: (_search: string | undefined): FakeRolesResult => ({
+		data: [],
+		isFetching: false,
+		isPending: false,
+		isPlaceholderData: false,
+	}),
+}));
 vi.mock("@/lib/query/use-roles-query", () => ({
-	useRolesQuery: () => ({ data: [], isFetching: false, isPlaceholderData: false }),
+	useRolesQuery: (search?: string) => rolesQuery.answer(search),
 	useInvalidateRoles: () => vi.fn(),
 }));
 vi.mock("@/hooks/use-debounced-value", () => ({
@@ -53,9 +69,25 @@ const bootstrap: RolesBootstrap = {
 	canManage: false,
 };
 
+/** A settled answer carrying `data`. */
+function settled(data: RoleRow[]): FakeRolesResult {
+	return { data, isFetching: false, isPending: false, isPlaceholderData: false };
+}
+
+const custom = (n: number): RoleRow[] =>
+	Array.from({ length: n }, (_, i) => ({
+		id: `role-custom-${i}`,
+		name: `deployer-${i}`,
+		description: "Custom.",
+		builtin: false,
+		permissionKeys: [],
+		grantCount: 0,
+	}));
+
 describe("roles: a search that matches nothing", () => {
 	beforeEach(() => {
 		useRolesFilters.getState().reset();
+		rolesQuery.answer = () => settled([]);
 	});
 
 	it("renders the shared empty state in place of the master-detail, and Reset clears the search", async () => {
@@ -78,5 +110,35 @@ describe("roles: a search that matches nothing", () => {
 		render(<RolesManager bootstrap={bootstrap} />);
 		expect(screen.queryByText("No roles match")).toBeNull();
 		expect(screen.getAllByText("Viewer").length).toBeGreaterThan(0);
+	});
+
+	it("does not claim 'no match' while the current search is still loading on the previous answer", () => {
+		// The previous search matched nothing; the new one is in flight. `data` is the stale `[]`.
+		useRolesFilters.getState().set("search", "deployer");
+		rolesQuery.answer = (search) =>
+			search === undefined
+				? settled(custom(5))
+				: { data: [], isFetching: true, isPending: false, isPlaceholderData: true };
+		render(<RolesManager bootstrap={bootstrap} />);
+		expect(screen.queryByText("No roles match")).toBeNull();
+	});
+
+	it("does not claim 'no match' before the first answer for a restored search", () => {
+		useRolesFilters.getState().set("search", "deployer");
+		rolesQuery.answer = (search) =>
+			search === undefined
+				? settled(custom(5))
+				: { data: undefined, isFetching: true, isPending: true, isPlaceholderData: false };
+		render(<RolesManager bootstrap={bootstrap} />);
+		expect(screen.queryByText("No roles match")).toBeNull();
+	});
+
+	it("counts the whole role universe, not the search result, in the empty state", () => {
+		// 1 built-in + 5 custom roles; the search matches none of them, so the SEARCHED custom list
+		// is empty — the count must still say 6.
+		useRolesFilters.getState().set("search", "zqxvjk");
+		rolesQuery.answer = (search) => settled(search === undefined ? custom(5) : []);
+		render(<RolesManager bootstrap={bootstrap} />);
+		expect(screen.getByText("None of the 6 roles match these filters.")).toBeInTheDocument();
 	});
 });

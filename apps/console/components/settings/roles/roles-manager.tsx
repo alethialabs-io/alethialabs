@@ -48,6 +48,8 @@ import { cn } from "@repo/ui/utils";
 import {
 	DEFAULT_ROLES_FILTERS,
 	filterBuiltins,
+	hasNoMatches,
+	noMatchesDescription,
 	normalizeRolesQuery,
 	ROLE_KIND_OPTIONS,
 	showsKind,
@@ -118,9 +120,16 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 	const {
 		data: customAll = [],
 		isFetching,
+		isPending,
 		isPlaceholderData,
 	} = useRolesQuery(query.search);
 	const custom = showsKind(query, "custom") ? customAll : [];
+	// The role UNIVERSE — every custom role, unsearched. This is the shared base key the page
+	// prefetches, so with no search it is the same cache entry as the call above and costs no
+	// extra request. Facet hints and the empty state's "None of the N roles" count against it,
+	// never against the search result (lib/query/README.md: counts come from the unfiltered
+	// universe). `undefined` until it has loaded, and the count is then left unstated.
+	const { data: customUniverse } = useRolesQuery();
 	const invalidate = useInvalidateRoles();
 
 	const [selectedId, setSelectedId] = useState<string>(builtin[0]?.id ?? "");
@@ -136,10 +145,16 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 		[builtin, query],
 	);
 	const activeFilters = countActiveFilters(filters, DEFAULT_ROLES_FILTERS);
-	// Filters are active and neither bucket kept a row. Read off the settled lists only: while a
-	// search is in flight `custom` is the previous answer, which is what the dim says.
-	const noMatches =
-		activeFilters > 0 && builtinList.length + custom.length === 0;
+	// Filters are active and neither bucket kept a row — read off the SETTLED lists only. While a
+	// search is in flight `custom` is the previous search's answer (placeholder data) or the `[]`
+	// default (first load), so neither may decide "nothing matches"; the dimmed master-detail
+	// stays up until the current query answers.
+	const noMatches = hasNoMatches({
+		activeFilters,
+		builtinCount: builtinList.length,
+		customCount: custom.length,
+		settled: !isPending && !isPlaceholderData,
+	});
 
 	const selected =
 		[...builtin, ...custom].find((r) => r.id === selectedId) ?? builtin[0] ?? null;
@@ -203,7 +218,12 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 					options={ROLE_KIND_OPTIONS.map((o) => ({
 						value: o.value,
 						label: o.label,
-						hint: String(o.value === "builtin" ? builtin.length : customAll.length),
+						hint:
+							o.value === "builtin"
+								? String(builtin.length)
+								: customUniverse === undefined
+									? undefined
+									: String(customUniverse.length),
 					}))}
 					value={filters.kinds}
 					onChange={(next) => set("kinds", next)}
@@ -222,7 +242,11 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 					className="border"
 					icon={<SearchX />}
 					title="No roles match"
-					description={`None of the ${builtin.length + customAll.length} roles match these filters.`}
+					description={noMatchesDescription(
+							customUniverse === undefined
+								? undefined
+								: builtin.length + customUniverse.length,
+						)}
 					action={
 						<Button variant="outline" size="sm" onClick={reset}>
 							Reset filters
