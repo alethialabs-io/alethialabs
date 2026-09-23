@@ -530,3 +530,25 @@ describe("convertProjectConfig — database families the target cannot run", () 
 		expect(config.databases?.[0]?.engine_family).toBe("mysql");
 	});
 });
+
+describe("convertProjectConfig — NoSQL capacity mode (#4320)", () => {
+	it("rewrites a provisioned table to serverless on Azure, and says so", () => {
+		const { data, warnings } = convertProjectConfig(
+			makeConfig({ nosql_tables: [{ name: "ledger", partition_key: "id", capacity_mode: "provisioned" }] }),
+			"aws",
+			"azure",
+		);
+		expect(data.nosql_tables?.[0]?.capacity_mode).toBe("on_demand");
+		expect(byComponent(warnings, "NoSQL").some((w) => /ledger/.test(w.message) && /Serverless/.test(w.message))).toBe(true);
+	});
+
+	it("keeps provisioned where the target offers it", () => {
+		const { data, warnings } = convertProjectConfig(
+			makeConfig({ nosql_tables: [{ name: "ledger", partition_key: "id", capacity_mode: "provisioned" }] }),
+			"azure",
+			"aws",
+		);
+		expect(data.nosql_tables?.[0]?.capacity_mode).toBe("provisioned");
+		expect(byComponent(warnings, "NoSQL").some((w) => /capacity/.test(w.message))).toBe(false);
+	});
+});

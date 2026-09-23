@@ -111,7 +111,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 
 | Field | alibaba | aws | azure | gcp | hetzner |
 |---|:---:|:---:|:---:|:---:|:---:|
-| `capacity_mode` | — | 🟡 | 🟡 | — | · |
+| `capacity_mode` | — | 🟡 | — | — | · |
 | `global_replicas` | — | 🟡 | 🟡 | — | · |
 | `partition_key` | 🟡 | 🟡 | 🟡 | — | · |
 | `partition_key_type` | 🟡 | 🟡 | — | — | · |
@@ -223,6 +223,7 @@ Decisions, not silence: this cloud will not honor the setting, and here is what 
 | `nosql_tables.capacity_mode` | gcp | Firestore bills per operation and offers no provisioned-throughput mode to switch to. |
 | `nosql_tables.partition_key_type` | azure | A Cosmos DB partition key is a path into the document ("/id"), and Cosmos reads the value's type from the document itself — there is no key type to declare separately. The key path you choose IS applied. |
 | `nosql_tables.capacity_mode` | alibaba | Tablestore chooses capacity mode on the instance that holds your tables, not on each table, so a per-table setting has nothing to land on. |
+| `nosql_tables.capacity_mode` | azure | Cosmos DB tables here are serverless — you pay per request, with no throughput to reserve. Adding a replica region is what moves the account onto provisioned throughput, because serverless accounts are single-region. (#4320) |
 | `nosql_tables.global_replicas` | gcp | Firestore replicates by its database location — a region or one of Google's fixed multi-region pairs chosen when the database is created — so a hand-picked list of replica regions cannot be applied to a table. |
 | `nosql_tables.global_replicas` | alibaba | Tablestore keeps your tables in a single-region instance and offers backups and tunnels rather than table replicas — there is no replica-region list to apply. |
 | `dns.managed_certificate` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate. (#1824) |
@@ -245,4 +246,4 @@ Decisions, not silence: this cloud will not honor the setting, and here is what 
 
 ---
 
-Measured this run: 392 schema columns examined, 73 of them user-settable, 164 cloud verdicts. Regenerate with `pnpm -C apps/console run gen:config-carriage`. CI runs the guard on every PR.
+Measured this run: 392 schema columns examined, 73 of them user-settable, 163 cloud verdicts. Regenerate with `pnpm -C apps/console run gen:config-carriage`. CI runs the guard on every PR.

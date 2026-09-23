@@ -649,7 +649,7 @@
 		{
 			"route": "/[org]",
 			"redirectOnly": false,
-			"surfaceFiles": 289,
+			"surfaceFiles": 291,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -767,7 +767,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"redirectOnly": false,
-			"surfaceFiles": 406,
+			"surfaceFiles": 408,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -826,7 +826,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"redirectOnly": false,
-			"surfaceFiles": 167,
+			"surfaceFiles": 169,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -885,7 +885,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"redirectOnly": false,
-			"surfaceFiles": 239,
+			"surfaceFiles": 241,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1121,7 +1121,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 282,
+			"surfaceFiles": 284,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1180,7 +1180,7 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"redirectOnly": false,
-			"surfaceFiles": 218,
+			"surfaceFiles": 220,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1357,7 +1357,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"redirectOnly": false,
-			"surfaceFiles": 297,
+			"surfaceFiles": 299,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1416,7 +1416,7 @@
 		{
 			"route": "/[org]/~/clusters",
 			"redirectOnly": false,
-			"surfaceFiles": 166,
+			"surfaceFiles": 168,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1652,7 +1652,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"redirectOnly": false,
-			"surfaceFiles": 228,
+			"surfaceFiles": 230,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1711,7 +1711,7 @@
 		{
 			"route": "/[org]/~/new",
 			"redirectOnly": false,
-			"surfaceFiles": 371,
+			"surfaceFiles": 373,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1770,7 +1770,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"redirectOnly": false,
-			"surfaceFiles": 279,
+			"surfaceFiles": 281,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1947,7 +1947,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 281,
+			"surfaceFiles": 283,
 			"families": {
 				"S": {
 					"instrumented": 4,

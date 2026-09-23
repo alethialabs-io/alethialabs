@@ -89,6 +89,7 @@ import {
 	convertProjectConfig,
 	dbEngineFamily,
 	DEFAULT_K8S_VERSION,
+	effectiveCapacityModeForCloud,
 	getProvider,
 	dnsZoneUnsupportedReasonForCloud,
 	keylessUnavailableReasonForCloud,
@@ -1736,19 +1737,25 @@ async function buildConfigSnapshot(
 				...resolvePlacement(t),
 				subscriptions: topicSubs.get(t.id) ?? [],
 			})),
-			nosql_tables: nosqlTables.map((n) => ({
-				name: n.name,
-				partition_key: n.partition_key,
-				partition_key_type: n.partition_key_type,
-				sort_key: n.sort_key,
-				sort_key_type: n.sort_key_type,
-				table_type: n.table_type,
-				capacity_mode: n.capacity_mode,
-				point_in_time_recovery: n.point_in_time_recovery,
-				global_replicas: n.global_replicas,
-				provider_config: n.provider_config,
-				...resolvePlacement(n),
-			})),
+			nosql_tables: nosqlTables.map((n) => {
+				const placement = resolvePlacement(n);
+				return {
+					name: n.name,
+					partition_key: n.partition_key,
+					partition_key_type: n.partition_key_type,
+					sort_key: n.sort_key,
+					sort_key_type: n.sort_key_type,
+					table_type: n.table_type,
+					// The mode the table GETS on its cloud, not the stored one (#4320): Azure rows saved
+					// as `provisioned` before Cosmos went serverless-only snapshot as `on_demand`, so the
+					// snapshot and the config diff stop recording a billing mode nothing ever built.
+					capacity_mode: effectiveCapacityModeForCloud(placement.cloud_provider, n.capacity_mode),
+					point_in_time_recovery: n.point_in_time_recovery,
+					global_replicas: n.global_replicas,
+					provider_config: n.provider_config,
+					...placement,
+				};
+			}),
 			secrets: secrets.map((s) => ({
 				name: s.name,
 				generate: s.generate,
