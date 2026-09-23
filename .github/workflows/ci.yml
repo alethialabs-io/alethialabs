@@ -1499,6 +1499,13 @@ jobs:
       - name: SPDX headers are legal-form-agnostic (Alethia Labs, no OÜ/DPK)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-license-headers.mjs
+      # #4986: the Google Fonts loader downloads fonts at build time, and a CDN blip failed builds on
+      # unrelated PRs. The faces are vendored in packages/brand; this keeps the loader from returning.
+      - name: No app loads fonts from the network at build time (#4986)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          node scripts/check-no-network-fonts.mjs --self-test
+          node scripts/check-no-network-fonts.mjs
       # The IP-activation path is dormant code until the founder assignment is signed, and dormant
       # code rots silently. It rewrites eleven exact prose markers across eight legal files; edit any
       # of that wording and the activation would refuse at the worst possible moment. This runs the
