@@ -8,18 +8,24 @@ import { Button } from "@repo/ui/button";
 import { Separator } from "@repo/ui/separator";
 import { cn } from "@repo/ui/utils";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { NOTHING_TO_FIT, useHasDrawnNodes } from "./use-has-drawn-nodes";
 
-/** A square ghost icon button sized for the controls bar. `active` marks a toggled-on tool. */
+/**
+ * A square ghost icon button sized for the controls bar. `active` marks a toggled-on tool;
+ * `disabledReason` replaces the tooltip while the button is disabled, so it says WHY.
+ */
 function CtrlButton({
   label,
   onClick,
   disabled,
+  disabledReason,
   active,
   children,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  disabledReason?: string;
   active?: boolean;
   children: React.ReactNode;
 }) {
@@ -36,7 +42,7 @@ function CtrlButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
-      title={label}
+      title={disabled && disabledReason ? disabledReason : label}
     >
       {children}
     </Button>
@@ -55,6 +61,7 @@ export function CanvasControls() {
   const redo = useCanvasStore((s) => s.redo);
   const canUndo = useCanvasStore((s) => s.past.length > 0);
   const canRedo = useCanvasStore((s) => s.future.length > 0);
+  const canFit = useHasDrawnNodes();
 
   return (
     <div className="absolute bottom-3 left-3 z-10 flex items-center border border-border bg-background/90 backdrop-blur">
@@ -64,7 +71,12 @@ export function CanvasControls() {
       <CtrlButton label="Zoom in" onClick={() => zoomIn()}>
         <ZoomIn className="h-3.5 w-3.5" />
       </CtrlButton>
-      <CtrlButton label="Fit view" onClick={() => fitView({ padding: 0.3 })}>
+      <CtrlButton
+        label="Fit view"
+        onClick={() => fitView({ padding: 0.3 })}
+        disabled={!canFit}
+        disabledReason={NOTHING_TO_FIT}
+      >
         <Maximize className="h-3.5 w-3.5" />
       </CtrlButton>
 

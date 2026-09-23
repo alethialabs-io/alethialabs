@@ -23,6 +23,7 @@ import {
 } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
 import { configName } from "./graph/node-config";
+import { NOTHING_TO_FIT } from "./use-has-drawn-nodes";
 
 /** Maps a node kind to its provider-specific service-name field. */
 const SERVICE_FIELD: Partial<Record<NodeKind, keyof CloudProviderMeta>> = {
@@ -81,6 +82,8 @@ interface CanvasCommandPaletteProps {
 	/** Optional — only present while the legacy form view still exists. */
 	onToggleView?: () => void;
 	onFitView: () => void;
+	/** The board draws nothing, so "Fit view" is shown disabled with {@link NOTHING_TO_FIT}. */
+	fitViewDisabled?: boolean;
 	onAskAi: () => void;
 	/** Auto-arrange the board (shared with the ⋯ menu and the pane context menu). */
 	onArrange: () => void;
@@ -108,6 +111,7 @@ export function CanvasCommandPalette({
 	onSave,
 	onToggleView,
 	onFitView,
+	fitViewDisabled = false,
 	onAskAi,
 	onArrange,
 	onEnvSettings,
@@ -264,7 +268,12 @@ export function CanvasCommandPalette({
 							Activity
 						</CommandItem>
 					)}
-					<CommandItem value="fit-view" onSelect={() => run(onFitView)}>
+					<CommandItem
+						value="fit-view"
+						disabled={fitViewDisabled}
+						title={fitViewDisabled ? NOTHING_TO_FIT : undefined}
+						onSelect={() => run(onFitView)}
+					>
 						Fit view
 					</CommandItem>
 					<CommandItem value="auto-arrange" onSelect={() => run(onArrange)}>
