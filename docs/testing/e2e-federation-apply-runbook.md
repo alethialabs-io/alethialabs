@@ -183,9 +183,12 @@ below is the maintainer's, from a plan the maintainer has read.
 
 ### What is in the tree
 
-The trust is written and **off**. Every stack has a variable `e2e_broker_issuer_url`, and every
-committed `terraform.tfvars` sets it to `null`. With `null` nothing is created and no trust document
-changes, so a plan of the current tree shows **no broker resources at all**.
+The trust is written and **committed, but not applied**. Every stack has a variable
+`e2e_broker_issuer_url`, and every committed `terraform.tfvars` sets it to
+`https://e2e-issuer.alethialabs.io` (#4226). Nothing exists in any cloud until the maintainer applies,
+but a plan of the current tree **does** show the broker resources below — so an apply of any of these
+stacks, for any reason, creates the trust. Do not apply them before the issuer serves (see *Before you
+plan*). `null` still means off: with it nothing is created and no trust document changes.
 
 | stack | when the issuer is set, it adds | file |
 |---|---|---|
@@ -223,30 +226,47 @@ issuer's **CA certificate fingerprints**, which are public.
 
 ### Before you plan
 
-1. **#4547 is done.** The `e2e-issuer` environment has its three secrets and four variables, and
-   *Deploy E2E assertion issuer* has run green. Its post-deploy step fetches discovery at
-   `E2E_ISSUER_URL`. A failed deploy means there is no issuer for a cloud to fetch keys from.
-2. **You have chosen the origin.** A `workers.dev` subdomain includes your Cloudflare account handle.
-   If you want a custom domain instead, choose it now. Every cloud pins the issuer string exactly,
-   and the Worker refuses to serve at any other origin.
-3. **The origin answers.** This must print the same origin back:
+1. **The issuer serves at its custom domain.** The origin is `https://e2e-issuer.alethialabs.io`
+   (maintainer ruling on #4226, 2026-09-23): a Workers Custom Domain that `infra/e2e-issuer` binds to
+   the Worker, with `workers.dev` turned off. Steps 1–6 of the runbook in
+   [`infra/e2e-issuer/README.md`](../../infra/e2e-issuer/README.md) are done: the zone-scoped token,
+   the `infra/e2e-issuer` apply, `E2E_ISSUER_URL` set to that origin, a green *Deploy E2E assertion
+   issuer* run, and the reviewed TLS pin (`infra/e2e-issuer/tls-ca-pin.json`) merged. The deploy's
+   post-deploy step fetches discovery at `E2E_ISSUER_URL`, so a green deploy means the origin answers.
+2. **The origin is already committed.** All four `terraform.tfvars` carry
+   `e2e_broker_issuer_url = "https://e2e-issuer.alethialabs.io"`, the same string as
+   `infra/e2e-issuer`'s `hostname`. `node scripts/ci/check-e2e-issuer-health.mjs --static` fails any PR
+   that lets those copies drift. **Until step 1 is done, do not apply any of the four stacks**, for any
+   reason: with the origin committed, every apply creates the broker trust.
+3. **The origin answers, and the health check is green.** This must print the same origin back:
    ```bash
-   curl -fsS https://<origin>/.well-known/openid-configuration | jq -r .issuer
+   curl -fsS https://e2e-issuer.alethialabs.io/.well-known/openid-configuration | jq -r .issuer
+   node scripts/ci/check-e2e-issuer-health.mjs --expected-url https://e2e-issuer.alethialabs.io
    ```
+   The second command exits `0` only when discovery, the JWKS, key age, the TLS pin and latency all
+   pass. The *E2E issuer health* workflow runs the same check every six hours and keeps one
+   `tracker:e2e-issuer-health` issue open while anything fails.
 4. **`gcp-e2e`'s `e2e_broker_workflow_refs` equals the broker's `ALLOWED_WORKFLOW_REFS`.** The
    default is `alethialabs-io/alethialabs/.github/workflows/e2e-nightly.yml@refs/heads/dev`, the
    value #4226 proposed for that variable. If the variable changed, change the list too.
 
-### Enable it — one reviewed PR, then one plan and apply per cloud
+### Enable it — one plan and apply per cloud
 
-Put the origin in all four `terraform.tfvars`, replacing `null`, and merge that PR:
+The origin is already in all four `terraform.tfvars` (#4226):
 
 ```hcl
-e2e_broker_issuer_url = "https://<origin>"
+e2e_broker_issuer_url = "https://e2e-issuer.alethialabs.io"
 ```
 
-Use the committed file, **not** `-var` at apply time. With `-var`, the next bare apply reads `null`
-and **removes** the trust.
+Keep it in the committed file, **not** `-var` at apply time. With `-var`, the next bare apply reads
+the committed value and rewrites or **removes** the trust.
+
+**Alibaba pins the reviewed TLS CA set, not the chain it sees at plan.** `alibaba-e2e` sets the RAM
+OIDC provider's fingerprints from `infra/e2e-issuer/tls-ca-pin.json` (at most five, RAM's limit).
+Its plan **fails** with a precondition error when that file is empty, names another origin, or does
+not cover every CA certificate the host serves at plan time. The fix is never to edit the stack: run
+`node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url https://e2e-issuer.alethialabs.io`,
+review the output, commit it to `tls-ca-pin.json` in a PR, and plan again after it merges.
 
 Then plan each stack as part one does, with the same inputs. The expected shapes below are
 **predictions from the code**. Nobody has planned them against live state, because there has been no
@@ -349,17 +369,22 @@ Alternatively, set a new `broker_pool_id`.
   issuer, so a key rotation happens entirely in the broker. Follow the procedure in
   `apps/e2e-issuer/README.md`: publish, wait 24 h, sign with the new key, wait 24 h, retire the old
   key. None of the four stacks pins a key.
-- **Alibaba certificate fingerprints: expect this to break, and plan again when it does.** The RAM
-  provider pins the fingerprints of the CA certificates in the chain the issuer **presents**. A server
-  normally does not send its root, so in practice that is the **issuing intermediate**, not a root.
-  Cloudflare's edge certificates can change issuing CA, and a CA such as Let's Encrypt can pick a
-  different intermediate at each renewal. So a routine certificate renewal at Cloudflare **can**
-  change the pinned value. When it does, AssumeRoleWithOIDC fails for the broker only, and nothing
-  reports it until the nightly's Alibaba leg fails. To fix it, plan and apply `alibaba-e2e` again:
-  `data.tls_certificate` reads the fingerprints again. The GitHub provider in `oidc.tf` has the same
-  design and the same exposure. A plan whose only change is `fingerprints` on a provider is this
-  case.
-- **The issuer origin.** A new origin is a new issuer on every cloud. Change the origin in all four
-  `terraform.tfvars` in one PR and plan each stack. Read whether each plan updates the issuer in
+- **Alibaba certificate fingerprints: a reviewed change, announced before it breaks.** The RAM
+  provider pins the fingerprints in `infra/e2e-issuer/tls-ca-pin.json` — every CA certificate the
+  issuer's host serves, at most five. Cloudflare can re-issue the host's certificate from another CA
+  (its CAA injection lists four for this zone) or another intermediate, and on this zone that cannot
+  be pinned to one CA — `infra/e2e-issuer/README.md` has the sources. When it happens, AssumeRoleWithOIDC
+  fails for the broker only. The *E2E issuer health* workflow compares the served chain with the pin
+  every six hours and opens the `tracker:e2e-issuer-health` issue naming the new certificate. To fix
+  it: `node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url https://e2e-issuer.alethialabs.io`
+  (it keeps the existing entries and appends the new ones), commit the reviewed file, then plan and
+  apply `alibaba-e2e` — the plan's only change is `fingerprints` on `alethia-e2e-broker`. Remove a
+  retired entry by hand, in a later PR, once the new chain is confirmed (RAM's guidance: add the new
+  fingerprint at least a day before a rotation). The plan refuses, by precondition, to write a pin that
+  does not cover the chain being served. The GitHub provider in `oidc.tf` still pins its chain at plan
+  time and keeps the old exposure.
+- **The issuer origin.** A new origin is a new issuer on every cloud. Change `hostname` in
+  `infra/e2e-issuer/terraform.tfvars`, the origin in all four `terraform.tfvars` and `issuer_url` in
+  `tls-ca-pin.json` in one PR (`--static` fails the PR if any copy is missed), and plan each stack. Read whether each plan updates the issuer in
   place or replaces the object. This file does not predict which, because nobody has measured it.
   Broker runs fail between the Worker moving and each apply, so do it when no nightly is scheduled.
