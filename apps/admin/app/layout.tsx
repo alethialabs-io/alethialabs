@@ -3,27 +3,11 @@
 
 import type { Metadata } from "next";
 import { PublicEnvScript } from "next-runtime-env";
-import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
+import { brandFontVariables } from "@repo/brand/fonts";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@repo/ui/sonner";
 import { QueryProvider } from "@/components/query-provider";
 import "./globals.css";
-
-const geistSans = Geist({
-	variable: "--font-geist-sans",
-	subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-	variable: "--font-geist-mono",
-	subsets: ["latin"],
-});
-
-const spaceGrotesk = Space_Grotesk({
-	variable: "--font-space-grotesk",
-	subsets: ["latin"],
-	weight: ["400", "500", "600", "700"],
-});
 
 export const metadata: Metadata = {
 	title: {
@@ -51,7 +35,7 @@ export default function RootLayout({
 				<PublicEnvScript />
 			</head>
 			<body
-				className={`${geistSans.variable} ${geistMono.variable} ${spaceGrotesk.variable} antialiased`}
+				className={`${brandFontVariables} antialiased`}
 			>
 				<ThemeProvider
 					attribute="class"

@@ -28,8 +28,8 @@ filing.
 
 | Material | Purpose | Provenance / terms |
 |---|---|---|
-| Space Grotesk | Display and wordmark typography | SIL OFL 1.1; filing artwork must outline text |
-| Geist / Geist Mono | Interface and technical typography | SIL OFL 1.1 |
+| Space Grotesk | Display and wordmark typography | SIL OFL 1.1; filing artwork must outline text. Vendored since #4986: `packages/brand/src/fonts/` (source, version and checksums in its README) |
+| Geist / Geist Mono | Interface and technical typography | SIL OFL 1.1. Vendored since #4986: `packages/brand/src/fonts/` (source, version and checksums in its README) |
 | Noto Sans | Fallback/localized typography | SIL OFL 1.1 |
 | Lucide | Interface icons | ISC |
 | Base UI, Radix, shadcn-derived code | Component primitives | Upstream permissive licences; local modifications remain recorded in Git |

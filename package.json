@@ -35,6 +35,7 @@
     "check:addon-resource-fit": "bash scripts/addons/check-resource-fit.sh",
     "check:destructive-actions": "node scripts/check-destructive-actions.mjs",
     "check:forbidden-names": "node scripts/check-forbidden-names.mjs",
+    "check:no-network-fonts": "node scripts/check-no-network-fonts.mjs",
     "check:closing-keyword-parsers": "node scripts/check-closing-keyword-parsers.mjs",
 		"check:shared-surface": "node scripts/check-shared-surface.mjs",
     "check:cli-surface": "node scripts/check-cli-surface.mjs",
