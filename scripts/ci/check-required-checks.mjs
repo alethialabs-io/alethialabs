@@ -15,6 +15,10 @@
 // and the only one of the five that is not a list of CHECKS but a list of LEGS the checks are
 // rendered from. So the header above is the original three; the file guards five.
 //
+// A SIXTH question is not about checks at all (#4942): what REVIEW each branch requires, and whether
+// a document in the tree claims a review control the ruleset does not have. Its own section, below
+// the fourth, states its bound — the claims it holds are an enumerated list.
+//
 // Measured 2026-08-28: the live `protect-dev` ruleset was last updated 2026-07-29 and carries 9
 // contexts; the HCL names 11 for dev. So the repository had been carrying written-down requirements
 // that nothing enforced, for a month. That is the SECOND occurrence — .mergify.yml's own header
@@ -500,7 +504,19 @@ export function readLiveRulesets(repo, run = (args) => execFileSync("gh", args, 
 			const checks = rules
 				.filter((x) => x.type === "required_status_checks")
 				.flatMap((x) => (x.parameters?.required_status_checks ?? []).map((c) => c.context));
-			rulesets.push({ name, branch, checks });
+			// The SAME response carries the review requirements (#4942) — reading them costs no call.
+			// A shape this does not recognise THROWS, and it is caught HERE, per branch, into
+			// `review: null` + `reviewError`: "could not look" for the review half only. Letting it reach
+			// the outer catch nulled every ruleset, lost the status-check comparison that worked before
+			// the review half existed, and blamed the token's permissions for a parse problem.
+			let review = null;
+			let reviewError = null;
+			try {
+				review = reviewFromBranchRules(rules, branch);
+			} catch (e) {
+				reviewError = String(e instanceof Error ? e.message : e).split("\n")[0];
+			}
+			rulesets.push({ name, branch, checks, review, reviewError });
 		}
 		return { rulesets, error: null };
 	} catch (e) {
@@ -927,6 +943,431 @@ export function readObservedJobs(repo, { perWorkflow = 8, run = (args) => execFi
 	}
 }
 
+// ── THE SIXTH QUESTION: what REVIEW does a branch require, and does any document claim more? ──────
+//
+// Every question above is about STATUS CHECKS. None of them read the ruleset's `pull_request` rule,
+// so a document could claim a review control that no ruleset has, and the one instrument that reads
+// the live rulesets would never say so. That is #4942, measured 2026-09-23:
+//
+//   .github/workflows/e2e-nightly.yml justifies the e2e-dev OIDC widening with "a ruleset on `dev`
+//   requiring CODEOWNERS review for `.github/workflows/**` and `infra/**`". .github/CODEOWNERS says
+//   enforcement "comes from the branch protection rulesets on `main`/`staging`". The live rulesets
+//   carry `require_code_owner_review: false` and `required_approving_review_count: 0` on ALL THREE
+//   branches, and infra/github/main.tf declares the same. Both documents are false, and they also
+//   disagree with each other.
+//
+// So this section does two things, and neither is a decision:
+//
+//   1. REPORT, per protected branch, `require_code_owner_review`, `required_approving_review_count`
+//      and the number of path-scoped `required_reviewers` — live under `--live`, and HCL-vs-live as
+//      drift, the same way the contexts are compared.
+//   2. HOLD EACH ENUMERATED CLAIM against those settings, and say plainly when a document claims a
+//      control the ruleset does not have.
+//
+// ⚠️ THE BOUND, stated because it is the shape this repo's worst guards have had: the claims are a
+// HAND-WRITTEN list (`REVIEW_CLAIMS` below). A new sentence somewhere else that claims enforcement is
+// not read by anything here. What the list does guarantee is that each claim it names is still where
+// it says (a record whose text has gone fails, so the list cannot outlive its subject) and that each
+// is measured against the ruleset rather than believed.
+//
+// WHY A FALSE CLAIM IS A WARNING AT PR TIME AND NOT A FAILURE. Both claims are false TODAY, and the
+// fix — add the control, or withdraw the sentence — is the maintainer's (#4942 item 1). Failing here
+// would red every PR into dev over a decision no PR author can make. So a false claim that carries an
+// `acknowledged` issue is a warning in-tree and a finding in the `--live` report; a false claim
+// WITHOUT one fails; and an acknowledgement on a claim that now HOLDS fails too, so the ledger only
+// shrinks. That is the same two-direction contract as `mergify_leads`.
+//
+// WHAT COUNTS AS THE CONTROL. `require_code_owner_review: true` on the claimed branch. A non-empty
+// `required_reviewers` (GitHub's path-scoped reviewer rule, the natural way to express "CODEOWNERS
+// review for these two globs") is reported as UNVERIFIED rather than as holding or refuted: this
+// script has no captured shape of a populated one and does not evaluate its `file_patterns`, and
+// guessing either way would be a verdict it has not earned.
+
+/**
+ * Enumerated places the tree CLAIMS a review control exists. Each `text` must match the file's
+ * prose (comment markers and line breaks folded away — see `foldProse`).
+ */
+export const REVIEW_CLAIMS = [
+	{
+		id: "codeowners-header",
+		file: ".github/CODEOWNERS",
+		text: /Required-review enforcement comes from the branch protection rulesets on `main`\/`staging`/,
+		branches: ["main", "staging"],
+		says: "code-owner review is enforced by the rulesets on `main` and `staging`",
+		acknowledged: "#4942",
+	},
+	{
+		id: "e2e-dev-compensating-control",
+		file: ".github/workflows/e2e-nightly.yml",
+		text: /a ruleset on `dev` requiring CODEOWNERS review for `\.github\/workflows\/\*\*` and `infra\/\*\*`/,
+		branches: ["dev"],
+		says: "a ruleset on `dev` requires CODEOWNERS review for `.github/workflows/**` and `infra/**` — the stated compensating control for the e2e-dev OIDC widening",
+		acknowledged: "#4942",
+	},
+	{
+		id: "e2e-advisory-off-main-staging",
+		file: ".github/workflows/e2e-nightly.yml",
+		text: /CODEOWNERS is advisory off `main`\/`staging`/,
+		branches: ["main", "staging"],
+		says: "CODEOWNERS is advisory only OFF `main`/`staging` — i.e. enforced on them",
+		acknowledged: "#4942",
+	},
+];
+
+/**
+ * Fold a file into one line of prose, dropping each line's indentation and leading comment markers,
+ * and keep the map back to line numbers — so a claim wrapped across two `#` comment lines is found,
+ * and reported at the line it starts on.
+ *
+ * @param {string} text
+ * @returns {{flat: string, lineOf: (index: number) => number}}
+ */
+export function foldProse(text) {
+	const starts = [];
+	const parts = [];
+	let at = 0;
+	for (const line of text.split("\n")) {
+		const body = line.replace(/^\s*(?:#+|\/\/+)?\s*/, "");
+		starts.push(at);
+		parts.push(body);
+		at += body.length + 1;
+	}
+	const flat = parts.join(" ");
+	const lineOf = (index) => {
+		let i = 0;
+		while (i + 1 < starts.length && starts[i + 1] <= index) i++;
+		return i + 1;
+	};
+	return { flat, lineOf };
+}
+
+/**
+ * The effective review requirement on one branch, from `GET /repos/{o}/{r}/rules/branches/{branch}`.
+ *
+ * Several rulesets can each contribute a `pull_request` rule, and GitHub enforces the strictest, so
+ * the counts take the max and the code-owner flag is true if ANY rule sets it. A `pull_request` rule
+ * whose fields are not the types this expects THROWS — reading a missing boolean as `false` is the
+ * jq `//` trap #4942 nearly shipped the opposite finding from.
+ *
+ * @param {unknown[]} rules
+ * @param {string} branch
+ * @returns {{pullRequestRules: number, requiredApprovingReviewCount: number, requireCodeOwnerReview: boolean, requiredReviewers: number}}
+ */
+export function reviewFromBranchRules(rules, branch) {
+	const prs = rules.filter((r) => r?.type === "pull_request");
+	let requiredApprovingReviewCount = 0;
+	let requireCodeOwnerReview = false;
+	let requiredReviewers = 0;
+	for (const r of prs) {
+		const p = r.parameters;
+		if (typeof p?.required_approving_review_count !== "number" || typeof p?.require_code_owner_review !== "boolean") {
+			throw new Error(`the \`pull_request\` rule on \`${branch}\` (ruleset ${r.ruleset_id ?? "?"}) does not carry a numeric \`required_approving_review_count\` and a boolean \`require_code_owner_review\` — an unknown shape, not a "no"`);
+		}
+		requiredApprovingReviewCount = Math.max(requiredApprovingReviewCount, p.required_approving_review_count);
+		requireCodeOwnerReview = requireCodeOwnerReview || p.require_code_owner_review;
+		if (p.required_reviewers !== undefined && !Array.isArray(p.required_reviewers)) {
+			throw new Error(`the \`pull_request\` rule on \`${branch}\` carries a \`required_reviewers\` that is not an array`);
+		}
+		requiredReviewers += (p.required_reviewers ?? []).length;
+	}
+	return { pullRequestRules: prs.length, requiredApprovingReviewCount, requireCodeOwnerReview, requiredReviewers };
+}
+
+/**
+ * The review requirement each `github_repository_ruleset` in main.tf DECLARES.
+ *
+ * `require_code_owner_review` absent means `false` (the provider's default — and what protect-dev and
+ * protect-staging rely on today). `required_approving_review_count` absent, or either one set to
+ * anything but a literal, is an ERROR: this script would otherwise be reporting a number it made up.
+ *
+ * It also reads WHICH BRANCHES each ruleset targets (`target`, `enforcement`, and
+ * `conditions.ref_name`), because GitHub enforces the MERGE of every active ruleset that targets a
+ * branch — see `hclReviewByBranch`. A `ref_name` list that is not string literals is an ERROR, for
+ * the same reason a non-literal count is.
+ *
+ * @param {string} mainText
+ * @returns {{name: string, target: string | null, enforcement: string | null, include: string[], exclude: string[], review: {pullRequestRules: number, requiredApprovingReviewCount: number, requireCodeOwnerReview: boolean, requiredReviewers: number}}[]}
+ */
+export function parseHclReview(mainText) {
+	const src = stripHclComments(mainText);
+	const out = [];
+	const re = /resource\s+"github_repository_ruleset"\s+"([^"]+)"\s*\{/g;
+	for (let m = re.exec(src); m; m = re.exec(src)) {
+		const nextBlock = src.indexOf('resource "github_repository_ruleset"', re.lastIndex);
+		const body = src.slice(m.index, nextBlock < 0 ? src.length : nextBlock);
+		const name = /\bname\s*=\s*"([^"]+)"/.exec(body)?.[1] ?? m[1];
+		const blocks = hclBlocks(body, "pull_request", name);
+		const target = /\btarget\s*=\s*"([^"]+)"/.exec(body)?.[1] ?? null;
+		const enforcement = /\benforcement\s*=\s*"([^"]+)"/.exec(body)?.[1] ?? null;
+		const refName = hclBlocks(hclBlocks(body, "conditions", name).join("\n"), "ref_name", name).join("\n");
+		const refList = (key) => {
+			const raw = new RegExp(`\\b${key}\\s*=\\s*(\\[[^\\]]*\\]|\\S+)`).exec(refName)?.[1];
+			if (raw === undefined) return [];
+			if (!raw.startsWith("[")) throw new Error(`${MAIN}: ruleset \`${name}\`'s \`ref_name.${key}\` is \`${raw}\`; only a list of string literals is modelled.`);
+			const inner = raw.slice(1, -1).trim();
+			if (inner === "") return [];
+			return inner.split(",").map((s) => s.trim()).filter((s) => s !== "").map((s) => {
+				const lit = /^"([^"]*)"$/.exec(s);
+				if (!lit) throw new Error(`${MAIN}: ruleset \`${name}\`'s \`ref_name.${key}\` carries \`${s}\`; only string literals are modelled.`);
+				return lit[1];
+			});
+		};
+		const include = refList("include");
+		const exclude = refList("exclude");
+		let requiredApprovingReviewCount = 0;
+		let requireCodeOwnerReview = false;
+		let requiredReviewers = 0;
+		for (const b of blocks) {
+			const count = /\brequired_approving_review_count\s*=\s*(\S+)/.exec(b)?.[1];
+			if (count === undefined || !/^\d+$/.test(count)) throw new Error(`${MAIN}: ruleset \`${name}\`'s \`pull_request\` block sets \`required_approving_review_count\` to ${count === undefined ? "nothing" : `\`${count}\``}; only a literal number is modelled.`);
+			requiredApprovingReviewCount = Math.max(requiredApprovingReviewCount, Number(count));
+			const owner = /\brequire_code_owner_review\s*=\s*(\S+)/.exec(b)?.[1];
+			if (owner !== undefined && owner !== "true" && owner !== "false") throw new Error(`${MAIN}: ruleset \`${name}\`'s \`require_code_owner_review\` is \`${owner}\`; only a literal true/false is modelled.`);
+			requireCodeOwnerReview = requireCodeOwnerReview || owner === "true";
+			requiredReviewers += (b.match(/\brequired_reviewers\s*\{/g) ?? []).length;
+		}
+		out.push({ name, target, enforcement, include, exclude, review: { pullRequestRules: blocks.length, requiredApprovingReviewCount, requireCodeOwnerReview, requiredReviewers } });
+	}
+	if (out.length === 0) throw new Error(`${MAIN}: no \`github_repository_ruleset\` resources found to read review requirements from.`);
+	return out;
+}
+
+/**
+ * The bodies of every `<name> { … }` block in `text`, brace-matched (comments already stripped).
+ *
+ * @param {string} text
+ * @param {string} block
+ * @param {string} ruleset only for the error message
+ * @returns {string[]}
+ */
+function hclBlocks(text, block, ruleset) {
+	const bodies = [];
+	const open = new RegExp(`\\b${block}\\s*\\{`, "g");
+	for (let p = open.exec(text); p; p = open.exec(text)) {
+		let depth = 1;
+		let i = open.lastIndex;
+		for (; i < text.length && depth > 0; i++) {
+			if (text[i] === "{") depth++;
+			else if (text[i] === "}") depth--;
+		}
+		if (depth !== 0) throw new Error(`${MAIN}: the \`${block}\` block in ruleset \`${ruleset}\` is never closed.`);
+		bodies.push(text.slice(open.lastIndex, i - 1));
+	}
+	return bodies;
+}
+
+/**
+ * Whether one `ref_name` pattern names `branch`, as GitHub evaluates it: `~ALL`, `~DEFAULT_BRANCH`,
+ * or `refs/heads/<fnmatch>` where `*` stays inside one path segment and `**` crosses them. Anything
+ * else THROWS — a pattern this does not model must not silently read as "does not target".
+ *
+ * @param {string} pattern
+ * @param {string} branch
+ * @param {string} defaultBranch the repository's default branch (`main` here)
+ * @returns {boolean}
+ */
+export function refPatternTargets(pattern, branch, defaultBranch = "main") {
+	if (pattern === "~ALL") return true;
+	if (pattern === "~DEFAULT_BRANCH") return branch === defaultBranch;
+	if (!pattern.startsWith("refs/heads/")) throw new Error(`${MAIN}: the ref_name pattern \`${pattern}\` is not modelled (only \`~ALL\`, \`~DEFAULT_BRANCH\` and \`refs/heads/…\`).`);
+	const glob = pattern.slice("refs/heads/".length);
+	const rx = glob
+		.split("**")
+		.map((part) => part.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*"))
+		.join(".*");
+	return new RegExp(`^${rx}$`).test(branch);
+}
+
+/**
+ * Where live and declared review requirements differ, per ruleset. Only the fields this reports are
+ * compared; a difference is drift for the same reason a context is — the HCL is the intent, the live
+ * ruleset is what binds, and an apply would move one onto the other.
+ *
+ * @param {{rulesets: {name: string, branch: string, review: object}[], hcl: {name: string, review: object}[]}} args
+ */
+export function compareLiveReview({ rulesets, hcl }) {
+	// Per BRANCH, not per ruleset name: `rules/branches/<branch>` is the merge of every active
+	// ruleset targeting it, so the HCL side must be the same merge (PR #4966 review).
+	const declaredByBranch = hclReviewByBranch(hcl, rulesets.map((rs) => rs.branch));
+	return rulesets.map((rs) => {
+		const declared = declaredByBranch.get(rs.branch) ?? null;
+		const drift = [];
+		// A review rule this could not parse is "could not look", never "no drift" and never drift.
+		if (rs.review === null) return { name: rs.name, branch: rs.branch, live: null, hcl: declared, drift, unreadable: rs.reviewError ?? "unknown error" };
+		if (!declared) drift.push(`infra/github declares no active ruleset targeting \`${rs.branch}\``);
+		else {
+			// PRESENCE first: a deleted live `pull_request` rule reads as false/0/0 — which is exactly
+			// what the HCL declares today — so without this the field comparison below reports
+			// agreement while pushes no longer need a PR at all (PR #4966 review, second pass).
+			if ((declared.pullRequestRules > 0) !== (rs.review.pullRequestRules > 0)) {
+				drift.push(
+					rs.review.pullRequestRules > 0
+						? "a `pull_request` rule is live but the HCL declares none"
+						: "the HCL declares a `pull_request` rule but none is live — pushes to this branch no longer need a PR",
+				);
+			}
+			for (const k of ["requireCodeOwnerReview", "requiredApprovingReviewCount", "requiredReviewers"]) {
+				if (declared[k] !== rs.review[k]) drift.push(`\`${REVIEW_FIELD[k]}\` is ${String(rs.review[k])} live but ${String(declared[k])} in the HCL`);
+			}
+		}
+		return { name: rs.name, branch: rs.branch, live: rs.review, hcl: declared, drift, unreadable: null };
+	});
+}
+
+/** The API's field names, so the report says what `gh api` would show rather than a JS identifier. */
+const REVIEW_FIELD = {
+	requireCodeOwnerReview: "require_code_owner_review",
+	requiredApprovingReviewCount: "required_approving_review_count",
+	requiredReviewers: "required_reviewers",
+};
+
+/**
+ * Hold each enumerated claim against a branch → review map (live or declared).
+ *
+ * Per claim: `missing-file` or `stale` when the claim cannot be found where the record says (the
+ * record has outlived its subject); otherwise, per claimed branch, `holds` when code-owner review is
+ * required, `unverified` when only path-scoped reviewers exist (not evaluated — see the header),
+ * `refuted` when neither. The claim's verdict is the worst of its branches.
+ *
+ * @param {{claims: typeof REVIEW_CLAIMS, readFile: (f: string) => string | null, reviewByBranch: Map<string, object>}} args
+ */
+export function evaluateReviewClaims({ claims, readFile, reviewByBranch }) {
+	return claims.map((claim) => {
+		const text = readFile(claim.file);
+		if (text === null) return { claim, line: null, verdict: "missing-file", branches: [] };
+		const { flat, lineOf } = foldProse(text);
+		const m = claim.text.exec(flat);
+		if (!m) return { claim, line: null, verdict: "stale", branches: [] };
+		const branches = claim.branches.map((branch) => {
+			const r = reviewByBranch.get(branch);
+			// Present but null: the live review rule could not be parsed. Not refuted — unknown.
+			if (r === null) return { branch, verdict: "unverified", why: "the live `pull_request` rule on this branch could not be parsed (see the review requirements above)", unreadable: true };
+			if (!r) return { branch, verdict: "refuted", why: "no ruleset protects this branch" };
+			if (r.requireCodeOwnerReview === true) return { branch, verdict: "holds", why: "`require_code_owner_review: true`" };
+			if (r.requiredReviewers > 0) return { branch, verdict: "unverified", why: `\`require_code_owner_review: false\`, but ${r.requiredReviewers} path-scoped \`required_reviewers\` entr${r.requiredReviewers === 1 ? "y" : "ies"} this script does not evaluate` };
+			return { branch, verdict: "refuted", why: `\`require_code_owner_review: false\`, \`required_approving_review_count: ${r.requiredApprovingReviewCount}\`, no path-scoped reviewers` };
+		});
+		const rank = { refuted: 2, unverified: 1, holds: 0 };
+		const verdict = branches.reduce((w, b) => (rank[b.verdict] > rank[w] ? b.verdict : w), "holds");
+		return { claim, line: lineOf(m.index), verdict, branches };
+	});
+}
+
+/**
+ * The in-tree (PR-time) reading of the claims, measured against the HCL. See the header for why a
+ * false-but-acknowledged claim warns rather than fails, and why an acknowledgement on a claim that
+ * now holds is itself a failure.
+ */
+export function compareReviewClaims(evaluated, source) {
+	const failures = [];
+	const notes = [];
+	for (const e of evaluated) {
+		const { claim } = e;
+		if (e.verdict === "missing-file") {
+			failures.push(`${claim.file}: the review claim \`${claim.id}\` points at a file that does not exist. Update or delete its record in REVIEW_CLAIMS (scripts/ci/check-required-checks.mjs) — a record for a claim nobody makes is stale evidence.`);
+			continue;
+		}
+		if (e.verdict === "stale") {
+			failures.push(`${claim.file}: the review claim \`${claim.id}\` (${claim.says}) is no longer in the file. If the sentence was corrected or withdrawn, delete its record in REVIEW_CLAIMS (scripts/ci/check-required-checks.mjs); if it was reworded, update the record's \`text\` so the claim is still measured.`);
+			continue;
+		}
+		const where = `${claim.file}:${e.line}`;
+		const detail = e.branches.filter((b) => b.verdict !== "holds").map((b) => `\`${b.branch}\`: ${b.why}`).join("; ");
+		if (e.verdict === "holds") {
+			if (claim.acknowledged) failures.push(`${where}: the review claim \`${claim.id}\` now HOLDS against ${source}, but its record still carries \`acknowledged: "${claim.acknowledged}"\`. Delete the acknowledgement — this list only shrinks.`);
+			continue;
+		}
+		const msg = `${where} claims ${claim.says}. ${source} ${e.verdict === "refuted" ? "does NOT have that control" : "cannot confirm it"} — ${detail}.`;
+		if (claim.acknowledged) notes.push(`${msg} Known and tracked in ${claim.acknowledged}; the fix (add the control, or correct the sentence) is the maintainer's.`);
+		else failures.push(`${msg} Either the control must exist or the sentence must say what is true. If it is a known gap awaiting a decision, record it with \`acknowledged: "#<issue>"\` in REVIEW_CLAIMS.`);
+	}
+	return { failures, notes };
+}
+
+/**
+ * The `--live` reading of the claims: the report lines, and whether any of them is LIVE DRIFT.
+ *
+ * WHAT MAY SET THE DRIFT EXIT, and why so little. Exit 2 from `--live` opens the
+ * `tracker:required-checks-drift` issue, whose body promises "it closes itself once an apply lands".
+ * So only a finding an apply could clear may set it. An ACKNOWLEDGED false claim cannot be cleared
+ * that way — the HCL refutes it too, so it would hold the issue open forever and bury every real
+ * status-check drift under an issue that is always open. It is REPORTED, not counted. A stale or
+ * missing record is a TREE problem, and the PR-time run already fails on it (`compareReviewClaims`);
+ * it is reported here with that said, and not counted either. An acknowledged claim that now HOLDS
+ * live is reported as such; the PR-time run fails it once the HCL declares the control too (and if
+ * the HCL does not, `compareLiveReview` reports that as review drift).
+ *
+ * What DOES count: an UNacknowledged claim the live ruleset does not honour. The PR-time run fails an
+ * unacknowledged claim the HCL refutes, so reaching here means the HCL declares the control and the
+ * live ruleset lacks it — which is exactly what an apply fixes.
+ *
+ * @param {ReturnType<typeof evaluateReviewClaims>} evaluated
+ * @returns {{lines: string[], drift: boolean}}
+ */
+export function reportLiveClaims(evaluated) {
+	const lines = [];
+	let drift = false;
+	let anyFalse = false;
+	for (const e of evaluated) {
+		const { claim } = e;
+		if (e.verdict === "missing-file" || e.verdict === "stale") {
+			lines.push(`- \`${claim.id}\` — the claim is no longer in \`${claim.file}\`; its record in REVIEW_CLAIMS is stale. That is a tree problem, not live drift: the PR-time run fails on it, and no apply would fix it.`);
+			continue;
+		}
+		const where = `\`${claim.file}:${e.line}\``;
+		if (e.verdict === "holds") {
+			lines.push(`- ${where} claims ${claim.says} — **holds** live.${claim.acknowledged ? ` Its record still carries \`acknowledged: "${claim.acknowledged}"\`; delete it (the PR-time run fails on this once the HCL declares the control).` : ""}`);
+			continue;
+		}
+		anyFalse = true;
+		const verb = e.verdict === "refuted" ? "**The live ruleset does NOT have this control.**" : "**UNVERIFIED** — this script cannot confirm it.";
+		lines.push(`- ${where} claims ${claim.says}. ${verb}`);
+		for (const b of e.branches.filter((x) => x.verdict !== "holds")) lines.push(`  - \`${b.branch}\`: ${b.why}`);
+		if (claim.acknowledged) lines.push(`  - known and tracked in ${claim.acknowledged} — reported, not counted as drift: no apply can clear it.`);
+		// A branch whose live rule could not be parsed is a blind spot, not drift.
+		else if (e.branches.some((b) => b.verdict !== "holds" && b.unreadable !== true)) drift = true;
+	}
+	if (anyFalse) lines.push("", `A false claim is fixed one of two ways, and choosing is the maintainer's: add the control in \`infra/github/\` and apply it, or correct the sentence. Correcting it also means deleting its record in \`REVIEW_CLAIMS\` (scripts/ci/check-required-checks.mjs).`);
+	return { lines, drift };
+}
+
+/**
+ * Branch → the review the HCL declares for it: the MERGE of every active branch ruleset whose
+ * `ref_name` conditions target that branch, strictest wins — the same merge GitHub applies and
+ * `reviewFromBranchRules` reads back from `rules/branches/<branch>`. Counts take the max, the
+ * code-owner flag is true if ANY ruleset sets it, path-scoped reviewers add up.
+ *
+ * Reading only the ruleset NAMED `protect-<branch>` was wrong the moment the control lands as its own
+ * ruleset — the natural shape of the #4942 fix: the HCL would declare it and still read as refuted,
+ * and the applied result would read as permanent drift. A ruleset in `evaluate` or `disabled` mode
+ * enforces nothing and does not appear in the live merge, so it is left out here too.
+ *
+ * @param {ReturnType<typeof parseHclReview>} hcl
+ * @param {string[]} branches the branches to answer for (default: the three protected ones)
+ * @returns {Map<string, {pullRequestRules: number, requiredApprovingReviewCount: number, requireCodeOwnerReview: boolean, requiredReviewers: number, rulesets: string[]}>}
+ */
+export function hclReviewByBranch(hcl, branches = RULESET_BRANCHES.map(([b]) => b)) {
+	const byBranch = new Map();
+	for (const branch of branches) {
+		const targeting = hcl.filter(
+			(h) =>
+				h.target === "branch" &&
+				h.enforcement === "active" &&
+				h.include.some((p) => refPatternTargets(p, branch)) &&
+				!h.exclude.some((p) => refPatternTargets(p, branch)),
+		);
+		if (targeting.length === 0) continue;
+		byBranch.set(branch, {
+			pullRequestRules: targeting.reduce((n, h) => n + h.review.pullRequestRules, 0),
+			requiredApprovingReviewCount: Math.max(...targeting.map((h) => h.review.requiredApprovingReviewCount)),
+			requireCodeOwnerReview: targeting.some((h) => h.review.requireCodeOwnerReview),
+			requiredReviewers: targeting.reduce((n, h) => n + h.review.requiredReviewers, 0),
+			rulesets: targeting.map((h) => h.name),
+		});
+	}
+	return byBranch;
+}
+
 function ok(label, cond, detail = "") {
 	if (cond) {
 		console.log(`ok   - ${label}`);
@@ -1323,6 +1764,176 @@ resource "github_repository_ruleset" "staging" {
 		console.log(`skip - the real-file assertions need ${GATE_WORKFLOW} and ${VARIABLES}; run the self-test from the repo root`);
 	}
 
+	// ── the sixth question: review requirements and the claims made about them (#4942) ──────────
+	//
+	// CAPTURED, NOT COMPOSED. The branch-rules responses below are the live API's own bytes
+	// (scripts/ci/fixtures/rules-branches.2026-09-23.json), so the reader is exercised against the
+	// shape GitHub actually returns — including the `required_reviewers: []` field a composed fixture
+	// would not have thought to include. Every mutation below starts from that capture.
+	const RULES_FIXTURE = "scripts/ci/fixtures/rules-branches.2026-09-23.json";
+	if (fs.existsSync(RULES_FIXTURE)) {
+		const cap = JSON.parse(fs.readFileSync(RULES_FIXTURE, "utf8"));
+		const clone = (x) => JSON.parse(JSON.stringify(x));
+		const liveRun = (a) => {
+			const b = /rules\/branches\/(\w+)$/.exec(a[1])?.[1];
+			return JSON.stringify(cap[b]);
+		};
+		const lr = readLiveRulesets("alethialabs-io/alethialabs", liveRun);
+		P("the captured branch rules read without error", lr.rulesets !== null, String(lr.error));
+		const byName = new Map((lr.rulesets ?? []).map((r) => [r.name, r]));
+		P("...and the status-check half is unchanged by the review half (19 contexts on main, as captured)", byName.get("protect-main")?.checks.length === 19, JSON.stringify(byName.get("protect-main")?.checks));
+		for (const n of ["protect-dev", "protect-staging", "protect-main"]) {
+			const r = byName.get(n)?.review;
+			// `false` must be READ as false — #4942's jq `//` nearly turned these into "n/a".
+			P(`${n}: the captured \`require_code_owner_review: false\` reads as false, count 0, one pull_request rule`, r?.requireCodeOwnerReview === false && r?.requiredApprovingReviewCount === 0 && r?.pullRequestRules === 1 && r?.requiredReviewers === 0, JSON.stringify(r));
+		}
+		// MUTATION CONTROL: flip the captured flag and it must read true — otherwise the assertion
+		// above would pass against a reader that always says false.
+		const flipped = clone(cap.dev);
+		flipped.find((x) => x.type === "pull_request").parameters.require_code_owner_review = true;
+		P("flipping the captured flag to true reads as true", reviewFromBranchRules(flipped, "dev").requireCodeOwnerReview === true);
+		// Two rulesets contributing pull_request rules: the strictest binds.
+		const twoRules = clone(cap.dev);
+		const extra = clone(twoRules.find((x) => x.type === "pull_request"));
+		extra.parameters.required_approving_review_count = 2;
+		extra.ruleset_id = 1;
+		// FIRST, so a last-one-wins reader reads the captured 0 and fails this.
+		twoRules.unshift(extra);
+		P("two pull_request rules — the max count binds", reviewFromBranchRules(twoRules, "dev").requiredApprovingReviewCount === 2 && reviewFromBranchRules(twoRules, "dev").pullRequestRules === 2);
+		// Fail closed: a missing boolean is an unknown shape, not `false`.
+		const noFlag = clone(cap.dev);
+		delete noFlag.find((x) => x.type === "pull_request").parameters.require_code_owner_review;
+		P("a pull_request rule missing the boolean is an ERROR, not a false", throws(() => reviewFromBranchRules(noFlag, "dev")));
+		// ...but ONLY for the review half, and only for that branch (PR #4966 review). Before, the throw
+		// reached readLiveRulesets' outer catch: every ruleset went null, the status-check comparison
+		// that predates the review half was lost, and the report blamed the token's permissions.
+		const badDev = readLiveRulesets("x/y", (a) => (a[1].endsWith("/dev") ? JSON.stringify(noFlag) : liveRun(a)));
+		const badByName = new Map((badDev.rulesets ?? []).map((r) => [r.name, r]));
+		P("a review parse error does NOT null the rulesets — the status-check half survives", badDev.rulesets !== null && badDev.error === null && badByName.get("protect-main")?.checks.length === 19 && badByName.get("protect-dev")?.checks.length === cap.dev.filter((x) => x.type === "required_status_checks").flatMap((x) => x.parameters.required_status_checks).length, JSON.stringify(badDev.error));
+		P("...the broken branch carries `review: null` and a PARSE error; the others still read", badByName.get("protect-dev")?.review === null && /unknown shape/.test(badByName.get("protect-dev")?.reviewError ?? "") && badByName.get("protect-main")?.review !== null, JSON.stringify(badByName.get("protect-dev")));
+		const badCmp = compareLiveReview({ rulesets: badDev.rulesets ?? [], hcl: fs.existsSync(MAIN) ? parseHclReview(fs.readFileSync(MAIN, "utf8")) : [] });
+		P("...and compareLiveReview reports it as UNREADABLE, not as drift and not as agreement", badCmp.find((r) => r.name === "protect-dev")?.unreadable !== null && badCmp.find((r) => r.name === "protect-dev")?.drift.length === 0, JSON.stringify(badCmp.find((r) => r.name === "protect-dev")));
+		P("...and still compares the status checks for the same branch", compareLive({ rulesets: badDev.rulesets ?? [], hclAll: ["x"], devExcluded: [] }).length === 3);
+		const blindClaims = evaluateReviewClaims({ claims: REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: () => "a ruleset on `dev` requiring CODEOWNERS review for `.github/workflows/**` and `infra/**`", reviewByBranch: new Map((badDev.rulesets ?? []).map((r) => [r.branch, r.review])) }).find((e) => e.claim.id === "e2e-dev-compensating-control");
+		P("...a claim on the unreadable branch is UNVERIFIED (not refuted) and does not set drift", blindClaims?.verdict === "unverified" && reportLiveClaims([blindClaims]).drift === false, JSON.stringify(blindClaims));
+		P("no pull_request rule at all reads as zero rules, not an error", reviewFromBranchRules(cap.dev.filter((x) => x.type !== "pull_request"), "dev").pullRequestRules === 0);
+
+		// The HCL half, against the REAL main.tf when present.
+		if (fs.existsSync(MAIN)) {
+			const hcl = parseHclReview(fs.readFileSync(MAIN, "utf8"));
+			P("the REAL main.tf yields a review block for all three rulesets", ["protect-dev", "protect-staging", "protect-main"].every((n) => hcl.find((h) => h.name === n)?.review.pullRequestRules === 1), JSON.stringify(hcl));
+			const cmp = compareLiveReview({ rulesets: lr.rulesets, hcl });
+			P("the captured live rules and the real HCL agree on review (as measured 2026-09-23)", cmp.every((r) => r.drift.length === 0), JSON.stringify(cmp));
+			const noPr = lr.rulesets.map((rs) => (rs.branch === "dev" ? { ...rs, review: { ...rs.review, pullRequestRules: 0 } } : rs));
+			P("a live `pull_request` rule that was DELETED is drift, though false/0/0 matches the HCL's values", compareLiveReview({ rulesets: noPr, hcl }).some((r) => r.branch === "dev" && r.drift.some((d) => /none is live/.test(d))));
+			const hclOwner = parseHclReview(fs.readFileSync(MAIN, "utf8").replace("require_code_owner_review       = false", "require_code_owner_review       = true"));
+			P("...and an HCL that declares code-owner review on main is reported as drift against the capture", compareLiveReview({ rulesets: lr.rulesets, hcl: hclOwner }).some((r) => r.name === "protect-main" && r.drift.some((d) => /require_code_owner_review/.test(d))));
+
+			// THE CONTROL AS ITS OWN RULESET (PR #4966 review) — the natural shape of the #4942 fix.
+			// `rules/branches/dev` returns the MERGE of every ruleset on dev, so the HCL side must be
+			// merged too; reading only `protect-dev` got both directions wrong.
+			const ownRuleset = `
+resource "github_repository_ruleset" "dev_codeowners" {
+  name        = "codeowners-dev"
+  repository  = var.repository
+  target      = "branch"
+  enforcement = "active"
+  conditions {
+    ref_name {
+      include = ["refs/heads/dev"]
+      exclude = []
+    }
+  }
+  rules {
+    pull_request {
+      required_approving_review_count = 1
+      require_code_owner_review       = true
+    }
+  }
+}
+`;
+			const hclPlus = parseHclReview(fs.readFileSync(MAIN, "utf8") + ownRuleset);
+			const plusDev = hclReviewByBranch(hclPlus).get("dev");
+			P("a separate ruleset targeting dev is MERGED into dev's declared review", plusDev?.requireCodeOwnerReview === true && plusDev?.requiredApprovingReviewCount === 1 && plusDev?.rulesets.length === 2, JSON.stringify(plusDev));
+			P("...and main's declared review is untouched by it", hclReviewByBranch(hclPlus).get("main")?.requireCodeOwnerReview === false);
+			// (1) PR time: the dev claim now HOLDS against the HCL, so its acknowledgement must fail.
+			const prTime = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null), reviewByBranch: hclReviewByBranch(hclPlus) }), "infra/github (the HCL)");
+			P("...so at PR time the dev claim HOLDS and its stale acknowledgement fails", prTime.failures.some((f) => /e2e-dev-compensating-control/.test(f) && /now HOLDS/.test(f)), JSON.stringify(prTime.failures));
+			// (2) After the apply: live dev carries the second ruleset's pull_request rule too.
+			const appliedDev = clone(cap.dev);
+			const ownRule = clone(appliedDev.find((x) => x.type === "pull_request"));
+			ownRule.parameters.require_code_owner_review = true;
+			ownRule.parameters.required_approving_review_count = 1;
+			ownRule.ruleset_id = 2;
+			appliedDev.push(ownRule);
+			const applied = readLiveRulesets("x/y", (a) => (a[1].endsWith("/dev") ? JSON.stringify(appliedDev) : liveRun(a)));
+			const appliedCmp = compareLiveReview({ rulesets: applied.rulesets ?? [], hcl: hclPlus });
+			P("...and once applied, live dev and the merged HCL AGREE — no permanent review drift", appliedCmp.length === 3 && appliedCmp.every((r) => r.drift.length === 0), JSON.stringify(appliedCmp.map((r) => [r.name, r.drift])));
+			// Only ACTIVE rulesets bind: the same ruleset in evaluate mode must not count.
+			const evalMode = hclReviewByBranch(parseHclReview(fs.readFileSync(MAIN, "utf8") + ownRuleset.replace('enforcement = "active"', 'enforcement = "evaluate"'))).get("dev");
+			P("...but a ruleset in `evaluate` mode is NOT merged in", evalMode?.requireCodeOwnerReview === false && evalMode?.rulesets.length === 1, JSON.stringify(evalMode));
+			const allRefs = hclReviewByBranch(parseHclReview(fs.readFileSync(MAIN, "utf8") + ownRuleset.replace('["refs/heads/dev"]', '["~ALL"]')));
+			P("...a `~ALL` ruleset targets every protected branch", ["dev", "staging", "main"].every((b) => allRefs.get(b)?.requireCodeOwnerReview === true));
+			const excluded = hclReviewByBranch(parseHclReview(fs.readFileSync(MAIN, "utf8") + ownRuleset.replace('["refs/heads/dev"]', '["~ALL"]').replace("exclude = []", 'exclude = ["refs/heads/main"]')));
+			P("...and an `exclude` removes a branch from it", excluded.get("main")?.requireCodeOwnerReview === false && excluded.get("dev")?.requireCodeOwnerReview === true);
+			P("a ref_name list that is not literals is an error", throws(() => parseHclReview(fs.readFileSync(MAIN, "utf8") + ownRuleset.replace('["refs/heads/dev"]', "var.branches"))));
+		}
+		P("ref patterns: a `*` stays inside one segment, `**` crosses them", refPatternTargets("refs/heads/release/*", "release/1") && !refPatternTargets("refs/heads/release/*", "release/1/x") && refPatternTargets("refs/heads/release/**", "release/1/x") && !refPatternTargets("refs/heads/dev", "develop"));
+		P("ref patterns: an unmodelled pattern throws rather than reading as 'not targeted'", throws(() => refPatternTargets("refs/tags/v*", "dev")));
+		P("a non-literal count in the HCL is an error", throws(() => parseHclReview('resource "github_repository_ruleset" "x" {\n name = "p"\n rules {\n pull_request {\n required_approving_review_count = var.n\n }\n }\n}')));
+		P("an absent count in a pull_request block is an error", throws(() => parseHclReview('resource "github_repository_ruleset" "x" {\n name = "p"\n rules {\n pull_request {\n dismiss_stale_reviews_on_push = true\n }\n }\n}')));
+
+		// The claims, against the REAL documents and the captured live rules.
+		const liveByBranch = new Map(lr.rulesets.map((r) => [r.branch, r.review]));
+		const realRead = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
+		if (REVIEW_CLAIMS.every((c) => fs.existsSync(c.file))) {
+			const ev = evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: realRead, reviewByBranch: liveByBranch });
+			P("every enumerated claim is FOUND in the real file (wrapped across comment lines)", ev.every((e) => e.line !== null), JSON.stringify(ev.map((e) => [e.claim.id, e.verdict])));
+			const ch = ev.find((e) => e.claim.id === "codeowners-header");
+			P("CODEOWNERS' claim is located on its line 2", ch?.line === 2, String(ch?.line));
+			P("...and against the captured rules every claim is REFUTED — the #4942 finding, reproduced", ev.every((e) => e.verdict === "refuted"), JSON.stringify(ev.map((e) => [e.claim.id, e.verdict])));
+			const inTree = compareReviewClaims(ev, "the live ruleset");
+			P("acknowledged false claims warn rather than fail", inTree.failures.length === 0 && inTree.notes.length === REVIEW_CLAIMS.length, JSON.stringify(inTree));
+			P("...and the warning names the branch and the missing field", inTree.notes.some((n) => /`main`: `require_code_owner_review: false`/.test(n)), JSON.stringify(inTree.notes));
+			const unack = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: realRead, reviewByBranch: liveByBranch }), "the live ruleset");
+			P("an UNacknowledged false claim is a failure", unack.failures.length === REVIEW_CLAIMS.length, JSON.stringify(unack.failures));
+			// Flip the captured dev flag: the dev claim now holds, so its acknowledgement is stale.
+			const fixedDev = new Map(liveByBranch);
+			fixedDev.set("dev", reviewFromBranchRules(flipped, "dev"));
+			const afterFix = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: realRead, reviewByBranch: fixedDev }), "the live ruleset");
+			P("a claim that now HOLDS but is still acknowledged fails — the ledger only shrinks", afterFix.failures.some((f) => /e2e-dev-compensating-control/.test(f) && /now HOLDS/.test(f)), JSON.stringify(afterFix.failures));
+			// A path-scoped reviewer rule is not evaluated, so it must not read as holding.
+			const scoped = new Map(liveByBranch);
+			scoped.set("dev", { ...liveByBranch.get("dev"), requiredReviewers: 1 });
+			const sc = evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: realRead, reviewByBranch: scoped }).find((e) => e.claim.id === "e2e-dev-compensating-control");
+			P("path-scoped reviewers make a claim UNVERIFIED, never 'holds'", sc?.verdict === "unverified", JSON.stringify(sc));
+			// The record must not outlive its sentence: correct the CODEOWNERS text and the record fails.
+			const corrected = (f) => (f === ".github/CODEOWNERS" ? realRead(f).replace("Required-review enforcement comes from", "Review is advisory; nothing enforces it on") : realRead(f));
+			const st = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: corrected, reviewByBranch: liveByBranch }), "the live ruleset");
+			P("a corrected sentence makes its record STALE, and that fails", st.failures.some((f) => /codeowners-header/.test(f) && /no longer in the file/.test(f)), JSON.stringify(st.failures));
+			P("a record naming a missing file fails", compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS.slice(0, 1), readFile: () => null, reviewByBranch: liveByBranch }), "x").failures.some((f) => /does not exist/.test(f)));
+
+			// THE --live EXIT (PR #4966 review). Exit 2 opens a tracker issue that says it closes on an
+			// apply; an acknowledged claim the HCL refutes too can never be cleared by one, so counting
+			// it held that issue open forever. As captured today: every claim refuted, every one
+			// acknowledged — and the claim half must NOT set drift.
+			const liveNow = reportLiveClaims(ev);
+			P("--live: acknowledged refuted claims are REPORTED but do not set the drift exit", liveNow.drift === false && liveNow.lines.filter((l) => /does NOT have this control/.test(l)).length === REVIEW_CLAIMS.length, JSON.stringify(liveNow));
+			// The other direction, so the assertion above cannot pass against a reader that never drifts.
+			const liveUnack = reportLiveClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: realRead, reviewByBranch: liveByBranch }));
+			P("--live: an UNacknowledged refuted claim DOES set the drift exit", liveUnack.drift === true, JSON.stringify(liveUnack));
+			const liveStale = reportLiveClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: corrected, reviewByBranch: liveByBranch }));
+			P("--live: a STALE record is reported as a tree problem, not live drift", liveStale.drift === false && liveStale.lines.some((l) => /codeowners-header/.test(l) && /tree problem/.test(l)), JSON.stringify(liveStale));
+			const liveHolds = reportLiveClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: realRead, reviewByBranch: fixedDev }));
+			P("--live: an acknowledged claim that now HOLDS says its acknowledgement is stale", liveHolds.lines.some((l) => /holds/.test(l) && /acknowledged: "#4942"/.test(l)), JSON.stringify(liveHolds.lines));
+		} else {
+			console.log("skip - the real-claim assertions need the claimed files; run the self-test from the repo root");
+		}
+	} else {
+		console.log(`skip - the captured branch-rules assertions need ${RULES_FIXTURE}; run the self-test from the repo root`);
+	}
+	P("folded prose finds a claim wrapped across `#` comment lines and reports its first line", (() => { const f = foldProse("x\n# a ruleset on\n#   `dev` here\n"); const m = /ruleset on `dev`/.exec(f.flat); return m !== null && f.lineOf(m.index) === 2; })());
+
 	console.log(pass ? "\nself-test: all passed" : "\nself-test: FAILED");
 	return pass;
 }
@@ -1392,6 +2003,20 @@ function main() {
 	failures.push(...legNameFailures.failures);
 	notes.push(...legNameFailures.notes);
 
+	// THE SIXTH QUESTION, in-tree half: each enumerated review claim, held against what the HCL
+	// DECLARES. The live half is below, under `--live`.
+	let hclReview;
+	try {
+		hclReview = parseHclReview(read(MAIN));
+	} catch (e) {
+		console.error(`::error::check-required-checks: ${e.message}`);
+		process.exit(1);
+	}
+	const readIfPresent = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
+	const claimsDeclared = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: readIfPresent, reviewByBranch: hclReviewByBranch(hclReview) }), `infra/github (the HCL)`);
+	failures.push(...claimsDeclared.failures);
+	notes.push(...claimsDeclared.notes);
+
 	if (argv.includes("--live")) {
 		const repo = process.env.GITHUB_REPOSITORY ?? "alethialabs-io/alethialabs";
 		const { rulesets, error } = readLiveRulesets(repo);
@@ -1409,6 +2034,36 @@ function main() {
 			if (row.extra.length) console.log(`  - the ruleset requires, the HCL does NOT: ${row.extra.map((c) => `\`${c}\``).join(", ")} — an apply would REMOVE these`);
 		}
 		if (drifted) console.log(`\nThe fix is a \`tofu apply\` in \`infra/github/\`, which is the maintainer's — see #2606. Nothing here can close this by itself.`);
+
+		// THE SIXTH QUESTION, live half (#4942): what a merge needs BESIDES green checks, and whether
+		// any document claims more than that.
+		console.log(`\n## Review requirements — what a merge needs besides green checks\n`);
+		let reviewDrift = false;
+		let reviewBlind = false;
+		for (const row of compareLiveReview({ rulesets, hcl: hclReview })) {
+			const l = row.live;
+			if (l === null) {
+				reviewBlind = true;
+				console.log(`- **${row.name}** (branch \`${row.branch}\`) — **could not read the review rule**: ${row.unreadable}. That is a PARSE problem in this script or a new API shape, not a token-permission one, and it is not "no review drift" — it is no measurement. The status-check comparison above is unaffected.`);
+				continue;
+			}
+			reviewDrift = reviewDrift || row.drift.length > 0;
+			console.log(
+				`- **${row.name}** (branch \`${row.branch}\`) — \`require_code_owner_review: ${l.requireCodeOwnerReview}\` · ` +
+					`\`required_approving_review_count: ${l.requiredApprovingReviewCount}\` · path-scoped \`required_reviewers\`: ${l.requiredReviewers}` +
+					`${l.pullRequestRules === 0 ? " · **no `pull_request` rule at all**" : ""}${row.drift.length === 0 ? " · HCL agrees" : ""}`,
+			);
+			for (const d of row.drift) console.log(`  - drift: ${d}`);
+			if (!l.requireCodeOwnerReview && l.requiredApprovingReviewCount === 0 && l.requiredReviewers === 0) {
+				console.log(`  - a PR into \`${row.branch}\` can merge with ZERO human review: CODEOWNERS only REQUESTS reviewers here, it does not require them.`);
+			}
+		}
+		const liveClaims = evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: readIfPresent, reviewByBranch: new Map(rulesets.map((r) => [r.branch, r.review])) });
+		console.log(`\n## Review controls the tree CLAIMS, held against the live rulesets\n`);
+		// Only an UNacknowledged false claim counts toward exit 2 — see `reportLiveClaims`.
+		const claimReport = reportLiveClaims(liveClaims);
+		for (const line of claimReport.lines) console.log(line);
+		drifted = drifted || reviewDrift || claimReport.drift;
 
 		// THE FOURTH QUESTION. `hclAll` is what an apply would require on `main` — main takes the
 		// list unfiltered, which is why it is the branch a never-satisfiable context wedges.
@@ -1448,7 +2103,10 @@ function main() {
 			for (const f of legNameFailures.failures) console.log(`- ${f}`);
 			console.log(`\nThis is a tree problem — \`infra/github\` and \`${GATE_WORKFLOW}\` disagree about which legs exist — and a \`tofu apply\` would not fix it but ENACT it. The PR-time run fails on this too.`);
 		}
-		process.exit(drifted || gateFailures.length || legNameFailures.failures.length || wedgeRisk ? 2 : 0);
+		// Drift wins over blindness so the tracker issue still opens, and its body carries the
+		// "could not read the review rule" line; with no drift, a blind review half is exit 1 — the
+		// workflow's "could not look" code — never a clean 0.
+		process.exit(drifted || gateFailures.length || legNameFailures.failures.length || wedgeRisk ? 2 : reviewBlind ? 1 : 0);
 	}
 
 	for (const n of notes) console.log(`::warning::check-required-checks: ${n}`);
