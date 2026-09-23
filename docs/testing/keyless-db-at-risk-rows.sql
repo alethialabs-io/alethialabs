@@ -15,11 +15,31 @@
 -- assistant, and the gates that now prevent a bad row were added LATER — so rows persisted before
 -- them are the migration hazard.
 --
--- Two joins matter:
+-- ── Two joins matter, and one of them used to LOSE rows ──────────────────────────────────────
+--
 --   * project_databases.cloud_identity_id is NULLABLE and inherits projects.cloud_identity_id, so
 --     the provider must be resolved with COALESCE. Joining it directly under-counts.
---   * the engine defaults to postgres when engine_family and engine are both null, which is the
---     same defaulting apps/console/lib/cloud-providers/keyless.ts applies.
+--
+--   * That COALESCE can still be NULL, and the join to cloud_identities must therefore be a LEFT
+--     join. BOTH columns are `uuid().references(cloudIdentities.id, { onDelete: "set null" })`
+--     (apps/console/lib/db/schema/project-components.ts:91, .../projects.ts:30), so DELETING a
+--     cloud identity nulls every reference to it. Under the INNER join this file used to carry,
+--     such a row vanished from the audit entirely — and a keyless-marked database whose cloud
+--     identity was deleted is precisely an at-risk row, not an irrelevant one. It is now reported
+--     as UNRESOLVED rather than dropped.
+--
+-- The rule this encodes: an audit that silently excludes what it cannot classify reports a clean
+-- result and a smaller number, which is the same shape of answer as "there is nothing wrong".
+-- Every `iam_auth = true` row is accounted for in exactly one bucket below, and the reconciliation
+-- query at the bottom is how you check that claim rather than trusting it.
+--
+-- The engine defaults to postgres when engine_family and engine are both null, which is the same
+-- defaulting apps/console/lib/cloud-providers/keyless.ts:32-36 applies. A DEFAULTED engine is not
+-- a declared one, so `engine_source` distinguishes them: a row classified on an inferred engine is
+-- a weaker statement than one that declared it. (One deliberate divergence: the console matches
+-- `engine.includes("mysql")` case-sensitively; this uses ILIKE, so a legacy 'MySQL' string is
+-- caught here and would be read as postgres by the console. A row reported `inferred-*` with a
+-- non-null engine string is worth reading by hand.)
 
 WITH resolved AS (
 	SELECT
@@ -34,22 +54,38 @@ WITH resolved AS (
 			WHEN d.engine ILIKE '%mysql%' THEN 'mysql'
 			ELSE 'postgres'
 		END AS engine,
+		CASE
+			WHEN d.engine_family IN ('mysql', 'postgres') THEN 'declared'
+			WHEN d.engine IS NOT NULL THEN 'inferred-from-legacy-engine'
+			ELSE 'inferred-default-postgres'
+		END AS engine_source,
 		d.status,
 		d.created_at,
 		d.updated_at
 	FROM project_databases d
+	-- INNER by design: project_id is NOT NULL and ON DELETE CASCADE, so an orphan cannot exist.
 	JOIN projects p ON p.id = d.project_id
-	JOIN cloud_identities ci
+	-- LEFT by necessity: see the header. A NULL provider is REPORTED, never dropped.
+	LEFT JOIN cloud_identities ci
 		ON ci.id = COALESCE(d.cloud_identity_id, p.cloud_identity_id)
 	WHERE d.iam_auth IS TRUE
 )
 SELECT
-	provider,
+	COALESCE(provider, '(unresolved)') AS provider,
 	engine,
-	count(*) AS rows,
+	engine_source,
+	-- `row_count`, not `rows`: ROWS is a Postgres keyword (the FETCH/window clause), and an
+	-- unquoted alias that collides with one is a parse error discovered in front of the person
+	-- running the audit.
+	count(*) AS row_count,
 	count(*) FILTER (WHERE status = 'READY') AS live_rows,
 	min(created_at) AS oldest,
 	CASE
+		-- Neither the database nor its project names a cloud identity that still exists. The
+		-- deploy's behaviour cannot be predicted from this table alone, so this is the bucket
+		-- that must be read by hand — it is NOT a synonym for "none".
+		WHEN provider IS NULL
+			THEN 'UNRESOLVED CLOUD — the identity was deleted or never set (ON DELETE SET NULL); classify by hand before deciding'
 		-- Excluded cells. The console gate already throws for these, so they are currently
 		-- UN-DEPLOYABLE — a support burden to surface, not a render to fix.
 		WHEN provider IN ('alibaba', 'hetzner')
@@ -63,11 +99,36 @@ SELECT
 		ELSE 'UNKNOWN PROVIDER — refused by keylessUnavailableReasonForCloud; investigate'
 	END AS classification
 FROM resolved
-GROUP BY provider, engine
-ORDER BY provider, engine;
+GROUP BY provider, engine, engine_source
+-- Positional, deliberately. `ORDER BY provider` would bind to the COALESCE'd OUTPUT column rather
+-- than the CTE's nullable one (Postgres resolves ORDER BY to output aliases first), so a
+-- `NULLS LAST` written there would silently never apply. Ordinals cannot be read two ways.
+ORDER BY 1, 2, 3;
 
--- The per-row form is what a maintainer actually reads before deciding. Same CTE, no GROUP BY:
+-- ── Reconciliation. Run this SECOND and check the two numbers agree. ─────────────────────────
 --
---   SELECT id, project_id, environment_id, name, provider, engine, status, created_at
+-- `grouped` re-runs the classification and totals it; `raw` counts the same predicate with no
+-- joins at all. If they differ, a join dropped rows and the report above understates the risk —
+-- which is the failure this query exists to make visible rather than to assume away.
+--
+--   WITH raw AS (SELECT count(*) AS n FROM project_databases WHERE iam_auth IS TRUE),
+--        grouped AS (
+--          SELECT count(*) AS n
+--          FROM project_databases d
+--          JOIN projects p ON p.id = d.project_id
+--          LEFT JOIN cloud_identities ci
+--            ON ci.id = COALESCE(d.cloud_identity_id, p.cloud_identity_id)
+--          WHERE d.iam_auth IS TRUE
+--        )
+--   SELECT raw.n AS raw_rows, grouped.n AS reported_rows,
+--          raw.n - grouped.n AS dropped_rows,
+--          CASE WHEN raw.n = grouped.n THEN 'OK — every row is accounted for'
+--               ELSE 'DROPPED ROWS — the report above understates the risk' END AS verdict
+--   FROM raw, grouped;
+--
+-- ── The per-row form is what a maintainer actually reads before deciding. Same CTE, no GROUP BY:
+--
+--   SELECT id, project_id, environment_id, name,
+--          COALESCE(provider, '(unresolved)') AS provider, engine, engine_source, status, created_at
 --   FROM resolved
---   ORDER BY provider, engine, created_at;
+--   ORDER BY 5, 6, 9;
