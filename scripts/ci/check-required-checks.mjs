@@ -495,7 +495,7 @@ export function compare({ hclAll, devExcluded, wiring, mergifyBlocks, divergence
  * The live rulesets, read from GitHub. Returns `null` with a reason when it cannot read them —
  * "could not look" and "looked and found nothing" must never render the same.
  */
-export function readLiveRulesets(repo, run = (args) => execFileSync("gh", args, { encoding: "utf8" })) {
+export function readLiveRulesets(repo, run = (args) => execFileSync("gh", args, { encoding: "utf8", maxBuffer: GH_MAX_BUFFER })) {
 	try {
 		const rulesets = [];
 		for (const [branch, name] of RULESET_BRANCHES) {
@@ -857,22 +857,34 @@ export function neverSatisfied({ contexts, observed }) {
  * (audit)` was flagged, and it had in fact gone green 12 runs back. Deepening everything to cover
  * that costs a multiple of the API calls for a question already answered about most contexts.
  *
- * So deepen only where the answer is still "no", and only in the workflows that actually emit the
- * context — which pass 1 recorded. A context nothing produced at all (`unseen`) cannot be deepened
- * and stays flagged, which is the correct answer for it: no workflow emits that name.
+ * So deepen only where the answer is still "no", and only in the workflows that emit the context —
+ * which pass 1 recorded, by its EXACT name or by its TEMPLATE. The second half is not optional: an
+ * `unseen` context used to be declared un-deepenable ("no workflow emits that name"), and that was
+ * false for every matrix leg. A matrix job whose `if:` skips it never expands, so GitHub reports it
+ * under its literal template — `Release gate (${{ matrix.project }})` — and on a day of skipped dev
+ * PR runs the shallow window held ONLY that name. All seven `Release gate (<leg>)` contexts then read
+ * as "NO job by this name … every PR into `main` blocks" an hour after a run had produced two of them
+ * green (run 35851828028, 2026-09-23). A context matched by no exact name AND no template still stays
+ * flagged — that is the case the warning exists for.
+ *
+ * Jobs pages are cached by run id: several contexts deepen through the same workflow's runs.
  */
-export function deepenNeverGreen({ repo, neverGreen, jobs, depth, run }) {
+export function deepenNeverGreen({ repo, neverGreen, jobs, depth, run, seenOut }) {
 	const cleared = [];
+	const jobsOfRun = new Map();
 	for (const n of neverGreen) {
-		const wfs = [...new Set(jobs.filter((j) => j.name === n.context).map((j) => j.workflow))];
+		const wfs = workflowsEmitting(n.context, jobs);
 		let green = false;
 		for (const wf of wfs) {
 			if (green) break;
 			try {
 				const runs = JSON.parse(run(["api", `repos/${repo}/actions/workflows/${wf}/runs?per_page=${depth}`]));
 				for (const r of runs?.workflow_runs ?? []) {
-					const page = JSON.parse(run(["api", `repos/${repo}/actions/runs/${r.id}/jobs?per_page=100`]));
-					if ((page?.jobs ?? []).some((j) => j.name === n.context && j.conclusion === "success")) {
+					if (!jobsOfRun.has(r.id)) jobsOfRun.set(r.id, JSON.parse(run(["api", `repos/${repo}/actions/runs/${r.id}/jobs?per_page=100`]))?.jobs ?? []);
+					// Record every conclusion seen for the context, not only success: an `unseen` context the
+					// deeper look finds FAILING exists and belongs in neverGreen, not "NO job by this name".
+					if (seenOut) for (const j of jobsOfRun.get(r.id)) if (j.name === n.context && j.conclusion) (seenOut.get(n.context) ?? seenOut.set(n.context, new Set()).get(n.context)).add(j.conclusion);
+					if (jobsOfRun.get(r.id).some((j) => j.name === n.context && j.conclusion === "success")) {
 						green = true;
 						break;
 					}
@@ -885,6 +897,40 @@ export function deepenNeverGreen({ repo, neverGreen, jobs, depth, run }) {
 		if (green) cleared.push(n.context);
 	}
 	return cleared;
+}
+
+/**
+ * `execFileSync`'s default maxBuffer is 1 MiB, and a 100-run page of `actions/workflows/<id>/runs`
+ * is ~1.4 MB (measured on release-gate.yml, 2026-09-23). Past the buffer the call THROWS, and every
+ * reader here treats a throw as "could not look" and leaves the flag standing — the safe direction,
+ * but it meant the deeper look silently never happened.
+ */
+const GH_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * The workflows that emit `context`: those where pass 1 saw a job by that exact name, plus those
+ * where it saw an UNEXPANDED template name (`Leg (${{ matrix.x }})`) whose shape matches it.
+ *
+ * @param {string} context
+ * @param {{name: string, workflow: number}[]} jobs
+ * @returns {number[]}
+ */
+export function workflowsEmitting(context, jobs) {
+	const out = new Set();
+	for (const j of jobs) {
+		if (!j.name) continue;
+		if (j.name === context) {
+			out.add(j.workflow);
+			continue;
+		}
+		if (!j.name.includes("${{")) continue;
+		const rx = j.name
+			.split(/\$\{\{[^}]*\}\}/)
+			.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+			.join(".+");
+		if (new RegExp(`^${rx}$`).test(context)) out.add(j.workflow);
+	}
+	return [...out];
 }
 
 /**
@@ -920,7 +966,7 @@ export function deepenNeverGreen({ repo, neverGreen, jobs, depth, run }) {
  * all, returns an error rather than an empty map. "I could not look" must never render as "I looked
  * and everything is fine" — that is the green-on-blindness defect this file exists to argue against.
  */
-export function readObservedJobs(repo, { perWorkflow = 8, run = (args) => execFileSync("gh", args, { encoding: "utf8" }) } = {}) {
+export function readObservedJobs(repo, { perWorkflow = 8, run = (args) => execFileSync("gh", args, { encoding: "utf8", maxBuffer: GH_MAX_BUFFER }) } = {}) {
 	try {
 		const wfs = JSON.parse(run(["api", `repos/${repo}/actions/workflows?per_page=100`]));
 		const wfIds = (wfs?.workflows ?? []).filter((w) => w.state === "active").map((w) => w.id);
@@ -1619,6 +1665,15 @@ resource "github_repository_ruleset" "staging" {
 	P("deepening clears a context that passed outside the shallow window", deepenNeverGreen({ repo: "x/y", neverGreen: [{ context: "Release gate (audit)", seen: ["failure"] }], jobs: deepJobs, depth: 30, run: deepRun }).includes("Release gate (audit)"));
 	P("deepening that cannot read leaves the flag standing", deepenNeverGreen({ repo: "x/y", neverGreen: [{ context: "Release gate (audit)", seen: ["failure"] }], jobs: deepJobs, depth: 30, run: () => { throw new Error("HTTP 500"); } }).length === 0);
 	P("deepening never invents a clear for a context nothing emits", deepenNeverGreen({ repo: "x/y", neverGreen: [{ context: "Nobody emits this", seen: ["failure"] }], jobs: deepJobs, depth: 30, run: deepRun }).length === 0);
+	// A skipped matrix leg is reported under its TEMPLATE; the context must still deepen through it.
+	const tmplJobs = [{ name: "Release gate (${{ matrix.project }})", conclusion: "skipped", workflow: 7 }];
+	P("an UNSEEN context deepens through a workflow that emitted its TEMPLATE", deepenNeverGreen({ repo: "x/y", neverGreen: [{ context: "Release gate (audit)", seen: [] }], jobs: tmplJobs, depth: 30, run: deepRun }).includes("Release gate (audit)"));
+	P("the template matcher binds the literal parts", workflowsEmitting("Release gate (audit)", tmplJobs).length === 1 && workflowsEmitting("Release gates (audit)", tmplJobs).length === 0 && workflowsEmitting("Release gate ()", tmplJobs).length === 0);
+	const failSeen = new Map();
+	const failRun = (a) => (a[1].includes("/runs?per_page") ? JSON.stringify({ workflow_runs: [{ id: 5 }] }) : JSON.stringify({ jobs: [{ name: "Release gate (canvas)", conclusion: "failure" }] }));
+	const notCleared = deepenNeverGreen({ repo: "x/y", neverGreen: [{ context: "Release gate (canvas)", seen: [] }], jobs: tmplJobs, depth: 30, run: failRun, seenOut: failSeen });
+	P("an unseen context the deeper look finds only FAILING is not cleared, and its failure is recorded", notCleared.length === 0 && failSeen.get("Release gate (canvas)")?.has("failure") === true, JSON.stringify([...failSeen]));
+	P("an exact-name job still counts", workflowsEmitting("Release gate (audit)", deepJobs).length === 1);
 	const jobsBoom = readObservedJobs("x/y", { run: () => { throw new Error("HTTP 403: Resource not accessible by integration"); } });
 	P("an unreadable runs API returns an error, not an empty job list", jobsBoom.jobs === null && /403/.test(jobsBoom.error), JSON.stringify(jobsBoom));
 	const jobsEmpty = readObservedJobs("x/y", { run: () => JSON.stringify({ workflows: [] }) });
@@ -2074,9 +2129,24 @@ function main() {
 			process.exit(1);
 		}
 		const first = neverSatisfied({ contexts: hclAll, observed: collectObservedConclusions(jobs) });
-		const cleared = deepenNeverGreen({ repo, neverGreen: first.neverGreen, jobs, depth: 30, run: (args) => execFileSync("gh", args, { encoding: "utf8" }) });
-		const unseen = first.unseen;
-		const neverGreen = first.neverGreen.filter((n) => !cleared.includes(n.context));
+		// `unseen` deepens too, through the workflows whose TEMPLATE matches it (see deepenNeverGreen).
+		// 100 runs, the API's page ceiling: release-gate runs on every dev PR event and skips on most.
+		const deepSeen = new Map();
+		const cleared = deepenNeverGreen({
+			repo,
+			neverGreen: [...first.neverGreen, ...first.unseen.map((c) => ({ context: c, seen: [] }))],
+			jobs,
+			depth: 100,
+			run: (args) => execFileSync("gh", args, { encoding: "utf8", maxBuffer: GH_MAX_BUFFER }),
+			seenOut: deepSeen,
+		});
+		// An unseen context the deeper look FOUND, but never green, is a failing job — not a missing one.
+		const foundFailing = first.unseen.filter((c) => !cleared.includes(c) && (deepSeen.get(c)?.size ?? 0) > 0);
+		const unseen = first.unseen.filter((c) => !cleared.includes(c) && !foundFailing.includes(c));
+		const neverGreen = [
+			...first.neverGreen.filter((n) => !cleared.includes(n.context)),
+			...foundFailing.map((c) => ({ context: c, seen: [...deepSeen.get(c)].sort() })),
+		];
 		if (cleared.length) console.log(`- cleared on a deeper look (passed further back than the shallow window): ${cleared.map((c) => `\`${c}\``).join(", ")}`);
 		if (unseen.length === 0 && neverGreen.length === 0) {
 			console.log(`- all ${hclAll.length} context(s) the HCL requires have been observed \`success\` at least once.`);
