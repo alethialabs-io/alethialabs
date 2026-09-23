@@ -107,6 +107,7 @@ const PROVIDERS = `${ROOT}/packages/core/cloud`;
 const TYPES = `${ROOT}/packages/core/types/project_config.go`;
 const NODE_REGISTRY = "components/design-project/canvas/graph/node-registry.ts";
 const EXCLUSIONS = `${TEMPLATES}/knob-exclusions.yaml`;
+const CARRIAGE_EXCLUSIONS = `${ROOT}/infra/config-carriage-exclusions.yaml`;
 const JSON_OUT = "lib/cloud-providers/generated/template-knobs.json";
 const DOC_OUT = `${ROOT}/docs/testing/template-knobs.md`;
 
@@ -336,7 +337,7 @@ function readExclusions() {
 		if (/^\s*#/.test(raw)) continue;
 		const line = raw.trimEnd();
 		if (!line.trim()) continue;
-		const head = line.match(/^(cells|variables|dead|reported):\s*$/);
+		const head = line.match(/^(cells|variables|dead|reported|ceiling):\s*$/);
 		if (head) {
 			if (cur) {
 				out.push(cur);
@@ -426,6 +427,11 @@ const excludedCell = (cloud, component) =>
 	EXCLUDED.find((e) => e.section === "cells" && (e.cloud === cloud || e.cloud === "*") && e.component === component);
 /** Is this (cloud, variable) recorded as unattributable? */
 const excludedVariable = (cloud, name) => EXCLUDED.find((e) => e.section === "variables" && e.cloud === cloud && e.variable === name);
+/** Is this knob recorded as a PROVIDER CEILING — declared, reachable, and unhonourable by the cloud
+ * (#4320)? Read from the ledger here and emitted as a flag so the console can gate on it; whether the
+ * claim still holds is `check-template-knobs.mjs`'s job, via lib/knob-ceilings.mjs. */
+const isCeiling = (cloud, component, name) =>
+	EXCLUDED.some((e) => e.section === "ceiling" && e.cloud === cloud && e.component === component && e.knob === name);
 
 /** The component each cloud's item-shaped passthrough lands in, keyed by the ROOT variable it lands
  * on: `sqs_queues` → [queue]. Derived, so step 0 needs no table. */
@@ -574,6 +580,7 @@ for (const cloud of CLOUDS) {
 			// can tell that shape from a knob nothing reads: both have an empty `readBy`, and only the
 			// second is a control that would lie. Measured here, never taken from the ledger.
 			reportedByOutput: reportedAsOutput(cloud, v.name),
+			ceiling: isCeiling(cloud, component, v.name),
 			// A ROOT variable is reachable only through a ROOT-shaped merge. An item-shaped component
 			// reaches the ATTRIBUTES of the variable it is modelled as one entry of, never the variable.
 			reachable: pt?.shape === "root",
@@ -609,6 +616,7 @@ for (const cloud of CLOUDS) {
 					readBy: wiring.readDirsOf(root, attr, false).map((d) => relative(TEMPLATES, d)),
 					// An output echoes a ROOT variable; an attribute of one entry is never what it names.
 					reportedByOutput: false,
+					ceiling: isCeiling(cloud, kind, attr),
 					reachable: true,
 					ownedByProvider: reservedHere,
 					typed: reservedHere,
@@ -645,11 +653,11 @@ const deadKnobs = entries.filter((e) => e.reachable && e.readBy.length === 0);
 /**
  * Would the console OFFER this knob? The same four filters `knobsFor` applies in
  * `lib/cloud-providers/template-knobs.ts` — reachable, READ (by a resource, or echoed by an output as a
- * brought resource's id), not provider-owned, not typed — so the board's "settable (offered)" column
+ * brought resource's id), not a recorded provider ceiling, not provider-owned, not typed — so the board's "settable (offered)" column
  * counts exactly what a card shows. Before #4320 it counted dead knobs as settable, which is the one
  * number on this board that must not credit a control that changes nothing.
  */
-const offerable = (e) => e.reachable && (e.readBy.length > 0 || e.reportedByOutput) && !e.ownedByProvider && !e.typed;
+const offerable = (e) => e.reachable && (e.readBy.length > 0 || e.reportedByOutput) && !e.ceiling && !e.ownedByProvider && !e.typed;
 
 const manifest = {
 	// A generated file says so in its own body, because the first thing anyone does with a manifest
@@ -748,6 +756,25 @@ function renderDoc() {
 		for (const d of deadKnobs) L.push(`| ${d.cloud} | ${d.component} | \`${d.name}\` | ${d.declaredAt} |`);
 	}
 	L.push("");
+	L.push("## Provider ceilings");
+	L.push("");
+	const ceilings = entries.filter((e) => e.ceiling);
+	if (!ceilings.length) L.push("None recorded.");
+	else {
+		L.push(
+			"Declared, reachable, and **unhonourable by the provider** — nothing on that cloud could read them. Recorded under",
+			"`ceiling:` in `infra/templates/project/knob-exclusions.yaml` with evidence, never offered as a control, and",
+			"re-read on every run: an entry fails the check the moment a resource reads its knob.",
+			"",
+			"| Cloud | Component | Knob | Evidence |",
+			"|---|---|---|---|",
+		);
+		for (const c of ceilings) {
+			const rec = EXCLUDED.find((e) => e.section === "ceiling" && e.cloud === c.cloud && e.component === c.component && e.knob === c.name);
+			L.push(`| ${c.cloud} | ${c.component} | \`${c.name}\` | ${rec?.issue ?? rec?.docs ?? ""} |`);
+		}
+	}
+	L.push("");
 	L.push("## How a knob is attributed to a component");
 	L.push("");
 	L.push(
@@ -773,7 +800,22 @@ const docText = renderDoc();
 // EVERYTHING above is measurement, and it is exported so `check-template-knobs.mjs` adjudicates the
 // SAME numbers a reader sees in the manifest. A checker that recomputed would be a second definition
 // of "reachable", free to disagree with the file it is checking.
-export { manifest, entries, unattributed, uncoveredCells, deadKnobs, jsonText, docText, EXCLUDED, JSON_OUT, DOC_OUT, PASSTHROUGH, CLOUDS, reportedAsOutput };
+export {
+	manifest,
+	entries,
+	unattributed,
+	uncoveredCells,
+	deadKnobs,
+	jsonText,
+	docText,
+	EXCLUDED,
+	JSON_OUT,
+	DOC_OUT,
+	PASSTHROUGH,
+	CLOUDS,
+	reportedAsOutput,
+	CARRIAGE_EXCLUSIONS,
+};
 
 // The CLI half runs ONLY when this file is the process entry. Importing it must measure and nothing
 // else — a module that writes two files on import cannot be read by a checker without also becoming

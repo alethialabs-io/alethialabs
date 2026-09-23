@@ -67,6 +67,16 @@ Each cell is **settable / declared**. A `—` means the cloud declares nothing t
 | azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:482 |
 | hetzner | dns | `dns_hosted_zone` | infra/templates/project/hetzner/variables.tf:244 |
 
+## Provider ceilings
+
+Declared, reachable, and **unhonourable by the provider** — nothing on that cloud could read them. Recorded under
+`ceiling:` in `infra/templates/project/knob-exclusions.yaml` with evidence, never offered as a control, and
+re-read on every run: an entry fails the check the moment a resource reads its knob.
+
+| Cloud | Component | Knob | Evidence |
+|---|---|---|---|
+| alibaba | dns | `alidns_managed_certificate` | #1824 |
+
 ## How a knob is attributed to a component
 
 1. The variable **is** the root key a component's item passthrough lands in (`sqs_queues`) — read from the Go

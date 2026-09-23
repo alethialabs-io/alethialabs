@@ -126,6 +126,7 @@ describe("offerableKnobs — a knob nothing reads is never offered (#4320)", () 
 		declaredAt: "infra/templates/project/gcp/variables.tf:1",
 		readBy: ["gcp"],
 		reportedByOutput: false,
+		ceiling: false,
 		reachable: true,
 		ownedByProvider: false,
 		typed: false,
@@ -138,6 +139,8 @@ describe("offerableKnobs — a knob nothing reads is never offered (#4320)", () 
 		knob("dead", { readBy: [] }),
 		// The brought-resource shape (#4531): no resource reads it BY DESIGN, an output echoes it.
 		knob("reported", { readBy: [], reportedByOutput: true }),
+		// A recorded provider ceiling (#4320) — withheld even if something were to read it.
+		knob("ceiling", { ceiling: true }),
 	];
 
 	it("offers a knob a resource reads", () => {
@@ -146,6 +149,16 @@ describe("offerableKnobs — a knob nothing reads is never offered (#4320)", () 
 
 	it("withholds a knob that is reachable and read by nothing", () => {
 		expect(offerableKnobs(fixture, "gcp", "cluster").map((k) => k.name)).not.toContain("dead");
+	});
+
+	it("withholds a recorded provider ceiling", () => {
+		expect(offerableKnobs(fixture, "gcp", "cluster").map((k) => k.name)).not.toContain("ceiling");
+	});
+
+	it("marks alibaba's managed-certificate knob as a ceiling in the committed manifest", () => {
+		const k = TEMPLATE_KNOBS.knobs.find((x) => x.cloud === "alibaba" && x.name === "alidns_managed_certificate");
+		expect(k?.ceiling).toBe(true);
+		expect(knobsFor("alibaba", "dns").some((x) => x.name === "alidns_managed_certificate")).toBe(false);
 	});
 
 	it("still offers a brought-resource knob an output reports", () => {

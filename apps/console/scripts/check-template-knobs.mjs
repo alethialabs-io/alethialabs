@@ -25,6 +25,10 @@
 //   3. THE COMMITTED FILES ARE THE MEASUREMENT. Regenerating must produce byte-identical output —
 //      the manifest is what the console's card UI reads, so a stale one is a UI offering knobs the
 //      templates no longer have.
+//   5. PROVIDER CEILINGS (#4320). A knob the CLOUD cannot honour is recorded under `ceiling:` — a
+//      decision, counted apart from the backlog — and every claim the entry makes is re-read by
+//      lib/knob-ceilings.mjs: evidence, a matching config-carriage exclusion, still declared, and still
+//      read by nothing. The last is the one that matters: a ceiling knob that becomes wireable FAILS.
 //   4. TRIPWIRES. A per-cloud floor on the knob count, zero unattributed variables, zero unresolved
 //      passthrough sites, and no stale ledger entry. Every rule above is a search for something
 //      MISSING, and a reader that stopped reading finds nothing missing — which is indistinguishable
@@ -35,6 +39,7 @@
 import { existsSync, readFileSync } from "node:fs";
 
 import {
+	CARRIAGE_EXCLUSIONS,
 	CLOUDS,
 	DOC_OUT,
 	EXCLUDED,
@@ -49,6 +54,10 @@ import {
 	unattributed,
 	uncoveredCells,
 } from "./gen-template-knobs.mjs";
+import { ceilingFindings, readCarriageExclusions, selfCheck as ceilingSelfCheck } from "./lib/knob-ceilings.mjs";
+
+// Prove the ceiling adjudication can go red before trusting it with the real ledger (#4320).
+ceilingSelfCheck();
 
 /** The floor under each cloud's knob count.
  *
@@ -161,15 +170,17 @@ for (const e of EXCLUDED.filter((x) => x.section === "cells")) {
 
 const deadLedger = EXCLUDED.filter((x) => x.section === "dead");
 const reportedLedger = EXCLUDED.filter((x) => x.section === "reported");
+const ceilingLedger = EXCLUDED.filter((x) => x.section === "ceiling");
 const listed = (led, d) => led.some((x) => x.cloud === d.cloud && x.component === d.component && x.knob === d.name);
 
 for (const d of deadKnobs) {
-	if (listed(deadLedger, d) || listed(reportedLedger, d)) continue;
+	if (listed(deadLedger, d) || listed(reportedLedger, d) || listed(ceilingLedger, d)) continue;
 	fail(
 		`${d.cloud}/${d.component}: \`${d.name}\` is declared, reachable, and read by nothing`,
 		`Declared at ${d.declaredAt}. A user can set it and no resource or module argument consumes it — the template ` +
 			"advertises a knob it does not honour. Wire it into the module, DELETE the declaration, record it under " +
-			"`dead:` as backlog, or — if its only correct reader IS an output — under `reported:` as a decision. " +
+			"`dead:` as backlog, or — if its only correct reader IS an output — under `reported:` as a decision, or — if " +
+			"the PROVIDER cannot honour it — under `ceiling:` with evidence. " +
 			"See infra/templates/project/knob-exclusions.yaml.",
 	);
 }
@@ -221,6 +232,18 @@ for (const x of deadLedger) {
 	);
 }
 
+// ── rule 5 · `ceiling:` — the knob the provider cannot honour ───────────────────────
+
+for (const f of ceilingFindings({
+	ceilings: ceilingLedger,
+	declared: entries,
+	dead: deadKnobs,
+	otherLedgers: [...deadLedger, ...reportedLedger],
+	carriageExclusions: existsSync(CARRIAGE_EXCLUSIONS) ? readCarriageExclusions(readFileSync(CARRIAGE_EXCLUSIONS, "utf8")) : [],
+})) {
+	fail(f.title, f.detail);
+}
+
 // ── rule 3 · the committed files ARE the measurement ────────────────────────────────
 
 const stale = [];
@@ -239,6 +262,7 @@ if (stale.length) {
 if (!failures.length) {
 	const dead = deadLedger.length;
 	const reported = reportedLedger.length;
+	const ceilings = ceilingLedger.length;
 	// The two counts are printed APART because only one of them is a backlog. Saying "23 dead knobs,
 	// all recorded, the list can only shrink" would be false the moment `reported:` existed: those
 	// entries are decisions and will never shrink, and folding them in would quietly restate a
@@ -247,6 +271,11 @@ if (!failures.length) {
 		`\n· ${uncoveredCells.length} cell(s) with no passthrough and ${dead} declared-and-dead knob(s), every one recorded in ` +
 			`infra/templates/project/knob-exclusions.yaml. Those two lists can only shrink. A further ${reported} knob(s) ` +
 			"are read only by an `output` — the brought-resource shape, recorded under `reported:` as decisions, which do not.",
+	);
+	// Counted apart for the same reason: a ceiling is the CLOUD's limit, not work outstanding here.
+	console.log(
+		`· ${ceilings} provider ceiling(s) under \`ceiling:\` — declared and unhonourable by the cloud, each with evidence and ` +
+			"a matching config-carriage exclusion, and each re-read: one a resource starts reading fails this check.",
 	);
 	console.log("\ntemplate-knobs: OK");
 	process.exit(0);

@@ -45,6 +45,10 @@ const KnobSchema = z.object({
 	 * something they own, the template creates nothing and echoes the id back. The one shape where an
 	 * empty `readBy` is correct rather than a knob that does nothing. */
 	reportedByOutput: z.boolean(),
+	/** Recorded under `ceiling:` in the knob ledger: declared and reachable, but the PROVIDER cannot
+	 * honour it — nothing on that cloud could read it (#4320). Never offered; the canvas gates the
+	 * matching typed control with a reason instead (e.g. Managed TLS on Alibaba). */
+	ceiling: z.boolean(),
 	/** A `provider_config` merge lands on it: a root-shaped merge for a root variable, an item-shaped
 	 * one for an attribute of the variable the component is modelled as one entry of. */
 	reachable: z.boolean(),
@@ -83,7 +87,7 @@ export function isRead(knob: TemplateKnob): boolean {
 /**
  * The knobs a card may OFFER for one component on one cloud.
  *
- * Four filters, and each one removes a control that would lie to the user:
+ * Five filters, and each one removes a control that would lie to the user:
  *
  *   · `reachable` — a `provider_config` key that no merge lands on never reaches tofu. The control
  *     would save cleanly and change nothing.
@@ -93,6 +97,9 @@ export function isRead(knob: TemplateKnob): boolean {
  *     there either. `check:template-knobs` keeps that set recorded and shrinking; this is what stops
  *     the recorded ones being OFFERED in the meantime, so the class cannot come back as a control
  *     (#4320, maintainer ruling 2026-09-23).
+ *   · `!ceiling` — the cloud itself cannot honour it (a recorded provider ceiling). Implied by READ
+ *     today, since a ceiling is by definition read by nothing; stated separately so the guarantee
+ *     does not rest on that coincidence.
  *   · `!ownedByProvider` — the provider writes this key unconditionally, and the merge is
  *     merge-if-absent, so the user's value loses every time. Silently.
  *   · `!typed` — the canvas already collects this value through a typed field. A generic control
@@ -119,6 +126,7 @@ export function offerableKnobs(knobs: readonly TemplateKnob[], cloud: string, ki
 				k.component === kind &&
 				k.reachable &&
 				isRead(k) &&
+				!k.ceiling &&
 				!k.ownedByProvider &&
 				!k.typed,
 		)

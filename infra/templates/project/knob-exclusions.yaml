@@ -4,7 +4,7 @@
 # The template-knob ledger — every recorded decision behind
 # `apps/console/scripts/gen-template-knobs.mjs` and `check-template-knobs.mjs`.
 #
-# Four sections, and the difference between them is load-bearing:
+# Five sections, and the difference between them is load-bearing:
 #
 #   variables:  a ROOT variable this cloud declares that the generator's wiring cannot attribute to
 #               one component, with the component it actually belongs to (default `platform`). An
@@ -45,6 +45,11 @@
 #               DO NOT resolve one of these by wiring the knob. Measured while building #4461: a
 #               `terraform_data` reading the variable does flip the guard green — an escape route that
 #               deepens the defect by adding a resource whose only job is to satisfy a reader.
+#
+#   ceiling:    a knob that is declared AND reachable AND that the PROVIDER cannot honour — no resource
+#               on that cloud could ever read it (#4320). A DECISION, like `reported:`, and verified
+#               like it: evidence and a matching infra/config-carriage-exclusions.yaml entry are
+#               required, and an entry whose knob a resource starts reading FAILS. See the section.
 
 variables:
   # ── The classification/tag sweep. Stamped by the console on EVERY resource
@@ -204,23 +209,13 @@ dead:
   # shape. This is a BACKLOG: each line is a template defect, not a decision, and the check fails on
   # any dead knob that is not listed. It can only shrink.
   #
-  # #4320 took this list from 13 to 4. Nine were wired into the module that should always have read
-  # them (aws keepers / redis_cluster_mode_enabled / redis_cloudwatch_logs_enabled /
-  # waf_rate_limit_rules, gcp memorystore_auth_enabled / cloud_sql_default_username, hetzner
-  # cors_origins) or deleted as unhonorable on the resource that replaced the one they were written
-  # for (azure azure_cache_family / azure_cache_capacity, the #1993 shape).
-  #
-  # The FOUR left are not the same kind of thing as each other, and the difference decides who can
-  # clear them. Two are CEILINGS — no resource on that cloud could ever read them, which is a
-  # recorded decision and not work a lane can do — and they sit here only because this ledger has no
-  # section for "declared, reachable, and unhonorable by the provider"; `reported:` is specifically
-  # the output-reader shape and the check verifies that claim, so it cannot hold these. Two are
-  # under-determined: wiring them is possible and the shape of the wire is a maintainer's call.
-  # Each reason below says which it is.
-  - cloud: alibaba
-    component: dns
-    knob: alidns_managed_certificate
-    reason: "CEILING, not backlog — settled by #1824 and recorded in infra/config-carriage-exclusions.yaml (dns.managed_certificate / alibaba): the alicloud provider has NO certificate-request resource at all. Its certificate resources are upload-only (PEM you already hold), private-CA, or attachments to a WAF/ESA instance this template does not provision, and none exposes the validation challenge the AWS template consumes. The console still emits the key (alibaba_provider.go) so the tfvars shape stays uniform across clouds. Nothing here can be wired; the open question is where in THIS ledger a ceiling belongs."
+  # EMPTY since #4320. That issue took it 13 → 4 by wiring or deleting, and the maintainer's rulings of
+  # 2026-09-23 cleared the last four: azure `billing_mode` (Cosmos is serverless only — deleted) and gcp
+  # `gke_log_retention_days` (GKE has no per-cluster retention — deleted) were under-determined; hetzner
+  # bucket `encryption_enabled` was a ceiling on a variable nothing read — deleted; and alibaba
+  # `alidns_managed_certificate` is a ceiling that stays declared — moved to `ceiling:` below, the section
+  # it was waiting for. The console's `knobsFor` also withholds any dead knob now, so a future entry here
+  # is backlog a user never sees as a control. A new one still fails the check until it is recorded.
 
 reported:
   # Declared AND reachable AND read by no RESOURCE — but referenced by an `output`, which is the
@@ -240,3 +235,25 @@ reported:
     knob: azure_dns_zone_name
     issue: "#4531"
     reason: "The brought-zone knob for Azure: referenced only by azure/outputs.tf:130, which echoes the caller's existing zone name back. Its previous `dead:` reason (\"the zone is named from dns_main_domain\") described what the template does INSTEAD of reading it, which is true and is exactly why no resource reads it — that is the contract, not a defect."
+
+ceiling:
+  # Declared AND reachable AND UNHONOURABLE BY THE PROVIDER — nothing on that cloud could ever read the
+  # knob. A DECISION, not a backlog (#4320, maintainer ruling 2026-09-23), counted apart from `dead:`
+  # because it will never legitimately shrink.
+  #
+  # Because a decision section is the easiest place to launder a defect, every claim is RE-READ by
+  # apps/console/scripts/lib/knob-ceilings.mjs on every run, and each of these FAILS the check:
+  #   · no evidence — `issue: "#<n>"` where it was settled, or `docs: https://…` to the provider's own docs;
+  #   · no `carriage:` cell, or infra/config-carriage-exclusions.yaml has no `exclusions:` entry for that
+  #     field on this cloud — the two ledgers must agree that the cloud cannot do it;
+  #   · the knob is no longer declared;
+  #   · a resource or module argument now READS the knob — it became wireable, so it was never a ceiling;
+  #   · the knob is also listed under `dead:` or `reported:`.
+  # A ceiling knob is never offered as a control (`knobsFor` filters `ceiling`), and where the canvas has
+  # a typed control for the same thing it is gated with the reason (`unavailableWhen`), not hidden.
+  - cloud: alibaba
+    component: dns
+    knob: alidns_managed_certificate
+    issue: "#1824"
+    carriage: dns.managed_certificate
+    reason: "The alicloud provider has NO certificate-request resource at all. Its certificate resources are upload-only (PEM you already hold), private-CA, or attachments to a WAF/ESA instance this template does not provision, and none exposes the validation challenge the AWS template consumes. The console still emits the key (alibaba_provider.go) so the tfvars shape stays uniform across clouds, and the canvas gates its Managed TLS switch on Alibaba with this reason (lib/cloud-providers/managed-certificate.ts)."
