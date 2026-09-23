@@ -303,6 +303,14 @@ typed token, and the App Router's RSC refetch that `useFilterUrlSync`'s URL rewr
 the evidence but is not the debounce's question — so a surface can PASS F10 while its URL half still
 round-trips per keystroke, and the evidence says how many times it did.
 
+**A list is read when it has ANSWERED, not when it holds still** (#4980). `settle()` in
+`e2e/audit/filters.ts` refuses any read taken while `main`, or anything in it, is `aria-busy="true"`,
+and a read still busy when its budget runs out never counts as the reloaded list or the reset count.
+Stillness alone cannot tell a `keepPreviousData` placeholder from an answer — `~/runners` and
+`~/alerts` passed and failed F8 on unchanged code according to how long the filtered fetch took. The
+console's filtered lists declare `aria-busy` until their rows answer the URL; a page that shows a
+placeholder WITHOUT declaring it can still be misread, and that is the page's defect to fix.
+
 The reference implementation is the evidence page —
 `components/evidence/{evidence-client,evidence-filter-bar}.tsx` and `evidence-query.ts`, plus
 `lib/stores/use-evidence-filters.ts` and `lib/query/use-evidence-query.ts`. Note it currently fails
@@ -338,6 +346,15 @@ until the fixtures improve. It is not measured, not failed and not counted, so *
 means "every control in the console does something"**; it means every control this org rendered did.
 Closing that gap needs a STATIC matcher over the handlers, which is a different instrument in a
 different unit. The same reasoning is why H9 exists beside T5: one predicate per question.
+
+**Two R8 outcomes are not "inert", and both are the page's own claim** (#4980). A control that
+reports it is ALREADY in the state it selects — `aria-current` (any token but `false`),
+`aria-selected="true"`, or `aria-checked="true"` on a `radio`/`menuitemradio` — and does nothing when
+pressed records the effect `already-current`: selecting the current item again is correctly a no-op.
+`aria-pressed="true"` is deliberately not read, because a toggle is expected to unpress. And the
+enumeration waits for the page to settle (no `data-slot="skeleton"`, no `aria-busy`, a stable control
+count) before it runs; an empty enumeration of a page that never settled is **NOT MEASURED
+`page-not-ready`**, never N/A `no-enabled-controls`, which is a claim about the page.
 
 **ITS ERRORS ARE BIASED TOWARD PASS, deliberately.** Six of the seven effects are attributable to the
 click. The seventh — a DOM mutation anywhere in `main` — is not: an async re-render provoked by the

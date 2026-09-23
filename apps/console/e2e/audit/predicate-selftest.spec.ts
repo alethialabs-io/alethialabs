@@ -18,7 +18,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
-import { accessibleName, activate, CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, namesDestructiveAction, preActivationExclusion } from "./inert";
+import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion } from "./inert";
 import { hitTest } from "./overlays";
 import {
 	controlFixture,
@@ -408,6 +408,32 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		const mutant = CONTROL_FIXTURE.replace('d.setAttribute("role", "dialog");', "");
 		const problems = await interactionControl(page, mutant);
 		expect(problems.join(" "), "the control says the PASS arm stopped firing").toMatch(/dialog opener reported/);
+	});
+
+	test("R8 — the control names the already-current arm when the current row stops saying so", async ({ page }) => {
+		// #4980. Without `aria-current` the row is an ordinary handler-less button and MUST read inert;
+		// the arm has to go red here, or the rule could be deleted and the control would stay green.
+		const mutant = CONTROL_FIXTURE.replace('<button aria-current="true">', "<button>");
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/current row reported null/);
+	});
+
+	test("R8 — the control names the already-current arm when it starts excusing a pressed toggle", async ({ page }) => {
+		// The other direction: a pressed toggle that does not unpress is inert. Rename the aria so the
+		// toggle claims to be current, and the arm that expects inert must name itself.
+		const mutant = CONTROL_FIXTURE.replace('<button aria-pressed="true">', '<button aria-current="true">');
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/pressed toggle reported "already-current"/);
+	});
+
+	test("R8 — enumerating at domcontentloaded sees the skeleton; waiting for readiness sees the page", async ({ page }) => {
+		// #4980, the defect and its fix on one fixture: `~/runners` and `[project]/architecture` were
+		// filed N/A `no-enabled-controls` from their `loading.tsx`.
+		await page.setContent(LOADING_FIXTURE);
+		expect((await enumerateControls(page, "main", "main")).controls, "the loading state offers nothing").toHaveLength(0);
+		const ready = await awaitReady(page, 8_000);
+		expect(ready.settled).toBe(true);
+		expect((await enumerateControls(page, "main", "main")).controls.map((c) => c.name)).toEqual(["Arrived"]);
 	});
 
 	test("R8 — the control names the enumeration when a disabled control starts being scored", async ({ page }) => {

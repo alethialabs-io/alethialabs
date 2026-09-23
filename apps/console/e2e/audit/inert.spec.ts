@@ -40,7 +40,9 @@ import { closeDb } from "../helpers/db";
 import { materialize, restoreContext, resolveOrgSlug, resolveOwner, saveContext, seedRouteFixtures, type AuditContext } from "./context";
 import {
 	activate,
+	awaitReady,
 	emptinessProblems,
+	emptyEnumerationReason,
 	enumerateControls,
 	interactionControl,
 	measureQuiescence,
@@ -205,6 +207,9 @@ async function driveControls(page: Page, route: string, url: string, controls: E
 		const clean = await recover(page);
 		if (seen.dirtied || !clean || page.url() !== url) {
 			await page.goto(url, { waitUntil: "domcontentloaded" });
+			// The next control is re-resolved BY INDEX, so the page it is resolved in must be the
+			// loaded one — against the skeleton it is `control-list-moved` for the wrong reason.
+			await awaitReady(page);
 		}
 	}
 	return observations;
@@ -232,6 +237,9 @@ async function auditRoute(route: RouteRecord, page: Page): Promise<void> {
 	}
 
 	await page.goto(url, { waitUntil: "domcontentloaded" });
+	// Enumerate the PAGE, not its `loading.tsx` (#4980): a streamed route answers
+	// `domcontentloaded` with a column of skeletons and nothing to press.
+	const readiness = await awaitReady(page);
 
 	const main = await enumerateControls(page, "main", "main");
 	if (!main.hasMain) {
@@ -252,6 +260,13 @@ async function auditRoute(route: RouteRecord, page: Page): Promise<void> {
 	];
 
 	if (controls.length === 0 && external.length === 0) {
+		// N/A says the PAGE offers nothing to press. It may only be said of a page that loaded; an
+		// empty enumeration of a page still loading is NOT MEASURED, with what was seen.
+		const notReady = emptyEnumerationReason(readiness);
+		if (notReady !== null) {
+			report.notMeasured({ route: route.route, url, predicate: "R8", reason: notReady, evidence: { readiness } });
+			return;
+		}
 		report.record({ route: route.route, url, predicate: "R8", verdict: "N/A", reason: "no-enabled-controls" });
 		return;
 	}
@@ -316,6 +331,7 @@ async function driveMenus(page: Page, route: string, url: string, observations: 
 	for (const opener of openers) {
 		if (budgetLeft <= 0) break;
 		await page.goto(url, { waitUntil: "domcontentloaded" });
+		await awaitReady(page);
 		const locator = await resolve(page, opener.control);
 		if (locator === null) continue;
 		await locator.click({ force: true, noWaitAfter: true, timeout: 2_000 }).catch(() => {});
@@ -339,6 +355,7 @@ async function driveMenus(page: Page, route: string, url: string, observations: 
 			// Re-open the menu for THIS item: the previous item's activation closed it.
 			if ((await page.locator('[role="menu"]').count()) === 0) {
 				await page.goto(url, { waitUntil: "domcontentloaded" });
+				await awaitReady(page);
 				const again = await resolve(page, opener.control);
 				if (again === null) break;
 				await again.click({ force: true, noWaitAfter: true, timeout: 2_000 }).catch(() => {});

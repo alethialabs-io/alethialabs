@@ -73,6 +73,12 @@ function RailRow({
 		<button
 			type="button"
 			onClick={onClick}
+			// The rail is a set of buttons choosing which role the detail pane shows — the WAI-ARIA
+			// "current item in a set" case, so `aria-current`, not `aria-pressed` (a toggle that would
+			// unpress on a second click) nor `aria-selected` (valid only on option/tab/row roles).
+			// Without it the selected row was indistinguishable from the rest to a screen reader, and
+			// R8 filed the default `owner` row inert for doing nothing when pressed again (#4980).
+			aria-current={active ? "true" : undefined}
 			className={cn(
 				"flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-2 text-left transition-colors",
 				active ? "bg-surface-muted" : "hover:bg-surface-muted/60",
