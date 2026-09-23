@@ -473,9 +473,16 @@ baseline:
   # and the #1895 research left the AUTO trigger's VPC prerequisite unresolved in both languages.
   # FIXED at the carrier: one REPO-scoped AUTO/VUL rule per repository whose switch is on, OFF as
   # the rule's absence, and the Subscription instance's `image_scanner`/`vpc_quota` traps untouched
-  # (#1933). Plan-green is deliberately NOT the whole claim — the push-an-image-and-observe-a-scan
-  # proof is owed by the alibaba e2e nightly (#2061/#2101), and if scans never fire there the
-  # fallback is a plan-time refusal (the gcp #1844 shape), not silent green.
+  # (#1933). Carried is not the same as proven: nobody has observed an AUTO rule scan on a Basic
+  # instance with no VPC endpoint, and the alibaba e2e nightly that was to observe it is muted —
+  # the account is disabled and unfunded (ruling 2026-09-19). So the switch is REFUSED AT PLAN
+  # (#2283, ruling 2026-09-23, shipped by #4969 without the probe): `ALI-CR-SCAN-001`, a
+  # `terraform_data` precondition in infra/templates/project/alibaba/modules/cr/main.tf (the gcp
+  # #1844 shape — a precondition, not a `check`, because a check never blocks an apply). Proven by
+  # infra/templates/project/alibaba/checks_registry.tftest.hcl: switch ON refuses, one scanning repo
+  # among several still refuses, OFF plans neither the guard nor a rule. The carrier stays wired, so
+  # the field is still carried rather than excluded; the refusal is what stops it being silent green.
+  # It rests on an ASSUMPTION, not a finding — an observed scan later means deleting the refusal.
 
   # dns.zone_id / azure was here (#1992): declared, read only by a `check` that never blocks, and
   # then ignored while modules/azure-dns created a NEW zone unconditionally. FIXED — creation is
