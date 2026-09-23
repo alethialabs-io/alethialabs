@@ -30,17 +30,21 @@
 //   --static               HERMETIC. The committed copies of the issuer origin agree: the stack's
 //                          hostname, tls-ca-pin.json, and the four trust stacks' e2e_broker_issuer_url.
 //                          And tls-ca-pin.json is well formed. Exit 0 · 1.
-//   --print-pin --expected-url <url>
-//                          Read the live served chain and print a tls-ca-pin.json for REVIEW. It never
-//                          writes the file: the pin is a trust decision and lands in a reviewed PR.
+//   --print-pin --expected-url <url> [--out <file>]
+//                          Read the live chain — VERIFIED to a trusted root and for this host name, or
+//                          refused — and merge its CA fingerprints into the pin (existing entries kept).
+//                          With --out, replace <file> atomically (read first, temp file, rename); never
+//                          `> tls-ca-pin.json`, which truncates the file before it is read. The result
+//                          lands in a reviewed PR: the pin is a trust decision.
 //   --self-test            Every check goes red on a fixture built to trip it, the healthy fixture is
 //                          green, and the fingerprint matches `openssl x509 -fingerprint -sha1`.
 //
 // Plain node, no dependencies: it runs before `pnpm install` in the scheduled job.
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -188,15 +192,73 @@ export function parseChain(text) {
 	});
 }
 
-/** Read the served chain for `host`. Throws when openssl is absent (blind), returns [] when nothing was served. */
-function readChain(host) {
-	const r = spawnSync("openssl", ["s_client", "-connect", `${host}:443`, "-servername", host, "-showcerts"], {
-		input: "",
-		encoding: "utf8",
-		timeout: 20000,
-	});
-	if (r.error && r.error.code === "ENOENT") throw new Error("openssl is not on PATH — the TLS pin cannot be read");
-	return parseChain(r.stdout ?? "");
+/**
+ * Read the chain `host` serves, VERIFIED. `-verify_return_error` makes a chain that does not verify to
+ * a trusted root abort the handshake, and `-verify_hostname` makes a certificate for another name do
+ * the same — without both, s_client prints whatever it was handed and exits 0, and a pin could be
+ * taken from (or compared against) a chain an on-path attacker served (PR #5004 review).
+ *
+ * @param {string} host
+ * @param {{port?: number, caFile?: string}} [opts] `port` and `caFile` exist for the self-test's local
+ *   s_server; production uses 443 and the system trust store.
+ * @returns {{verified: boolean, certs: ReturnType<typeof parseChain>, detail: string}}
+ *   Throws only when openssl itself is absent (the instrument is blind).
+ */
+export function readChain(host, opts = {}) {
+	const base = ["s_client", "-connect", `${host}:${opts.port ?? 443}`, "-servername", host, "-showcerts", "-verify_return_error", "-verify_hostname", host];
+	if (opts.caFile) base.push("-CAfile", opts.caFile);
+	// IPv4 first, then whatever the resolver returns. s_client has no happy-eyeballs fallback: on a
+	// network with a broken IPv6 route it blocks on the AAAA address until the timeout (measured on a
+	// workstation while writing this — curl answered, s_client hung). Cloudflare serves both families,
+	// so -4 loses nothing; the second attempt keeps an IPv6-only host readable.
+	let r = null;
+	for (const family of [["-4"], []]) {
+		r = spawnSync("openssl", [...base, ...family], { input: "", encoding: "utf8", timeout: 15000 });
+		if (r.error && r.error.code === "ENOENT") throw new Error("openssl is not on PATH — the TLS pin cannot be read");
+		if (/Verify return code:|verify error:|-----BEGIN CERTIFICATE-----/.test(`${r.stdout ?? ""}${r.stderr ?? ""}`)) break;
+	}
+	const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+	// Both signals, not either: a zero exit AND openssl's own "Verify return code: 0 (ok)". A timeout or
+	// a killed process leaves status null, which is not a verified chain either.
+	const verified = r.status === 0 && /Verify return code: 0 \(ok\)/.test(out);
+	const reason = /verify error:[^\n]*/.exec(out)?.[0] ?? /Verify return code: [^\n]*/.exec(out)?.[0] ?? (r.error ? String(r.error.message) : `openssl exited ${r.status}`);
+	return { verified, certs: verified ? parseChain(r.stdout ?? "") : [], detail: verified ? "verified" : reason };
+}
+
+/**
+ * The pin `--print-pin` proposes. ADDITIVE for the same origin: a chain change is staged by pinning the
+ * new CA BESIDE the old one (RAM: add the new fingerprint at least a day before the rotation, remove the
+ * old after). Dropping an entry is a deliberate hand edit in a reviewed PR, never a side effect of this.
+ * A pin for another origin is replaced, not merged. PURE.
+ * @returns {{pin?: object, error?: string}}
+ */
+export function mergePin(existing, url, cas, today) {
+	const kept = existing.issuer_url === url ? existing.fingerprints : [];
+	const added = cas
+		.filter((c) => !kept.some((f) => f.sha1 === c.sha1))
+		.map((c) => ({ sha1: c.sha1, subject: c.subject, issuer: c.issuer, not_after: c.validTo, observed_at: today }));
+	const fingerprints = [...kept, ...added];
+	if (fingerprints.length > MAX_PIN) {
+		return { error: `${fingerprints.length} fingerprints (${kept.length} kept + ${added.length} served) — more than Alibaba's ${MAX_PIN}. Remove retired entries by hand first.` };
+	}
+	return { pin: { ...existing, issuer_url: url, fingerprints } };
+}
+
+/**
+ * Replace `file` with `text` atomically: write a sibling temp file, then rename over the target. A
+ * reader — or a crash half way — sees the old file or the new one, never a truncated one. This is what
+ * `--print-pin > tls-ca-pin.json` could not do: the shell truncates the target BEFORE the script reads
+ * the pins it must keep, so the merge read 0 bytes (PR #5004 review).
+ */
+export function writeAtomic(file, text) {
+	const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.tmp`);
+	try {
+		fs.writeFileSync(tmp, text, { flag: "wx" });
+		fs.renameSync(tmp, file);
+	} catch (err) {
+		fs.rmSync(tmp, { force: true });
+		throw err;
+	}
 }
 
 /** One timed GET. Never throws: a failure is an observation. */
@@ -236,7 +298,7 @@ async function observe(url, { checks, retrySeconds }) {
 		// reported by the discovery check
 	}
 	if (typeof jwksUri === "string" && /^https:\/\//.test(jwksUri)) obs.jwks = await timedGet(jwksUri);
-	if (checks.includes("tls-pin")) obs.chain = readChain(new URL(url).host);
+	if (checks.includes("tls-pin")) obs.tls = readChain(new URL(url).host);
 	if (checks.includes("latency")) {
 		obs.latencySamples.push(discovery.ms);
 		for (let i = 0; i < 2; i++) obs.latencySamples.push((await timedGet(`${url}/.well-known/openid-configuration`)).ms);
@@ -344,15 +406,16 @@ export function evaluate(obs, cfg) {
 	if (on("tls-pin")) {
 		const pinned = new Set(cfg.pin.fingerprints.map((f) => f.sha1));
 		if (cfg.pin.issuer_url !== url) add("tls-pin", `tls-ca-pin.json is for ${cfg.pin.issuer_url}, not ${url}`);
-		if (pinned.size === 0) add("tls-pin", "tls-ca-pin.json pins nothing yet — run `node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url <url>` and commit the reviewed result before the Alibaba trust apply");
-		const chain = obs.chain ?? [];
-		if (chain.length === 0) add("tls-pin", `no certificate chain was served by ${url}`);
+		if (pinned.size === 0) add("tls-pin", "tls-ca-pin.json pins nothing yet — run `node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url <url> --out infra/e2e-issuer/tls-ca-pin.json` and commit the reviewed result before the Alibaba trust apply");
+		const chain = obs.tls?.certs ?? [];
+		if (obs.tls && !obs.tls.verified) add("tls-pin", `the TLS chain served by ${url} did NOT verify (${obs.tls.detail}) — nothing it carries may be compared with, or become, a pin`);
+		else if (chain.length === 0) add("tls-pin", `no certificate chain was served by ${url}`);
 		else {
 			const cas = chain.filter((c) => c.ca);
 			if (cas.length === 0) add("tls-pin", "the served chain carries no CA certificate — only a leaf, which must never be pinned");
 			for (const c of cas) {
 				if (pinned.size && !pinned.has(c.sha1)) {
-					add("tls-pin", `served CA certificate ${c.sha1} (${c.subject}, issued by ${c.issuer}) is NOT in tls-ca-pin.json — Alibaba RAM may refuse the issuer. Add it (--print-pin), re-apply infra/alibaba-e2e, and keep the old one until the chain is confirmed (RAM docs: add the new fingerprint at least a day before rotating).`);
+					add("tls-pin", `served CA certificate ${c.sha1} (${c.subject}, issued by ${c.issuer}) is NOT in tls-ca-pin.json — Alibaba RAM may refuse the issuer. Add it (--print-pin --out infra/e2e-issuer/tls-ca-pin.json), re-apply infra/alibaba-e2e, and keep the old one until the chain is confirmed (RAM docs: add the new fingerprint at least a day before rotating).`);
 				}
 			}
 			const leaf = chain[0];
@@ -380,11 +443,11 @@ export function renderReport(findings, cfg, obs) {
 		const f = findings.filter((x) => x.check === c);
 		lines.push(`| \`${c}\` | ${f.length ? f.map((x) => x.detail.replaceAll("|", "\\|")).join("<br>") : "ok"} |`);
 	}
-	if (obs?.chain?.length) {
+	if (obs?.tls?.certs?.length) {
 		lines.push("");
-		lines.push("Served chain (leaf first):");
+		lines.push("Served chain (leaf first, verified):");
 		lines.push("");
-		for (const c of obs.chain) lines.push(`- \`${c.sha1}\` ${c.ca ? "CA" : "leaf"} — ${c.subject} (issuer: ${c.issuer}; until ${c.validTo})`);
+		for (const c of obs.tls.certs) lines.push(`- \`${c.sha1}\` ${c.ca ? "CA" : "leaf"} — ${c.subject} (issuer: ${c.issuer}; until ${c.validTo})`);
 	}
 	lines.push("");
 	lines.push("Runbook: `infra/e2e-issuer/README.md`. Contract: #4226.");
@@ -426,7 +489,7 @@ export function preflightProblems({ url, committedUrl, workersDev, probe }) {
 
 // ── self-test ───────────────────────────────────────────────────────────────────────────────────
 
-function selfTest() {
+async function selfTest() {
 	let fails = 0;
 	const ok = (cond, name) => {
 		if (cond) console.log(`  ok   ${name}`);
@@ -442,11 +505,15 @@ function selfTest() {
 	const healthy = () => ({
 		discovery: { status: 200, ms: 120, body: JSON.stringify({ issuer: U, jwks_uri: `${U}/.well-known/jwks.json`, id_token_signing_alg_values_supported: ["RS256"] }) },
 		jwks: { status: 200, ms: 90, body: JSON.stringify({ keys: [goodKey] }) },
-		chain: [
-			{ sha1: "c".repeat(40), ca: false, subject: "CN=e2e-issuer.alethialabs.io", issuer: "CN=WE1", validTo: "Dec 20 00:00:00 2026 GMT" },
-			{ sha1: "a".repeat(40), ca: true, subject: "CN=WE1", issuer: "CN=GTS Root R4", validTo: "Feb 20 00:00:00 2029 GMT" },
-			{ sha1: "b".repeat(40), ca: true, subject: "CN=GTS Root R4", issuer: "CN=GlobalSign Root CA", validTo: "Jan 28 00:00:00 2028 GMT" },
-		],
+		tls: {
+			verified: true,
+			detail: "verified",
+			certs: [
+				{ sha1: "c".repeat(40), ca: false, subject: "CN=e2e-issuer.alethialabs.io", issuer: "CN=WE1", validTo: "Dec 20 00:00:00 2026 GMT" },
+				{ sha1: "a".repeat(40), ca: true, subject: "CN=WE1", issuer: "CN=GTS Root R4", validTo: "Feb 20 00:00:00 2029 GMT" },
+				{ sha1: "b".repeat(40), ca: true, subject: "CN=GTS Root R4", issuer: "CN=GlobalSign Root CA", validTo: "Jan 28 00:00:00 2028 GMT" },
+			],
+		},
 		latencySamples: [120, 110, 130],
 	});
 	const cfg = (over = {}) => ({ expectedUrl: U, committedUrl: U, pin, checks: CHECKS, now, ...over });
@@ -510,21 +577,24 @@ function selfTest() {
 	ok(redOn(o, "keys"), "keys: a future-dated kid is red");
 
 	o = healthy();
-	o.chain[1].sha1 = "d".repeat(40);
+	o.tls.certs[1].sha1 = "d".repeat(40);
 	ok(redOn(o, "tls-pin"), "tls-pin: an intermediate outside the pin is red");
 	ok(redOn(healthy(), "tls-pin", cfg({ pin: { ...pin, fingerprints: [] } })), "tls-pin: an empty pin is red");
 	ok(redOn(healthy(), "tls-pin", cfg({ pin: { ...pin, issuer_url: "https://other.alethialabs.io" } })), "tls-pin: a pin for another origin is red");
 	o = healthy();
-	o.chain = [];
+	o.tls.certs = [];
 	ok(redOn(o, "tls-pin"), "tls-pin: no chain served is red");
 	o = healthy();
-	o.chain = [o.chain[0]];
+	o.tls = { verified: false, detail: "verify error:num=19:self-signed certificate in certificate chain", certs: [] };
+	ok(evaluate(o, cfg()).some((f) => f.check === "tls-pin" && /did NOT verify/.test(f.detail)), "tls-pin: an UNVERIFIED chain is red, and says so");
+	o = healthy();
+	o.tls.certs = [o.tls.certs[0]];
 	ok(redOn(o, "tls-pin"), "tls-pin: a leaf-only chain is red");
 	o = healthy();
-	o.chain[0].validTo = "Sep 30 00:00:00 2026 GMT";
+	o.tls.certs[0].validTo = "Sep 30 00:00:00 2026 GMT";
 	ok(redOn(o, "tls-pin"), "tls-pin: a leaf expiring within the renewal floor is red");
 	o = healthy();
-	o.chain[0].sha1 = "e".repeat(40);
+	o.tls.certs[0].sha1 = "e".repeat(40);
 	ok(evaluate(o, cfg()).length === 0, "tls-pin: a rotated LEAF is green (only CA certificates are pinned)");
 
 	o = healthy();
@@ -535,7 +605,7 @@ function selfTest() {
 	ok(evaluate(o, cfg()).length === 0, "latency: one slow outlier is green (median, not max)");
 
 	o = healthy();
-	o.chain[1].sha1 = "d".repeat(40);
+	o.tls.certs[1].sha1 = "d".repeat(40);
 	ok(evaluate(o, cfg({ checks: ["discovery", "jwks", "keys"] })).length === 0, "--checks: an excluded check cannot go red");
 
 	console.log("preflight:");
@@ -575,19 +645,76 @@ function selfTest() {
 	ok(throws(() => readWorkersDev('{ "name": "x" }')), "wrangler.jsonc without workers_dev throws");
 	ok(readWorkersDev('  "workers_dev": false,\n') === false, "workers_dev false is read");
 
-	console.log("fingerprint (against openssl):");
+	console.log("pin merge and atomic write (--print-pin --out):");
+	const served2 = [
+		{ sha1: "a".repeat(40), ca: true, subject: "CN=WE1", issuer: "CN=GTS Root R4", validTo: "x" },
+		{ sha1: "f".repeat(40), ca: true, subject: "CN=WE2", issuer: "CN=GTS Root R4", validTo: "x" },
+	];
+	let m = mergePin(pin, U, served2, "2026-09-23");
+	ok(m.pin && m.pin.fingerprints.map((f) => f.sha1).join() === ["a", "b", "f"].map((c) => c.repeat(40)).join(), "merge KEEPS every existing entry and appends only the new CA (a rotation is staged, not swapped)");
+	m = mergePin({ ...pin, issuer_url: "https://old.alethialabs.io" }, U, served2, "2026-09-23");
+	ok(m.pin && m.pin.fingerprints.length === 2 && m.pin.issuer_url === U, "a pin for ANOTHER origin is replaced, not merged");
+	m = mergePin({ ...pin, fingerprints: ["1", "2", "3", "4", "5"].map((c) => ({ sha1: c.repeat(40) })) }, U, served2, "2026-09-23");
+	ok(Boolean(m.error) && !m.pin, "a merge past Alibaba's five is refused, not truncated");
+	const wdir = fs.mkdtempSync(path.join(os.tmpdir(), "issuer-pin-"));
+	try {
+		const target = path.join(wdir, "tls-ca-pin.json");
+		fs.writeFileSync(target, "OLD");
+		writeAtomic(target, "NEW");
+		ok(fs.readFileSync(target, "utf8") === "NEW" && fs.readdirSync(wdir).length === 1, "writeAtomic replaces the file and leaves no temp file behind");
+		const asDir = path.join(wdir, "occupied");
+		fs.mkdirSync(asDir);
+		fs.writeFileSync(path.join(asDir, "keep"), "x");
+		let threw = false;
+		try {
+			writeAtomic(asDir, "NEW");
+		} catch {
+			threw = true;
+		}
+		ok(threw && fs.readFileSync(path.join(asDir, "keep"), "utf8") === "x" && fs.readdirSync(wdir).length === 2, "a failed rename leaves the target untouched and cleans up its temp file");
+	} finally {
+		fs.rmSync(wdir, { recursive: true, force: true });
+	}
+
+	console.log("fingerprint and chain verification (against openssl):");
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "issuer-health-"));
+	let server = null;
 	try {
 		const run = (args) => execFileSync("openssl", args, { cwd: dir, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
 		run(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "2", "-subj", "/CN=Self-test CA", "-addext", "basicConstraints=critical,CA:TRUE"]);
-		run(["req", "-newkey", "rsa:2048", "-nodes", "-keyout", "leaf.key", "-out", "leaf.csr", "-subj", "/CN=e2e-issuer.test"]);
-		run(["x509", "-req", "-in", "leaf.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", "leaf.pem", "-days", "2"]);
+		run(["req", "-newkey", "rsa:2048", "-nodes", "-keyout", "leaf.key", "-out", "leaf.csr", "-subj", "/CN=localhost"]);
+		fs.writeFileSync(path.join(dir, "leaf.ext"), "subjectAltName=DNS:localhost\nbasicConstraints=CA:FALSE\n");
+		run(["x509", "-req", "-in", "leaf.csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", "leaf.pem", "-days", "2", "-extfile", "leaf.ext"]);
 		const served = `depth=1 noise\n${fs.readFileSync(path.join(dir, "leaf.pem"), "utf8")}---\n${fs.readFileSync(path.join(dir, "ca.pem"), "utf8")}---\n`;
 		const chain = parseChain(served);
 		const expect = run(["x509", "-in", "ca.pem", "-fingerprint", "-sha1", "-noout"]).split("=")[1].trim().replaceAll(":", "").toLowerCase();
 		ok(chain.length === 2 && chain[0].ca === false && chain[1].ca === true, "served order is kept and the CA flag is read");
 		ok(chain[1].sha1 === expect, "the CA fingerprint equals `openssl x509 -fingerprint -sha1` (Alibaba's documented procedure)");
+
+		// A real TLS server on loopback, serving leaf + CA, so readChain's verification is exercised
+		// end to end rather than asserted about.
+		const port = 20000 + Math.floor(Math.random() * 20000);
+		server = spawn("openssl", ["s_server", "-accept", String(port), "-cert", "leaf.pem", "-key", "leaf.key", "-cert_chain", "ca.pem", "-quiet"], { cwd: dir, stdio: "ignore" });
+		const up = await new Promise((resolve) => {
+			const deadline = Date.now() + 10000;
+			const tryConnect = () => {
+				const sock = net.connect(port, "127.0.0.1", () => {
+					sock.destroy();
+					resolve(true);
+				});
+				sock.on("error", () => (Date.now() > deadline ? resolve(false) : setTimeout(tryConnect, 100)));
+			};
+			tryConnect();
+		});
+		ok(up, "the loopback TLS server started");
+		const trusted = readChain("localhost", { port, caFile: path.join(dir, "ca.pem") });
+		ok(trusted.verified && trusted.certs.some((c) => c.ca && c.sha1 === expect), "a chain to a trusted root, for the right name, VERIFIES and yields the CA fingerprint");
+		const untrusted = readChain("localhost", { port });
+		ok(!untrusted.verified && untrusted.certs.length === 0, "a chain to an UNTRUSTED root does not verify and yields NO certificates to pin");
+		const wrongName = readChain("127.0.0.1", { port, caFile: path.join(dir, "ca.pem") });
+		ok(!wrongName.verified && wrongName.certs.length === 0, "a trusted chain for ANOTHER name does not verify (-verify_hostname)");
 	} finally {
+		server?.kill();
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
 
@@ -644,25 +771,31 @@ async function main() {
 	}
 
 	if (argv.includes("--print-pin")) {
-		const chain = readChain(new URL(url).host);
-		const cas = chain.filter((c) => c.ca);
+		const tls = readChain(new URL(url).host);
+		if (!tls.verified) {
+			console.error(`refusing to pin: the chain served by ${url} did not verify (${tls.detail})`);
+			process.exit(1);
+		}
+		const cas = tls.certs.filter((c) => c.ca);
 		if (cas.length === 0) {
 			console.error(`no CA certificate in the chain served by ${url}`);
 			process.exit(1);
 		}
-		const pin = parsePin(readRepo(PATHS.pin));
-		const today = new Date().toISOString().slice(0, 10);
-		// ADDITIVE for the same origin: a chain change is staged by pinning the new CA BESIDE the old one
-		// (RAM docs: add the new fingerprint at least a day before the rotation, remove the old after).
-		// Dropping an entry is a deliberate hand edit in the reviewed PR, never a side effect of this.
-		const kept = pin.issuer_url === url ? pin.fingerprints : [];
-		const added = cas.filter((c) => !kept.some((f) => f.sha1 === c.sha1)).map((c) => ({ sha1: c.sha1, subject: c.subject, issuer: c.issuer, not_after: c.validTo, observed_at: today }));
-		const fingerprints = [...kept, ...added];
-		if (fingerprints.length > MAX_PIN) {
-			console.error(`${fingerprints.length} fingerprints (${kept.length} kept + ${added.length} served) — more than Alibaba's ${MAX_PIN}. Remove retired entries from ${PATHS.pin} by hand first.`);
+		const out = arg("--out");
+		// Read the pins to keep from the file that will be replaced (or the committed one), BEFORE any
+		// write — and never through a shell redirect, which truncates first.
+		const existing = parsePin(fs.readFileSync(out ? path.resolve(out) : path.join(ROOT, PATHS.pin), "utf8"));
+		const merged = mergePin(existing, url, cas, new Date().toISOString().slice(0, 10));
+		if (merged.error) {
+			console.error(merged.error);
 			process.exit(1);
 		}
-		console.log(JSON.stringify({ ...pin, issuer_url: url, fingerprints }, null, 2));
+		const text = `${JSON.stringify(merged.pin, null, 2)}\n`;
+		parsePin(text); // never write a pin the readers would refuse
+		if (out) {
+			writeAtomic(path.resolve(out), text);
+			console.error(`wrote ${out}: ${merged.pin.fingerprints.length} fingerprint(s) — review the diff before committing`);
+		} else process.stdout.write(text);
 		return;
 	}
 
