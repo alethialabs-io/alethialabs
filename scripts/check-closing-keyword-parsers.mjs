@@ -161,6 +161,53 @@ function checkBothSitesCarryTheGuard() {
 		}
 	}
 	failures.push(...checkVocabularyStaysAPlainAlternation());
+	failures.push(...checkNoLookbehindThroughGhJq());
+	return failures;
+}
+
+/**
+ * The negation guard is a LOOKBEHIND, and only one of the two jq engines on a runner can run it.
+ * The standalone `jq` is Oniguruma and accepts `(?<!not )`. `gh --jq` is gojq, whose Go RE2 engine
+ * rejects it ("invalid named capture: `(?P<!not )…`"). #4945 composed the guard into two `gh --jq`
+ * filters in board-pr.sh; every call then failed, the fail-closed caller read the failure as
+ * "a PR closes this issue", and `claim-work.sh` refused to hand out ANY unit. Nothing went red —
+ * the only symptom was a board that could not be claimed.
+ *
+ * So: no `--jq` argument in board-pr.sh may run a REGEX at all (`test`/`match`/`capture`/`sub`/
+ * `gsub`/`scan`/`splits`). Matching the guard's NAME is not enough — the first broken site took
+ * its pattern through a `$kws` parameter the caller composed, so its text never said
+ * NEGATION_GUARD. One engine for every regex in the file is the rule that has no such gap.
+ * The span read is from `--jq` to the end of its command (`2>/dev/null` or the next blank line);
+ * a `--jq` inside a shell comment is skipped, since a comment can only name the flag.
+ * @param {string} [source] board-pr.sh's text — injectable so the self-test can prove this fails.
+ * @returns {string[]} failures
+ */
+export function checkNoLookbehindThroughGhJq(source) {
+	let text = source;
+	if (text === undefined) {
+		try {
+			text = readFileSync(resolve(ROOT, LIB), "utf8");
+		} catch {
+			return [`  ${LIB}: cannot read`];
+		}
+	}
+	const failures = [];
+	for (const m of text.matchAll(/--jq\b/g)) {
+		// Comments NAME the flag (this very rule is documented in one); only code can run it.
+		const lineStart = text.lastIndexOf("\n", m.index) + 1;
+		if (/^\s*#/.test(text.slice(lineStart, m.index))) continue;
+		const rest = text.slice(m.index);
+		const end = rest.search(/2>\/dev\/null|\n\s*\n/);
+		const span = end === -1 ? rest : rest.slice(0, end);
+		if (/\b(?:test|match|capture|sub|gsub|scan|splits)\s*\(/.test(span)) {
+			const line = text.slice(0, m.index).split("\n").length;
+			failures.push(
+				`  ${LIB}:${line}: a \`gh --jq\` filter runs a regex. gh's --jq is gojq (Go RE2), which\n` +
+					"    rejects the negation lookbehind, so such a call fails and the fail-closed callers report\n" +
+					"    every issue as taken. Fetch with gh --json and filter with the standalone `jq`.",
+			);
+		}
+	}
 	return failures;
 }
 
@@ -250,6 +297,17 @@ function selfTest() {
 
 	// 3 · both files carry the guard
 	failures.push(...checkBothSitesCarryTheGuard());
+
+	// 4 · the gh --jq check can FAIL: the exact shape #4945 shipped must be caught
+	// (the pattern arrives through a parameter, exactly as it did — the text never names the guard)
+	const shipped =
+		'  gh pr list --json body \\\n    --jq "[.[] | test(\\"(?i)($kws) *#$n\\")] | length" \\\n    2>/dev/null\n';
+	if (checkNoLookbehindThroughGhJq(shipped).length !== 1) {
+		failures.push("checkNoLookbehindThroughGhJq does not catch the parameter-borne gh --jq regex #4945 shipped");
+	}
+	if (checkNoLookbehindThroughGhJq('  gh issue view 1 --json state --jq .state 2>/dev/null\n').length !== 0) {
+		failures.push("checkNoLookbehindThroughGhJq flags a plain `gh --jq` that runs no regex");
+	}
 
 	if (failures.length > 0) {
 		console.error("✗ check-closing-keyword-parsers self-test:");
