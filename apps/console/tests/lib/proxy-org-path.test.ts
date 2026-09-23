@@ -12,7 +12,11 @@
 import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { proxy } from "@/proxy";
-import { ORG_PATH_HEADER } from "@/lib/authz/org-path";
+import {
+	ACTION_FORWARDED_HEADER,
+	ORG_PATH_HEADER,
+	isRoutePatternPath,
+} from "@/lib/authz/org-path";
 
 const at = (url: string, headers?: HeadersInit) =>
 	new NextRequest(new Request(`https://console.example.invalid${url}`, { headers }));
@@ -64,4 +68,61 @@ describe("the proxy publishes the request path", () => {
 		const res = proxy(at("/acme/hero-app", { [ORG_PATH_HEADER]: "/victim-org/secrets" }));
 		await expect(published(res)).resolves.toBe("/acme/hero-app");
 	});
+});
+
+// #5001. Next forwards a server action posted to a page whose bundle lacks it: it re-POSTs to the
+// worker's ROUTE PATTERN (`/[org]`), copies the original headers — including the path this proxy
+// published on the first pass — and adds `x-action-forwarded: 1`. Publishing the pattern overwrote
+// the real address, `currentActor()` looked up an org slugged `[org]`, threw notFound(), and Next
+// answered with the `/[org]` tree for an org named "[org]": "Organization not found" on the
+// user's own org, in the qa gate on promotion #4959.
+describe("a server action Next forwards to another worker", () => {
+	const firstPass = "/acme/~/new";
+
+	it("keeps the address published on the first pass, not the worker's route pattern", async () => {
+		const res = proxy(
+			at("/[org]", { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass }),
+		);
+		await expect(published(res)).resolves.toBe(firstPass);
+	});
+
+	it("...whether the pattern arrives raw or percent-encoded", async () => {
+		const res = proxy(
+			at("/%5Borg%5D", { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass }),
+		);
+		await expect(published(res)).resolves.toBe(firstPass);
+	});
+
+	// The exception is as narrow as the three conditions. Each case below drops one of them, and
+	// each is the anti-forgery replacement above, unchanged.
+	it("a real address still wins over an inbound value, even with the forwarded header", async () => {
+		const res = proxy(
+			at("/acme/hero-app", {
+				[ACTION_FORWARDED_HEADER]: "1",
+				[ORG_PATH_HEADER]: "/victim-org/secrets",
+			}),
+		);
+		await expect(published(res)).resolves.toBe("/acme/hero-app");
+	});
+
+	it("a route-pattern path WITHOUT the forwarded header publishes the path itself", async () => {
+		const res = proxy(at("/[org]", { [ORG_PATH_HEADER]: "/victim-org/secrets" }));
+		await expect(published(res)).resolves.toBe("/[org]");
+	});
+
+	it("a forwarded request with nothing carried publishes the path itself", async () => {
+		const res = proxy(at("/[org]", { [ACTION_FORWARDED_HEADER]: "1" }));
+		await expect(published(res)).resolves.toBe("/[org]");
+	});
+});
+
+describe("isRoutePatternPath", () => {
+	it.each(["/[org]", "/[org]/~/new", "/%5Borg%5D", "/%5borg%5d/x", "/docs/[...slug]"])(
+		"%s is a route pattern",
+		(p) => expect(isRoutePatternPath(p)).toBe(true),
+	);
+	it.each(["/", "/acme", "/acme/~/new", "/e2e-hobby-e2e-ownerhobby-1/~/new", "/login"])(
+		"%s is an address",
+		(p) => expect(isRoutePatternPath(p)).toBe(false),
+	);
 });
