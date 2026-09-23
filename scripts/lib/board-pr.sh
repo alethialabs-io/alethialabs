@@ -90,6 +90,42 @@ BOARD_PR_NEGATION_GUARD='(?<!not )(?<!n.t )(?<!never )(?<!what )(?<!that )(?<!wh
 # Fenced first, then inline: a ``` block may contain single backticks, and stripping inline spans
 # first would leave the fence's content exposed.
 BOARD_PR_STRIP_CODE='gsub("(?s)```.*?```"; " ") | gsub("`[^`\n]*`"; " ")'
+
+# ── A CLOSING KEYWORD MUST START ITS LINE ─────────────────────────────────────────────────────
+# This is the structural rule the three guards above were converging on one family at a time, and
+# it SUBSUMES all of them. Every false positive that closed an issue on 2026-09-22/23 was prose
+# ABOUT closing, and every one of them was MID-SENTENCE:
+#
+#   #3855  "This does not close #3855."                       (#4919, #4924)
+#   #3348  "That is what closes #3348, which is why…"         (#4940)
+#   #4110  "Changed from `Closes #4110` to `Refs #4110`"      (#4935)
+#   #3348  "they closed #3348 and #4110 while this branch…"   (#4945 — the PR FIXING this)
+#
+# The fourth arrived eleven seconds after the third fix merged, from the very paragraph documenting
+# the defect. A PR that explains this bug is GUARANTEED to contain the strings, so lookbehinds are
+# whack-a-mole by construction.
+#
+# MEASURED before adopting, over the last 60 merged dev PRs: 28 closing refs sit on their own line,
+# 10 appear only inline — and of those 10, exactly TWO are genuine ("Closes #4910. Also fixes…",
+# "Closes #4114. Part of #2766."), both LINE-INITIAL with prose after. The other eight are the
+# false positives above. So line-initial keeps 30 of 30 real references and rejects 8 of 8 false
+# ones on real data, rather than on an argument.
+#
+# The anchor allows leading whitespace, list markers and bold, because that is how they are written:
+# `- Closes #n`, `**Closes #n**`. It does NOT allow a table cell (`| … |`) or mid-sentence text.
+#
+# ⚠️ `(?m)` IS REQUIRED AND IT MEANS MULTILINE HERE. Classic Oniguruma documents `(?m)` as DOTALL,
+# but jq's build uses Perl semantics — verified both ways: with `(?m)` a line-initial match on line
+# 2 is found, without it `^` anchors to the string start only and finds nothing; and `(?m)a.b` does
+# NOT match "a\nb", so it is not dotall. `(?s)` is dotall, which is what STRIP_CODE uses.
+#
+# Callers must therefore join title and body with a NEWLINE, not a space, or a title-borne
+# `Closes #n` stops being line-initial. Both call sites below do.
+#
+# `[*][*]` rather than `\*\*` on purpose: these patterns are embedded in a jq STRING literal, and
+# `\*` is not a valid jq string escape — it fails to compile the whole program. A character class
+# needs no backslash and cannot be mangled by the next person adding an escaping layer.
+BOARD_PR_LINE_ANCHOR='(?m)^[ \t]*(?:[-*>][ \t]*)*(?:[*][*])?'
 # LINKING: this PR is BUILDING the issue without finishing it — the phrasing a PR uses when it
 # delivers one tier of a multi-tier unit (#1414 "Part of #1268", #1408 "Part of #1389"). Kept to an
 # explicit list on purpose: matching a bare "#1389" anywhere would let an incidental "similar to
@@ -110,7 +146,7 @@ _board_pr_matching() { # <n> <state-filter> <kw-alternation> -> prints count | r
   local n="$1" states="$2" kws="$3"
   gh pr list --state all --limit 20 --search "#$n" --json number,state,body,title \
     --jq "[.[] | select($states)
-               | select((.body + \" \" + .title) | $BOARD_PR_STRIP_CODE
+               | select((.title + \"\\n\" + .body) | $BOARD_PR_STRIP_CODE
                           | test(\"(?i)($kws) *#$n\\\\b\"))] | length" \
     2>/dev/null
 }
@@ -120,7 +156,7 @@ _board_pr_matching() { # <n> <state-filter> <kw-alternation> -> prints count | r
 # that didn't link). Searches title AND body.
 has_closing_pr() { # <n> -> 0 = a PR closes it (or we couldn't tell) · 1 = definitely none
   local n="$1" out
-  if ! out="$(_board_pr_matching "$n" '.state=="OPEN" or .state=="MERGED"' "$BOARD_PR_NEGATION_GUARD$BOARD_PR_CLOSING_KW")"; then
+  if ! out="$(_board_pr_matching "$n" '.state=="OPEN" or .state=="MERGED"' "$BOARD_PR_LINE_ANCHOR$BOARD_PR_NEGATION_GUARD$BOARD_PR_CLOSING_KW")"; then
     echo "⚠ could not check PRs for #$n (gh failed) — treating as taken." >&2
     return 0
   fi
@@ -188,8 +224,8 @@ stalled_pr_ref() { # <n> <ttl> -> prints e.g. "#1461 (CONFLICTING, idle 8h)" or 
   local n="$1" ttl="$2" now rows
   now="$(date -u +%s)"
   rows="$(gh pr list --state open --limit 20 --search "#$n" --json number,mergeable,updatedAt,body,title \
-    --jq "[.[] | select((.body + \" \" + .title) | $BOARD_PR_STRIP_CODE
-              | test(\"(?i)($BOARD_PR_NEGATION_GUARD$BOARD_PR_CLOSING_KW|$BOARD_PR_LINKING_KW) *#$n\\\\b\"))]
+    --jq "[.[] | select((.title + \"\\n\" + .body) | $BOARD_PR_STRIP_CODE
+              | test(\"(?i)($BOARD_PR_LINE_ANCHOR$BOARD_PR_NEGATION_GUARD$BOARD_PR_CLOSING_KW|$BOARD_PR_LINKING_KW) *#$n\\\\b\"))]
           | .[] | \"\\(.number)\\t\\(.mergeable)\\t\\(.updatedAt)\"" 2>/dev/null)" || return 0
   [ -z "$rows" ] && return 0
   local pr mergeable ts upd idle
