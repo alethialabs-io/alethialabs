@@ -41,8 +41,10 @@
 # one was noticed because an issue visibly shut, and this one would not have been.
 #
 # Keep IDENTICAL to the pattern in that workflow — scripts/check-closing-keyword-parsers.mjs fails
-# the build when they drift. These run through jq's Oniguruma, which supports lookbehind; plain
-# ERE `grep` does not, which is why neither site uses grep any more.
+# the build when they drift. These run through the STANDALONE `jq` (Oniguruma), which supports
+# lookbehind. `gh --jq` is gojq (Go RE2) and REJECTS it — every matcher here therefore fetches with
+# `gh` and filters with `jq`; check-closing-keyword-parsers.mjs fails on a `--jq` that composes this
+# guard. Plain ERE `grep` does not support it either, which is why neither site uses grep any more.
 BOARD_PR_CLOSING_KW='(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved) +'
 
 # ── A NEGATED KEYWORD IS NOT A KEYWORD (#3855) ────────────────────────────────────────────────
@@ -64,8 +66,10 @@ BOARD_PR_CLOSING_KW='(close|closes|closed|fix|fixes|fixed|resolve|resolves|resol
 # one was noticed because an issue visibly shut, and this one would not have been.
 #
 # Keep IDENTICAL to the guard in that workflow — scripts/check-closing-keyword-parsers.mjs fails
-# the build when they drift. These run through jq's Oniguruma, which supports lookbehind; plain
-# ERE `grep` does not, which is why neither site uses grep any more.
+# the build when they drift. These run through the STANDALONE `jq` (Oniguruma), which supports
+# lookbehind. `gh --jq` is gojq (Go RE2) and REJECTS it — every matcher here therefore fetches with
+# `gh` and filters with `jq`; check-closing-keyword-parsers.mjs fails on a `--jq` that composes this
+# guard. Plain ERE `grep` does not support it either, which is why neither site uses grep any more.
 # Three families, and they are here because each one CLOSED A REAL ISSUE:
 #   negation        "does not close #n" / "doesn't" / "never closes" / "cannot close"
 #                   → #3855, twice on 2026-09-22 (#4919 16:54Z, #4924 21:41Z)
@@ -143,12 +147,14 @@ board_pr_links() { # <text> <n> <kw> -> 0 = links · 1 = does not
 # Counts PRs whose body or title links the issue with one of the given keywords. Prints the count,
 # or fails (non-zero) when the query itself failed — callers translate that into "taken".
 _board_pr_matching() { # <n> <state-filter> <kw-alternation> -> prints count | returns 1 on query failure
-  local n="$1" states="$2" kws="$3"
-  gh pr list --state all --limit 20 --search "#$n" --json number,state,body,title \
-    --jq "[.[] | select($states)
+  local n="$1" states="$2" kws="$3" json
+  # Fetch with gh, FILTER with the standalone jq. Never `gh --jq`: that is gojq, whose Go RE2
+  # engine rejects the lookbehinds in BOARD_PR_NEGATION_GUARD ("invalid named capture"), and the
+  # fail-closed caller then reports EVERY issue as taken — which is what #4945 shipped.
+  json="$(gh pr list --state all --limit 20 --search "#$n" --json number,state,body,title 2>/dev/null)" || return 1
+  jq -r "[.[] | select($states)
                | select((.title + \"\\n\" + .body) | $BOARD_PR_STRIP_CODE
-                          | test(\"(?i)($kws) *#$n\\\\b\"))] | length" \
-    2>/dev/null
+                          | test(\"(?i)($kws) *#$n\\\\b\"))] | length" <<<"$json" 2>/dev/null
 }
 
 # has_closing_pr <issue-number>: true (exit 0) if an OPEN or MERGED PR CLOSES this issue — work in
@@ -223,10 +229,12 @@ board_pr_is_stalled() { # <mergeable> <updated_epoch> <now_epoch> <ttl> -> 0 = s
 stalled_pr_ref() { # <n> <ttl> -> prints e.g. "#1461 (CONFLICTING, idle 8h)" or nothing
   local n="$1" ttl="$2" now rows
   now="$(date -u +%s)"
-  rows="$(gh pr list --state open --limit 20 --search "#$n" --json number,mergeable,updatedAt,body,title \
-    --jq "[.[] | select((.title + \"\\n\" + .body) | $BOARD_PR_STRIP_CODE
+  local json
+  # Standalone jq, not `gh --jq` (gojq/RE2 rejects the lookbehinds) — see _board_pr_matching.
+  json="$(gh pr list --state open --limit 20 --search "#$n" --json number,mergeable,updatedAt,body,title 2>/dev/null)" || return 0
+  rows="$(jq -r "[.[] | select((.title + \"\\n\" + .body) | $BOARD_PR_STRIP_CODE
               | test(\"(?i)($BOARD_PR_LINE_ANCHOR$BOARD_PR_NEGATION_GUARD$BOARD_PR_CLOSING_KW|$BOARD_PR_LINKING_KW) *#$n\\\\b\"))]
-          | .[] | \"\\(.number)\\t\\(.mergeable)\\t\\(.updatedAt)\"" 2>/dev/null)" || return 0
+          | .[] | \"\\(.number)\\t\\(.mergeable)\\t\\(.updatedAt)\"" <<<"$json" 2>/dev/null)" || return 0
   [ -z "$rows" ] && return 0
   local pr mergeable ts upd idle
   while IFS=$'\t' read -r pr mergeable ts; do
@@ -299,11 +307,13 @@ board_unit_is_stalled() { # <n> <lease-ttl> <pr-idle-ttl> -> 0 = stalled · 1 = 
 # a diagnostic that names what to go look at. Best-effort — empty when unknown, never fails the
 # caller (the DECISION belongs to has_active_pr; this is only how we describe it).
 active_pr_ref() { # <n> -> prints e.g. "#1408 (draft)" or nothing
-  local n="$1"
-  gh pr list --state open --limit 20 --search "#$n" --json number,isDraft,body,title \
-    --jq "[.[] | select((.body + \" \" + .title) | test(\"(?i)($BOARD_PR_LINKING_KW) *#$n\\\\b\"))]
+  local n="$1" json
+  # Standalone jq, not `gh --jq` — every regex in this file runs through one engine (see
+  # _board_pr_matching), so a keyword list that later gains a lookbehind cannot break only here.
+  json="$(gh pr list --state open --limit 20 --search "#$n" --json number,isDraft,body,title 2>/dev/null)" || return 0
+  jq -r "[.[] | select((.body + \" \" + .title) | test(\"(?i)($BOARD_PR_LINKING_KW) *#$n\\\\b\"))]
           | .[0] | if . == null then \"\" else \"#\\(.number) (\\(if .isDraft then \"draft\" else \"open\" end))\" end" \
-    2>/dev/null || true
+    <<<"$json" 2>/dev/null || true
 }
 
 # ── A BODY THAT ASSERTS A PROTECTION THE ISSUE DOES NOT CARRY ────────────────────────────────────
