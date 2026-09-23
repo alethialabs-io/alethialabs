@@ -456,7 +456,7 @@
 				"Navigation shell — mobile viewport › tapping a row in the drawer navigates and closes it": "passed"
 			},
 			"flows/onboarding.negative.spec.ts": {
-				"Onboarding negatives — login gating › login with an unknown email shows the no-account screen (no silent signup)": "failed",
+				"Onboarding negatives — login gating › login with an unknown email shows the no-account screen (no silent signup)": "passed",
 				"Onboarding negatives — login gating › an invalid email format does not advance past the email step": "passed",
 				"Onboarding negatives — OTP code › a wrong 6-digit code is rejected with an inline error": "passed",
 				"Onboarding negatives — OTP code › the code step lets you go back to change the email": "passed",
@@ -478,7 +478,7 @@
 				"Onboarding — public auth pages › signup ?email= prefills the email and skips the provider grid": "passed",
 				"Onboarding — public auth pages › signup page has no serious a11y violations": "passed",
 				"Onboarding — fresh signup + plan pick › onboarding wizard shows both self-serve plan tiles": "passed",
-				"Onboarding — fresh signup + plan pick › onboarding lets you customize the org URL slug": "failed",
+				"Onboarding — fresh signup + plan pick › onboarding lets you customize the org URL slug": "passed",
 				"Onboarding — fresh signup + plan pick › full Hobby signup lands on the org overview": "failed",
 				"Onboarding — fresh signup + plan pick › full Pro-trial signup lands on the org overview": "passed",
 				"Onboarding — returning user login › an already-onboarded account logs in and skips onboarding": "passed",
