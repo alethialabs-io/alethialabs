@@ -201,16 +201,23 @@
 // the first time was one BUFFER shared across two questions; here each spec keeps its own
 // `createReport()` and the file is the union of two disjoint answers about one organisation.
 //
-// THE THIRD SECTION IS DECLARED BEFORE IT IS MEASURED, and that is a deliberate, checked, temporary
-// state — `awaitingFirstImport` on the section below. R8's instrument landed in #4277; its artifact
-// exists only once the `audit-interaction` leg has run and somebody has imported it. The dishonest
-// alternatives were both available and both refused: leaving R8 out of the rubric would have shipped
-// an instrument scored by nothing (this file's own header calls that "implemented and UNMEASURED"),
-// and hand-writing plausible records would have poisoned a ledger with numbers no run produced.
-// So every R8 cell joins as NOT MEASURED carrying the marker's reason, R8 scores `null` rather than
-// 1, and the marker is checked in BOTH directions: a pending section that carries records RAISES,
-// naming the one-line edit that clears it. An exception that can outlive its subject is how a
-// ledger stops being true.
+// THE THIRD SECTION WAS DECLARED BEFORE IT WAS MEASURED, and that temporary state ENDED in #4901.
+// It was carried by `awaitingFirstImport` on the section below: R8's instrument landed in #4277 and
+// F8–F10's in #4278, and the artifact exists only once the `audit-interaction` leg has run and
+// somebody has imported it. The dishonest alternatives were both available and both refused —
+// leaving the predicates out of the rubric would have shipped instruments scored by nothing (this
+// file's own header calls that "implemented and UNMEASURED"), and hand-writing plausible records
+// would have poisoned a ledger with numbers no run produced. So all 160 cells joined as NOT
+// MEASURED carrying the marker's reason and the four predicates scored `null` rather than 1.
+//
+// WHAT THE MARKER COULD NOT DO IS MAKE ANYBODY IMPORT THE ARTIFACT, and that is the lesson #4901
+// paid for. The leg ran in the release gate on every audit-touching PR for weeks, writing a
+// complete `ui-audit-interaction.json` each time; the marker sat in this file saying so, correctly,
+// in the both-directions form this repo asks for. Nothing was wrong and nothing was red. The board
+// simply read 174 NOT MEASURED against 1029 PASS / 32 FAIL, and a score that leaves 160 cells out
+// of its denominator is an answer to a smaller question than it looks like. The first import (run
+// 35713083980 @ `c776a4d15`) resolved 141 of them and found seven FAILs. A declared gap still has
+// to be CLOSED by somebody; declaring it is what keeps it visible, not what ends it.
 //
 // **They are joined, never pooled**, and `apps/console/e2e/audit/report.ts`'s header records what
 // pooling them cost: both specs load into one process under `workers: 1`, and one module-level
@@ -434,22 +441,18 @@ export const LIVE_SECTIONS = /** @type {const} */ ({
 		persona: "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
 		org: "a fresh, empty organisation created for the run",
 		covers: "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
-		// ── THE MARKER, AND WHAT CLEARS IT ────────────────────────────────────────────────
-		// Set while the instrument exists and no run has produced its artifact yet. It makes
-		// exactly two things legal that are otherwise errors: `runs.interaction.records` may be
-		// EMPTY, and R8 may have no record anywhere. Everything else still holds — every R8 cell
-		// joins as NOT MEASURED carrying `why`, and NOT MEASURED leaves the denominator, so the
-		// board scores R8 `null` and never 1.
+		// ── THE MARKER IS GONE, AND THAT IS THE MEASUREMENT (#4901) ───────────────────────
+		// It read `awaitingFirstImport: { since: "#4277", … }` from #4277 until run 35713083980
+		// @ `c776a4d15` imported 160 interaction records — 40 routes × F8/F9/F10/R8, the section's
+		// whole key set. `parseLive()` raises the moment a marked section carries a record, so the
+		// marker had to go in the SAME commit as the import; that check is why this comment is a
+		// history note rather than a live exception.
 		//
-		// IT IS CHECKED IN BOTH DIRECTIONS. A ledger entry that outlives its subject fails
-		// SILENTLY and suppresses a real finding forever, so `parseLive()` raises the moment the
-		// section carries a record: the import has landed and this marker is now a lie that would
-		// let an empty re-import read as a pending one. Delete these three lines and re-run
-		// `--write`; that is the whole edit.
-		awaitingFirstImport: {
-			since: "#4277",
-			why: "R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet",
-		},
+		// What it was hiding is worth keeping in view, because the number moved a long way: while
+		// it was set, `runs.interaction.records` was legally EMPTY and all 160 cells joined as NOT
+		// MEASURED carrying one instrument-level reason. That is 160 of the 174 withheld cells this
+		// file used to report, and none of them was a claim about a PAGE. Now 141 carry a real
+		// verdict and 19 stay withheld — each with a reason the RUN produced, not this table.
 	},
 });
 
@@ -491,20 +494,60 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * that no longer fails raises too. The second direction is the one that matters over time: a debt
  * ledger nobody is forced to shrink is a ledger that stops being true.
  *
- * IT IS EMPTY, AND EMPTY IS A MEASUREMENT — not a table nobody has filled in yet. Run
- * 34851361970 @ `e48ff5213` measured all 387 live records with ZERO failures, and the four rows
- * that used to live here (R3 #3885 · R4, R5, R6 #3805) were deleted in the same commit as the
- * import that cleared them, which is what the second direction of the check forces. The evidence
- * that this is not an emptiness artefact is in the import itself: the artifact carries the same
- * key set as the file it replaced — 360 route records over 40 routes, 27 permission records over
- * 27 routes, no key added and none dropped — so a withheld measurement would have arrived as
- * `NOT MEASURED`, which is never a pass, rather than as silence.
+ * IT WAS EMPTY, AND EMPTY WAS A MEASUREMENT of the two sections that had been imported — never of
+ * the third. Run 34851361970 @ `e48ff5213` measured all 387 `routes` + `permissions` records with
+ * ZERO failures, and the four rows that used to live here (R3 #3885 · R4, R5, R6 #3805) were
+ * deleted in the same commit as the import that cleared them, which is what the second direction
+ * of the check forces. What the empty table could not say anything about was F8/F9/F10 and R8: the
+ * `interaction` section carried no records at all, so their 160 cells were NOT MEASURED and a
+ * predicate that is never measured cannot FAIL, cannot earn a row here, and reads exactly like one
+ * that passes everywhere (#4901).
  *
- * Do NOT read an empty table as "the live half is finished". It means every predicate the last
- * imported run measured passed on every route it reached; the next import can refill it, and a
- * FAIL with no row here still raises.
+ * THE FIRST `audit-interaction` IMPORT FILLED IT AGAIN — run 35713083980 @ `c776a4d15`, dev, all
+ * seven release-gate legs green. 160 interaction records over the same 40 routes: 141 verdicts,
+ * 19 still withheld with a per-run reason, and SEVEN FAILs on five routes. #4939 owns all three
+ * rows; the per-route evidence is in that issue, summarised here only far enough to say what each
+ * predicate is red ABOUT.
+ *
+ * The evidence that this import is a measurement and not a recount is the other two sections: they
+ * came from a DIFFERENT run at a DIFFERENT commit and reproduced 387 verdicts key-for-key, nothing
+ * added and nothing dropped. A withheld measurement would have arrived as `NOT MEASURED`, which is
+ * never a pass, rather than as silence.
+ *
+ * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
+ * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
-export const LIVE_DEBT = /** @type {const} */ ({});
+export const LIVE_DEBT = /** @type {const} */ ({
+	F8: {
+		owner: "#4939",
+		why:
+			"ONE route, and the URL half only. `~/connectors` narrows 42 rows to 2 on `health=Connected` " +
+			"and writes the param; a FRESH TAB on that URL keeps the param and renders 42 rows again. " +
+			"Reset is correct in both halves, so the bar is linkable in name and not in effect — which " +
+			"is the defect F2's static matcher structurally cannot see, since the `useFilterUrlSync` " +
+			"call it reads is present and correct.",
+	},
+	F10: {
+		owner: "#4939",
+		why:
+			"TWO routes, and the EMPTY-STATE half only — both debounce cleanly. `~/alerts` and " +
+			"`~/settings/roles` render no `[data-slot=\"empty\"]` inside `main` for a token that matches " +
+			"nothing, and `~/alerts` renders 2 hand-rolled 'no results' messages outside it. This is " +
+			"CLAUDE.md §6's `@repo/ui/empty` row observed rather than grepped: H9 scores the FILE, F10 " +
+			"scores what the page put on screen once the list emptied, and these two pages pass H9.",
+	},
+	R8: {
+		owner: "#4939",
+		why:
+			"FOUR routes, 39 controls enumerated between them, and two different findings. Three INERT " +
+			"controls produced no navigation, no overlay, no DOM mutation and no aria flip within " +
+			"1 000 ms — `link \"Docs\"` on `~/alerts`, `link \"What is classification?\"` on " +
+			"`~/settings/classification`, `button \"Scroll to latest\"` on `~/support/ask`. Two more read " +
+			"a destructive verb that `destructive-actions.yaml` does not declare, and RUBRIC.md says that " +
+			"is a finding either way: the ledger is short an entry, or the control wears a verb it does " +
+			"not carry out.",
+	},
+});
 
 /**
  * Which section owns which live predicate, checked in both directions.
@@ -1208,23 +1251,28 @@ export function parseLive(text) {
  *
  * @param {ReturnType<typeof parseLive>} live
  * @param {string[]} routeOrder
+ * @param {typeof LIVE_SECTIONS} [sections]  injectable so `--self-test` can drive the
+ *   `awaitingFirstImport` branch below. NO REAL SECTION CARRIES THE MARKER any more (#4901 imported
+ *   the last one), and a branch that no fixture can reach is a branch that rots until the next
+ *   predicate lands ahead of its leg and needs it. The parameter is the only way to keep both
+ *   directions of the marker under test once the table is clean.
  * @returns {string[]}
  */
-export function liveVacuityProblems(live, routeOrder) {
+export function liveVacuityProblems(live, routeOrder, sections = LIVE_SECTIONS) {
 	/** @type {string[]} */
 	const problems = [];
 	const known = new Set(routeOrder);
 	const measured = new Set();
 	/** Predicates whose section has not been measured yet — declared, not silently absent. */
 	const pending = new Set();
-	for (const [key, section] of Object.entries(LIVE_SECTIONS)) {
+	for (const [key, section] of Object.entries(sections)) {
 		const rows = live.sections[key].records;
 		if (rows.length === 0) {
 			// A PENDING section is empty BY DECLARATION — `sectionRecordsProblem()` owns that rule
 			// and refuses the other direction. Every cell it owns still joins as NOT MEASURED, so
 			// nothing here scores as a pass; what it must not do is read as "the artifact is gone".
 			if (section.awaitingFirstImport !== undefined) {
-				for (const [id, owner] of livePredicateSections()) if (owner === key) pending.add(id);
+				for (const [id, owner] of livePredicateSections(NOT_SCORED_STATICALLY, sections)) if (owner === key) pending.add(id);
 				continue;
 			}
 			problems.push(`the \`${key}\` section (${section.artifact}) holds ZERO records — it measured nothing, which is not the same as finding nothing.`);
@@ -1238,7 +1286,7 @@ export function liveVacuityProblems(live, routeOrder) {
 		}
 		for (const r of rows) measured.add(r.predicate);
 	}
-	for (const id of livePredicateSections().keys()) {
+	for (const id of livePredicateSections(NOT_SCORED_STATICALLY, sections).keys()) {
 		if (pending.has(id)) continue;
 		if (!measured.has(id)) {
 			problems.push(`${id} has NO record in any section — the predicate was never measured, and a report that scored it 0/0 would say so as \`—\`.`);
@@ -1257,12 +1305,14 @@ export function liveVacuityProblems(live, routeOrder) {
  *
  * @param {ReturnType<typeof parseLive>} live
  * @param {string[]} routeOrder
+ * @param {typeof LIVE_SECTIONS} [sections]  injectable for the same reason `liveVacuityProblems`
+ *   takes it: the `awaitingFirstImport` reason string below is now unreachable from the real table.
  */
-export function joinLive(live, routeOrder) {
-	const owned = livePredicateSections();
+export function joinLive(live, routeOrder, sections = LIVE_SECTIONS) {
+	const owned = livePredicateSections(NOT_SCORED_STATICALLY, sections);
 	/** @type {Map<string, {route: string, predicate: string, verdict: string, reason?: string, detail?: string}>} */
 	const byCell = new Map();
-	for (const key of Object.keys(LIVE_SECTIONS)) {
+	for (const key of Object.keys(sections)) {
 		for (const r of live.sections[key].records) {
 			byCell.set(`${r.route}${KEY}${r.predicate}`, {
 				route: r.route,
@@ -1282,7 +1332,7 @@ export function joinLive(live, routeOrder) {
 				verdicts.push(hit);
 				continue;
 			}
-			const section = LIVE_SECTIONS[key];
+			const section = sections[key];
 			verdicts.push({
 				route,
 				predicate: id,
@@ -2006,6 +2056,27 @@ const cell = (f) => {
 };
 
 /**
+ * A ROUTE's overall cell: the score, and ALWAYS how many of the 38 predicates were withheld.
+ *
+ * THE ZERO IS STATED, NOT LEFT AS AN ABSENCE, and that is the whole point of this function (#4901).
+ * `cell()` above may omit its suffix, because a family cell already prints its own denominator —
+ * `6/10` says outright that four predicates are not in the score. The overall column prints one
+ * number and nothing else, so before this a `0.97` withholding four predicates and a `0.97`
+ * withholding none rendered IDENTICALLY, and the reader had to notice a missing suffix to tell
+ * them apart. A suffix that appears only when there is something to say is read as decoration the
+ * day it is absent; this repo's recurring shape is that a withheld measurement looks exactly like
+ * a clean one. So both states are spelled: `· 0 withheld of 38` is a measurement too.
+ *
+ * The denominator is the rubric's own predicate count rather than a literal, so adding a row to
+ * RUBRIC.md moves it — the generator already refuses to run when that count and the tables
+ * disagree.
+ *
+ * @param {{pass: number, fail: number, na: number, notMeasured: number, score: number|null}} o
+ * @param {number} of the number of predicates the rubric defines
+ */
+const overallCell = (o, of) => `**${pct(o.score)}** · ${o.notMeasured} withheld of ${of}`;
+
+/**
  * A `| file | occurrences |` table, or the sentence that says the bucket is empty.
  *
  * Both reconciliation buckets below are meant to reach zero, and both are introduced by a
@@ -2186,6 +2257,8 @@ export function renderScoreboard(view) {
 	L.push("");
 
 	// ── per route ─────────────────────────────────────────────────────────────────────────────
+	/** The rubric's own predicate count — derived, so a new rubric row moves the denominator. */
+	const predicateCount = t.predicates;
 	L.push("## Per route");
 	L.push("");
 	L.push("Each cell is `PASS/scored · score` over that family's instrumented predicates —");
@@ -2198,12 +2271,18 @@ export function renderScoreboard(view) {
 	L.push("A `· n withheld` suffix means n of that family's predicates were NOT MEASURED on this route: the");
 	L.push("score is over the rest, and the cell says so rather than letting a narrower measurement read wider.");
 	L.push("");
+	L.push(`**The overall column carries its withheld count ALWAYS, including when it is zero.** A score is`);
+	L.push("not comparable to another score until you know how many predicates each one is an answer to, and");
+	L.push(`\`0.97 · 4 withheld of ${predicateCount}\` is a different claim from \`0.97 · 0 withheld of ${predicateCount}\` — the first is an`);
+	L.push("answer about 34 predicates wearing the shape of an answer about 38. The zero is printed rather than");
+	L.push("implied by a missing suffix, because a suffix that is usually absent is read as decoration.");
+	L.push("");
 	L.push("| route | surface | S | T | H | F | R | overall |");
 	L.push("|---|---:|---|---|---|---|---|---|");
 	for (const r of [...view.routes].sort((a, b) => (a.overall.score ?? 1) - (b.overall.score ?? 1) || a.route.localeCompare(b.route))) {
 		L.push(
 			`| \`${r.route}\`${r.redirectOnly ? " ·" : ""} | ${r.surfaceFiles} | ${cell(r.families.S)} | ${cell(r.families.T)} | ` +
-				`${cell(r.families.H)} | ${cell(r.families.F)} | ${cell(r.families.R)} | **${pct(r.overall.score)}** |`,
+				`${cell(r.families.H)} | ${cell(r.families.F)} | ${cell(r.families.R)} | ${overallCell(r.overall, predicateCount)} |`,
 		);
 	}
 	L.push("");
@@ -2948,11 +3027,29 @@ function selfTest() {
 					// /r is absent: `permissions.spec` drives only the org-only routes.
 				],
 			},
-			// EMPTY, because the section it stands for is declared `awaitingFirstImport`: R8's
-			// instrument landed in #4277 before any `audit-interaction` run produced its artifact.
-			// Every R8 cell must therefore join as NOT MEASURED naming that marker, and R8 must
-			// score `null` — asserted below, in both directions, against `sectionRecordsProblem()`.
-			interaction: { runKey: "", records: [] },
+			// POPULATED since #4901, and shaped like what the first real import brought back: a
+			// PASS, a FAIL, an N/A on the redirect-only route, and — the case this section exists
+			// to keep straight — an F8/F9 pair WITHHELD by the RUN rather than by the page. #4881
+			// made that distinction deliberate: a bar whose list never narrowed cannot tell a
+			// working filter from a broken one, so it reports NOT MEASURED and never a vacuous
+			// PASS. The fixture therefore carries both kinds of withholding on one route.
+			interaction: {
+				runKey: "fixture-interaction-org",
+				records: [
+					liveRecord("/a", "F8", "PASS"),
+					liveRecord("/a", "F9", "PASS"),
+					liveRecord("/a", "F10", "FAIL", { detail: 'a nonsense search rendered no `[data-slot="empty"]` inside `main`' }),
+					liveRecord("/a", "R8", "PASS"),
+					liveRecord("/b", "F8", "NOT MEASURED", { reason: "the list rendered 1 row(s); a filter over fewer than 2 narrows nothing" }),
+					liveRecord("/b", "F9", "NOT MEASURED", { reason: "the list rendered 1 row(s); a filter over fewer than 2 narrows nothing" }),
+					liveRecord("/b", "F10", "PASS"),
+					liveRecord("/b", "R8", "FAIL", { detail: "1 enabled control did nothing within 1000ms — of 4 controls enumerated on this route" }),
+					liveRecord("/r", "F8", "N/A", { reason: "not-a-list-page" }),
+					liveRecord("/r", "F9", "N/A", { reason: "not-a-list-page" }),
+					liveRecord("/r", "F10", "N/A", { reason: "not-a-list-page" }),
+					liveRecord("/r", "R8", "N/A", { reason: "redirect-only" }),
+				],
+			},
 		},
 	};
 	// ── family F's fixture ───────────────────────────────────────────────────────────────────
@@ -2980,6 +3077,8 @@ function selfTest() {
 		R4: { owner: "#1", why: "one shell defect" },
 		R5: { owner: "#2", why: "the axe residue" },
 		T7: { owner: "#3", why: "a blank where a state belongs" },
+		F10: { owner: "#4", why: "a nonsense search that lands nowhere" },
+		R8: { owner: "#5", why: "one inert control" },
 	};
 
 	const view = buildView({
@@ -3065,19 +3164,34 @@ function selfTest() {
 		"the F column is instrumented on all ten rows — seven static, three live — and carries a number",
 		view.routes.every((r) => r.families.F.instrumented === 10 && r.families.F.of === 10) && view.routes[0].families.F.score !== null,
 	);
-	// The fixture's interaction section is EMPTY and pending, exactly as the committed file is until the
-	// first `audit-interaction` import — so F8–F10 are WITHHELD on every route, never N/A. A page with
-	// no filter store therefore reads `all N/A or withheld`: its seven static rows are N/A (a claim
-	// about the page) and its three live rows were not measured (a claim about the run), and the cell
-	// must not fold the second into the first.
+	// THE TWO KINDS OF WITHHOLDING MUST NOT COLLAPSE (#4881, #4901). `/b`'s F column carries F7
+	// withheld by the static half and F8/F9 withheld by the RUN, and every other F row on it passes:
+	// the cell must print a score AND the count it is a score over, or a 7-of-7 reads as a 10-of-10.
 	ok(
-		"...and a page with no filter store reads `all N/A or withheld` while F8-F10's section is pending, not `all N/A`",
-		cell(view.routes.find((r) => r.route === "/r").families.F) === "all N/A or withheld",
+		"...and a family with some predicates withheld prints the count beside the score",
+		cell(view.routes.find((r) => r.route === "/b").families.F) === "7/7 · 1.00 · 3 withheld",
 	);
 	ok(
-		"...because F8-F10 join as NOT MEASURED naming the marker, on every route",
-		view.verdicts.filter((v) => ["F8", "F9", "F10"].includes(v.predicate)).every((v) => v.verdict === "NOT MEASURED" && v.reason.includes("has never been imported")) &&
-			view.verdicts.filter((v) => ["F8", "F9", "F10"].includes(v.predicate)).length === 3 * 3,
+		"...while a page with no filter store at all is `all N/A` — a claim about the PAGE, from both halves",
+		cell(view.routes.find((r) => r.route === "/r").families.F) === "all N/A",
+	);
+	ok(
+		"...and `all N/A or withheld` stays a distinct rendering, for the mixed family the fixture no longer produces",
+		cell({ instrumented: 10, of: 10, pass: 0, fail: 0, na: 7, notMeasured: 3, score: null }) === "all N/A or withheld" &&
+			cell({ instrumented: 10, of: 10, pass: 0, fail: 0, na: 0, notMeasured: 10, score: null }) === "all withheld (10)",
+	);
+	// THE OVERALL COLUMN STATES ITS ZERO. `/a` withholds nothing and `/b` withholds three, and the
+	// two must not render the same shape — that is the whole defect #4901 was opened about, one
+	// level up from the family cells.
+	ok(
+		"the overall cell carries the withheld count, and carries it when it is ZERO",
+		overallCell(view.routes.find((r) => r.route === "/b").overall, 33).endsWith("· 3 withheld of 33") &&
+			overallCell(view.routes.find((r) => r.route === "/a").overall, 33).endsWith("· 0 withheld of 33"),
+	);
+	ok(
+		"...and a route's withheld count is the one the verdict list actually holds, not a rendering",
+		view.routes.find((r) => r.route === "/b").overall.notMeasured ===
+			view.verdicts.filter((v) => v.route === "/b" && v.verdict === "NOT MEASURED").length,
 	);
 	ok("...and the T column is now 7 of 7 — 4 static plus 3 live", view.routes[0].families.T.instrumented === 7 && view.routes[0].families.T.of === 7);
 
@@ -3744,28 +3858,34 @@ function selfTest() {
 		liveVacuityProblems(emptyLive, ["/a"]).some((p) => p.includes("ZERO records")),
 	);
 	ok(
-		"...and every live predicate with no record anywhere is named",
-		liveVacuityProblems(emptyLive, ["/a"]).filter((p) => p.includes("has NO record in any section")).length === 10,
+		"...and every live predicate with no record anywhere is named — ALL FOURTEEN, now that no section is pending",
+		liveVacuityProblems(emptyLive, ["/a"]).filter((p) => p.includes("has NO record in any section")).length === 14,
 	);
-	// R8 IS THE ELEVENTH LIVE PREDICATE AND IS NOT IN THAT TEN, because its section is declared
-	// `awaitingFirstImport` — the ONE thing the marker buys. The two assertions below are the two
-	// halves that keep it from becoming a hole: the pending section is not reported as a vacuous
-	// artifact, AND every cell it owns still joins as NOT MEASURED naming the marker, so the
-	// predicate scores `null` and never 1. Delete the marker and the first of these flips, which is
-	// the point.
+	ok(
+		"...including F8-F10 and R8, whose section used to be spared by `awaitingFirstImport` and no longer is (#4901)",
+		["F8", "F9", "F10", "R8"].every((id) => liveVacuityProblems(emptyLive, ["/a"]).some((p) => p.startsWith(`${id} has NO record`))) &&
+			liveVacuityProblems(emptyLive, ["/a"]).some((p) => p.includes("`interaction`") && p.includes("ZERO records")),
+	);
+	// THE MARKER'S BRANCH IS STILL UNDER TEST, on an INJECTED table. No real section carries
+	// `awaitingFirstImport` since #4901 imported the last one, so nothing in `LIVE_SECTIONS` can
+	// reach the branch any more — and an unreachable branch is one that rots silently until the
+	// next predicate lands ahead of its leg. The three assertions below are the marker's contract:
+	// a pending section is not reported as a vacuous artifact, every cell it owns still joins as
+	// NOT MEASURED naming it, and the predicate therefore scores `null` and never 1.
+	const pendingTable = { ...LIVE_SECTIONS, interaction: { ...LIVE_SECTIONS.interaction, awaitingFirstImport: { since: "#0", why: "its leg has not run" } } };
 	ok(
 		"a PENDING section is not reported as a vacuous artifact — that is the marker's whole job",
-		!liveVacuityProblems(emptyLive, ["/a"]).some((p) => p.includes("`interaction`")) &&
-			!liveVacuityProblems(emptyLive, ["/a"]).some((p) => p.includes("R8 has NO record")),
+		!liveVacuityProblems(emptyLive, ["/a"], pendingTable).some((p) => p.includes("`interaction`")) &&
+			!liveVacuityProblems(emptyLive, ["/a"], pendingTable).some((p) => p.includes("R8 has NO record")),
 	);
 	ok(
 		"...and its cells still join as NOT MEASURED, naming the marker rather than a coverage gap",
-		joinLive(emptyLive, ["/a"]).filter((v) => v.predicate === "R8").every((v) => v.verdict === "NOT MEASURED" && v.reason.includes("has never been imported")),
+		joinLive(emptyLive, ["/a"], pendingTable).filter((v) => v.predicate === "R8").every((v) => v.verdict === "NOT MEASURED" && v.reason.includes("has never been imported")),
 	);
 	ok(
 		"...so R8 scores null, never 1 — a column of withheld cells is not a clean board",
 		(() => {
-			const cells = joinLive(emptyLive, ["/a", "/b"]).filter((v) => v.predicate === "R8");
+			const cells = joinLive(emptyLive, ["/a", "/b"], pendingTable).filter((v) => v.predicate === "R8");
 			return cells.length === 2 && cells.filter((v) => v.verdict === "PASS").length === 0;
 		})(),
 	);
@@ -3895,6 +4015,39 @@ function selfTest() {
 			],
 		},
 		permissions: { runKey: "e2e-org-2", generatedAt: "2026-09-02T11:31:39.556Z", records: [{ route: "/a", url: "/e2e-org-2", predicate: "T7", verdict: "PASS", evidence: { member: { text: "…" } } }] },
+		// The THIRD artifact, present since #4901. It was absent here for as long as its section was
+		// declared `awaitingFirstImport`, and `importLive` let that pass; now an absent interaction
+		// artifact RAISES, which is asserted below with the other three refusals.
+		interaction: {
+			runKey: "e2e-org-3",
+			generatedAt: "2026-09-02T11:33:02.119Z",
+			records: [
+				{
+					route: "/a",
+					url: "/e2e-org-3",
+					predicate: "R8",
+					verdict: "FAIL",
+					evidence: {
+						enumerated: 4,
+						activated: 3,
+						inert: [{ control: 'link "Docs"', origin: "main" }],
+						notActivated: [],
+						disabled: { withReason: 0, noReason: 0 },
+						external: 0,
+						networkSignal: false,
+						enumeratedFrom: [{ scope: "main", enumerated: 4 }],
+					},
+				},
+				{
+					route: "/a",
+					url: "/e2e-org-3",
+					predicate: "F8",
+					verdict: "NOT MEASURED",
+					reason: "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing",
+					evidence: { countSource: "count-pill", counts: { full: 1 } },
+				},
+			],
+		},
 	};
 	const imported = JSON.parse(importLive(rawArtifacts, { run: "https://example.invalid/runs/7", commit: "abc123" }));
 	ok("the import keeps both runs apart, each with its own runKey", imported.runs.routes.runKey === "e2e-org-1" && imported.runs.permissions.runKey === "e2e-org-2");
@@ -3927,6 +4080,29 @@ function selfTest() {
 		"belongs to the `permissions` section",
 	);
 	raises("importing without provenance RAISES", () => importLive(rawArtifacts, { run: "", commit: "c" }), "a baseline nobody can cite is not one");
+	// THE THIRD ARTIFACT IS NOW MANDATORY (#4901). While `interaction` was `awaitingFirstImport`,
+	// `importLive` imported it as the empty declared section it already was — that is what kept the
+	// OTHER two refreshable while R8's leg had not run. With the marker gone, leaving the file out
+	// of the download is a truncated import, and a truncated import that silently kept 160 stale
+	// cells would be indistinguishable from a run that measured them.
+	raises(
+		"an import missing the interaction artifact RAISES now that its section is no longer pending",
+		() => importLive({ routes: rawArtifacts.routes, permissions: rawArtifacts.permissions }, { run: "r", commit: "c" }),
+		"ui-audit-interaction.json: no `records` array",
+	);
+	ok(
+		"the interaction section imports as its own run, with its own key and its FAIL summarised",
+		imported.runs.interaction.runKey === "e2e-org-3" &&
+			imported.runs.interaction.records.length === 2 &&
+			imported.runs.interaction.records.find((r) => r.predicate === "R8").detail.includes("1 enabled control did nothing"),
+	);
+	ok(
+		"...and a NOT MEASURED record keeps the RUN's reason and gains no detail",
+		(() => {
+			const r = imported.runs.interaction.records.find((x) => x.predicate === "F8");
+			return r.verdict === "NOT MEASURED" && r.reason.includes("fewer than 2 narrows nothing") && !("detail" in r);
+		})(),
+	);
 
 	// ── the CLI's valued arguments ────────────────────────────────────────────────────────────
 	ok("--import-live=<dir> --run= --commit= parses", parseCliArgs(["--import-live=x", "--run=r", "--commit=c"]).mode === "import-live");
