@@ -23,7 +23,7 @@
 		"notInstrumented": 0,
 		"findings": 24,
 		"findingFiles": 15,
-		"liveNotMeasured": 174
+		"liveNotMeasured": 33
 	},
 	"ledgers": {
 		"baseline": 16,
@@ -31,8 +31,8 @@
 	},
 	"live": {
 		"source": {
-			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/34851361970",
-			"commit": "e48ff5213e9b5b4fca3452031d28907ee61942b6"
+			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35713083980",
+			"commit": "c776a4d15a119ad8ee5178d8820d8c38f635999b"
 		},
 		"sections": {
 			"routes": {
@@ -79,11 +79,27 @@
 					"F10",
 					"R8"
 				],
-				"records": 0,
-				"routes": 0
+				"records": 160,
+				"routes": 40
 			}
 		},
-		"debt": {}
+		"debt": {
+			"F8": {
+				"owner": "#4939",
+				"why": "ONE route, and the URL half only. `~/connectors` narrows 42 rows to 2 on `health=Connected` and writes the param; a FRESH TAB on that URL keeps the param and renders 42 rows again. Reset is correct in both halves, so the bar is linkable in name and not in effect — which is the defect F2's static matcher structurally cannot see, since the `useFilterUrlSync` call it reads is present and correct.",
+				"fail": 1
+			},
+			"F10": {
+				"owner": "#4939",
+				"why": "TWO routes, and the EMPTY-STATE half only — both debounce cleanly. `~/alerts` and `~/settings/roles` render no `[data-slot=\"empty\"]` inside `main` for a token that matches nothing, and `~/alerts` renders 2 hand-rolled 'no results' messages outside it. This is CLAUDE.md §6's `@repo/ui/empty` row observed rather than grepped: H9 scores the FILE, F10 scores what the page put on screen once the list emptied, and these two pages pass H9.",
+				"fail": 2
+			},
+			"R8": {
+				"owner": "#4939",
+				"why": "FOUR routes, 39 controls enumerated between them, and two different findings. Three INERT controls produced no navigation, no overlay, no DOM mutation and no aria flip within 1 000 ms — `link \"Docs\"` on `~/alerts`, `link \"What is classification?\"` on `~/settings/classification`, `button \"Scroll to latest\"` on `~/support/ask`. Two more read a destructive verb that `destructive-actions.yaml` does not declare, and RUBRIC.md says that is a finding either way: the ledger is short an entry, or the control wears a verb it does not carry out.",
+				"fail": 4
+			}
+		}
 	},
 	"predicates": {
 		"S1": {
@@ -454,45 +470,63 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"pass": 0,
-			"fail": 0,
-			"na": 0,
-			"notMeasured": 40,
-			"naReasons": {},
-			"notMeasuredReasons": {
-				"the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet": 40
+			"debt": "#4939",
+			"pass": 6,
+			"fail": 1,
+			"na": 24,
+			"notMeasured": 9,
+			"naReasons": {
+				"not-a-list-page": 24
 			},
-			"score": null
+			"notMeasuredReasons": {
+				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 3,
+				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
+				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 1,
+				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1,
+				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
+			},
+			"score": 0.8571
 		},
 		"F9": {
 			"family": "F",
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"pass": 0,
+			"pass": 7,
 			"fail": 0,
-			"na": 0,
-			"notMeasured": 40,
-			"naReasons": {},
-			"notMeasuredReasons": {
-				"the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet": 40
+			"na": 24,
+			"notMeasured": 9,
+			"naReasons": {
+				"not-a-list-page": 24
 			},
-			"score": null
+			"notMeasuredReasons": {
+				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 3,
+				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
+				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 1,
+				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1,
+				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
+			},
+			"score": 1
 		},
 		"F10": {
 			"family": "F",
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"pass": 0,
-			"fail": 0,
-			"na": 0,
-			"notMeasured": 40,
-			"naReasons": {},
-			"notMeasuredReasons": {
-				"the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet": 40
+			"debt": "#4939",
+			"pass": 13,
+			"fail": 2,
+			"na": 24,
+			"notMeasured": 1,
+			"naReasons": {
+				"not-a-list-page": 24
 			},
-			"score": null
+			"notMeasuredReasons": {
+				"the page's store declares a `search` filter and no `FilterSearch` input rendered in `main` — a tabbed or conditional bar this pass did not reach": 1
+			},
+			"score": 0.8667
 		},
 		"R1": {
 			"family": "R",
@@ -598,15 +632,17 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"pass": 0,
-			"fail": 0,
-			"na": 0,
-			"notMeasured": 40,
-			"naReasons": {},
-			"notMeasuredReasons": {
-				"the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet": 40
+			"debt": "#4939",
+			"pass": 25,
+			"fail": 4,
+			"na": 11,
+			"notMeasured": 0,
+			"naReasons": {
+				"redirect-only": 4,
+				"no-enabled-controls": 7
 			},
-			"score": null
+			"notMeasuredReasons": {},
+			"score": 0.8621
 		}
 	},
 	"routes": [
@@ -647,25 +683,25 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 26,
 				"fail": 0,
-				"na": 9,
-				"notMeasured": 4,
+				"na": 12,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -706,8 +742,8 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
@@ -715,16 +751,16 @@
 					"of": 8,
 					"pass": 4,
 					"fail": 0,
-					"na": 3,
-					"notMeasured": 1,
+					"na": 4,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 14,
 				"fail": 1,
-				"na": 18,
-				"notMeasured": 5,
+				"na": 22,
+				"notMeasured": 1,
 				"score": 0.9333
 			}
 		},
@@ -765,25 +801,25 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 26,
 				"fail": 0,
-				"na": 8,
-				"notMeasured": 5,
+				"na": 11,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -824,25 +860,25 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 26,
+				"pass": 27,
 				"fail": 0,
-				"na": 7,
-				"notMeasured": 5,
+				"na": 10,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -883,26 +919,26 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 1,
-				"na": 8,
-				"notMeasured": 5,
-				"score": 0.96
+				"na": 11,
+				"notMeasured": 1,
+				"score": 0.9615
 			}
 		},
 		{
@@ -940,27 +976,27 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 2,
 					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 32,
+				"pass": 34,
 				"fail": 0,
 				"na": 1,
-				"notMeasured": 5,
+				"notMeasured": 3,
 				"score": 1
 			}
 		},
@@ -1001,8 +1037,8 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
@@ -1010,16 +1046,16 @@
 					"of": 8,
 					"pass": 4,
 					"fail": 0,
-					"na": 3,
-					"notMeasured": 1,
+					"na": 4,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 14,
 				"fail": 1,
-				"na": 18,
-				"notMeasured": 5,
+				"na": 22,
+				"notMeasured": 1,
 				"score": 0.9333
 			}
 		},
@@ -1058,27 +1094,27 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 2,
 					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 33,
+				"pass": 35,
 				"fail": 0,
 				"na": 0,
-				"notMeasured": 5,
+				"notMeasured": 3,
 				"score": 1
 			}
 		},
@@ -1117,27 +1153,27 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 2,
 					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 33,
+				"pass": 35,
 				"fail": 0,
 				"na": 0,
-				"notMeasured": 5,
+				"notMeasured": 3,
 				"score": 1
 			}
 		},
@@ -1178,26 +1214,26 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
 					"pass": 7,
-					"fail": 0,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 1,
-					"score": 1
+					"notMeasured": 0,
+					"score": 0.875
 				}
 			},
 			"overall": {
 				"pass": 25,
-				"fail": 0,
-				"na": 8,
-				"notMeasured": 5,
-				"score": 1
+				"fail": 1,
+				"na": 11,
+				"notMeasured": 1,
+				"score": 0.9615
 			}
 		},
 		{
@@ -1237,25 +1273,25 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 26,
 				"fail": 0,
-				"na": 8,
-				"notMeasured": 5,
+				"na": 11,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -1296,25 +1332,25 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 26,
 				"fail": 0,
-				"na": 8,
-				"notMeasured": 5,
+				"na": 11,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -1353,28 +1389,28 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 1
+					"notMeasured": 0,
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
 					"pass": 7,
-					"fail": 0,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 1,
-					"score": 1
+					"notMeasured": 0,
+					"score": 0.875
 				}
 			},
 			"overall": {
-				"pass": 30,
-				"fail": 2,
+				"pass": 32,
+				"fail": 4,
 				"na": 2,
-				"notMeasured": 4,
-				"score": 0.9375
+				"notMeasured": 0,
+				"score": 0.8889
 			}
 		},
 		{
@@ -1414,25 +1450,25 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 26,
 				"fail": 0,
-				"na": 9,
-				"notMeasured": 4,
+				"na": 12,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -1471,28 +1507,28 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 8,
+					"fail": 2,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 0.8571
+					"notMeasured": 0,
+					"score": 0.8
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 30,
-				"fail": 1,
+				"pass": 33,
+				"fail": 2,
 				"na": 3,
-				"notMeasured": 4,
-				"score": 0.9677
+				"notMeasured": 0,
+				"score": 0.9429
 			}
 		},
 		{
@@ -1530,28 +1566,28 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
+					"pass": 7,
 					"fail": 1,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 0.8571
+					"notMeasured": 2,
+					"score": 0.875
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 31,
+				"pass": 33,
 				"fail": 1,
 				"na": 2,
-				"notMeasured": 4,
-				"score": 0.9688
+				"notMeasured": 2,
+				"score": 0.9706
 			}
 		},
 		{
@@ -1589,27 +1625,27 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 32,
+				"pass": 36,
 				"fail": 0,
 				"na": 2,
-				"notMeasured": 4,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -1650,8 +1686,8 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
@@ -1659,16 +1695,16 @@
 					"of": 8,
 					"pass": 7,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 1,
+					"na": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 24,
 				"fail": 1,
-				"na": 8,
-				"notMeasured": 5,
+				"na": 12,
+				"notMeasured": 1,
 				"score": 0.96
 			}
 		},
@@ -1709,26 +1745,26 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 23,
+				"pass": 24,
 				"fail": 1,
-				"na": 10,
-				"notMeasured": 4,
-				"score": 0.9583
+				"na": 13,
+				"notMeasured": 0,
+				"score": 0.96
 			}
 		},
 		{
@@ -1766,27 +1802,27 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
+					"pass": 7,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 4,
+					"notMeasured": 3,
 					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 31,
+				"pass": 33,
 				"fail": 0,
 				"na": 2,
-				"notMeasured": 5,
+				"notMeasured": 3,
 				"score": 1
 			}
 		},
@@ -1827,8 +1863,8 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
@@ -1836,16 +1872,16 @@
 					"of": 8,
 					"pass": 4,
 					"fail": 0,
-					"na": 3,
-					"notMeasured": 1,
+					"na": 4,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 14,
 				"fail": 1,
-				"na": 19,
-				"notMeasured": 4,
+				"na": 23,
+				"notMeasured": 0,
 				"score": 0.9333
 			}
 		},
@@ -1884,27 +1920,27 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 32,
+				"pass": 36,
 				"fail": 0,
 				"na": 2,
-				"notMeasured": 4,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -1943,27 +1979,27 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 2,
 					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 31,
+				"pass": 33,
 				"fail": 0,
 				"na": 3,
-				"notMeasured": 4,
+				"notMeasured": 2,
 				"score": 1
 			}
 		},
@@ -2004,8 +2040,8 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
@@ -2013,16 +2049,16 @@
 					"of": 8,
 					"pass": 7,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 1,
+					"na": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 24,
 				"fail": 0,
-				"na": 10,
-				"notMeasured": 4,
+				"na": 14,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2070,18 +2106,18 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 31,
+				"pass": 32,
 				"fail": 0,
 				"na": 3,
-				"notMeasured": 4,
+				"notMeasured": 3,
 				"score": 1
 			}
 		},
@@ -2122,26 +2158,26 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
 					"pass": 7,
-					"fail": 0,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 1,
-					"score": 1
+					"notMeasured": 0,
+					"score": 0.875
 				}
 			},
 			"overall": {
 				"pass": 24,
-				"fail": 0,
-				"na": 10,
-				"notMeasured": 4,
-				"score": 1
+				"fail": 1,
+				"na": 13,
+				"notMeasured": 0,
+				"score": 0.96
 			}
 		},
 		{
@@ -2181,8 +2217,8 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
@@ -2190,16 +2226,16 @@
 					"of": 8,
 					"pass": 7,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 1,
+					"na": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 24,
 				"fail": 0,
-				"na": 10,
-				"notMeasured": 4,
+				"na": 14,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2238,10 +2274,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
@@ -2249,16 +2285,16 @@
 					"of": 8,
 					"pass": 7,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 1,
+					"na": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 31,
+				"pass": 34,
 				"fail": 0,
-				"na": 3,
-				"notMeasured": 4,
+				"na": 4,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2297,28 +2333,28 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 1
+					"notMeasured": 0,
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 32,
-				"fail": 0,
+				"pass": 35,
+				"fail": 1,
 				"na": 2,
-				"notMeasured": 4,
-				"score": 1
+				"notMeasured": 0,
+				"score": 0.9722
 			}
 		},
 		{
@@ -2356,27 +2392,27 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 2,
 					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 33,
+				"pass": 35,
 				"fail": 0,
 				"na": 1,
-				"notMeasured": 4,
+				"notMeasured": 2,
 				"score": 1
 			}
 		},
@@ -2415,10 +2451,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 2,
 					"score": 1
 				},
 				"R": {
@@ -2426,16 +2462,16 @@
 					"of": 8,
 					"pass": 7,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 1,
+					"na": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 32,
+				"pass": 33,
 				"fail": 0,
-				"na": 2,
-				"notMeasured": 4,
+				"na": 3,
+				"notMeasured": 2,
 				"score": 1
 			}
 		},
@@ -2476,25 +2512,25 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 0,
-				"na": 10,
-				"notMeasured": 4,
+				"na": 13,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2535,25 +2571,25 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 0,
-				"na": 10,
-				"notMeasured": 4,
+				"na": 13,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2594,26 +2630,26 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
 					"pass": 7,
-					"fail": 0,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 1,
-					"score": 1
+					"notMeasured": 0,
+					"score": 0.875
 				}
 			},
 			"overall": {
 				"pass": 24,
-				"fail": 0,
-				"na": 10,
-				"notMeasured": 4,
-				"score": 1
+				"fail": 1,
+				"na": 13,
+				"notMeasured": 0,
+				"score": 0.96
 			}
 		},
 		{
@@ -2653,25 +2689,25 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
+				"pass": 26,
 				"fail": 0,
-				"na": 8,
-				"notMeasured": 5,
+				"na": 11,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -2710,28 +2746,28 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
+					"pass": 9,
 					"fail": 1,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 0.8571
+					"notMeasured": 0,
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 31,
+				"pass": 35,
 				"fail": 1,
 				"na": 2,
-				"notMeasured": 4,
-				"score": 0.9688
+				"notMeasured": 0,
+				"score": 0.9722
 			}
 		},
 		{
@@ -2771,25 +2807,25 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 0,
-				"na": 10,
-				"notMeasured": 4,
+				"na": 13,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2830,8 +2866,8 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
@@ -2839,16 +2875,16 @@
 					"of": 8,
 					"pass": 7,
 					"fail": 0,
-					"na": 0,
-					"notMeasured": 1,
+					"na": 1,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 24,
 				"fail": 0,
-				"na": 10,
-				"notMeasured": 4,
+				"na": 14,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2889,8 +2925,8 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
@@ -2898,16 +2934,16 @@
 					"of": 8,
 					"pass": 6,
 					"fail": 0,
-					"na": 1,
-					"notMeasured": 1,
+					"na": 2,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 23,
 				"fail": 0,
-				"na": 11,
-				"notMeasured": 4,
+				"na": 15,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2948,8 +2984,8 @@
 					"of": 10,
 					"pass": 0,
 					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
+					"na": 10,
+					"notMeasured": 0,
 					"score": null
 				},
 				"R": {
@@ -2957,16 +2993,16 @@
 					"of": 8,
 					"pass": 4,
 					"fail": 0,
-					"na": 3,
-					"notMeasured": 1,
+					"na": 4,
+					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 15,
 				"fail": 1,
-				"na": 18,
-				"notMeasured": 4,
+				"na": 22,
+				"notMeasured": 0,
 				"score": 0.9375
 			}
 		}
@@ -2981,8 +3017,8 @@
 		{
 			"route": "/[org]",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]",
@@ -3023,14 +3059,14 @@
 		{
 			"route": "/[org]",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]",
@@ -3116,8 +3152,7 @@
 		{
 			"route": "/[org]",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]",
@@ -3185,8 +3220,8 @@
 		{
 			"route": "/[org]/[project]",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]",
@@ -3227,14 +3262,14 @@
 		{
 			"route": "/[org]/[project]",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]",
@@ -3323,8 +3358,8 @@
 		{
 			"route": "/[org]/[project]",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]",
@@ -3400,8 +3435,8 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -3442,14 +3477,14 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -3535,8 +3570,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -3604,8 +3638,8 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -3646,14 +3680,14 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -3739,8 +3773,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -3807,8 +3840,8 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -3849,14 +3882,14 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -3942,8 +3975,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -4011,8 +4043,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4049,13 +4080,13 @@
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4141,8 +4172,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4210,8 +4240,8 @@
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings",
@@ -4252,14 +4282,14 @@
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings",
@@ -4348,8 +4378,8 @@
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/[project]/settings",
@@ -4424,8 +4454,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -4462,13 +4491,13 @@
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -4554,8 +4583,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -4621,8 +4649,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -4659,13 +4686,13 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -4751,8 +4778,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -4819,8 +4845,8 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -4861,14 +4887,14 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -4954,8 +4980,8 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "FAIL",
+			"detail": "1 control named a destructive verb the ledger does not declare — of 1 control enumerated on this route"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -5023,8 +5049,8 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -5065,14 +5091,14 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -5158,8 +5184,7 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -5227,8 +5252,8 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/usage",
@@ -5269,14 +5294,14 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/[project]/usage",
@@ -5362,8 +5387,7 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/usage",
@@ -5430,8 +5454,8 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "FAIL",
+			"detail": "a nonsense search rendered no `[data-slot=\"empty\"]` inside `main`; 2 hand-rolled \"no results\" messages outside the shared empty state"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5467,14 +5491,12 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5560,8 +5582,8 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "FAIL",
+			"detail": "1 enabled control did nothing within 1000ms, 1 control named a destructive verb the ledger does not declare — of 29 controls enumerated on this route"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5631,8 +5653,8 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -5673,14 +5695,14 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -5766,8 +5788,7 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -5834,8 +5855,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -5871,14 +5891,13 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "FAIL",
+			"detail": "reload() kept the param but not the narrowed list"
 		},
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -5964,8 +5983,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6033,8 +6051,7 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -6071,13 +6088,13 @@
 			"route": "/[org]/~/evidence",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
 		},
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -6163,8 +6180,7 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -6231,8 +6247,7 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -6268,14 +6283,12 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -6361,8 +6374,7 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -6430,8 +6442,8 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -6472,14 +6484,14 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -6565,8 +6577,8 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "no-enabled-controls"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -6635,8 +6647,8 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -6677,14 +6689,14 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/new",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -6770,8 +6782,7 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -6840,8 +6851,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -6878,13 +6888,13 @@
 			"route": "/[org]/~/runners",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -6970,8 +6980,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -7039,8 +7048,8 @@
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings",
@@ -7081,14 +7090,14 @@
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings",
@@ -7177,8 +7186,8 @@
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/[org]/~/settings",
@@ -7253,8 +7262,7 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -7290,14 +7298,12 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -7383,8 +7389,7 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -7451,8 +7456,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -7489,13 +7493,13 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -7581,8 +7585,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -7651,8 +7654,8 @@
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -7693,14 +7696,14 @@
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -7786,8 +7789,8 @@
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "no-enabled-controls"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -7856,7 +7859,7 @@
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F10",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the page's store declares a `search` filter and no `FilterSearch` input rendered in `main` — a tabbed or conditional bar this pass did not reach"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -7893,13 +7896,13 @@
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -7985,8 +7988,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -8055,8 +8057,8 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -8097,14 +8099,14 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -8190,8 +8192,8 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "FAIL",
+			"detail": "1 enabled control did nothing within 1000ms — of 4 controls enumerated on this route"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -8260,8 +8262,8 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings/general",
@@ -8302,14 +8304,14 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/settings/general",
@@ -8395,8 +8397,8 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "no-enabled-controls"
 		},
 		{
 			"route": "/[org]/~/settings/general",
@@ -8464,8 +8466,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -8501,14 +8502,12 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -8594,8 +8593,8 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "no-enabled-controls"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -8663,8 +8662,8 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "FAIL",
+			"detail": "a nonsense search rendered no `[data-slot=\"empty\"]` inside `main`"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -8700,14 +8699,12 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -8793,8 +8790,7 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -8861,8 +8857,7 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -8899,13 +8894,13 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -8991,8 +8986,7 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -9058,8 +9052,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -9096,13 +9089,13 @@
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -9188,8 +9181,8 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "no-enabled-controls"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -9257,8 +9250,8 @@
 		{
 			"route": "/[org]/~/support",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support",
@@ -9299,14 +9292,14 @@
 		{
 			"route": "/[org]/~/support",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support",
@@ -9392,8 +9385,7 @@
 		{
 			"route": "/[org]/~/support",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support",
@@ -9438,216 +9430,215 @@
 		},
 		{
 			"route": "/[org]/~/support",
-			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
-		},
-		{
-			"route": "/[org]/~/support",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support",
-			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R5",
-			"verdict": "PASS",
-			"detail": "themes dark, light"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/support/abuse",
 			"predicate": "T5",
 			"verdict": "N/A",
 			"reason": "no-empty-state"
 		},
 		{
+			"route": "/[org]/~/support",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support",
+			"predicate": "T7",
+			"verdict": "N/A",
+			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F10",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F8",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "F9",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "R8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/support/abuse",
+			"predicate": "T5",
+			"verdict": "N/A",
+			"reason": "no-empty-state"
+		},
+		{
 			"route": "/[org]/~/support/abuse",
 			"predicate": "T6",
 			"verdict": "PASS"
@@ -9667,8 +9658,8 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -9709,14 +9700,14 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -9802,8 +9793,8 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "FAIL",
+			"detail": "1 enabled control did nothing within 1000ms — of 5 controls enumerated on this route"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -9872,8 +9863,8 @@
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
@@ -9914,14 +9905,14 @@
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
@@ -10007,8 +9998,7 @@
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
@@ -10075,8 +10065,7 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
@@ -10112,14 +10101,12 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
@@ -10205,8 +10192,7 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
@@ -10274,8 +10260,8 @@
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support/submit",
@@ -10316,14 +10302,14 @@
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/support/submit",
@@ -10409,8 +10395,7 @@
 		{
 			"route": "/[org]/~/support/submit",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/submit",
@@ -10479,8 +10464,8 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -10521,14 +10506,14 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -10614,8 +10599,8 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "no-enabled-controls"
 		},
 		{
 			"route": "/[org]/~/usage",
@@ -10684,8 +10669,8 @@
 		{
 			"route": "/cli/login",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/cli/login",
@@ -10726,14 +10711,14 @@
 		{
 			"route": "/cli/login",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/cli/login",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/cli/login",
@@ -10820,8 +10805,8 @@
 		{
 			"route": "/cli/login",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "no-enabled-controls"
 		},
 		{
 			"route": "/cli/login",
@@ -10890,8 +10875,8 @@
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
@@ -10932,14 +10917,14 @@
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
@@ -11028,8 +11013,8 @@
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` section has never been imported (#4277): R8's instrument (#4277) and F8–F10's (#4278) landed before any `audit-interaction` run produced `test-results/ui-audit-interaction.json`, so no route has been measured for them yet"
+			"verdict": "N/A",
+			"reason": "redirect-only"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",
