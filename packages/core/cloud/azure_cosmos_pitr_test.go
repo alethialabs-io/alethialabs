@@ -78,3 +78,24 @@ func TestAzureCosmos_PITRReachesTheTemplateAsATfvar(t *testing.T) {
 		t.Errorf("tfvars must not enable Synapse analytical storage off the back of PITR: %#v", collections[0])
 	}
 }
+
+// TestAzureCosmos_ServerlessOnlyEmitsNoBillingMode pins the #4320 ruling (2026-09-23): Cosmos on
+// Azure is serverless only. `billing_mode` used to be emitted per container from the canvas's
+// capacity mode into an attribute no resource read, so a user who picked provisioned silently got
+// serverless. It must now be absent in every position — from the typed capacity mode AND from a
+// stored provider_config, which is why the key stays reserved though it is never written.
+func TestAzureCosmos_ServerlessOnlyEmitsNoBillingMode(t *testing.T) {
+	got := buildCosmosDBCollections([]types.ProjectNosqlConfig{
+		{Name: "legacy-provisioned", CapacityMode: types.NosqlCapacityModeProvisioned},
+		{Name: "on-demand", CapacityMode: types.NosqlCapacityModeOnDemand},
+		{Name: "smuggled", ProviderConfig: map[string]any{"billing_mode": "PROVISIONED"}},
+	})
+	if len(got) != 3 {
+		t.Fatalf("want one entry per table, got %d: %#v", len(got), got)
+	}
+	for i, entry := range got {
+		if v, ok := entry["billing_mode"]; ok {
+			t.Errorf("table %d emitted billing_mode = %v; Azure Cosmos is serverless only (#4320): %#v", i, v, entry)
+		}
+	}
+}

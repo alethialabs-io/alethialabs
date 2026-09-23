@@ -516,9 +516,14 @@ func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]in
 		entry := map[string]interface{}{
 			"name":                   t.Name,
 			"partition_key":          orDefault(t.PartitionKey, "/id"),
-			"billing_mode":           ddbCapacityMode(string(t.CapacityMode)),
 			"point_in_time_recovery": t.PointInTimeRecovery,
 		}
+		// NO `billing_mode`, and `t.CapacityMode` is deliberately not read on Azure (#4320, maintainer
+		// ruling 2026-09-23): Cosmos here is serverless only. It used to emit PAY_PER_REQUEST|PROVISIONED
+		// per container into an attribute no resource read, so picking provisioned on the canvas
+		// silently produced serverless. The template no longer declares the attribute, the catalog no
+		// longer offers the mode, and replica regions (below) are the one route to provisioned
+		// throughput — bought per ACCOUNT, which is the only unit Cosmos sells it in.
 		// The regions the canvas collected for the table (#2158). Cosmos replicates at the
 		// ACCOUNT level (`geo_location` blocks), so the template folds every table's list into one
 		// account-wide union — the point_in_time_recovery shape above, and the same reason the
@@ -534,6 +539,8 @@ func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]in
 		// `analytical_storage_enabled` is deliberately NOT reserved: it is an accepted attribute of
 		// the container shape that no typed field derives any more (#1838), which makes it exactly
 		// the kind of knob this passthrough exists to reach.
+		// `billing_mode` stays RESERVED although it is no longer emitted: it is WITHDRAWN (#4320), and a
+		// reserved withdrawn key is what stops a stored provider_config from re-introducing it.
 		mergeItemProviderConfig(entry, t.ProviderConfig,
 			"name", "partition_key", "billing_mode", "point_in_time_recovery", "global_replicas")
 		result = append(result, entry)

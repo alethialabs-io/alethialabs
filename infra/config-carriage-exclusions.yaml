@@ -326,6 +326,18 @@ exclusions:
   - field: nosql_tables.capacity_mode
     cloud: alibaba
     reason: Tablestore chooses capacity mode on the instance that holds your tables, not on each table, so a per-table setting has nothing to land on.
+  # Azure is a DECISION, not a ceiling of the product (#4320, maintainer ruling 2026-09-23). Cosmos
+  # does sell provisioned throughput, but it sells it per ACCOUNT — `EnableServerless` is a create-time
+  # account capability — and it needs an RU/s figure the canvas never collected. The per-container
+  # `billing_mode` the provider used to emit was read by no resource, so "Provisioned Throughput" on
+  # the canvas silently built serverless. The ruling made Azure serverless only: the option is gone
+  # from the catalog, the template no longer declares the attribute, and rows already saved as
+  # `provisioned` are read as `on_demand` (lib/cloud-providers/nosql-capacity.ts). Replica regions are
+  # the one route to provisioned throughput — see `global_replicas`, which IS carried.
+  - field: nosql_tables.capacity_mode
+    cloud: azure
+    reason: Cosmos DB tables here are serverless — you pay per request, with no throughput to reserve. Adding a replica region is what moves the account onto provisioned throughput, because serverless accounts are single-region.
+    issue: "#4320"
 
   # ── NoSQL replica regions — same three products, same shapes (#1982) ────────────────
   # AWS carries the list (a DynamoDB global table takes `replicas` per table). Firestore replicates

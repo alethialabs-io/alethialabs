@@ -45,6 +45,15 @@ export {
 	normalizeWafEnabled,
 } from "./waf";
 export {
+	managedCertificateUnavailableReason,
+	normalizeManagedCertificate,
+} from "./managed-certificate";
+export {
+	effectiveCapacityMode,
+	effectiveCapacityModeForCloud,
+	type NosqlCapacityMode,
+} from "./nosql-capacity";
+export {
 	dnsZoneUnsupportedReason,
 	dnsZoneUnsupportedReasonForCloud,
 } from "./dns-zone-support";
