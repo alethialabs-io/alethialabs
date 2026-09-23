@@ -479,7 +479,7 @@
 				"Onboarding — public auth pages › signup page has no serious a11y violations": "passed",
 				"Onboarding — fresh signup + plan pick › onboarding wizard shows both self-serve plan tiles": "passed",
 				"Onboarding — fresh signup + plan pick › onboarding lets you customize the org URL slug": "passed",
-				"Onboarding — fresh signup + plan pick › full Hobby signup lands on the org overview": "failed",
+				"Onboarding — fresh signup + plan pick › full Hobby signup lands on the org overview": "passed",
 				"Onboarding — fresh signup + plan pick › full Pro-trial signup lands on the org overview": "passed",
 				"Onboarding — returning user login › an already-onboarded account logs in and skips onboarding": "passed",
 				"Onboarding — org switcher + create-org sheet › switcher shows the active org and its plan badge": "passed",
