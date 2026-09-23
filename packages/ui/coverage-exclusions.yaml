@@ -127,6 +127,12 @@ tier_separation:
     symbols: [Label]
     reason: The date-range and quick-range filters label their controls with a real Label.
 
+  - path: src/dropdown-menu.tsx
+    suite: [tests/disabled-reason.test.tsx]
+    symbols: [DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger]
+    issue: "#2649"
+    reason: The disabled-reason suite opens a real dropdown and asserts a gated item shows its reason, is described by it, and does not fire.
+
   - path: src/tooltip.tsx
     suite: [tests/disabled-reason.test.tsx]
     symbols: [Tooltip, TooltipContent, TooltipTrigger]
@@ -251,11 +257,8 @@ baseline:
   - path: src/dropdown-menu.tsx
     symbols:
       [
-        DropdownMenu,
         DropdownMenuCheckboxItem,
-        DropdownMenuContent,
         DropdownMenuGroup,
-        DropdownMenuItem,
         DropdownMenuLabel,
         DropdownMenuPortal,
         DropdownMenuRadioGroup,
@@ -265,11 +268,10 @@ baseline:
         DropdownMenuSub,
         DropdownMenuSubContent,
         DropdownMenuSubTrigger,
-        DropdownMenuTrigger,
       ]
     issue: "#2649"
-    state: no-test
-    reason: The dropdown menu and all fifteen of its parts are named by no suite in this package — the largest single unmeasured module here.
+    state: untested-export
+    reason: The disabled-reason suite mounts a real dropdown (menu, trigger, content, item); these eleven parts are the ones it does not reach.
 
   - path: src/empty.tsx
     symbols: [Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyState, EmptyTitle]
