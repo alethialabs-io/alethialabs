@@ -443,6 +443,12 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// (#3855). nil until the runner has started.
 	var runnerProc *t2RunnerProc
 	var runnerOut bytes.Buffer
+	// The ALETHIA_E2E_T2_RUNNER_LOG file is closed by the teardown AFTER the runner has stopped,
+	// never by its own t.Cleanup: cleanups run LIFO and that one would be registered after the
+	// teardown, so it would close the file first and the runner would spend its stop grace writing
+	// into a closed file — losing the drain/cancel lines, and once the pipe filled, blocking on a
+	// write until it was SIGKILLed (PR #4973 review).
+	var runnerLogFile *os.File
 
 	// GUARANTEED graceful teardown — registered BEFORE launching the runner so a
 	// mid-deploy failure still tears the cluster down. The workflow's always() cleanup
@@ -479,6 +485,9 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		// spent inside this window rather than added to the budget ladder (t2RunnerStopGrace).
 		for _, line := range t2QuiesceRunner(runnerProc, t2RunnerStopGrace(window), cp, jobID) {
 			t.Log(line)
+		}
+		if runnerLogFile != nil {
+			_ = runnerLogFile.Close()
 		}
 		if runnerProc != nil && t.Failed() {
 			t.Logf("──── runner process output ────\n%s", runnerOut.String())
@@ -538,7 +547,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	var runnerSink io.Writer = &runnerOut
 	if p := os.Getenv("ALETHIA_E2E_T2_RUNNER_LOG"); p != "" {
 		if f, ferr := os.Create(p); ferr == nil {
-			t.Cleanup(func() { _ = f.Close() })
+			runnerLogFile = f // closed by the teardown, after the runner stops — see its declaration
 			runnerSink = io.MultiWriter(&runnerOut, f)
 		}
 	}

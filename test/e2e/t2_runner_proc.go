@@ -95,10 +95,17 @@ type t2RunnerProc struct {
 // t2RunnerStop is what a Stop established. Graceful means the runner exited on its own within the
 // grace after the group SIGINT; either way the group has been SIGKILLed afterwards, so no process
 // of it is left to hold a state lock.
+//
+// AlreadyExited means the runner had exited — and been reaped — before Stop was called (a crash
+// earlier in the run). Stop then sends NO signal: the leader's pid, and so the group id, may have
+// been reused in the meantime, and a group SIGKILL would land on an unrelated process group on the
+// CI host (PR #4973 review). On Linux its tofu cannot outlive it anyway (terraform-exec's
+// Pdeathsig: SIGKILL); off Linux a lingering tofu is a laptop-only leak, not a CI one.
 type t2RunnerStop struct {
-	Graceful bool
-	Took     time.Duration
-	WaitErr  error
+	Graceful      bool
+	AlreadyExited bool
+	Took          time.Duration
+	WaitErr       error
 }
 
 // startT2RunnerProc starts cmd as the leader of a new process group and reaps it in the
@@ -131,6 +138,14 @@ func startT2RunnerProc(cmd *exec.Cmd) (*t2RunnerProc, error) {
 func (p *t2RunnerProc) Stop(grace time.Duration, interrupted func()) t2RunnerStop {
 	p.stopOnce.Do(func() {
 		start := time.Now()
+		select {
+		case <-p.done:
+			// Reaped before we got here: its group id is no longer ours to signal.
+			p.stopped.AlreadyExited = true
+			p.stopped.WaitErr = p.waitErr
+			return
+		default:
+		}
 		pgid := p.cmd.Process.Pid
 		_ = syscall.Kill(-pgid, syscall.SIGINT)
 		if interrupted != nil {
@@ -162,9 +177,12 @@ func t2QuiesceRunner(proc *t2RunnerProc, grace time.Duration, cp *ControlPlane, 
 	var lines []string
 	if proc != nil {
 		st := proc.Stop(grace, func() { cp.CancelJobOnHeartbeat(jobID) })
-		if st.Graceful {
+		switch {
+		case st.AlreadyExited:
+			lines = append(lines, fmt.Sprintf("teardown: runner had already exited before the teardown (%v) — no signal sent, since its process group id may have been reused; any lock it held is released below", st.WaitErr))
+		case st.Graceful:
 			lines = append(lines, fmt.Sprintf("teardown: runner stopped gracefully in %s (SIGINT to drain it, job %s cancelled on its heartbeat so it interrupted its tofu)", st.Took.Round(time.Second), jobID))
-		} else {
+		default:
 			lines = append(lines, fmt.Sprintf("teardown: runner did not stop within the %s grace — its process group was SIGKILLed; the in-flight tofu may not have written state or released its lock, and a resource it was creating may be orphaned outside state", grace))
 		}
 	}

@@ -363,3 +363,25 @@ func TestT2RunnerStopGrace(t *testing.T) {
 		}
 	}
 }
+
+// TestT2RunnerStop_AlreadyExitedSendsNoSignal pins the PR #4973 review finding: a runner that
+// crashed and was reaped before the teardown must not be signalled — its group id may have been
+// reused by an unrelated process group on the CI host.
+func TestT2RunnerStop_AlreadyExitedSendsNoSignal(t *testing.T) {
+	proc, err := startT2RunnerProc(exec.Command("true"))
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	select {
+	case <-proc.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("`true` did not exit")
+	}
+	st := proc.Stop(time.Minute, func() { t.Fatal("interrupted hook ran for a runner that had already exited") })
+	if !st.AlreadyExited || st.Graceful {
+		t.Fatalf("Stop of a reaped runner = %+v, want AlreadyExited and not Graceful", st)
+	}
+	if st.Took > time.Second {
+		t.Fatalf("Stop of a reaped runner waited %s — it should return at once, having signalled nothing", st.Took)
+	}
+}
