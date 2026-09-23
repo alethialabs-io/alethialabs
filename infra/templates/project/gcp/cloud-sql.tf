@@ -25,6 +25,12 @@ module "cloud_sql" {
   iam_auth = var.cloud_sql_iam_auth
   port     = var.cloud_sql_port
 
+  # Declared at the root as "postgres" and threaded nowhere before #4320, so the module's hardcoded
+  # `<project_name>-user` decided the admin login whatever the caller asked for. The root default is
+  # now `null`, which the module resolves to that same derived name — so no existing instance's
+  # admin user is touched, and a caller who names one finally gets it.
+  default_username = var.cloud_sql_default_username
+
   # Declared at the root and threaded nowhere before #4320. Default [] adds no flag, so every
   # existing instance keeps exactly the IAM-auth flag it has; the module appends, never replaces.
   database_flags = var.cloud_sql_database_flags

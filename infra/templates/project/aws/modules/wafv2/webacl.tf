@@ -5571,4 +5571,62 @@ resource "aws_wafv2_web_acl" "wafv2_web_acl" {
       }
     }
   }
+
+  # Rate-based rules — the short form (#4320).
+  #
+  # A SECOND rule block rather than a projection concatenated onto `custom_rules`: `custom_rules` is
+  # `any` precisely because its elements have different shapes, and a projected rate rule has a
+  # different one again. `concat`ing them produces a tuple whose elements do not unify, and the
+  # `{ for r in … : r.name => r }` above then cannot become a map. Two typed loops, one rule space.
+  #
+  # Anything a rate rule needs beyond these four fields — a scope-down statement, a forwarded-IP
+  # config, a custom aggregation key — goes in `custom_rules` as `statement.rate_based_statement`,
+  # which this module has always supported and examples/custom-rules.tfvars shows.
+  dynamic "rule" {
+    for_each = { for r in var.rate_limit_rules : r.name => r }
+
+    content {
+      name     = rule.value.name
+      priority = rule.value.priority
+
+      action {
+        dynamic "allow" {
+          for_each = rule.value.action == "allow" ? [1] : []
+          content {}
+        }
+        dynamic "block" {
+          for_each = rule.value.action == "block" ? [1] : []
+          content {}
+        }
+        dynamic "count" {
+          for_each = rule.value.action == "count" ? [1] : []
+          content {}
+        }
+        dynamic "captcha" {
+          for_each = rule.value.action == "captcha" ? [1] : []
+          content {}
+        }
+        dynamic "challenge" {
+          for_each = rule.value.action == "challenge" ? [1] : []
+          content {}
+        }
+      }
+
+      statement {
+        rate_based_statement {
+          limit              = rule.value.limit
+          aggregate_key_type = rule.value.aggregate_key_type
+          # Optional and NOT computed on the provider, so null means "unset" and WAF applies its own
+          # 300-second window. Writing a number here instead would invent a setting nobody chose.
+          evaluation_window_sec = rule.value.evaluation_window_sec
+        }
+      }
+
+      visibility_config {
+        cloudwatch_metrics_enabled = var.web_acl_cloudwatch_enabled
+        metric_name                = rule.value.name
+        sampled_requests_enabled   = var.sampled_requests_enabled
+      }
+    }
+  }
 }

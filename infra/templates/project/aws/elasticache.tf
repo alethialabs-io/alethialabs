@@ -16,10 +16,19 @@ module "elasticache" {
   redis_default_user_id     = local.aws_redis_default_user_id
   aws_elasticache_user_name = var.aws_elasticache_user_name
 
-  vpc_id                     = try(module.common_vpc[0].vpc_id, null) != null ? module.common_vpc[0].vpc_id : var.vpc_id
-  subnet_ids                 = try(module.common_vpc[0].database_subnets, null) != null ? slice(module.common_vpc[0].database_subnets, 0, 2) : var.vpc_private_subnet_ids
-  cluster_size               = var.redis_cluster_size
-  instance_type              = var.redis_instance_type
+  vpc_id        = try(module.common_vpc[0].vpc_id, null) != null ? module.common_vpc[0].vpc_id : var.vpc_id
+  subnet_ids    = try(module.common_vpc[0].database_subnets, null) != null ? slice(module.common_vpc[0].database_subnets, 0, 2) : var.vpc_private_subnet_ids
+  cluster_size  = var.redis_cluster_size
+  instance_type = var.redis_instance_type
+
+  # Both threaded by #4320, and BOTH change what a deployed cache does — read the knob comments in
+  # variables.tf before assuming either is cosmetic. They were declared at the root, required (no
+  # default), emitted by the console on every AWS apply, and then dropped here, so modules/redis'
+  # own defaults decided both: cluster mode ON and CloudWatch log delivery ON, whatever the caller
+  # asked for.
+  cluster_mode_enabled    = var.redis_cluster_mode_enabled
+  cloudwatch_logs_enabled = var.redis_cloudwatch_logs_enabled
+
   automatic_failover_enabled = var.redis_automatic_failover_enabled
   multi_az_enabled           = var.redis_multi_az_enabled
   engine_version             = var.redis_engine_version

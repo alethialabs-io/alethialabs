@@ -18,25 +18,25 @@
 			"declared": 159,
 			"reachable": 122,
 			"settable": 52,
-			"dead": 4
+			"dead": 0
 		},
 		"azure": {
-			"declared": 90,
-			"reachable": 64,
-			"settable": 24,
-			"dead": 4
+			"declared": 88,
+			"reachable": 62,
+			"settable": 22,
+			"dead": 2
 		},
 		"gcp": {
 			"declared": 104,
 			"reachable": 84,
 			"settable": 34,
-			"dead": 3
+			"dead": 1
 		},
 		"hetzner": {
 			"declared": 37,
 			"reachable": 27,
 			"settable": 4,
-			"dead": 3
+			"dead": 2
 		}
 	},
 	"knobs": [
@@ -1209,7 +1209,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1227,7 +1227,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1245,7 +1245,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1263,7 +1263,7 @@
 			"required": false,
 			"description": "Values needed for the creation of a new S3 bucket. For the value of the argument 'bucket_name_prefix' it should be a value that has the service name and the purpose of that bucket.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws",
 				"aws/modules/s3"
@@ -1296,7 +1296,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1314,7 +1314,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1332,7 +1332,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1350,7 +1350,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1368,7 +1368,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1386,7 +1386,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1404,7 +1404,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1422,7 +1422,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1440,7 +1440,7 @@
 			"required": false,
 			"description": "Creation of a S3 bucket",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:880",
+			"declaredAt": "infra/templates/project/aws/variables.tf:924",
 			"readBy": [
 				"aws"
 			],
@@ -1458,7 +1458,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1476,7 +1476,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1494,7 +1494,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:888",
+			"declaredAt": "infra/templates/project/aws/variables.tf:932",
 			"readBy": [
 				"aws/modules/s3"
 			],
@@ -1512,7 +1512,7 @@
 			"required": false,
 			"description": "Username for the ElastiCache default user. Change this only if the default user already exists by other means. Feeds the NAMING-004 derivation of the default user's id.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:647",
+			"declaredAt": "infra/templates/project/aws/variables.tf:691",
 			"readBy": [
 				"aws",
 				"aws/modules/redis"
@@ -1531,7 +1531,7 @@
 			"required": true,
 			"description": "If a new Elasticache Redis instance needs to be created",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:581",
+			"declaredAt": "infra/templates/project/aws/variables.tf:606",
 			"readBy": [
 				"aws"
 			],
@@ -1548,7 +1548,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:657",
+			"declaredAt": "infra/templates/project/aws/variables.tf:701",
 			"readBy": [
 				"aws"
 			],
@@ -1566,7 +1566,7 @@
 			"required": true,
 			"description": "List of CIDRs allowed on Redis security group rules",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:611",
+			"declaredAt": "infra/templates/project/aws/variables.tf:644",
 			"readBy": [
 				"aws"
 			],
@@ -1583,7 +1583,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:616",
+			"declaredAt": "infra/templates/project/aws/variables.tf:649",
 			"readBy": [
 				"aws",
 				"aws/modules/redis",
@@ -1602,7 +1602,7 @@
 			"required": false,
 			"description": "Automatic failover (Not available for T1/T2 instances)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:636",
+			"declaredAt": "infra/templates/project/aws/variables.tf:680",
 			"readBy": [
 				"aws",
 				"aws/modules/redis"
@@ -1619,10 +1619,13 @@
 			"kind": "bool",
 			"typeExpr": "bool",
 			"required": true,
-			"description": "Indicates whether you want to enable or disable streaming broker logs to Cloudwatch Logs.",
+			"description": "Indicates whether you want to enable or disable streaming broker logs to Cloudwatch Logs. Threaded into modules/redis (#4320) — the module used to default it to true regardless, so setting it false now destroys the cache's CloudWatch log group.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:631",
-			"readBy": [],
+			"declaredAt": "infra/templates/project/aws/variables.tf:675",
+			"readBy": [
+				"aws",
+				"aws/modules/redis"
+			],
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1634,10 +1637,13 @@
 			"kind": "bool",
 			"typeExpr": "bool",
 			"required": true,
-			"description": "Flag to enable/disable cluster mode",
+			"description": "Flag to enable/disable cluster mode. Threaded into modules/redis (#4320) — the module used to default it to true regardless, so turning it off is a topology change on an existing cache.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:591",
-			"readBy": [],
+			"declaredAt": "infra/templates/project/aws/variables.tf:624",
+			"readBy": [
+				"aws",
+				"aws/modules/redis"
+			],
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1651,7 +1657,7 @@
 			"required": true,
 			"description": "Number of nodes in cluster. Ignored when redis_cluster_mode_enabled == true",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:586",
+			"declaredAt": "infra/templates/project/aws/variables.tf:611",
 			"readBy": [
 				"aws",
 				"aws/modules/redis"
@@ -1669,7 +1675,7 @@
 			"required": true,
 			"description": "Redis engine version",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:601",
+			"declaredAt": "infra/templates/project/aws/variables.tf:634",
 			"readBy": [
 				"aws",
 				"aws/modules/redis"
@@ -1687,7 +1693,7 @@
 			"required": true,
 			"description": "Redis family",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:606",
+			"declaredAt": "infra/templates/project/aws/variables.tf:639",
 			"readBy": [
 				"aws",
 				"aws/modules/redis"
@@ -1705,7 +1711,7 @@
 			"required": true,
 			"description": "Elastic cache instance type",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:596",
+			"declaredAt": "infra/templates/project/aws/variables.tf:629",
 			"readBy": [
 				"aws",
 				"aws/modules/redis"
@@ -1723,7 +1729,7 @@
 			"required": false,
 			"description": "Flag to enable/disable Multiple AZs",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:623",
+			"declaredAt": "infra/templates/project/aws/variables.tf:656",
 			"readBy": [
 				"aws",
 				"aws/modules/redis"
@@ -1742,7 +1748,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:682",
+			"declaredAt": "infra/templates/project/aws/variables.tf:726",
 			"readBy": [
 				"aws",
 				"aws/modules/valkey"
@@ -1761,7 +1767,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:672",
+			"declaredAt": "infra/templates/project/aws/variables.tf:716",
 			"readBy": [
 				"aws",
 				"aws/modules/valkey"
@@ -1780,7 +1786,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:677",
+			"declaredAt": "infra/templates/project/aws/variables.tf:721",
 			"readBy": [
 				"aws",
 				"aws/modules/valkey"
@@ -1799,7 +1805,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:667",
+			"declaredAt": "infra/templates/project/aws/variables.tf:711",
 			"readBy": [
 				"aws",
 				"aws/modules/valkey"
@@ -1818,7 +1824,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:662",
+			"declaredAt": "infra/templates/project/aws/variables.tf:706",
 			"readBy": [
 				"aws",
 				"aws/modules/valkey"
@@ -1896,7 +1902,7 @@
 			"required": false,
 			"description": "Configure EC2 spot service role provisioning.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:728",
+			"declaredAt": "infra/templates/project/aws/variables.tf:772",
 			"readBy": [
 				"aws"
 			],
@@ -2163,7 +2169,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:723",
+			"declaredAt": "infra/templates/project/aws/variables.tf:767",
 			"readBy": [
 				"aws"
 			],
@@ -2449,7 +2455,7 @@
 			"required": false,
 			"description": "Generate a validated acm cert",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:690",
+			"declaredAt": "infra/templates/project/aws/variables.tf:734",
 			"readBy": [
 				"aws"
 			],
@@ -2486,7 +2492,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:430",
+			"declaredAt": "infra/templates/project/aws/variables.tf:455",
 			"readBy": [
 				"aws",
 				"aws/modules/wafv2"
@@ -2505,7 +2511,7 @@
 			"required": false,
 			"description": "Create and manage the Route 53 hosted zone in-template (parity with GCP/Azure, which create their managed zone). When false, an existing zone id (dns_hosted_zone) is used.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:706",
+			"declaredAt": "infra/templates/project/aws/variables.tf:750",
 			"readBy": [
 				"aws"
 			],
@@ -2523,7 +2529,7 @@
 			"required": false,
 			"description": "Optional Name-tag label for the created Route 53 hosted zone; defaults to the domain.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:712",
+			"declaredAt": "infra/templates/project/aws/variables.tf:756",
 			"readBy": [
 				"aws",
 				"aws/modules/route53"
@@ -2561,7 +2567,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:435",
+			"declaredAt": "infra/templates/project/aws/variables.tf:460",
 			"readBy": [
 				"aws",
 				"aws/modules/wafv2"
@@ -2580,7 +2586,7 @@
 			"required": false,
 			"description": "Domain Managed under the R53 Zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:700",
+			"declaredAt": "infra/templates/project/aws/variables.tf:744",
 			"readBy": [
 				"aws",
 				"aws/modules/acm",
@@ -2618,7 +2624,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:440",
+			"declaredAt": "infra/templates/project/aws/variables.tf:465",
 			"readBy": [
 				"aws",
 				"aws/modules/wafv2"
@@ -2656,7 +2662,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:429",
+			"declaredAt": "infra/templates/project/aws/variables.tf:454",
 			"readBy": [
 				"aws",
 				"aws/modules/wafv2"
@@ -2674,7 +2680,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:428",
+			"declaredAt": "infra/templates/project/aws/variables.tf:453",
 			"readBy": [
 				"aws",
 				"aws/modules/wafv2"
@@ -2688,12 +2694,15 @@
 			"component": "dns",
 			"name": "waf_rate_limit_rules",
 			"kind": "list",
-			"typeExpr": "list(any)",
+			"typeExpr": "list(object({\n    name                  = string\n    priority              = number\n    limit                 = number\n    action                = optional(string, \"block\")\n    aggregate_key_type    = optional(string, \"IP\")\n    evaluation_window_sec = optional(number)\n  }))",
 			"required": false,
-			"description": "Rate-based rules passed through to the WAF module (same schema as tf-module-wafv2 rate_limit_rules).",
+			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:420",
-			"readBy": [],
+			"declaredAt": "infra/templates/project/aws/variables.tf:427",
+			"readBy": [
+				"aws",
+				"aws/modules/wafv2"
+			],
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2708,7 +2717,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:427",
+			"declaredAt": "infra/templates/project/aws/variables.tf:452",
 			"readBy": [
 				"aws",
 				"aws/modules/wafv2"
@@ -2726,7 +2735,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:426",
+			"declaredAt": "infra/templates/project/aws/variables.tf:451",
 			"readBy": [
 				"aws",
 				"aws/modules/wafv2"
@@ -2818,7 +2827,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -2837,7 +2846,7 @@
 			"required": false,
 			"description": "If a DynomoDB table needs to be created",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:761",
+			"declaredAt": "infra/templates/project/aws/variables.tf:805",
 			"readBy": [
 				"aws"
 			],
@@ -2855,7 +2864,7 @@
 			"required": false,
 			"description": "If a DynomoDB global table needs to be created",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:768",
+			"declaredAt": "infra/templates/project/aws/variables.tf:812",
 			"readBy": [
 				"aws"
 			],
@@ -2873,7 +2882,7 @@
 			"required": true,
 			"description": "List of objects to pass to the module for the creation of the global table.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:834",
+			"declaredAt": "infra/templates/project/aws/variables.tf:878",
 			"readBy": [
 				"aws",
 				"aws/modules/dynamodb"
@@ -2891,7 +2900,7 @@
 			"required": true,
 			"description": "List of objects to pass to the module for the creation of the table.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws",
 				"aws/modules/dynamodb"
@@ -2909,7 +2918,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -2928,7 +2937,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -2947,7 +2956,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -2966,7 +2975,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -2985,7 +2994,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3004,7 +3013,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3022,7 +3031,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3040,7 +3049,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3059,7 +3068,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3077,7 +3086,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3095,7 +3104,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3114,7 +3123,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3132,7 +3141,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3151,7 +3160,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3170,7 +3179,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:775",
+			"declaredAt": "infra/templates/project/aws/variables.tf:819",
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
@@ -3338,7 +3347,7 @@
 			"required": false,
 			"description": "Object of custom values that can be used for extra terraform files outside of the template",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:927",
+			"declaredAt": "infra/templates/project/aws/variables.tf:971",
 			"readBy": [],
 			"reachable": false,
 			"ownedByProvider": false,
@@ -3354,7 +3363,7 @@
 			"required": false,
 			"description": "Managed R53 Zone ID",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:695",
+			"declaredAt": "infra/templates/project/aws/variables.tf:739",
 			"readBy": [
 				"aws",
 				"aws/modules/acm",
@@ -3540,7 +3549,7 @@
 			"required": false,
 			"description": "A map of tags to add to all resources",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:459",
+			"declaredAt": "infra/templates/project/aws/variables.tf:484",
 			"readBy": [],
 			"reachable": false,
 			"ownedByProvider": false,
@@ -3692,7 +3701,7 @@
 			"required": false,
 			"description": "Determines whether a lifecycle policy will be created",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:561",
+			"declaredAt": "infra/templates/project/aws/variables.tf:586",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3711,7 +3720,7 @@
 			"required": false,
 			"description": "Determines whether the registry scanning configuration will be managed",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:543",
+			"declaredAt": "infra/templates/project/aws/variables.tf:568",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3730,7 +3739,7 @@
 			"required": false,
 			"description": "Map of repositories to create. Example: { r1 = \"myfirstrepo\", r2 = \"mysecondrepo\" }",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:471",
+			"declaredAt": "infra/templates/project/aws/variables.tf:496",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3749,7 +3758,7 @@
 			"required": false,
 			"description": "One or multiple blocks specifying scanning rules to determine which repository filters are used and at what frequency scanning will occur",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:555",
+			"declaredAt": "infra/templates/project/aws/variables.tf:580",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3768,7 +3777,7 @@
 			"required": false,
 			"description": "the scanning type to set for the registry. Can be either `ENHANCED` or `BASIC`",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:549",
+			"declaredAt": "infra/templates/project/aws/variables.tf:574",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3787,7 +3796,7 @@
 			"required": false,
 			"description": "Per-repository registry switches, keyed like ecr_names_map. Omitted repositories use ecr_repository_image_tag_mutability / ecr_repository_image_scan_on_push.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:491",
+			"declaredAt": "infra/templates/project/aws/variables.tf:516",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3806,7 +3815,7 @@
 			"required": false,
 			"description": "The encryption type for the repository. Must be one of: `KMS` or `AES256`. Defaults to `AES256`",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:514",
+			"declaredAt": "infra/templates/project/aws/variables.tf:539",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3825,7 +3834,7 @@
 			"required": false,
 			"description": "Indicates whether images are scanned after being pushed to the repository (`true`) or not scanned (`false`)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:525",
+			"declaredAt": "infra/templates/project/aws/variables.tf:550",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3844,7 +3853,7 @@
 			"required": false,
 			"description": "The tag mutability setting for the repository. Must be one of: `MUTABLE` or `IMMUTABLE`. Defaults to `IMMUTABLE`",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:503",
+			"declaredAt": "infra/templates/project/aws/variables.tf:528",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3863,7 +3872,7 @@
 			"required": false,
 			"description": "ECR lifecycle policy document (JSON). Null ⇒ the template default: expire untagged after 14 days, keep the last 30 tagged images.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:572",
+			"declaredAt": "infra/templates/project/aws/variables.tf:597",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3882,7 +3891,7 @@
 			"required": false,
 			"description": "The ARNs of the IAM users/roles that have read access to the repository",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:531",
+			"declaredAt": "infra/templates/project/aws/variables.tf:556",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3901,7 +3910,7 @@
 			"required": false,
 			"description": "The ARNs of the IAM users/roles that have read/write access to the repository",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:537",
+			"declaredAt": "infra/templates/project/aws/variables.tf:562",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3920,7 +3929,7 @@
 			"required": false,
 			"description": "The type of repository to create. Either `public` or `private`",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:465",
+			"declaredAt": "infra/templates/project/aws/variables.tf:490",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3939,7 +3948,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:454",
+			"declaredAt": "infra/templates/project/aws/variables.tf:479",
 			"readBy": [
 				"aws",
 				"aws/modules/ecr"
@@ -3977,7 +3986,7 @@
 			"required": false,
 			"description": "Map of keepers for the secrets",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:752",
+			"declaredAt": "infra/templates/project/aws/variables.tf:796",
 			"readBy": [
 				"aws",
 				"aws/modules/awssm-passgen"
@@ -3996,7 +4005,7 @@
 			"required": true,
 			"description": "List of custom secrets to create",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:739",
+			"declaredAt": "infra/templates/project/aws/variables.tf:783",
 			"readBy": [
 				"aws",
 				"aws/modules/awssm-passgen"
@@ -4014,8 +4023,10 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:739",
-			"readBy": [],
+			"declaredAt": "infra/templates/project/aws/variables.tf:783",
+			"readBy": [
+				"aws/modules/awssm-passgen"
+			],
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4030,7 +4041,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:739",
+			"declaredAt": "infra/templates/project/aws/variables.tf:783",
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
@@ -4048,7 +4059,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:739",
+			"declaredAt": "infra/templates/project/aws/variables.tf:783",
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
@@ -4067,7 +4078,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:739",
+			"declaredAt": "infra/templates/project/aws/variables.tf:783",
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
@@ -4085,7 +4096,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:739",
+			"declaredAt": "infra/templates/project/aws/variables.tf:783",
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
@@ -4140,7 +4151,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:739",
+			"declaredAt": "infra/templates/project/aws/variables.tf:783",
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
@@ -4158,7 +4169,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/aws/variables.tf:739",
+			"declaredAt": "infra/templates/project/aws/variables.tf:783",
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
@@ -4194,7 +4205,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:569",
+			"declaredAt": "infra/templates/project/azure/variables.tf:570",
 			"readBy": [
 				"azure/modules/storage-account"
 			],
@@ -4213,7 +4224,7 @@
 			"required": false,
 			"description": "Whether to create an Azure Storage Account",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:548",
+			"declaredAt": "infra/templates/project/azure/variables.tf:549",
 			"readBy": [
 				"azure"
 			],
@@ -4231,7 +4242,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:569",
+			"declaredAt": "infra/templates/project/azure/variables.tf:570",
 			"readBy": [
 				"azure",
 				"azure/modules/storage-account"
@@ -4250,7 +4261,7 @@
 			"required": false,
 			"description": "Replication type for the Storage Account (LRS, GRS, RAGRS, ZRS)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:560",
+			"declaredAt": "infra/templates/project/azure/variables.tf:561",
 			"readBy": [
 				"azure",
 				"azure/modules/storage-account"
@@ -4269,7 +4280,7 @@
 			"required": false,
 			"description": "Performance tier for the Storage Account (Standard or Premium)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:554",
+			"declaredAt": "infra/templates/project/azure/variables.tf:555",
 			"readBy": [
 				"azure",
 				"azure/modules/storage-account"
@@ -4288,7 +4299,7 @@
 			"required": false,
 			"description": "List of storage containers to create in the Storage Account",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:569",
+			"declaredAt": "infra/templates/project/azure/variables.tf:570",
 			"readBy": [
 				"azure",
 				"azure/modules/storage-account"
@@ -4307,7 +4318,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:569",
+			"declaredAt": "infra/templates/project/azure/variables.tf:570",
 			"readBy": [
 				"azure/modules/storage-account"
 			],
@@ -4320,45 +4331,13 @@
 		{
 			"cloud": "azure",
 			"component": "cache",
-			"name": "azure_cache_capacity",
-			"kind": "number",
-			"typeExpr": "number",
-			"required": false,
-			"description": "Size of the Azure Cache for Redis instance (0-6 for C family, 1-5 for P family)",
-			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:362",
-			"readBy": [],
-			"reachable": true,
-			"ownedByProvider": false,
-			"typed": false,
-			"default": 0
-		},
-		{
-			"cloud": "azure",
-			"component": "cache",
-			"name": "azure_cache_family",
-			"kind": "string",
-			"typeExpr": "string",
-			"required": false,
-			"description": "SKU family for Azure Cache for Redis (C for Basic/Standard, P for Premium)",
-			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:356",
-			"readBy": [],
-			"reachable": true,
-			"ownedByProvider": false,
-			"typed": false,
-			"default": "C"
-		},
-		{
-			"cloud": "azure",
-			"component": "cache",
 			"name": "azure_cache_multi_az",
 			"kind": "bool",
 			"typeExpr": "bool",
 			"required": false,
 			"description": "Whether to enable zone redundancy for Azure Cache for Redis (requires Premium SKU)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:376",
+			"declaredAt": "infra/templates/project/azure/variables.tf:377",
 			"readBy": [
 				"azure",
 				"azure/modules/azure-cache-redis"
@@ -4395,7 +4374,7 @@
 			"required": false,
 			"description": "Exact Azure Managed Redis sku (Balanced_B*/MemoryOptimized_M*/ComputeOptimized_X*/FlashOptimized_A*). Null = map from azure_cache_sku. Normally emitted from the project's MemoryGB.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:642",
+			"declaredAt": "infra/templates/project/azure/variables.tf:643",
 			"readBy": [
 				"azure"
 			],
@@ -4623,7 +4602,7 @@
 			"required": false,
 			"description": "Envelope-encrypt Kubernetes Secrets in etcd under a key in this project's Key Vault. On by default (AWS parity). Requires key_vault_purge_protection_enabled.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:685",
+			"declaredAt": "infra/templates/project/azure/variables.tf:686",
 			"readBy": [
 				"azure"
 			],
@@ -4736,7 +4715,7 @@
 			"required": false,
 			"description": "OPTIONAL. Name of a pre-existing user-assigned managed identity for the external-secrets operator. Requires external_secrets_identity_resource_group.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:670",
+			"declaredAt": "infra/templates/project/azure/variables.tf:671",
 			"readBy": [
 				"azure"
 			],
@@ -4754,7 +4733,7 @@
 			"required": false,
 			"description": "OPTIONAL. Resource group holding external_secrets_identity_name. Requires external_secrets_identity_name.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:676",
+			"declaredAt": "infra/templates/project/azure/variables.tf:677",
 			"readBy": [
 				"azure"
 			],
@@ -4979,7 +4958,7 @@
 			"required": false,
 			"description": "Fixed instance count for the Application Gateway v2 SKU. Azure requires at least 1; raise it for capacity or zone redundancy.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:533",
+			"declaredAt": "infra/templates/project/azure/variables.tf:534",
 			"readBy": [
 				"azure"
 			],
@@ -4997,7 +4976,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:515",
+			"declaredAt": "infra/templates/project/azure/variables.tf:516",
 			"readBy": [
 				"azure"
 			],
@@ -5015,7 +4994,7 @@
 			"required": false,
 			"description": "DNS domain name for the managed zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:483",
+			"declaredAt": "infra/templates/project/azure/variables.tf:484",
 			"readBy": [
 				"azure",
 				"azure/modules/azure-dns"
@@ -5034,7 +5013,7 @@
 			"required": false,
 			"description": "Whether to create an Azure DNS zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:471",
+			"declaredAt": "infra/templates/project/azure/variables.tf:472",
 			"readBy": [
 				"azure"
 			],
@@ -5052,7 +5031,7 @@
 			"required": false,
 			"description": "Name of the Azure DNS zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:477",
+			"declaredAt": "infra/templates/project/azure/variables.tf:478",
 			"readBy": [],
 			"reachable": true,
 			"ownedByProvider": true,
@@ -5068,7 +5047,7 @@
 			"required": false,
 			"description": "Whether to create an Azure WAF policy",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:494",
+			"declaredAt": "infra/templates/project/azure/variables.tf:495",
 			"readBy": [
 				"azure"
 			],
@@ -5086,7 +5065,7 @@
 			"required": false,
 			"description": "List of Azure WAF custom rules",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:500",
+			"declaredAt": "infra/templates/project/azure/variables.tf:501",
 			"readBy": [
 				"azure",
 				"azure/modules/azure-waf"
@@ -5216,7 +5195,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:432",
+			"declaredAt": "infra/templates/project/azure/variables.tf:433",
 			"readBy": [
 				"azure/modules/cosmos-db"
 			],
@@ -5235,7 +5214,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:432",
+			"declaredAt": "infra/templates/project/azure/variables.tf:433",
 			"readBy": [],
 			"reachable": true,
 			"ownedByProvider": true,
@@ -5252,7 +5231,7 @@
 			"required": false,
 			"description": "List of Cosmos DB containers (collections) to create with partition keys",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:432",
+			"declaredAt": "infra/templates/project/azure/variables.tf:433",
 			"readBy": [
 				"azure",
 				"azure/modules/cosmos-db"
@@ -5271,7 +5250,7 @@
 			"required": false,
 			"description": "Default consistency level for the Cosmos DB account",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:426",
+			"declaredAt": "infra/templates/project/azure/variables.tf:427",
 			"readBy": [
 				"azure",
 				"azure/modules/cosmos-db"
@@ -5290,7 +5269,7 @@
 			"required": false,
 			"description": "Retention tier used when a container asks for point-in-time recovery. Continuous7Days is free; Continuous30Days is billed.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:456",
+			"declaredAt": "infra/templates/project/azure/variables.tf:457",
 			"readBy": [
 				"azure"
 			],
@@ -5308,7 +5287,7 @@
 			"required": false,
 			"description": "Kind of Cosmos DB account (GlobalDocumentDB or MongoDB)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:420",
+			"declaredAt": "infra/templates/project/azure/variables.tf:421",
 			"readBy": [
 				"azure",
 				"azure/modules/cosmos-db"
@@ -5327,7 +5306,7 @@
 			"required": false,
 			"description": "Whether to create an Azure Cosmos DB account",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:414",
+			"declaredAt": "infra/templates/project/azure/variables.tf:415",
 			"readBy": [
 				"azure"
 			],
@@ -5345,7 +5324,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:432",
+			"declaredAt": "infra/templates/project/azure/variables.tf:433",
 			"readBy": [
 				"azure"
 			],
@@ -5364,7 +5343,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:432",
+			"declaredAt": "infra/templates/project/azure/variables.tf:433",
 			"readBy": [
 				"azure",
 				"azure/modules/cosmos-db"
@@ -5383,7 +5362,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:432",
+			"declaredAt": "infra/templates/project/azure/variables.tf:433",
 			"readBy": [
 				"azure/modules/cosmos-db"
 			],
@@ -5402,7 +5381,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:432",
+			"declaredAt": "infra/templates/project/azure/variables.tf:433",
 			"readBy": [
 				"azure"
 			],
@@ -5439,7 +5418,7 @@
 			"required": false,
 			"description": "Object of custom values that can be used for extra terraform files outside of the template",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:636",
+			"declaredAt": "infra/templates/project/azure/variables.tf:637",
 			"readBy": [],
 			"reachable": false,
 			"ownedByProvider": false,
@@ -5593,7 +5572,7 @@
 			"required": false,
 			"description": "Whether to create an Azure Service Bus namespace",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:386",
+			"declaredAt": "infra/templates/project/azure/variables.tf:387",
 			"readBy": [
 				"azure"
 			],
@@ -5611,7 +5590,7 @@
 			"required": false,
 			"description": "Map of Service Bus queues to create",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:398",
+			"declaredAt": "infra/templates/project/azure/variables.tf:399",
 			"readBy": [
 				"azure",
 				"azure/modules/service-bus"
@@ -5630,7 +5609,7 @@
 			"required": false,
 			"description": "SKU for the Service Bus namespace (Basic, Standard, or Premium)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:392",
+			"declaredAt": "infra/templates/project/azure/variables.tf:393",
 			"readBy": [
 				"azure",
 				"azure/modules/service-bus"
@@ -5649,7 +5628,7 @@
 			"required": false,
 			"description": "SKU for the Azure Container Registry (Basic, Standard, or Premium)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:591",
+			"declaredAt": "infra/templates/project/azure/variables.tf:592",
 			"readBy": [
 				"azure",
 				"azure/modules/acr"
@@ -5668,7 +5647,7 @@
 			"required": false,
 			"description": "Whether to provision an Azure Container Registry",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:585",
+			"declaredAt": "infra/templates/project/azure/variables.tf:586",
 			"readBy": [
 				"azure"
 			],
@@ -5704,7 +5683,7 @@
 			"required": false,
 			"description": "Per-secret rotation keepers, keyed by secret name. Changing any value under a name re-generates that secret's password; a name absent from the map keeps its value forever. Empty (the default) is behavior-preserving.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:615",
+			"declaredAt": "infra/templates/project/azure/variables.tf:616",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -5723,7 +5702,7 @@
 			"required": false,
 			"description": "List of secrets to create in Azure Key Vault",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:601",
+			"declaredAt": "infra/templates/project/azure/variables.tf:602",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -5742,7 +5721,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:601",
+			"declaredAt": "infra/templates/project/azure/variables.tf:602",
 			"readBy": [
 				"azure/modules/key-vault"
 			],
@@ -5760,7 +5739,7 @@
 			"required": false,
 			"description": "Block purging this project's soft-deleted Key Vault until the retention window expires. IRREVERSIBLE: Azure refuses to disable purge protection once it is on, so this can only be set to false BEFORE the vault is first created. Leaving it true means a destroyed environment cannot be rebuilt under the same project + environment name for 7 days.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:621",
+			"declaredAt": "infra/templates/project/azure/variables.tf:622",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -5779,7 +5758,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:601",
+			"declaredAt": "infra/templates/project/azure/variables.tf:602",
 			"readBy": [
 				"azure/modules/key-vault"
 			],
@@ -5798,7 +5777,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:601",
+			"declaredAt": "infra/templates/project/azure/variables.tf:602",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -5836,7 +5815,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:601",
+			"declaredAt": "infra/templates/project/azure/variables.tf:602",
 			"readBy": [
 				"azure/modules/key-vault"
 			],
@@ -5855,7 +5834,7 @@
 			"required": false,
 			"description": "Map of Service Bus topics to create",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:404",
+			"declaredAt": "infra/templates/project/azure/variables.tf:405",
 			"readBy": [
 				"azure",
 				"azure/modules/service-bus"
@@ -5874,7 +5853,7 @@
 			"required": false,
 			"description": "List of Cloud Storage buckets to create",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:555",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:567",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-storage"
@@ -5893,7 +5872,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:555",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:567",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -5912,7 +5891,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:555",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:567",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -5931,7 +5910,7 @@
 			"required": false,
 			"description": "Whether to create Cloud Storage buckets",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:549",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:561",
 			"readBy": [
 				"gcp"
 			],
@@ -5949,7 +5928,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:555",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:567",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -5968,7 +5947,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:555",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:567",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -5987,7 +5966,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:555",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:567",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6005,7 +5984,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:555",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:567",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6023,7 +6002,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:555",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:567",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6042,7 +6021,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:555",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:567",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6061,7 +6040,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:555",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:567",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6080,7 +6059,7 @@
 			"required": false,
 			"description": "Whether to create a Memorystore Redis instance",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:368",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:374",
 			"readBy": [
 				"gcp"
 			],
@@ -6098,7 +6077,7 @@
 			"required": false,
 			"description": "Provision Memorystore for Valkey instead of Redis. Mutually exclusive with create_memorystore — the chosen cache engine sets exactly one.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:758",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:770",
 			"readBy": [
 				"gcp"
 			],
@@ -6114,14 +6093,17 @@
 			"kind": "bool",
 			"typeExpr": "bool",
 			"required": false,
-			"description": "Whether AUTH is enabled for Memorystore",
+			"description": "Whether AUTH is enabled for Memorystore. Threaded into modules/memorystore (#4320); the default matches what every instance already runs.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:392",
-			"readBy": [],
+			"declaredAt": "infra/templates/project/gcp/variables.tf:404",
+			"readBy": [
+				"gcp",
+				"gcp/modules/memorystore"
+			],
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
-			"default": false
+			"default": true
 		},
 		{
 			"cloud": "gcp",
@@ -6132,7 +6114,7 @@
 			"required": false,
 			"description": "Memory size in GB for the Memorystore instance",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:380",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:386",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore"
@@ -6151,7 +6133,7 @@
 			"required": false,
 			"description": "Redis version for Memorystore",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:386",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:392",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore"
@@ -6170,7 +6152,7 @@
 			"required": false,
 			"description": "Service tier for Memorystore (BASIC or STANDARD_HA)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:374",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:380",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore"
@@ -6189,7 +6171,7 @@
 			"required": false,
 			"description": "Transit encryption mode for Memorystore (DISABLED or SERVER_AUTHENTICATION)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:398",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:410",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore"
@@ -6208,7 +6190,7 @@
 			"required": false,
 			"description": "Valkey engine enum (VALKEY_7_2, …)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:764",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:776",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore-valkey"
@@ -6227,7 +6209,7 @@
 			"required": false,
 			"description": "Per-shard machine size for the Valkey instance",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:770",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:782",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore-valkey"
@@ -6246,7 +6228,7 @@
 			"required": false,
 			"description": "Replica nodes per Valkey shard",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:782",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:794",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore-valkey"
@@ -6265,7 +6247,7 @@
 			"required": false,
 			"description": "Number of Valkey shards (derived from the requested memory)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:776",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:788",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore-valkey"
@@ -6284,7 +6266,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:697",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:709",
 			"readBy": [
 				"gcp"
 			],
@@ -6302,7 +6284,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:673",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:685",
 			"readBy": [
 				"gcp"
 			],
@@ -6571,7 +6553,7 @@
 			"required": false,
 			"description": "Envelope-encrypt Kubernetes Secrets in etcd under a customer-managed Cloud KMS key. On by default (AWS parity).",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:793",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:805",
 			"readBy": [
 				"gcp"
 			],
@@ -6589,7 +6571,7 @@
 			"required": false,
 			"description": "Cloud KMS rotation period for the Secrets encryption key (default 90 days). Old versions are retained, so existing Secrets stay readable.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:799",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:811",
 			"readBy": [
 				"gcp"
 			],
@@ -6682,7 +6664,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:727",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:739",
 			"readBy": [
 				"gcp"
 			],
@@ -6774,14 +6756,17 @@
 			"kind": "string",
 			"typeExpr": "string",
 			"required": false,
-			"description": "Default database username",
+			"description": "Name of the BUILT_IN admin database user. Null (the default) derives \"<project_name>-user\" — the name every existing instance has and the one the credentials secret carries. Setting it on an EXISTING instance replaces the admin user.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:358",
-			"readBy": [],
+			"declaredAt": "infra/templates/project/gcp/variables.tf:364",
+			"readBy": [
+				"gcp",
+				"gcp/modules/cloud-sql"
+			],
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
-			"default": "postgres"
+			"default": null
 		},
 		{
 			"cloud": "gcp",
@@ -6811,7 +6796,7 @@
 			"required": false,
 			"description": "Cloud SQL edition. ENTERPRISE supports the standard tiers (db-f1-micro etc.); ENTERPRISE_PLUS requires db-perf-optimized-N-* tiers. Left unset, the API now defaults to ENTERPRISE_PLUS and rejects the default tier.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:666",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:678",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-sql"
@@ -6944,7 +6929,7 @@
 			"required": false,
 			"description": "Action the Cloud Armor catch-all rule applies to every request none of cloud_armor_rules matched. Reachable through the DNS provider_config passthrough.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:530",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:542",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-armor"
@@ -6963,7 +6948,7 @@
 			"required": false,
 			"description": "Whether to create Cloud Armor security policies",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:513",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:525",
 			"readBy": [
 				"gcp"
 			],
@@ -6981,7 +6966,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:519",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:531",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-armor"
@@ -7000,7 +6985,7 @@
 			"required": false,
 			"description": "DNS domain name for the managed zone (must end with a dot)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:502",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:514",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-dns"
@@ -7019,7 +7004,7 @@
 			"required": false,
 			"description": "Whether to create Cloud DNS managed zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:490",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:502",
 			"readBy": [
 				"gcp"
 			],
@@ -7037,7 +7022,7 @@
 			"required": false,
 			"description": "Name of the Cloud DNS managed zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:496",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:508",
 			"readBy": [
 				"gcp"
 			],
@@ -7202,7 +7187,7 @@
 			"required": false,
 			"description": "Whether to create a Firestore database",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:439",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:451",
 			"readBy": [
 				"gcp"
 			],
@@ -7220,7 +7205,7 @@
 			"required": false,
 			"description": "Firestore database type (FIRESTORE_NATIVE or DATASTORE_MODE)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:445",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:457",
 			"readBy": [
 				"gcp",
 				"gcp/modules/firestore"
@@ -7239,7 +7224,7 @@
 			"required": false,
 			"description": "Location for Firestore database (defaults to the region derived from var.region if empty)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:451",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:463",
 			"readBy": [
 				"gcp",
 				"gcp/modules/firestore"
@@ -7258,7 +7243,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:469",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:481",
 			"readBy": [
 				"gcp",
 				"gcp/modules/firestore"
@@ -7313,7 +7298,7 @@
 			"required": false,
 			"description": "Object of custom values that can be used for extra terraform files outside of the template",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:660",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:672",
 			"readBy": [],
 			"reachable": false,
 			"ownedByProvider": false,
@@ -7488,7 +7473,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:419",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:431",
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
@@ -7507,7 +7492,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:419",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:431",
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
@@ -7525,7 +7510,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:625",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:637",
 			"readBy": [
 				"gcp",
 				"gcp/modules/artifact-registry"
@@ -7544,7 +7529,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:625",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:637",
 			"readBy": [
 				"gcp/modules/artifact-registry"
 			],
@@ -7563,7 +7548,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:625",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:637",
 			"readBy": [
 				"gcp/modules/artifact-registry"
 			],
@@ -7582,7 +7567,7 @@
 			"required": false,
 			"description": "Whether to provision Artifact Registry repositories",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:600",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:612",
 			"readBy": [
 				"gcp"
 			],
@@ -7618,7 +7603,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:625",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:637",
 			"readBy": [
 				"gcp",
 				"gcp/modules/artifact-registry"
@@ -7638,7 +7623,7 @@
 			"required": false,
 			"description": "Map of keepers for the secrets",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:650",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:662",
 			"readBy": [
 				"gcp",
 				"gcp/modules/secret-manager"
@@ -7657,7 +7642,7 @@
 			"required": false,
 			"description": "List of secrets to create in Secret Manager",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:639",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:651",
 			"readBy": [
 				"gcp",
 				"gcp/modules/secret-manager"
@@ -7676,7 +7661,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:639",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:651",
 			"readBy": [
 				"gcp/modules/secret-manager"
 			],
@@ -7694,7 +7679,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:639",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:651",
 			"readBy": [
 				"gcp/modules/secret-manager"
 			],
@@ -7713,7 +7698,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:639",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:651",
 			"readBy": [
 				"gcp",
 				"gcp/modules/secret-manager"
@@ -7751,7 +7736,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:639",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:651",
 			"readBy": [
 				"gcp/modules/secret-manager"
 			],
@@ -7770,7 +7755,7 @@
 			"required": false,
 			"description": "Whether to create Pub/Sub topics and subscriptions",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:413",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:425",
 			"readBy": [
 				"gcp"
 			],
@@ -7788,7 +7773,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:419",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:431",
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
@@ -7807,7 +7792,7 @@
 			"required": false,
 			"description": "Map of Pub/Sub topics with their subscriptions",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:419",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:431",
 			"readBy": [
 				"gcp",
 				"gcp/modules/pubsub"
@@ -7826,7 +7811,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:419",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:431",
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
@@ -7863,7 +7848,9 @@
 			"description": "",
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/hetzner/variables.tf:258",
-			"readBy": [],
+			"readBy": [
+				"hetzner"
+			],
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7896,7 +7883,7 @@
 			"required": false,
 			"description": "Hetzner Object Storage S3 access key (distinct from the Cloud API token; manually generated in the Hetzner Console). Empty when no buckets are provisioned.",
 			"sensitive": true,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:287",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:295",
 			"readBy": [
 				"hetzner"
 			],
@@ -7914,7 +7901,7 @@
 			"required": false,
 			"description": "Hetzner Object Storage S3 endpoint HOST, no scheme (e.g. fsn1.your-objectstorage.com). Only used when var.buckets is non-empty.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:275",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:283",
 			"readBy": [
 				"hetzner"
 			],
@@ -7932,7 +7919,7 @@
 			"required": false,
 			"description": "Hetzner Object Storage location/region (fsn1, nbg1, hel1).",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:281",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:289",
 			"readBy": [
 				"hetzner"
 			],
@@ -7950,7 +7937,7 @@
 			"required": false,
 			"description": "Hetzner Object Storage S3 secret key. Empty when no buckets are provisioned.",
 			"sensitive": true,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:294",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:302",
 			"readBy": [
 				"hetzner"
 			],
@@ -8024,7 +8011,7 @@
 			"required": false,
 			"description": "TTL for the Talos admin kubeconfig client cert (.cluster.adminKubeconfig.certLifetime). Pinned LOW (default 24h) so placement-minted kubeconfigs are short-lived; the Talos default is 1 year. Go time.Duration format.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:301",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:309",
 			"readBy": [
 				"hetzner"
 			],
@@ -8096,7 +8083,7 @@
 			"required": false,
 			"description": "In-cluster registry hosts (registry-<name>.registries.svc.cluster.local) to trust over plain HTTP via a containerd mirror. Empty on a cluster with no registry node.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:323",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:331",
 			"readBy": [
 				"hetzner"
 			],

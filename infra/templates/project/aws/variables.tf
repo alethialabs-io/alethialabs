@@ -417,10 +417,35 @@ variable "waf_default_action" {
   description = "allow or block - default action of WAF when a request hasn't matched any rules"
 }
 
+# WIRED BY #4320. Declared, carried all the way to tfvars, and read by NO resource: modules/wafv2
+# had one rule input (`custom_rules`) and this list reached neither it nor the Web ACL, so a rate
+# limit a caller asked for was accepted and never built. It now has its own typed input and its own
+# rule loop in modules/wafv2/webacl.tf.
+#
+# Typed rather than left `list(any)`: `any` declares no shape at all, so a misspelt key used to be
+# dropped in silence — the same failure this knob already was, one level down.
 variable "waf_rate_limit_rules" {
-  description = "Rate-based rules passed through to the WAF module (same schema as tf-module-wafv2 rate_limit_rules)."
-  type        = list(any)
-  default     = []
+  description = <<-EOT
+    Rate-based WAF rules, short form. Applied to BOTH Web ACLs (regional + CloudFront), like every
+    other rule input here.
+
+    Priorities share one space with `waf_custom_rules` and the managed rule groups — WAFv2 rejects a
+    Web ACL with two rules at the same priority. `evaluation_window_sec` unset leaves WAF's own
+    300-second window.
+
+    A rate limit that needs a scope-down statement (limit only requests matching some other
+    statement tree) belongs in `waf_custom_rules` as `statement.rate_based_statement` instead; see
+    modules/wafv2/examples/custom-rules.tfvars.
+  EOT
+  type = list(object({
+    name                  = string
+    priority              = number
+    limit                 = number
+    action                = optional(string, "block")
+    aggregate_key_type    = optional(string, "IP")
+    evaluation_window_sec = optional(number)
+  }))
+  default = []
 }
 
 variable "waf_webacl_cloudwatch_enabled" {}
@@ -588,9 +613,17 @@ variable "redis_cluster_size" {
   description = "Number of nodes in cluster. Ignored when redis_cluster_mode_enabled == true"
 }
 
+# WIRED BY #4320, and the wire CHANGES A DEPLOYED CACHE. This was declared here, required, emitted
+# by the console as `false` (packages/core/cloud/aws_provider.go), and threaded into
+# modules/redis by nothing — so the module's own default, `true`, decided it. Every ElastiCache
+# this template has ever built is running with cluster mode ON against a caller that asked for OFF.
+#
+# Honouring the caller is the fix, and on an EXISTING replication group the flip from a sharded
+# cluster to a single node group is a TOPOLOGY change, not an in-place update. `redis_cluster_size`
+# is ignored while this is true, which is the other half of the same lie.
 variable "redis_cluster_mode_enabled" {
   type        = bool
-  description = "Flag to enable/disable cluster mode"
+  description = "Flag to enable/disable cluster mode. Threaded into modules/redis (#4320) — the module used to default it to true regardless, so turning it off is a topology change on an existing cache."
 }
 
 variable "redis_instance_type" {
@@ -628,9 +661,20 @@ variable "redis_multi_az_enabled" {
 
 ## Elasticache Redis - Logging variables
 
+# WIRED BY #4320, and the wire CHANGES A DEPLOYED CACHE — the same shape as
+# `redis_cluster_mode_enabled` above. Declared here, required, emitted by the console as `false`
+# (packages/core/cloud/aws_provider.go), threaded nowhere, so modules/redis' default of `true` won:
+# every cache this template has built is streaming slow-log and engine-log to CloudWatch against a
+# caller that asked for none.
+#
+# The consequence of honouring `false` is stated rather than softened: modules/redis creates
+# `aws_cloudwatch_log_group.redis` under `count = var.cloudwatch_logs_enabled ? 1 : 0`, so the first
+# apply after this wire DESTROYS that log group and the retained log events with it. The module
+# falls back to the firehose delivery configuration, which is itself off by default, so the cache
+# ends up delivering no logs at all — which is what `false` means.
 variable "redis_cloudwatch_logs_enabled" {
   type        = bool
-  description = "Indicates whether you want to enable or disable streaming broker logs to Cloudwatch Logs."
+  description = "Indicates whether you want to enable or disable streaming broker logs to Cloudwatch Logs. Threaded into modules/redis (#4320) — the module used to default it to true regardless, so setting it false now destroys the cache's CloudWatch log group."
 }
 
 variable "redis_automatic_failover_enabled" {
