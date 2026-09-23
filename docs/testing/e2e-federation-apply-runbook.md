@@ -238,7 +238,7 @@ issuer's **CA certificate fingerprints**, which are public.
    `infra/e2e-issuer`'s `hostname`. `node scripts/ci/check-e2e-issuer-health.mjs --static` fails any PR
    that lets those copies drift. **Until step 1 is done, do not apply any of the four stacks**, for any
    reason: with the origin committed, every apply creates the broker trust.
-3. **The origin answers, and the health check is green.** This must print the same origin back:
+3. **The origin answers, and the health check passes.** This must print the same origin back:
    ```bash
    curl -fsS https://e2e-issuer.alethialabs.io/.well-known/openid-configuration | jq -r .issuer
    node scripts/ci/check-e2e-issuer-health.mjs --expected-url https://e2e-issuer.alethialabs.io
