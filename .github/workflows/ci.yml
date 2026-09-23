@@ -1790,6 +1790,17 @@ jobs:
       - name: Nightly dimension resolution (floor and full-bar never collide)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/resolve-dimension.sh --self-test
+      # The keyless recorder decides what a run PROVED, and the parity board flips a cell to ✅ only
+      # on a PASS row it writes — so a misclassification here is the whole chain. It shipped reading
+      # `rc == 0 && grep '^ok|^--- PASS|^PASS'` FIRST, and a Go test that SKIPS prints both markers
+      # and exits 0, so an un-configured run — the most likely FIRST run — recorded PASS. That is
+      # #1723 inside the script whose header promises to prevent it. These fixtures pin the three
+      # shapes of that hazard (a SKIP, a `no tests to run`, and a green T2 that never ran the keyless
+      # stage at all) against the summary file the scenario itself writes. Hermetic — no cloud, no
+      # network, no repo write.
+      - name: Keyless-DB recorder verdicts (a SKIPPED run is BLOCKED, never PASS)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/e2e/keyless-db-e2e.sh --self-test
       # The AWS sweeper discovers this run's cluster to reach the resources tofu never owned — the
       # NLB ingress-nginx creates, Karpenter's instances. Discovery fell back to EC2 tags alone, so a
       # teardown that deleted the cluster AND the instances (a hard-killed run's exact end state) left
