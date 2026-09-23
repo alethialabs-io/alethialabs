@@ -258,9 +258,17 @@ variable "dns_zone_ttl" {
 variable "buckets" {
   description = <<-EOT
     Object Storage buckets to provision via the aminueza/minio provider. Empty = none
-    (the minio provider is then never exercised). `cors_origins` is IGNORED on Hetzner
-    (the provider does not apply CORS to a non-MinIO backend); `encryption_enabled` is
-    informational (Hetzner encrypts at rest automatically, no per-bucket toggle).
+    (the minio provider is then never exercised).
+
+    `cors_origins` builds a minio_s3_bucket_cors rule for any bucket that asks for one (#4320).
+    The provider runs in s3_compat_mode, which names CORS among the features it SKIPS rather than
+    fails when a backend does not implement them — so a CORS request here is honoured where Hetzner
+    supports it and is a no-op where it does not, never an apply error.
+
+    `encryption_enabled` is INFORMATIONAL and reaches no resource, deliberately: Hetzner Object
+    Storage supports exactly one encryption type, SSE-C — per-request keys the caller supplies —
+    and no bucket-level default-encryption configuration. There is nothing for a resource to write.
+    Objects are encrypted at rest regardless; this field cannot turn that off.
   EOT
   type = list(object({
     name               = string

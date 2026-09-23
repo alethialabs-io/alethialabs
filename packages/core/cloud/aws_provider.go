@@ -150,16 +150,33 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 		// Cache defaults. The chosen ENGINE decides which module runs — the Caches block below
 		// overrides both toggles. Defaulting Redis on keeps an engine-less config unchanged.
-		"create_elasticache_redis":         len(config.Caches) > 0,
-		"create_elasticache_valkey":        false,
-		"redis_cluster_size":               1,
-		"redis_cluster_mode_enabled":       false,
+		"create_elasticache_redis":  len(config.Caches) > 0,
+		"create_elasticache_valkey": false,
+		"redis_cluster_size":        1,
+		// THESE TWO WERE `false` AND WERE IGNORED. Both knobs were declared at the root and read by
+		// no resource, so the aws/modules/redis defaults won — and both of those default TRUE. So
+		// every cache provisioned to date runs cluster mode ON and streams to CloudWatch, while
+		// this map has been politely asking for neither since it was written.
+		//
+		// The same change that wires them (#4320) therefore flips what a deployment DOES, not just
+		// what it says. Left at `false`, the first apply after that wire lands would have turned
+		// cluster mode off — an ElastiCache TOPOLOGY change, not an in-place update — and DESTROYED
+		// `aws_cloudwatch_log_group.redis` (it sits under `count = var.cloudwatch_logs_enabled ? 1 :
+		// 0`) along with every log event it retained, on every existing AWS deployment, with nobody
+		// having asked for it. The firehose fallback is off by default too, so the cache would then
+		// deliver no logs at all.
+		//
+		// So these now send what is ALREADY TRUE in the field. The knobs become real and opt-OUT
+		// rather than silently-ignored-then-suddenly-destructive, and no existing deployment moves.
+		// Maintainer decision, 2026-09-22: fix the console default, not the template — the template's
+		// job is to honour its input, and its input was wrong.
+		"redis_cluster_mode_enabled":       true,
 		"redis_instance_type":              "cache.t3.micro",
 		"redis_engine_version":             "7.1",
 		"redis_family":                     "redis7",
 		"redis_allowed_cidr_blocks":        []string{},
 		"redis_allowed_security_group_ids": []string{},
-		"redis_cloudwatch_logs_enabled":    false,
+		"redis_cloudwatch_logs_enabled":    true,
 
 		// Secrets
 		"custom_secrets": buildSecrets(config.Secrets),
