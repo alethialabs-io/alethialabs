@@ -67,7 +67,28 @@ jobs:
           # The safe direction is deliberate: over-rejecting leaves an issue open for a human to
           # close, while under-rejecting closes an issue nobody meant to close and the board then
           # lies about what is done.
-          # THREE families of false positive, each one of which closed a REAL issue:
+          # ── A CLOSING KEYWORD MUST START ITS LINE — the rule that subsumes the rest ──────────
+          # A FOURTH false positive arrived ELEVEN SECONDS after the third fix merged, from the
+          # paragraph in that very PR documenting the defect: "they closed #3348 and #4110 while
+          # this branch was open" closed #3348 again. Past tense, no negation, not quoted — all
+          # three guards correct, none applicable. A PR explaining this bug is GUARANTEED to carry
+          # the strings, so lookbehinds are whack-a-mole by construction.
+          #
+          # Every false positive so far has been MID-SENTENCE. Measured over the last 60 merged dev
+          # PRs: 28 closing refs on their own line, 10 only inline — of which exactly TWO are
+          # genuine ("Closes #4910. Also fixes…", "Closes #4114. Part of #2766."), both
+          # LINE-INITIAL. So this keeps 30 of 30 real refs and rejects 8 of 8 false ones on real
+          # data rather than on an argument.
+          #
+          # ⚠️ `(?m)` HERE MEANS MULTILINE, not dotall. Classic Oniguruma documents it the other
+          # way; jq's build uses Perl semantics. Verified: without `(?m)`, `^` anchors to the
+          # string start and a line-initial ref on line 2 is MISSED. Title is joined before body
+          # with "\n" for the same reason — a space would put a title's `Closes #n` mid-line.
+          #
+          # The lookbehinds below are kept as belt-and-braces for a line-initial negation
+          # ("Does not close #n" starting a line), which the anchor alone would admit.
+          #
+          # The three families the lookbehinds cover, each of which closed a REAL issue:
           #   negation         "does not close #n"     → #3855, twice (#4919 16:54Z, #4924 21:41Z)
           #   relative clause  "what closes #n"        → #3348, by the sentence in #4940 saying it
           #                                              used `Refs` and not `Closes`
@@ -80,7 +101,7 @@ jobs:
           refs="$(jq -rn --arg t "$PR_TITLE" --arg b "$PR_BODY" '
             ($t + "\n" + ($b // ""))
             | gsub("(?s)```.*?```"; " ") | gsub("`[^`\n]*`"; " ")
-            | [ match("(?i)(?<!not )(?<!n.t )(?<!never )(?<!what )(?<!that )(?<!which )(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved) +#([0-9]+)"; "g")
+            | [ match("(?i)(?m)^[ \t]*(?:[-*>][ \t]*)*(?:[*][*])?(?<!not )(?<!n.t )(?<!never )(?<!what )(?<!that )(?<!which )(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved) +#([0-9]+)"; "g")
                 | .captures[1].string ]
             | map(tonumber) | unique | .[]' || true)"
 

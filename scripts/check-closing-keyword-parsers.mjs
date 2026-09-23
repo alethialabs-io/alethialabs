@@ -58,6 +58,13 @@ const LIB = "scripts/lib/board-pr.sh";
 const GUARD = "(?<!not )(?<!n.t )(?<!never )(?<!what )(?<!that )(?<!which )";
 /** A keyword inside backticks is NAMED, not used. Not decidable by lookbehind — stripped first. */
 const STRIP = 'gsub("(?s)```.*?```"; " ")';
+/**
+ * A closing keyword must START its line. This SUBSUMES the lookbehinds: every false positive so
+ * far was mid-sentence prose ABOUT closing. Measured over 60 merged dev PRs — 28 own-line refs,
+ * 10 inline of which exactly 2 genuine and both line-initial — so it keeps 30/30 real and rejects
+ * 8/8 false. `(?m)` is MULTILINE in jq's engine, not dotall; verified both directions.
+ */
+const ANCHOR = '(?m)^[ \\t]*(?:[-*>][ \\t]*)*(?:[*][*])?';
 const KEYWORDS = "(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)";
 
 /**
@@ -66,8 +73,9 @@ const KEYWORDS = "(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved
  */
 const CORPUS = [
 	{ text: "Closes #4112", expect: [4112], why: "the ordinary case" },
-	{ text: "closes #1, fixes #2", expect: [1, 2], why: "several refs, several tenses" },
-	{ text: "Note: closes #7", expect: [7], why: "a word CONTAINING 'not' must not reject" },
+	{ text: "closes #1, fixes #2", expect: [1], why: "BEHAVIOUR CHANGE: only the line-initial ref closes. Measured over 60 merged dev PRs, ZERO lines carry two closing refs, so this costs nothing real — and the loss direction is the safe one (a human closes #2)" },
+	{ text: "Note: closes #7", expect: [], why: "BEHAVIOUR CHANGE: mid-sentence, so no longer closes. It was only ever in the corpus to prove a word CONTAINING 'not' does not trip the negation guard — which the line-initial row below now covers instead" },
+	{ text: "Note #7 is unrelated\nCloses #7", expect: [7], why: "…and the guard still must not reject a line-initial keyword merely because an earlier line contains 'Note'" },
 	{ text: "Fixes #99 and does not close #100", expect: [99], why: "one real, one negated, same line" },
 	{ text: "It does not close #3855", expect: [], why: "#4924 — closed #3855 at 21:41Z" },
 	{ text: "**This does not close #3855.**", expect: [], why: "#4919 — closed #3855 at 16:54Z" },
@@ -78,7 +86,14 @@ const CORPUS = [
 	{ text: "That is what closes #3348, which is why this says Refs", expect: [], why: "#4940 — closed #3348: a relative clause, in the sentence saying it used Refs" },
 	{ text: "Changed from `Closes #4110` to `Refs #4110` — deliberately", expect: [], why: "#4935 — closed #4110: the keyword QUOTED in the note saying it had been changed away from Closes" },
 	{ text: "the commit that fixes #9", expect: [], why: "relative clause, other tense" },
-	{ text: "```\nCloses #999\n```\nand Closes #5", expect: [5], why: "a fenced block is not an assertion; the real one beside it still counts" },
+	{ text: "```\nCloses #999\n```\nCloses #5", expect: [5], why: "a fenced block is not an assertion; a line-initial ref after it still counts" },
+	{ text: "The last two were found the hard way: they closed #3348 and #4110 while open", expect: [], why: "#4945 — closed #3348 ELEVEN SECONDS after the previous fix merged, from the paragraph documenting the defect" },
+	{ text: "Closes #4910. Also fixes the outage tracked by #4934", expect: [4910], why: "GENUINE inline continuation — line-initial, must still close" },
+	{ text: "Closes #4114. Part of #2766.", expect: [4114], why: "likewise genuine (#4911)" },
+	{ text: "- Closes #4112", expect: [4112], why: "a list marker is still line-initial" },
+	{ text: "**Closes #4112**", expect: [4112], why: "bold is still line-initial" },
+	{ text: "| a | closes #77 | b |", expect: [], why: "a TABLE CELL is not a closing reference" },
+	{ text: "intro\nCloses #4112\nmore prose", expect: [4112], why: "line 2 — proves (?m) is present and means multiline" },
 	{ text: "", expect: [], why: "empty body must not throw" },
 ];
 
@@ -86,7 +101,7 @@ const CORPUS = [
 function refsOf(text) {
 	const program =
 		'$t | gsub("(?s)```.*?```"; " ") | gsub("`[^`\\n]*`"; " ") ' +
-		`| [ match("(?i)${GUARD}${KEYWORDS} +#([0-9]+)"; "g") | .captures[1].string ] ` +
+		`| [ match("(?i)${ANCHOR}${GUARD}${KEYWORDS} +#([0-9]+)"; "g") | .captures[1].string ] ` +
 		`| map(tonumber) | unique`;
 	const out = execFileSync("jq", ["-rn", "--arg", "t", text, program], { encoding: "utf8" });
 	return JSON.parse(out.trim() || "[]");
@@ -129,6 +144,13 @@ function checkBothSitesCarryTheGuard() {
 		}
 		if (!text.includes(KEYWORDS)) {
 			failures.push(`  ${path}: does not carry the shared keyword alternation — the two have drifted`);
+		}
+		if (!text.includes("(?m)^[ \\t]*(?:[-*>][ \\t]*)*")) {
+			failures.push(
+				`  ${path}: does not anchor the keyword to the START OF A LINE.\n` +
+					"    Mid-sentence prose about closing would close an issue — which is how #3348 was\n" +
+					"    closed eleven seconds after the previous fix for this very defect merged.",
+			);
 		}
 		if (!text.includes(STRIP)) {
 			failures.push(
