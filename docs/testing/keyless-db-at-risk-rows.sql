@@ -74,9 +74,9 @@ SELECT
 	COALESCE(provider, '(unresolved)') AS provider,
 	engine,
 	engine_source,
-	-- `row_count`, not `rows`: ROWS is a Postgres keyword (the FETCH/window clause), and an
-	-- unquoted alias that collides with one is a parse error discovered in front of the person
-	-- running the audit.
+	-- `row_count` rather than `rows` for readability only. `AS rows` parses fine — ROWS is a
+	-- non-reserved keyword and an `AS` label accepts any keyword (checked on Postgres 15:
+	-- `SELECT 1 AS rows` and even `SELECT 1 AS select` both run).
 	count(*) AS row_count,
 	count(*) FILTER (WHERE status = 'READY') AS live_rows,
 	min(created_at) AS oldest,
@@ -107,9 +107,15 @@ ORDER BY 1, 2, 3;
 
 -- ── Reconciliation. Run this SECOND and check the two numbers agree. ─────────────────────────
 --
--- `grouped` re-runs the classification and totals it; `raw` counts the same predicate with no
--- joins at all. If they differ, a join dropped rows and the report above understates the risk —
--- which is the failure this query exists to make visible rather than to assume away.
+-- `raw` counts the predicate with no joins at all; `grouped` counts it through the SAME joins the
+-- `resolved` CTE uses. If they differ, a join dropped rows and the report above understates the
+-- risk — the failure this query exists to make visible rather than to assume away.
+--
+-- What it does NOT check: it carries its own copy of the joins, so it proves THIS join shape keeps
+-- every row, not that the report above still uses it. Close that gap by hand — the report's
+-- `row_count` column must SUM to `raw_rows`. (Exercised against a fixture schema on Postgres 15:
+-- a database whose own and project identity were both deleted lands in `(unresolved)`, and the
+-- two counts agree; under the old INNER join that row was absent from the report.)
 --
 --   WITH raw AS (SELECT count(*) AS n FROM project_databases WHERE iam_auth IS TRUE),
 --        grouped AS (

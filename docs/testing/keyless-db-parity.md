@@ -60,8 +60,10 @@ the symbol.
 ### The security row is two different claims
 
 The static gate is real and required (`.github/workflows/capabilities-security.yml`), and it does
-reach the keyless sources. But it decides **four deterministic invariants** — no `as any`, no
-`as unknown as`, no `AKIA…`, no PEM — and its own header disclaims more. It never reads the
+reach the keyless sources. But it decides **four deterministic invariants** (its header, A–D): RLS
+registration of a new `cloud_capability_*` table, a `provider` filter on queries against one, no
+`as any` / `as unknown as`, and no static credentials (`AKIA…` access-key ids, embedded PEMs). Only
+the last two bear on the keyless DB code, and its own header disclaims more. It never reads the
 bootstrap SQL's privilege grants, the admin-versus-app least-privilege split, or the proxy's token
 handling.
 
