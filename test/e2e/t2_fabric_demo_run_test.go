@@ -18,7 +18,8 @@ import (
 	"time"
 )
 
-// runT2FabricDemo drives the #845 acceptance gate on the Fabric the base run provisioned: place each
+// runT2FabricDemo drives the #845 acceptance gate on the Fabric the base run provisioned: assert the
+// base deploy is the prod tier's DEDICATED placement that owns this Fabric, place each
 // tier as a namespace env syncing its OWN Kustomize overlay, place one tier as a vcluster env, prove
 // every placement genuinely CAUSED the artifacts it is credited with, re-prove the Fabric's drift
 // posture, and record the whole thing as a machine-readable verdict.
@@ -67,6 +68,23 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 	// is what ties these placements to a proven Fabric; an absent digest fails the verdict rather
 	// than quietly reporting placements on an unproven cluster.
 	summary.FabricPlanSHA = strings.TrimSpace(p.planSHA)
+
+	// ── (P) The PROD tier — the DEDICATED placement that provisioned this Fabric ────────────────
+	//    Asserted from the base DEPLOY job's own rows, before any tenant is placed: its snapshot
+	//    must resolve to the dedicated path, its metadata must name this Fabric, and its receipt
+	//    must have verified. Cheap (two DB reads, no cloud time), so it runs first and a Fabric that
+	//    was not provisioned by a dedicated placement fails before a single tenant is seeded.
+	prodSnap, prodMeta, err := fabricDemoBaseJobRows(ctx, cp, p.deployJobID)
+	if err != nil {
+		t.Fatalf("fabric-demo: prod tier: %v", err)
+	}
+	prod, err := assertFabricDemoProd(p.deployJobID, prodSnap, prodMeta, p.fabricClust, summary.FabricPlanSHA)
+	summary.Prod = prod
+	if err != nil {
+		t.Fatalf("fabric-demo: prod tier: %v", err)
+	}
+	t.Logf("fabric-demo: prod tier = DEDICATED placement (base DEPLOY %s, placement_mode=%s, stage label %q) owning Fabric %q with a verified receipt",
+		prod.DeployJob, prod.PlacementMode, prod.StageLabel, p.fabricClust)
 
 	timeout := fabricDemoTimeout()
 	t.Logf("fabric-demo (#845): placing %d namespace tier(s) %v + one vcluster tier (%s) onto Fabric %q from %s (bound %s)",
@@ -290,6 +308,22 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 		t.Fatalf("fabric-demo (#845) FAILED: %s", fabricDemoSummaryVerdict(summary))
 	}
 	t.Logf("fabric-demo (#845) PROVEN: %s", fabricDemoSummaryVerdict(summary))
+}
+
+// fabricDemoBaseJobRows reads the base DEPLOY job's config_snapshot and execution_metadata — the two
+// rows assertFabricDemoProd judges the prod tier's dedicated placement by. An empty job id is not an
+// error here: assertFabricDemoProd refuses it with the reason, so the summary still records it.
+func fabricDemoBaseJobRows(ctx context.Context, cp *ControlPlane, jobID string) (snapshot, meta []byte, err error) {
+	if strings.TrimSpace(jobID) == "" {
+		return nil, nil, nil
+	}
+	err = cp.pool.QueryRow(ctx,
+		`SELECT config_snapshot, execution_metadata FROM public.jobs WHERE id = $1`, jobID).
+		Scan(&snapshot, &meta)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read base DEPLOY job %s rows: %w", jobID, err)
+	}
+	return snapshot, meta, nil
 }
 
 // kubeIdentsOf lists a kind and returns name → identity, for the causality baseline. ns == "" lists
