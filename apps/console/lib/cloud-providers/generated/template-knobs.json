@@ -27,10 +27,10 @@
 			"dead": 1
 		},
 		"gcp": {
-			"declared": 104,
-			"reachable": 84,
-			"settable": 34,
-			"dead": 1
+			"declared": 103,
+			"reachable": 83,
+			"settable": 33,
+			"dead": 0
 		},
 		"hetzner": {
 			"declared": 37,
@@ -53,6 +53,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -72,6 +73,7 @@
 				"alibaba",
 				"alibaba/modules/oss"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -90,6 +92,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -109,6 +112,7 @@
 				"alibaba",
 				"alibaba/modules/kvstore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -128,6 +132,7 @@
 				"alibaba",
 				"alibaba/modules/kvstore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -147,6 +152,7 @@
 				"alibaba",
 				"alibaba/modules/kvstore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -166,6 +172,7 @@
 				"alibaba",
 				"alibaba/modules/kvstore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -185,6 +192,7 @@
 				"alibaba",
 				"alibaba/modules/kvstore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -203,6 +211,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -221,6 +230,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -240,6 +250,7 @@
 				"alibaba",
 				"alibaba/modules/cluster"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -258,6 +269,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -276,6 +288,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -295,6 +308,7 @@
 				"alibaba",
 				"alibaba/modules/cluster"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -314,6 +328,7 @@
 				"alibaba",
 				"alibaba/modules/cluster"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -335,6 +350,7 @@
 				"alibaba",
 				"alibaba/modules/cluster"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -354,6 +370,7 @@
 				"alibaba",
 				"alibaba/modules/cluster"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -373,6 +390,7 @@
 				"alibaba",
 				"alibaba/modules/cluster"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -392,6 +410,7 @@
 				"alibaba",
 				"alibaba/modules/cluster"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -410,6 +429,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -428,6 +448,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -447,6 +468,7 @@
 				"alibaba",
 				"alibaba/modules/kms"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -465,6 +487,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -483,6 +506,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -500,6 +524,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -518,6 +543,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -537,6 +563,7 @@
 				"alibaba",
 				"alibaba/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -556,6 +583,7 @@
 				"alibaba",
 				"alibaba/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -575,6 +603,7 @@
 				"alibaba",
 				"alibaba/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -594,6 +623,7 @@
 				"alibaba",
 				"alibaba/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -612,6 +642,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -631,6 +662,7 @@
 				"alibaba",
 				"alibaba/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -650,6 +682,7 @@
 				"alibaba",
 				"alibaba/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -669,6 +702,7 @@
 				"alibaba",
 				"alibaba/modules/dns"
 			],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -687,6 +721,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -703,6 +738,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/alibaba/variables.tf:240",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -721,6 +757,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -739,6 +776,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -758,6 +796,7 @@
 				"alibaba",
 				"alibaba/modules/network"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -776,6 +815,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -794,6 +834,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -813,6 +854,7 @@
 				"alibaba",
 				"alibaba/modules/network"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -831,6 +873,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -850,6 +893,7 @@
 				"alibaba",
 				"alibaba/modules/network"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -868,6 +912,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -887,6 +932,7 @@
 				"alibaba",
 				"alibaba/modules/ots"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -903,6 +949,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/alibaba/variables.tf:42",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -921,6 +968,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -939,6 +987,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -958,6 +1007,7 @@
 				"alibaba/modules/kvstore",
 				"alibaba/modules/network"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -974,6 +1024,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/alibaba/connector-providers.tf:31",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -990,6 +1041,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/alibaba/connector-providers.tf:42",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1008,6 +1060,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1027,6 +1080,7 @@
 				"alibaba",
 				"alibaba/modules/mns"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1046,6 +1100,7 @@
 				"alibaba",
 				"alibaba/modules/cr"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1064,6 +1119,7 @@
 			"readBy": [
 				"alibaba/modules/cr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1084,6 +1140,7 @@
 				"alibaba",
 				"alibaba/modules/cr"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -1101,6 +1158,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1119,6 +1177,7 @@
 			"readBy": [
 				"alibaba"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1137,6 +1196,7 @@
 			"readBy": [
 				"alibaba/modules/cr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1156,6 +1216,7 @@
 			"readBy": [
 				"alibaba/modules/cr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1176,6 +1237,7 @@
 				"alibaba",
 				"alibaba/modules/kms"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1195,6 +1257,7 @@
 				"alibaba",
 				"alibaba/modules/mns"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1213,6 +1276,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1231,6 +1295,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1249,6 +1314,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1268,6 +1334,7 @@
 				"aws",
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1300,6 +1367,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1318,6 +1386,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1336,6 +1405,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1354,6 +1424,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1372,6 +1443,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1390,6 +1462,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1408,6 +1481,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1426,6 +1500,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1444,6 +1519,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1462,6 +1538,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1480,6 +1557,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1498,6 +1576,7 @@
 			"readBy": [
 				"aws/modules/s3"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1517,6 +1596,7 @@
 				"aws",
 				"aws/modules/redis"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1535,6 +1615,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1552,6 +1633,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1570,6 +1652,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1589,6 +1672,7 @@
 				"aws/modules/redis",
 				"aws/modules/valkey"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1607,6 +1691,7 @@
 				"aws",
 				"aws/modules/redis"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1626,6 +1711,7 @@
 				"aws",
 				"aws/modules/redis"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1644,6 +1730,7 @@
 				"aws",
 				"aws/modules/redis"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1662,6 +1749,7 @@
 				"aws",
 				"aws/modules/redis"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1680,6 +1768,7 @@
 				"aws",
 				"aws/modules/redis"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1698,6 +1787,7 @@
 				"aws",
 				"aws/modules/redis"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1716,6 +1806,7 @@
 				"aws",
 				"aws/modules/redis"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -1734,6 +1825,7 @@
 				"aws",
 				"aws/modules/redis"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -1753,6 +1845,7 @@
 				"aws",
 				"aws/modules/valkey"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1772,6 +1865,7 @@
 				"aws",
 				"aws/modules/valkey"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -1791,6 +1885,7 @@
 				"aws",
 				"aws/modules/valkey"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1810,6 +1905,7 @@
 				"aws",
 				"aws/modules/valkey"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -1829,6 +1925,7 @@
 				"aws",
 				"aws/modules/valkey"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1848,6 +1945,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1867,6 +1965,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1888,6 +1987,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1906,6 +2006,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1925,6 +2026,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1944,6 +2046,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -1963,6 +2066,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -1982,6 +2086,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2001,6 +2106,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -2020,6 +2126,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -2041,6 +2148,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2060,6 +2168,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2079,6 +2188,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -2098,6 +2208,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -2117,6 +2228,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -2136,6 +2248,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2155,6 +2268,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2173,6 +2287,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2191,6 +2306,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -2210,6 +2326,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2229,6 +2346,7 @@
 				"aws",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2250,6 +2368,7 @@
 				"aws",
 				"aws/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -2268,6 +2387,7 @@
 				"aws",
 				"aws/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2287,6 +2407,7 @@
 				"aws",
 				"aws/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -2306,6 +2427,7 @@
 				"aws",
 				"aws/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2324,6 +2446,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true
@@ -2342,6 +2465,7 @@
 				"aws",
 				"aws/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2361,6 +2485,7 @@
 				"aws",
 				"aws/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2383,6 +2508,7 @@
 				"aws",
 				"aws/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -2402,6 +2528,7 @@
 				"aws",
 				"aws/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -2421,6 +2548,7 @@
 				"aws",
 				"aws/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -2442,6 +2570,7 @@
 				"aws",
 				"aws/modules/rds"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true
@@ -2459,6 +2588,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2478,6 +2608,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2497,6 +2628,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2515,6 +2647,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2534,6 +2667,7 @@
 				"aws",
 				"aws/modules/route53"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2553,6 +2687,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2572,6 +2707,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2592,6 +2728,7 @@
 				"aws/modules/acm",
 				"aws/modules/route53"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2610,6 +2747,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2629,6 +2767,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2648,6 +2787,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2667,6 +2807,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -2685,6 +2826,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -2703,6 +2845,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2722,6 +2865,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -2740,6 +2884,7 @@
 				"aws",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -2757,6 +2902,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2775,6 +2921,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2793,6 +2940,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2813,6 +2961,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2831,6 +2980,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2850,6 +3000,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2868,6 +3019,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2887,6 +3039,7 @@
 				"aws",
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -2905,6 +3058,7 @@
 				"aws",
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -2922,6 +3076,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2941,6 +3096,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2960,6 +3116,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -2979,6 +3136,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -2998,6 +3156,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3017,6 +3176,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3035,6 +3195,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3053,6 +3214,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3072,6 +3234,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3090,6 +3253,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3108,6 +3272,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3127,6 +3292,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3145,6 +3311,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3164,6 +3331,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3183,6 +3351,7 @@
 			"readBy": [
 				"aws/modules/dynamodb"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3202,6 +3371,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3220,6 +3390,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3238,6 +3409,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3261,6 +3433,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3279,6 +3452,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3297,6 +3471,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3315,6 +3490,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3333,6 +3509,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3349,6 +3526,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/aws/variables.tf:971",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3369,6 +3547,7 @@
 				"aws/modules/acm",
 				"aws/modules/eks"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3397,6 +3576,7 @@
 				"aws/modules/valkey",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -3414,6 +3594,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3432,6 +3613,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3457,6 +3639,7 @@
 				"aws/modules/valkey",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -3474,6 +3657,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3500,6 +3684,7 @@
 				"aws/modules/valkey",
 				"aws/modules/wafv2"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -3517,6 +3702,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3535,6 +3721,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3551,6 +3738,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/aws/variables.tf:484",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3567,6 +3755,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/aws/connector-providers.tf:34",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3589,6 +3778,7 @@
 				"aws/modules/redis",
 				"aws/modules/valkey"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3611,6 +3801,7 @@
 				"aws/modules/redis",
 				"aws/modules/valkey"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3631,6 +3822,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3650,6 +3842,7 @@
 				"aws",
 				"aws/modules/sqs-sns"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3669,6 +3862,7 @@
 				"aws",
 				"aws/modules/sqs-sns"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -3687,6 +3881,7 @@
 				"aws",
 				"aws/modules/sqs-sns"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3706,6 +3901,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3725,6 +3921,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3744,6 +3941,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3763,6 +3961,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3782,6 +3981,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3801,6 +4001,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3820,6 +4021,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3839,6 +4041,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3858,6 +4061,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3877,6 +4081,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3896,6 +4101,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3915,6 +4121,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3934,6 +4141,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3953,6 +4161,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -3972,6 +4181,7 @@
 				"aws",
 				"aws/modules/ecr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -3991,6 +4201,7 @@
 				"aws",
 				"aws/modules/awssm-passgen"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4010,6 +4221,7 @@
 				"aws",
 				"aws/modules/awssm-passgen"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -4027,6 +4239,7 @@
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4045,6 +4258,7 @@
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4063,6 +4277,7 @@
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4082,6 +4297,7 @@
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4100,6 +4316,7 @@
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4119,6 +4336,7 @@
 				"aws",
 				"aws/modules/awssm-passgen"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4137,6 +4355,7 @@
 			"readBy": [
 				"aws"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4155,6 +4374,7 @@
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4173,6 +4393,7 @@
 			"readBy": [
 				"aws/modules/awssm-passgen"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4192,6 +4413,7 @@
 				"aws",
 				"aws/modules/sqs-sns"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -4209,6 +4431,7 @@
 			"readBy": [
 				"azure/modules/storage-account"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4228,6 +4451,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4247,6 +4471,7 @@
 				"azure",
 				"azure/modules/storage-account"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4266,6 +4491,7 @@
 				"azure",
 				"azure/modules/storage-account"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4285,6 +4511,7 @@
 				"azure",
 				"azure/modules/storage-account"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4304,6 +4531,7 @@
 				"azure",
 				"azure/modules/storage-account"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4322,6 +4550,7 @@
 			"readBy": [
 				"azure/modules/storage-account"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4342,6 +4571,7 @@
 				"azure",
 				"azure/modules/azure-cache-redis"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4360,6 +4590,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4378,6 +4609,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4396,6 +4628,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4415,6 +4648,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4434,6 +4668,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4453,6 +4688,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4472,6 +4708,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4491,6 +4728,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4510,6 +4748,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4531,6 +4770,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4550,6 +4790,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4569,6 +4810,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4588,6 +4830,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4606,6 +4849,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4625,6 +4869,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4644,6 +4889,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4663,6 +4909,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4682,6 +4929,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4701,6 +4949,7 @@
 				"azure",
 				"azure/modules/aks"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4719,6 +4968,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4737,6 +4987,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4756,6 +5007,7 @@
 				"azure",
 				"azure/modules/azure-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4775,6 +5027,7 @@
 				"azure",
 				"azure/modules/azure-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4794,6 +5047,7 @@
 				"azure",
 				"azure/modules/azure-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4813,6 +5067,7 @@
 				"azure",
 				"azure/modules/azure-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4832,6 +5087,7 @@
 				"azure",
 				"azure/modules/azure-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4851,6 +5107,7 @@
 				"azure",
 				"azure/modules/azure-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4869,6 +5126,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4888,6 +5146,7 @@
 				"azure",
 				"azure/modules/azure-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4907,6 +5166,7 @@
 				"azure",
 				"azure/modules/azure-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4925,6 +5185,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -4944,6 +5205,7 @@
 				"azure",
 				"azure/modules/azure-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -4962,6 +5224,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4980,6 +5243,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -4999,6 +5263,7 @@
 				"azure",
 				"azure/modules/azure-dns"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5017,6 +5282,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5033,6 +5299,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/azure/variables.tf:482",
 			"readBy": [],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5051,6 +5318,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5070,6 +5338,7 @@
 				"azure",
 				"azure/modules/azure-waf"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5088,6 +5357,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5106,6 +5376,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5125,6 +5396,7 @@
 				"azure",
 				"azure/modules/vnet"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5143,6 +5415,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -5162,6 +5435,7 @@
 				"azure",
 				"azure/modules/vnet"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5181,6 +5455,7 @@
 				"azure",
 				"azure/modules/vnet"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5199,6 +5474,7 @@
 			"readBy": [
 				"azure/modules/cosmos-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5219,6 +5495,7 @@
 				"azure",
 				"azure/modules/cosmos-db"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5238,6 +5515,7 @@
 				"azure",
 				"azure/modules/cosmos-db"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5256,6 +5534,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5275,6 +5554,7 @@
 				"azure",
 				"azure/modules/cosmos-db"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5293,6 +5573,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5311,6 +5592,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5331,6 +5613,7 @@
 				"azure",
 				"azure/modules/cosmos-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5349,6 +5632,7 @@
 			"readBy": [
 				"azure/modules/cosmos-db"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5368,6 +5652,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5387,6 +5672,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5403,6 +5689,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/azure/variables.tf:641",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5425,6 +5712,7 @@
 				"azure/modules/cosmos-db",
 				"azure/modules/vnet"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -5452,6 +5740,7 @@
 				"azure/modules/storage-account",
 				"azure/modules/vnet"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -5473,6 +5762,7 @@
 				"azure/modules/cosmos-db",
 				"azure/modules/vnet"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -5490,6 +5780,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5508,6 +5799,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5524,6 +5816,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/azure/connector-providers.tf:34",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5542,6 +5835,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -5559,6 +5853,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5578,6 +5873,7 @@
 				"azure",
 				"azure/modules/service-bus"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5597,6 +5893,7 @@
 				"azure",
 				"azure/modules/service-bus"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5616,6 +5913,7 @@
 				"azure",
 				"azure/modules/acr"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5634,6 +5932,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5652,6 +5951,7 @@
 			"readBy": [
 				"azure"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5671,6 +5971,7 @@
 				"azure",
 				"azure/modules/key-vault"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5690,6 +5991,7 @@
 				"azure",
 				"azure/modules/key-vault"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5708,6 +6010,7 @@
 			"readBy": [
 				"azure/modules/key-vault"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5727,6 +6030,7 @@
 				"azure",
 				"azure/modules/key-vault"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5745,6 +6049,7 @@
 			"readBy": [
 				"azure/modules/key-vault"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5765,6 +6070,7 @@
 				"azure",
 				"azure/modules/key-vault"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5784,6 +6090,7 @@
 				"azure",
 				"azure/modules/key-vault"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5802,6 +6109,7 @@
 			"readBy": [
 				"azure/modules/key-vault"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5822,6 +6130,7 @@
 				"azure",
 				"azure/modules/service-bus"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5841,6 +6150,7 @@
 				"gcp",
 				"gcp/modules/cloud-storage"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5859,6 +6169,7 @@
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5878,6 +6189,7 @@
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5897,6 +6209,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5915,6 +6228,7 @@
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5934,6 +6248,7 @@
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5953,6 +6268,7 @@
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -5971,6 +6287,7 @@
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -5989,6 +6306,7 @@
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -6008,6 +6326,7 @@
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6027,6 +6346,7 @@
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -6046,6 +6366,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -6064,6 +6385,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6083,6 +6405,7 @@
 				"gcp",
 				"gcp/modules/memorystore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6102,6 +6425,7 @@
 				"gcp",
 				"gcp/modules/memorystore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6121,6 +6445,7 @@
 				"gcp",
 				"gcp/modules/memorystore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6140,6 +6465,7 @@
 				"gcp",
 				"gcp/modules/memorystore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6159,6 +6485,7 @@
 				"gcp",
 				"gcp/modules/memorystore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6178,6 +6505,7 @@
 				"gcp",
 				"gcp/modules/memorystore-valkey"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6197,6 +6525,7 @@
 				"gcp",
 				"gcp/modules/memorystore-valkey"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6216,6 +6545,7 @@
 				"gcp",
 				"gcp/modules/memorystore-valkey"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6235,6 +6565,7 @@
 				"gcp",
 				"gcp/modules/memorystore-valkey"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6253,6 +6584,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6271,6 +6603,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6290,6 +6623,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -6309,6 +6643,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6328,6 +6663,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6347,6 +6683,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -6366,6 +6703,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6385,6 +6723,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6404,28 +6743,13 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
 			"default": [
 				"e2-standard-4"
 			]
-		},
-		{
-			"cloud": "gcp",
-			"component": "cluster",
-			"name": "gke_log_retention_days",
-			"kind": "number",
-			"typeExpr": "number",
-			"required": false,
-			"description": "Cluster log retention in days",
-			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:267",
-			"readBy": [],
-			"reachable": true,
-			"ownedByProvider": false,
-			"typed": false,
-			"default": 14
 		},
 		{
 			"cloud": "gcp",
@@ -6441,6 +6765,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6465,6 +6790,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6484,6 +6810,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6503,6 +6830,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6522,6 +6850,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6540,6 +6869,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6558,6 +6888,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6577,6 +6908,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6596,6 +6928,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6615,6 +6948,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6634,6 +6968,7 @@
 				"gcp",
 				"gcp/modules/gke"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true
@@ -6651,6 +6986,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6670,6 +7006,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -6689,6 +7026,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6708,6 +7046,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6727,6 +7066,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6746,6 +7086,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6765,6 +7106,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6784,6 +7126,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6803,6 +7146,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6822,6 +7166,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6841,6 +7186,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6860,6 +7206,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6879,6 +7226,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6898,6 +7246,7 @@
 				"gcp",
 				"gcp/modules/cloud-sql"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -6917,6 +7266,7 @@
 				"gcp",
 				"gcp/modules/cloud-armor"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6935,6 +7285,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -6954,6 +7305,7 @@
 				"gcp",
 				"gcp/modules/cloud-armor"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -6973,6 +7325,7 @@
 				"gcp",
 				"gcp/modules/cloud-dns"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -6991,6 +7344,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7009,6 +7363,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7027,6 +7382,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7045,6 +7401,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7064,6 +7421,7 @@
 				"gcp",
 				"gcp/modules/vpc-network"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7083,6 +7441,7 @@
 				"gcp",
 				"gcp/modules/vpc-network"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7101,6 +7460,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7120,6 +7480,7 @@
 				"gcp",
 				"gcp/modules/vpc-network"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7138,6 +7499,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7156,6 +7518,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -7174,6 +7537,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7193,6 +7557,7 @@
 				"gcp",
 				"gcp/modules/firestore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7212,6 +7577,7 @@
 				"gcp",
 				"gcp/modules/firestore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7231,6 +7597,7 @@
 				"gcp",
 				"gcp/modules/firestore"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7249,6 +7616,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7267,6 +7635,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7283,6 +7652,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/gcp/variables.tf:672",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7313,6 +7683,7 @@
 				"gcp/modules/secret-manager",
 				"gcp/modules/vpc-network"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -7333,6 +7704,7 @@
 				"gcp/modules/memorystore",
 				"gcp/modules/memorystore-valkey"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": true,
@@ -7363,6 +7735,7 @@
 				"gcp/modules/secret-manager",
 				"gcp/modules/vpc-network"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -7391,6 +7764,7 @@
 				"gcp/modules/secret-manager",
 				"gcp/modules/vpc-network"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -7408,6 +7782,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7426,6 +7801,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7442,6 +7818,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/gcp/connector-providers.tf:34",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7460,6 +7837,7 @@
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7479,6 +7857,7 @@
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7498,6 +7877,7 @@
 				"gcp",
 				"gcp/modules/artifact-registry"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7516,6 +7896,7 @@
 			"readBy": [
 				"gcp/modules/artifact-registry"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7535,6 +7916,7 @@
 			"readBy": [
 				"gcp/modules/artifact-registry"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7554,6 +7936,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7572,6 +7955,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7591,6 +7975,7 @@
 				"gcp",
 				"gcp/modules/artifact-registry"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7611,6 +7996,7 @@
 				"gcp",
 				"gcp/modules/secret-manager"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7630,6 +8016,7 @@
 				"gcp",
 				"gcp/modules/secret-manager"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7648,6 +8035,7 @@
 			"readBy": [
 				"gcp/modules/secret-manager"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7666,6 +8054,7 @@
 			"readBy": [
 				"gcp/modules/secret-manager"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7686,6 +8075,7 @@
 				"gcp",
 				"gcp/modules/secret-manager"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7705,6 +8095,7 @@
 				"gcp",
 				"gcp/modules/secret-manager"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": false,
@@ -7723,6 +8114,7 @@
 			"readBy": [
 				"gcp/modules/secret-manager"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7742,6 +8134,7 @@
 			"readBy": [
 				"gcp"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7760,6 +8153,7 @@
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7780,6 +8174,7 @@
 				"gcp",
 				"gcp/modules/pubsub"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7798,6 +8193,7 @@
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7816,6 +8212,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7834,6 +8231,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7851,6 +8249,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/hetzner/variables.tf:258",
 			"readBy": [],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7870,6 +8269,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": true,
@@ -7888,6 +8288,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": true,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7906,6 +8307,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7924,6 +8326,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": false,
 			"typed": true,
@@ -7942,6 +8345,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7960,6 +8364,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7979,6 +8384,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -7998,6 +8404,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -8016,6 +8423,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8034,6 +8442,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8052,6 +8461,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": true,
@@ -8070,6 +8480,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8088,6 +8499,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8106,6 +8518,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8124,6 +8537,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -8142,6 +8556,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8160,6 +8575,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8178,6 +8594,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8196,6 +8613,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8212,6 +8630,7 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/hetzner/variables.tf:244",
 			"readBy": [],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8230,6 +8649,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8248,6 +8668,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -8266,6 +8687,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
@@ -8284,6 +8706,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8302,6 +8725,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8320,6 +8744,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": true,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8338,6 +8763,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8356,6 +8782,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8374,6 +8801,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": true,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8392,6 +8820,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8410,6 +8839,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,
@@ -8428,6 +8858,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -8445,6 +8876,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true
@@ -8462,6 +8894,7 @@
 			"readBy": [
 				"hetzner"
 			],
+			"reportedByOutput": false,
 			"reachable": false,
 			"ownedByProvider": true,
 			"typed": true,

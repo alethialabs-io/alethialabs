@@ -41,6 +41,10 @@ const KnobSchema = z.object({
 	/** The template directories whose resource or module arguments consume it. EMPTY means the knob is
 	 * declared and read by nothing — the `gke_spot` shape, which `check:template-knobs` fails on. */
 	readBy: z.array(z.string()),
+	/** An `output` block references it — the BROUGHT-resource contract (#4531): the caller supplies
+	 * something they own, the template creates nothing and echoes the id back. The one shape where an
+	 * empty `readBy` is correct rather than a knob that does nothing. */
+	reportedByOutput: z.boolean(),
 	/** A `provider_config` merge lands on it: a root-shaped merge for a root variable, an item-shaped
 	 * one for an attribute of the variable the component is modelled as one entry of. */
 	reachable: z.boolean(),
@@ -71,13 +75,24 @@ export type TemplateKnob = z.infer<typeof KnobSchema>;
  * rather than at the moment a user opens a card. */
 export const TEMPLATE_KNOBS = ManifestSchema.parse(MANIFEST);
 
+/** Does anything the template builds — or reports — consume this knob? False is the dead shape. */
+export function isRead(knob: TemplateKnob): boolean {
+	return knob.readBy.length > 0 || knob.reportedByOutput;
+}
+
 /**
  * The knobs a card may OFFER for one component on one cloud.
  *
- * Three filters, and each one removes a control that would lie to the user:
+ * Four filters, and each one removes a control that would lie to the user:
  *
  *   · `reachable` — a `provider_config` key that no merge lands on never reaches tofu. The control
  *     would save cleanly and change nothing.
+ *   · READ — some resource or module argument consumes it (`readBy`), or an output echoes it back as
+ *     a brought resource's id (`reportedByOutput`). A knob that is declared, reachable and read by
+ *     NOTHING is the `gke_spot` / `gke_log_retention_days` shape: it reaches tofu and changes nothing
+ *     there either. `check:template-knobs` keeps that set recorded and shrinking; this is what stops
+ *     the recorded ones being OFFERED in the meantime, so the class cannot come back as a control
+ *     (#4320, maintainer ruling 2026-09-23).
  *   · `!ownedByProvider` — the provider writes this key unconditionally, and the merge is
  *     merge-if-absent, so the user's value loses every time. Silently.
  *   · `!typed` — the canvas already collects this value through a typed field. A generic control
@@ -87,7 +102,25 @@ export const TEMPLATE_KNOBS = ManifestSchema.parse(MANIFEST);
  * Sorted by name so a card's controls do not reorder when the generator's file order changes.
  */
 export function knobsFor(cloud: string, kind: NodeKind): TemplateKnob[] {
-	return TEMPLATE_KNOBS.knobs
-		.filter((k) => k.cloud === cloud && k.component === kind && k.reachable && !k.ownedByProvider && !k.typed)
+	return offerableKnobs(TEMPLATE_KNOBS.knobs, cloud, kind);
+}
+
+/**
+ * `knobsFor` over an explicit knob list — the filters themselves, separated from the committed
+ * manifest so they can be pinned against fixtures. The live manifest cannot prove a filter works once
+ * the templates stop containing the shape it removes: after #4320 no offerable-but-dead knob remains,
+ * so a test over the manifest alone would pass the day the READ filter was deleted.
+ */
+export function offerableKnobs(knobs: readonly TemplateKnob[], cloud: string, kind: NodeKind): TemplateKnob[] {
+	return knobs
+		.filter(
+			(k) =>
+				k.cloud === cloud &&
+				k.component === kind &&
+				k.reachable &&
+				isRead(k) &&
+				!k.ownedByProvider &&
+				!k.typed,
+		)
 		.sort((a, b) => a.name.localeCompare(b.name));
 }

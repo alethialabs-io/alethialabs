@@ -62,7 +62,11 @@ var (
 		"memorystore_tier", "memorystore_memory_size_gb", "memorystore_redis_version",
 	}
 	gcpNosqlReserved   = []string{"create_firestore", "firestore_point_in_time_recovery"}
-	gcpClusterReserved = []string{"enable_autopilot"}
+	// `gke_log_retention_days` is not written by anything: the template DELETED the variable (#4320)
+	// because GKE has no per-cluster log retention. Reserved so a value already stored in a cluster's
+	// provider_config is stripped rather than emitted as an undeclared root tfvar — the same move as
+	// `managed_certificate` below and Azure's `log_exports`.
+	gcpClusterReserved = []string{"enable_autopilot", "gke_log_retention_days"}
 	gcpDNSReserved     = []string{"cloud_armor", "managed_certificate"}
 
 	// Every key this file assigns to root tfvars — the KEYS THE TYPED MAPPING WRITES, whether

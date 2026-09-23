@@ -221,10 +221,6 @@ dead:
     component: dns
     knob: alidns_managed_certificate
     reason: "CEILING, not backlog — settled by #1824 and recorded in infra/config-carriage-exclusions.yaml (dns.managed_certificate / alibaba): the alicloud provider has NO certificate-request resource at all. Its certificate resources are upload-only (PEM you already hold), private-CA, or attachments to a WAF/ESA instance this template does not provision, and none exposes the validation challenge the AWS template consumes. The console still emits the key (alibaba_provider.go) so the tfvars shape stays uniform across clouds. Nothing here can be wired; the open question is where in THIS ledger a ceiling belongs."
-  - cloud: gcp
-    component: cluster
-    knob: gke_log_retention_days
-    reason: "Declared (default 14) and read by nothing; modules/gke only sets `logging_service`. UNDER-DETERMINED: GKE has no per-cluster log retention. Honouring it means either a `google_logging_project_bucket_config` on the project's `_Default` bucket, which changes retention for EVERY log in a project this template does not own, or a dedicated log bucket plus a cluster-filtered sink, which stores and bills for the same logs twice unless `_Default` is also excluded. Both are decisions with a blast radius outside the cluster; #4320 left the choice to the maintainer."
   - cloud: hetzner
     component: bucket
     knob: encryption_enabled

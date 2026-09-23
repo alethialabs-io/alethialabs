@@ -570,6 +570,10 @@ for (const cloud of CLOUDS) {
 			sensitive: v.sensitive,
 			declaredAt: `${relative(ROOT, v.path)}:${v.line}`,
 			readBy: consumingDirs(wiring, v.name).map((d) => relative(TEMPLATES, d)),
+			// An `output` references it — the brought-resource contract (#4531). Emitted so the console
+			// can tell that shape from a knob nothing reads: both have an empty `readBy`, and only the
+			// second is a control that would lie. Measured here, never taken from the ledger.
+			reportedByOutput: reportedAsOutput(cloud, v.name),
 			// A ROOT variable is reachable only through a ROOT-shaped merge. An item-shaped component
 			// reaches the ATTRIBUTES of the variable it is modelled as one entry of, never the variable.
 			reachable: pt?.shape === "root",
@@ -603,6 +607,8 @@ for (const cloud of CLOUDS) {
 					sensitive: false,
 					declaredAt: `${relative(ROOT, decl.path)}:${decl.line}`,
 					readBy: wiring.readDirsOf(root, attr, false).map((d) => relative(TEMPLATES, d)),
+					// An output echoes a ROOT variable; an attribute of one entry is never what it names.
+					reportedByOutput: false,
 					reachable: true,
 					ownedByProvider: reservedHere,
 					typed: reservedHere,
@@ -636,6 +642,15 @@ for (const cloud of CLOUDS) {
  * and no resource consumes. */
 const deadKnobs = entries.filter((e) => e.reachable && e.readBy.length === 0);
 
+/**
+ * Would the console OFFER this knob? The same four filters `knobsFor` applies in
+ * `lib/cloud-providers/template-knobs.ts` — reachable, READ (by a resource, or echoed by an output as a
+ * brought resource's id), not provider-owned, not typed — so the board's "settable (offered)" column
+ * counts exactly what a card shows. Before #4320 it counted dead knobs as settable, which is the one
+ * number on this board that must not credit a control that changes nothing.
+ */
+const offerable = (e) => e.reachable && (e.readBy.length > 0 || e.reportedByOutput) && !e.ownedByProvider && !e.typed;
+
 const manifest = {
 	// A generated file says so in its own body, because the first thing anyone does with a manifest
 	// is edit it.
@@ -649,7 +664,7 @@ const manifest = {
 				{
 					declared: mine.length,
 					reachable: mine.filter((e) => e.reachable).length,
-					settable: mine.filter((e) => e.reachable && !e.ownedByProvider && !e.typed).length,
+					settable: mine.filter(offerable).length,
 					dead: mine.filter((e) => e.reachable && e.readBy.length === 0).length,
 				},
 			];
@@ -691,10 +706,11 @@ function renderDoc() {
 	L.push("");
 	L.push(
 		"**knobs** = root variables the root module declares, plus the object attributes a leaf component's item",
-		"passthrough reaches. **reachable** = a `provider_config` merge lands on it. **settable** = reachable, and neither",
-		"already written by the provider from a typed field nor unconditionally owned by it (merge-if-absent means an",
-		"always-written key can never be reached). **declared-and-dead** = reachable and read by no resource or module",
-		"argument — the shape a raw variable count cannot tell from a working knob.",
+		"passthrough reaches. **reachable** = a `provider_config` merge lands on it. **settable** = reachable, read by",
+		"something (a resource or module argument, or an output reporting a brought resource), and neither already written",
+		"by the provider from a typed field nor unconditionally owned by it (merge-if-absent means an always-written key",
+		"can never be reached) — exactly what the console's `knobsFor` offers. **declared-and-dead** = reachable and read",
+		"by no resource or module argument — the shape a raw variable count cannot tell from a working knob.",
 		"",
 	);
 	L.push("## Per component");
@@ -706,7 +722,7 @@ function renderDoc() {
 		const cells = CLOUDS.map((c) => {
 			const mine = entries.filter((e) => e.cloud === c && e.component === comp);
 			if (!mine.length) return "—";
-			const settable = mine.filter((e) => e.reachable && !e.ownedByProvider && !e.typed).length;
+			const settable = mine.filter(offerable).length;
 			return `${settable} / ${mine.length}`;
 		});
 		L.push(`| ${comp} | ${cells.join(" | ")} |`);

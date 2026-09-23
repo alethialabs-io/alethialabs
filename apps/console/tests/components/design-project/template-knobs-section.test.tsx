@@ -268,6 +268,7 @@ describe("a sensitive knob's value is never rendered back", () => {
 		sensitive: true,
 		declaredAt: "infra/templates/project/aws/variables.tf:1",
 		readBy: ["infra/templates/project/aws"],
+		reportedByOutput: false,
 		reachable: true,
 		ownedByProvider: false,
 		typed: false,
