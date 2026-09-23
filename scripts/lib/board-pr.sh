@@ -211,3 +211,112 @@ active_pr_ref() { # <n> -> prints e.g. "#1408 (draft)" or nothing
           | .[0] | if . == null then \"\" else \"#\\(.number) (\\(if .isDraft then \"draft\" else \"open\" end))\" end" \
     2>/dev/null || true
 }
+
+# ── A BODY THAT ASSERTS A PROTECTION THE ISSUE DOES NOT CARRY ────────────────────────────────────
+#
+# WHY. #4112 opens with "NOT AGENT-BUILDABLE. Creating repositories … `needs:human` keeps this out
+# of `claim-work.sh`'s autonomous picking." Its labels were `wave:hygiene, lane:docs, class:backend`.
+# The protection its own first sentence asserts DOES NOT EXIST, so the unit sat at the TOP of
+# `claim-work.sh --class backend`'s ready queue inviting an agent to "create" three repositories
+# that already existed, were public, and were unlicensed.
+#
+# This is the "a wrong COMMENT on correct code" class, on the board instead of in a file: the prose
+# and the mechanism disagree, no check reads the prose, and the prose is what the author trusted.
+# `claim-work.sh` filters on LABELS and never reads a word of the body, so the assertion is
+# unenforced by construction — and it fails OPEN, which is the dangerous direction.
+#
+# ── THE BOUND, and it is the whole reason this is cheap ──
+#
+# Only units `claim-work.sh` can actually pick are asked: an OPEN issue carrying a `class:` label.
+# That bound is not tidiness, it is what removes the noise. Measured against the 43 open issues on
+# 2026-09-22, a plain "does the body contain the string" match over the whole board produced two
+# false positives and both were outside the bound — #4264 ("`needs:human` removed", about #4273)
+# and #2945 (an overnight report summarising "all 33 open `needs:human` units"), neither of which
+# carries a `class:` label and neither of which claim-work can hand to anybody.
+#
+# ── WHAT IS MATCHED, AND WHAT IS DELIBERATELY NOT ──
+#
+# The label name IN BACKTICKS, plus the prose form NOT AGENT-BUILDABLE. Backticks are a STRUCTURAL
+# signal, not a stylistic one: an author writing `needs:human` is naming a LABEL, while one writing
+# "epic" is almost always writing English. On the same 43-issue board the bare word `epic` appeared
+# in six board-unit bodies and ALL SIX were prose — "Part of the release-gate epic: #4264", "the
+# epic's bar", "epic #1419" — while backticked `epic` appeared in none.
+#
+#   · `blocked` is NOT matched. Two reasons, and either alone is sufficient. It is already
+#     mechanised in both directions by coordinate.sh's `unblock` pass, which RECOMPUTES the label
+#     from the body's `blocked-by:` line every run — a prose check would be a second, weaker opinion
+#     about a question that already has an authoritative one. And it is noisy even backticked: #3612
+#     writes "#3662 → #3663 → #3664 are all correctly `blocked`", which is a statement about three
+#     OTHER issues' labels.
+#   · `epic` is NOT matched. Zero measured signal (no board unit backticks it) against a real noise
+#     source (six bare-word prose uses), so it would be a matcher with nothing to find and something
+#     to get wrong. If an umbrella issue ever does assert `epic` in backticks without carrying it,
+#     add it here WITH the measurement — do not add it on the theory that the set should be
+#     symmetric with claim-work.sh's filter. The self-test pins that filter instead, so a new
+#     exclusion label there cannot slip past unnoticed.
+#
+# ── WHY IT OVER-REPORTS ON PURPOSE ──
+#
+# An author CAN discuss another unit's `needs:human` on a board unit of their own, and this will
+# flag it. Suppressing that — for instance by ignoring any line that also names a `#<n>` — was
+# considered and REJECTED: it can only remove findings, and the thing it would remove first is a
+# body that names its blocker on the same line as its protection. This is an ADVISORY line in a
+# report and a warning at claim time; it blocks nothing. A false positive costs a reader one
+# second, a false negative is #4112 happening again.
+#
+# Reads the board as one `gh issue list --json number,title,labels,body` array on STDIN.
+# Prints one `<number>\t<asserted>\t<labels>` row per finding. No finding prints nothing.
+# Returns 0 when it examined the board (found or not) and 4 when it could NOT examine it — the
+# caller must render those two differently, because "nothing found" and "never ran" are the same
+# silence otherwise.
+#
+# The assertions, as an `|`-alternation of EXTENDED regexes. Kept as a constant because the matcher
+# below and the self-test must not be able to disagree about what counts as an assertion.
+BOARD_PROTECTION_ASSERTIONS='`needs:human`|NOT AGENT-BUILDABLE'
+# Which label each assertion claims. Same order, same count — the self-test asserts both.
+BOARD_PROTECTION_LABELS='needs:human|needs:human'
+
+board_asserted_protection() { # stdin: board JSON -> rows on stdout · 0 = examined · 4 = could not
+  command -v jq >/dev/null 2>&1 || return 4
+  jq -r --arg pats "$BOARD_PROTECTION_ASSERTIONS" --arg labs "$BOARD_PROTECTION_LABELS" '
+    # A FENCED BLOCK IS NOT AN ASSERTION. Same hazard, same cure as coordinate.sh
+    # `blocked_by_from_body`: .claude/skills/decompose/SKILL.md prints a seeding snippet at column
+    # zero inside a ```bash fence, so a body that pastes it would otherwise acquire a phantom
+    # assertion. CLOSED fences only — an unterminated one leaves the rest of the body in play,
+    # which can only over-report, and over-reporting is the safe direction here.
+    # A CLOSED fence is dropped; an UNTERMINATED one is given back. That asymmetry is the whole
+    # point and a plain open/closed toggle gets it backwards: a toggle drops everything after one
+    # stray backtick run, which SUPPRESSES findings — the fail-CLOSED direction, silently. So the
+    # lines inside a fence are buffered, discarded when the closer arrives, and appended back if it
+    # never does. Keeping them can only over-report, which is visible.
+    def strip_fences:
+      split("\n")
+      | reduce .[] as $l ({open: false, pending: [], out: []};
+          if ($l | test("^[[:space:]]*(```|~~~)")) then
+            (if .open then {open: false, pending: [], out: .out}
+             else {open: true, pending: [$l], out: .out} end)
+          elif .open then {open: true, pending: (.pending + [$l]), out: .out}
+          else {open: false, pending: .pending, out: (.out + [$l])} end)
+      | (if .open then (.out + .pending) else .out end)
+      | join("\n");
+    ($pats | split("|")) as $P | ($labs | split("|")) as $L
+    | if type != "array" then empty else .[] end
+    | select(.body != null)
+    # THE BOUND: only what claim-work.sh could hand to somebody.
+    | select(.labels | map(.name) | any(startswith("class:")))
+    | . as $i | ($i.body | strip_fences) as $prose
+    | (.labels | map(.name)) as $names
+    # `range(…) as $ix`, NOT a bare `.`. The arguments of `test` are evaluated against the OWN input
+    # of test, so `$P[.]` there indexes the array with the BODY STRING and dies — which the
+    # `2>/dev/null` below would turn into a silent rc=4 "could not examine" on every single run.
+    # (No apostrophes in this block: the whole jq program is one single-quoted shell word.)
+    | [ range(0; $P | length) as $ix
+        | select($prose | test($P[$ix]; "i"))
+        | select($names | index($L[$ix]) | not)
+        | {a: $P[$ix], l: $L[$ix]} ] as $hits
+    | select($hits | length > 0)
+    # Four TAB-separated fields: number · what the body asserts · the label(s) it thereby claims ·
+    # the labels it actually carries. Both callers read them positionally.
+    | "\($i.number)\t\($hits | map(.a) | unique | join(", "))\t\($hits | map(.l) | unique | join(", "))\t\($names | join(","))"
+  ' 2>/dev/null || return 4
+}
