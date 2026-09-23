@@ -869,7 +869,7 @@ export function neverSatisfied({ contexts, observed }) {
  *
  * Jobs pages are cached by run id: several contexts deepen through the same workflow's runs.
  */
-export function deepenNeverGreen({ repo, neverGreen, jobs, depth, run }) {
+export function deepenNeverGreen({ repo, neverGreen, jobs, depth, run, seenOut }) {
 	const cleared = [];
 	const jobsOfRun = new Map();
 	for (const n of neverGreen) {
@@ -881,6 +881,9 @@ export function deepenNeverGreen({ repo, neverGreen, jobs, depth, run }) {
 				const runs = JSON.parse(run(["api", `repos/${repo}/actions/workflows/${wf}/runs?per_page=${depth}`]));
 				for (const r of runs?.workflow_runs ?? []) {
 					if (!jobsOfRun.has(r.id)) jobsOfRun.set(r.id, JSON.parse(run(["api", `repos/${repo}/actions/runs/${r.id}/jobs?per_page=100`]))?.jobs ?? []);
+					// Record every conclusion seen for the context, not only success: an `unseen` context the
+					// deeper look finds FAILING exists and belongs in neverGreen, not "NO job by this name".
+					if (seenOut) for (const j of jobsOfRun.get(r.id)) if (j.name === n.context && j.conclusion) (seenOut.get(n.context) ?? seenOut.set(n.context, new Set()).get(n.context)).add(j.conclusion);
 					if (jobsOfRun.get(r.id).some((j) => j.name === n.context && j.conclusion === "success")) {
 						green = true;
 						break;
@@ -1666,6 +1669,10 @@ resource "github_repository_ruleset" "staging" {
 	const tmplJobs = [{ name: "Release gate (${{ matrix.project }})", conclusion: "skipped", workflow: 7 }];
 	P("an UNSEEN context deepens through a workflow that emitted its TEMPLATE", deepenNeverGreen({ repo: "x/y", neverGreen: [{ context: "Release gate (audit)", seen: [] }], jobs: tmplJobs, depth: 30, run: deepRun }).includes("Release gate (audit)"));
 	P("the template matcher binds the literal parts", workflowsEmitting("Release gate (audit)", tmplJobs).length === 1 && workflowsEmitting("Release gates (audit)", tmplJobs).length === 0 && workflowsEmitting("Release gate ()", tmplJobs).length === 0);
+	const failSeen = new Map();
+	const failRun = (a) => (a[1].includes("/runs?per_page") ? JSON.stringify({ workflow_runs: [{ id: 5 }] }) : JSON.stringify({ jobs: [{ name: "Release gate (canvas)", conclusion: "failure" }] }));
+	const notCleared = deepenNeverGreen({ repo: "x/y", neverGreen: [{ context: "Release gate (canvas)", seen: [] }], jobs: tmplJobs, depth: 30, run: failRun, seenOut: failSeen });
+	P("an unseen context the deeper look finds only FAILING is not cleared, and its failure is recorded", notCleared.length === 0 && failSeen.get("Release gate (canvas)")?.has("failure") === true, JSON.stringify([...failSeen]));
 	P("an exact-name job still counts", workflowsEmitting("Release gate (audit)", deepJobs).length === 1);
 	const jobsBoom = readObservedJobs("x/y", { run: () => { throw new Error("HTTP 403: Resource not accessible by integration"); } });
 	P("an unreadable runs API returns an error, not an empty job list", jobsBoom.jobs === null && /403/.test(jobsBoom.error), JSON.stringify(jobsBoom));
@@ -2124,15 +2131,22 @@ function main() {
 		const first = neverSatisfied({ contexts: hclAll, observed: collectObservedConclusions(jobs) });
 		// `unseen` deepens too, through the workflows whose TEMPLATE matches it (see deepenNeverGreen).
 		// 100 runs, the API's page ceiling: release-gate runs on every dev PR event and skips on most.
+		const deepSeen = new Map();
 		const cleared = deepenNeverGreen({
 			repo,
 			neverGreen: [...first.neverGreen, ...first.unseen.map((c) => ({ context: c, seen: [] }))],
 			jobs,
 			depth: 100,
 			run: (args) => execFileSync("gh", args, { encoding: "utf8", maxBuffer: GH_MAX_BUFFER }),
+			seenOut: deepSeen,
 		});
-		const unseen = first.unseen.filter((c) => !cleared.includes(c));
-		const neverGreen = first.neverGreen.filter((n) => !cleared.includes(n.context));
+		// An unseen context the deeper look FOUND, but never green, is a failing job — not a missing one.
+		const foundFailing = first.unseen.filter((c) => !cleared.includes(c) && (deepSeen.get(c)?.size ?? 0) > 0);
+		const unseen = first.unseen.filter((c) => !cleared.includes(c) && !foundFailing.includes(c));
+		const neverGreen = [
+			...first.neverGreen.filter((n) => !cleared.includes(n.context)),
+			...foundFailing.map((c) => ({ context: c, seen: [...deepSeen.get(c)].sort() })),
+		];
 		if (cleared.length) console.log(`- cleared on a deeper look (passed further back than the shallow window): ${cleared.map((c) => `\`${c}\``).join(", ")}`);
 		if (unseen.length === 0 && neverGreen.length === 0) {
 			console.log(`- all ${hclAll.length} context(s) the HCL requires have been observed \`success\` at least once.`);
