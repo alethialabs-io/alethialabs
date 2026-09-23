@@ -259,10 +259,22 @@ tagged_eips() { tagged_ids eip vpc DescribeEipAddresses '.EipAddresses.EipAddres
 
 # SLB (classic) tag filter param spelling differs per API version; use the documented Tag.N.Key.
 tagged_slbs() { tagged_ids slb slb DescribeLoadBalancers '.LoadBalancers.LoadBalancer[]?.LoadBalancerId'; }
-# ALB lister is ROA-ish RPC (`ListLoadBalancers` → `.LoadBalancers[].LoadBalancerId`).
+# ALB lister is RPC (`ListLoadBalancers` → `.LoadBalancers[].LoadBalancerId`).
+#
+# `--force` is REQUIRED here and nowhere else in this file (#2545). The aliyun CLI checks every
+# `--Name` against its bundled API metadata before sending. ECS/VPC/SLB describe `Tag` as a
+# `RepeatList`, which the CLI's matcher expands to `Tag.1.Key`, so those listers pass. ALB
+# 2020-06-16 describes `Tag` as `Array` with no sub-parameters, which the matcher only accepts as
+# the bare `--Tag` — and `--Tag Key=…,Value=…` is then sent VERBATIM as one `Tag=` query value,
+# which is not a tag filter. So the CLI pinned in CI (3.0.263, and 3.4.6 as well) refuses
+# `--Tag.1.Key` with "'--Tag.1.Key' is not a valid parameter or flag", the probe records ALB as
+# UNVERIFIABLE, and no run could prove an ALB gone. `--force` skips only that metadata check and
+# sends `Tag.1.Key=…&Tag.1.Value=…`, which is the wire form Alibaba's own SDK produces for this API
+# (openapi-util flattens an array of objects to `Tag.<n>.<field>`). Both claims were measured with
+# `--dryrun` against the pinned binary; scripts/e2e/alibaba-cleanup-argv-test.sh pins the argv.
 tagged_albs() {
 	assert_scope
-	ali_jq alb '.LoadBalancers[]?.LoadBalancerId' alb ListLoadBalancers \
+	ali_jq alb '.LoadBalancers[]?.LoadBalancerId' alb ListLoadBalancers --force \
 		--Tag.1.Key "$TAGK" --Tag.1.Value "$PROJECT_ID_TAG"
 }
 
@@ -326,9 +338,10 @@ cluster_tagged_ids() {
 cluster_instance_ids() { cluster_tagged_ids ecs-instance ecs DescribeInstances '.Instances.Instance[]?.InstanceId'; }
 cluster_disk_ids() { cluster_tagged_ids cloud-disk ecs DescribeDisks '.Disks.Disk[]?.DiskId'; }
 cluster_slb_ids() { cluster_tagged_ids slb slb DescribeLoadBalancers '.LoadBalancers.LoadBalancer[]?.LoadBalancerId'; }
+# `--force` for the reason given above tagged_albs — ALB's `Tag` is not a RepeatList to the CLI.
 cluster_alb_ids() {
 	[ -z "$CLUSTER_ID" ] && return 0
-	ali_jq alb '.LoadBalancers[]?.LoadBalancerId' alb ListLoadBalancers \
+	ali_jq alb '.LoadBalancers[]?.LoadBalancerId' alb ListLoadBalancers --force \
 		--Tag.1.Key "ack.aliyun.com" --Tag.1.Value "$CLUSTER_ID"
 }
 
