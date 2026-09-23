@@ -114,11 +114,11 @@ resource "alicloud_ims_oidc_provider" "e2e_broker" {
     }
     precondition {
       condition     = length(local.broker_fingerprints) >= 1 && length(local.broker_fingerprints) <= 5
-      error_message = "${var.broker_tls_pin_path} must pin 1–5 CA fingerprints (RAM's maximum is 5); it pins ${length(local.broker_fingerprints)}. Populate it with `node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url ${coalesce(var.e2e_broker_issuer_url, "<url>")}` in a reviewed PR."
+      error_message = "${var.broker_tls_pin_path} must pin 1–5 CA fingerprints (RAM's maximum is 5); it pins ${length(local.broker_fingerprints)}. Populate it with `node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url ${coalesce(var.e2e_broker_issuer_url, "<url>")} --out infra/e2e-issuer/tls-ca-pin.json` in a reviewed PR."
     }
     precondition {
       condition     = length(local.broker_served_ca_fingerprints) > 0 && alltrue([for fp in local.broker_served_ca_fingerprints : contains(local.broker_fingerprints, fp)])
-      error_message = "the issuer serves CA certificate(s) ${jsonencode(local.broker_served_ca_fingerprints)}, and not all are in ${var.broker_tls_pin_path} (${jsonencode(local.broker_fingerprints)}). Add them with --print-pin, merge, then apply."
+      error_message = "the issuer serves CA certificate(s) ${jsonencode(local.broker_served_ca_fingerprints)}, and not all are in ${var.broker_tls_pin_path} (${jsonencode(local.broker_fingerprints)}). Add them with `--print-pin --out infra/e2e-issuer/tls-ca-pin.json`, merge, then apply."
     }
   }
 }

@@ -170,9 +170,14 @@ yet. Anything else is a real finding.
 
 ```bash
 node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url https://e2e-issuer.alethialabs.io \
-  > infra/e2e-issuer/tls-ca-pin.json
+  --out infra/e2e-issuer/tls-ca-pin.json
 git diff infra/e2e-issuer/tls-ca-pin.json    # read the subjects: the issuing CA and its parent
 ```
+
+Use `--out`, never `> infra/e2e-issuer/tls-ca-pin.json`. The shell empties the target before the
+script runs, so a redirect destroys the entries the merge has to keep. `--out` reads the file first,
+then replaces it atomically (a temp file, then a rename). It refuses to pin a chain that does not
+verify to a trusted root for this host name.
 
 Merge it. `node scripts/ci/check-e2e-issuer-health.mjs --expected-url https://e2e-issuer.alethialabs.io`
 now exits `0`. Run *E2E issuer health* once by hand (`gh workflow run e2e-issuer-health.yml --ref dev`).
@@ -190,8 +195,9 @@ Then **revoke the token** from step 1.
 - **The health tracker.** *E2E issuer health* keeps one issue labelled `tracker:e2e-issuer-health`
   open while any check fails, and closes it when all pass. If the instrument itself cannot look (for
   example, the pin file is unreadable), the job fails instead of opening an issue.
-- **A new certificate chain** (the tracker's `tls-pin` row names it): run `--print-pin` again. It
-  keeps the existing entries and appends the new ones. Merge, then plan and apply `alibaba-e2e`. The
+- **A new certificate chain** (the tracker's `tls-pin` row names it): run
+  `--print-pin --expected-url https://e2e-issuer.alethialabs.io --out infra/e2e-issuer/tls-ca-pin.json`
+  again. It keeps the existing entries and appends the new ones. Merge, then plan and apply `alibaba-e2e`. The
   only change should be `fingerprints`. Remove retired entries by hand in a later PR.
 - **Signing-key age** (the `keys` row): rotate the key as `apps/e2e-issuer/README.md` describes. The
   check reads age from the `YYYY-MM` kid convention.

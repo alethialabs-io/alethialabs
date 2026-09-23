@@ -265,8 +265,9 @@ the committed value and rewrites or **removes** the trust.
 OIDC provider's fingerprints from `infra/e2e-issuer/tls-ca-pin.json` (at most five, RAM's limit).
 Its plan **fails** with a precondition error when that file is empty, names another origin, or does
 not cover every CA certificate the host serves at plan time. The fix is never to edit the stack: run
-`node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url https://e2e-issuer.alethialabs.io`,
-review the output, commit it to `tls-ca-pin.json` in a PR, and plan again after it merges.
+`node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url https://e2e-issuer.alethialabs.io --out infra/e2e-issuer/tls-ca-pin.json`,
+review the diff, commit it in a PR, and plan again after it merges. Use `--out`, not a `>` redirect:
+the shell empties the file before the script reads the entries it must keep.
 
 Then plan each stack as part one does, with the same inputs. The expected shapes below are
 **predictions from the code**. Nobody has planned them against live state, because there has been no
@@ -376,8 +377,8 @@ Alternatively, set a new `broker_pool_id`.
   be pinned to one CA — `infra/e2e-issuer/README.md` has the sources. When it happens, AssumeRoleWithOIDC
   fails for the broker only. The *E2E issuer health* workflow compares the served chain with the pin
   every six hours and opens the `tracker:e2e-issuer-health` issue naming the new certificate. To fix
-  it: `node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url https://e2e-issuer.alethialabs.io`
-  (it keeps the existing entries and appends the new ones), commit the reviewed file, then plan and
+  it: `node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url https://e2e-issuer.alethialabs.io --out infra/e2e-issuer/tls-ca-pin.json`
+  (never a `>` redirect, which empties the file before it is read; `--out` keeps the existing entries and appends the new ones), commit the reviewed file, then plan and
   apply `alibaba-e2e` — the plan's only change is `fingerprints` on `alethia-e2e-broker`. Remove a
   retired entry by hand, in a later PR, once the new chain is confirmed (RAM's guidance: add the new
   fingerprint at least a day before a rotation). The plan refuses, by precondition, to write a pin that
