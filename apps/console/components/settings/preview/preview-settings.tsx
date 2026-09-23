@@ -45,6 +45,7 @@ import {
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Switch } from "@repo/ui/switch";
 import { cn } from "@repo/ui/utils";
+import type { GitProviderAvailability } from "@/lib/connectors/git-providers";
 
 type PreviewConfigRow = Awaited<ReturnType<typeof getPreviewConfig>> | null;
 type FabricOption = Awaited<ReturnType<typeof listProjectFabrics>>[number];
@@ -137,12 +138,15 @@ export function PreviewSettings({
 	fabrics,
 	gitCredentials,
 	gitlabBaseUrl,
+	providerAvailability,
 }: {
 	projectId: string;
 	initialConfig: PreviewConfigRow;
 	fabrics: FabricOption[];
 	gitCredentials: GitCredentialOption[];
 	gitlabBaseUrl: string;
+	/** Which git providers this instance can link (server-computed) — passed to the repo picker. */
+	providerAvailability: GitProviderAvailability;
 }) {
 	const router = useRouter();
 	const defaults = useMemo(() => configDefaults(initialConfig), [initialConfig]);
@@ -257,6 +261,7 @@ export function PreviewSettings({
 								}}
 								placeholder="Select repository..."
 								variant="settings"
+								providerAvailability={providerAvailability}
 							/>
 							<div className="flex items-center gap-2 text-ui-xs text-text-tertiary">
 								<GitProviderIcon provider={selectedProvider} size={14} />

@@ -279,10 +279,13 @@ export function OrgGeneral() {
             title="Transfer ownership"
             description="Move this organization to another owner. They take over billing and the Owner role."
           >
+            {/* Not built yet. It used to be a live button whose click only toasted "coming soon",
+                which reads as a control that works (#4996); disabled, the reason is its title. */}
             <Button
               variant="outline"
               size="sm"
-              onClick={() => toast.info("Ownership transfer is coming soon.")}
+              disabled
+              title="Ownership transfer is coming soon"
             >
               Transfer
             </Button>
