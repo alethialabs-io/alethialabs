@@ -1201,6 +1201,52 @@ export function compareReviewClaims(evaluated, source) {
 	return { failures, notes };
 }
 
+/**
+ * The `--live` reading of the claims: the report lines, and whether any of them is LIVE DRIFT.
+ *
+ * WHAT MAY SET THE DRIFT EXIT, and why so little. Exit 2 from `--live` opens the
+ * `tracker:required-checks-drift` issue, whose body promises "it closes itself once an apply lands".
+ * So only a finding an apply could clear may set it. An ACKNOWLEDGED false claim cannot be cleared
+ * that way — the HCL refutes it too, so it would hold the issue open forever and bury every real
+ * status-check drift under an issue that is always open. It is REPORTED, not counted. A stale or
+ * missing record is a TREE problem, and the PR-time run already fails on it (`compareReviewClaims`);
+ * it is reported here with that said, and not counted either. An acknowledged claim that now HOLDS
+ * live is reported as such; the PR-time run fails it once the HCL declares the control too (and if
+ * the HCL does not, `compareLiveReview` reports that as review drift).
+ *
+ * What DOES count: an UNacknowledged claim the live ruleset does not honour. The PR-time run fails an
+ * unacknowledged claim the HCL refutes, so reaching here means the HCL declares the control and the
+ * live ruleset lacks it — which is exactly what an apply fixes.
+ *
+ * @param {ReturnType<typeof evaluateReviewClaims>} evaluated
+ * @returns {{lines: string[], drift: boolean}}
+ */
+export function reportLiveClaims(evaluated) {
+	const lines = [];
+	let drift = false;
+	let anyFalse = false;
+	for (const e of evaluated) {
+		const { claim } = e;
+		if (e.verdict === "missing-file" || e.verdict === "stale") {
+			lines.push(`- \`${claim.id}\` — the claim is no longer in \`${claim.file}\`; its record in REVIEW_CLAIMS is stale. That is a tree problem, not live drift: the PR-time run fails on it, and no apply would fix it.`);
+			continue;
+		}
+		const where = `\`${claim.file}:${e.line}\``;
+		if (e.verdict === "holds") {
+			lines.push(`- ${where} claims ${claim.says} — **holds** live.${claim.acknowledged ? ` Its record still carries \`acknowledged: "${claim.acknowledged}"\`; delete it (the PR-time run fails on this once the HCL declares the control).` : ""}`);
+			continue;
+		}
+		anyFalse = true;
+		const verb = e.verdict === "refuted" ? "**The live ruleset does NOT have this control.**" : "**UNVERIFIED** — this script cannot confirm it.";
+		lines.push(`- ${where} claims ${claim.says}. ${verb}`);
+		for (const b of e.branches.filter((x) => x.verdict !== "holds")) lines.push(`  - \`${b.branch}\`: ${b.why}`);
+		if (claim.acknowledged) lines.push(`  - known and tracked in ${claim.acknowledged} — reported, not counted as drift: no apply can clear it.`);
+		else drift = true;
+	}
+	if (anyFalse) lines.push("", `A false claim is fixed one of two ways, and choosing is the maintainer's: add the control in \`infra/github/\` and apply it, or correct the sentence. Correcting it also means deleting its record in \`REVIEW_CLAIMS\` (scripts/ci/check-required-checks.mjs).`);
+	return { lines, drift };
+}
+
 /** Branch → declared review, joining main.tf's ruleset names to the branches they protect. */
 export function hclReviewByBranch(hcl) {
 	const byBranch = new Map();
@@ -1691,6 +1737,20 @@ resource "github_repository_ruleset" "staging" {
 			const st = compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: corrected, reviewByBranch: liveByBranch }), "the live ruleset");
 			P("a corrected sentence makes its record STALE, and that fails", st.failures.some((f) => /codeowners-header/.test(f) && /no longer in the file/.test(f)), JSON.stringify(st.failures));
 			P("a record naming a missing file fails", compareReviewClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS.slice(0, 1), readFile: () => null, reviewByBranch: liveByBranch }), "x").failures.some((f) => /does not exist/.test(f)));
+
+			// THE --live EXIT (PR #4966 review). Exit 2 opens a tracker issue that says it closes on an
+			// apply; an acknowledged claim the HCL refutes too can never be cleared by one, so counting
+			// it held that issue open forever. As captured today: every claim refuted, every one
+			// acknowledged — and the claim half must NOT set drift.
+			const liveNow = reportLiveClaims(ev);
+			P("--live: acknowledged refuted claims are REPORTED but do not set the drift exit", liveNow.drift === false && liveNow.lines.filter((l) => /does NOT have this control/.test(l)).length === REVIEW_CLAIMS.length, JSON.stringify(liveNow));
+			// The other direction, so the assertion above cannot pass against a reader that never drifts.
+			const liveUnack = reportLiveClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: realRead, reviewByBranch: liveByBranch }));
+			P("--live: an UNacknowledged refuted claim DOES set the drift exit", liveUnack.drift === true, JSON.stringify(liveUnack));
+			const liveStale = reportLiveClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: corrected, reviewByBranch: liveByBranch }));
+			P("--live: a STALE record is reported as a tree problem, not live drift", liveStale.drift === false && liveStale.lines.some((l) => /codeowners-header/.test(l) && /tree problem/.test(l)), JSON.stringify(liveStale));
+			const liveHolds = reportLiveClaims(evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: realRead, reviewByBranch: fixedDev }));
+			P("--live: an acknowledged claim that now HOLDS says its acknowledgement is stale", liveHolds.lines.some((l) => /holds/.test(l) && /acknowledged: "#4942"/.test(l)), JSON.stringify(liveHolds.lines));
 		} else {
 			console.log("skip - the real-claim assertions need the claimed files; run the self-test from the repo root");
 		}
@@ -1819,27 +1879,10 @@ function main() {
 		}
 		const liveClaims = evaluateReviewClaims({ claims: REVIEW_CLAIMS, readFile: readIfPresent, reviewByBranch: new Map(rulesets.map((r) => [r.branch, r.review])) });
 		console.log(`\n## Review controls the tree CLAIMS, held against the live rulesets\n`);
-		let claimFalse = false;
-		for (const e of liveClaims) {
-			const { claim } = e;
-			if (e.verdict === "missing-file" || e.verdict === "stale") {
-				claimFalse = true;
-				console.log(`- \`${claim.id}\` — the claim is no longer in \`${claim.file}\`; its record in REVIEW_CLAIMS is stale (the PR-time run fails on this).`);
-				continue;
-			}
-			const where = `\`${claim.file}:${e.line}\``;
-			if (e.verdict === "holds") {
-				console.log(`- ${where} claims ${claim.says} — **holds** live.`);
-				continue;
-			}
-			claimFalse = true;
-			const verb = e.verdict === "refuted" ? "**The live ruleset does NOT have this control.**" : "**UNVERIFIED** — this script cannot confirm it.";
-			console.log(`- ${where} claims ${claim.says}. ${verb}`);
-			for (const b of e.branches.filter((x) => x.verdict !== "holds")) console.log(`  - \`${b.branch}\`: ${b.why}`);
-			if (claim.acknowledged) console.log(`  - tracked in ${claim.acknowledged}.`);
-		}
-		if (claimFalse) console.log(`\nA false claim is fixed one of two ways, and choosing is the maintainer's: add the control in \`infra/github/\` and apply it, or correct the sentence. Correcting it also means deleting its record in \`REVIEW_CLAIMS\` (scripts/ci/check-required-checks.mjs).`);
-		drifted = drifted || reviewDrift || claimFalse;
+		// Only an UNacknowledged false claim counts toward exit 2 — see `reportLiveClaims`.
+		const claimReport = reportLiveClaims(liveClaims);
+		for (const line of claimReport.lines) console.log(line);
+		drifted = drifted || reviewDrift || claimReport.drift;
 
 		// THE FOURTH QUESTION. `hclAll` is what an apply would require on `main` — main takes the
 		// list unfiltered, which is why it is the branch a never-satisfiable context wedges.
