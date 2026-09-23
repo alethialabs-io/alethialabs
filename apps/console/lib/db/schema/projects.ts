@@ -12,6 +12,7 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
+import type { WebhookCaConsumer } from "@/lib/addons/webhook-ca-consumers";
 import { cloudIdentities } from "./identities";
 
 // Project — a declarative infrastructure config a user writes; the top-level **Project** under
@@ -39,6 +40,16 @@ export const projects = pgTable(
 		region: text().notNull(),
 		iac_version: text().notNull(),
 		estimated_monthly_cost: numeric({ precision: 12, scale: 2, mode: "number" }),
+		// Workloads this project runs that are NOT marketplace add-ons but whose admission webhook
+		// needs the cert-manager controller for its CA (#4990) — KServe, from the AI Workloads
+		// starter. Set at create time by the template; emitted on the config snapshot as
+		// `webhook_ca_consumers` (only when non-empty) so the runner installs cert-manager
+		// issuer-free. See lib/addons/webhook-ca-consumers.ts.
+		webhook_ca_consumers: text()
+			.array()
+			.$type<WebhookCaConsumer[]>()
+			.default([])
+			.notNull(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},

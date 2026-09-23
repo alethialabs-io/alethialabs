@@ -56,8 +56,10 @@ import {
 	provisionProject,
 	tryCreateProject,
 	tryDuplicateProjectForProvider,
+	updateProjectDesign,
 	updateProjectName,
 } from "@/app/server/actions/projects";
+import { webhookCaConsumersForTemplate } from "@/lib/addons/webhook-ca-consumers";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize, currentActor } from "@/lib/authz/guard";
@@ -3190,5 +3192,139 @@ describe("getProjects", () => {
 			status: "DRAFT",
 			default_environment_id: null,
 		});
+	});
+});
+
+// ============================================================
+// #4990 — the project-level webhook-CA marker
+// ============================================================
+
+// KServe is not a marketplace add-on: the AI Workloads starter ships it as its own ArgoCD
+// Application, so no install spec can carry `requiresCertManager` for it. The PROJECT declares it
+// instead, and these pin the whole console half of the carriage: the template sets it, create
+// stores it (validated behind the guard), a canvas save cannot change it, a duplicate keeps it,
+// and the deploy snapshot emits it only when non-empty. The Go half reads the key back
+// (packages/core/argocd/cert_manager_test.go).
+describe("webhook_ca_consumers — the project-level webhook-CA marker (#4990)", () => {
+	const input = (webhook_ca_consumers?: unknown) => ({
+		project: {
+			project_name: "Inference",
+			environment_stage: "production",
+			region: "us-east-1",
+			cloud_identity_id: "ci-1",
+			iac_version: "1.11.4",
+			...(webhook_ca_consumers === undefined ? {} : { webhook_ca_consumers }),
+		},
+		network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
+		cluster: {
+			cluster_version: "1.31",
+			instance_types: ["m5.large"],
+			node_min_size: 2,
+			node_max_size: 5,
+			node_desired_size: 2,
+			cluster_admins: [],
+			provider_config: {},
+		},
+		dns: { enabled: false },
+		repositories: {},
+	});
+
+	/** Wires a create that succeeds, so the assertions are about the projects row alone. */
+	function createDb() {
+		return setupDb({
+			select: new Map([[projects, []]]),
+			insert: new Map<unknown, RowsResolver>([
+				[projects, [{ id: "p1", org_id: "org-1", slug: "inference", user_id: "user-1" }]],
+				[projectFabrics, [{ id: "fabric-1" }]],
+				[projectEnvironments, [{ id: "env-1" }, { id: "env-preview" }]],
+			]),
+		});
+	}
+
+	it("only the AI Workloads template declares a consumer", () => {
+		expect(webhookCaConsumersForTemplate("ai")).toEqual(["kserve"]);
+		expect(webhookCaConsumersForTemplate("standard")).toEqual([]);
+		expect(webhookCaConsumersForTemplate("custom")).toEqual([]);
+	});
+
+	it("stores the marker the template set on the projects row", async () => {
+		const { valuesSpy } = createDb();
+		await createProject(input(webhookCaConsumersForTemplate("ai")) as never);
+		expect(valuesFor(valuesSpy, projects)).toMatchObject({
+			webhook_ca_consumers: ["kserve"],
+		});
+	});
+
+	it("stores none when the caller sets nothing — every other create path is unchanged", async () => {
+		const { valuesSpy } = createDb();
+		await createProject(input() as never);
+		expect(valuesFor(valuesSpy, projects)).toMatchObject({ webhook_ca_consumers: [] });
+	});
+
+	it("refuses a consumer nobody verified, after the guard and before any write", async () => {
+		const { insertSpy } = createDb();
+		await expect(createProject(input(["istio"]) as never)).rejects.toThrow();
+		expect(authorize).toHaveBeenCalledWith("create", { type: "project" });
+		expect(insertSpy).not.toHaveBeenCalled();
+	});
+
+	it("a canvas save cannot clear or change the stored marker", async () => {
+		const { setSpy } = setupDb({});
+		await updateProjectDesign("p1", "env-1", input([]) as never);
+		const call = setSpy.mock.calls.find((c) => c[0] === projects);
+		expect(call?.[1]).not.toHaveProperty("webhook_ca_consumers");
+	});
+
+	it("a duplicate keeps the source project's marker", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[
+					projects,
+					[
+						{
+							id: "p1",
+							org_id: "org-1",
+							project_name: "Inference",
+							region: "us-east-1",
+							iac_version: "1.11.4",
+							cloud_identity_id: null,
+							webhook_ca_consumers: ["kserve"],
+						},
+					],
+				],
+				[projectEnvironments, [{ id: "env-1", name: "production", stage: "production", status: "DRAFT", is_default: true }]],
+			]),
+		});
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.project.webhook_ca_consumers).toEqual(["kserve"]);
+	});
+
+	/** Run planProject against a project row and return the frozen config snapshot. */
+	async function snapshotFor(projectRow: Record<string, unknown>) {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projects,
+						[{ id: "p1", org_id: "org-1", cloud_identity_id: "ci-1", region: "us-east-1", ...projectRow }],
+					],
+				]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await planProject("p1");
+		return valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+	}
+
+	it("emits the marker on the deploy snapshot for the runner", async () => {
+		const snapshot = await snapshotFor({ webhook_ca_consumers: ["kserve"] });
+		expect(snapshot.webhook_ca_consumers).toEqual(["kserve"]);
+	});
+
+	it("omits the key when the marker is empty or absent, so existing snapshot bytes do not move", async () => {
+		expect(await snapshotFor({ webhook_ca_consumers: [] })).not.toHaveProperty(
+			"webhook_ca_consumers",
+		);
+		expect(await snapshotFor({})).not.toHaveProperty("webhook_ca_consumers");
 	});
 });
