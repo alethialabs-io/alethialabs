@@ -354,8 +354,10 @@ pressed records the effect `already-current`: selecting the current item again i
 `aria-pressed="true"` counts only on a button with `aria-pressed` siblings — a one-of-N pressed group
 such as the theme toggle; a LONE pressed toggle is expected to unpress and is still inert if it does not. And the
 enumeration waits for the page to settle (no `data-slot="skeleton"`, no `aria-busy`, a stable control
-count) before it runs; an empty enumeration of a page that never settled is **NOT MEASURED
-`page-not-ready`**, never N/A `no-enabled-controls`, which is a claim about the page.
+count) before it runs; a route that never settled on its first load is **NOT MEASURED
+`page-not-ready`** as a whole — never N/A `no-enabled-controls`, which is a claim about the page — and
+so is a route whose reload after a dirtying control stops settling inside its short budget, so a
+stuck route costs one bounded wait rather than one per control.
 
 **ITS ERRORS ARE BIASED TOWARD PASS, deliberately.** Six of the seven effects are attributable to the
 click. The seventh — a DOM mutation anywhere in `main` — is not: an async re-render provoked by the

@@ -18,7 +18,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
-import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion } from "./inert";
+import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
 import { hitTest } from "./overlays";
 import {
 	controlFixture,
@@ -434,6 +434,16 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		const ready = await awaitReady(page, 8_000);
 		expect(ready.settled).toBe(true);
 		expect((await enumerateControls(page, "main", "main")).controls.map((c) => c.name)).toEqual(["Arrived"]);
+	});
+
+	test("R8 — a re-navigation that never settles stops the route with page-not-ready, inside its short budget", async ({ page }) => {
+		// #4980 review: every reload paid the full 15 s route budget, so a never-settling route ran
+		// into the 120 s test timeout instead of a verdict.
+		expect(await reloadBudgetProblems(page), "the shipped re-navigation wait is bounded and stops the route").toEqual([]);
+		// The pre-fix shape: the full-budget wait that returns quietly. Both arms must name it.
+		const unbounded = await reloadBudgetProblems(page, (p) => awaitReady(p, 6_000));
+		expect(unbounded.join(" ")).toMatch(/did not stop the route with `page-not-ready`/);
+		expect(unbounded.join(" ")).toMatch(/over its \d+ms budget/);
 	});
 
 	test("R8 — the control names the enumeration when a disabled control starts being scored", async ({ page }) => {

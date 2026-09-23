@@ -499,11 +499,27 @@ async function readReadiness(page: Page): Promise<ReadinessRead> {
 }
 
 /**
+ * The readiness budget for a route's FIRST load. A route that has not settled inside it is recorded
+ * NOT MEASURED `page-not-ready` as a whole and is not driven (#4980): every later re-navigation
+ * would pay the same budget again, and 60 of them overrun the leg's 120 s per-route test timeout —
+ * a Playwright timeout in place of a verdict.
+ */
+export const ROUTE_READY_BUDGET_MS = 15_000;
+
+/**
+ * The readiness budget for a RE-navigation, after a control dirtied the page. The route already
+ * settled once, so this only has to outlast a warm reload; a re-navigation that does not settle in
+ * it throws `PageNotReady` and the route stops there. That bounds a route's readiness spend at
+ * `ROUTE_READY_BUDGET_MS` plus ONE of these, however many controls it has.
+ */
+export const RENAVIGATION_READY_BUDGET_MS = 3_000;
+
+/**
  * Wait until the page in front of R8 is the page, not its loading state: `load`, then `hasSettled()`
  * over reads `READY_POLL_MS` apart, for at most `budgetMs`. Returns what it last saw either way — the
  * caller decides what an unsettled page means for its verdict.
  */
-export async function awaitReady(page: Page, budgetMs = 15_000): Promise<Readiness> {
+export async function awaitReady(page: Page, budgetMs: number = ROUTE_READY_BUDGET_MS): Promise<Readiness> {
 	const start = Date.now();
 	await page.waitForLoadState("load", { timeout: budgetMs }).catch(() => {});
 	const reads: ReadinessRead[] = [];
@@ -516,18 +532,48 @@ export async function awaitReady(page: Page, budgetMs = 15_000): Promise<Readine
 }
 
 /**
- * The route-level verdict for a page that ENUMERATED NOTHING: N/A only when the page had loaded and
- * offered nothing; otherwise NOT MEASURED, with the reason (#4980).
+ * Why a route cannot be measured from this readiness, or `null` when it can. A page that never
+ * settled is NOT MEASURED `page-not-ready` — whatever it enumerated (nothing, or the controls of its
+ * loading state) is a claim about this run, not about the page, and an empty enumeration of it is
+ * never N/A `no-enabled-controls` (#4980).
  *
- * @returns `null` when the empty enumeration is a real N/A, else the NOT MEASURED reason
+ * @returns `null` when the page loaded, else the NOT MEASURED reason
  */
-export function emptyEnumerationReason(readiness: Readiness): string | null {
+export function notReadyReason(readiness: Readiness): string | null {
 	if (readiness.settled && !isLoadingRead(readiness.last)) return null;
 	const { last } = readiness;
 	const seen = !last.hasMain
 		? "no `<main>`"
 		: [last.busy ? "`aria-busy`" : null, last.skeletons > 0 ? `${last.skeletons} skeleton(s)` : null, `${last.controls} control(s)`].filter(Boolean).join(", ");
-	return `page-not-ready — the route had not finished loading after ${readiness.waitedMs}ms (last read: ${seen}), so an empty enumeration is a claim about this run, not the page`;
+	return `page-not-ready — the route had not finished loading after ${readiness.waitedMs}ms (last read: ${seen}), so what it offered is a claim about this run, not the page`;
+}
+
+/** A re-navigation that did not settle inside `RENAVIGATION_READY_BUDGET_MS`: the route stops here. */
+export class PageNotReady extends Error {
+	/** The NOT MEASURED reason, starting `page-not-ready`. */
+	readonly reason: string;
+	/** What the wait last saw. */
+	readonly readiness: Readiness;
+
+	/** Wrap an unsettled readiness as the route's stop signal. */
+	constructor(reason: string, readiness: Readiness) {
+		super(reason);
+		this.name = "PageNotReady";
+		this.reason = reason;
+		this.readiness = readiness;
+	}
+}
+
+/**
+ * Wait for readiness after a RE-navigation, on the short budget, and throw `PageNotReady` when the
+ * page does not settle — so a route whose reloads stop settling costs one short wait, not one per
+ * remaining control.
+ */
+export async function awaitReadyAfterReload(page: Page, budgetMs: number = RENAVIGATION_READY_BUDGET_MS): Promise<Readiness> {
+	const readiness = await awaitReady(page, budgetMs);
+	const reason = notReadyReason(readiness);
+	if (reason !== null) throw new PageNotReady(`${reason} (on a re-navigation)`, readiness);
+	return readiness;
 }
 
 /**
@@ -1015,8 +1061,44 @@ export async function interactionControl(page: Page, fixture: string = CONTROL_F
 	}
 	await page.setContent(LOADING_FIXTURE.replace("__ARRIVE_MS__", "600000"));
 	const stuck = await awaitReady(page, 2_000);
-	if (emptyEnumerationReason(stuck) === null) {
+	if (notReadyReason(stuck) === null) {
 		problems.push("R8: a page still showing its skeleton when the budget ran out was accepted as loaded — its empty enumeration would be filed N/A `no-enabled-controls`, a claim about the page the run never saw.");
+	}
+
+	// THE RE-NAVIGATION BUDGET (#4980 review). A reload that never settles must STOP the route with
+	// `page-not-ready` inside the short budget — not return quietly and let the next control pay the
+	// full route budget again, which is how 60 reloads overran the 120 s test timeout.
+	problems.push(...(await reloadBudgetProblems(page)));
+	return problems;
+}
+
+/** Slack over the budget for the last poll and the `load` wait to return. */
+const READY_BUDGET_SLACK_MS = 1_500;
+
+/**
+ * Drive `awaitReadyAfterReload()` against a page that never leaves its skeleton and report what it
+ * got wrong: it must throw `PageNotReady` with a `page-not-ready` reason, within
+ * `RENAVIGATION_READY_BUDGET_MS` (plus slack). Empty means the bound holds.
+ *
+ * @param page a page this function may overwrite
+ * @param wait the re-navigation wait under test — a parameter so the self-test can hand it a broken one
+ */
+export async function reloadBudgetProblems(page: Page, wait: (page: Page) => Promise<Readiness> = awaitReadyAfterReload): Promise<string[]> {
+	await page.setContent(LOADING_FIXTURE.replace("__ARRIVE_MS__", "600000"));
+	const start = Date.now();
+	let thrown: unknown = null;
+	try {
+		await wait(page);
+	} catch (err) {
+		thrown = err;
+	}
+	const took = Date.now() - start;
+	const problems: string[] = [];
+	if (!(thrown instanceof PageNotReady) || !thrown.reason.startsWith("page-not-ready")) {
+		problems.push("R8: a re-navigation that never settled did not stop the route with `page-not-ready` — every remaining control would pay the readiness budget again, and the route would end in a Playwright timeout instead of a verdict.");
+	}
+	if (took > RENAVIGATION_READY_BUDGET_MS + READY_BUDGET_SLACK_MS) {
+		problems.push(`R8: an unsettled re-navigation took ${took}ms, over its ${RENAVIGATION_READY_BUDGET_MS}ms budget — the route's readiness spend is not bounded.`);
 	}
 	return problems;
 }

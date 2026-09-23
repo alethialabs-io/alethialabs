@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-	emptyEnumerationReason,
+	notReadyReason,
 	hasSettled,
 	isAlreadySelected,
 	READY_STABLE_READS,
@@ -81,15 +81,15 @@ describe("hasSettled", () => {
 	});
 });
 
-describe("emptyEnumerationReason", () => {
+describe("notReadyReason", () => {
 	it("allows N/A only for a page that settled and was not loading", () => {
-		expect(emptyEnumerationReason({ settled: true, last: read(0), waitedMs: 1500 })).toBeNull();
+		expect(notReadyReason({ settled: true, last: read(0), waitedMs: 1500 })).toBeNull();
 	});
 
 	it("withholds as NOT MEASURED, naming what was seen, when the page never finished loading", () => {
-		const reason = emptyEnumerationReason({ settled: false, last: read(0, { skeletons: 8 }), waitedMs: 15000 });
+		const reason = notReadyReason({ settled: false, last: read(0, { skeletons: 8 }), waitedMs: 15000 });
 		expect(reason).toMatch(/^page-not-ready/);
 		expect(reason).toContain("8 skeleton(s)");
-		expect(emptyEnumerationReason({ settled: false, last: read(0, { hasMain: false }), waitedMs: 15000 })).toContain("no `<main>`");
+		expect(notReadyReason({ settled: false, last: read(0, { hasMain: false }), waitedMs: 15000 })).toContain("no `<main>`");
 	});
 });
