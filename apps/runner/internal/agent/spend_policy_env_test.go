@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // TestSpendPolicyFromEnv pins the parse of the opt-in pre-apply spend policy (#2385). The env
@@ -67,5 +69,18 @@ func TestSpendPolicySurvivesThePayload(t *testing.T) {
 	}
 	if !out.SpendPolicy.RefusePrepaid || !slices.Equal(out.SpendPolicy.HcloudServerTypes, []string{"cpx22"}) {
 		t.Fatalf("policy lost in the payload round-trip: %s", raw)
+	}
+}
+
+// TestDeployPayloadReadsSpendPolicyFromEnv proves the env the e2e workflow sets actually reaches
+// the payload the deploy stage runs from. The parse and the round-trip are pinned above; this is
+// the seam between them — a payload builder that stopped calling spendPolicyFromEnv would leave
+// both of those green and the control off.
+func TestDeployPayloadReadsSpendPolicyFromEnv(t *testing.T) {
+	t.Setenv("ALETHIA_SPEND_HCLOUD_SERVER_TYPES", "cpx22,cpx32,cx33")
+	t.Setenv("ALETHIA_SPEND_REFUSE_PREPAID", "1")
+	p := buildDeployPayload(&types.ProjectConfig{ProjectName: "web"}, "hetzner", false, "", "/tpl", "/cat", "", nil, nil, "https://console", "job-1")
+	if !p.SpendPolicy.RefusePrepaid || !slices.Equal(p.SpendPolicy.HcloudServerTypes, []string{"cpx22", "cpx32", "cx33"}) {
+		t.Fatalf("payload SpendPolicy = %+v, want the env's cap and prepaid refusal", p.SpendPolicy)
 	}
 }
