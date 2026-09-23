@@ -24,7 +24,7 @@ import type { TemplateId } from "@/components/create-project/templates";
  * A closed list, not free text: each entry is a statement about a specific chart's webhook, and a
  * name nobody verified would install cert-manager on a claim nothing backs.
  */
-export const WEBHOOK_CA_CONSUMERS = ["kserve"] as const;
+const WEBHOOK_CA_CONSUMERS = ["kserve"] as const;
 
 /** One workload the project declares needs cert-manager for its webhook CA. */
 export type WebhookCaConsumer = (typeof WEBHOOK_CA_CONSUMERS)[number];
