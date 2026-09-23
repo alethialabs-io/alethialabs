@@ -20,7 +20,7 @@
 //                          "Could not look" is never rendered as "fine", and an issuer that does not
 //                          answer is a FINDING (2), not blindness: it is exactly what is watched.
 //     --checks a,b         restrict to named checks (the deploy workflow's post-deploy probe uses
-//                          discovery,jwks,keys — the TLS pin is a trust-apply concern, not a deploy one)
+//                          config,discovery,jwks — the TLS pin, key age and latency are the schedule's)
 //     --retry-seconds N    re-probe discovery until it answers or N seconds pass (a fresh deploy or a
 //                          fresh custom-domain certificate takes a moment to serve)
 //   --preflight --expected-url <url>
@@ -214,8 +214,17 @@ async function timedGet(url) {
 /** Collect everything the checks read from the live issuer. */
 async function observe(url, { checks, retrySeconds }) {
 	const deadline = Date.now() + retrySeconds * 1000;
+	// Settled = 200 AND naming this origin: right after a deploy the previous version can still answer
+	// 200 as another issuer for a moment, and that is not yet a finding worth failing on.
+	const settled = (d) => {
+		try {
+			return d.status === 200 && JSON.parse(d.body).issuer === url;
+		} catch {
+			return false;
+		}
+	};
 	let discovery = await timedGet(`${url}/.well-known/openid-configuration`);
-	while (discovery.status !== 200 && Date.now() < deadline) {
+	while (!settled(discovery) && Date.now() < deadline) {
 		await new Promise((r) => setTimeout(r, 10000));
 		discovery = await timedGet(`${url}/.well-known/openid-configuration`);
 	}

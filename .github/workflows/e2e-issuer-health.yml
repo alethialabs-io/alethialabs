@@ -1,0 +1,129 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Is the E2E assertion issuer still the issuer four clouds trust? (#4226, maintainer ruling 2026-09-23)
+#
+# WHY THIS EXISTS. Every way that trust breaks is silent until the nightly federates and a cloud
+# refuses it: the Worker answers as another origin, the JWKS stops parsing or publishes private
+# members, a signing key is never rotated, or Cloudflare re-issues the host's certificate from a CA or
+# intermediate that infra/e2e-issuer/tls-ca-pin.json — Alibaba RAM's fingerprint pin — does not name.
+# That last one is not hypothetical: Cloudflare's CAA injection lists four CAs for this zone, and GTS and
+# Let's Encrypt each rotate between several intermediates (infra/e2e-issuer/main.tf has the sources).
+# So `scripts/ci/check-e2e-issuer-health.mjs` asks the clouds' questions four times a day and says which
+# failed. RAM's own guidance is to add a new fingerprint at least a day before a rotation; a daily-or-
+# better signal is what makes that lead time possible.
+#
+# THE SAME TRACKER MECHANISM as workflow-health.yml — ONE long-lived issue keyed on a LABEL
+# (`tracker:e2e-issuer-health`), never on the title (#3252), updated in place, closed when healthy, and
+# more than one match REPORTED rather than silently absorbed. Read that file's header for why each of
+# those is the way it is.
+#
+# THREE OUTCOMES, and only two of them are verdicts:
+#   0  healthy       → close the tracker if one is open
+#   2  findings      → open or update the tracker; the job stays GREEN (the issue is the signal —
+#                      a second red surface for the same fact is noise; workflow-health.yml's rule)
+#   *  blind         → the instrument could not look (unreadable pin, no openssl, moved tfvars). The
+#                      job FAILS: "I did not check" must never render as "fine" — and workflow-health's
+#                      daily sweep then reports this workflow as red.
+#
+# WARNING: `schedule:` fires the DEFAULT branch's copy of this file and of every file it reads — the
+# script, the pin and the tfvars. Until this has ridden dev → staging → main it runs on no schedule at
+# all, and afterwards it measures against main's pin, which is the pin a maintainer applies from.
+# `workflow_dispatch` against a branch exercises it before then.
+#
+# No secret and no cloud credential: public GETs of the discovery document and JWKS, one TLS handshake.
+
+name: E2E issuer health
+
+on:
+  schedule:
+    - cron: "41 */6 * * *" # every six hours, off the hour
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write # upsert the one tracking issue
+
+concurrency:
+  group: e2e-issuer-health
+  cancel-in-progress: true
+
+jobs:
+  health:
+    name: Issuer health (discovery · JWKS · key age · TLS pin · latency)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # The instrument's own proof first: a check nobody has seen go red is indistinguishable from no
+      # check. Hermetic — fixtures plus a throwaway openssl CA.
+      - name: Self-test the health check
+        run: node scripts/ci/check-e2e-issuer-health.mjs --self-test
+
+      # `|| code=$?` rather than a bare call: a `run:` step is `bash -e`, so a non-zero exit would abort
+      # the step before the report could be read, and exit 2 here MEANS something.
+      - name: Measure the live issuer
+        id: health
+        env:
+          ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
+        run: |
+          set -euo pipefail
+          code=0
+          node scripts/ci/check-e2e-issuer-health.mjs --expected-url "$ISSUER_URL" > report.md || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          { echo '## E2E issuer health'; echo; cat report.md; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" != "0" ] && [ "$code" != "2" ]; then
+            echo "::error::the issuer health check could not look — this job is blind, not clean"
+            exit 1
+          fi
+
+      - name: Open or update the tracking issue
+        if: steps.health.outputs.code == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "e2e: the E2E assertion issuer is not healthy as the issuer four clouds trust"
+          LABEL: tracker:e2e-issuer-health
+        run: |
+          set -euo pipefail
+          {
+            cat report.md
+            printf '\n_Refreshed by `.github/workflows/e2e-issuer-health.yml` on %s. It closes itself once every check passes._\n' "$(date -u +%Y-%m-%dT%H:%MZ)"
+          } > body.md
+          # The label may not exist yet on a fresh repository; `gh issue create --label` refuses an
+          # unknown label, which would turn every finding into a failed step instead of an issue.
+          gh label create "$LABEL" --description "Upserted by e2e-issuer-health.yml" --color BFD4F2 2>/dev/null || true
+          # Keyed on the tracker label, never on the title — see workflow-health.yml's header. `--label`
+          # is also live where `--search` lags by minutes.
+          matches="$(gh issue list --state open --label "$LABEL" --limit 100 --json number -q '.[].number' 2>/dev/null || true)"
+          count="$(printf '%s' "$matches" | grep -c . || true)"
+          if [ "${count:-0}" -gt 1 ]; then
+            echo "::error title=duplicate tracking issues::more than one open issue carries \`$LABEL\`: $(printf '%s' "$matches" | tr '\n' ' ')— close all but one."
+            exit 1
+          fi
+          existing="$(printf '%s' "$matches" | head -1)"
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file body.md
+            echo "updated #$existing"
+          else
+            gh issue create --title "$TITLE" --label "wave:hygiene,$LABEL" --body-file body.md
+          fi
+
+      - name: Close it when the issuer is healthy
+        if: steps.health.outputs.code == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: tracker:e2e-issuer-health
+        run: |
+          set -euo pipefail
+          matches="$(gh issue list --state open --label "$LABEL" --limit 100 --json number -q '.[].number' 2>/dev/null || true)"
+          count="$(printf '%s' "$matches" | grep -c . || true)"
+          if [ "${count:-0}" -gt 1 ]; then
+            echo "::error title=duplicate tracking issues::more than one open issue carries \`$LABEL\`: $(printf '%s' "$matches" | tr '\n' ' ')— close all but one."
+            exit 1
+          fi
+          existing="$(printf '%s' "$matches" | head -1)"
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Every issuer health check passes as of $(date -u +%Y-%m-%dT%H:%MZ). Closing; this reopens itself if that changes."
+            echo "closed #$existing"
+          fi

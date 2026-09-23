@@ -10,6 +10,13 @@
 #     infra/github/environments.tf next to `production`'s `main` policy. The environment holds the
 #     Cloudflare credentials, so a job that cannot select it cannot deploy at all.
 #
+# The issuer's ONE origin is https://e2e-issuer.alethialabs.io, a Workers Custom Domain owned by
+# infra/e2e-issuer (maintainer ruling on #4226, 2026-09-23); wrangler.jsonc turns workers.dev off. That
+# makes ordering load-bearing: deploying with workers.dev off before the custom domain routes to the
+# Worker would leave the issuer reachable NOWHERE. So a preflight runs before anything is uploaded and
+# refuses — with the reason and the runbook step — unless vars.E2E_ISSUER_URL is the committed origin
+# and that origin already routes to this Worker. A refused deploy changes nothing that is live.
+#
 # Key material never rides a code deploy. `SIGNING_KEYS_JSON` is uploaded only when a dispatch
 # says so (`upload-signing-keys`), which is a ROTATION step, not a deploy step — see the README.
 
@@ -54,6 +61,12 @@ jobs:
       # the test suite run without them, and only the two wrangler steps receive them.
       - run: pnpm install --frozen-lockfile
       - run: pnpm -C apps/e2e-issuer run test
+      # Before any credential is used or anything uploaded. Plain node, repository files only; the one
+      # network read is a GET of the public discovery document.
+      - name: Preflight — the origin is the committed one and already routes to this Worker
+        env:
+          ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
+        run: node scripts/ci/check-e2e-issuer-health.mjs --preflight --expected-url "$ISSUER_URL"
       - name: Upload rotation-aware signing key set
         if: github.event_name == 'workflow_dispatch' && inputs.upload-signing-keys
         working-directory: apps/e2e-issuer
@@ -79,13 +92,11 @@ jobs:
           --var "ALLOWED_WORKFLOW_REFS:$ALLOWED_WORKFLOW_REFS"
       # The Worker refuses to serve at any origin but ISSUER_URL, so this is a measurement of the
       # deployed issuer, not an echo of the variable: a mismatch is a 503 here, not a silent
-      # cloud-side rejection later.
-      - name: Verify the deployed issuer serves discovery at its configured origin
+      # cloud-side rejection later. It re-probes for up to three minutes, until discovery names THIS origin (a new version and a new
+      # custom-domain certificate take a moment to serve everywhere), then fails naming the check —
+      # an unreachable origin says so, it does not surface as a bare curl exit code. The TLS pin and
+      # latency and key age are the scheduled health check's (e2e-issuer-health.yml), not a deploy gate.
+      - name: Verify the deployed issuer serves discovery and a usable JWKS at its configured origin
         env:
           ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
-        run: |
-          set -euo pipefail
-          discovery="$(curl -fsS --max-time 20 "$ISSUER_URL/.well-known/openid-configuration")"
-          served="$(printf '%s' "$discovery" | jq -r '.issuer')"
-          [ "$served" = "${ISSUER_URL%/}" ] || { echo "issuer mismatch: served '$served', configured '$ISSUER_URL'" >&2; exit 1; }
-          curl -fsS --max-time 20 "$ISSUER_URL/.well-known/jwks.json" | jq -e '.keys | length > 0' >/dev/null
+        run: node scripts/ci/check-e2e-issuer-health.mjs --expected-url "$ISSUER_URL" --checks config,discovery,jwks --retry-seconds 180
