@@ -1,0 +1,9 @@
+{
+  "$comment": "Fixture for checks.tftest.hcl only: the pin for the mocked broker origin, covering the mocked served CA (2222…). The real pin is infra/e2e-issuer/tls-ca-pin.json.",
+  "issuer_url": "https://alethia-e2e-issuer.example.workers.dev",
+  "algorithm": "sha1",
+  "fingerprints": [
+    { "sha1": "2222222222222222222222222222222222222222" },
+    { "sha1": "4444444444444444444444444444444444444444" }
+  ]
+}

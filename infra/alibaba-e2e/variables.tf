@@ -129,6 +129,21 @@ variable "e2e_broker_issuer_url" {
   }
 }
 
+variable "broker_tls_pin_path" {
+  description = <<-EOT
+    Path, relative to this stack, of the reviewed TLS CA fingerprint pin for the broker's host. The
+    default is the ONE committed copy, infra/e2e-issuer/tls-ca-pin.json, which the scheduled health
+    check also reads. Overridden only by checks.tftest.hcl, to point at fixtures.
+  EOT
+  type        = string
+  default     = "../e2e-issuer/tls-ca-pin.json"
+
+  validation {
+    condition     = endswith(var.broker_tls_pin_path, "tls-ca-pin.json")
+    error_message = "broker_tls_pin_path must name a tls-ca-pin.json file."
+  }
+}
+
 variable "broker_oidc_provider_name" {
   description = "Name of the RAM OIDC provider trusting the E2E assertion broker. Distinct from oidc_provider_name (GitHub) and from the connector's `alethia` provider."
   type        = string

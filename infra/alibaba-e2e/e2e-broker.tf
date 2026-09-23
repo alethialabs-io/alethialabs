@@ -21,6 +21,16 @@
 # read; the BROKER enforces it before it signs (ALLOWED_REPOSITORIES, ALLOWED_WORKFLOW_REFS, the
 # GitHub-token cross-check and the replay guard in apps/e2e-issuer/src/worker.ts).
 #
+# TLS PIN (maintainer ruling 2026-09-23). RAM pins the SHA-1 fingerprints of the CA certificates the
+# issuer's host serves, at most five. This used to pin whatever chain `tofu plan` happened to see —
+# trust on first use, at plan time, and silently wrong the day Cloudflare re-issued the host's
+# certificate from another CA or intermediate (it may: its CAA injection lists four CAs, and GTS and
+# Let's Encrypt each rotate between several intermediates — infra/e2e-issuer/main.tf). Now the set is
+# the REVIEWED one committed in infra/e2e-issuer/tls-ca-pin.json, which the scheduled health check
+# (.github/workflows/e2e-issuer-health.yml) compares with the live chain every day. The live read below
+# is kept, as a precondition: this refuses to write a pin that does not cover the chain being served
+# right now, rather than write one RAM would refuse.
+#
 # LIFETIME. RAM is the one cloud of the four with a trust-side knob: an OIDC provider's
 # `issuance_limit_time` rejects a token whose `iat` is older than that many hours. Alibaba's
 # CreateOIDCProvider API documents the range as 1–168 (not measured here), so it is set to 1 — the
@@ -41,13 +51,15 @@ locals {
 
   broker_enabled = var.e2e_broker_issuer_url != null
 
-  broker_ca_fingerprints = local.broker_enabled ? [
-    for c in data.tls_certificate.e2e_broker[0].certificates : c.sha1_fingerprint if c.is_ca
+  # The reviewed pin (one copy, shared with the health check). Read even while disabled so a malformed
+  # file fails every plan, not only the enabling one.
+  broker_tls_pin      = jsondecode(file("${path.module}/${var.broker_tls_pin_path}"))
+  broker_fingerprints = [for f in local.broker_tls_pin.fingerprints : lower(f.sha1)]
+
+  # What the host serves right now — CA certificates only, never the leaf. Compared, never pinned.
+  broker_served_ca_fingerprints = local.broker_enabled ? [
+    for c in data.tls_certificate.e2e_broker[0].certificates : lower(c.sha1_fingerprint) if c.is_ca
   ] : []
-  # Same defensive fallback as oidc.tf: a chain with no cert flagged is_ca pins the whole chain.
-  broker_fingerprints = length(local.broker_ca_fingerprints) > 0 ? local.broker_ca_fingerprints : (
-    local.broker_enabled ? [for c in data.tls_certificate.e2e_broker[0].certificates : c.sha1_fingerprint] : []
-  )
 
   # The provider's ARN, BUILT from plan-time values rather than read off the resource. `arn` is
   # computed-only in the alicloud schema, so a statement that referenced
@@ -74,9 +86,10 @@ locals {
   }] : []
 }
 
-# Alibaba pins the issuer's TLS chain on the provider, as oidc.tf does for GitHub: the CA certs, not
-# the leaf, so a leaf rotation at the edge does not break validation. Read only while enabled, so an
-# unset issuer makes no network call at plan.
+# The served chain, read only to check it against the committed pin (above) — never pinned directly.
+# Read only while enabled, so an unset issuer makes no network call at plan. While the issuer host
+# does not answer at all, this read fails the plan: the trust must not be applied before the issuer
+# serves (infra/e2e-issuer/README.md orders the steps).
 data "tls_certificate" "e2e_broker" {
   count = local.broker_enabled ? 1 : 0
   url   = var.e2e_broker_issuer_url
@@ -91,4 +104,21 @@ resource "alicloud_ims_oidc_provider" "e2e_broker" {
   fingerprints        = local.broker_fingerprints
   issuance_limit_time = 1
   description         = "Trust the E2E assertion broker (apps/e2e-issuer) for the e2e-nightly RAM role (#4226)."
+
+  lifecycle {
+    # Un-appliable, not merely reported: a wrong pin here is a trust RAM refuses at the nightly's
+    # federation, far from the plan that wrote it.
+    precondition {
+      condition     = local.broker_tls_pin.issuer_url == var.e2e_broker_issuer_url
+      error_message = "${var.broker_tls_pin_path} pins ${local.broker_tls_pin.issuer_url}, but e2e_broker_issuer_url is ${coalesce(var.e2e_broker_issuer_url, "<unset>")}."
+    }
+    precondition {
+      condition     = length(local.broker_fingerprints) >= 1 && length(local.broker_fingerprints) <= 5
+      error_message = "${var.broker_tls_pin_path} must pin 1–5 CA fingerprints (RAM's maximum is 5); it pins ${length(local.broker_fingerprints)}. Populate it with `node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url ${coalesce(var.e2e_broker_issuer_url, "<url>")}` in a reviewed PR."
+    }
+    precondition {
+      condition     = length(local.broker_served_ca_fingerprints) > 0 && alltrue([for fp in local.broker_served_ca_fingerprints : contains(local.broker_fingerprints, fp)])
+      error_message = "the issuer serves CA certificate(s) ${jsonencode(local.broker_served_ca_fingerprints)}, and not all are in ${var.broker_tls_pin_path} (${jsonencode(local.broker_fingerprints)}). Add them with --print-pin, merge, then apply."
+    }
+  }
 }
