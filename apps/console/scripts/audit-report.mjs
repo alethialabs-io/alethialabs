@@ -534,29 +534,43 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * for the page instead of reading its skeleton. The seven R8 FAILs below are what those newly
  * measured pages show, and what a settled page no longer hides. None of them is a #4980 cell.
  *
+ * THE FOURTH IMPORT — run 35872640708 @ `b417c13e1`, `audit` + `audit-interaction` of ONE run, the
+ * second on #4980's branch. `routes` and `permissions` reproduced all 387 verdicts key-for-key again,
+ * and all three #4980 cells PASSED a second time (F8 `~/alerts`, F8 `~/runners`, R8
+ * `~/settings/roles`), which is the issue's stability condition. The three pick-one buttons
+ * `6c70a6b62` excuses now PASS (`/[org]`, `~/usage`, `[project]/usage`), so the R8 row below names
+ * only the four routes still red, and moves to #4996. One NEW F8 FAIL arrived on
+ * `~/settings/members`, a cell that PASSED in the third import on an unchanged table: the #4980
+ * class on a page #4980 did not touch, so it gets its own row and its own issue (#4999).
+ * `[project]/jobs` F8/F9 read NOT MEASURED (the list rendered 0 rows), a withheld measurement that
+ * never scores as a pass.
+ *
  * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
 export const LIVE_DEBT = /** @type {const} */ ({
-	R8: {
-		owner: "#4980",
+	F8: {
+		owner: "#4999",
 		why:
-			"SEVEN routes, and none is a cell #4980 named: `owner39` on `~/settings/roles` now PASSES, and " +
-			"`~/runners` and `[project]/architecture` are MEASURED (20 and 14 controls) where they were N/A " +
-			"from their loading skeletons. Waiting for the page to settle also removed the re-render that " +
-			"used to land inside a control's window and pass it, and revealed these. Two classes: " +
-			"(1) an exclusive-choice button ALREADY PRESSED, clicked again: `Runner minutes` on `~/usage` " +
-			"and `[project]/usage` (the metric group) and the theme menu's `System` on `/[org]`. These use " +
-			"`aria-pressed` for a one-of-N choice, and the rule in the measured commit excused only " +
-			"`aria-current`, `aria-selected` and a checked radio; the next commit also excuses a pressed " +
-			"button with `aria-pressed` siblings, which should clear class (1) but is unproven until the " +
-			"next import. (2) Controls with no state attribute whose click showed " +
-			"nothing within 1 000 ms: `Fit view` on `[project]/architecture` (the view is already fitted), " +
-			"`Link GitHub`/`Link GitLab`/`Link Bitbucket` on `[project]/settings/preview` and `~/new`, " +
-			"`Design with the agent` on `~/new`, and `Transfer` on `~/settings/general`. Each needs a " +
-			"product-or-instrument decision.",
+			"ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, " +
+			"read from the count pill). The fresh tab kept the param but no narrowed count was read back, so " +
+			"Reset was never reached. The cell PASSED in run 35867789835 and FAILED in run 35872640708 with the " +
+			"members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and " +
+			"`~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while " +
+			"the URL is unread or the rows are placeholder data.",
+	},
+	R8: {
+		owner: "#4996",
+		why:
+			"FOUR routes, six controls with no state attribute whose click showed nothing within 1 000 ms: " +
+			"`Fit view` on `[project]/architecture`, `Link GitHub`/`Link GitLab`/`Link Bitbucket` on " +
+			"`[project]/settings/preview` and on `~/new`, `Design with the agent` on `~/new`, and `Transfer` " +
+			"on `~/settings/general`. The three pick-one buttons the previous row also named (`Runner " +
+			"minutes` on both usage pages, the theme toggle's `System`) PASS in run 35872640708, so they are " +
+			"gone from this row.",
 	},
 });
+
 
 /**
  * Which section owns which live predicate, checked in both directions.
