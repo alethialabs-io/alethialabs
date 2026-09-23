@@ -26,6 +26,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -91,6 +92,10 @@ type ControlPlane struct {
 type stateEntry struct {
 	state  []byte
 	locked bool
+	// lockInfo is the body the holder sent with its LOCK — OpenTofu's LockInfo JSON (ID,
+	// Operation, Who, Created). It is handed back to a contending LOCK so tofu can NAME the
+	// holder, the way the console's state proxy does (#3855).
+	lockInfo []byte
 }
 
 // NewControlPlane connects to Postgres (the migrated CI/dev database) and returns a
@@ -830,17 +835,67 @@ func (cp *ControlPlane) handleStateLock(w http.ResponseWriter, r *http.Request) 
 	switch r.Method {
 	case http.MethodPost: // LOCK
 		if e.locked {
-			w.WriteHeader(http.StatusConflict)
+			// 423 + the HOLDER's lock info, mirroring apps/console/app/api/jobs/[id]/state/lock.
+			// This used to be a bare 409 with no body, and tofu's http backend then reports
+			// "HTTP remote state already locked, failed to unmarshal body" and prints the
+			// CONTENDER's own lock info as if it were the holder's — on #3855's gcp floor that
+			// made a destroy blocked by the runner's stranded apply lock read as a destroy
+			// blocked by itself (same host, Created one second earlier).
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusLocked)
+			_, _ = w.Write(lockHolderBody(e.lockInfo))
 			return
 		}
+		b, _ := io.ReadAll(r.Body)
 		e.locked = true
+		e.lockInfo = b
 		w.WriteHeader(http.StatusOK)
 	case http.MethodDelete: // UNLOCK
 		e.locked = false
+		e.lockInfo = nil
 		w.WriteHeader(http.StatusOK)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// lockHolderBody is the 423 body for a contended LOCK: the holder's own lock info when it sent
+// one, else an empty JSON object — never an empty body, which tofu cannot unmarshal.
+func lockHolderBody(info []byte) []byte {
+	if len(bytes.TrimSpace(info)) == 0 {
+		return []byte("{}")
+	}
+	return info
+}
+
+// StateLockHolder reports whether jobID's state slot (following any alias) is locked, and the
+// lock info its holder sent. The teardown asks this AFTER the runner process is gone: a lock still
+// held then has no living owner (#3855).
+func (cp *ControlPlane) StateLockHolder(jobID string) ([]byte, bool) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	e := cp.states[cp.resolveStateKeyLocked(jobID)]
+	if e == nil || !e.locked {
+		return nil, false
+	}
+	return append([]byte(nil), e.lockInfo...), true
+}
+
+// ReleaseStrandedStateLock clears jobID's state lock and returns the lock info it carried. It is
+// the harness's `tofu force-unlock`, and it is only sound once every process that could hold the
+// lock is dead — the caller (t2QuiesceRunner) establishes that by killing the runner's whole
+// process group first. Reports false when there was no lock to release.
+func (cp *ControlPlane) ReleaseStrandedStateLock(jobID string) ([]byte, bool) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	e := cp.states[cp.resolveStateKeyLocked(jobID)]
+	if e == nil || !e.locked {
+		return nil, false
+	}
+	info := e.lockInfo
+	e.locked = false
+	e.lockInfo = nil
+	return info, true
 }
 
 // ─────────────────────────── receipt / teardown / kube helpers ───────────────────────────
