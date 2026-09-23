@@ -45,6 +45,12 @@ export {
 	normalizeWafEnabled,
 } from "./waf";
 export {
+	effectiveCapacityMode,
+	effectiveCapacityModeForCloud,
+	normalizeCapacityMode,
+	type NosqlCapacityMode,
+} from "./nosql-capacity";
+export {
 	dnsZoneUnsupportedReason,
 	dnsZoneUnsupportedReasonForCloud,
 } from "./dns-zone-support";

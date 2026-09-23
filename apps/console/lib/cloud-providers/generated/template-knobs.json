@@ -21,10 +21,10 @@
 			"dead": 0
 		},
 		"azure": {
-			"declared": 88,
-			"reachable": 62,
+			"declared": 87,
+			"reachable": 61,
 			"settable": 22,
-			"dead": 2
+			"dead": 1
 		},
 		"gcp": {
 			"declared": 104,
@@ -4205,7 +4205,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:570",
+			"declaredAt": "infra/templates/project/azure/variables.tf:574",
 			"readBy": [
 				"azure/modules/storage-account"
 			],
@@ -4224,7 +4224,7 @@
 			"required": false,
 			"description": "Whether to create an Azure Storage Account",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:549",
+			"declaredAt": "infra/templates/project/azure/variables.tf:553",
 			"readBy": [
 				"azure"
 			],
@@ -4242,7 +4242,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:570",
+			"declaredAt": "infra/templates/project/azure/variables.tf:574",
 			"readBy": [
 				"azure",
 				"azure/modules/storage-account"
@@ -4261,7 +4261,7 @@
 			"required": false,
 			"description": "Replication type for the Storage Account (LRS, GRS, RAGRS, ZRS)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:561",
+			"declaredAt": "infra/templates/project/azure/variables.tf:565",
 			"readBy": [
 				"azure",
 				"azure/modules/storage-account"
@@ -4280,7 +4280,7 @@
 			"required": false,
 			"description": "Performance tier for the Storage Account (Standard or Premium)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:555",
+			"declaredAt": "infra/templates/project/azure/variables.tf:559",
 			"readBy": [
 				"azure",
 				"azure/modules/storage-account"
@@ -4299,7 +4299,7 @@
 			"required": false,
 			"description": "List of storage containers to create in the Storage Account",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:570",
+			"declaredAt": "infra/templates/project/azure/variables.tf:574",
 			"readBy": [
 				"azure",
 				"azure/modules/storage-account"
@@ -4318,7 +4318,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:570",
+			"declaredAt": "infra/templates/project/azure/variables.tf:574",
 			"readBy": [
 				"azure/modules/storage-account"
 			],
@@ -4374,7 +4374,7 @@
 			"required": false,
 			"description": "Exact Azure Managed Redis sku (Balanced_B*/MemoryOptimized_M*/ComputeOptimized_X*/FlashOptimized_A*). Null = map from azure_cache_sku. Normally emitted from the project's MemoryGB.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:643",
+			"declaredAt": "infra/templates/project/azure/variables.tf:647",
 			"readBy": [
 				"azure"
 			],
@@ -4602,7 +4602,7 @@
 			"required": false,
 			"description": "Envelope-encrypt Kubernetes Secrets in etcd under a key in this project's Key Vault. On by default (AWS parity). Requires key_vault_purge_protection_enabled.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:686",
+			"declaredAt": "infra/templates/project/azure/variables.tf:690",
 			"readBy": [
 				"azure"
 			],
@@ -4715,7 +4715,7 @@
 			"required": false,
 			"description": "OPTIONAL. Name of a pre-existing user-assigned managed identity for the external-secrets operator. Requires external_secrets_identity_resource_group.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:671",
+			"declaredAt": "infra/templates/project/azure/variables.tf:675",
 			"readBy": [
 				"azure"
 			],
@@ -4733,7 +4733,7 @@
 			"required": false,
 			"description": "OPTIONAL. Resource group holding external_secrets_identity_name. Requires external_secrets_identity_name.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:677",
+			"declaredAt": "infra/templates/project/azure/variables.tf:681",
 			"readBy": [
 				"azure"
 			],
@@ -4958,7 +4958,7 @@
 			"required": false,
 			"description": "Fixed instance count for the Application Gateway v2 SKU. Azure requires at least 1; raise it for capacity or zone redundancy.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:534",
+			"declaredAt": "infra/templates/project/azure/variables.tf:538",
 			"readBy": [
 				"azure"
 			],
@@ -4976,7 +4976,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:516",
+			"declaredAt": "infra/templates/project/azure/variables.tf:520",
 			"readBy": [
 				"azure"
 			],
@@ -4994,7 +4994,7 @@
 			"required": false,
 			"description": "DNS domain name for the managed zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:484",
+			"declaredAt": "infra/templates/project/azure/variables.tf:488",
 			"readBy": [
 				"azure",
 				"azure/modules/azure-dns"
@@ -5013,7 +5013,7 @@
 			"required": false,
 			"description": "Whether to create an Azure DNS zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:472",
+			"declaredAt": "infra/templates/project/azure/variables.tf:476",
 			"readBy": [
 				"azure"
 			],
@@ -5031,7 +5031,7 @@
 			"required": false,
 			"description": "Name of the Azure DNS zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:478",
+			"declaredAt": "infra/templates/project/azure/variables.tf:482",
 			"readBy": [],
 			"reachable": true,
 			"ownedByProvider": true,
@@ -5047,7 +5047,7 @@
 			"required": false,
 			"description": "Whether to create an Azure WAF policy",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:495",
+			"declaredAt": "infra/templates/project/azure/variables.tf:499",
 			"readBy": [
 				"azure"
 			],
@@ -5065,7 +5065,7 @@
 			"required": false,
 			"description": "List of Azure WAF custom rules",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:501",
+			"declaredAt": "infra/templates/project/azure/variables.tf:505",
 			"readBy": [
 				"azure",
 				"azure/modules/azure-waf"
@@ -5208,26 +5208,9 @@
 		{
 			"cloud": "azure",
 			"component": "nosql",
-			"name": "billing_mode",
-			"kind": "string",
-			"typeExpr": "string",
-			"required": false,
-			"description": "",
-			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:433",
-			"readBy": [],
-			"reachable": true,
-			"ownedByProvider": true,
-			"typed": true,
-			"itemScope": "cosmos_db_collections",
-			"default": "PAY_PER_REQUEST"
-		},
-		{
-			"cloud": "azure",
-			"component": "nosql",
 			"name": "cosmos_db_collections",
 			"kind": "list",
-			"typeExpr": "list(object({\n    name          = string\n    partition_key = optional(string, \"/id\")\n    billing_mode  = optional(string, \"PAY_PER_REQUEST\")\n   \n   \n   \n    point_in_time_recovery = optional(bool, false)\n   \n   \n   \n    analytical_storage_enabled = optional(bool, false)\n   \n   \n   \n   \n   \n    global_replicas = optional(list(string), [])\n  }))",
+			"typeExpr": "list(object({\n    name          = string\n    partition_key = optional(string, \"/id\")\n   \n   \n   \n   \n   \n   \n   \n   \n    point_in_time_recovery = optional(bool, false)\n   \n   \n   \n    analytical_storage_enabled = optional(bool, false)\n   \n   \n   \n   \n   \n    global_replicas = optional(list(string), [])\n  }))",
 			"required": false,
 			"description": "List of Cosmos DB containers (collections) to create with partition keys",
 			"sensitive": false,
@@ -5269,7 +5252,7 @@
 			"required": false,
 			"description": "Retention tier used when a container asks for point-in-time recovery. Continuous7Days is free; Continuous30Days is billed.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:457",
+			"declaredAt": "infra/templates/project/azure/variables.tf:461",
 			"readBy": [
 				"azure"
 			],
@@ -5418,7 +5401,7 @@
 			"required": false,
 			"description": "Object of custom values that can be used for extra terraform files outside of the template",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:637",
+			"declaredAt": "infra/templates/project/azure/variables.tf:641",
 			"readBy": [],
 			"reachable": false,
 			"ownedByProvider": false,
@@ -5628,7 +5611,7 @@
 			"required": false,
 			"description": "SKU for the Azure Container Registry (Basic, Standard, or Premium)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:592",
+			"declaredAt": "infra/templates/project/azure/variables.tf:596",
 			"readBy": [
 				"azure",
 				"azure/modules/acr"
@@ -5647,7 +5630,7 @@
 			"required": false,
 			"description": "Whether to provision an Azure Container Registry",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:586",
+			"declaredAt": "infra/templates/project/azure/variables.tf:590",
 			"readBy": [
 				"azure"
 			],
@@ -5683,7 +5666,7 @@
 			"required": false,
 			"description": "Per-secret rotation keepers, keyed by secret name. Changing any value under a name re-generates that secret's password; a name absent from the map keeps its value forever. Empty (the default) is behavior-preserving.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:616",
+			"declaredAt": "infra/templates/project/azure/variables.tf:620",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -5702,7 +5685,7 @@
 			"required": false,
 			"description": "List of secrets to create in Azure Key Vault",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:602",
+			"declaredAt": "infra/templates/project/azure/variables.tf:606",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -5721,7 +5704,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:602",
+			"declaredAt": "infra/templates/project/azure/variables.tf:606",
 			"readBy": [
 				"azure/modules/key-vault"
 			],
@@ -5739,7 +5722,7 @@
 			"required": false,
 			"description": "Block purging this project's soft-deleted Key Vault until the retention window expires. IRREVERSIBLE: Azure refuses to disable purge protection once it is on, so this can only be set to false BEFORE the vault is first created. Leaving it true means a destroyed environment cannot be rebuilt under the same project + environment name for 7 days.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:622",
+			"declaredAt": "infra/templates/project/azure/variables.tf:626",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -5758,7 +5741,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:602",
+			"declaredAt": "infra/templates/project/azure/variables.tf:606",
 			"readBy": [
 				"azure/modules/key-vault"
 			],
@@ -5777,7 +5760,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:602",
+			"declaredAt": "infra/templates/project/azure/variables.tf:606",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -5815,7 +5798,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:602",
+			"declaredAt": "infra/templates/project/azure/variables.tf:606",
 			"readBy": [
 				"azure/modules/key-vault"
 			],

@@ -221,10 +221,6 @@ dead:
     component: dns
     knob: alidns_managed_certificate
     reason: "CEILING, not backlog — settled by #1824 and recorded in infra/config-carriage-exclusions.yaml (dns.managed_certificate / alibaba): the alicloud provider has NO certificate-request resource at all. Its certificate resources are upload-only (PEM you already hold), private-CA, or attachments to a WAF/ESA instance this template does not provision, and none exposes the validation challenge the AWS template consumes. The console still emits the key (alibaba_provider.go) so the tfvars shape stays uniform across clouds. Nothing here can be wired; the open question is where in THIS ledger a ceiling belongs."
-  - cloud: azure
-    component: nosql
-    knob: billing_mode
-    reason: "Declared on `cosmos_db_collections`, emitted per container by the console (azure_provider.go buildCosmosDBCollections, PAY_PER_REQUEST|PROVISIONED) and read by nothing on the Cosmos chain, so a user who picks provisioned capacity on the canvas silently gets serverless. UNDER-DETERMINED, not merely unwired: Cosmos buys throughput per ACCOUNT the way replica regions do — `EnableServerless` is a create-time capability, so honouring one container's PROVISIONED replaces the account — and a provisioned container also needs an RU/s number that no variable in this template offers. Wiring it means choosing that number and that replacement rule; #4320 left both to the maintainer rather than invent them."
   - cloud: gcp
     component: cluster
     knob: gke_log_retention_days

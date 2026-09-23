@@ -13,6 +13,7 @@ import {
 	CACHE_NODE_TYPES,
 	DB_CAPACITY,
 	dbEngineFamily,
+	effectiveCapacityMode,
 	getProvider,
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
@@ -1625,9 +1626,11 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				],
 			},
 		],
-		summary: (c) =>
+		summary: (c, provider) =>
 			`${c.partition_key || "id"} · ${
-				c.capacity_mode === "provisioned" ? "Provisioned" : "On-demand"
+				effectiveCapacityMode(provider, c.capacity_mode) === "provisioned"
+					? "Provisioned"
+					: "On-demand"
 			}`,
 	},
 

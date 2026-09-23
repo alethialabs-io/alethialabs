@@ -19,7 +19,7 @@ provisioned.
 |---|---:|---:|---:|---:|
 | alibaba | 63 | 45 | 11 | 1 |
 | aws | 159 | 122 | 52 | 0 |
-| azure | 88 | 62 | 22 | 2 |
+| azure | 87 | 61 | 22 | 1 |
 | gcp | 104 | 84 | 34 | 1 |
 | hetzner | 37 | 27 | 4 | 2 |
 
@@ -39,7 +39,7 @@ argument — the shape a raw variable count cannot tell from a working knob.
 | database | 0 / 8 | 4 / 11 | 3 / 11 | 7 / 14 | — |
 | dns | 1 / 5 | 7 / 16 | 4 / 8 | 3 / 7 | 2 / 5 |
 | network | 1 / 6 | 1 / 4 | 0 / 5 | 2 / 7 | 0 / 6 |
-| nosql | 0 / 2 | 8 / 20 | 1 / 11 | 2 / 4 | — |
+| nosql | 0 / 2 | 8 / 20 | 1 / 10 | 2 / 4 | — |
 | platform | 0 / 6 | 0 / 22 | 0 / 9 | 0 / 10 | 0 / 5 |
 | queue | 0 / 2 | 0 / 4 | 0 / 3 | 0 / 2 | — |
 | registry | 0 / 7 | 10 / 15 | 2 / 3 | 0 / 6 | — |
@@ -63,8 +63,7 @@ Each cell is **settable / declared**. A `—` means the cloud declares nothing t
 | Cloud | Component | Knob | Declared at |
 |---|---|---|---|
 | alibaba | dns | `alidns_managed_certificate` | infra/templates/project/alibaba/variables.tf:240 |
-| azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:478 |
-| azure | nosql | `billing_mode` | infra/templates/project/azure/variables.tf:433 |
+| azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:482 |
 | gcp | cluster | `gke_log_retention_days` | infra/templates/project/gcp/variables.tf:267 |
 | hetzner | bucket | `encryption_enabled` | infra/templates/project/hetzner/variables.tf:258 |
 | hetzner | dns | `dns_hosted_zone` | infra/templates/project/hetzner/variables.tf:244 |
