@@ -11,6 +11,7 @@ import {
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import type { EnvironmentStage } from "@/lib/db/schema";
+import { webhookCaConsumersForTemplate } from "@/lib/addons/webhook-ca-consumers";
 
 /** The quick-create template ids. UI-only — there is no template column in the schema. */
 export type TemplateId = "standard" | "ai" | "custom";
@@ -59,6 +60,10 @@ export function buildCreateInput(args: {
 	const { projectName, template, provider, cloudIdentityId, defaultEnvironment, environments } =
 		args;
 	const autoscalerKey = AUTOSCALER[provider].providerConfigKey;
+	// The template's in-cluster webhook-CA needs (#4990): the AI template's KServe needs
+	// cert-manager, which the deploy installs issuer-free when the project declares it. Omitted
+	// when empty so every other template's input is unchanged.
+	const webhookCaConsumers = webhookCaConsumersForTemplate(template);
 
 	return {
 		project: {
@@ -68,6 +73,7 @@ export function buildCreateInput(args: {
 			cloud_identity_id: cloudIdentityId,
 			iac_version: "1.11.4",
 			...(environments?.length ? { environments } : {}),
+			...(webhookCaConsumers.length ? { webhook_ca_consumers: webhookCaConsumers } : {}),
 		},
 		network: {
 			provision_network: true,

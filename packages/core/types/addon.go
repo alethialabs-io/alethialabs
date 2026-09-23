@@ -47,7 +47,7 @@ type AddOnInstall struct {
 	//
 	// It is declared HERE, on the spec, rather than inferred from the add-on id in Go, so exactly
 	// one place knows which operators need it: the console mapper that adds the operator. The Go
-	// side reads it back through InfraFacts.WebhookCAAddOns and gates on that, which is what stops
+	// side reads it back through InfraFacts.WebhookCAConsumers and gates on that, which is what stops
 	// the install decision drifting from the thing that caused it (#3228).
 	RequiresCertManager bool `json:"requiresCertManager,omitempty"`
 	// Project is the ArgoCD AppProject the Application is placed in. Empty = "infra" (the

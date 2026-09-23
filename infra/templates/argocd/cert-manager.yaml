@@ -21,10 +21,22 @@
        TestCertManagerGateMatchesTemplate parses this file to prove the gate is still exactly that
        method call and never a second copy of the logic.
 
-       It renders only where a DNS01 challenge can actually COMPLETE — see CertManagerSolver():
-       aws/gcp/azure, native DNS only. Alibaba and Hetzner render nothing, because cert-manager
-       ships no in-box solver for either and an issuer that cannot solve is worse than no issuer:
-       every Challenge sits `pending` forever and nothing in the cluster reports it as broken.
+       It renders for either of TWO reasons, and they are different questions (#3228, #4990):
+
+         ISSUE   CertManagerIssuerEnabled — a managed certificate, a domain, and a DNS01 solver
+                 that can actually COMPLETE a challenge (CertManagerSolver(): aws/gcp/azure,
+                 native DNS only). Only then is a ClusterIssuer created and the solver's cloud
+                 identity bound to the ServiceAccount below. Alibaba and Hetzner never issue:
+                 cert-manager ships no in-box solver for either, and an issuer that cannot solve
+                 is worse than none — every Challenge sits `pending` forever and nothing in the
+                 cluster reports it as broken.
+         INJECT  CertManagerWebhookCARequired — something on the deploy needs the controller for
+                 an admission-webhook CA: an add-on that set RequiresCertManager (hetzner's
+                 scylla-operator), or a project that declared webhook_ca_consumers (KServe from
+                 the AI Workloads starter). This arm needs no domain and works on ALL FIVE
+                 clouds, alibaba and hetzner included. It installs the controller and CRDs with
+                 NO ClusterIssuer and NO cloud identity — the workload brings its own namespaced
+                 self-signed Issuer.
 
        The ClusterIssuer is NOT in this file. It is a custom resource whose CRD and webhook this
        Application installs, so applying it alongside would race the operator exactly as the
@@ -67,6 +79,12 @@ spec:
                  federated-identity subject). Renaming it here silently breaks the token
                  exchange, and the only symptom is a certificate that never issues. */}}
           name: cert-manager
+          {{- /* The cloud identity is the DNS01 SOLVER's, so it is bound only when this deploy
+                 issues. An issuer-free install (a webhook CA for KServe or scylla-operator, with
+                 no domain) has no solver and no identity output to name: rendering the arm
+                 anyway would ship an annotation with an EMPTY value, which is exactly what the
+                 real-pipeline test forbids on the issuing path. */}}
+          {{- if .CertManagerIssuerEnabled }}
           annotations:
             {{- if eq .Provider "aws" }}
             eks.amazonaws.com/role-arn: {{ .IRSAExternalDNSArn }}
@@ -75,10 +93,12 @@ spec:
             {{- else if eq .Provider "azure" }}
             azure.workload.identity/client-id: {{ .AzureExternalDNSClient }}
             {{- end }}
-        {{- if eq .Provider "azure" }}
+          {{- end }}
+        {{- if and .CertManagerIssuerEnabled (eq .Provider "azure") }}
         {{- /* AKS injects the projected token only into pods carrying this label — without it
                the annotation above is inert and every DNS01 challenge fails at token exchange.
-               Same pairing as external-dns.yaml. */}}
+               Same pairing as external-dns.yaml, and the same issuing-only condition as the
+               annotation it pairs with. */}}
         podLabels:
           azure.workload.identity/use: "true"
         {{- end }}
