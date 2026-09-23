@@ -51,10 +51,6 @@ type stageDeployPayload struct {
 	// (0 ⇒ disabled). Read from ALETHIA_COST_CEILING_MONTHLY_USD in the parent and carried
 	// in the payload so it survives the sandbox boundary (the container child sees no env).
 	CostCeilingMonthlyUSD float64 `json:"cost_ceiling_monthly_usd,omitempty"`
-	// SpendShape is the pre-apply shape policy (#2385) — a hetzner server-type cap and a prepaid
-	// refusal — read from ALETHIA_SPEND_* in the parent and carried across the sandbox boundary
-	// for the same reason as the ceiling.
-	SpendShape provisioner.SpendShapePolicy `json:"spend_shape,omitempty"`
 	// SpendPolicy is the pre-apply shape control for clouds the ceiling cannot price (#2385).
 	// Read from ALETHIA_SPEND_* in the parent and carried in the payload for the same reason as
 	// the ceiling: the container child sees no env.
@@ -191,7 +187,6 @@ func buildDeployPayload(vc *types.ProjectConfig, provider string, dryRun bool, p
 		VerifyOverride:        override,
 		CompatOverride:        compatOverride,
 		CostCeilingMonthlyUSD: costCeilingFromEnv(),
-		SpendShape:            spendShapeFromEnv(),
 		SpendPolicy:           spendPolicyFromEnv(),
 		StateConsoleURL:       stateConsoleURL,
 		JobID:                 jobID,
@@ -235,28 +230,6 @@ func spendPolicyFromEnv() provisioner.SpendPolicy {
 	return p
 }
 
-// spendShapeFromEnv parses the opt-in pre-apply shape policy (#2385):
-//
-//   - ALETHIA_SPEND_HCLOUD_SERVER_TYPES — comma-separated hetzner server types a planned
-//     hcloud_server may use. Unset/empty ⇒ no cap.
-//   - ALETHIA_SPEND_REFUSE_PREPAID — truthy (1/true/yes/on) refuses a planned Subscription/PrePaid
-//     resource. Anything else ⇒ not checked.
-//
-// Read in the parent so it can be carried across the sandbox boundary, like the ceiling.
-func spendShapeFromEnv() provisioner.SpendShapePolicy {
-	var p provisioner.SpendShapePolicy
-	for _, t := range strings.Split(os.Getenv("ALETHIA_SPEND_HCLOUD_SERVER_TYPES"), ",") {
-		if t = strings.TrimSpace(t); t != "" {
-			p.HcloudServerTypes = append(p.HcloudServerTypes, t)
-		}
-	}
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("ALETHIA_SPEND_REFUSE_PREPAID"))) {
-	case "1", "true", "yes", "on":
-		p.RefusePrepaid = true
-	}
-	return p
-}
-
 func buildDestroyPayload(vc *types.ProjectConfig, provider, templatesDir, categoriesDir,
 	stateConsoleURL, jobID string) stageDestroyPayload {
 	cfg := *vc
@@ -290,7 +263,6 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 		CategoriesDir:         p.CategoriesDir,
 		InfracostToken:        p.InfracostToken,
 		CostCeilingMonthlyUSD: p.CostCeilingMonthlyUSD,
-		SpendShape:            p.SpendShape,
 		SpendPolicy:           p.SpendPolicy,
 		GitAccessToken:        sec.GitToken,
 		GitRepoTokens:         sec.GitTokens,

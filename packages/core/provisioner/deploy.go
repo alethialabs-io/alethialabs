@@ -118,11 +118,6 @@ type DeployParams struct {
 	// default) disables the guard, so existing callers are unaffected. Opt-in cost
 	// safety for the real-cloud e2e nightly; see costCeilingBlock.
 	CostCeilingMonthlyUSD float64
-	// SpendShape, when active, fail-closes a real apply whose plan exceeds a declared
-	// node-shape cap or commits to a prepaid term — the pre-apply control for the clouds
-	// Infracost cannot price (hetzner, alibaba; #2385). The zero value disables it, so
-	// existing callers are unaffected. See spendShapeBlock.
-	SpendShape SpendShapePolicy
 	// SpendPolicy is the pre-apply shape control for clouds the cost ceiling cannot price
 	// (hetzner server-type cap, alibaba prepaid refusal). The zero value disables it, so
 	// existing callers are unaffected. Opt-in for the real-cloud e2e; see spendPolicyBlock.
@@ -866,14 +861,6 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	// enabling it requires a working INFRACOST_API_KEY. Runs only on the real-apply path
 	// (dry-run/plan jobs already returned above and never block on cost).
 	if blocked, msg := costCeilingBlock(result.CostBreakdown, params.CostCeilingMonthlyUSD); blocked {
-		telemetry.GateBlocked(ctx, provider.Name())
-		return nil, fmt.Errorf("%s", msg)
-	}
-	// Fail-closed spend-SHAPE guard (opt-in; #2385). The ceiling above prices the plan; this
-	// refuses it on shape where no price exists — a server type above the declared cap, or a
-	// prepaid (Subscription) resource a monthly ceiling cannot see. Same position, same posture:
-	// real-apply only, zero value is a no-op, an uninspectable plan is refused.
-	if blocked, msg := spendShapeBlock(planJSON, params.SpendShape); blocked {
 		telemetry.GateBlocked(ctx, provider.Name())
 		return nil, fmt.Errorf("%s", msg)
 	}
