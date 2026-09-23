@@ -10,6 +10,7 @@
     "./apple-icon": "./src/apple-icon.tsx",
     "./opengraph-image": "./src/opengraph-image.tsx",
     "./ramp-srgb": "./src/ramp-srgb.ts",
+    "./fonts": "./src/fonts.ts",
     "./twitter-image": "./src/twitter-image.tsx",
     "./manifest": "./src/manifest.ts",
     "./robots": "./src/robots.ts",

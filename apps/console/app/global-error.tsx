@@ -8,19 +8,11 @@
 // correctly (defaults to the light token set; no theme class is applied here).
 
 import { useEffect } from "react";
-import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
+import { brandFontVariables } from "@repo/brand/fonts";
 import { captureException } from "@/lib/analytics/track";
 import { ErrorState } from "@/components/errors/error-state";
 import { Button } from "@repo/ui/button";
 import "./globals.css";
-
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
-const spaceGrotesk = Space_Grotesk({
-	variable: "--font-space-grotesk",
-	subsets: ["latin"],
-	weight: ["400", "500", "600", "700"],
-});
 
 export default function GlobalError({
 	error,
@@ -37,7 +29,7 @@ export default function GlobalError({
 	return (
 		<html lang="en">
 			<body
-				className={`${geistSans.variable} ${geistMono.variable} ${spaceGrotesk.variable} antialiased`}
+				className={`${brandFontVariables} antialiased`}
 			>
 				<ErrorState
 					fullPage

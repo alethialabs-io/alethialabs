@@ -4,27 +4,11 @@
 import type { Metadata } from "next";
 import "@xyflow/react/dist/style.css";
 import { PublicEnvScript } from "next-runtime-env";
-import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
+import { brandFontVariables } from "@repo/brand/fonts";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@repo/ui/sonner";
 import { Providers } from "./providers";
 import "./globals.css";
-
-const geistSans = Geist({
-	variable: "--font-geist-sans",
-	subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-	variable: "--font-geist-mono",
-	subsets: ["latin"],
-});
-
-const spaceGrotesk = Space_Grotesk({
-	variable: "--font-space-grotesk",
-	subsets: ["latin"],
-	weight: ["400", "500", "600", "700"],
-});
 
 const SITE_DESCRIPTION =
 	"Configure multi-cloud infrastructure in the browser. Deploy from the terminal.";
@@ -62,7 +46,7 @@ export default function RootLayout({
 				<PublicEnvScript />
 			</head>
 			<body
-				className={`${geistSans.variable} ${geistMono.variable} ${spaceGrotesk.variable} antialiased`}
+				className={`${brandFontVariables} antialiased`}
 			>
 				{/* `enableSystem` must stay on: the account menu offers a System option,
 				    and with it off picking that option silently did nothing.
