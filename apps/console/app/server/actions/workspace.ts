@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { and, eq } from "drizzle-orm";
+import { NotOrgMemberError } from "@/lib/auth/errors";
 import { getOwnerScope } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getEntitlements } from "@/lib/authz/entitlements";
@@ -134,7 +135,7 @@ export async function setActiveOrganization(
 			.from(member)
 			.where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
 			.limit(1);
-		if (!m) throw new Error("Not a member of that organization");
+		if (!m) throw new NotOrgMemberError();
 	}
 
 	await getServiceDb()
