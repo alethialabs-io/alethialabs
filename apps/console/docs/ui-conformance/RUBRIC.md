@@ -351,7 +351,8 @@ different unit. The same reasoning is why H9 exists beside T5: one predicate per
 reports it is ALREADY in the state it selects — `aria-current` (any token but `false`),
 `aria-selected="true"`, or `aria-checked="true"` on a `radio`/`menuitemradio` — and does nothing when
 pressed records the effect `already-current`: selecting the current item again is correctly a no-op.
-`aria-pressed="true"` is deliberately not read, because a toggle is expected to unpress. And the
+`aria-pressed="true"` counts only on a button with `aria-pressed` siblings — a one-of-N pressed group
+such as the theme toggle; a LONE pressed toggle is expected to unpress and is still inert if it does not. And the
 enumeration waits for the page to settle (no `data-slot="skeleton"`, no `aria-busy`, a stable control
 count) before it runs; an empty enumeration of a page that never settled is **NOT MEASURED
 `page-not-ready`**, never N/A `no-enabled-controls`, which is a claim about the page.

@@ -547,8 +547,10 @@ export const LIVE_DEBT = /** @type {const} */ ({
 			"used to land inside a control's window and pass it, and revealed these. Two classes: " +
 			"(1) an exclusive-choice button ALREADY PRESSED, clicked again: `Runner minutes` on `~/usage` " +
 			"and `[project]/usage` (the metric group) and the theme menu's `System` on `/[org]`. These use " +
-			"`aria-pressed` for a one-of-N choice, and the #4980 rule excused only `aria-current`, " +
-			"`aria-selected` and a checked radio. (2) Controls with no state attribute whose click showed " +
+			"`aria-pressed` for a one-of-N choice, and the rule in the measured commit excused only " +
+			"`aria-current`, `aria-selected` and a checked radio; the next commit also excuses a pressed " +
+			"button with `aria-pressed` siblings, which should clear class (1) but is unproven until the " +
+			"next import. (2) Controls with no state attribute whose click showed " +
 			"nothing within 1 000 ms: `Fit view` on `[project]/architecture` (the view is already fitted), " +
 			"`Link GitHub`/`Link GitLab`/`Link Bitbucket` on `[project]/settings/preview` and `~/new`, " +
 			"`Design with the agent` on `~/new`, and `Transfer` on `~/settings/general`. Each needs a " +

@@ -6,7 +6,8 @@
 // 1. A control already in the state it selects is not inert. `~/settings/roles` selects the
 //    built-in `owner` row on arrival; pressing it again correctly changes nothing, and R8 filed it
 //    inert whenever no unrelated re-render landed in the window. The rule reads the control's own
-//    ARIA claim — and deliberately NOT `aria-pressed`, whose toggle is expected to unpress.
+//    ARIA claim. `aria-pressed` counts only inside a one-of-N pressed group; a lone toggle is
+//    expected to unpress.
 // 2. An empty enumeration is N/A only when the page had loaded. `~/runners` and
 //    `[project]/architecture` were filed `no-enabled-controls` from their skeletons.
 
@@ -22,7 +23,7 @@ import {
 
 /** A selection state with nothing set, overridable per case. */
 function sel(over: Partial<SelectionState> = {}): SelectionState {
-	return { role: null, current: null, selected: null, checked: null, ...over };
+	return { role: null, current: null, selected: null, checked: null, pressed: null, pressedSiblings: 0, ...over };
 }
 
 describe("isAlreadySelected", () => {
@@ -36,6 +37,15 @@ describe("isAlreadySelected", () => {
 		expect(isAlreadySelected(sel({ selected: "true" }))).toBe(true);
 		expect(isAlreadySelected(sel({ role: "radio", checked: "true" }))).toBe(true);
 		expect(isAlreadySelected(sel({ role: "menuitemradio", checked: "true" }))).toBe(true);
+	});
+
+	it("reads the pressed member of a one-of-N pressed group as chosen — the theme toggle, the metric group", () => {
+		expect(isAlreadySelected(sel({ pressed: "true", pressedSiblings: 2 }))).toBe(true);
+		expect(isAlreadySelected(sel({ pressed: "false", pressedSiblings: 2 }))).toBe(false);
+	});
+
+	it("does NOT excuse a LONE pressed toggle — it was expected to unpress", () => {
+		expect(isAlreadySelected(sel({ pressed: "true", pressedSiblings: 0 }))).toBe(false);
 	});
 
 	it("does NOT excuse a checked checkbox or a control that claims nothing", () => {

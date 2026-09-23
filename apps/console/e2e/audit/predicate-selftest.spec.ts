@@ -418,10 +418,10 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/current row reported null/);
 	});
 
-	test("R8 — the control names the already-current arm when it starts excusing a pressed toggle", async ({ page }) => {
-		// The other direction: a pressed toggle that does not unpress is inert. Rename the aria so the
-		// toggle claims to be current, and the arm that expects inert must name itself.
-		const mutant = CONTROL_FIXTURE.replace('<button aria-pressed="true">', '<button aria-current="true">');
+	test("R8 — the control names the already-current arm when it starts excusing a lone pressed toggle", async ({ page }) => {
+		// The other direction: a LONE pressed toggle that does not unpress is inert. Give it a pressed
+		// sibling and the rule reads a one-of-N group — the arm that expects inert must name itself.
+		const mutant = CONTROL_FIXTURE.replace('<div><button aria-pressed="true">Pressed toggle</button></div>', '<div><button aria-pressed="true">Pressed toggle</button><button aria-pressed="false">Sibling</button></div>');
 		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
 		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/pressed toggle reported "already-current"/);
 	});

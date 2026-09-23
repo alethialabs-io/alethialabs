@@ -581,6 +581,10 @@ export interface SelectionState {
 	current: string | null;
 	selected: string | null;
 	checked: string | null;
+	/** `aria-pressed` on the control itself. */
+	pressed: string | null;
+	/** How many OTHER elements under the same parent carry `aria-pressed` — a one-of-N set when > 0. */
+	pressedSiblings: number;
 }
 
 /**
@@ -596,14 +600,23 @@ export interface SelectionState {
  *    stepper). Selecting the current item again is a no-op by definition.
  *  - `aria-selected="true"` — a selected option, tab or row.
  *  - `aria-checked="true"` on a `radio` or `menuitemradio` — a radio stays checked when pressed.
+ *  - `aria-pressed="true"` on a button with `aria-pressed` SIBLINGS — a one-of-N choice built from
+ *    pressed buttons, which is how the console builds them (`@repo/ui/theme-toggle`, the usage
+ *    metric group). Pressing the chosen one again is a no-op, like a radio.
  *
- * `aria-pressed="true"` is deliberately NOT read. A pressed toggle button is expected to UNPRESS
- * when activated (that is what makes it a toggle), so one that does nothing is exactly the inert
- * control R8 exists to find. A checkbox's `aria-checked` is excluded for the same reason.
+ * A LONE `aria-pressed="true"` toggle is still NOT excused: a toggle is expected to UNPRESS when
+ * activated, so one that does nothing is exactly the inert control R8 exists to find. The sibling
+ * test is the boundary, and it is stated rather than hidden: a MULTI-select group of pressed chips
+ * (a filter bar) also has pressed siblings, so a chip in one that fails to unpress would be excused
+ * — when nothing at all happens. That leans toward PASS, which is this instrument's stated bias
+ * (see the header); run 35867789835 is why the sibling case was added, after `Runner minutes` and
+ * the theme menu's `System` were filed inert for doing, correctly, nothing. A checkbox's
+ * `aria-checked` is never read.
  */
 export function isAlreadySelected(state: SelectionState): boolean {
 	if (state.current !== null && state.current !== "false") return true;
 	if (state.selected === "true") return true;
+	if (state.pressed === "true" && state.pressedSiblings > 0) return true;
 	return state.checked === "true" && (state.role === "radio" || state.role === "menuitemradio");
 }
 
@@ -657,6 +670,8 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			current: el.getAttribute("aria-current"),
 			selected: el.getAttribute("aria-selected"),
 			checked: el.getAttribute("aria-checked"),
+			pressed: el.getAttribute("aria-pressed"),
+			pressedSiblings: el.parentElement === null ? 0 : [...el.parentElement.children].filter((c) => c !== el && c.hasAttribute("aria-pressed")).length,
 		}),
 		undefined,
 		{ timeout: READ_TIMEOUT_MS },
@@ -969,10 +984,12 @@ export async function interactionControl(page: Page, fixture: string = CONTROL_F
 	}
 
 	// THE ALREADY-CURRENT ARM, BOTH WAYS (#4980). A handler-less row that says it is the current
-	// member of its set must not be filed inert; a handler-less toggle that says it is PRESSED must
-	// still be — it was expected to unpress, and pressing it did nothing.
+	// member of its set, and the chosen button of a one-of-N pressed group, must not be filed inert;
+	// a LONE handler-less toggle that says it is PRESSED must still be — it was expected to unpress,
+	// and pressing it did nothing.
 	for (const [name, want] of [
 		["Current row", "already-current"],
+		["Chosen option", "already-current"],
 		["Pressed toggle", null],
 	] as const) {
 		const control = enumerated.controls.find((c) => c.name === name);
@@ -1024,7 +1041,9 @@ export const CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 c
 	<button id="opener">Open the dialog</button>
 	<button aria-disabled="true" title="You do not have permission">Unavailable</button>
 	<a href="https://example.invalid/docs">Docs</a>
-	<nav><button aria-current="true">Current row</button><button aria-pressed="true">Pressed toggle</button></nav>
+	<nav><button aria-current="true">Current row</button></nav>
+	<div><button aria-pressed="true">Pressed toggle</button></div>
+	<div><button aria-pressed="true">Chosen option</button><button aria-pressed="false">Other option</button></div>
 	<div id="layer"></div>
 </main><script>
 	document.getElementById("opener").addEventListener("click", function () {
