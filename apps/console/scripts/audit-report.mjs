@@ -520,15 +520,18 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * 387 verdicts key-for-key again. Three NEW FAILs arrived, and none of them is one of the seven.
  * The F8 and R8 rows below now describe those three and nothing else. Each of the three
  * reversed verdict between runs on UNCHANGED code (see each row), so each row records a timing
- * question the instrument cannot yet settle, not a proven product defect. `#4939` stays the
- * owner only until a follow-up issue is filed for them.
+ * question the instrument cannot yet settle, not a proven product defect. They moved to #4980,
+ * which fixed both halves (the routes prefetch a filtered link's list and mark it `aria-busy`;
+ * `settle()` refuses a busy read; the roles rail says `aria-current`; R8 reads a control already in
+ * the state it selects as `already-current`). The rows stay, owned by #4980, until an imported run
+ * proves the cells — the import that clears them deletes them in the same commit.
  *
  * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
 export const LIVE_DEBT = /** @type {const} */ ({
 	F8: {
-		owner: "#4939",
+		owner: "#4980",
 		why:
 			"TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and " +
 			"`~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param " +
@@ -536,18 +539,20 @@ export const LIVE_DEBT = /** @type {const} */ ({
 			"35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between " +
 			"those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the " +
 			"URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data " +
-			"until the filtered fetch returns. `settle()` takes two equal reads 300 ms apart as settled, so " +
-			"it cannot tell a slow placeholder from an answer. Flake or defect is not settled yet.",
+			"until the filtered fetch returns. `settle()` took two equal reads 300 ms apart as settled, so " +
+			"it could not tell a slow placeholder from an answer. #4980 fixes both halves; unproven until " +
+			"an imported run shows both cells PASS.",
 	},
 	R8: {
-		owner: "#4939",
+		owner: "#4980",
 		why:
 			"ONE route, ONE control: `button \"owner39\"` on `~/settings/roles`, which is the built-in " +
 			"`owner` rail row, selected by default. Clicking the row that is already selected changes " +
 			"nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that " +
 			"could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a " +
-			"DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 has " +
-			"no rule for a control that is already in the state it selects.",
+			"DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 had " +
+			"no rule for a control that is already in the state it selects. #4980 adds `aria-current` " +
+			"to the row and the rule to R8; unproven until an imported run shows the cell PASS.",
 	},
 });
 

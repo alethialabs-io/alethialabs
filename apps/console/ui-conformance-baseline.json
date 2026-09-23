@@ -85,13 +85,13 @@
 		},
 		"debt": {
 			"F8": {
-				"owner": "#4939",
-				"why": "TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and `~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param and reads the FULL count, while Reset is correct in both halves. Both cells PASSED in run 35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data until the filtered fetch returns. `settle()` takes two equal reads 300 ms apart as settled, so it cannot tell a slow placeholder from an answer. Flake or defect is not settled yet.",
+				"owner": "#4980",
+				"why": "TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and `~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param and reads the FULL count, while Reset is correct in both halves. Both cells PASSED in run 35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data until the filtered fetch returns. `settle()` took two equal reads 300 ms apart as settled, so it could not tell a slow placeholder from an answer. #4980 fixes both halves; unproven until an imported run shows both cells PASS.",
 				"fail": 2
 			},
 			"R8": {
-				"owner": "#4939",
-				"why": "ONE route, ONE control: `button \"owner39\"` on `~/settings/roles`, which is the built-in `owner` rail row, selected by default. Clicking the row that is already selected changes nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 has no rule for a control that is already in the state it selects.",
+				"owner": "#4980",
+				"why": "ONE route, ONE control: `button \"owner39\"` on `~/settings/roles`, which is the built-in `owner` rail row, selected by default. Clicking the row that is already selected changes nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 had no rule for a control that is already in the state it selects. #4980 adds `aria-current` to the row and the rule to R8; unproven until an imported run shows the cell PASS.",
 				"fail": 1
 			}
 		}
@@ -466,7 +466,7 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"debt": "#4939",
+			"debt": "#4980",
 			"pass": 6,
 			"fail": 2,
 			"na": 24,
@@ -627,7 +627,7 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"debt": "#4939",
+			"debt": "#4980",
 			"pass": 26,
 			"fail": 1,
 			"na": 13,
@@ -939,7 +939,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 275,
+			"surfaceFiles": 276,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1057,7 +1057,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 291,
+			"surfaceFiles": 292,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1116,7 +1116,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 287,
+			"surfaceFiles": 288,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1352,7 +1352,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"redirectOnly": false,
-			"surfaceFiles": 302,
+			"surfaceFiles": 303,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1470,7 +1470,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"redirectOnly": false,
-			"surfaceFiles": 286,
+			"surfaceFiles": 287,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1529,7 +1529,7 @@
 		{
 			"route": "/[org]/~/evidence",
 			"redirectOnly": false,
-			"surfaceFiles": 235,
+			"surfaceFiles": 236,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1588,7 +1588,7 @@
 		{
 			"route": "/[org]/~/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 274,
+			"surfaceFiles": 275,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1765,7 +1765,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"redirectOnly": false,
-			"surfaceFiles": 311,
+			"surfaceFiles": 313,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1883,7 +1883,7 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 290,
+			"surfaceFiles": 291,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1942,7 +1942,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 286,
+			"surfaceFiles": 287,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2060,7 +2060,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"redirectOnly": false,
-			"surfaceFiles": 268,
+			"surfaceFiles": 269,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2237,7 +2237,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"redirectOnly": false,
-			"surfaceFiles": 297,
+			"surfaceFiles": 298,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2296,7 +2296,7 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"redirectOnly": false,
-			"surfaceFiles": 297,
+			"surfaceFiles": 298,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2355,7 +2355,7 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"redirectOnly": false,
-			"surfaceFiles": 288,
+			"surfaceFiles": 289,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2414,7 +2414,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"redirectOnly": false,
-			"surfaceFiles": 294,
+			"surfaceFiles": 295,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2709,7 +2709,7 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"redirectOnly": false,
-			"surfaceFiles": 233,
+			"surfaceFiles": 234,
 			"families": {
 				"S": {
 					"instrumented": 4,

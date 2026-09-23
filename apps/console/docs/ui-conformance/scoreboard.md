@@ -150,8 +150,8 @@ loudly as a missing one:
 
 | predicate | FAIL | owner | what is failing |
 |---|---:|---|---|
-| **F8** | 2 | #4939 | TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and `~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param and reads the FULL count, while Reset is correct in both halves. Both cells PASSED in run 35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data until the filtered fetch returns. `settle()` takes two equal reads 300 ms apart as settled, so it cannot tell a slow placeholder from an answer. Flake or defect is not settled yet. |
-| **R8** | 1 | #4939 | ONE route, ONE control: `button "owner39"` on `~/settings/roles`, which is the built-in `owner` rail row, selected by default. Clicking the row that is already selected changes nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 has no rule for a control that is already in the state it selects. |
+| **F8** | 2 | #4980 | TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and `~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param and reads the FULL count, while Reset is correct in both halves. Both cells PASSED in run 35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data until the filtered fetch returns. `settle()` took two equal reads 300 ms apart as settled, so it could not tell a slow placeholder from an answer. #4980 fixes both halves; unproven until an imported run shows both cells PASS. |
+| **R8** | 1 | #4980 | ONE route, ONE control: `button "owner39"` on `~/settings/roles`, which is the built-in `owner` rail row, selected by default. Clicking the row that is already selected changes nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 had no rule for a control that is already in the state it selects. #4980 adds `aria-current` to the row and the rule to R8; unproven until an imported run shows the cell PASS. |
 
 ## Per predicate
 
@@ -222,7 +222,7 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 
 | route | surface | S | T | H | F | R | overall |
 |---|---:|---|---|---|---|---|---|
-| `/[org]/~/alerts` | 302 | 2/4 · 0.50 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | **0.92** · 0 withheld of 38 |
+| `/[org]/~/alerts` | 303 | 2/4 · 0.50 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | **0.92** · 0 withheld of 38 |
 | `/[org]/[project]` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.93** · 1 withheld of 38 |
 | `/[org]/[project]/settings` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.93** · 1 withheld of 38 |
 | `/[org]/~/settings` · | 1 | all N/A | 1/2 · 0.50 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.93** · 0 withheld of 38 |
@@ -230,35 +230,35 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]/~/jobs/[id]` | 233 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** · 1 withheld of 38 |
 | `/[org]/~/new` | 375 | 3/4 · 0.75 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **0.96** · 0 withheld of 38 |
 | `/[org]/[project]/environments` | 244 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **0.96** · 1 withheld of 38 |
-| `/[org]/~/runners` | 311 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 · 1 withheld | 7/7 · 1.00 | **0.97** · 1 withheld of 38 |
-| `/[org]/~/settings/roles` | 297 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 7/8 · 0.88 | **0.97** · 0 withheld of 38 |
+| `/[org]/~/runners` | 313 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 · 1 withheld | 7/7 · 1.00 | **0.97** · 1 withheld of 38 |
+| `/[org]/~/settings/roles` | 298 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 7/8 · 0.88 | **0.97** · 0 withheld of 38 |
 | `/[org]` | 294 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/[project]/architecture` | 411 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/clusters` | 228 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/[project]/jobs` | 275 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
-| `/[org]/[project]/settings/access` | 291 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
-| `/[org]/[project]/settings/activity` | 287 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
+| `/[org]/[project]/jobs` | 276 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
+| `/[org]/[project]/settings/access` | 292 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
+| `/[org]/[project]/settings/activity` | 288 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
 | `/[org]/[project]/settings/general` | 223 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/settings/preview` | 226 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/usage` | 226 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/~/clusters` | 227 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/connectors` | 286 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/~/evidence` | 235 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
-| `/[org]/~/jobs` | 274 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/access` | 290 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/activity` | 286 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 2 withheld of 38 |
+| `/[org]/~/connectors` | 287 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
+| `/[org]/~/evidence` | 236 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
+| `/[org]/~/jobs` | 275 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
+| `/[org]/~/settings/access` | 291 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
+| `/[org]/~/settings/activity` | 287 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 2 withheld of 38 |
 | `/[org]/~/settings/billing` | 274 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/billing/invoices` | 268 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
+| `/[org]/~/settings/billing/invoices` | 269 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
 | `/[org]/~/settings/classification` | 228 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/settings/general` | 220 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/members` | 297 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 7/7 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/settings/sso` | 288 | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 2 withheld of 38 |
-| `/[org]/~/settings/teams` | 294 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 7/7 · 1.00 | **1.00** · 2 withheld of 38 |
+| `/[org]/~/settings/members` | 298 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 7/7 · 1.00 | **1.00** · 0 withheld of 38 |
+| `/[org]/~/settings/sso` | 289 | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 2 withheld of 38 |
+| `/[org]/~/settings/teams` | 295 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 7/7 · 1.00 | **1.00** · 2 withheld of 38 |
 | `/[org]/~/support` | 7 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/support/abuse` | 220 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/support/ask` | 276 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/support/cases/[id]` | 238 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
-| `/[org]/~/support/my-cases` | 233 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
+| `/[org]/~/support/my-cases` | 234 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/~/support/submit` | 228 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/usage` | 264 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/cli/login` | 5 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 6/6 · 1.00 | **1.00** · 0 withheld of 38 |
