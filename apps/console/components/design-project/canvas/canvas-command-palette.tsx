@@ -270,8 +270,7 @@ export function CanvasCommandPalette({
 					)}
 					<CommandItem
 						value="fit-view"
-						disabled={fitViewDisabled}
-						title={fitViewDisabled ? NOTHING_TO_FIT : undefined}
+						disabledReason={fitViewDisabled ? NOTHING_TO_FIT : null}
 						onSelect={() => run(onFitView)}
 					>
 						Fit view

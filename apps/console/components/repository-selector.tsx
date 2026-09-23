@@ -5,6 +5,7 @@
 import { coerceEnum } from "@/lib/coerce";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
   Command,
   CommandEmpty,
@@ -47,7 +48,8 @@ interface RepositorySelectorProps {
   onRepositorySelect?: (repository: Repository) => void;
   /**
    * Which providers this instance can link, from `computePlatformConfigured()` on the server page.
-   * An unconfigured provider's Link button renders disabled, titled "Not enabled on this instance".
+   * An unconfigured provider's Link button renders disabled with the reason "Not enabled on this
+   * instance" (via `DisabledReason`: tooltip on hover and focus, and its `aria-describedby`).
    * Omitted: every provider is offered, as before.
    */
   providerAvailability?: GitProviderAvailability;
@@ -281,18 +283,21 @@ export function RepositorySelector({
   ) => {
     const enabled = providerAvailability?.[provider] ?? true;
     return (
-      <Button
+      <DisabledReason
         key={provider}
-        type="button"
-        variant="outline"
-        size="sm"
-        className={className}
-        disabled={!enabled}
-        title={enabled ? undefined : GIT_PROVIDER_NOT_ENABLED}
-        onClick={() => handleLinkAccount(provider)}
+        reason={enabled ? null : GIT_PROVIDER_NOT_ENABLED}
       >
-        <GitProviderIcon provider={provider} className={iconClassName} /> {text}
-      </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={className}
+          onClick={() => handleLinkAccount(provider)}
+        >
+          <GitProviderIcon provider={provider} className={iconClassName} />{" "}
+          {text}
+        </Button>
+      </DisabledReason>
     );
   };
 

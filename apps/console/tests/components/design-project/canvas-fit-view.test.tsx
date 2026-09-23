@@ -4,7 +4,8 @@
 // "Fit view" on a board that draws nothing is a click that visibly does nothing — the R8 audit
 // filed it inert on `[project]/architecture`, whose seeded board holds only the project, cluster
 // and network nodes the canvas never draws (#4996). Every entry point now reads React Flow's DRAWN
-// node count and, at zero, renders disabled with the reason as its title.
+// node count and, at zero, renders disabled and DESCRIBED by the reason — a button through
+// DisabledReason (tooltip on hover and focus), a menu or palette row as visible text in the row.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -39,7 +40,8 @@ describe("Fit view on an empty board", () => {
 		render(<CanvasControls />);
 		const fit = screen.getByRole("button", { name: "Fit view" });
 		expect(fit).toBeDisabled();
-		expect(fit).toHaveAttribute("title", NOTHING_TO_FIT);
+		expect(fit).toHaveAccessibleDescription(NOTHING_TO_FIT);
+		expect(fit).not.toHaveAttribute("title");
 	});
 
 	it("the controls bar keeps it live once the board draws a node", async () => {
@@ -60,7 +62,8 @@ describe("Fit view on an empty board", () => {
 		await user.click(screen.getByRole("button", { name: "More" }));
 		const item = await screen.findByRole("menuitem", { name: /fit view/i });
 		expect(item).toHaveAttribute("aria-disabled", "true");
-		expect(item).toHaveAttribute("title", NOTHING_TO_FIT);
+		expect(item).toHaveAccessibleDescription(NOTHING_TO_FIT);
+		expect(item).toHaveTextContent(NOTHING_TO_FIT);
 	});
 
 	it("the ⌘K palette disables its entry with the reason", () => {
@@ -76,6 +79,7 @@ describe("Fit view on an empty board", () => {
 		);
 		const item = screen.getByText("Fit view").closest("[cmdk-item]");
 		expect(item).toHaveAttribute("aria-disabled", "true");
-		expect(item).toHaveAttribute("title", NOTHING_TO_FIT);
+		expect(item).toHaveAccessibleDescription(NOTHING_TO_FIT);
+		expect(item).toHaveTextContent(NOTHING_TO_FIT);
 	});
 });

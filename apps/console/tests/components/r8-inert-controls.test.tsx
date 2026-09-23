@@ -90,7 +90,7 @@ describe("gitProviderAvailability", () => {
 });
 
 describe("RepositorySelector — Link buttons", () => {
-	it("renders an unconfigured provider disabled, with the reason as its title", async () => {
+	it("renders an unconfigured provider disabled, described by the reason", async () => {
 		render(
 			<RepositorySelector
 				value={undefined}
@@ -102,12 +102,15 @@ describe("RepositorySelector — Link buttons", () => {
 		const github = await screen.findByRole("button", { name: /link github/i });
 		const bitbucket = screen.getByRole("button", { name: /link bitbucket/i });
 		const gitlab = screen.getByRole("button", { name: /link gitlab/i });
+		// Described, not titled: a disabled button's `title` is never shown (the review of #5000).
+		// DisabledReason itself proves the tooltip opens on hover and focus (packages/ui).
 		for (const off of [github, bitbucket]) {
 			expect(off).toBeDisabled();
-			expect(off).toHaveAttribute("title", GIT_PROVIDER_NOT_ENABLED);
+			expect(off).toHaveAccessibleDescription(GIT_PROVIDER_NOT_ENABLED);
+			expect(off.closest('[data-slot="disabled-reason"]')).toHaveAttribute("tabindex", "0");
 		}
 		expect(gitlab).toBeEnabled();
-		expect(gitlab).not.toHaveAttribute("title");
+		expect(gitlab).not.toHaveAccessibleDescription();
 	});
 
 	it("shows a failed link as an alert and returns to the page it was started on", async () => {
@@ -138,7 +141,8 @@ describe("OrgGeneral — Transfer", () => {
 		render(<OrgGeneral />);
 		const transfer = await screen.findByRole("button", { name: "Transfer" });
 		expect(transfer).toBeDisabled();
-		expect(transfer).toHaveAttribute("title", "Ownership transfer is coming soon");
+		expect(transfer).toHaveAccessibleDescription("Ownership transfer is coming soon");
+		expect(transfer.closest('[data-slot="disabled-reason"]')).toHaveAttribute("tabindex", "0");
 	});
 });
 

@@ -114,8 +114,7 @@ export function CanvasMoreMenu({
 					Repair overlaps
 				</DropdownMenuItem>
 				<DropdownMenuItem
-					disabled={!canFit}
-					title={canFit ? undefined : NOTHING_TO_FIT}
+					disabledReason={canFit ? null : NOTHING_TO_FIT}
 					onSelect={() => void fitView({ padding: 0.3 })}
 				>
 					<Maximize className="mr-2 h-4 w-4 text-muted-foreground" />

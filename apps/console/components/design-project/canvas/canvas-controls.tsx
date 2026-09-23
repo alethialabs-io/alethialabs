@@ -5,6 +5,7 @@
 import { useReactFlow } from "@xyflow/react";
 import { Maximize, Redo2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { Separator } from "@repo/ui/separator";
 import { cn } from "@repo/ui/utils";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
@@ -12,7 +13,8 @@ import { NOTHING_TO_FIT, useHasDrawnNodes } from "./use-has-drawn-nodes";
 
 /**
  * A square ghost icon button sized for the controls bar. `active` marks a toggled-on tool;
- * `disabledReason` replaces the tooltip while the button is disabled, so it says WHY.
+ * `disabledReason` is shown in place of the label's tooltip while the button is disabled, so it says
+ * WHY — through `DisabledReason`, because a disabled button's own `title` is never shown.
  */
 function CtrlButton({
   label,
@@ -30,22 +32,24 @@ function CtrlButton({
   children: React.ReactNode;
 }) {
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      className={cn(
-        "h-8 w-8 rounded-none",
-        active && "bg-muted text-foreground",
-      )}
-      aria-pressed={active}
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={disabled && disabledReason ? disabledReason : label}
-    >
-      {children}
-    </Button>
+    <DisabledReason reason={disabled ? disabledReason : null}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className={cn(
+          "h-8 w-8 rounded-none",
+          active && "bg-muted text-foreground",
+        )}
+        aria-pressed={active}
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        title={disabled ? undefined : label}
+      >
+        {children}
+      </Button>
+    </DisabledReason>
   );
 }
 

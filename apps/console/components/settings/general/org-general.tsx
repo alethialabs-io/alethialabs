@@ -43,6 +43,7 @@ import {
   AlertDialogTrigger,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import { Skeleton } from "@repo/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
@@ -280,15 +281,13 @@ export function OrgGeneral() {
             description="Move this organization to another owner. They take over billing and the Owner role."
           >
             {/* Not built yet. It used to be a live button whose click only toasted "coming soon",
-                which reads as a control that works (#4996); disabled, the reason is its title. */}
-            <Button
-              variant="outline"
-              size="sm"
-              disabled
-              title="Ownership transfer is coming soon"
-            >
-              Transfer
-            </Button>
+                which reads as a control that works (#4996); disabled, it says why through
+                DisabledReason — a disabled button's own `title` is never shown. */}
+            <DisabledReason reason="Ownership transfer is coming soon">
+              <Button variant="outline" size="sm">
+                Transfer
+              </Button>
+            </DisabledReason>
           </SettingsDangerRow>
           <SettingsDangerRow
             title="Delete organization"

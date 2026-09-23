@@ -334,7 +334,8 @@ describe("CanvasContextMenu — Fit view on an empty board", () => {
 			renderMenu({ kind: "pane" });
 			const item = await screen.findByRole("menuitem", { name: /fit view/i });
 			expect(item).toHaveAttribute("data-disabled");
-			expect(item).toHaveAttribute("title", NOTHING_TO_FIT);
+			expect(item).toHaveAccessibleDescription(NOTHING_TO_FIT);
+			expect(item).toHaveTextContent(NOTHING_TO_FIT);
 		} finally {
 			flow.drawn = 1;
 		}

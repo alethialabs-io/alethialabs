@@ -6,7 +6,7 @@
 # what the guard re-reads; this header records only what is true HERE.
 #
 # THE EXCLUSION IS AN `include:` ALLOWLIST, AND THAT IS WHY THIS FILE IS LONG. vitest.config.ts
-# hand-lists TWENTY files as the coverage scope while `src/` holds SIXTY-ONE. An `include` allowlist
+# hand-lists TWENTY-ONE files as the coverage scope while `src/` holds SIXTY-TWO. An `include` allowlist
 # is an exclusion with the sign flipped: the other 41 files are excluded exactly as surely as a named
 # `exclude:` entry, and the `exclude:` sweep — which walks `coverage.exclude` — sees none of them.
 # The ratchet is armed at the widened scope's Linux CI measurement: 1642/1795 statements.
@@ -126,6 +126,12 @@ tier_separation:
     suite: [tests/date-range-filter.test.tsx]
     symbols: [Label]
     reason: The date-range and quick-range filters label their controls with a real Label.
+
+  - path: src/tooltip.tsx
+    suite: [tests/disabled-reason.test.tsx]
+    symbols: [Tooltip, TooltipContent, TooltipTrigger]
+    issue: "#2649"
+    reason: DisabledReason renders a real tooltip; its suite opens it on hover and on keyboard focus and reads the popup's text.
 
 baseline:
   # ── exports hidden behind a module a suite DOES execute ───────────────────────────────────────
@@ -386,7 +392,7 @@ baseline:
     reason: The theme toggle is named by no suite in this package.
 
   - path: src/tooltip.tsx
-    symbols: [Tooltip, TooltipContent, TooltipProvider, TooltipTrigger]
+    symbols: [TooltipProvider]
     issue: "#2649"
-    state: no-test
-    reason: The tooltip and its provider are named by no suite in this package.
+    state: untested-export
+    reason: The standalone delay provider is imported by no suite; `Tooltip` mounts its own, and the disabled-reason suite drives that one.
