@@ -15,7 +15,7 @@ import { proxy } from "@/proxy";
 import {
 	ACTION_FORWARDED_HEADER,
 	ORG_PATH_HEADER,
-	isRoutePatternPath,
+	namesNoOrg,
 } from "@/lib/authz/org-path";
 
 const at = (url: string, headers?: HeadersInit) =>
@@ -93,6 +93,34 @@ describe("a server action Next forwards to another worker", () => {
 		await expect(published(res)).resolves.toBe(firstPass);
 	});
 
+	// The worker Next picks is the FIRST in its manifest that has the action, and that can be a
+	// static page: `/start` imports billing.ts, `/` and `/dashboard` import resolve.ts, and `[org]`
+	// pages import both. Publishing `/start` would make urlOrgSlug() read a reserved segment and fall
+	// back to the session's org — the action run against a tenant the address did not name.
+	it.each(["/start", "/", "/accept-terms"])(
+		"keeps the first-pass address when the worker is the static page %s",
+		async (target) => {
+			const res = proxy(
+				at(target, { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass }),
+			);
+			await expect(published(res)).resolves.toBe(firstPass);
+		},
+	);
+
+	// THE SECURITY CASE. The `[org]` layout scopes from `params.org` — the FIRST segment — and the
+	// readers under it from this header. A bracket in a LATER segment must not buy the carried value
+	// a way past a concrete first segment, or one request could scope the layout to org-a and the
+	// page to org-b.
+	it.each(["/org-a/%5Bx%5D", "/org-a/[x]", "/~/[x]"])(
+		"a concrete org first segment wins even with a bracket later: %s",
+		async (target) => {
+			const res = proxy(
+				at(target, { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: "/org-b" }),
+			);
+			await expect(published(res)).resolves.toBe(target);
+		},
+	);
+
 	// The exception is as narrow as the three conditions. Each case below drops one of them, and
 	// each is the anti-forgery replacement above, unchanged.
 	it("a real address still wins over an inbound value, even with the forwarded header", async () => {
@@ -116,13 +144,29 @@ describe("a server action Next forwards to another worker", () => {
 	});
 });
 
-describe("isRoutePatternPath", () => {
-	it.each(["/[org]", "/[org]/~/new", "/%5Borg%5D", "/%5borg%5d/x", "/docs/[...slug]"])(
-		"%s is a route pattern",
-		(p) => expect(isRoutePatternPath(p)).toBe(true),
-	);
-	it.each(["/", "/acme", "/acme/~/new", "/e2e-hobby-e2e-ownerhobby-1/~/new", "/login"])(
-		"%s is an address",
-		(p) => expect(isRoutePatternPath(p)).toBe(false),
-	);
+describe("namesNoOrg — the first segment decides, the only one urlOrgSlug() reads", () => {
+	it.each([
+		"/",
+		"/[org]",
+		"/[org]/~/new",
+		"/%5Borg%5D",
+		"/%5borg%5d/x",
+		"/start",
+		"/dashboard/[[...rest]]",
+		"/cli/login",
+		"/onboarding",
+		"/accept-terms",
+	])("%s names no org", (p) => expect(namesNoOrg(p)).toBe(true));
+	it.each([
+		"/acme",
+		"/acme/~/new",
+		"/e2e-hobby-e2e-ownerhobby-1/~/new",
+		"/org-a/[x]",
+		"/org-a/%5Bx%5D",
+		"/~/evidence",
+		"/~/[x]",
+		"/[slug]",
+		"/[ORG]",
+		"/[org]x",
+	])("%s names an org, or is not the [org] pattern", (p) => expect(namesNoOrg(p)).toBe(false));
 });
