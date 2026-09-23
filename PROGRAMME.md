@@ -424,8 +424,8 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 | board | recorded debt |
 |---|---|
 | `infra/offer-exclusions.yaml` | exclusions: 26 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
-| `infra/config-carriage-exclusions.yaml` | exclusions: 31 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
-| `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 299 · uniform: 13 |
+| `infra/config-carriage-exclusions.yaml` | exclusions: 32 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
+| `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 298 · uniform: 13 |
 | `apps/console/e2e/gate-baseline.json` | failed: 24 · fixme: 4 · skip: 1 |
 
 ### Provenance
