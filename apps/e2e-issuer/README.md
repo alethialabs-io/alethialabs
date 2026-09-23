@@ -71,6 +71,8 @@ The verifiers are the clouds, not this Worker, and a cloud caches a JWKS for far
 
 Key material is never part of a code deploy. The workflow uploads `SIGNING_KEYS_JSON` only when dispatched with `upload-signing-keys` set, so a code fix never touches the bundle and a rotation never ships code by accident.
 
+A rotation never waits for the origin preflight. The upload runs first and re-publishes the Worker's current code with the new secret. If the preflight then refuses the code deploy, the dispatch skips it with a warning. It then checks that every uploaded `kid` is published in the JWKS at `E2E_ISSUER_URL`, retrying for up to three minutes. There is one short window where that check cannot pass: between runbook steps 3 and 4 in `infra/e2e-issuer/README.md`, when the variable already names the new origin but the Worker has not yet been deployed for it. Step 4 is a deploy, and it checks the kids again.
+
 1. Add the new key to `keys` (complete private JWK, `alg` `RS256`, `use` `sig`) without changing `activeKid`. Update the environment secret, then dispatch the workflow with `upload-signing-keys` checked. Confirm the new `kid` appears in `/.well-known/jwks.json`.
 2. Wait **at least 24 hours** so every cloud's cached JWKS has refreshed.
 3. Change `activeKid` to the new key, update the secret, dispatch again with `upload-signing-keys`. Keep the prior key in `keys`.

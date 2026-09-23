@@ -21,8 +21,9 @@
 //                          answer is a FINDING (2), not blindness: it is exactly what is watched.
 //     --checks a,b         restrict to named checks (the deploy workflow's post-deploy probe uses
 //                          config,discovery,jwks — the TLS pin, key age and latency are the schedule's)
-//     --retry-seconds N    re-probe discovery until it answers or N seconds pass (a fresh deploy or a
-//                          fresh custom-domain certificate takes a moment to serve)
+//     --retry-seconds N    re-probe until discovery names this origin (and, with --expect-kids, until
+//                          those kids are published) or N seconds pass
+//     --expect-kids a,b    a rotation's uploaded kids: each must be published in the JWKS
 //   --preflight --expected-url <url>
 //                          BEFORE a deploy: refuse to deploy unless the origin is the committed one,
 //                          is not a workers.dev origin while wrangler.jsonc disables workers.dev, and
@@ -383,6 +384,10 @@ export function evaluate(obs, cfg) {
 		if (usable.length === 0) add("jwks", `the JWKS carries no usable RS256 signing key (kty RSA, alg RS256, use sig, kid, n, e) — ${keys.length} key(s) published`);
 		const kids = keys.map((k) => k?.kid);
 		if (new Set(kids).size !== kids.length) add("jwks", `duplicate kid in the JWKS: ${JSON.stringify(kids)} — a verifier cannot tell the keys apart`);
+		// A rotation dispatch passes the kids it just uploaded: every one must now be PUBLISHED, or the
+		// rotation's first step ("confirm the new kid appears in the JWKS") has not happened.
+		const missing = (cfg.expectKids ?? []).filter((kid) => !kids.includes(kid));
+		if (missing.length) add("jwks", `uploaded kid(s) ${JSON.stringify(missing)} are not published in the JWKS (published: ${JSON.stringify(kids)})`);
 	}
 
 	if (keys && on("keys")) {
@@ -558,6 +563,9 @@ async function selfTest() {
 	o = healthy();
 	o.jwks.body = JSON.stringify({ keys: [goodKey, { ...goodKey }] });
 	ok(redOn(o, "jwks"), "jwks: duplicate kids are red");
+	o = healthy();
+	ok(redOn(o, "jwks", cfg({ expectKids: ["2026-10"] })), "jwks: an uploaded kid that is not published is red (a rotation that did not land)");
+	ok(evaluate(healthy(), cfg({ expectKids: ["2026-09"] })).length === 0, "jwks: an uploaded kid that IS published is green");
 	o = healthy();
 	o.jwks = null;
 	o.discovery.body = JSON.stringify({ issuer: U, jwks_uri: "http://insecure", id_token_signing_alg_values_supported: ["RS256"] });
@@ -807,9 +815,19 @@ async function main() {
 		process.exit(1);
 	}
 	const pin = parsePin(readRepo(PATHS.pin));
-	const obs = await observe(url, { checks, retrySeconds: Number(arg("--retry-seconds") ?? 0) });
-	const cfg = { expectedUrl: url, committedUrl, pin, checks, now: new Date() };
-	const findings = evaluate(obs, cfg);
+	const retrySeconds = Number(arg("--retry-seconds") ?? 0);
+	const expectKids = (arg("--expect-kids") ?? "").split(",").map((k) => k.trim()).filter(Boolean);
+	const cfg = { expectedUrl: url, committedUrl, pin, checks, now: new Date(), expectKids };
+	// A just-uploaded key set takes a moment to reach every edge: re-observe until the expected kids
+	// are published or the retry budget is spent, then report whatever the last observation says.
+	const deadline = Date.now() + retrySeconds * 1000;
+	let obs = await observe(url, { checks, retrySeconds });
+	let findings = evaluate(obs, cfg);
+	while (expectKids.length && findings.some((f) => /are not published/.test(f.detail)) && Date.now() < deadline) {
+		await new Promise((r) => setTimeout(r, 15000));
+		obs = await observe(url, { checks, retrySeconds: 0 });
+		findings = evaluate(obs, cfg);
+	}
 	console.log(renderReport(findings, cfg, obs));
 	if (findings.length) {
 		for (const f of findings) console.error(`::error title=e2e issuer ${f.check}::${f.detail}`);
