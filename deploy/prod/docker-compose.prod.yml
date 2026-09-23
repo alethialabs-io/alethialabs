@@ -23,6 +23,35 @@ services:
   runner:
     image: "ghcr.io/alethialabs-io/runner:${ALETHIA_IMAGE_TAG:-latest}"
     pull_policy: always
+    environment:
+      # PRODUCTION CANNOT PROVISION AWS OR GCP WITHOUT THIS (#3348).
+      #
+      # The base bundle sets `ALETHIA_RUNNER_MODE: self-hosted`, which is right for local dev —
+      # there is no keyless federation infrastructure on a laptop. But this container is
+      # colocated with the control plane, has NO ambient cloud credentials, and `self` takes the
+      # ambient-credential path: `runner.go` branches on `Operator == "managed"` and everything
+      # else falls through to plain AssumeRole / ADC. The AWS SDK then reaches for EC2 instance
+      # metadata on a box that is not EC2 and returns a 404 naming IMDS — an error that sends the
+      # reader somewhere with nothing to do with the cause. #4916 made that failure legible at
+      # claim time; this is the other half, and it is the half that makes provisioning work.
+      #
+      # ⚠️ `self` IS ALSO THE DEFAULT. `runnerOperator()` (apps/runner/cmd/runner/main.go:196-206)
+      # reads ALETHIA_RUNNER_OPERATOR first, falls back to ALETHIA_RUNNER_MODE
+      # (cloud-hosted → managed, self-hosted → self), and returns "self" when BOTH are unset. So
+      # deleting this line does not restore a neutral state — it restores the broken one, and
+      # nothing fails until a provisioning job reaches a cloud.
+      #
+      # WHAT THIS GRANTS, stated plainly: a `managed` runner federates keylessly into customer
+      # roles, so this VM can mint assertions into any connected customer account. That is the
+      # product's central claim working as designed, and it is also the blast radius if this VM
+      # is compromised.
+      #
+      # THE DECISION, and its scope (maintainer, 2026-09-22): taken deliberately BECAUSE nobody
+      # is using production yet. The goal is to make provisioning work properly for testing now;
+      # a proper runner-pool mechanism is to be designed before there are real users. Read this
+      # as a pre-users choice with a known expiry, NOT as a settled architecture for a
+      # multi-tenant deployment. Revisit it when the first customer connects an account.
+      ALETHIA_RUNNER_OPERATOR: managed
   # Marketing public site — self-hosted (the tunnel overlay turns the zone on).
   # Inactive unless the operator runs with COMPOSE_PROFILES=marketing AND enables
   # the `import marketing*.caddy` line in deploy/prod/Caddyfile.
