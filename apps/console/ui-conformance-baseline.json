@@ -23,7 +23,7 @@
 		"notInstrumented": 0,
 		"findings": 24,
 		"findingFiles": 15,
-		"liveNotMeasured": 33
+		"liveNotMeasured": 36
 	},
 	"ledgers": {
 		"baseline": 16,
@@ -454,16 +454,17 @@
 			"instrument": "check-filter-standard",
 			"owner": null,
 			"pass": 12,
-			"fail": 3,
+			"fail": 0,
 			"na": 24,
-			"notMeasured": 1,
+			"notMeasured": 4,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
-				"the only facet-bearing builder(s) this page reaches (getJobsPage) are declared undriven — F7 is a behaviour and nothing ran it here": 1
+				"the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here": 3,
+				"the only facet-bearing builder(s) this page reaches (getJobsPage, queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here": 1
 			},
-			"score": 0.8
+			"score": 1
 		},
 		"F8": {
 			"family": "F",
@@ -649,7 +650,7 @@
 		{
 			"route": "/[org]",
 			"redirectOnly": false,
-			"surfaceFiles": 291,
+			"surfaceFiles": 293,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -767,7 +768,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"redirectOnly": false,
-			"surfaceFiles": 408,
+			"surfaceFiles": 410,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -826,7 +827,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"redirectOnly": false,
-			"surfaceFiles": 169,
+			"surfaceFiles": 227,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -885,7 +886,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"redirectOnly": false,
-			"surfaceFiles": 241,
+			"surfaceFiles": 243,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -944,7 +945,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 224,
+			"surfaceFiles": 274,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1062,7 +1063,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 217,
+			"surfaceFiles": 290,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1121,7 +1122,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 284,
+			"surfaceFiles": 286,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1180,7 +1181,7 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"redirectOnly": false,
-			"surfaceFiles": 220,
+			"surfaceFiles": 222,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1239,7 +1240,7 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"redirectOnly": false,
-			"surfaceFiles": 145,
+			"surfaceFiles": 225,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1298,7 +1299,7 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"redirectOnly": false,
-			"surfaceFiles": 150,
+			"surfaceFiles": 225,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1357,7 +1358,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"redirectOnly": false,
-			"surfaceFiles": 299,
+			"surfaceFiles": 301,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1416,7 +1417,7 @@
 		{
 			"route": "/[org]/~/clusters",
 			"redirectOnly": false,
-			"surfaceFiles": 168,
+			"surfaceFiles": 226,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1475,7 +1476,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"redirectOnly": false,
-			"surfaceFiles": 214,
+			"surfaceFiles": 285,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1508,10 +1509,10 @@
 					"instrumented": 10,
 					"of": 10,
 					"pass": 8,
-					"fail": 2,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8
+					"notMeasured": 1,
+					"score": 0.8889
 				},
 				"R": {
 					"instrumented": 8,
@@ -1525,16 +1526,16 @@
 			},
 			"overall": {
 				"pass": 33,
-				"fail": 2,
+				"fail": 1,
 				"na": 3,
-				"notMeasured": 0,
-				"score": 0.9429
+				"notMeasured": 1,
+				"score": 0.9706
 			}
 		},
 		{
 			"route": "/[org]/~/evidence",
 			"redirectOnly": false,
-			"surfaceFiles": 153,
+			"surfaceFiles": 234,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1567,10 +1568,10 @@
 					"instrumented": 10,
 					"of": 10,
 					"pass": 7,
-					"fail": 1,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 2,
-					"score": 0.875
+					"notMeasured": 3,
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1584,16 +1585,16 @@
 			},
 			"overall": {
 				"pass": 33,
-				"fail": 1,
+				"fail": 0,
 				"na": 2,
-				"notMeasured": 2,
-				"score": 0.9706
+				"notMeasured": 3,
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 223,
+			"surfaceFiles": 273,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1652,7 +1653,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"redirectOnly": false,
-			"surfaceFiles": 230,
+			"surfaceFiles": 232,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1711,7 +1712,7 @@
 		{
 			"route": "/[org]/~/new",
 			"redirectOnly": false,
-			"surfaceFiles": 373,
+			"surfaceFiles": 374,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1770,7 +1771,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"redirectOnly": false,
-			"surfaceFiles": 281,
+			"surfaceFiles": 310,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1888,7 +1889,7 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 216,
+			"surfaceFiles": 289,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1947,7 +1948,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 283,
+			"surfaceFiles": 285,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2006,7 +2007,7 @@
 		{
 			"route": "/[org]/~/settings/billing",
 			"redirectOnly": false,
-			"surfaceFiles": 199,
+			"surfaceFiles": 273,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2065,7 +2066,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"redirectOnly": false,
-			"surfaceFiles": 194,
+			"surfaceFiles": 267,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2124,7 +2125,7 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"redirectOnly": false,
-			"surfaceFiles": 149,
+			"surfaceFiles": 227,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2183,7 +2184,7 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"redirectOnly": false,
-			"surfaceFiles": 138,
+			"surfaceFiles": 219,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2242,7 +2243,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"redirectOnly": false,
-			"surfaceFiles": 225,
+			"surfaceFiles": 296,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2301,7 +2302,7 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"redirectOnly": false,
-			"surfaceFiles": 226,
+			"surfaceFiles": 296,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2360,7 +2361,7 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"redirectOnly": false,
-			"surfaceFiles": 215,
+			"surfaceFiles": 287,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2419,7 +2420,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"redirectOnly": false,
-			"surfaceFiles": 220,
+			"surfaceFiles": 293,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2537,7 +2538,7 @@
 		{
 			"route": "/[org]/~/support/abuse",
 			"redirectOnly": false,
-			"surfaceFiles": 138,
+			"surfaceFiles": 219,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2596,7 +2597,7 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"redirectOnly": false,
-			"surfaceFiles": 202,
+			"surfaceFiles": 275,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2655,7 +2656,7 @@
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"redirectOnly": false,
-			"surfaceFiles": 159,
+			"surfaceFiles": 237,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2714,7 +2715,7 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"redirectOnly": false,
-			"surfaceFiles": 151,
+			"surfaceFiles": 232,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2747,10 +2748,10 @@
 					"instrumented": 10,
 					"of": 10,
 					"pass": 9,
-					"fail": 1,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.9
+					"notMeasured": 1,
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -2764,16 +2765,16 @@
 			},
 			"overall": {
 				"pass": 35,
-				"fail": 1,
+				"fail": 0,
 				"na": 2,
-				"notMeasured": 0,
-				"score": 0.9722
+				"notMeasured": 1,
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/support/submit",
 			"redirectOnly": false,
-			"surfaceFiles": 148,
+			"surfaceFiles": 227,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2832,7 +2833,7 @@
 		{
 			"route": "/[org]/~/usage",
 			"redirectOnly": false,
-			"surfaceFiles": 189,
+			"surfaceFiles": 263,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2950,7 +2951,7 @@
 		{
 			"route": "/dashboard/[[...rest]]",
 			"redirectOnly": true,
-			"surfaceFiles": 129,
+			"surfaceFiles": 210,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -5885,8 +5886,8 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "F7",
-			"verdict": "FAIL",
-			"detail": "this page owns useConnectorFilters and its closure reaches no server read that returns facets — so its filter options come from somewhere other than the unfiltered universe"
+			"verdict": "NOT MEASURED",
+			"reason": "the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6081,8 +6082,8 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F7",
-			"verdict": "FAIL",
-			"detail": "this page owns useEvidenceFilters and its closure reaches no server read that returns facets — so its filter options come from somewhere other than the unfiltered universe"
+			"verdict": "NOT MEASURED",
+			"reason": "the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -6882,7 +6883,7 @@
 			"route": "/[org]/~/runners",
 			"predicate": "F7",
 			"verdict": "NOT MEASURED",
-			"reason": "the only facet-bearing builder(s) this page reaches (getJobsPage) are declared undriven — F7 is a behaviour and nothing ran it here"
+			"reason": "the only facet-bearing builder(s) this page reaches (getJobsPage, queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -10095,8 +10096,8 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F7",
-			"verdict": "FAIL",
-			"detail": "this page owns useSupportFilters and its closure reaches no server read that returns facets — so its filter options come from somewhere other than the unfiltered universe"
+			"verdict": "NOT MEASURED",
+			"reason": "the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
