@@ -33,10 +33,10 @@
 			"dead": 0
 		},
 		"hetzner": {
-			"declared": 37,
-			"reachable": 27,
+			"declared": 36,
+			"reachable": 26,
 			"settable": 4,
-			"dead": 2
+			"dead": 1
 		}
 	},
 	"knobs": [
@@ -8204,7 +8204,7 @@
 			"component": "bucket",
 			"name": "buckets",
 			"kind": "list",
-			"typeExpr": "list(object({\n    name               = string\n    versioning         = optional(bool, false)\n    encryption_enabled = optional(bool, true)\n    public_access      = optional(bool, false)\n    cors_origins       = optional(list(string), [])\n  }))",
+			"typeExpr": "list(object({\n    name          = string\n    versioning    = optional(bool, false)\n    public_access = optional(bool, false)\n    cors_origins  = optional(list(string), [])\n  }))",
 			"required": false,
 			"description": "",
 			"sensitive": false,
@@ -8237,24 +8237,6 @@
 			"typed": true,
 			"itemScope": "buckets",
 			"default": []
-		},
-		{
-			"cloud": "hetzner",
-			"component": "bucket",
-			"name": "encryption_enabled",
-			"kind": "bool",
-			"typeExpr": "bool",
-			"required": false,
-			"description": "",
-			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:258",
-			"readBy": [],
-			"reportedByOutput": false,
-			"reachable": true,
-			"ownedByProvider": true,
-			"typed": true,
-			"itemScope": "buckets",
-			"default": true
 		},
 		{
 			"cloud": "hetzner",

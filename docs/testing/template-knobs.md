@@ -21,7 +21,7 @@ provisioned.
 | aws | 159 | 122 | 52 | 0 |
 | azure | 87 | 61 | 22 | 1 |
 | gcp | 103 | 83 | 33 | 0 |
-| hetzner | 37 | 27 | 4 | 2 |
+| hetzner | 36 | 26 | 4 | 1 |
 
 **knobs** = root variables the root module declares, plus the object attributes a leaf component's item
 passthrough reaches. **reachable** = a `provider_config` merge lands on it. **settable** = reachable, read by
@@ -34,7 +34,7 @@ by no resource or module argument — the shape a raw variable count cannot tell
 
 | Component | alibaba | aws | azure | gcp | hetzner |
 |---|---:|---:|---:|---:|---:|
-| bucket | 0 / 2 | 3 / 16 | 0 / 7 | 4 / 11 | 0 / 10 |
+| bucket | 0 / 2 | 3 / 16 | 0 / 7 | 4 / 11 | 0 / 9 |
 | cache | 0 / 6 | 5 / 18 | 1 / 4 | 3 / 11 | — |
 | cluster | 9 / 17 | 11 / 21 | 11 / 18 | 12 / 20 | 2 / 11 |
 | database | 0 / 8 | 4 / 11 | 3 / 11 | 7 / 14 | — |
@@ -65,7 +65,6 @@ Each cell is **settable / declared**. A `—` means the cloud declares nothing t
 |---|---|---|---|
 | alibaba | dns | `alidns_managed_certificate` | infra/templates/project/alibaba/variables.tf:240 |
 | azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:482 |
-| hetzner | bucket | `encryption_enabled` | infra/templates/project/hetzner/variables.tf:258 |
 | hetzner | dns | `dns_hosted_zone` | infra/templates/project/hetzner/variables.tf:244 |
 
 ## How a knob is attributed to a component
