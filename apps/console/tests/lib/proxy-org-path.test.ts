@@ -78,17 +78,19 @@ describe("the proxy publishes the request path", () => {
 // user's own org, in the qa gate on promotion #4959.
 describe("a server action Next forwards to another worker", () => {
 	const firstPass = "/acme/~/new";
+	/** Any action id: the forwarded POST keeps `next-action`; Next's redirect render drops it. */
+	const ACTION_ID = "00ab12cd34";
 
 	it("keeps the address published on the first pass, not the worker's route pattern", async () => {
 		const res = proxy(
-			at("/[org]", { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass }),
+			at("/[org]", { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass, "next-action": ACTION_ID }),
 		);
 		await expect(published(res)).resolves.toBe(firstPass);
 	});
 
 	it("...whether the pattern arrives raw or percent-encoded", async () => {
 		const res = proxy(
-			at("/%5Borg%5D", { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass }),
+			at("/%5Borg%5D", { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass, "next-action": ACTION_ID }),
 		);
 		await expect(published(res)).resolves.toBe(firstPass);
 	});
@@ -101,7 +103,7 @@ describe("a server action Next forwards to another worker", () => {
 		"keeps the first-pass address when the worker is the static page %s",
 		async (target) => {
 			const res = proxy(
-				at(target, { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass }),
+				at(target, { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass, "next-action": ACTION_ID }),
 			);
 			await expect(published(res)).resolves.toBe(firstPass);
 		},
@@ -115,13 +117,28 @@ describe("a server action Next forwards to another worker", () => {
 		"a concrete org first segment wins even with a bracket later: %s",
 		async (target) => {
 			const res = proxy(
-				at(target, { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: "/org-b" }),
+				at(target, {
+					[ACTION_FORWARDED_HEADER]: "1",
+					[ORG_PATH_HEADER]: "/org-b",
+					"next-action": ACTION_ID,
+				}),
 			);
 			await expect(published(res)).resolves.toBe(target);
 		},
 	);
 
-	// The exception is as narrow as the three conditions. Each case below drops one of them, and
+	// A forwarded action that calls redirect(): Next renders the TARGET page with a copy of the
+	// forwarded headers minus `next-action`. That render must be scoped by its own address, or a
+	// redirect to `/dashboard` after leaving `acme` renders the dashboard as `acme` (#5005 review).
+	it.each(["/accept-terms", "/start", "/"])(
+		"the redirect render of a forwarded action (no next-action) publishes its own path: %s",
+		async (target) => {
+			const res = proxy(at(target, { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass }));
+			await expect(published(res)).resolves.toBe(target);
+		},
+	);
+
+	// The exception is as narrow as its four conditions. Each case below drops one of them, and
 	// each is the anti-forgery replacement above, unchanged.
 	it("a real address still wins over an inbound value, even with the forwarded header", async () => {
 		const res = proxy(

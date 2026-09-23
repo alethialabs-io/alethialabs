@@ -88,9 +88,15 @@ export function namesNoOrg(pathname: string): boolean {
  */
 export function orgPathToPublish(pathname: string, inbound: Headers): string {
 	const carried = inbound.get(ORG_PATH_HEADER);
+	// `next-action` is required too: when a forwarded action calls `redirect()`, Next renders the
+	// TARGET page with a copy of the forwarded request's headers — `x-action-forwarded` and the
+	// carried path survive, only `next-action` and the router-state header are dropped
+	// (`createRedirectRenderResult`). Without this, an action on `/acme/…` that redirects to
+	// `/dashboard` would render the dashboard scoped to `acme` (PR #5005 review).
 	if (
 		carried &&
 		inbound.get(ACTION_FORWARDED_HEADER) === "1" &&
+		inbound.has("next-action") &&
 		namesNoOrg(pathname)
 	) {
 		return carried;
