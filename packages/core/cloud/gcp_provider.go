@@ -61,7 +61,7 @@ var (
 		"memorystore_valkey_engine_version",
 		"memorystore_tier", "memorystore_memory_size_gb", "memorystore_redis_version",
 	}
-	gcpNosqlReserved   = []string{"create_firestore", "firestore_point_in_time_recovery"}
+	gcpNosqlReserved = []string{"create_firestore", "firestore_point_in_time_recovery"}
 	// `gke_log_retention_days` is not written by anything: the template DELETED the variable (#4320)
 	// because GKE has no per-cluster log retention. Reserved so a value already stored in a cluster's
 	// provider_config is stripped rather than emitted as an undeclared root tfvar — the same move as
