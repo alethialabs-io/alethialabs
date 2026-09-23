@@ -27,8 +27,7 @@ import { test, expect } from "../fixtures/qa";
 import { ACCEPTANCE_LABELS } from "@repo/legal/documents";
 import { scanA11y } from "../helpers/a11y";
 import { pendingInvitationId } from "../helpers/db";
-import { logCursor, waitForOtp } from "../helpers/otp";
-import { organizationApi, signUpHobby } from "../helpers/personas";
+import { emailOtpSignIn, organizationApi, signUpHobby } from "../helpers/personas";
 import type { Page } from "@playwright/test";
 
 /** A unique, never-before-registered test email so each signup creates a fresh account. */
@@ -54,17 +53,17 @@ function ownerHobbyEmail(): string {
 const OTP_WAIT_MS = 150_000;
 
 /**
- * Local email-OTP sign-in, mirroring helpers/personas.emailOtpSignIn but with a longer OTP
- * wait — under a busy dev server the code can land in the log later than the shared 30s default.
+ * Email-OTP sign-in with this file's longer OTP wait — under a busy dev server the code can land in
+ * the log later than the shared 30s default.
+ *
+ * It USED to mirror helpers/personas.emailOtpSignIn, and the mirror drifted in the two ways that
+ * mattered (#5007): it read the newest code in the log with no recipient, so on the qa leg's three
+ * workers a signup could take somebody else's code and die on "That code didn't work"; and it never
+ * answered the consent banner, whose fixed panel covers "Customize URL" on /onboarding — the
+ * customize-slug test below retried that click until its 180s timeout on run 35917620550.
  */
 export async function otpSignIn(page: Page, email: string, mode: "signup" | "login"): Promise<void> {
-	const cursor = await logCursor();
-	await page.goto(`/${mode}`);
-	await page.getByRole("button", { name: /continue with email/i }).click();
-	await page.locator("#email").fill(email);
-	await page.getByRole("button", { name: /continue with email/i }).click();
-	const code = await waitForOtp(cursor, { timeoutMs: OTP_WAIT_MS });
-	await page.locator("input[data-input-otp]").first().fill(code);
+	await emailOtpSignIn(page, email, mode, { otpTimeoutMs: OTP_WAIT_MS });
 }
 
 /** Runs a fresh signup through email-OTP and waits until the /onboarding wizard renders. */
