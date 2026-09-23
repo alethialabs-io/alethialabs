@@ -32,7 +32,9 @@ import type {
 	PolicyDTO,
 } from "@/app/server/actions/alerts";
 import {
+	ACTIVITY_URL_PARAMS,
 	CHANNEL_STATUS_LABEL,
+	CHANNEL_URL_PARAMS,
 	DEFAULT_ACTIVITY_FILTERS,
 	DEFAULT_CHANNEL_FILTERS,
 	DEFAULT_POLICY_FILTERS,
@@ -43,6 +45,7 @@ import {
 	normalizePoliciesQuery,
 	POLICY_KIND_LABEL,
 	POLICY_STATUS_LABEL,
+	POLICY_URL_PARAMS,
 } from "@/components/alerts/alerts-query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
@@ -75,6 +78,14 @@ export interface FilteredView<Row, Facets> {
 	 * renders the previous filter's answer as the current one.
 	 */
 	stale: boolean;
+	/**
+	 * True while the rows may not answer the URL and the bar: before the link has been read into
+	 * the store, before the first answer, while `stale`, and while a typed search is inside its
+	 * debounce. The hub puts it on the panel's section as `aria-busy`, so a reader — and the
+	 * audit's F8, which used to accept a placeholder as an answer (#4980) — can tell an answer
+	 * from a stand-in. `stale` stays the dim alone: dimming every first paint flashes a correct page.
+	 */
+	busy: boolean;
 }
 
 export type ChannelsView = FilteredView<
@@ -113,11 +124,11 @@ const NO_OPTIONS: FacetOption[] = [];
  *  @param enabled false on the hub's upsell path, where no list renders. */
 export function useChannelsView(enabled = true): ChannelsView {
 	const filters = useAlertChannelFilters((s) => s.filters);
-	useFilterUrlSync(useAlertChannelFilters, DEFAULT_CHANNEL_FILTERS, {
-		search: "channel",
-		types: "channelType",
-		status: "channelStatus",
-	});
+	const urlRead = useFilterUrlSync(
+		useAlertChannelFilters,
+		DEFAULT_CHANNEL_FILTERS,
+		CHANNEL_URL_PARAMS,
+	);
 	const search = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
 	const query = useMemo(
 		() => normalizeChannelsQuery({ ...filters, search }),
@@ -139,6 +150,11 @@ export function useChannelsView(enabled = true): ChannelsView {
 		count: page.data?.resultCount ?? 0,
 		facets,
 		stale: page.isPlaceholderData,
+		busy:
+			!urlRead ||
+			page.isPending ||
+			page.isPlaceholderData ||
+			filters.search !== search,
 	};
 }
 
@@ -146,12 +162,11 @@ export function useChannelsView(enabled = true): ChannelsView {
  *  @param enabled see {@link useChannelsView}. */
 export function usePoliciesView(enabled = true): PoliciesView {
 	const filters = useAlertPolicyFilters((s) => s.filters);
-	useFilterUrlSync(useAlertPolicyFilters, DEFAULT_POLICY_FILTERS, {
-		search: "policy",
-		status: "policyStatus",
-		kinds: "policyKind",
-		channels: "policyChannel",
-	});
+	const urlRead = useFilterUrlSync(
+		useAlertPolicyFilters,
+		DEFAULT_POLICY_FILTERS,
+		POLICY_URL_PARAMS,
+	);
 	const search = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
 	const query = useMemo(
 		() => normalizePoliciesQuery({ ...filters, search }),
@@ -174,6 +189,11 @@ export function usePoliciesView(enabled = true): PoliciesView {
 		count: page.data?.resultCount ?? 0,
 		facets,
 		stale: page.isPlaceholderData,
+		busy:
+			!urlRead ||
+			page.isPending ||
+			page.isPlaceholderData ||
+			filters.search !== search,
 	};
 }
 
@@ -181,10 +201,11 @@ export function usePoliciesView(enabled = true): PoliciesView {
  *  @param enabled see {@link useChannelsView}. */
 export function useActivityView(enabled = true): ActivityView {
 	const filters = useAlertActivityFilters((s) => s.filters);
-	useFilterUrlSync(useAlertActivityFilters, DEFAULT_ACTIVITY_FILTERS, {
-		search: "activity",
-		status: "activityStatus",
-	});
+	const urlRead = useFilterUrlSync(
+		useAlertActivityFilters,
+		DEFAULT_ACTIVITY_FILTERS,
+		ACTIVITY_URL_PARAMS,
+	);
 	const search = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
 	const query = useMemo(
 		() => normalizeActivityQuery({ ...filters, search }),
@@ -205,5 +226,10 @@ export function useActivityView(enabled = true): ActivityView {
 		count: page.data?.resultCount ?? 0,
 		facets,
 		stale: page.isPlaceholderData,
+		busy:
+			!urlRead ||
+			page.isPending ||
+			page.isPlaceholderData ||
+			filters.search !== search,
 	};
 }
