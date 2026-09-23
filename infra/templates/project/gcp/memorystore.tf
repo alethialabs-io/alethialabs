@@ -17,10 +17,18 @@ module "memorystore" {
   # module's `false` always won. The root default ("DISABLED") maps to that same `false`, so wiring
   # it changes no existing instance; the root variable's validation rejects any other spelling.
   #
-  # `memorystore_auth_enabled` is deliberately NOT threaded here: its root default (false) disagrees
-  # with the module's (true), so a plain wire would turn Redis AUTH OFF on every instance whose
-  # caller never set it. That one waits on a maintainer ruling (#4320).
   transit_encryption = var.memorystore_transit_encryption_mode == "SERVER_AUTHENTICATION"
+
+  # Redis AUTH. Also threaded nowhere before #4320, and the one knob in that batch where the two
+  # ends DISAGREED: root `false`, module `true`. Because nothing threaded it, the module's `true`
+  # is what every Memorystore instance is actually running, and a plain wire would have turned AUTH
+  # OFF on every instance whose caller never set the knob.
+  #
+  # Resolved by moving the ROOT default to `true` (the maintainer's ruling on #4320: a knob that
+  # governs security takes the secure default), not by leaving the wire out. Both ends now say
+  # `true`, so no deployed instance changes, and a caller who explicitly sets `false` finally gets
+  # the thing they asked for instead of silently getting AUTH.
+  auth_enabled = var.memorystore_auth_enabled
 
   network_self_link = try(module.vpc_network[0].network_self_link, null) != null ? module.vpc_network[0].network_self_link : var.network_id
 
