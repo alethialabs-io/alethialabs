@@ -35,6 +35,7 @@ authenticate the backend and no static state keys exist.
 | `gcp-e2e/` | WIF pool + ref-bound provider + provisioner SA + billing budget | `gcs` · `alethia-tofu-state-<project_id>` · `gcp-e2e/` | `gcp-e2e/bootstrap/` — the GCS bucket |
 | `azure-e2e/` | Entra app + federated credential + subscription roles + AKS admin group | `azurerm` · `alethiatfstate`/`tfstate` · `azure-e2e.tfstate` | `azure-e2e/bootstrap/` — RG + storage account + container |
 | `alibaba-e2e/` | RAM OIDC provider + `alethia-e2e-nightly` role + least-priv policy | `oss` · `alethia-tofu-state-e2e-alibaba` · `alibaba-e2e/` | `alibaba-e2e/bootstrap/` — the OSS bucket |
+| `e2e-issuer/` | The E2E assertion issuer's origin `e2e-issuer.alethialabs.io`: the Workers Custom Domain, its CAA set, and the reviewed TLS CA pin `alibaba-e2e` reads | `s3` · `alethia-tofu-state-270587882865` · `e2e-issuer/` | none (the bucket exists). Applied with a zone-scoped Cloudflare token, never the deploy token |
 | `aws-secrets-e2e/` | Account-B canary for the cross-account keyless secret proof | `s3` · `alethia-tofu-state-270587882865` | — |
 
 Each `bootstrap/` owns exactly one thing: the container its parent's state lives in. It exists

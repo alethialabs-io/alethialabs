@@ -11,16 +11,35 @@ The `e2e-issuer` GitHub environment supplies these deployment values. The enviro
 | Secret   | `CLOUDFLARE_API_TOKEN`  | Worker deployment only                                                  |
 | Secret   | `CLOUDFLARE_ACCOUNT_ID` | Worker deployment only                                                  |
 | Secret   | `SIGNING_KEYS_JSON`     | Rotation-aware RSA signing keys; uploaded only by a rotation dispatch   |
-| Variable | `E2E_ISSUER_URL`        | The HTTPS origin the Worker is served at; it refuses to serve any other |
+| Variable | `E2E_ISSUER_URL`        | `https://e2e-issuer.alethialabs.io` — the one origin the Worker serves |
 | Variable | `GITHUB_TOKEN_AUDIENCE` | Audience requested from GitHub OIDC                                     |
 | Variable | `ALLOWED_REPOSITORIES`  | Comma-separated exact repository names                                  |
 | Variable | `ALLOWED_WORKFLOW_REFS` | Comma-separated exact `workflow_ref` claims                             |
 
-`E2E_ISSUER_URL` must be exactly the origin the Worker answers at (for a `workers.dev` deployment, `https://alethia-e2e-issuer.<account-subdomain>.workers.dev`). Every minted `iss`, the discovery document and the JWKS URL are derived from it, and a request at any other origin is refused with `issuer_origin_mismatch`. The deploy workflow fetches discovery from that origin after deploying, so a mismatch fails the deploy instead of failing silently at the clouds. The same value is what the console reads as `ALETHIA_E2E_ASSERTION_BROKER_URL`.
+`E2E_ISSUER_URL` is a repository variable, and it must be exactly the origin the Worker answers at: **`https://e2e-issuer.alethialabs.io`**. That is a Workers Custom Domain owned by [`infra/e2e-issuer`](../../infra/e2e-issuer/README.md) (maintainer ruling on #4226, 2026-09-23), not a route in `wrangler.jsonc`. `workers_dev` is `false`, so the Worker has no second hostname. Every minted `iss`, the discovery document and the JWKS URL are derived from `E2E_ISSUER_URL`, and a request at any other origin is refused with `issuer_origin_mismatch`. The same value is what the console reads as `ALETHIA_E2E_ASSERTION_BROKER_URL`, and what the four cloud trust stacks pin as `e2e_broker_issuer_url`.
+
+The deploy workflow checks the origin twice:
+
+- **Before it deploys**, a preflight refuses unless `E2E_ISSUER_URL` is the origin `infra/e2e-issuer` commits, is not a `workers.dev` origin, and already routes to this Worker. With `workers.dev` off, a deploy before the custom domain exists would leave the issuer reachable nowhere. So the custom domain must exist before the first deploy: apply `infra/e2e-issuer` first (its README has the ordered runbook). A refused deploy changes nothing that is live.
+- **After it deploys**, it retries for up to three minutes until discovery names this origin and the JWKS has a usable RS256 key. Then it fails, naming the check that failed. A mismatch fails the deploy instead of failing silently at the clouds.
+
+The Cloudflare token here deploys the Worker only (Account · Workers Scripts · Edit). The custom domain and its CAA records are applied with a **separate** token, as `infra/e2e-issuer/README.md` describes. Do not add zone permissions to this one.
+
+## Health
+
+*E2E issuer health* (`.github/workflows/e2e-issuer-health.yml`) runs `scripts/ci/check-e2e-issuer-health.mjs` every six hours. It checks:
+
+- discovery's `issuer` is `E2E_ISSUER_URL`, and that value is the committed origin;
+- `jwks_uri` resolves to a JWKS with a usable RS256 key and no private members;
+- the newest key's age, from its `kid`;
+- that every CA certificate in the live TLS chain is in `infra/e2e-issuer/tls-ca-pin.json`, the set Alibaba pins, and that the leaf certificate has renewal runway;
+- the median response time.
+
+If a check fails, it keeps one `tracker:e2e-issuer-health` issue open.
 
 There is no per-provider audience variable. The audience each cloud trusts is `providerAudience(provider)` from `@repo/workload-identity`, the one copy the console forwards and the Worker enforces.
 
-`SIGNING_KEYS_JSON` has one active key and may retain old or staged keys:
+`SIGNING_KEYS_JSON` has one active key and may retain old or staged keys. Name each key's `kid` after the month it was minted, as `YYYY-MM`. The public JWKS does not say which key is active, so the health check measures key age from the newest `kid`, and it reports a `kid` in any other form as a key whose age it cannot measure:
 
 ```json
 {
