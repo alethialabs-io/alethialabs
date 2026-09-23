@@ -22,7 +22,8 @@ e2e_github_environment = "e2e-dev"
 # ---- E2E assertion broker trust (#4226) ----
 # The broker's origin, chosen by the maintainer on 2026-09-23: the Cloudflare custom domain that
 # infra/e2e-issuer binds to the Worker. It must equal that stack's `hostname` byte for byte, and
-# `node scripts/ci/check-e2e-issuer-health.mjs --static` (ci.yml) fails the PR that lets the copies
+# `node scripts/ci/check-e2e-issuer-health.mjs --static` (ci.yml, the always-run `Authz / open-core
+# guards` job — no path filter) fails the PR that lets the copies
 # drift. Committed here, never passed with -var at apply time: the next bare apply would read the old
 # value and rewrite or REMOVE the trust.
 #

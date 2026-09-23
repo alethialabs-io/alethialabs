@@ -7,7 +7,8 @@
 #
 # `hostname` has four more copies that must agree with it byte-for-byte: `e2e_broker_issuer_url` in
 # infra/{aws-oidc,gcp-e2e,azure-e2e,alibaba-e2e}/terraform.tfvars, and `issuer_url` in
-# tls-ca-pin.json. `node scripts/ci/check-e2e-issuer-health.mjs --static` (ci.yml) fails the PR that
+# tls-ca-pin.json. `node scripts/ci/check-e2e-issuer-health.mjs --static` (ci.yml, the always-run
+# `Authz / open-core guards` job — no path filter) fails the PR that
 # lets them drift.
 
 zone_name = "alethialabs.io"

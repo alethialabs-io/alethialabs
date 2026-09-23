@@ -17,12 +17,6 @@ on:
       - "infra/e2e-issuer/**"
       # main.tf reads the Worker's name out of wrangler.jsonc, so a change there changes this plan.
       - "apps/e2e-issuer/wrangler.jsonc"
-      # The other four committed copies of the issuer origin, and the instrument that compares them.
-      - "infra/aws-oidc/terraform.tfvars"
-      - "infra/gcp-e2e/terraform.tfvars"
-      - "infra/azure-e2e/terraform.tfvars"
-      - "infra/alibaba-e2e/terraform.tfvars"
-      - "scripts/ci/check-e2e-issuer-health.mjs"
       - "infra/.trivyignore"
       - "infra/.tflint.hcl"
       - "infra/.trivy.yaml"
@@ -61,14 +55,9 @@ jobs:
           tofu init -backend=false
           tofu validate
 
-      # The committed copies of the issuer origin (this stack's hostname, tls-ca-pin.json and the four
-      # trust stacks' e2e_broker_issuer_url) agree. Hermetic.
-      - name: The issuer origin has one value everywhere it is committed
-        run: node scripts/ci/check-e2e-issuer-health.mjs --static
-      # The scheduled health check's own proof, on the PR that changes it rather than only at 6-hourly
-      # runs of main's copy: every check goes red on a fixture built to trip it.
-      - name: The issuer health check can go red on every check
-        run: node scripts/ci/check-e2e-issuer-health.mjs --self-test
+      # The five committed copies of the issuer origin are compared in ci.yml's always-run guards job
+      # (`check-e2e-issuer-health.mjs --static`), NOT here: this workflow is path-filtered, so an edit to
+      # one trust stack's tfvars would skip it.
 
       - name: IaC checks (fmt + tflint + Trivy + tofu test)
         uses: ./.github/actions/iac-checks
