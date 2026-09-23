@@ -1998,6 +1998,17 @@ jobs:
         run: |
           node scripts/check-tfvars-safety.mjs --self-test
           node scripts/check-tfvars-safety.mjs
+      # The E2E issuer origin has FIVE committed copies — infra/e2e-issuer's hostname, its
+      # tls-ca-pin.json, and e2e_broker_issuer_url in aws-oidc, gcp-e2e, azure-e2e and alibaba-e2e — and
+      # four clouds pin it byte for byte (#4226). Here in the always-run guards job, not behind a path
+      # filter, so an edit to any one copy cannot skip the comparison. The self-test first: every live
+      # check goes red on a fixture, the pin merge and atomic write hold, and a loopback TLS server
+      # proves an unverified chain is never pinned. Hermetic.
+      - name: The E2E issuer origin has one value in every committed copy (and its health check can go red)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          node scripts/ci/check-e2e-issuer-health.mjs --self-test
+          node scripts/ci/check-e2e-issuer-health.mjs --static
       # The proof-bundle scrub decides what a PUBLIC repo publishes, and its only run was inside
       # e2e-nightly.yml — a workflow no PR triggers. So the change that made the tripwire fire on
       # every azure plan JSON could not have been caught before merge, and wasn't: azure lost its
