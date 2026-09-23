@@ -155,40 +155,89 @@ run "an_illegal_repository_name_is_refused" {
   expect_failures = [check.cr_repo_names_valid]
 }
 
-# ── Vulnerability scanning (#1845). ON, OFF, and the omitted default. ──────────────────
+# ── Vulnerability scanning (#1845, refused by #2283). ON is REFUSED; OFF and omitted plan nothing. ──
 #
-# The switch is a SIBLING resource, not a repository argument: ON plans one REPO-scoped
-# `alicloud_cr_scan_rule` (AUTO trigger, VUL type) targeting exactly that repository; OFF and
-# omitted plan NO rule — the template's pre-#1845 status quo, so an old snapshot changes nothing.
+# The switch is a SIBLING resource, not a repository argument: OFF and omitted plan NO
+# `alicloud_cr_scan_rule` — the template's pre-#1845 status quo, so an old snapshot changes nothing.
 # The instance's own `image_scanner`/`vpc_quota` arguments stay untouched (#1933 — a change there
 # applies "cleanly" and does nothing, or replaces a Subscription-billed registry).
 #
-# Plan-green here is NOT proof a scan runs: the AUTO trigger's VPC prerequisite is undocumented
-# in both languages (docs/research/alibaba-cr-scan-rule-vpc.md). The runtime proof — push an
-# image, observe a scan result — is owed by the alibaba e2e nightly (#2061/#2101).
+# ON used to plan a REPO-scoped AUTO rule and assert its shape here — wiring without behaviour, since
+# nobody has observed an AUTO rule scan on a Basic instance with no VPC endpoint
+# (docs/research/alibaba-cr-scan-rule-vpc.md). Maintainer ruling 2026-09-23 (#2283): with the Alibaba
+# account disabled and unfunded, refuse at plan instead of shipping a switch that may scan nothing.
+#
+# The refusal lives in modules/cr (`terraform_data.vulnerability_scanning_unproven`), and
+# `expect_failures` cannot address a resource inside a module from a root run — OpenTofu rejects
+# `module.cr[0].terraform_data…` as a reference. So these runs plan the MODULE directly (the
+# `module {}` block, as aws/checks_acm.tftest.hcl does), which makes the guard a root-level address.
+# They stay in this ROOT file on purpose: `modules/**/*.tftest.hcl` is silently never executed.
 
-run "vulnerability_scanning_on_plans_a_repo_scoped_auto_rule" {
+run "vulnerability_scanning_on_is_refused_at_plan" {
   command = plan
 
+  module {
+    source = "./modules/cr"
+  }
+
   variables {
-    cr_repos = {
+    instance_name  = "cr-demo-dev"
+    namespace_name = "demo"
+    repos = {
       apps = { summary = "Container images for apps", vulnerability_scanning = true }
     }
   }
 
-  assert {
-    condition     = module.cr[0].repository_scan_rules["apps"].scan_scope == "REPO"
-    error_message = "vulnerability_scanning = true must plan a REPO-scoped alicloud_cr_scan_rule; got ${jsonencode(module.cr[0].repository_scan_rules)}."
+  expect_failures = [terraform_data.vulnerability_scanning_unproven]
+}
+
+# The refusal is keyed on ANY repository asking — one ON among several OFF must still be refused,
+# or adding a second registry component would be a way around it.
+run "one_scanning_repository_among_several_is_still_refused" {
+  command = plan
+
+  module {
+    source = "./modules/cr"
+  }
+
+  variables {
+    instance_name  = "cr-demo-dev"
+    namespace_name = "demo"
+    repos = {
+      apps = { summary = "Container images for apps" }
+      jobs = { summary = "Batch images", vulnerability_scanning = true }
+    }
+  }
+
+  expect_failures = [terraform_data.vulnerability_scanning_unproven]
+}
+
+# …and the guard is not merely always-on: with every switch OFF the module plans no guard and no
+# rule, so the refusal cannot be what stops an ordinary registry from planning.
+run "scanning_off_plans_neither_guard_nor_rule" {
+  command = plan
+
+  module {
+    source = "./modules/cr"
+  }
+
+  variables {
+    instance_name  = "cr-demo-dev"
+    namespace_name = "demo"
+    repos = {
+      apps = { summary = "Container images for apps", vulnerability_scanning = false }
+      jobs = { summary = "Batch images" }
+    }
   }
 
   assert {
-    condition     = module.cr[0].repository_scan_rules["apps"].trigger_type == "AUTO" && module.cr[0].repository_scan_rules["apps"].scan_type == "VUL"
-    error_message = "The rule must be AUTO-triggered and of type VUL — anything else looks like scanning without being what the switch promises. Got ${jsonencode(module.cr[0].repository_scan_rules)}."
+    condition     = length(terraform_data.vulnerability_scanning_unproven) == 0
+    error_message = "With every vulnerability_scanning switch off the refusal guard must not be planned."
   }
 
   assert {
-    condition     = tolist(module.cr[0].repository_scan_rules["apps"].repo_names) == tolist(["apps"])
-    error_message = "The rule must target exactly the repository whose switch is on; got ${jsonencode(module.cr[0].repository_scan_rules)}."
+    condition     = length(alicloud_cr_scan_rule.this) == 0
+    error_message = "With every vulnerability_scanning switch off no alicloud_cr_scan_rule may be planned."
   }
 }
 

@@ -353,18 +353,6 @@ variable "azure_cache_sku" {
   description = "SKU for Azure Cache for Redis (Basic, Standard, or Premium)"
 }
 
-variable "azure_cache_family" {
-  type        = string
-  default     = "C"
-  description = "SKU family for Azure Cache for Redis (C for Basic/Standard, P for Premium)"
-}
-
-variable "azure_cache_capacity" {
-  type        = number
-  default     = 0
-  description = "Size of the Azure Cache for Redis instance (0-6 for C family, 1-5 for P family)"
-}
-
 # azure_cache_redis_version was here. DELETED, not left declared (#1993): Azure Cache for Redis is
 # retired and the kind is backed by azurerm_managed_redis, which accepts NO engine-version argument
 # — neither `redis_version` on the resource nor `version` inside `default_database`. Both were
@@ -372,6 +360,19 @@ variable "azure_cache_capacity" {
 #
 # A variable nobody can honor is worse than no variable: it reads as a setting, and it manufactures
 # a false green in the parity guards, which ask whether a tfvar is DECLARED and read.
+#
+# azure_cache_family ("C"/"P") and azure_cache_capacity (0-6) were here too, and were DELETED by
+# #4320 for exactly the reason stated above, one paragraph up. They are the two halves of the
+# RETIRED azurerm_redis_cache sku block (`sku { name, family, capacity }`). azurerm_managed_redis
+# has a single flat `sku_name` — Balanced_B0, MemoryOptimized_M10, and so on — and no family or
+# capacity argument for them to reach; the family/capacity pair cannot even be folded into it,
+# because `azure_cache_sku`/`azure_cache_sku_name` already choose that one string and a second
+# mapping over the same field would just be a way for two knobs to disagree.
+#
+# Both were declared and reachable and read by nothing (the `dead:` backlog in
+# infra/templates/project/knob-exclusions.yaml) since the Managed Redis migration. Nothing emits
+# them — no Go provider, no tfvars, no test — so deleting is a removal of an offer that was never
+# real, and #1993 is the recorded precedent for this exact shape on this exact resource.
 
 variable "azure_cache_multi_az" {
   type        = bool

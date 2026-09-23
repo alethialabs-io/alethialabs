@@ -49,7 +49,8 @@ type t2Provider struct {
 	// waitTimeout bounds the test-side WaitTerminal poll for the job to go terminal
 	// (image build + apply + spine + argo on real infra).
 	waitTimeout time.Duration
-	// teardownTimeout bounds the in-process t.Cleanup destroy. It is NOT part of the test
+	// teardownTimeout bounds the in-process t.Cleanup teardown: the runner's graceful stop
+	// (up to t2RunnerStopGrace of it, #3855) and then the destroy. It is NOT part of the test
 	// body's ctx — teardown runs after the body returns — but it IS inside the go-test
 	// process deadline, which is why ResolveT2Budget reserves it in GoTimeout rather than
 	// in Ctx.

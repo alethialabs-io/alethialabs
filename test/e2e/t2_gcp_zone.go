@@ -302,3 +302,42 @@ func ChooseGCPZone(ctx context.Context, candidates []string, wantType string, of
 func GCPMachineTypeNames(ctx context.Context, zone string) ([]string, error) {
 	return gcpMachineTypeNames(ctx, zone)
 }
+
+// GCPRegionOf turns a gcp LOCATION into the region a regional API will accept: `europe-west3-a`
+// becomes `europe-west3`, and anything already region-shaped is returned unchanged.
+//
+// WHY THIS EXISTS. `ALETHIA_E2E_REGION` holds a ZONE for gcp, deliberately — GKE needs one, because
+// a bare region makes the cluster REGIONAL and multiplies every node count by the zone count
+// (europe-west3 delivers 3 nodes where the floor declares 1) and skips the zonal capacity
+// preflight. `t2_preflight.go` says so at its own refusal. So the variable is correct and every
+// consumer that needs a REGION has to derive one.
+//
+// Three places already did, and one did not:
+//
+//	infra/templates/project/gcp/locals.tf:62   gcp_region_key = can(regex("-[a-z]$", …)) ? substr(…) : …
+//	scripts/e2e/gcp-cleanup.sh                 *-[a-z]) REGION="${REGION%-?}" ;;      (self-tested)
+//	firestore.tf / existing-network.tf         consume local.gcp_region_key
+//	buildByoIacSnapshot                        passed the raw zone  ← #4951
+//
+// The consequence, measured on run 35789927722 (a dispatched gcp floor, 2026-09-22): the customer
+// module's `google_storage_bucket.drift_probe` was created with `location = "europe-west3-a"` and
+// GCS answered `Error 400: The specified location constraint is not valid.` The cluster had already
+// provisioned and ArgoCD had already converged 4/4 — the run died on a bucket.
+//
+// THE SHAPE TEST IS "ENDS IN -<letter>", NOT "HAS TWO DASHES". ParseGCPZones above uses the dash
+// COUNT to refuse a region-shaped entry, and the two agree on every real input — but only this one
+// is IDEMPOTENT, which is what a normalizer needs: feed it a region and it must hand the region
+// back, not eat a character. `GCPRegionOf(GCPRegionOf(z)) == GCPRegionOf(z)` for every input, and
+// TestGCPRegionOf pins exactly that.
+//
+// It is deliberately NOT applied to other clouds: aws, azure and alibaba put a real region in this
+// variable, and hetzner puts a location. gcp is the only one where the value is a zone.
+func GCPRegionOf(location string) string {
+	l := strings.TrimSpace(location)
+	// `-` plus exactly one ASCII letter at the end is the zone suffix, matching locals.tf's
+	// `regex("-[a-z]$")` and gcp-cleanup.sh's `*-[a-z])` glob.
+	if n := len(l); n >= 3 && l[n-2] == '-' && l[n-1] >= 'a' && l[n-1] <= 'z' {
+		return l[:n-2]
+	}
+	return l
+}

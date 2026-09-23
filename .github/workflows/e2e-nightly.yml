@@ -48,7 +48,7 @@ on:
     #
     # The full bar (P2-F, #1068: ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 — 11 kinds +
     # 18 add-ons) used to run weekly on `17 5 * * 0`. It was REMOVED, because a schedule fired it
-    # across the whole matrix while the pre-apply cost ceiling below is wired for **aws only**: on
+    # across the whole matrix while the pre-apply cost ceiling below was wired for **aws only**: on
     # gcp, azure, alibaba and hetzner a full bar provisioned the entire 11-kind surface with no
     # spend gate whatsoever. It also bought a standing monthly resource on alibaba every week —
     # `infra/templates/project/alibaba/modules/cr` creates `alicloud_cr_ee_instance` with
@@ -61,8 +61,9 @@ on:
     # RE-ADDING IT is a per-cloud decision, not a global one, and it is gated: that cloud needs a
     # wired cost ceiling and a committed full-bar PASS row in demos/proofs/provisioning-e2e-log.md
     # first. `scripts/check-e2e-spend-guard.mjs` enforces the ceiling half of that — a cron that
-    # resolves to `full` fails CI unless every provider in the matrix is priced or explicitly
-    # exempted, so this cannot be reintroduced unguarded by editing one line.
+    # resolves to `full` fails CI unless every provider in the matrix carries a spend control — a
+    # cost ceiling (aws/gcp/azure) or a pre-apply shape control (hetzner/alibaba, #2385) — so this
+    # cannot be reintroduced unguarded by editing one line.
     #
     # `scripts/e2e/resolve-dimension.sh` still MAPS `17 5 * * 0` to `full` on purpose: re-adding
     # the cron must work, and a cron whose dimension silently resolved to `floor` would run the
@@ -99,7 +100,11 @@ on:
           - full
         default: ""
       full_bar:
-        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws; gcp/azure/alibaba/hetzner are unpriced, so dispatch those one at a time and watch them."
+        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws/gcp/azure; hetzner and alibaba are guarded by a pre-apply shape control instead (server-type cap; prepaid refusal). Dispatch one cloud at a time and watch it."
+        type: boolean
+        default: false
+      alibaba_allow_prepaid:
+        description: "ALIBABA ONLY, THIS RUN ONLY. Let the apply buy a PREPAID (Subscription) resource. Off, the pre-apply spend policy refuses one — and alibaba maxconfig/full needs one, because ACR Enterprise Edition has no pay-as-you-go model (Basic is 150 USD/month, bought per run; a teardown may not refund it, #2333). Tick this only on a watched dispatch. Deliberately an INPUT and not a repo variable: a variable would wave the refusal through on every scheduled run."
         type: boolean
         default: false
       azure_redis_allow_known_bad:
@@ -276,12 +281,24 @@ jobs:
     # says "this environment". That is deliberate: the branch list becomes an auditable control that
     # can be tightened without a `tofu apply`.
     #
-    # THE COMPENSATING CONTROL, and the reason this is safe at all: a ruleset on `dev` requiring
-    # CODEOWNERS review for `.github/workflows/**` and `infra/**`. Widening to `dev` is only dangerous
-    # because Mergify auto-lands PRs there and CODEOWNERS is advisory off `main`/`staging`; two globs
-    # remove exactly that path — a PR editing the file that HOLDS the credential — and leave every other
-    # lane autonomous. Required *reviewers* on the environment are deliberately NOT set: that would put
-    # a human in every run, which is the thing being removed.
+    # WHAT BOUNDS THE WIDENING, and what does NOT (#4942). The controls that exist:
+    #   - the trigger: this workflow runs only on `schedule` / `workflow_dispatch`, never on a PR event,
+    #     so no fork or PR can mint the token (scripts/check-workflow-oidc-isolation.mjs fails CI
+    #     otherwise), and a dispatch needs write access to the repository;
+    #   - the environment's deployment-branch policy above (`dev` only). It is configured by hand in
+    #     GitHub, not in infra/github, and repository admins can bypass it;
+    #   - each cloud's trust admits the environment subject only as an exact `assertion.sub` equality
+    #     (the `checks.tf` in infra/aws-oidc, gcp-e2e, azure-e2e and alibaba-e2e);
+    #   - cost is capped separately (the pre-apply spend policy and the job timeouts below). Those live
+    #     in this same file, so they limit what an UNCHANGED run can cost, not what a changed one does.
+    # What does NOT exist is any required review of a change to this file. No ruleset on `dev`,
+    # `staging` or `main` requires a code-owner review or any approval (`require_code_owner_review =
+    # false`, 0 approvals, infra/github/main.tf), and CODEOWNERS only requests one. Mergify auto-lands
+    # a conflict-free, green PR into `dev`, so a PR that edits this job — the file that HOLDS the
+    # credential path — can land with no human review, and the next dispatch from `dev` runs it under
+    # `e2e-dev`. That gap is accepted as-is by maintainer ruling on #4942 (2026-09-23). Required
+    # *reviewers* on the environment are deliberately NOT set either: that would put a human in every
+    # run, which is the thing the widening removes.
     environment: ${{ github.event_name == 'workflow_dispatch' && 'e2e-dev' || '' }}
     # Hard cost cap: even if every finer timeout failed, the job cannot bill past this.
     # Raised 60→90 to fit the opt-in day-2 SOAK window (BYOC A0.3): the base
@@ -1820,8 +1837,19 @@ jobs:
           #    Both are aws-relevant: the secret enables the estimate, the var (default $300/mo, a
           #    monthly-estimate guard dominated by the always-on EKS control plane + single NAT ⇒ a
           #    cheap run ≈ $150–200/mo) catches a runaway shape. Enabling the ceiling REQUIRES the
-          #    secret — without it the guard fail-closes (a ceiling with no estimate refuses). For
-          #    non-aws providers the ceiling is unset ⇒ no cost gate (their waves add their own).
+          #    secret — without it the guard fail-closes (a ceiling with no estimate refuses).
+          #
+          #    GCP AND AZURE ARE PRICED THE SAME WAY (#2385), with their own vars and the same
+          #    defaults (E2E_{GCP,AZURE}_COST_CEILING_USD / _FULL_USD, $300 / $600). This is also what
+          #    makes an estimate EXIST on those clouds: apps/runner/internal/agent/runner.go hands the
+          #    apply its INFRACOST_API_KEY only when this ceiling is > 0, so before this line no gcp or
+          #    azure apply was ever priced. The first dispatch after it is therefore the first time
+          #    the estimate is produced there — watch it: a plan Infracost cannot price fail-closes
+          #    the leg (cost_ceiling.go), which is a red leg, not a spend.
+          #
+          #    hetzner and alibaba have no Infracost pricing, so they get a PRE-APPLY SHAPE control
+          #    instead (ALETHIA_SPEND_* below, packages/core/provisioner/spend_policy.go). Every cloud
+          #    in the matrix has one or the other; scripts/check-e2e-spend-guard.mjs fails CI if not.
           #    On a HEAVY-SHAPE run (P2-F, #1068) the 11-kind / 18-add-on surface bills more (extra
           #    managed resources + add-on scale-up, on a bigger node pool), so the ceiling is raised
           #    to the full-bar var (default $600/mo).
@@ -1829,9 +1857,33 @@ jobs:
           #    KEYED ON E2E_HEAVY_SHAPE, NOT E2E_FULL_BAR. The ceiling has to follow the SHAPE it is
           #    pricing: `maxconfig` and `addons` now provision the heavy pool too, and pricing them
           #    against the $300 floor ceiling would hard-fail the pre-apply cost guard on aws before
-          #    the run started. Same expression as the node-shape override above, on purpose. ──
+          #    the run started. Same expression as the node-shape override above, on purpose.
+          #    ALSO RAISED WHEN THE FABRIC DEMO IS ON: `vars.E2E_FABRIC_DEMO` reaches the SCHEDULED
+          #    nightly and loads the bigger demo shape with E2E_HEAVY_SHAPE=false — priced against
+          #    $300 it would be refused on every gcp/azure/aws leg (PR #4977 review). `!= ''` is the
+          #    same test the job/step caps use. ──
           INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
-          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (env.E2E_HEAVY_SHAPE == 'true' && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || '' }}
+          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || matrix.provider == 'gcp' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_GCP_COST_CEILING_FULL_USD || '600') || (vars.E2E_GCP_COST_CEILING_USD || '300')) || matrix.provider == 'azure' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_AZURE_COST_CEILING_FULL_USD || '600') || (vars.E2E_AZURE_COST_CEILING_USD || '300')) || '' }}
+          # ── Pre-apply SHAPE controls for the clouds Infracost cannot price (#2385). Read by the
+          #    runner (stage.go spendPolicyFromEnv) and enforced after the plan, before the apply.
+          #
+          #    HETZNER — an allowlist of server types. Hetzner names do not sort by price (cpx, cx and
+          #    ccx are three product lines), so "above the cap" means "not listed". The default admits
+          #    exactly what the e2e provisions: cpx22 (the template + hetzner_provider.go default),
+          #    cpx32 (cluster_json.heavy.hetzner.json) and cx33 (cluster_json.demo.hetzner.json and
+          #    maxconfig.go). The spend guard re-derives that list from those files on every PR, so a
+          #    fixture that moves to a bigger type fails CI rather than a paid run. A var widens it —
+          #    a standing, deliberate change.
+          ALETHIA_SPEND_HCLOUD_SERVER_TYPES: ${{ matrix.provider == 'hetzner' && (vars.E2E_HETZNER_SERVER_TYPES || 'cpx22,cpx32,cx33') || '' }}
+          #    ALIBABA — refuse a prepaid (Subscription / PrePaid) purchase, which a monthly ceiling
+          #    could never see: the money goes at purchase and a teardown does not reliably refund
+          #    it (modules/cr/main.tf, #2333). ON BY DEFAULT, including every schedule. It DOES red an
+          #    alibaba maxconfig/full leg, because ACR Enterprise Edition is Subscription-only —
+          #    that is the point: buying one takes the `alibaba_allow_prepaid` dispatch input, ticked
+          #    by the person watching the run. NO `vars.` fallback, for the same reason as the Redis
+          #    hatch above: a variable would wave the refusal through on every scheduled run. On
+          #    `schedule` `inputs.*` is empty ⇒ `!inputs.x` is true ⇒ '1' ⇒ refusing.
+          ALETHIA_SPEND_REFUSE_PREPAID: ${{ matrix.provider == 'alibaba' && !inputs.alibaba_allow_prepaid && '1' || '' }}
           # The two outer rungs, passed in so t2budget can verify them against what this leg needs.
           # They are the SAME expressions as the step/job timeout-minutes above; if you change one,
           # change both — and t2budget will tell you if you got it wrong, on the next run.
