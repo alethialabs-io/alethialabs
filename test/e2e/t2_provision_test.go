@@ -469,11 +469,13 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 
 		// ── STOP THE RUNNER BEFORE THE DESTROY, and release a lock it stranded (#3855). ──────────
 		// A deploy wait that expires leaves the runner's `tofu apply` mid-resource, HOLDING the
-		// state lock. It used to be stopped by SIGKILL to the runner alone, which never reaches
-		// the tofu it runs in-process, so the lock was never released and this destroy failed with
-		// "Error acquiring the state lock" (gcp run 35705203097). t2QuiesceRunner SIGINTs the whole
-		// process group — tofu finishes its resource, writes state and unlocks — and, if the grace
-		// runs out, kills the group and releases the dead holder's lock out loud. The grace is
+		// state lock. It used to be stopped by SIGKILL to the runner alone, so tofu was never
+		// interrupted, never released the lock, and this destroy failed with "Error acquiring the
+		// state lock" (gcp run 35705203097). t2QuiesceRunner drains the runner and cancels the job
+		// on its heartbeat — the product's cancel path, the only one that interrupts tofu, which
+		// runs in its own process group — and, if the grace runs out, kills the runner and releases
+		// the dead holder's lock out loud. A resource tofu was creating and never recorded is still
+		// orphaned outside state; the workflow's always() sweeper is what removes it. The grace is
 		// spent inside this window rather than added to the budget ladder (t2RunnerStopGrace).
 		for _, line := range t2QuiesceRunner(runnerProc, t2RunnerStopGrace(window), cp, jobID) {
 			t.Log(line)

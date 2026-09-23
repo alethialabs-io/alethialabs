@@ -40,6 +40,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -87,6 +88,12 @@ type ControlPlane struct {
 	// written" are the same observation — and those mean opposite things about whether live
 	// infrastructure was orphaned. See the byo-iac state-cleared assertion.
 	stateClearedBy map[string]string
+
+	// cancelledJobs is what the runner heartbeat reports as server-side-cancelled
+	// (cancelled_job_ids), set by CancelJobOnHeartbeat. Guarded by mu. It is the harness's end of
+	// the product's cancel path: the runner cancels that job's context, and terraform-exec turns
+	// the cancel into a SIGINT to tofu (#3855).
+	cancelledJobs map[string]bool
 }
 
 type stateEntry struct {
@@ -691,7 +698,34 @@ func (cp *ControlPlane) handleHeartbeat(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"cancelled_job_ids": []string{}})
+	writeJSON(w, http.StatusOK, map[string]any{"cancelled_job_ids": cp.heartbeatCancelledJobs()})
+}
+
+// CancelJobOnHeartbeat makes every later runner heartbeat report jobID as cancelled server-side,
+// the way the console reports a job a user cancelled. The runner answers with its fallback cancel
+// path (applyHeartbeatCancels → the job context is cancelled → terraform-exec SIGINTs tofu), so
+// the in-flight tofu gets the one interrupt that reaches it: on Linux terraform-exec starts tofu in
+// its OWN process group, so a signal to the runner's group never does (#3855).
+func (cp *ControlPlane) CancelJobOnHeartbeat(jobID string) {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	if cp.cancelledJobs == nil {
+		cp.cancelledJobs = map[string]bool{}
+	}
+	cp.cancelledJobs[jobID] = true
+}
+
+// heartbeatCancelledJobs is the sorted cancelled_job_ids a heartbeat answers with — never nil, so
+// the JSON is an empty array rather than null.
+func (cp *ControlPlane) heartbeatCancelledJobs() []string {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	ids := make([]string, 0, len(cp.cancelledJobs))
+	for id := range cp.cancelledJobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // handleWake serves the push-dispatch SSE stream: one wake to trigger an immediate
