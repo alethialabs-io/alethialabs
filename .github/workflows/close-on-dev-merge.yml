@@ -50,9 +50,39 @@ jobs:
           # Parse ALL closing refs from the title + body. GitHub only auto-closes on `main`, and
           # multi-issue PRs frequently drop a per-issue keyword — so we deliberately match EVERY
           # `<keyword> #<n>` occurrence (close/fix/resolve + tenses), case-insensitive.
-          refs="$(printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" \
-            | grep -oiE '\b(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[[:space:]]+#[0-9]+' \
-            | grep -oE '#[0-9]+' | tr -d '#' | sort -un || true)"
+          #
+          # ── A NEGATED KEYWORD IS NOT A KEYWORD (#3855, twice in one day) ──────────────────────
+          # This used to be a bare `grep -oiE '(close|closes|…) +#[0-9]+'`, which matched the
+          # `close #3855` INSIDE the sentence "It does not close #3855" and closed the issue. It
+          # fired on #4919 at 16:54Z, a fix was promised, no PR was opened, and it fired again on
+          # #4924 at 21:41Z — on the same issue, five hours later. Prose ABOUT a closing keyword is
+          # not a closing keyword, and a PR explaining why it does NOT close something is exactly
+          # the PR most likely to say the words.
+          #
+          # The negative lookbehinds need a PCRE-class engine, which ERE `grep` is not — hence jq,
+          # whose Oniguruma supports them. Keep this pattern IDENTICAL to $BOARD_PR_CLOSING_KW in
+          # scripts/lib/board-pr.sh; `scripts/check-closing-keyword-parsers.mjs` fails the build if
+          # the two drift, because the same defect lived in BOTH and only one got noticed.
+          #
+          # The safe direction is deliberate: over-rejecting leaves an issue open for a human to
+          # close, while under-rejecting closes an issue nobody meant to close and the board then
+          # lies about what is done.
+          # THREE families of false positive, each one of which closed a REAL issue:
+          #   negation         "does not close #n"     → #3855, twice (#4919 16:54Z, #4924 21:41Z)
+          #   relative clause  "what closes #n"        → #3348, by the sentence in #4940 saying it
+          #                                              used `Refs` and not `Closes`
+          #   quoted keyword   "`Closes #n`"           → #4110, by the note in #4935 recording that
+          #                                              the ref had been changed FROM `Closes` so
+          #                                              the issue would STAY OPEN
+          # The first two are lookbehinds. The third is not decidable that way and is stripped
+          # before matching — a keyword inside backticks is being NAMED, not used. Fenced blocks go
+          # first: a ``` block can contain single backticks.
+          refs="$(jq -rn --arg t "$PR_TITLE" --arg b "$PR_BODY" '
+            ($t + "\n" + ($b // ""))
+            | gsub("(?s)```.*?```"; " ") | gsub("`[^`\n]*`"; " ")
+            | [ match("(?i)(?<!not )(?<!n.t )(?<!never )(?<!what )(?<!that )(?<!which )(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved) +#([0-9]+)"; "g")
+                | .captures[1].string ]
+            | map(tonumber) | unique | .[]' || true)"
 
           if [ -z "$refs" ]; then
             echo "PR #$PR_NUMBER: no closing refs in title/body — nothing to close."
