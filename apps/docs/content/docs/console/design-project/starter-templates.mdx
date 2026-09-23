@@ -24,6 +24,21 @@ All three are licensed Apache-2.0. Each carries a `TEMPLATE_VERSION` file and a 
 `CHANGELOG.md`. A change to a chart's `values.schema.json` is a major bump, because that file is
 the interface your values are written against.
 
+## Pick one when you create a project
+
+When you create a project with **Start from a template**, the **Template** section offers three
+choices. Each one gives you a starter repository to copy:
+
+| Template | Starter repository |
+|---|---|
+| Standard | alethia-starter-apps |
+| AI Workloads | alethia-starter-ai |
+| Custom | None. You attach your own repositories. |
+
+The choice does not change the cluster. All three create the same node pool, with no GPU. Use
+**Use this template** to copy the starter, then attach your copy to the environment as this page
+describes.
+
 ## The two trust levels
 
 Your manifests run under one of two ArgoCD projects. They are not the same shape, and which one
