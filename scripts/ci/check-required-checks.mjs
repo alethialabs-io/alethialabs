@@ -505,9 +505,18 @@ export function readLiveRulesets(repo, run = (args) => execFileSync("gh", args, 
 				.filter((x) => x.type === "required_status_checks")
 				.flatMap((x) => (x.parameters?.required_status_checks ?? []).map((c) => c.context));
 			// The SAME response carries the review requirements (#4942) — reading them costs no call.
-			// A shape this does not recognise THROWS, and the catch below turns it into "could not
-			// look" rather than into `false`.
-			rulesets.push({ name, branch, checks, review: reviewFromBranchRules(rules, branch) });
+			// A shape this does not recognise THROWS, and it is caught HERE, per branch, into
+			// `review: null` + `reviewError`: "could not look" for the review half only. Letting it reach
+			// the outer catch nulled every ruleset, lost the status-check comparison that worked before
+			// the review half existed, and blamed the token's permissions for a parse problem.
+			let review = null;
+			let reviewError = null;
+			try {
+				review = reviewFromBranchRules(rules, branch);
+			} catch (e) {
+				reviewError = String(e instanceof Error ? e.message : e).split("\n")[0];
+			}
+			rulesets.push({ name, branch, checks, review, reviewError });
 		}
 		return { rulesets, error: null };
 	} catch (e) {
@@ -1183,13 +1192,15 @@ export function compareLiveReview({ rulesets, hcl }) {
 	return rulesets.map((rs) => {
 		const declared = declaredByBranch.get(rs.branch) ?? null;
 		const drift = [];
+		// A review rule this could not parse is "could not look", never "no drift" and never drift.
+		if (rs.review === null) return { name: rs.name, branch: rs.branch, live: null, hcl: declared, drift, unreadable: rs.reviewError ?? "unknown error" };
 		if (!declared) drift.push(`infra/github declares no active ruleset targeting \`${rs.branch}\``);
 		else {
 			for (const k of ["requireCodeOwnerReview", "requiredApprovingReviewCount", "requiredReviewers"]) {
 				if (declared[k] !== rs.review[k]) drift.push(`\`${REVIEW_FIELD[k]}\` is ${String(rs.review[k])} live but ${String(declared[k])} in the HCL`);
 			}
 		}
-		return { name: rs.name, branch: rs.branch, live: rs.review, hcl: declared, drift };
+		return { name: rs.name, branch: rs.branch, live: rs.review, hcl: declared, drift, unreadable: null };
 	});
 }
 
@@ -1219,6 +1230,8 @@ export function evaluateReviewClaims({ claims, readFile, reviewByBranch }) {
 		if (!m) return { claim, line: null, verdict: "stale", branches: [] };
 		const branches = claim.branches.map((branch) => {
 			const r = reviewByBranch.get(branch);
+			// Present but null: the live review rule could not be parsed. Not refuted — unknown.
+			if (r === null) return { branch, verdict: "unverified", why: "the live `pull_request` rule on this branch could not be parsed (see the review requirements above)", unreadable: true };
 			if (!r) return { branch, verdict: "refuted", why: "no ruleset protects this branch" };
 			if (r.requireCodeOwnerReview === true) return { branch, verdict: "holds", why: "`require_code_owner_review: true`" };
 			if (r.requiredReviewers > 0) return { branch, verdict: "unverified", why: `\`require_code_owner_review: false\`, but ${r.requiredReviewers} path-scoped \`required_reviewers\` entr${r.requiredReviewers === 1 ? "y" : "ies"} this script does not evaluate` };
@@ -1301,7 +1314,8 @@ export function reportLiveClaims(evaluated) {
 		lines.push(`- ${where} claims ${claim.says}. ${verb}`);
 		for (const b of e.branches.filter((x) => x.verdict !== "holds")) lines.push(`  - \`${b.branch}\`: ${b.why}`);
 		if (claim.acknowledged) lines.push(`  - known and tracked in ${claim.acknowledged} — reported, not counted as drift: no apply can clear it.`);
-		else drift = true;
+		// A branch whose live rule could not be parsed is a blind spot, not drift.
+		else if (e.branches.some((b) => b.verdict !== "holds" && b.unreadable !== true)) drift = true;
 	}
 	if (anyFalse) lines.push("", `A false claim is fixed one of two ways, and choosing is the maintainer's: add the control in \`infra/github/\` and apply it, or correct the sentence. Correcting it also means deleting its record in \`REVIEW_CLAIMS\` (scripts/ci/check-required-checks.mjs).`);
 	return { lines, drift };
@@ -1780,7 +1794,18 @@ resource "github_repository_ruleset" "staging" {
 		const noFlag = clone(cap.dev);
 		delete noFlag.find((x) => x.type === "pull_request").parameters.require_code_owner_review;
 		P("a pull_request rule missing the boolean is an ERROR, not a false", throws(() => reviewFromBranchRules(noFlag, "dev")));
-		P("...and readLiveRulesets turns that into 'could not look'", readLiveRulesets("x/y", (a) => (a[1].endsWith("/dev") ? JSON.stringify(noFlag) : liveRun(a))).rulesets === null);
+		// ...but ONLY for the review half, and only for that branch (PR #4966 review). Before, the throw
+		// reached readLiveRulesets' outer catch: every ruleset went null, the status-check comparison
+		// that predates the review half was lost, and the report blamed the token's permissions.
+		const badDev = readLiveRulesets("x/y", (a) => (a[1].endsWith("/dev") ? JSON.stringify(noFlag) : liveRun(a)));
+		const badByName = new Map((badDev.rulesets ?? []).map((r) => [r.name, r]));
+		P("a review parse error does NOT null the rulesets — the status-check half survives", badDev.rulesets !== null && badDev.error === null && badByName.get("protect-main")?.checks.length === 19 && badByName.get("protect-dev")?.checks.length === cap.dev.filter((x) => x.type === "required_status_checks").flatMap((x) => x.parameters.required_status_checks).length, JSON.stringify(badDev.error));
+		P("...the broken branch carries `review: null` and a PARSE error; the others still read", badByName.get("protect-dev")?.review === null && /unknown shape/.test(badByName.get("protect-dev")?.reviewError ?? "") && badByName.get("protect-main")?.review !== null, JSON.stringify(badByName.get("protect-dev")));
+		const badCmp = compareLiveReview({ rulesets: badDev.rulesets ?? [], hcl: fs.existsSync(MAIN) ? parseHclReview(fs.readFileSync(MAIN, "utf8")) : [] });
+		P("...and compareLiveReview reports it as UNREADABLE, not as drift and not as agreement", badCmp.find((r) => r.name === "protect-dev")?.unreadable !== null && badCmp.find((r) => r.name === "protect-dev")?.drift.length === 0, JSON.stringify(badCmp.find((r) => r.name === "protect-dev")));
+		P("...and still compares the status checks for the same branch", compareLive({ rulesets: badDev.rulesets ?? [], hclAll: ["x"], devExcluded: [] }).length === 3);
+		const blindClaims = evaluateReviewClaims({ claims: REVIEW_CLAIMS.map((c) => ({ ...c, acknowledged: undefined })), readFile: () => "a ruleset on `dev` requiring CODEOWNERS review for `.github/workflows/**` and `infra/**`", reviewByBranch: new Map((badDev.rulesets ?? []).map((r) => [r.branch, r.review])) }).find((e) => e.claim.id === "e2e-dev-compensating-control");
+		P("...a claim on the unreadable branch is UNVERIFIED (not refuted) and does not set drift", blindClaims?.verdict === "unverified" && reportLiveClaims([blindClaims]).drift === false, JSON.stringify(blindClaims));
 		P("no pull_request rule at all reads as zero rules, not an error", reviewFromBranchRules(cap.dev.filter((x) => x.type !== "pull_request"), "dev").pullRequestRules === 0);
 
 		// The HCL half, against the REAL main.tf when present.
@@ -2002,8 +2027,14 @@ function main() {
 		// any document claims more than that.
 		console.log(`\n## Review requirements — what a merge needs besides green checks\n`);
 		let reviewDrift = false;
+		let reviewBlind = false;
 		for (const row of compareLiveReview({ rulesets, hcl: hclReview })) {
 			const l = row.live;
+			if (l === null) {
+				reviewBlind = true;
+				console.log(`- **${row.name}** (branch \`${row.branch}\`) — **could not read the review rule**: ${row.unreadable}. That is a PARSE problem in this script or a new API shape, not a token-permission one, and it is not "no review drift" — it is no measurement. The status-check comparison above is unaffected.`);
+				continue;
+			}
 			reviewDrift = reviewDrift || row.drift.length > 0;
 			console.log(
 				`- **${row.name}** (branch \`${row.branch}\`) — \`require_code_owner_review: ${l.requireCodeOwnerReview}\` · ` +
@@ -2060,7 +2091,10 @@ function main() {
 			for (const f of legNameFailures.failures) console.log(`- ${f}`);
 			console.log(`\nThis is a tree problem — \`infra/github\` and \`${GATE_WORKFLOW}\` disagree about which legs exist — and a \`tofu apply\` would not fix it but ENACT it. The PR-time run fails on this too.`);
 		}
-		process.exit(drifted || gateFailures.length || legNameFailures.failures.length || wedgeRisk ? 2 : 0);
+		// Drift wins over blindness so the tracker issue still opens, and its body carries the
+		// "could not read the review rule" line; with no drift, a blind review half is exit 1 — the
+		// workflow's "could not look" code — never a clean 0.
+		process.exit(drifted || gateFailures.length || legNameFailures.failures.length || wedgeRisk ? 2 : reviewBlind ? 1 : 0);
 	}
 
 	for (const n of notes) console.log(`::warning::check-required-checks: ${n}`);
