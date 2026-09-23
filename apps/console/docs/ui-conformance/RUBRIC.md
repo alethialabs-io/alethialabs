@@ -410,14 +410,23 @@ clean page — it must raise.
 them, a bare `pnpm -F console audit:report` checks them against the tree and exits 2 naming the
 command — the contract `PROGRAMME.md`'s derived half uses. Never hand-edit either file.
 
-**The live half is measured in CI and committed, not inferred.** The Playwright `audit` project
-writes two files — `test-results/ui-audit.json` (T5, T6, R1–R7, as the run's own owner in a fresh
-empty org) and `test-results/ui-audit-permissions.json` (T7, as the `member` persona in a *second*
-organisation) — and
+**The live half is measured in CI and committed, not inferred.** TWO Playwright projects write
+THREE files — `test-results/ui-audit.json` (T5, T6, R1–R7, as the run's own owner in a fresh empty
+org), `test-results/ui-audit-permissions.json` (T7, as the `member` persona in a *second*
+organisation) and `test-results/ui-audit-interaction.json` (F8–F10 and R8, from the
+`audit-interaction` project, which ACTIVATES controls rather than reading rendered state) — and
 `node apps/console/scripts/audit-report.mjs --import-live=<dir> --run=<url> --commit=<sha>` reduces
 them to `apps/console/ui-conformance-live.json`. **They are joined, never pooled**: each artifact
 declares the predicates it may carry, and a record in the wrong one refuses to parse.
 `e2e/audit/report.ts`'s header records what pooling them cost the first time.
+
+> This paragraph said "the Playwright `audit` project writes two files" from #3634 until #4901, and
+> the third one had existed since #4277. That is the gap the sentence itself caused: the
+> `audit-interaction` leg ran in the release gate for weeks, and because nothing the reader saw said
+> there was an artifact to import, nobody imported it — so all 160 F8/F9/F10/R8 cells read NOT
+> MEASURED, on a board whose headline was 1029 PASS against 32 FAIL. The first import (run
+> 35713083980 @ `c776a4d15`) turned 141 of them into verdicts and found seven FAILs. **A missing
+> instrument is loud; an instrument nobody joined in is silent, and looks exactly like a clean one.**
 
 A (route, predicate) cell no artifact carries is **`NOT MEASURED`** — its own column, never folded
 into N/A and never a pass. `permissions.spec.ts` drives only the org-only routes, so T7 has no
