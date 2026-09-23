@@ -195,7 +195,15 @@ export interface EnumeratedControl {
 export interface DisabledControl {
 	role: string;
 	name: string;
-	/** `aria-disabled` or `disabled` with a `title` / `aria-describedby` saying why. */
+	/**
+	 * `aria-disabled` or `disabled`, and whether its `aria-describedby` RESOLVES to text saying why.
+	 *
+	 * A `title` does not count, and did until the review of #5000: `@repo/ui`'s Button carries
+	 * `disabled:pointer-events-none` and menu items `data-[disabled]:pointer-events-none`, so a
+	 * disabled control never gets the hover that would show its title, and a natively disabled button
+	 * takes no focus. A title on one reaches nobody. Nor does an `aria-describedby` that names no
+	 * element, or an empty one — the attribute is not the reason, the text it points at is.
+	 */
 	reason: "disabled-with-reason" | "disabled-no-reason";
 }
 
@@ -388,8 +396,13 @@ export async function enumerateControls(page: Page, scope: string, origin: Enume
 					href: el.getAttribute("href"),
 					ariaDisabled: el.getAttribute("aria-disabled"),
 					nativeDisabled: el.hasAttribute("disabled"),
-					title: el.getAttribute("title"),
-					describedBy: el.getAttribute("aria-describedby"),
+					// The text `aria-describedby` resolves to, "" when it names nothing that exists. Hidden
+					// nodes count: a description may reference a visually hidden one (DisabledReason).
+					description: (el.getAttribute("aria-describedby") ?? "")
+						.split(/\s+/)
+						.map((id) => (id === "" ? "" : (document.getElementById(id)?.textContent ?? "")))
+						.join(" ")
+						.trim(),
 					ariaLabel: el.getAttribute("aria-label"),
 					text: el.textContent ?? "",
 					visible: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
@@ -412,7 +425,7 @@ export async function enumerateControls(page: Page, scope: string, origin: Enume
 			disabled.push({
 				role,
 				name,
-				reason: probed.title || probed.describedBy ? "disabled-with-reason" : "disabled-no-reason",
+				reason: probed.description !== "" ? "disabled-with-reason" : "disabled-no-reason",
 			});
 			continue;
 		}
@@ -997,7 +1010,7 @@ export async function interactionControl(
 	if (!names.includes("Open the dialog")) problems.push("R8: the enumeration did not find the dialog opener.");
 	if (names.includes("Unavailable")) problems.push("R8: an `aria-disabled` control was enumerated as enabled — R8 must not score a control a person cannot press.");
 	if (enumerated.disabled.some((d) => d.name === "Unavailable" && d.reason === "disabled-with-reason") === false) {
-		problems.push("R8: a disabled control carrying a `title` was not counted as `disabled-with-reason`.");
+		problems.push("R8: a disabled control described by a reason (`aria-describedby`) was not counted as `disabled-with-reason`.");
 	}
 	if (enumerated.external.some((e) => e.name === "Docs") === false) {
 		problems.push("R8: a cross-origin link was not recorded as external — it must PASS on its href and never be clicked.");
@@ -1156,7 +1169,7 @@ export const LOADING_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 l
 export const CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 control</title></head><body><section aria-label="Notifications" aria-live="polite"><ol id="sonner" data-sonner-toaster></ol></section><main>
 	<button id="inert">Nothing happens</button>
 	<button id="opener">Open the dialog</button>
-	<button aria-disabled="true" title="You do not have permission">Unavailable</button>
+	<button aria-disabled="true" aria-describedby="why">Unavailable</button><span id="why" hidden>You do not have permission</span>
 	<a href="https://example.invalid/docs">Docs</a>
 	<nav><button aria-current="true">Current row</button></nav>
 	<div><button aria-pressed="true">Pressed toggle</button></div>
