@@ -26,8 +26,8 @@ import {
 	DEFAULT_CONNECTOR_FILTERS,
 	GROUP_META,
 	buildConnectorsView,
-	isPristineQuery,
 	normalizeConnectorQuery,
+	seedConnectorsQuery,
 } from "@/components/connectors/connectors-query";
 import { ApiKeyConnection } from "@/components/connectors/api-key-connection";
 import {
@@ -162,18 +162,9 @@ export function ConnectorsPage({
 		placeholderData: keepPreviousData,
 		staleTime: 30_000,
 		// The catalog is already on the wire as this RSC's props, and the selection over it is
-		// pure — so ANY query's first answer is seeded from them, not only the pristine one.
-		//
-		// It used to seed the pristine key alone. A pasted link (`?health=connected`) renders
-		// pristine first and hydrates the store from the URL in a mount effect, so the filtered
-		// key arrived with no data, `keepPreviousData` held the FULL list up while a server
-		// action re-read the whole catalog, and the page showed 42 rows under a URL that said 2
-		// (#4939, the audit's F8). The fetch still runs once the seed is stale.
-		initialData: () =>
-			buildConnectorsView(integrations, query, platformConfigured ?? {}),
-		// The seed is as old as the RSC render, not as old as this mount: a key first read
-		// long after the page loaded must not treat the props as a fresh answer.
-		initialDataUpdatedAt: isPristineQuery(query) ? undefined : 0,
+		// pure — so every filter state's first answer is seeded from them (#4939, F8). See
+		// `seedConnectorsQuery` for why seeding only the pristine key broke a pasted link.
+		...seedConnectorsQuery(integrations, query, platformConfigured ?? {}),
 	});
 
 	/** Re-read the board after a mutation: the RSC props AND every cached connectors key. */
