@@ -43,7 +43,11 @@
 #   reach           optional opener chain the spec walks first: {menu: "<name>"} | {section: "<title>"}
 #                   | {select: "<row>"} | {open: "<control>"}
 #   control         the trigger, by accessible role + name (never a CSS class)
-#   confirm         alert-dialog | confirm-dialog | popover | undo | none
+#   confirm         alert-dialog | confirm-dialog | popover | undo | staged | none
+#                   `staged`: the click only stages the change in an edit draft, and a save bar
+#                   decides it. `staged: {save, discard}` names that bar's two buttons; the spec
+#                   asserts Save appears (never presses it), presses Discard, and requires the
+#                   control back and no row moved. (#4939)
 #   confirm_action  the destructive button's label — the ONE control the spec never clicks
 #   dialog_title    what the dialog says, so a renamed dialog is a finding rather than a pass
 #   fixture         what the spec must seed for the control to render
@@ -77,7 +81,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 47 controls — 47 confirmed
+#   census: 48 controls — 48 confirmed
 
 version: 1
 
@@ -416,6 +420,24 @@ controls:
     persona: team
     status: confirmed
     prod-qa: own-rows-only
+
+  - id: alerts.channel.recipient.remove
+    route: /[org]/~/alerts
+    surface: apps/console/components/alerts/recipients-editor.tsx
+    # The chip raises `onChange`; the channel detail holds the draft and `updateChannel` is what
+    # persists it, from the dirty Save/Discard bar — so the removal is decided there, not here.
+    mutation_surface: apps/console/components/alerts/channels-panel.tsx
+    mutation: updateChannel
+    # NO reach step — the rail pre-selects its first row, as for alerts.channel.delete. The seeded
+    # email channel carries `ops@e2e.test` (e2e/helpers/seed-alerts.ts).
+    control: { role: button, name: "Remove recipient <address>" }
+    confirm: staged
+    staged: { save: "Save changes", discard: "Discard" }
+    fixture: alert-channel
+    persona: team
+    status: confirmed
+    prod-qa: skip
+    reason: its confirmation is a save bar, not a dialog, and the production sweep's open-cancel knows only how to cancel a dialog; the audit spec measures it
 
   - id: alerts.policy.delete
     route: /[org]/~/alerts

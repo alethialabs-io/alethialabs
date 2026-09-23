@@ -14,7 +14,9 @@
 // The only button this file ever clicks inside a dialog is Cancel. `confirm_action` is read so the
 // destructive button can be FOUND and asserted; it is never activated. That is not a convention to
 // remember — `assertNeverPressed()` below fails the test if the located confirm button is ever the
-// click target, so the rule is enforced rather than trusted.
+// click target, so the rule is enforced rather than trusted. A `confirm: staged` control has a save
+// bar where a dialog would be, and the same rule holds there: its Save is asserted and never
+// pressed, and Discard is the one button clicked (`observeStaged`).
 //
 // ── "NOTHING MUTATED", TWO WAYS ─────────────────────────────────────────────────────────────────
 //
@@ -114,6 +116,8 @@ interface ControlEntry {
 	dialog_title?: string;
 	/** For `confirm: undo`: the key chord that takes the action back (`Meta+Z`). */
 	undo?: { shortcut?: string };
+	/** For `confirm: staged`: the save bar's two buttons — the one that decides, and the way out. */
+	staged?: { save?: string; discard?: string };
 	fixture?: string;
 	persona?: string;
 	status?: string;
@@ -753,6 +757,30 @@ async function observeUndo(page: Page, entry: ControlEntry): Promise<Observed> {
 }
 
 /**
+ * Measure a `confirm: staged` control: the click has already fired, and all it may have done is
+ * stage the change in an edit draft.
+ *
+ * The draft's save bar IS the confirmation, so it is held to what a dialog is held to: the button
+ * that decides (`staged.save`) must appear and is ASSERTED, never pressed; the way out
+ * (`staged.discard`) is the one button pressed, and the control must come back — a discard that
+ * does not restore what was staged is no way out at all. The row fingerprint the caller takes
+ * afterwards is the "nothing was persisted" half. `recipients-editor.tsx`'s chip is the first
+ * entry of this shape (#4939).
+ */
+async function observeStaged(page: Page, entry: ControlEntry, trigger: Locator): Promise<Observed> {
+	const save = entry.staged?.save;
+	const discard = entry.staged?.discard;
+	if (!save || !discard) return "missing";
+	const saveButton = assertNeverPressed(page.getByRole("button", { name: controlNameMatcher(save) }).first(), entry.id);
+	const staged = await saveButton.waitFor({ state: "visible", timeout: 5_000 }).then(() => true).catch(() => false);
+	if (!staged) return "missing";
+	await page.getByRole("button", { name: controlNameMatcher(discard) }).first().click();
+	const restored = await trigger.waitFor({ state: "visible", timeout: 5_000 }).then(() => true).catch(() => false);
+	const barGone = await saveButton.waitFor({ state: "hidden", timeout: 5_000 }).then(() => true).catch(() => false);
+	return restored && barGone ? "confirmed" : "missing";
+}
+
+/**
  * The dialog `dialog` resolves to NOW, as a locator that keeps naming that one element.
  *
  * `teams.member.remove` needs this (#4800). Its confirmation replaces the Manage members dialog,
@@ -1043,7 +1071,7 @@ for (const entry of CONTROLS) {
 					await expect(dialog, `${entry.id}: a renamed dialog is a finding, not a pass — expected a title beginning "${literal}"`).toContainText(new RegExp(escapeRe(literal), "i"));
 				}
 			}
-			// The ONLY button this file ever presses.
+			// The ONLY button this file ever presses inside a dialog.
 			const cancel = dialog.getByRole("button", { name: /^(cancel|no|keep|nevermind|never mind)\b/i }).first();
 			await expect(cancel, `${entry.id}: a confirmation with no way out is worse than none`).toBeVisible();
 			// Pinned BEFORE the click: `dialog` is a lazy `.first()` over every dialog on the page,
@@ -1054,6 +1082,8 @@ for (const entry of CONTROLS) {
 			observed = "confirmed";
 		} else if (entry.confirm === "undo") {
 			observed = await observeUndo(page, entry);
+		} else if (entry.confirm === "staged") {
+			observed = await observeStaged(page, entry, trigger);
 		} else {
 			// `none` / `popover`: the registry records that a bare click fires. The spec asserts the
 			// RECORDED state — a dialog appearing here is stale evidence, and the lane that added it
@@ -1069,7 +1099,9 @@ for (const entry of CONTROLS) {
 		const after = await fingerprint();
 		const moved = diffFingerprints(before, after);
 
-		if (expectsDialog) {
+		// A staged control's way out was pressed exactly as a dialog's Cancel is, so the same row
+		// fingerprint carries the "nothing was persisted" half for it.
+		if (expectsDialog || entry.confirm === "staged") {
 			// ── WHAT EACH OBSERVATION CAN AND CANNOT PROVE ──────────────────────────────────
 			//
 			// The header comment used to claim these were two independent proofs of "nothing
