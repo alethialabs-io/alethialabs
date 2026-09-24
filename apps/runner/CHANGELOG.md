@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.6.0...runner-v0.7.0) (2026-09-23)
+
+
+### Features
+
+* **e2e:** a pre-apply spend control on every matrix cloud — gcp/azure ceilings, a hetzner type cap, an alibaba prepaid refusal ([#2385](https://github.com/alethialabs-io/alethialabs/issues/2385)) ([#4977](https://github.com/alethialabs-io/alethialabs/issues/4977)) ([824f5c9](https://github.com/alethialabs-io/alethialabs/commit/824f5c9261b1f1c8a7dcf02c38f006b2465cd898))
+
+
+### Bug Fixes
+
+* **compat:** the console judged what the apply gate refused to decide ([#3584](https://github.com/alethialabs-io/alethialabs/issues/3584)) ([8dedd28](https://github.com/alethialabs-io/alethialabs/commit/8dedd281cc9435d7259ed2faa008d26c4f669a9f))
+* **runner:** a `self` runner with no ambient credentials says so, instead of naming EC2 IMDS ([#4419](https://github.com/alethialabs-io/alethialabs/issues/4419)) ([1da1afa](https://github.com/alethialabs-io/alethialabs/commit/1da1afa711834578a3f7ed3564a06e6e40e681c6))
+* **runner:** report the operator/record mismatch at CLAIM time, not after a doomed credential refresh ([#4916](https://github.com/alethialabs-io/alethialabs/issues/4916)) ([b0948ff](https://github.com/alethialabs-io/alethialabs/commit/b0948ff8d2eb2dd9212b244679f5176ff5987f89))
+
 ## [0.6.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.5.0...runner-v0.6.0) (2026-08-29)
 
 
