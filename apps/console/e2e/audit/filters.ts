@@ -206,22 +206,58 @@ export async function readListCount(page: Page): Promise<ListCount> {
 	});
 }
 
+/** Is anything in `main` — or `main` itself — marked `aria-busy="true"`? */
+export async function readBusy(page: Page): Promise<boolean> {
+	return page.evaluate(() => document.querySelector('main[aria-busy="true"], main [aria-busy="true"]') !== null);
+}
+
+/** One read of the list: its size, and whether the page said the rows are not an answer yet. */
+export interface ListRead {
+	count: ListCount;
+	busy: boolean;
+}
+
+/** A settled read. `busy` is true only when the budget ran out with the page still saying so. */
+export interface SettledCount extends ListCount {
+	busy: boolean;
+}
+
 /**
- * Wait until the list stops moving: two identical reads 300 ms apart, after at least 600 ms, for at
- * most `budgetMs`. A list still moving when the budget runs out is returned as read — the caller's
- * comparison then fails on it, which is the honest outcome for a page that never settled.
+ * Two consecutive reads are a settled answer: neither was taken while the page declared itself busy,
+ * and both read the same size from the same source.
+ *
+ * The busy half is #4980. Before it, two equal reads 300 ms apart WERE the answer — and a
+ * `keepPreviousData` placeholder is exactly a list that holds still: `~/runners?versions=…` opened in
+ * a fresh tab showed the unfiltered grid for as long as the filtered fetch took, and F8 scored that
+ * as the restored list whenever the fetch took longer than the window. Stillness cannot tell a
+ * placeholder from an answer; `aria-busy` is the page saying which one it is.
  */
-export async function settle(page: Page, budgetMs = 8_000): Promise<ListCount> {
+export function isSettledPair(previous: ListRead | null, next: ListRead): boolean {
+	if (previous === null || previous.busy || next.busy) return false;
+	return previous.count.source === next.count.source && previous.count.value === next.count.value;
+}
+
+/**
+ * Wait until the list has ANSWERED: two settled reads (`isSettledPair`) 300 ms apart, after at least
+ * 600 ms, for at most `budgetMs`. A list still moving, or still busy, when the budget runs out is
+ * returned as read with `busy` saying which — the caller's comparison then fails on it, which is the
+ * honest outcome for a page that never answered.
+ *
+ * A page that declares no busy state reads exactly as it did before: stillness alone. So a list that
+ * shows a placeholder WITHOUT saying so can still be misread — the instrument can only be as honest
+ * as the page, which is why the console lists now say it (#4980).
+ */
+export async function settle(page: Page, budgetMs = 12_000): Promise<SettledCount> {
 	const start = Date.now();
 	await page.waitForTimeout(600);
-	let last = await readListCount(page);
+	let last: ListRead = { count: await readListCount(page), busy: await readBusy(page) };
 	while (Date.now() - start < budgetMs) {
 		await page.waitForTimeout(300);
-		const next = await readListCount(page);
-		if (next.source === last.source && next.value === last.value) return next;
+		const next: ListRead = { count: await readListCount(page), busy: await readBusy(page) };
+		if (isSettledPair(last, next)) return { ...next.count, busy: false };
 		last = next;
 	}
-	return last;
+	return { ...last.count, busy: last.busy };
 }
 
 /** One facet option as rendered: its label, its count, and whether it is selected. */
@@ -458,7 +494,7 @@ export async function measureRoundTrip(
 	if (narrowed.value === null || full.value === null || narrowed.value >= full.value) {
 		await closeOverlays(page);
 		const reason = `the list did not narrow after the option "${target.label}" (count ${target.count}) was applied — ${full.value} before, ${narrowed.value} after, read from the ${narrowed.source} — so an unchanged facet or restored list would prove nothing`;
-		const evidence = { option: target.label, optionCount: target.count, full: full.value, narrowed: narrowed.value, source: narrowed.source, applied, param };
+		const evidence = { option: target.label, optionCount: target.count, full: full.value, narrowed: narrowed.value, source: narrowed.source, stillBusy: narrowed.busy, applied, param };
 		return { F8: { kind: "not-measured", reason, evidence }, F9: { kind: "not-measured", reason, evidence } };
 	}
 
@@ -487,6 +523,9 @@ export async function measureRoundTrip(
 		afterReload: null,
 		afterReset: null,
 	};
+	// Which reads ran out of budget with the page still declaring itself busy (#4980). A busy read is
+	// a placeholder by the page's own account, so it never counts as the restored list.
+	const stillBusy: { afterReload: boolean | null; afterReset: boolean | null } = { afterReload: null, afterReset: null };
 	if (applied && param !== null) {
 		const value = presentParams(page.url(), [param]).get(param);
 		const fresh = await openPage();
@@ -494,8 +533,9 @@ export async function measureRoundTrip(
 			await fresh.goto(page.url(), { waitUntil: "domcontentloaded" });
 			const reloaded = await settle(fresh);
 			counts.afterReload = reloaded.value;
+			stillBusy.afterReload = reloaded.busy;
 			steps.survivedReload = presentParams(fresh.url(), [param]).get(param) === value;
-			steps.restoredList = steps.survivedReload ? reloaded.value === narrowed.value : null;
+			steps.restoredList = steps.survivedReload ? !reloaded.busy && reloaded.value === narrowed.value : null;
 			const reset = resetButton(fresh);
 			if ((await reset.count()) === 0) {
 				steps.resetUrl = false;
@@ -504,7 +544,8 @@ export async function measureRoundTrip(
 				steps.resetUrl = await waitForUrl(fresh, (u) => presentParams(u, allParams).size === 0);
 				const afterReset = await settle(fresh);
 				counts.afterReset = afterReset.value;
-				steps.resetCount = afterReset.value === full.value;
+				stillBusy.afterReset = afterReset.busy;
+				steps.resetCount = !afterReset.busy && afterReset.value === full.value;
 			}
 		} finally {
 			await fresh.close();
@@ -512,7 +553,7 @@ export async function measureRoundTrip(
 	}
 	const passed = Object.values(steps).every((s) => s === true);
 	return {
-		F8: { kind: "verdict", verdict: passed ? "PASS" : "FAIL", evidence: { param, option: target.label, countSource: full.source, counts, steps } },
+		F8: { kind: "verdict", verdict: passed ? "PASS" : "FAIL", evidence: { param, option: target.label, countSource: full.source, counts, stillBusy, steps } },
 		F9,
 	};
 }
@@ -619,7 +660,13 @@ export async function measureRoute(page: Page, url: string, surfaces: readonly O
 
 	let F8: Outcome;
 	let F9: Outcome;
-	if (full.value === null) {
+	if (full.busy) {
+		// The unfiltered list never answered inside the budget. Every step below compares against it,
+		// so a comparison would be against a placeholder — a claim about the RUN, not the page.
+		const reason = "the unfiltered list was still `aria-busy` when the settle budget ran out, so there is no answered list size to narrow";
+		F8 = { kind: "not-measured", reason, evidence: { count: full } };
+		F9 = { kind: "not-measured", reason, evidence: { count: full } };
+	} else if (full.value === null) {
 		const reason = "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow";
 		F8 = { kind: "not-measured", reason };
 		F9 = { kind: "not-measured", reason };
@@ -654,7 +701,9 @@ export async function measureRoute(page: Page, url: string, surfaces: readonly O
 
 // ── the positive control ────────────────────────────────────────────────────────────────────────
 //
-// Four bars with KNOWN answers, plus the good one the first three are each one defect away from. The
+// Four bars with KNOWN answers, plus the good one the first three are each one defect away from, plus
+// `slow-reload` — the good bar with a placeholder under `aria-busy` on a fresh filtered load, which F8
+// must PASS (#4980: a stillness-only settle scored the placeholder as the reloaded list). The
 // fourth, `one-kind`, gives every row the same facet value AND computes its counts in memory: no
 // option can narrow it, so F8 and F9 must be NOT MEASURED there — a PASS would be the vacuous one
 // (#4867's review), since an in-memory facet pass shows unchanged counts when nothing narrowed. The control
@@ -664,8 +713,16 @@ export async function measureRoute(page: Page, url: string, surfaces: readonly O
 /** The origin the fixtures are served from. Never resolved by DNS: `context.route()` answers it. */
 export const CONTROL_ORIGIN = "http://filters-control.invalid";
 
-/** The four fixture modes. Each bad one breaks exactly one predicate. */
-export type ControlMode = "good" | "no-url" | "moving-counts" | "per-keystroke" | "one-kind";
+/**
+ * The fixture modes. Each bad one breaks exactly one predicate. `slow-reload` is a GOOD bar that is
+ * slow: a fresh tab opened on a filtered link shows the unfiltered rows as a placeholder under
+ * `aria-busy` for longer than the old settle window, then the filtered answer (#4980). F8 must PASS
+ * there — a stillness-only settle read the placeholder and failed it.
+ */
+export type ControlMode = "good" | "no-url" | "moving-counts" | "per-keystroke" | "one-kind" | "slow-reload";
+
+/** How long `slow-reload` holds its placeholder — well past the old 600 + 300 ms stillness window. */
+export const SLOW_RELOAD_MS = 2_000;
 
 /**
  * The fixture list page. Plain DOM, the SAME slots the real primitives render — a `count-pill`, chips
@@ -686,7 +743,8 @@ if (MODE === "one-kind") ROWS = [{ name: "alpha", kind: "a" }, { name: "beta", k
 var p = new URLSearchParams(location.search);
 var state = { kinds: (p.get("kinds") || "").split(",").filter(Boolean), search: p.get("search") || "" };
 var timer = null;
-function match(r) { return (state.kinds.length === 0 || state.kinds.indexOf(r.kind) >= 0) && (!state.search || r.name.indexOf(state.search) >= 0); }
+var placeholder = MODE === "slow-reload" && state.kinds.length > 0;
+function match(r) { return (placeholder || state.kinds.length === 0 || state.kinds.indexOf(r.kind) >= 0) && (!state.search || r.name.indexOf(state.search) >= 0); }
 function writeUrl() {
 	if (MODE === "no-url") return;
 	var q = new URLSearchParams();
@@ -717,6 +775,10 @@ document.addEventListener("click", function (e) {
 	else return;
 	writeUrl(); render();
 });
+if (placeholder) {
+	document.querySelector("main").setAttribute("aria-busy", "true");
+	setTimeout(function () { placeholder = false; document.querySelector("main").removeAttribute("aria-busy"); render(); }, __SLOW_MS__);
+}
 document.getElementById("q").value = state.search;
 document.getElementById("q").addEventListener("input", function (e) {
 	state.search = e.target.value; writeUrl(); render();
@@ -732,7 +794,7 @@ export async function serveControl(context: BrowserContext, mode: ControlMode, f
 	await context.unroute(`${CONTROL_ORIGIN}/**`).catch(() => {});
 	await context.route(`${CONTROL_ORIGIN}/**`, (route) => {
 		if (new URL(route.request().url()).pathname === "/data") return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
-		return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: fixture.replace("__MODE__", mode) });
+		return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: fixture.replace("__MODE__", mode).replace("__SLOW_MS__", String(SLOW_RELOAD_MS)) });
 	});
 }
 
@@ -779,6 +841,8 @@ export async function filtersControl(page: Page, fixture = CONTROL_FIXTURE): Pro
 		if (!(moving.F9.kind === "verdict" && moving.F9.verdict === "FAIL")) problems.push(`the bar whose counts move reported F9 ${verdictOf(moving.F9)}`);
 		const chatty = await run("per-keystroke");
 		if (!(chatty.F10.kind === "verdict" && chatty.F10.verdict === "FAIL")) problems.push(`the bar that fetches per keystroke reported F10 ${verdictOf(chatty.F10)}`);
+		const slow = await run("slow-reload");
+		if (verdictOf(slow.F8) !== "PASS") problems.push(`the bar whose filtered link loads slowly under aria-busy reported F8 ${verdictOf(slow.F8)}`);
 		const oneKind = await run("one-kind");
 		for (const id of ["F8", "F9"] as const) {
 			if (oneKind[id].kind !== "not-measured") problems.push(`the bar whose facet cannot narrow reported ${id} ${verdictOf(oneKind[id])}`);

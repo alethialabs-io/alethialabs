@@ -212,6 +212,7 @@ export type Effect =
 	| "new-tab"
 	| "dom-mutation"
 	| "network"
+	| "already-current"
 	| null;
 
 /** One control's outcome. `effect: null` with no `excluded` is the FAIL R8 exists to find. */
@@ -420,6 +421,161 @@ export async function enumerateControls(page: Page, scope: string, origin: Enume
 	return { controls, disabled, external, hasMain };
 }
 
+// ── readiness: enumerate the page, not its loading state (#4980) ─────────────────────────────────
+//
+// R8 used to enumerate the moment `domcontentloaded` fired. On a streamed route that is often the
+// route's `loading.tsx` — a column of `Skeleton`s with nothing to press — and the run then recorded
+// N/A `no-enabled-controls` against `~/runners` and `[project]/architecture`, whose previous run on
+// the SAME head had found 18 and 6 controls there. An N/A is a claim about the PAGE; "it had not
+// loaded yet" is a claim about the RUN, and belongs in NOT MEASURED.
+
+/** One look at `main`: how many enabled controls it offers, and whether it says it is still loading. */
+export interface ReadinessRead {
+	hasMain: boolean;
+	/** Visible, enabled, non-`inert` controls — the same parts `enumerateControls()` scores. */
+	controls: number;
+	/** `main` or anything in it is `aria-busy="true"`. */
+	busy: boolean;
+	/** Visible `data-slot="skeleton"` placeholders — a `loading.tsx` or a pending list. */
+	skeletons: number;
+}
+
+/** Reads a page must hold still for before it counts as loaded: a page WITH controls, and one without. */
+export const READY_STABLE_READS = { withControls: 2, empty: 6 } as const;
+
+/** How often readiness is sampled. */
+export const READY_POLL_MS = 250;
+
+/** Whether this read is of a page that says it is still loading (or has no `main` yet). */
+export function isLoadingRead(read: ReadinessRead): boolean {
+	return !read.hasMain || read.busy || read.skeletons > 0;
+}
+
+/**
+ * Whether a sequence of reads (oldest first) ends on a LOADED page: the last few reads are all not
+ * loading and agree on the control count. A page offering nothing must hold still for longer
+ * (`READY_STABLE_READS.empty`) than one offering controls, because "nothing yet" and "nothing"
+ * look identical in any single read and differ only in whether they last.
+ */
+export function hasSettled(reads: readonly ReadinessRead[]): boolean {
+	const last = reads.at(-1);
+	if (last === undefined) return false;
+	const need = last.controls > 0 ? READY_STABLE_READS.withControls : READY_STABLE_READS.empty;
+	if (reads.length < need) return false;
+	const tail = reads.slice(-need);
+	return tail.every((r) => !isLoadingRead(r) && r.controls === last.controls);
+}
+
+/** The outcome of waiting: whether the page settled, and the last thing seen. */
+export interface Readiness {
+	settled: boolean;
+	last: ReadinessRead;
+	waitedMs: number;
+}
+
+/** One readiness read of `main`. */
+async function readReadiness(page: Page): Promise<ReadinessRead> {
+	const selector = controlSelector("main");
+	return page
+		.evaluate((sel) => {
+			const main = document.querySelector("main");
+			const shown = (el: Element) => {
+				const style = window.getComputedStyle(el);
+				const r = el.getBoundingClientRect();
+				return style.visibility !== "hidden" && style.display !== "none" && r.width > 0 && r.height > 0;
+			};
+			if (main === null) return { hasMain: false, controls: 0, busy: false, skeletons: 0 };
+			const controls = [...document.querySelectorAll(sel)].filter(
+				(el) => shown(el) && el.closest("[inert]") === null && !el.hasAttribute("disabled") && el.getAttribute("aria-disabled") !== "true",
+			).length;
+			return {
+				hasMain: true,
+				controls,
+				busy: main.matches('[aria-busy="true"]') || main.querySelector('[aria-busy="true"]') !== null,
+				skeletons: [...main.querySelectorAll('[data-slot="skeleton"]')].filter(shown).length,
+			};
+		}, selector)
+		.catch(() => ({ hasMain: false, controls: 0, busy: false, skeletons: 0 }));
+}
+
+/**
+ * The readiness budget for a route's FIRST load. A route that has not settled inside it is recorded
+ * NOT MEASURED `page-not-ready` as a whole and is not driven (#4980): every later re-navigation
+ * would pay the same budget again, and 60 of them overrun the leg's 120 s per-route test timeout —
+ * a Playwright timeout in place of a verdict.
+ */
+export const ROUTE_READY_BUDGET_MS = 15_000;
+
+/**
+ * The readiness budget for a RE-navigation, after a control dirtied the page. The route already
+ * settled once, so this only has to outlast a warm reload; a re-navigation that does not settle in
+ * it throws `PageNotReady` and the route stops there. That bounds a route's readiness spend at
+ * `ROUTE_READY_BUDGET_MS` plus ONE of these, however many controls it has.
+ */
+export const RENAVIGATION_READY_BUDGET_MS = 3_000;
+
+/**
+ * Wait until the page in front of R8 is the page, not its loading state: `load`, then `hasSettled()`
+ * over reads `READY_POLL_MS` apart, for at most `budgetMs`. Returns what it last saw either way — the
+ * caller decides what an unsettled page means for its verdict.
+ */
+export async function awaitReady(page: Page, budgetMs: number = ROUTE_READY_BUDGET_MS): Promise<Readiness> {
+	const start = Date.now();
+	await page.waitForLoadState("load", { timeout: budgetMs }).catch(() => {});
+	const reads: ReadinessRead[] = [];
+	for (;;) {
+		reads.push(await readReadiness(page));
+		if (hasSettled(reads)) return { settled: true, last: reads[reads.length - 1], waitedMs: Date.now() - start };
+		if (Date.now() - start >= budgetMs) return { settled: false, last: reads[reads.length - 1], waitedMs: Date.now() - start };
+		await page.waitForTimeout(READY_POLL_MS);
+	}
+}
+
+/**
+ * Why a route cannot be measured from this readiness, or `null` when it can. A page that never
+ * settled is NOT MEASURED `page-not-ready` — whatever it enumerated (nothing, or the controls of its
+ * loading state) is a claim about this run, not about the page, and an empty enumeration of it is
+ * never N/A `no-enabled-controls` (#4980).
+ *
+ * @returns `null` when the page loaded, else the NOT MEASURED reason
+ */
+export function notReadyReason(readiness: Readiness): string | null {
+	if (readiness.settled && !isLoadingRead(readiness.last)) return null;
+	const { last } = readiness;
+	const seen = !last.hasMain
+		? "no `<main>`"
+		: [last.busy ? "`aria-busy`" : null, last.skeletons > 0 ? `${last.skeletons} skeleton(s)` : null, `${last.controls} control(s)`].filter(Boolean).join(", ");
+	return `page-not-ready — the route had not finished loading after ${readiness.waitedMs}ms (last read: ${seen}), so what it offered is a claim about this run, not the page`;
+}
+
+/** A re-navigation that did not settle inside `RENAVIGATION_READY_BUDGET_MS`: the route stops here. */
+export class PageNotReady extends Error {
+	/** The NOT MEASURED reason, starting `page-not-ready`. */
+	readonly reason: string;
+	/** What the wait last saw. */
+	readonly readiness: Readiness;
+
+	/** Wrap an unsettled readiness as the route's stop signal. */
+	constructor(reason: string, readiness: Readiness) {
+		super(reason);
+		this.name = "PageNotReady";
+		this.reason = reason;
+		this.readiness = readiness;
+	}
+}
+
+/**
+ * Wait for readiness after a RE-navigation, on the short budget, and throw `PageNotReady` when the
+ * page does not settle — so a route whose reloads stop settling costs one short wait, not one per
+ * remaining control.
+ */
+export async function awaitReadyAfterReload(page: Page, budgetMs: number = RENAVIGATION_READY_BUDGET_MS): Promise<Readiness> {
+	const readiness = await awaitReady(page, budgetMs);
+	const reason = notReadyReason(readiness);
+	if (reason !== null) throw new PageNotReady(`${reason} (on a re-navigation)`, readiness);
+	return readiness;
+}
+
 /**
  * Turn an enumerated control back into a locator, refusing when the list has moved under us.
  *
@@ -465,6 +621,51 @@ function isChatter(url: string): boolean {
 	return /\/_next\/(static|image)\//.test(url) || /\/favicon\.|\.(png|jpe?g|svg|webp|woff2?|css|map)(\?|$)/.test(url);
 }
 
+/** The attributes that say a control is ALREADY the selected member of its set. */
+export interface SelectionState {
+	role: string | null;
+	current: string | null;
+	selected: string | null;
+	checked: string | null;
+	/** `aria-pressed` on the control itself. */
+	pressed: string | null;
+	/** How many OTHER elements under the same parent carry `aria-pressed` — a one-of-N set when > 0. */
+	pressedSiblings: number;
+}
+
+/**
+ * Whether a control reports that it is already in the state activating it selects — so that
+ * nothing happening is the RIGHT answer, not an inert control (#4980).
+ *
+ * `~/settings/roles` selects the built-in `owner` role on arrival; clicking its rail row again
+ * changes nothing, correctly, and R8 filed it inert on every run where no unrelated re-render
+ * happened to land inside the window. What the rule reads is the control's OWN claim, never an
+ * inference from its styling:
+ *
+ *  - `aria-current` with any token but `false` — the current item of a set (a rail, a nav, a
+ *    stepper). Selecting the current item again is a no-op by definition.
+ *  - `aria-selected="true"` — a selected option, tab or row.
+ *  - `aria-checked="true"` on a `radio` or `menuitemradio` — a radio stays checked when pressed.
+ *  - `aria-pressed="true"` on a button with `aria-pressed` SIBLINGS — a one-of-N choice built from
+ *    pressed buttons, which is how the console builds them (`@repo/ui/theme-toggle`, the usage
+ *    metric group). Pressing the chosen one again is a no-op, like a radio.
+ *
+ * A LONE `aria-pressed="true"` toggle is still NOT excused: a toggle is expected to UNPRESS when
+ * activated, so one that does nothing is exactly the inert control R8 exists to find. The sibling
+ * test is the boundary, and it is stated rather than hidden: a MULTI-select group of pressed chips
+ * (a filter bar) also has pressed siblings, so a chip in one that fails to unpress would be excused
+ * — when nothing at all happens. That leans toward PASS, which is this instrument's stated bias
+ * (see the header); run 35867789835 is why the sibling case was added, after `Runner minutes` and
+ * the theme menu's `System` were filed inert for doing, correctly, nothing. A checkbox's
+ * `aria-checked` is never read.
+ */
+export function isAlreadySelected(state: SelectionState): boolean {
+	if (state.current !== null && state.current !== "false") return true;
+	if (state.selected === "true") return true;
+	if (state.pressed === "true" && state.pressedSiblings > 0) return true;
+	return state.checked === "true" && (state.role === "radio" || state.role === "menuitemradio");
+}
+
 /** Options `activate()` needs from the route loop. */
 export interface ActivateOptions {
 	/** False on a route `measureQuiescence()` found chattering — the network signal is withheld. */
@@ -505,6 +706,18 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			pressed: el.getAttribute("aria-pressed"),
 			selected: el.getAttribute("aria-selected"),
 			checked: el.getAttribute("aria-checked"),
+		}),
+		undefined,
+		{ timeout: READ_TIMEOUT_MS },
+	);
+	const selection = await locator.evaluate(
+		(el) => ({
+			role: el.getAttribute("role"),
+			current: el.getAttribute("aria-current"),
+			selected: el.getAttribute("aria-selected"),
+			checked: el.getAttribute("aria-checked"),
+			pressed: el.getAttribute("aria-pressed"),
+			pressedSiblings: el.parentElement === null ? 0 : [...el.parentElement.children].filter((c) => c !== el && c.hasAttribute("aria-pressed")).length,
 		}),
 		undefined,
 		{ timeout: READ_TIMEOUT_MS },
@@ -649,6 +862,10 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			mutated = mutated || (await page.evaluate(() => window.__alethiaR8?.mutated === true).catch(() => false));
 			if (mutated) effect = "dom-mutation";
 			else if (options.networkUsable && requests.length > 0) effect = "network";
+			// LAST, and only when nothing at all was observed: a control already in the state it
+			// selects is correct to do nothing. Read BEFORE the click, so a control that reports
+			// itself current only because the click made it so is an aria flip above, not this.
+			else if (isAlreadySelected(selection)) effect = "already-current";
 		}
 		return {
 			effect,
@@ -656,7 +873,8 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			// Anything that moved the page means the next control must start from a fresh load: a
 			// stale async mutation is the one signal this instrument cannot attribute, so it is not
 			// allowed to accumulate across controls.
-			dirtied: effect !== null || fileChooser,
+			// `already-current` moved nothing, so it does not force a reload.
+			dirtied: (effect !== null && effect !== "already-current") || fileChooser,
 		};
 	} finally {
 		page.off("request", onRequest);
@@ -810,8 +1028,91 @@ export async function interactionControl(page: Page, fixture: string = CONTROL_F
 		const observed = locator === null ? null : (await activate(page, locator, { networkUsable: false })).effect;
 		if (observed !== "overlay") problems.push(`R8: the dialog opener reported ${JSON.stringify(observed)} rather than an overlay — the PASS arm does not fire.`);
 	}
+
+	// THE ALREADY-CURRENT ARM, BOTH WAYS (#4980). A handler-less row that says it is the current
+	// member of its set, and the chosen button of a one-of-N pressed group, must not be filed inert;
+	// a LONE handler-less toggle that says it is PRESSED must still be — it was expected to unpress,
+	// and pressing it did nothing.
+	for (const [name, want] of [
+		["Current row", "already-current"],
+		["Chosen option", "already-current"],
+		["Pressed toggle", null],
+	] as const) {
+		const control = enumerated.controls.find((c) => c.name === name);
+		if (control === undefined) {
+			problems.push(`R8: the enumeration did not find the control named ${JSON.stringify(name)}.`);
+			continue;
+		}
+		await page.setContent(fixture);
+		const locator = await resolve(page, control);
+		const observed = locator === null ? "(unresolved)" : (await activate(page, locator, { networkUsable: false })).effect;
+		if (observed !== want) {
+			problems.push(`R8: the ${name.toLowerCase()} reported ${JSON.stringify(observed)} rather than ${JSON.stringify(want)} — a control already in the state it selects is not inert, and a pressed toggle that does not unpress is.`);
+		}
+	}
+
+	// THE READINESS ARM, BOTH WAYS (#4980). A page that streams its controls in behind a skeleton
+	// must be enumerated after they arrive; a page that never leaves its skeleton must NOT read as a
+	// page with nothing to press.
+	await page.setContent(LOADING_FIXTURE);
+	const late = await awaitReady(page, 8_000);
+	if (!late.settled || late.last.controls !== 1) {
+		problems.push(`R8: readiness settled=${late.settled} on ${late.last.controls} control(s) for a page whose one control arrives after its skeleton — the enumeration would run against the loading state.`);
+	}
+	await page.setContent(LOADING_FIXTURE.replace("__ARRIVE_MS__", "600000"));
+	const stuck = await awaitReady(page, 2_000);
+	if (notReadyReason(stuck) === null) {
+		problems.push("R8: a page still showing its skeleton when the budget ran out was accepted as loaded — its empty enumeration would be filed N/A `no-enabled-controls`, a claim about the page the run never saw.");
+	}
+
+	// THE RE-NAVIGATION BUDGET (#4980 review). A reload that never settles must STOP the route with
+	// `page-not-ready` inside the short budget — not return quietly and let the next control pay the
+	// full route budget again, which is how 60 reloads overran the 120 s test timeout.
+	problems.push(...(await reloadBudgetProblems(page)));
 	return problems;
 }
+
+/** Slack over the budget for the last poll and the `load` wait to return. */
+const READY_BUDGET_SLACK_MS = 1_500;
+
+/**
+ * Drive `awaitReadyAfterReload()` against a page that never leaves its skeleton and report what it
+ * got wrong: it must throw `PageNotReady` with a `page-not-ready` reason, within
+ * `RENAVIGATION_READY_BUDGET_MS` (plus slack). Empty means the bound holds.
+ *
+ * @param page a page this function may overwrite
+ * @param wait the re-navigation wait under test — a parameter so the self-test can hand it a broken one
+ */
+export async function reloadBudgetProblems(page: Page, wait: (page: Page) => Promise<Readiness> = awaitReadyAfterReload): Promise<string[]> {
+	await page.setContent(LOADING_FIXTURE.replace("__ARRIVE_MS__", "600000"));
+	const start = Date.now();
+	let thrown: unknown = null;
+	try {
+		await wait(page);
+	} catch (err) {
+		thrown = err;
+	}
+	const took = Date.now() - start;
+	const problems: string[] = [];
+	if (!(thrown instanceof PageNotReady) || !thrown.reason.startsWith("page-not-ready")) {
+		problems.push("R8: a re-navigation that never settled did not stop the route with `page-not-ready` — every remaining control would pay the readiness budget again, and the route would end in a Playwright timeout instead of a verdict.");
+	}
+	if (took > RENAVIGATION_READY_BUDGET_MS + READY_BUDGET_SLACK_MS) {
+		problems.push(`R8: an unsettled re-navigation took ${took}ms, over its ${RENAVIGATION_READY_BUDGET_MS}ms budget — the route's readiness spend is not bounded.`);
+	}
+	return problems;
+}
+
+/**
+ * A route in its `loading.tsx`: a skeleton in `main`, replaced by one button after `__ARRIVE_MS__`
+ * (1.5 s unless the arm overrides it — well past `domcontentloaded`).
+ */
+export const LOADING_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 loading</title></head><body><main>
+	<div data-slot="skeleton" style="width: 200px; height: 20px"></div>
+</main><script>
+	var at = Number("__ARRIVE_MS__") || 1500;
+	setTimeout(function () { document.querySelector("main").innerHTML = '<button type="button">Arrived</button>'; }, at);
+</script></body></html>`;
 
 /**
  * The control's page. A real doctype, because `setContent` without one is QUIRKS mode and this
@@ -822,6 +1123,9 @@ export const CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 c
 	<button id="opener">Open the dialog</button>
 	<button aria-disabled="true" title="You do not have permission">Unavailable</button>
 	<a href="https://example.invalid/docs">Docs</a>
+	<nav><button aria-current="true">Current row</button></nav>
+	<div><button aria-pressed="true">Pressed toggle</button></div>
+	<div><button aria-pressed="true">Chosen option</button><button aria-pressed="false">Other option</button></div>
 	<div id="layer"></div>
 </main><script>
 	document.getElementById("opener").addEventListener("click", function () {

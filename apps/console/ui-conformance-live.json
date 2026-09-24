@@ -9,8 +9,8 @@
 	],
 	"version": 1,
 	"source": {
-		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35851828028",
-		"commit": "6bcf7425b0b429dc9a3f1dc53e703c04c852b429"
+		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35872640708",
+		"commit": "b417c13e18b30f0785234e7896cc0528d1ea93f8"
 	},
 	"runs": {
 		"routes": {
@@ -19,7 +19,7 @@
 			"persona": "the run's own owner",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names",
-			"runKey": "e2e-e2e-1790161296790-83930",
+			"runKey": "e2e-e2e-1790173160673-930988",
 			"records": [
 				{
 					"route": "/[org]",
@@ -1911,7 +1911,7 @@
 			"persona": "the `member` persona, compared against the owner of the same org",
 			"org": "a SECOND organisation, created by that spec and never touched by the primary run",
 			"covers": "only the org-only routes; the parameterised ones need a project the persona cannot be given",
-			"runKey": "e2e-e2e-audit-owner-1790161301044-1",
+			"runKey": "e2e-e2e-audit-owner-1790173165336-1",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2081,7 +2081,7 @@
 			"persona": "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
-			"runKey": "e2e-e2e-1790161339475-989113",
+			"runKey": "e2e-e2e-1790173164671-821477",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2151,8 +2151,8 @@
 				{
 					"route": "/[org]/[project]/architecture",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "FAIL",
+					"detail": "1 enabled control did nothing within 1000ms — of 7 controls enumerated on this route"
 				},
 				{
 					"route": "/[org]/[project]/clusters",
@@ -2277,13 +2277,13 @@
 					"route": "/[org]/[project]/settings/activity",
 					"predicate": "F8",
 					"verdict": "NOT MEASURED",
-					"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 				},
 				{
 					"route": "/[org]/[project]/settings/activity",
 					"predicate": "F9",
 					"verdict": "NOT MEASURED",
-					"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 				},
 				{
 					"route": "/[org]/[project]/settings/activity",
@@ -2334,7 +2334,8 @@
 				{
 					"route": "/[org]/[project]/settings/preview",
 					"predicate": "R8",
-					"verdict": "PASS"
+					"verdict": "FAIL",
+					"detail": "3 enabled controls did nothing within 1000ms — of 7 controls enumerated on this route"
 				},
 				{
 					"route": "/[org]/[project]/usage",
@@ -2367,8 +2368,7 @@
 				{
 					"route": "/[org]/~/alerts",
 					"predicate": "F8",
-					"verdict": "FAIL",
-					"detail": "reload() kept the param but not the narrowed list"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/alerts",
@@ -2486,8 +2486,7 @@
 				{
 					"route": "/[org]/~/jobs/[id]",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/new",
@@ -2510,18 +2509,18 @@
 				{
 					"route": "/[org]/~/new",
 					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/runners",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/runners",
-					"predicate": "F8",
 					"verdict": "FAIL",
-					"detail": "reload() kept the param but not the narrowed list"
+					"detail": "4 enabled controls did nothing within 1000ms — of 11 controls enumerated on this route"
+				},
+				{
+					"route": "/[org]/~/runners",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/runners",
+					"predicate": "F8",
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/runners",
@@ -2531,8 +2530,7 @@
 				{
 					"route": "/[org]/~/runners",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings",
@@ -2621,8 +2619,7 @@
 				{
 					"route": "/[org]/~/settings/billing",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
@@ -2691,50 +2688,49 @@
 				{
 					"route": "/[org]/~/settings/general",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
-				},
-				{
-					"route": "/[org]/~/settings/members",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/settings/members",
-					"predicate": "F8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/settings/members",
-					"predicate": "F9",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/settings/members",
-					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
-				},
-				{
-					"route": "/[org]/~/settings/roles",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/settings/roles",
-					"predicate": "F8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/settings/roles",
-					"predicate": "F9",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/settings/roles",
-					"predicate": "R8",
 					"verdict": "FAIL",
-					"detail": "1 enabled control did nothing within 1000ms — of 19 controls enumerated on this route"
+					"detail": "1 enabled control did nothing within 1000ms — of 8 controls enumerated on this route"
+				},
+				{
+					"route": "/[org]/~/settings/members",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/members",
+					"predicate": "F8",
+					"verdict": "FAIL",
+					"detail": "reload() kept the param but not the narrowed list; Reset left a filter param in the URL — 1 later step not reached"
+				},
+				{
+					"route": "/[org]/~/settings/members",
+					"predicate": "F9",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/members",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/roles",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/roles",
+					"predicate": "F8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/roles",
+					"predicate": "F9",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/roles",
+					"predicate": "R8",
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/sso",
@@ -2778,8 +2774,7 @@
 				{
 					"route": "/[org]/~/settings/teams",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/support",
@@ -2937,8 +2932,7 @@
 				{
 					"route": "/[org]/~/usage",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/cli/login",
