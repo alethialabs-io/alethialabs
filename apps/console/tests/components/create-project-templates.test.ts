@@ -53,6 +53,7 @@ describe("buildCreateInput", () => {
     for (const provider of PROVIDERS) {
       const input = buildCreateInput({
         projectName: "p",
+        template: "standard",
         provider,
         cloudIdentityId: "id",
         defaultEnvironment: { name: "production", stage: "production", region: "r" },

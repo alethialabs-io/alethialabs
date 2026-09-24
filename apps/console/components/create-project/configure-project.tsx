@@ -128,7 +128,8 @@ export function ConfigureProject({
 	const [environments, setEnvironments] = useState<EnvironmentSpec[]>(
 		DEFAULT_ENVIRONMENT_MATRIX,
 	);
-	// Only read on the `?scratch=template` path; it picks the starter repository, not the cluster.
+	// Only read on the `?scratch=template` path; it picks the starter repository and the webhook-CA
+	// marker (#4990: the AI template declares KServe), not the cluster.
 	const [template, setTemplate] = useState<TemplateId>(DEFAULT_TEMPLATE);
 	const [creating, setCreating] = useState(false);
 	// The server's reason for refusing this create, rendered beside the field it is about. NOT form
@@ -258,6 +259,7 @@ export function ConfigureProject({
 				if (!identityId) throw new Error("A cloud account is required.");
 				input = buildCreateInput({
 					projectName: name,
+					template,
 					provider,
 					cloudIdentityId: identityId,
 					defaultEnvironment,

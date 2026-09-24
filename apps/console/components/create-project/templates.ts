@@ -110,12 +110,15 @@ export interface QuickEnvironment {
 /**
  * Builds the full {@link CreateProjectInput} for a quick-create submission. The form only
  * captures a name and cloud; everything else comes from per-provider presets so the project is
- * valid and immediately designable. The chosen template is NOT an input: every template creates
- * the same cluster (see {@link TEMPLATE_OPTIONS}) and differs only in the starter it hands over. The first
- * environment seeds the project's default env (createProject), the rest are added afterwards.
+ * valid and immediately designable. Every template creates the same cluster (see
+ * {@link TEMPLATE_OPTIONS}); the template is an input only for the in-cluster webhook-CA marker
+ * (#4990) — the AI template declares KServe — and otherwise differs only in the starter it hands
+ * over. The first environment seeds the project's default env (createProject), the rest are added
+ * afterwards.
  */
 export function buildCreateInput(args: {
 	projectName: string;
+	template: TemplateId;
 	provider: CloudProviderSlug;
 	cloudIdentityId: string;
 	defaultEnvironment: QuickEnvironment;
@@ -123,7 +126,7 @@ export function buildCreateInput(args: {
 	 *  Prod(dedicated)+Preview(namespace) shape. */
 	environments?: EnvironmentSpec[];
 }): CreateProjectInput {
-	const { projectName, provider, cloudIdentityId, defaultEnvironment, environments } =
+	const { projectName, template, provider, cloudIdentityId, defaultEnvironment, environments } =
 		args;
 	const autoscalerKey = AUTOSCALER[provider].providerConfigKey;
 	// The template's in-cluster webhook-CA needs (#4990): the AI template's KServe needs
