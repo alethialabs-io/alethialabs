@@ -180,9 +180,10 @@ async function waitForOrgLanding(page: Page): Promise<string> {
  * whole factory single-use per environment database: a second `pnpm ... --project=qa` on one env
  * failed on ownerHobby.
  *
- * `fixtures/auth.ts` already derives its org name from the address for exactly this reason.
+ * `fixtures/auth.ts` already derives its org name from the address for exactly this reason. Exported
+ * so a spec asserting on a persona's org by NAME derives it here rather than restating it (#5009).
  */
-function orgNameFor(kind: string, email: string): string {
+export function orgNameFor(kind: string, email: string): string {
 	return `E2E ${kind} ${email.split("@")[0]}`;
 }
 

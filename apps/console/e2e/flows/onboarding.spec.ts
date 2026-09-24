@@ -27,7 +27,8 @@ import { test, expect } from "../fixtures/qa";
 import { ACCEPTANCE_LABELS } from "@repo/legal/documents";
 import { scanA11y } from "../helpers/a11y";
 import { pendingInvitationId } from "../helpers/db";
-import { emailOtpSignIn, organizationApi, signUpHobby } from "../helpers/personas";
+import { planMeta } from "@repo/plan-catalog";
+import { emailOtpSignIn, organizationApi, orgNameFor, signUpHobby } from "../helpers/personas";
 import type { Page } from "@playwright/test";
 
 /** A unique, never-before-registered test email so each signup creates a fresh account. */
@@ -82,11 +83,73 @@ async function freshSignupToOnboarding(page: Page, email: string): Promise<void>
 	});
 }
 
-/** True once the URL is a real org overview (a single non-public path segment). */
+/**
+ * True once the URL is a real org overview (a single non-public path segment).
+ *
+ * `accept-terms` is load-bearing (#5009): it is a single segment a new account passes THROUGH, and
+ * without it here a wait for the overview resolved on the clickwrap gate. The Hobby walk then failed
+ * later on a missing "Create project" link, and the Pro walk — whose only post-wait assertion is
+ * "not /onboarding" — passed while standing on the gate. helpers/personas.ts NON_ORG_SEGMENTS made
+ * the same correction for the persona factory.
+ */
 function isOrgOverview(url: URL): boolean {
 	const parts = url.pathname.split("/").filter(Boolean);
-	const publicSeg = new Set(["signup", "login", "onboarding", "invites", "dashboard", "start", "cli"]);
+	const publicSeg = new Set([
+		"signup",
+		"login",
+		"onboarding",
+		"accept-terms",
+		"invites",
+		"dashboard",
+		"start",
+		"cli",
+	]);
 	return parts.length === 1 && !publicSeg.has(parts[0]);
+}
+
+/**
+ * Waits for the "Create organization" hand-off to settle EITHER way — on the clickwrap gate or on
+ * the org overview — and reports which. Waiting for both is what keeps a caller from deciding while
+ * the navigation is still in flight: a fixed-timeout probe for the gate reads "not there yet" as
+ * "not there".
+ */
+async function settleOrgHandoff(page: Page, timeoutMs: number): Promise<"gate" | "overview"> {
+	await page.waitForURL((url) => url.pathname === "/accept-terms" || isOrgOverview(url), {
+		timeout: timeoutMs,
+	});
+	return new URL(page.url()).pathname === "/accept-terms" ? "gate" : "overview";
+}
+
+/**
+ * Walks a fresh account from "Create organization" to its org overview, through the clickwrap gate
+ * when it engages. The gate is data-dependent — it shows only where a legal document is awaiting
+ * acceptance (app/server/actions/legal.ts · getPendingAcceptance) — so a journey that is NOT about
+ * the gate must pass it either way. The gate's own behaviour is asserted by the clickwrap test.
+ *
+ * Walking past the gate asserts NOTHING about what it says or records. A first signup is shown
+ * "Our Terms have changed" and its acceptance is stored with context "reacceptance"
+ * (accept-terms-form.tsx) — an open product question on #5009 that this helper does not settle
+ * and no journey here can expose.
+ */
+async function throughTermsToOverview(page: Page, timeoutMs: number): Promise<void> {
+	await settleOrgHandoff(page, timeoutMs);
+	// The URL alone cannot decide it: the hand-off can land on /{org} for a moment BEFORE the
+	// layout redirects to the gate, and run 35932135625 read that moment as "overview" and then
+	// stood on the gate. So wait for what only one side renders — the gate's submit button, or the
+	// in-shell breadcrumb the gate (outside the shell) never has — and decide on that.
+	const submit = page.getByRole("button", { name: ACCEPTANCE_LABELS.submit });
+	const shell = page.getByRole("navigation", { name: "breadcrumb" });
+	await expect(submit.or(shell).first()).toBeVisible({ timeout: timeoutMs });
+	if (await submit.isVisible()) {
+		await page
+			.getByText(new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i"))
+			.first()
+			.click();
+		await expect(submit).toBeEnabled();
+		await submit.click();
+		await page.waitForURL((url) => isOrgOverview(url), { timeout: timeoutMs });
+		await expect(shell).toBeVisible({ timeout: timeoutMs });
+	}
 }
 
 // ── Public auth pages ────────────────────────────────────────────────────────────
@@ -178,7 +241,7 @@ test.describe("Onboarding — fresh signup + plan pick", () => {
 		await page.locator("#org-name").fill(orgName);
 		await page.getByRole("button", { name: /personal projects/i }).click();
 		await page.getByRole("button", { name: /create organization/i }).click();
-		await page.waitForURL((url) => isOrgOverview(url), { timeout: 30_000 });
+		await throughTermsToOverview(page, 60_000);
 		await expect(page).not.toHaveURL(/\/onboarding/);
 		await expect(page.getByRole("link", { name: /create.*project/i }).first()).toBeVisible({
 			timeout: 15_000,
@@ -196,7 +259,7 @@ test.describe("Onboarding — fresh signup + plan pick", () => {
 		// A fresh account still holds its one trial → card-less "Create organization".
 		await expect(page.getByText(/trial · no card required/i)).toBeVisible();
 		await page.getByRole("button", { name: /create organization/i }).click();
-		await page.waitForURL((url) => isOrgOverview(url), { timeout: 60_000 });
+		await throughTermsToOverview(page, 60_000);
 		await expect(page).not.toHaveURL(/\/onboarding/);
 	});
 });
@@ -221,7 +284,17 @@ test.describe("Onboarding — org switcher + create-org sheet", () => {
 		await owner.page.goto(`/${owner.orgSlug}`);
 		await owner.page.getByRole("button", { name: /switch organization/i }).click();
 		await expect(owner.page.getByPlaceholder(/find organization/i)).toBeVisible();
-		await expect(owner.page.getByRole("option", { name: /e2e hobby org/i }).first()).toBeVisible();
+		// The org name is DERIVED from the persona's address, never restated (#5009): the literal
+		// "E2E Hobby Org" this line used to match stopped existing when #3829 made persona org names
+		// per-account, and the test then found no option at all. `hasText` is a substring match, so
+		// the plan badge rendered inside the same option does not disturb it.
+		const activeOrg = owner.page
+			.getByRole("option")
+			.filter({ hasText: orgNameFor("Hobby", owner.email) });
+		await expect(activeOrg).toHaveCount(1);
+		await expect(activeOrg).toBeVisible();
+		// The plan badge the test is named for: ownerHobby onboarded on the free plan.
+		await expect(activeOrg.getByText(planMeta("community").name, { exact: true })).toBeVisible();
 	});
 
 	test("switcher exposes the create-organization action", async ({ owner }) => {
@@ -335,15 +408,12 @@ test.describe("Onboarding — the clickwrap gate", () => {
 
 		// Wait for the org hand-off to settle EITHER way before deciding, so the skip below can
 		// never fire merely because the navigation had not happened yet.
-		await page.waitForURL(
-			(url) => url.pathname === "/accept-terms" || isOrgOverview(url),
-			{ timeout: 60_000 },
-		);
+		const landed = await settleOrgHandoff(page, 60_000);
 		// Data-dependent: the gate only engages where a legal document is actually awaiting
 		// acceptance (app/server/actions/legal.ts · getPendingAcceptance). On a deployment with
 		// none, there is nothing to measure — and saying so is the honest outcome, not a pass.
 		test.skip(
-			new URL(page.url()).pathname !== "/accept-terms",
+			landed !== "gate",
 			"no legal document is pending acceptance on this deployment — the clickwrap gate does not engage",
 		);
 
