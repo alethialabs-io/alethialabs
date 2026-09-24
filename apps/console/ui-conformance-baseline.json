@@ -110,15 +110,15 @@
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 32,
-			"fail": 4,
+			"pass": 33,
+			"fail": 3,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8889
+			"score": 0.9167
 		},
 		"S3": {
 			"family": "S",
@@ -138,15 +138,15 @@
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 35,
-			"fail": 1,
+			"pass": 36,
+			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.9722
+			"score": 1
 		},
 		"T1": {
 			"family": "T",
@@ -1349,11 +1349,11 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 2,
-					"fail": 2,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.5
+					"score": 1
 				},
 				"T": {
 					"instrumented": 7,
@@ -1393,11 +1393,11 @@
 				}
 			},
 			"overall": {
-				"pass": 34,
-				"fail": 2,
+				"pass": 36,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9444
+				"score": 1
 			}
 		},
 		{
@@ -5575,8 +5575,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "two widths: AppShell max-w-[1200px] and the page's max-w-[1200px]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5586,8 +5585,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "S4",
-			"verdict": "FAIL",
-			"detail": "AppShell already owns the width; the page re-declares max-w-[1200px]"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
