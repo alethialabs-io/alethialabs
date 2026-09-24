@@ -109,7 +109,7 @@ Every predicate has an instrument; nothing below is rendered `—` for want of o
 ## The live half — three artifacts, three questions, never pooled
 
 T5–T7 and R1–R8 are measured in a browser, not read off the tree. The records below were
-imported from **https://github.com/alethialabs-io/alethialabs/actions/runs/35713083980** at commit `c776a4d15a119ad8ee5178d8820d8c38f635999b` and committed to
+imported from **https://github.com/alethialabs-io/alethialabs/actions/runs/35851828028** at commit `6bcf7425b0b429dc9a3f1dc53e703c04c852b429` and committed to
 `apps/console/ui-conformance-live.json`; refresh them with `--import-live`. They come from **three files, joined and never
 pooled** — `e2e/audit/report.ts` records what pooling them cost, and the split is checked here:
 each section declares the predicates it may carry, and a record in the wrong one refuses to parse.
@@ -131,13 +131,13 @@ leaves the denominator and a predicate withheld everywhere scores `—`, never `
 | **F10** | 1 | the page's store declares a `search` filter and no `FilterSearch` input rendered in `main` — a tabbed or conditional bar this pass did not reach |
 | **F8** | 1 | no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one |
 | **F8** | 2 | no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one |
-| **F8** | 3 | the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface |
+| **F8** | 2 | the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface |
 | **F8** | 1 | the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface |
 | **F8** | 1 | the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface |
 | **F8** | 1 | the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow |
 | **F9** | 1 | no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one |
 | **F9** | 2 | no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one |
-| **F9** | 3 | the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface |
+| **F9** | 2 | the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface |
 | **F9** | 1 | the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface |
 | **F9** | 1 | the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface |
 | **F9** | 1 | the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow |
@@ -150,9 +150,8 @@ loudly as a missing one:
 
 | predicate | FAIL | owner | what is failing |
 |---|---:|---|---|
-| **F10** | 2 | #4939 | TWO routes, and the EMPTY-STATE half only — both debounce cleanly. `~/alerts` and `~/settings/roles` render no `[data-slot="empty"]` inside `main` for a token that matches nothing, and `~/alerts` renders 2 hand-rolled 'no results' messages outside it. This is CLAUDE.md §6's `@repo/ui/empty` row observed rather than grepped: H9 scores the FILE, F10 scores what the page put on screen once the list emptied, and these two pages pass H9. |
-| **F8** | 1 | #4939 | ONE route, and the URL half only. `~/connectors` narrows 42 rows to 2 on `health=Connected` and writes the param; a FRESH TAB on that URL keeps the param and renders 42 rows again. Reset is correct in both halves, so the bar is linkable in name and not in effect — which is the defect F2's static matcher structurally cannot see, since the `useFilterUrlSync` call it reads is present and correct. |
-| **R8** | 4 | #4939 | FOUR routes, 39 controls enumerated between them, and two different findings. Three INERT controls produced no navigation, no overlay, no DOM mutation and no aria flip within 1 000 ms — `link "Docs"` on `~/alerts`, `link "What is classification?"` on `~/settings/classification`, `button "Scroll to latest"` on `~/support/ask`. Two more read a destructive verb that `destructive-actions.yaml` does not declare, and RUBRIC.md says that is a finding either way: the ledger is short an entry, or the control wears a verb it does not carry out. |
+| **F8** | 2 | #4939 | TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and `~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param and reads the FULL count, while Reset is correct in both halves. Both cells PASSED in run 35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data until the filtered fetch returns. `settle()` takes two equal reads 300 ms apart as settled, so it cannot tell a slow placeholder from an answer. Flake or defect is not settled yet. |
+| **R8** | 1 | #4939 | ONE route, ONE control: `button "owner39"` on `~/settings/roles`, which is the built-in `owner` rail row, selected by default. Clicking the row that is already selected changes nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 has no rule for a control that is already in the state it selects. |
 
 ## Per predicate
 
@@ -189,9 +188,9 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **F5** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
 | **F6** | F | `check-filter-standard` | 16 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
 | **F7** | F | `check-filter-standard` | 12 | 0 | 24 | 4 | 1.00 | `not-a-list-page` 24 |
-| **F8** | F | live — `interaction` | 6 | 1 | 24 | 9 | 0.86 | `not-a-list-page` 24 |
-| **F9** | F | live — `interaction` | 7 | 0 | 24 | 9 | 1.00 | `not-a-list-page` 24 |
-| **F10** | F | live — `interaction` | 13 | 2 | 24 | 1 | 0.87 | `not-a-list-page` 24 |
+| **F8** | F | live — `interaction` | 6 | 2 | 24 | 8 | 0.75 | `not-a-list-page` 24 |
+| **F9** | F | live — `interaction` | 8 | 0 | 24 | 8 | 1.00 | `not-a-list-page` 24 |
+| **F10** | F | live — `interaction` | 15 | 0 | 24 | 1 | 1.00 | `not-a-list-page` 24 |
 | **R1** | R | live — `routes` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
 | **R2** | R | live — `routes` | 39 | 0 | 1 | 0 | 1.00 | `opens-no-overlay` 1 |
 | **R3** | R | live — `routes` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
@@ -199,7 +198,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **R5** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **R6** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
 | **R7** | R | live — `routes` | 40 | 0 | 0 | 0 | 1.00 | — |
-| **R8** | R | live — `interaction` | 25 | 4 | 11 | 0 | 0.86 | `no-enabled-controls` 7, `redirect-only` 4 |
+| **R8** | R | live — `interaction` | 26 | 1 | 13 | 0 | 0.96 | `no-enabled-controls` 9, `redirect-only` 4 |
 
 The static H half emits **no N/A at all**, which is why those rows are empty rather than
 carrying the rubric's `renders-no-table` / `renders-no-formatted-value` / `declares-no-z-index`.
@@ -223,41 +222,41 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 
 | route | surface | S | T | H | F | R | overall |
 |---|---:|---|---|---|---|---|---|
-| `/[org]/~/alerts` | 302 | 2/4 · 0.50 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 7/8 · 0.88 | **0.89** · 0 withheld of 38 |
+| `/[org]/~/alerts` | 302 | 2/4 · 0.50 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | **0.92** · 0 withheld of 38 |
 | `/[org]/[project]` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.93** · 1 withheld of 38 |
 | `/[org]/[project]/settings` · | 1 | all N/A | 1/2 · 0.50 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.93** · 1 withheld of 38 |
 | `/[org]/~/settings` · | 1 | all N/A | 1/2 · 0.50 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.93** · 0 withheld of 38 |
 | `/dashboard/[[...rest]]` · | 211 | all N/A | 2/3 · 0.67 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **0.94** · 0 withheld of 38 |
 | `/[org]/~/jobs/[id]` | 233 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **0.96** · 1 withheld of 38 |
 | `/[org]/~/new` | 375 | 3/4 · 0.75 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **0.96** · 0 withheld of 38 |
-| `/[org]/~/settings/classification` | 228 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/8 · 0.88 | **0.96** · 0 withheld of 38 |
-| `/[org]/~/support/ask` | 276 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/8 · 0.88 | **0.96** · 0 withheld of 38 |
 | `/[org]/[project]/environments` | 244 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **0.96** · 1 withheld of 38 |
-| `/[org]/[project]/settings/general` | 223 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/8 · 0.88 | **0.96** · 1 withheld of 38 |
-| `/[org]/~/connectors` | 286 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 · 1 withheld | 8/8 · 1.00 | **0.97** · 1 withheld of 38 |
-| `/[org]/~/settings/roles` | 297 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | **0.97** · 0 withheld of 38 |
+| `/[org]/~/runners` | 311 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 · 1 withheld | 7/7 · 1.00 | **0.97** · 1 withheld of 38 |
+| `/[org]/~/settings/roles` | 297 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 7/8 · 0.88 | **0.97** · 0 withheld of 38 |
 | `/[org]` | 294 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/[project]/architecture` | 411 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
+| `/[org]/[project]/architecture` | 411 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/clusters` | 228 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/jobs` | 275 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
 | `/[org]/[project]/settings/access` | 291 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
 | `/[org]/[project]/settings/activity` | 287 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
+| `/[org]/[project]/settings/general` | 223 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/settings/preview` | 226 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/usage` | 226 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/~/clusters` | 227 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
+| `/[org]/~/connectors` | 286 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/~/evidence` | 235 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
 | `/[org]/~/jobs` | 274 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
-| `/[org]/~/runners` | 311 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
 | `/[org]/~/settings/access` | 290 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/settings/activity` | 286 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 2 withheld of 38 |
 | `/[org]/~/settings/billing` | 274 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/settings/billing/invoices` | 268 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | 8/8 · 1.00 | **1.00** · 3 withheld of 38 |
+| `/[org]/~/settings/classification` | 228 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/settings/general` | 220 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 7/7 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/settings/members` | 297 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 7/7 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/settings/sso` | 288 | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 8/8 · 1.00 | **1.00** · 2 withheld of 38 |
 | `/[org]/~/settings/teams` | 294 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 · 2 withheld | 7/7 · 1.00 | **1.00** · 2 withheld of 38 |
 | `/[org]/~/support` | 7 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/support/abuse` | 220 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
+| `/[org]/~/support/ask` | 276 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/support/cases/[id]` | 238 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/~/support/my-cases` | 233 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/~/support/submit` | 228 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |

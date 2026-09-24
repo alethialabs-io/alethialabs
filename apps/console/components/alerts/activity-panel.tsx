@@ -18,14 +18,23 @@
 // heading, which is where the console filter standard puts it.
 
 import type { ColumnDef } from "@tanstack/react-table";
+import { Activity, SearchX } from "lucide-react";
 import { useMemo } from "react";
 import type { DeliveryDTO } from "@/app/server/actions/alerts";
 import { ActivityFilterBar } from "@/components/alerts/alerts-filter-bar";
 import type { ActivityView } from "@/components/alerts/alerts-filters";
+import {
+	type ActivityFilters,
+	DEFAULT_ACTIVITY_FILTERS,
+} from "@/components/alerts/alerts-query";
 import { deliveryBadge } from "@/components/alerts/alerts-status";
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { DataTable } from "@/components/data-table";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
+import { useAlertActivityFilters } from "@/lib/stores/use-alerts-filters";
+import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { formatDate } from "@repo/format";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { StatusBadge } from "@repo/ui/status-badge";
@@ -49,6 +58,10 @@ export function ActivityPanel({
 	view: ActivityView;
 }) {
 	const { rows, facets, stale } = view;
+	const filters = useAlertActivityFilters((s) => s.filters);
+	const resetFilters = useAlertActivityFilters((s) => s.reset);
+	const filtered =
+		countActiveFilters<ActivityFilters>(filters, DEFAULT_ACTIVITY_FILTERS) > 0;
 	// One batched query hydrates every delivery row's classification chips (read-only). The
 	// ledger is filtered and windowed SERVER-side, so the subject set is the rows on screen —
 	// it used to be the bootstrap's whole 50-row window, which is neither.
@@ -70,11 +83,34 @@ export function ActivityPanel({
 			    PREVIOUS query's answer, kept so the table does not blank, and marked so they are
 			    not read as the current one. */}
 			<div className={cn(stale && "opacity-60 transition-opacity")}>
-				<DataTable
-					columns={columns}
-					data={rows}
-					emptyMessage="No activity matches these filters."
-				/>
+				{/* An empty ledger is the SHARED empty state, not the table's muted empty row — the
+				    same answer every console list gives, and the one the audit's F10 reads
+				    (`[data-slot="empty"]`, #4939). It says which empty it is: nothing delivered
+				    yet, or nothing matching, and only the second offers Reset. */}
+				{rows.length === 0 ? (
+					filtered ? (
+						<EmptyState
+							className="border"
+							icon={<SearchX />}
+							title="No activity matches"
+							description="No delivery matches these filters."
+							action={
+								<Button variant="outline" size="sm" onClick={resetFilters}>
+									Reset filters
+								</Button>
+							}
+						/>
+					) : (
+						<EmptyState
+							className="border"
+							icon={<Activity />}
+							title="No activity yet"
+							description="Deliveries appear here once a policy routes an alert to a channel."
+						/>
+					)
+				) : (
+					<DataTable columns={columns} data={rows} />
+				)}
 			</div>
 		</div>
 	);

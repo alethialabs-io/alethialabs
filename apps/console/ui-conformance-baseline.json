@@ -23,7 +23,7 @@
 		"notInstrumented": 0,
 		"findings": 24,
 		"findingFiles": 15,
-		"liveNotMeasured": 36
+		"liveNotMeasured": 34
 	},
 	"ledgers": {
 		"baseline": 16,
@@ -31,8 +31,8 @@
 	},
 	"live": {
 		"source": {
-			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35713083980",
-			"commit": "c776a4d15a119ad8ee5178d8820d8c38f635999b"
+			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35851828028",
+			"commit": "6bcf7425b0b429dc9a3f1dc53e703c04c852b429"
 		},
 		"sections": {
 			"routes": {
@@ -86,18 +86,13 @@
 		"debt": {
 			"F8": {
 				"owner": "#4939",
-				"why": "ONE route, and the URL half only. `~/connectors` narrows 42 rows to 2 on `health=Connected` and writes the param; a FRESH TAB on that URL keeps the param and renders 42 rows again. Reset is correct in both halves, so the bar is linkable in name and not in effect — which is the defect F2's static matcher structurally cannot see, since the `useFilterUrlSync` call it reads is present and correct.",
-				"fail": 1
-			},
-			"F10": {
-				"owner": "#4939",
-				"why": "TWO routes, and the EMPTY-STATE half only — both debounce cleanly. `~/alerts` and `~/settings/roles` render no `[data-slot=\"empty\"]` inside `main` for a token that matches nothing, and `~/alerts` renders 2 hand-rolled 'no results' messages outside it. This is CLAUDE.md §6's `@repo/ui/empty` row observed rather than grepped: H9 scores the FILE, F10 scores what the page put on screen once the list emptied, and these two pages pass H9.",
+				"why": "TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and `~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param and reads the FULL count, while Reset is correct in both halves. Both cells PASSED in run 35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data until the filtered fetch returns. `settle()` takes two equal reads 300 ms apart as settled, so it cannot tell a slow placeholder from an answer. Flake or defect is not settled yet.",
 				"fail": 2
 			},
 			"R8": {
 				"owner": "#4939",
-				"why": "FOUR routes, 39 controls enumerated between them, and two different findings. Three INERT controls produced no navigation, no overlay, no DOM mutation and no aria flip within 1 000 ms — `link \"Docs\"` on `~/alerts`, `link \"What is classification?\"` on `~/settings/classification`, `button \"Scroll to latest\"` on `~/support/ask`. Two more read a destructive verb that `destructive-actions.yaml` does not declare, and RUBRIC.md says that is a finding either way: the ledger is short an entry, or the control wears a verb it does not carry out.",
-				"fail": 4
+				"why": "ONE route, ONE control: `button \"owner39\"` on `~/settings/roles`, which is the built-in `owner` rail row, selected by default. Clicking the row that is already selected changes nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 has no rule for a control that is already in the state it selects.",
+				"fail": 1
 			}
 		}
 	},
@@ -473,39 +468,39 @@
 			"owner": null,
 			"debt": "#4939",
 			"pass": 6,
-			"fail": 1,
+			"fail": 2,
 			"na": 24,
-			"notMeasured": 9,
+			"notMeasured": 8,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
 				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 3,
-				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 2,
 				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 1,
+				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
 				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1,
 				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
 			},
-			"score": 0.8571
+			"score": 0.75
 		},
 		"F9": {
 			"family": "F",
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"pass": 7,
+			"pass": 8,
 			"fail": 0,
 			"na": 24,
-			"notMeasured": 9,
+			"notMeasured": 8,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
 				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 3,
-				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 2,
 				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 1,
+				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
 				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1,
 				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
 			},
@@ -516,9 +511,8 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"debt": "#4939",
-			"pass": 13,
-			"fail": 2,
+			"pass": 15,
+			"fail": 0,
 			"na": 24,
 			"notMeasured": 1,
 			"naReasons": {
@@ -527,7 +521,7 @@
 			"notMeasuredReasons": {
 				"the page's store declares a `search` filter and no `FilterSearch` input rendered in `main` — a tabbed or conditional bar this pass did not reach": 1
 			},
-			"score": 0.8667
+			"score": 1
 		},
 		"R1": {
 			"family": "R",
@@ -634,16 +628,16 @@
 			"section": "interaction",
 			"owner": null,
 			"debt": "#4939",
-			"pass": 25,
-			"fail": 4,
-			"na": 11,
+			"pass": 26,
+			"fail": 1,
+			"na": 13,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4,
-				"no-enabled-controls": 7
+				"no-enabled-controls": 9
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8621
+			"score": 0.963
 		}
 	},
 	"routes": [
@@ -809,17 +803,17 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 8,
+					"pass": 7,
 					"fail": 0,
-					"na": 0,
+					"na": 1,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 26,
+				"pass": 25,
 				"fail": 0,
-				"na": 11,
+				"na": 12,
 				"notMeasured": 1,
 				"score": 1
 			}
@@ -1222,19 +1216,19 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 1,
+				"pass": 26,
+				"fail": 0,
 				"na": 11,
 				"notMeasured": 1,
-				"score": 0.9615
+				"score": 1
 			}
 		},
 		{
@@ -1399,19 +1393,19 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 32,
-				"fail": 4,
+				"pass": 33,
+				"fail": 3,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.8889
+				"score": 0.9167
 			}
 		},
 		{
@@ -1508,11 +1502,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
-					"fail": 1,
+					"pass": 9,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 1,
-					"score": 0.8889
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1525,11 +1519,11 @@
 				}
 			},
 			"overall": {
-				"pass": 33,
-				"fail": 1,
+				"pass": 34,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 1,
-				"score": 0.9706
+				"score": 1
 			}
 		},
 		{
@@ -1803,28 +1797,28 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
-					"fail": 0,
+					"pass": 8,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 1
+					"notMeasured": 1,
+					"score": 0.8889
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 8,
+					"pass": 7,
 					"fail": 0,
-					"na": 0,
+					"na": 1,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 33,
-				"fail": 0,
-				"na": 2,
-				"notMeasured": 3,
-				"score": 1
+				"fail": 1,
+				"na": 3,
+				"notMeasured": 1,
+				"score": 0.9706
 			}
 		},
 		{
@@ -2166,19 +2160,19 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 25,
+				"fail": 0,
 				"na": 13,
 				"notMeasured": 0,
-				"score": 0.96
+				"score": 1
 			}
 		},
 		{
@@ -2334,20 +2328,20 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 0.9
-				},
-				"R": {
-					"instrumented": 8,
-					"of": 8,
-					"pass": 8,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
 					"score": 1
+				},
+				"R": {
+					"instrumented": 8,
+					"of": 8,
+					"pass": 7,
+					"fail": 1,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 0.875
 				}
 			},
 			"overall": {
@@ -2638,19 +2632,19 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 25,
+				"fail": 0,
 				"na": 13,
 				"notMeasured": 0,
-				"score": 0.96
+				"score": 1
 			}
 		},
 		{
@@ -3571,7 +3565,8 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "R8",
-			"verdict": "PASS"
+			"verdict": "N/A",
+			"reason": "no-enabled-controls"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -4687,13 +4682,13 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -4981,8 +4976,7 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "1 control named a destructive verb the ledger does not declare — of 1 control enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -5455,8 +5449,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F10",
-			"verdict": "FAIL",
-			"detail": "a nonsense search rendered no `[data-slot=\"empty\"]` inside `main`; 2 hand-rolled \"no results\" messages outside the shared empty state"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5492,7 +5485,8 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F8",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "reload() kept the param but not the narrowed list"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5583,8 +5577,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "1 enabled control did nothing within 1000ms, 1 control named a destructive verb the ledger does not declare — of 29 controls enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5892,8 +5885,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "F8",
-			"verdict": "FAIL",
-			"detail": "reload() kept the param but not the narrowed list"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6888,14 +6880,13 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+			"verdict": "FAIL",
+			"detail": "reload() kept the param but not the narrowed list"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -6981,7 +6972,8 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "R8",
-			"verdict": "PASS"
+			"verdict": "N/A",
+			"reason": "no-enabled-controls"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -8193,8 +8185,7 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "1 enabled control did nothing within 1000ms — of 4 controls enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -8663,8 +8654,7 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F10",
-			"verdict": "FAIL",
-			"detail": "a nonsense search rendered no `[data-slot=\"empty\"]` inside `main`"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -8791,7 +8781,8 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "R8",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "1 enabled control did nothing within 1000ms — of 19 controls enumerated on this route"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -9794,8 +9785,7 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "1 enabled control did nothing within 1000ms — of 5 controls enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/ask",

@@ -319,7 +319,7 @@ H2: it hand-writes its own `<h2>`.
 | **R5** | axe reports zero serious or critical violations, **in both themes** | `scanRouteThemes()` returns none at `wcag2a`/`wcag2aa` in **light and dark**, each violation naming its theme, and both themes applied and painted differently | never |
 | **R6** | zero console errors, zero failed requests | nothing on `console.error`, no response ≥ 400 | never |
 | **R7** | interactive within budget | p95 under the route's recorded budget | never |
-| **R8** | every enabled control does something | every enabled `button`, same-origin `a[href]` and depth-1 `menuitem` in `main` — plus the shell chrome, measured once under `/[org]` — produces, within **1 000 ms** of activation, a navigation, a new overlay, a DOM mutation in `main`, an `aria-expanded\|pressed\|selected\|checked` flip, a network request, a download or a `role=status` toast | `redirect-only`, `no-enabled-controls` |
+| **R8** | every enabled control does something | every enabled `button`, same-origin `a[href]` and depth-1 `menuitem` in `main` — plus the shell chrome, measured once under `/[org]` — produces, within **1 000 ms** of activation, a navigation, a new overlay, a DOM mutation in `main`, an `aria-expanded\|pressed\|selected\|checked` flip, a network request, a download, a new tab or a `role=status` toast | `redirect-only`, `no-enabled-controls` |
 
 **R8 IS MEASURED WITHOUT EVER PRESSING A CONFIRM.** `e2e/audit/inert.ts`'s `activate()` refuses to
 click while a dialog or an alertdialog is open, and a confirm button exists nowhere else — so the
@@ -349,9 +349,14 @@ page that polls, "a request happened" is true of every control and therefore evi
 
 **Three things are declared out of scope, each with its reason, none of them silent.** A **disabled**
 control is not scored — it is counted as `disabled-with-reason` / `disabled-no-reason` for a later
-R9, because "why is this greyed out" is a different question. An **external** link PASSES on a real
+R9, because "why is this greyed out" is a different question. A control inside an **`inert`** subtree
+is not enumerated at all: the browser has already taken it out of the click, focus and accessibility
+model, so no user can reach it (#4939 — the chat scroller's faded-out "Scroll to latest"). An **external** link PASSES on a real
 `href` and is never clicked: activating it navigates the run out of the console, and whether the
-destination exists is not R8's question. A control that opens a **file chooser** is detected (via
+destination exists is not R8's question. A same-origin link that opens a **new tab** (`target="_blank"`)
+is activated, and the tab it opens (`page.on("popup")`) is its effect; the tab is closed unread, for
+the same reason — before #4939 nothing listened for it, so every same-origin docs link read as inert.
+A control that opens a **file chooser** is detected (via
 `page.on("filechooser")`, so the exclusion is reachable rather than vacuous) and excluded. So is the
 shell's **sign out**, and that one is a single spelled-out pattern: revoking the run's session would
 make every later verdict a measurement of the sign-in page wearing the route's name.
