@@ -11,9 +11,10 @@ on:
   pull_request:
   push:
     branches: [main]
-  # Historical native-queue trigger. `provision-e2e` still selects it, but Mergify does not emit
-  # `merge_group`, so the T1 job currently has no live trigger (#4173). Keep the dead source visible
-  # until T1's replacement home is decided; the weekly health report now fails loudly on its age.
+  # Historical native-queue trigger. Mergify does not emit `merge_group` (#4173) — a Mergify queue
+  # build is a `pull_request` run on a `mergify/merge-queue/*` draft PR, and that is what
+  # `provision-e2e` and scripts/merge-signal-health.sh now read (#2759). Kept so the jobs that still
+  # name it keep working if a native queue ever returns; nothing fires it today.
   merge_group:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC — mutation testing (slow, non-blocking)
@@ -1587,6 +1588,12 @@ jobs:
       - name: Worktree start-point honesty (a landed remote branch is not a base)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/worktree-base-test.sh
+      # The weekly merge-signal report grades the heavy signals over Mergify's queue builds (#2759).
+      # Offline — a fake `gh` serves fixtures — and it mutates the script five times and requires
+      # every mutant to fail the suite, so a refusal that quietly became a pass cannot stay green.
+      - name: "Merge-signal health grades Mergify queue builds, and refuses a dead or stale source (#2759)"
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/merge-signal-health-test.sh
       - name: Board claim arbitration (earliest-lease-wins) + PR predicates
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/claim-work.sh --self-test
@@ -2584,17 +2591,33 @@ jobs:
 
   provision-e2e:
     name: Provisioning E2E (T1 · real runner → kind)
-    # ⚠️ THIS JOB HAS NOT RUN SINCE 2026-07-21, AND THE COMMENT HERE SAID OTHERWISE FOR SIX WEEKS.
+    # RUNS ON EVERY MERGIFY QUEUE BUILD (#2759), and on `merge_group` should a native queue return.
     #
-    # It used to read "runs when a PR enters the merge queue". `merge_group` fires only under
-    # GitHub's NATIVE merge queue, and `.mergify.yml` replaced that queue on 2026-07-21 — precisely
-    # because this job, being merge_group-only, failed on missing auth env and wedged every queued
-    # PR. Measured 2026-09-03: all 107 merge_group CI runs in the repo are dated 2026-07-18..21,
-    # and the last twelve all FAILED. So the T1 provisioning keystone has had no live trigger at
-    # all, while its own comment asserted a schedule it no longer had.
+    # History, because the comment here was wrong for six weeks: this job used to be
+    # `merge_group`-only. That event fires only under GitHub's NATIVE queue, which `.mergify.yml`
+    # replaced on 2026-07-21 — precisely because this job failed on missing auth env there and
+    # wedged every queued PR. Measured 2026-09-03: all 107 merge_group CI runs are dated
+    # 2026-07-18..21, so T1 had no live trigger at all from then until #2759.
     #
-    # It is deliberately merge-queue-only: manual dispatch lacks the real runner/control-plane
-    # prerequisites and would produce a predictable red rather than a useful signal.
+    # A Mergify queue build is a `pull_request` run whose head is the draft PR Mergify opens from
+    # `mergify/merge-queue/<hash>`, so `github.head_ref` is the selector. On a feature PR's own run
+    # this job is `skipped`; on the queue build it runs. The branch name alone is not an identity —
+    # anyone can open a PR from a fork branch with that name — so the head repository must also be
+    # this one; Mergify pushes its queue branches here. (A fork that edits ci.yml can rewrite this
+    # `if:` too; scripts/merge-signal-health.sh applies the same head-repository test, so such a
+    # run is never graded as queue evidence either way.)
+    #
+    # WHY THIS CANNOT WEDGE THE QUEUE: it is OBSERVE-ONLY. The name is in none of the three
+    # required-check lists (infra/github/variables.tf, .mergify.yml merge_conditions and
+    # merge_protections — scripts/ci/check-required-checks.mjs keeps those in step), and nothing
+    # `needs:` it, so a red, a skip or a cancel here reaches no condition Mergify waits on. The one
+    # visible effect of a red is the queue build's overall run conclusion. Promoting it is NOT a
+    # list edit: merge_protections are evaluated on the PR itself, where this job is skipped, and
+    # Mergify's `check-success=` does not accept `skipped` — see the always-report rule
+    # scripts/merge-signal-health.sh prints with any PROMOTE verdict.
+    #
+    # It stays off manual dispatch: that lacks the real runner/control-plane prerequisites and
+    # would produce a predictable red rather than a useful signal.
     #
     # What it does, when it runs: a real runner PROCESS claims a QUEUED job from a real
     # Postgres-backed control plane and drives the full RunDeployV2 spine against a genuine `kind`
@@ -2602,7 +2625,11 @@ jobs:
     # `e2e_t1` build tag keeps it out of the fast per-PR Go suite; ALETHIA_E2E_T1_REQUIRE=1 turns a
     # missing prerequisite (docker/kind/tofu) into a HARD FAIL, never a green skip, so the signal
     # cannot hollow out. Extends the in-process T0 (which stays in the `go` job as a compile check).
-    if: github.event_name == 'merge_group'
+    if: >-
+      github.event_name == 'merge_group'
+      || (github.event_name == 'pull_request'
+          && startsWith(github.head_ref, 'mergify/merge-queue/')
+          && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     services:
       # Mirrors the `integration` job: a throwaway Postgres that db:migrate turns into
