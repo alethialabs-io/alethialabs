@@ -5,6 +5,7 @@
 import { coerceEnum } from "@/lib/coerce";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { Button } from "@repo/ui/button";
+import { DisabledReason } from "@repo/ui/disabled-reason";
 import {
   Command,
   CommandEmpty,
@@ -25,6 +26,10 @@ import {
 import { authClient } from "@/lib/auth/client";
 import { cn } from "@repo/ui/utils";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
+import {
+  GIT_PROVIDER_NOT_ENABLED,
+  type GitProviderAvailability,
+} from "@/lib/connectors/git-providers";
 
 import { fetchRepositoriesByProvider } from "@/app/server/actions/git/repositories";
 import { Repository } from "@/app/server/actions/git/types";
@@ -41,6 +46,36 @@ interface RepositorySelectorProps {
   required?: boolean;
   variant?: "default" | "settings";
   onRepositorySelect?: (repository: Repository) => void;
+  /**
+   * Which providers this instance can link, from `computePlatformConfigured()` on the server page.
+   * An unconfigured provider's Link button renders disabled with the reason "Not enabled on this
+   * instance" (via `DisabledReason`: tooltip on hover and focus, and its `aria-describedby`).
+   * Omitted: every provider is offered, as before.
+   */
+  providerAvailability?: GitProviderAvailability;
+}
+
+/** The order the Link buttons are offered in. */
+const LINK_ORDER = [
+  "github",
+  "gitlab",
+  "bitbucket",
+] as const satisfies readonly PublicGitProvider[];
+
+const PROVIDER_LABEL: Record<PublicGitProvider, string> = {
+  github: "GitHub",
+  gitlab: "GitLab",
+  bitbucket: "Bitbucket",
+};
+
+/**
+ * Where a provider link returns to: the page the user linked FROM. Absolute, because Better Auth
+ * checks a relative callbackURL against a pattern that rejects the `~` in org routes (see
+ * connectors-page.tsx), while an absolute one is matched by its trusted origin.
+ */
+function linkCallbackUrl(): string {
+  const { origin, pathname, search } = window.location;
+  return `${origin}${pathname}${search}`;
 }
 
 const PROVIDER_HOSTS: Record<string, PublicGitProvider> = {
@@ -77,6 +112,7 @@ export function RepositorySelector({
   required,
   variant = "default",
   onRepositorySelect,
+  providerAvailability,
 }: RepositorySelectorProps) {
   const sharedCtx = useRepositoryContext();
   const [repositories, setRepositories] = useState<Repository[]>([]);
@@ -215,7 +251,7 @@ export function RepositorySelector({
 
   const handleLinkAccount = async (providerName: PublicGitProvider) => {
     try {
-      const callbackURL = "/dashboard/configure";
+      const callbackURL = linkCallbackUrl();
 
       // Better Auth account linking — native GitHub via linkSocial (repo
       // scope); self-hosted GitLab + Bitbucket via the genericOAuth link
@@ -236,6 +272,33 @@ export function RepositorySelector({
         `Failed to link ${providerName} account. Please try signing out and back in.`,
       );
     }
+  };
+
+  /** A provider's Link button: live when this instance can link it, disabled with the reason when not. */
+  const linkButton = (
+    provider: PublicGitProvider,
+    text: string,
+    className: string | undefined,
+    iconClassName: string,
+  ) => {
+    const enabled = providerAvailability?.[provider] ?? true;
+    return (
+      <DisabledReason
+        key={provider}
+        reason={enabled ? null : GIT_PROVIDER_NOT_ENABLED}
+      >
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={className}
+          onClick={() => handleLinkAccount(provider)}
+        >
+          <GitProviderIcon provider={provider} className={iconClassName} />{" "}
+          {text}
+        </Button>
+      </DisabledReason>
+    );
   };
 
   if (loading) {
@@ -265,32 +328,15 @@ export function RepositorySelector({
           Link an account to select repositories automatically, or enter the URL
           manually.
         </p>
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => handleLinkAccount("github")}
-          >
-            <GitProviderIcon provider="github" className="mr-2" /> Link GitHub
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => handleLinkAccount("gitlab")}
-          >
-            <GitProviderIcon provider="gitlab" className="mr-2" /> Link GitLab
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => handleLinkAccount("bitbucket")}
-          >
-            <GitProviderIcon provider="bitbucket" className="mr-2" /> Link
-            Bitbucket
-          </Button>
+          {LINK_ORDER.map((p) =>
+            linkButton(p, `Link ${PROVIDER_LABEL[p]}`, undefined, "mr-2"),
+          )}
           <div className="w-full mt-2">
             <Button
               type="button"
@@ -431,6 +477,7 @@ export function RepositorySelector({
                 )}
               />
               <span
+                role="alert"
                 className={cn(
                   "truncate text-sm",
                   variant === "settings"
@@ -575,39 +622,8 @@ export function RepositorySelector({
           <p className="text-ui-2xs uppercase font-bold text-muted-foreground w-full mb-1">
             Link Platform
           </p>
-          {!linkedProviders.includes("github") && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => handleLinkAccount("github")}
-            >
-              <GitProviderIcon provider="github" className="mr-1" /> GitHub
-            </Button>
-          )}
-          {!linkedProviders.includes("gitlab") && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => handleLinkAccount("gitlab")}
-            >
-              <GitProviderIcon provider="gitlab" className="mr-1" /> GitLab
-            </Button>
-          )}
-          {!linkedProviders.includes("bitbucket") && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => handleLinkAccount("bitbucket")}
-            >
-              <GitProviderIcon provider="bitbucket" className="mr-1" />{" "}
-              Bitbucket
-            </Button>
+          {LINK_ORDER.filter((p) => !linkedProviders.includes(p)).map((p) =>
+            linkButton(p, PROVIDER_LABEL[p], "h-7 text-xs", "mr-1"),
           )}
         </div>
       )}

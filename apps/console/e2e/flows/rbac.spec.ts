@@ -564,12 +564,17 @@ test.describe("RBAC — General settings", () => {
 		await expect(owner.page).toHaveURL(new RegExp(`/${owner.orgSlug}`));
 	});
 
-	test("Transfer ownership is a stub → surfaces a 'coming soon' toast", async ({ owner }) => {
+	// #4996 (R8): Transfer was a live button whose only effect was a "coming soon" toast. It is now
+	// disabled, and DisabledReason gives the reason to pointer, keyboard and screen reader alike.
+	test("Transfer ownership is a stub → disabled, and says ownership transfer is coming soon", async ({
+		owner,
+	}) => {
 		await owner.page.goto(generalUrl(owner.orgSlug));
 		await expect(owner.page.getByRole("heading", { name: "Danger zone" })).toBeVisible({
 			timeout: 30_000,
 		});
-		await owner.page.getByRole("button", { name: /^Transfer$/ }).click();
-		await expect(owner.page.getByText(/ownership transfer is coming soon/i)).toBeVisible();
+		const transfer = owner.page.getByRole("button", { name: /^Transfer$/ });
+		await expect(transfer).toBeDisabled();
+		await expect(transfer).toHaveAccessibleDescription(/ownership transfer is coming soon/i);
 	});
 });
