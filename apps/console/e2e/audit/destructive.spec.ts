@@ -690,6 +690,56 @@ async function amendForClosedMenu(page: Page, entry: ControlEntry, reason: strin
 	return `${reason} — and no menu was open when the item was read, so the menu opened by {menu: "${step.menu}"} was lost between the reach and the count; the item's absence says nothing about the persona`;
 }
 
+/** How many times the reach is re-walked when the menu holding the control was lost before the count. */
+const REACH_REWALK_ATTEMPTS = 2;
+
+/**
+ * Was the control's MENU lost, rather than the control never offered? True only when the entry's
+ * LAST reach step is a `menu:` step (so the control lives inside that menu), the count found
+ * nothing, and no menu is open now. A chain that ends in some other step legitimately closes its
+ * menu on the way (`{menu: "More"}, {open: "Environment settings"}`), so a shut menu there is not a
+ * loss, and re-walking it would re-click an `open:` step.
+ */
+async function lostTheControlsMenu(page: Page, entry: ControlEntry, reason: string): Promise<boolean> {
+	const last = entry.reach?.at(-1);
+	if (typeof last?.menu !== "string" || !reason.includes("is not rendered")) return false;
+	return !(await openMenuLocator(page).isVisible().catch(() => false));
+}
+
+/**
+ * `resolveTrigger`, with the one retry a LOST MENU licenses.
+ *
+ * A row menu can be torn down by a re-render between `walkReach` opening it and the item being
+ * counted (#5023: `members-table.tsx` rebuilt its cell components on every render, so a refetch
+ * remounted the cell and shut the menu). The item's absence then says nothing about the persona,
+ * and the fix is to open the menu again — the thing a person would do. So when the count withholds
+ * "not rendered" AND `lostTheControlsMenu` says the menu is gone, the reach is re-walked (at most
+ * `REACH_REWALK_ATTEMPTS` times) and the count taken again. A re-walk that cannot be taken stops the
+ * retries at once and its reason is appended.
+ *
+ * Only then is the verdict withheld, with `amendForClosedMenu`'s reason unchanged at its head: the
+ * retry buys a measurement when the loss was transient and changes nothing when it persists. It
+ * never turns a withhold into a pass by itself — a locator comes back only from a count of one.
+ */
+async function resolveAfterReach(page: Page, entry: ControlEntry, where: string, settleMs = 8_000): Promise<Resolution> {
+	let resolved = await resolveTrigger(page, entry, where, settleMs);
+	let rewalks = 0;
+	let rewalkFailure: string | null = null;
+	while ("withhold" in resolved && rewalks < REACH_REWALK_ATTEMPTS && (await lostTheControlsMenu(page, entry, resolved.withhold))) {
+		rewalks++;
+		rewalkFailure = await walkReach(page, entry);
+		if (rewalkFailure) break;
+		resolved = await resolveTrigger(page, entry, where, settleMs);
+	}
+	if ("locator" in resolved) return resolved;
+	const amended = await amendForClosedMenu(page, entry, resolved.withhold);
+	if (rewalks === 0) return { withhold: amended };
+	const retried = rewalkFailure
+		? `the reach was re-walked ${rewalks} time(s) and the last re-walk could not be taken: ${rewalkFailure}`
+		: `the reach was re-walked ${rewalks} time(s) and the item was still not on the page`;
+	return { withhold: `${amended} (${retried})` };
+}
+
 /**
  * Attach what the page looked like when a reach step could not be taken: a screenshot and the
  * accessibility tree of the scope the step searched.
@@ -1005,9 +1055,11 @@ for (const entry of CONTROLS) {
 			return;
 		}
 
-		const resolved = await resolveTrigger(page, entry, url);
+		// A menu lost between the reach and the count is re-opened (bounded) before anything is
+		// withheld — see `resolveAfterReach`.
+		const resolved = await resolveAfterReach(page, entry, url);
 		if ("withhold" in resolved) {
-			withholdWithFixture(entry, await amendForClosedMenu(page, entry, resolved.withhold));
+			withholdWithFixture(entry, resolved.withhold);
 			return;
 		}
 		const trigger = resolved.locator;
@@ -1301,7 +1353,8 @@ test("the run measured something — a withheld verdict is not a pass", async ()
 // one match, two identically-named controls, a visible control beside an A11Y-HIDDEN duplicate (NOT
 // ambiguity), a visible control beside a ZERO-BOX duplicate (ambiguity), and a name that is a
 // mid-word PREFIX of another control's (not a candidate). A seventh test drives `walkReach`'s
-// overlay scoping, the step before it. Each drives the REAL
+// overlay scoping, the step before it, and two more drive `resolveAfterReach`'s bounded re-walk of a
+// LOST menu in both directions (re-opened → measured; lost for good → still withheld, #5023). Each drives the REAL
 // function, not a restatement of it — a self-test that re-implements the rule verifies a copy.
 //
 // The last two are not decoration. They are the only assertions on the ⚠ in `resolveTrigger`'s
@@ -1531,6 +1584,70 @@ test("self-test — a menu LOST after the reach withholds naming the menu, not t
 	expect(amended, "and the finding names the menu it lost").toContain(`the menu opened by {menu: "Manage member"} was lost between the reach and the count`);
 });
 
+test("self-test — a menu LOST once is re-walked, and the item is then MEASURED", async ({ page }) => {
+	// #5023's shape: the menu opens, a re-render removes it, and it opens again on the next click.
+	// `resolveAfterReach` must re-walk the reach and resolve the item rather than withhold it.
+	await page.setContent(`
+		<main>
+			<button aria-label="Manage member Audit Active Colleague" aria-haspopup="menu" aria-expanded="false"
+				onclick="
+					this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1);
+					this.setAttribute('aria-expanded', 'true');
+					const menu = document.createElement('div');
+					menu.id = 'row-menu';
+					menu.setAttribute('role', 'menu');
+					menu.innerHTML = '<div role=&quot;menuitem&quot; tabindex=&quot;-1&quot;>Suspend</div>';
+					document.body.appendChild(menu);
+				">…</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Suspend"), control: { role: "menuitem", name: "Suspend" }, reach: [{ menu: "Manage member" }] };
+	expect(await walkReach(page, entry), "premise: the first reach opened the menu").toBeNull();
+	// The re-render, driven once rather than timed.
+	await page.evaluate(() => {
+		document.getElementById("row-menu")?.remove();
+		document.querySelector("button")?.setAttribute("aria-expanded", "false");
+	});
+	const resolved = await resolveAfterReach(page, entry, "about:self-test", 1_000);
+	expect("locator" in resolved, `a menu lost ONCE must be re-opened and the item measured: ${"withhold" in resolved ? resolved.withhold : ""}`).toBe(true);
+	if (!("locator" in resolved)) return;
+	await expect(resolved.locator).toHaveText("Suspend");
+	await expect(page.getByRole("button", { name: /Manage member/ }), "exactly one re-walk: the reach, then the re-open").toHaveAttribute("data-clicks", "2");
+});
+
+test("self-test — a menu LOST for good still withholds, with the lost-menu reason and the re-walk named", async ({ page }) => {
+	// The persistence direction: the trigger opens its menu on the FIRST click only, so once the
+	// menu is gone every re-walk fails. The retry must change nothing about the verdict — it is
+	// still withheld, the lost-menu amendment still heads it, and the retries are bounded.
+	await page.setContent(`
+		<main>
+			<button aria-label="Manage member Audit Active Colleague" aria-haspopup="menu" aria-expanded="false"
+				onclick="
+					this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1);
+					if (this.dataset.clicks !== '1') return;
+					this.setAttribute('aria-expanded', 'true');
+					const menu = document.createElement('div');
+					menu.id = 'row-menu';
+					menu.setAttribute('role', 'menu');
+					menu.innerHTML = '<div role=&quot;menuitem&quot; tabindex=&quot;-1&quot;>Suspend</div>';
+					document.body.appendChild(menu);
+				">…</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Suspend"), control: { role: "menuitem", name: "Suspend" }, reach: [{ menu: "Manage member" }] };
+	expect(await walkReach(page, entry), "premise: the first reach opened the menu").toBeNull();
+	await page.evaluate(() => {
+		document.getElementById("row-menu")?.remove();
+		document.querySelector("button")?.setAttribute("aria-expanded", "false");
+	});
+	const resolved = await resolveAfterReach(page, entry, "about:self-test", 1_000);
+	expect("withhold" in resolved, "a menu that never comes back cannot be measured").toBe(true);
+	if (!("withhold" in resolved)) return;
+	expect(resolved.withhold, "the observation is kept").toContain("is not rendered at about:self-test");
+	expect(resolved.withhold, "the lost-menu amendment still names the menu").toContain(`the menu opened by {menu: "Manage member"} was lost between the reach and the count`);
+	expect(resolved.withhold, "and the retry is on the record").toContain("the reach was re-walked 1 time(s) and the last re-walk could not be taken");
+	const clicks = Number(await page.getByRole("button", { name: /Manage member/ }).getAttribute("data-clicks"));
+	expect(clicks, "the re-walks are bounded").toBeLessThanOrEqual(1 + REACH_REWALK_ATTEMPTS * MENU_OPEN_ATTEMPTS);
+});
+
 test("self-test — a control whose item is genuinely absent from an OPEN menu keeps the persona reason", async ({ page }) => {
 	// The other direction, and the one that keeps the amendment honest: a menu that is open and
 	// simply does not carry the item is exactly the finding `resolveTrigger` words, and adding a
@@ -1545,6 +1662,10 @@ test("self-test — a control whose item is genuinely absent from an OPEN menu k
 	if (!("withhold" in resolved)) throw new Error("premise: `Suspend` is not in this menu, so the verdict must be withheld");
 	const amended = await amendForClosedMenu(page, entry, resolved.withhold);
 	expect(amended, "nothing was lost — the menu is right there").toBe(resolved.withhold);
+	// And no re-walk: an open menu without the item is not a loss, so the retry must not fire (this
+	// markup has no trigger, so a re-walk would fail and append its reason).
+	const viaRetry = await resolveAfterReach(page, entry, "about:self-test", 1_000);
+	expect(viaRetry, "the retry path withholds with the same persona reason, untouched").toEqual({ withhold: resolved.withhold });
 });
 
 // ── the floor's own test ────────────────────────────────────────────────────────────────────────
