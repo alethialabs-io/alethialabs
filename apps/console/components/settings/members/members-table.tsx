@@ -525,8 +525,10 @@ export function MembersTable() {
   const filters = useMembersFilters((s) => s.filters);
   const set = useMembersFilters((s) => s.set);
   const reset = useMembersFilters((s) => s.reset);
-  useFilterUrlSync(useMembersFilters, DEFAULT_MEMBERS_FILTERS);
-  const search = useDebouncedValue(filters.search);
+  const urlRead = useFilterUrlSync(useMembersFilters, DEFAULT_MEMBERS_FILTERS);
+  // Seeded from the URL, so a pasted `?search=…&statuses=…` asks first for the key the route
+  // prefetched — not `{statuses}` alone, which it did not (#4999, as #4980 on `~/runners`).
+  const search = useDebouncedValue(filters.search, 250, { urlRead });
   const query = useMemo(
     () => normalizeMembersQuery(filters, search),
     [filters, search],
@@ -558,6 +560,14 @@ export function MembersTable() {
   // `keepPreviousData` (in the hook) keeps the table's rows across a filter change —
   // `isPlaceholderData` is what marks them stale while the next answer loads.
   const page = useMembersPageQuery(query);
+  // The list is BUSY while what it shows may not answer the URL and the bar: before the link has
+  // been read into the store, before the first answer, while the rows are the previous query's
+  // placeholder, and while a typed search is still inside its debounce. Exposed as `aria-busy` on
+  // the table's root, so assistive tech — and the audit's F8 read, which refuses a busy read as an
+  // answer (#4980) — can tell an answer from a stand-in (#4999). The dim below stays the
+  // placeholder half only: dimming the first paint of every visit would flash a correct page.
+  const busy =
+    !urlRead || page.isPending || page.isPlaceholderData || filters.search !== search;
   // Inviting is the paid (Pro) value — viewing members is always open. The billing-backed
   // `canInvite` gate (card-backed/paid) decides whether the Invite button opens the form
   // or the Pro upsell; the server enforces it again in `beforeCreateInvitation`.
@@ -725,7 +735,7 @@ export function MembersTable() {
 
   if (page.isPending) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4" aria-busy>
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-64 w-full" />
       </div>
@@ -733,7 +743,7 @@ export function MembersTable() {
   }
 
   return (
-    <div>
+    <div aria-busy={busy}>
       <PageToolbar
         className="mb-4"
         description="Organization members and pending invitations."

@@ -9,6 +9,16 @@
 // (#4890). `getMembersPage(q)` narrows both record kinds in SQL and counts the status, role and
 // team facets over the org's unfiltered universe, so `filterMembers` and `membersFacetCounts`
 // are gone and this module is the normalize step and nothing else.
+//
+// It is also what the members ROUTE imports to prefetch a pasted filtered link (#4999), so it
+// stays pure: no React, no store, no `"use client"`. A server component cannot import the
+// sessionStorage-persisted store module, and a client module imported there is a reference, not
+// a callable function.
+
+import {
+	filterStateFromUrl,
+	type ParamReader,
+} from "@/lib/query/filter-url-codec";
 
 /** The unified row the members table renders — a member or a pending invitation. */
 export interface MemberRowView {
@@ -100,4 +110,15 @@ export function normalizeMembersQuery(
 	const teams = normalizeList(filters.teams);
 	if (teams) query.teams = teams;
 	return query;
+}
+
+/**
+ * The members list's query for a URL — the key the client settles on once `useFilterUrlSync` has
+ * read the link (and the debounced search has landed with it), so it is the key the route must
+ * prefetch for a pasted filtered link to render filtered rather than as the unfiltered
+ * placeholder (#4999, the audit's F8 — the #4980 class on `~/runners`).
+ */
+export function membersQueryFromUrl(params: ParamReader): NormalizedMembersQuery {
+	const filters = filterStateFromUrl(params, DEFAULT_MEMBERS_FILTERS);
+	return normalizeMembersQuery(filters, filters.search);
 }
