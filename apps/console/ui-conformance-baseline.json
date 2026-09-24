@@ -1704,7 +1704,7 @@
 		{
 			"route": "/[org]/~/new",
 			"redirectOnly": false,
-			"surfaceFiles": 375,
+			"surfaceFiles": 376,
 			"families": {
 				"S": {
 					"instrumented": 4,
