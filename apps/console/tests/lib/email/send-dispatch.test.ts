@@ -17,9 +17,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ render: vi.fn(), sesSend: vi.fn() }));
 
 vi.mock("@react-email/components", () => ({ render: h.render }));
+// `function`, not an arrow: send.ts calls both with `new`, and since vitest 4 a spy invoked as a
+// constructor runs its implementation as one — an arrow implementation throws "is not a
+// constructor". Returning an object from a constructor replaces `this`, so the shape is unchanged.
 vi.mock("@aws-sdk/client-sesv2", () => ({
-	SESv2Client: vi.fn(() => ({ send: h.sesSend })),
-	SendEmailCommand: vi.fn((input: unknown) => ({ input })),
+	SESv2Client: vi.fn(function () {
+		return { send: h.sesSend };
+	}),
+	SendEmailCommand: vi.fn(function (input: unknown) {
+		return { input };
+	}),
 }));
 
 const EMAIL_KEYS = [
