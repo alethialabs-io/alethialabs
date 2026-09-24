@@ -1214,7 +1214,8 @@ jobs:
         env:
           PREFLIGHT: "1"
           ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
-          ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
+          # ALETHIA_E2E_REGION is inherited from $GITHUB_ENV — never re-declared at step level,
+          # which would SHADOW the export (TestWorkflowStepEnvDoesNotShadowGithubEnv, #5055).
         run: ./scripts/e2e/aws-cleanup.sh
 
       # ── The real proof. A finer step-level timeout than the job cap so a hung apply
@@ -1378,9 +1379,12 @@ jobs:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
           ALETHIA_E2E_PROJECT: ${{ env.E2E_PROJECT }}
           ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
-          # Generalized region (the compute step also exports this to $GITHUB_ENV; explicit here
-          # for clarity). resolveT2Region reads ALETHIA_E2E_REGION for every provider.
-          ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
+          # ALETHIA_E2E_REGION (resolveT2Region reads it for every provider) and ALETHIA_E2E_CLI_BIN
+          # are deliberately NOT declared here: both are exported to $GITHUB_ENV by earlier steps
+          # (the compute step / gcpzone, and the cli-demo build step), and a step-level entry
+          # SHADOWS the export. #5055: `ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}` here rendered
+          # EMPTY over the built path, and the first-ever cli-demo run refused itself in 0.00s.
+          # TestWorkflowStepEnvDoesNotShadowGithubEnv (test/e2e) fails on the shape.
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
           # ── Day-2 SOAK window (BYOC A0.3). The soak's WINDOW is deliberately NOT set here.
           #    It is exported by the "Resolve full-bar dimension" step from
@@ -1808,16 +1812,15 @@ jobs:
           #    re-driving it through the CLI would double the bill to re-prove it. That is why this
           #    is safe to leave ON for every cloud rather than dispatching it like a spend scenario.
           #
-          #    ALETHIA_E2E_CLI_BIN points at the binary under test. Leave it UNSET and the harness
-          #    uses whatever `alethia` is on PATH. Point it at a RELEASE artifact to prove the bar
-          #    against the binary that actually ships — which is the only run that means anything:
-          #    the released CLI was v0.4.0 while `project ... placement` (#2313) and
-          #    `connector hetzner` (#2316) existed only on dev, so a green run against a working-tree
-          #    build would have proven the wrong thing.
+          #    ALETHIA_E2E_CLI_BIN points at the binary under test. It is NOT set here: the
+          #    "cli-demo — build the `alethia` binary under test" step exports it to $GITHUB_ENV —
+          #    vars.E2E_CLI_BIN when a maintainer pinned a RELEASE artifact (the only run that means
+          #    anything: the released CLI was v0.4.0 while `project ... placement` (#2313) and
+          #    `connector hetzner` (#2316) existed only on dev), else a build of this checkout.
+          #    Re-declaring it here shadows that export (see the region note above, #5055).
           #
-          #    Both plain VARIABLES. Unset ⇒ empty ⇒ a clean skip. ──
+          #    A plain VARIABLE. Unset ⇒ empty ⇒ a clean skip. ──
           ALETHIA_E2E_CLI_DEMO: ${{ vars.E2E_CLI_DEMO }}
-          ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}
           # ── The image the in-cluster bootstrap Jobs run (#3216). `selfimage.Ref()` reads this
           #    FIRST, ahead of the ALETHIA_RUNNER_SELF_IMAGE a published image bakes in — which is
           #    exactly the override it was built for, and which nothing that shipped ever set.
@@ -2078,8 +2081,8 @@ jobs:
           # names, booleans, counts and a PUBLIC commit + plan digest.
           ALETHIA_E2E_BYO_IAC_SUMMARY: ${{ runner.temp }}/byo-iac-summary.json
           # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
-          # the capture script reads (region + the unique cluster name for the summary).
-          ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
+          # the capture script reads (the unique cluster name for the summary). The region needs
+          # no mapping: ALETHIA_E2E_REGION is itself exported, and re-declaring it would shadow it.
           ALETHIA_E2E_CLUSTER: ${{ env.E2E_CLUSTER }}
         run: |
           # The runner's kubeconfig only exists on the success path. Point KUBECONFIG at it
@@ -2412,7 +2415,9 @@ jobs:
         if: always() && steps.gate.outputs.run == 'true' && vars.E2E_CLI_DEMO != ''
         env:
           ALETHIA_E2E_CLI_DEMO: ${{ vars.E2E_CLI_DEMO }}
-          ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}
+          # A pinned release wins; else the path the cli-demo build step exported (read BACK, not
+          # shadowed — #5055); else empty, and the script below builds one.
+          ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN || env.ALETHIA_E2E_CLI_BIN }}
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
           # ── CEILING SATISFACTION PROBES (t2_cli_ceiling.go). ──
           #
