@@ -993,6 +993,23 @@ jobs:
           pnpm gen:shared-surface
           git diff --exit-code -- apps/console/shared-surface-allowlist.yaml \
             || { echo "::error::apps/console/shared-surface-allowlist.yaml's ledger counters are stale — run 'pnpm gen:shared-surface' and commit."; exit 1; }
+      # Every interactive control in the console has a role and an accessible name (#5046): an
+      # icon-only button or link, a clickable non-control, an unlabelled field. A PARSE (the
+      # console's own `typescript`), so it reaches the controls behind conditions the rendered axe
+      # audit never opens. Measured drift is `lifts:` debt in apps/console/control-names-allowlist.yaml,
+      # checked in both directions; the counters are derived, and the third step diffs them.
+      - name: Every console control has a role and an accessible name
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm -C apps/console run check:control-names
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node apps/console/scripts/check-control-names.mjs --self-test
+      - name: Control-names ledger counters are derived from the rows, not typed
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          pnpm -C apps/console run gen:control-names
+          git diff --exit-code -- apps/console/control-names-allowlist.yaml \
+            || { echo "::error::apps/console/control-names-allowlist.yaml's ledger counters are stale — run 'pnpm -C apps/console run gen:control-names' and commit."; exit 1; }
       # The connector catalog's `icon_url`s. Eleven of the eighteen icon slugs it named had no file
       # behind them (#3802): the generator emitted every one verbatim into the TS registry AND
       # persisted it into `connectors.icon_url`, so the console asked for an asset that 404s on
