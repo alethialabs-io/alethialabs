@@ -18,7 +18,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
-import { accessibleName, activate, CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, namesDestructiveAction, preActivationExclusion } from "./inert";
+import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
 import { hitTest } from "./overlays";
 import {
 	controlFixture,
@@ -410,6 +410,42 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		expect(problems.join(" "), "the control says the PASS arm stopped firing").toMatch(/dialog opener reported/);
 	});
 
+	test("R8 — the control names the already-current arm when the current row stops saying so", async ({ page }) => {
+		// #4980. Without `aria-current` the row is an ordinary handler-less button and MUST read inert;
+		// the arm has to go red here, or the rule could be deleted and the control would stay green.
+		const mutant = CONTROL_FIXTURE.replace('<button aria-current="true">', "<button>");
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/current row reported null/);
+	});
+
+	test("R8 — the control names the already-current arm when it starts excusing a lone pressed toggle", async ({ page }) => {
+		// The other direction: a LONE pressed toggle that does not unpress is inert. Give it a pressed
+		// sibling and the rule reads a one-of-N group — the arm that expects inert must name itself.
+		const mutant = CONTROL_FIXTURE.replace('<div><button aria-pressed="true">Pressed toggle</button></div>', '<div><button aria-pressed="true">Pressed toggle</button><button aria-pressed="false">Sibling</button></div>');
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/pressed toggle reported "already-current"/);
+	});
+
+	test("R8 — enumerating at domcontentloaded sees the skeleton; waiting for readiness sees the page", async ({ page }) => {
+		// #4980, the defect and its fix on one fixture: `~/runners` and `[project]/architecture` were
+		// filed N/A `no-enabled-controls` from their `loading.tsx`.
+		await page.setContent(LOADING_FIXTURE);
+		expect((await enumerateControls(page, "main", "main")).controls, "the loading state offers nothing").toHaveLength(0);
+		const ready = await awaitReady(page, 8_000);
+		expect(ready.settled).toBe(true);
+		expect((await enumerateControls(page, "main", "main")).controls.map((c) => c.name)).toEqual(["Arrived"]);
+	});
+
+	test("R8 — a re-navigation that never settles stops the route with page-not-ready, inside its short budget", async ({ page }) => {
+		// #4980 review: every reload paid the full 15 s route budget, so a never-settling route ran
+		// into the 120 s test timeout instead of a verdict.
+		expect(await reloadBudgetProblems(page), "the shipped re-navigation wait is bounded and stops the route").toEqual([]);
+		// The pre-fix shape: the full-budget wait that returns quietly. Both arms must name it.
+		const unbounded = await reloadBudgetProblems(page, (p) => awaitReady(p, 6_000));
+		expect(unbounded.join(" ")).toMatch(/did not stop the route with `page-not-ready`/);
+		expect(unbounded.join(" ")).toMatch(/over its \d+ms budget/);
+	});
+
 	test("R8 — the control names the enumeration when a disabled control starts being scored", async ({ page }) => {
 		const mutant = CONTROL_FIXTURE.replace('aria-disabled="true" ', "");
 		const problems = await interactionControl(page, mutant);
@@ -667,6 +703,16 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		const mutant = FILTERS_FIXTURE.replace('if (MODE === "per-keystroke") {', 'if (MODE === "never") {');
 		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
 		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/fetches per keystroke reported F10 PASS/);
+	});
+
+	test("F8 — the control names the arm when the slow bar stops declaring its placeholder busy", async ({ page }) => {
+		test.setTimeout(300_000);
+		// #4980. Without `aria-busy` the placeholder is indistinguishable from an answer by stillness —
+		// which is what `settle()` used to accept. The arm must go red when the page stops saying so,
+		// or the busy wait could be deleted and the control would still read green.
+		const mutant = FILTERS_FIXTURE.replace('document.querySelector("main").setAttribute("aria-busy", "true");', "");
+		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
+		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/loads slowly under aria-busy reported F8 FAIL/);
 	});
 
 	test("F8–F9 — the control names the arm when the one-kind bar gains an option that narrows", async ({ page }) => {

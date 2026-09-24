@@ -106,12 +106,14 @@ const noChannels: ChannelsView = {
 	count: 0,
 	facets: { types: [], status: [] },
 	stale: false,
+	busy: false,
 };
 const noPolicies: PoliciesView = {
 	rows: [],
 	count: 0,
 	facets: { status: [], kinds: [], channels: [] },
 	stale: false,
+	busy: false,
 };
 
 describe("alerts rails: a filter that matches nothing", () => {
@@ -191,6 +193,7 @@ const noActivity: ActivityView = {
 	count: 0,
 	facets: { status: [] },
 	stale: false,
+	busy: false,
 };
 
 /**

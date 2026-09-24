@@ -520,36 +520,57 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * 387 verdicts key-for-key again. Three NEW FAILs arrived, and none of them is one of the seven.
  * The F8 and R8 rows below now describe those three and nothing else. Each of the three
  * reversed verdict between runs on UNCHANGED code (see each row), so each row records a timing
- * question the instrument cannot yet settle, not a proven product defect. `#4939` stays the
- * owner only until a follow-up issue is filed for them.
+ * question the instrument cannot yet settle, not a proven product defect. They moved to #4980,
+ * which fixed both halves (the routes prefetch a filtered link's list and mark it `aria-busy`;
+ * `settle()` refuses a busy read; the roles rail says `aria-current`; R8 reads a control already in
+ * the state it selects as `already-current`). The rows stay, owned by #4980, until an imported run
+ * proves the cells — the import that clears them deletes them in the same commit.
+ *
+ * THE THIRD IMPORT — run 35867789835 @ `d69e62699`, `audit` + `audit-interaction` of ONE run
+ * again, on #4980's branch. The `routes` and `permissions` sections reproduced all 387 verdicts
+ * key-for-key. All three #4980 cells are proven: F8 PASSES on `~/alerts` and `~/runners`, which
+ * leaves F8 failing nowhere, so its row is gone. `owner39` on `~/settings/roles` PASSES. R8's N/A
+ * `no-enabled-controls` fell from 9 routes to 1 (`/cli/login`), because the enumeration now waits
+ * for the page instead of reading its skeleton. The seven R8 FAILs below are what those newly
+ * measured pages show, and what a settled page no longer hides. None of them is a #4980 cell.
+ *
+ * THE FOURTH IMPORT — run 35872640708 @ `b417c13e1`, `audit` + `audit-interaction` of ONE run, the
+ * second on #4980's branch. `routes` and `permissions` reproduced all 387 verdicts key-for-key again,
+ * and all three #4980 cells PASSED a second time (F8 `~/alerts`, F8 `~/runners`, R8
+ * `~/settings/roles`), which is the issue's stability condition. The three pick-one buttons
+ * `6c70a6b62` excuses now PASS (`/[org]`, `~/usage`, `[project]/usage`), so the R8 row below names
+ * only the four routes still red, and moves to #4996. One NEW F8 FAIL arrived on
+ * `~/settings/members`, a cell that PASSED in the third import on an unchanged table: the #4980
+ * class on a page #4980 did not touch, so it gets its own row and its own issue (#4999).
+ * `[project]/jobs` F8/F9 read NOT MEASURED (the list rendered 0 rows), a withheld measurement that
+ * never scores as a pass.
  *
  * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
 export const LIVE_DEBT = /** @type {const} */ ({
 	F8: {
-		owner: "#4939",
+		owner: "#4999",
 		why:
-			"TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and " +
-			"`~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param " +
-			"and reads the FULL count, while Reset is correct in both halves. Both cells PASSED in run " +
-			"35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between " +
-			"those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the " +
-			"URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data " +
-			"until the filtered fetch returns. `settle()` takes two equal reads 300 ms apart as settled, so " +
-			"it cannot tell a slow placeholder from an answer. Flake or defect is not settled yet.",
+			"ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, " +
+			"read from the count pill). The fresh tab kept the param but no narrowed count was read back, so " +
+			"Reset was never reached. The cell PASSED in run 35867789835 and FAILED in run 35872640708 with the " +
+			"members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and " +
+			"`~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while " +
+			"the URL is unread or the rows are placeholder data.",
 	},
 	R8: {
-		owner: "#4939",
+		owner: "#4996",
 		why:
-			"ONE route, ONE control: `button \"owner39\"` on `~/settings/roles`, which is the built-in " +
-			"`owner` rail row, selected by default. Clicking the row that is already selected changes " +
-			"nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that " +
-			"could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a " +
-			"DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 has " +
-			"no rule for a control that is already in the state it selects.",
+			"FOUR routes, six controls with no state attribute whose click showed nothing within 1 000 ms: " +
+			"`Fit view` on `[project]/architecture`, `Link GitHub`/`Link GitLab`/`Link Bitbucket` on " +
+			"`[project]/settings/preview` and on `~/new`, `Design with the agent` on `~/new`, and `Transfer` " +
+			"on `~/settings/general`. The three pick-one buttons the previous row also named (`Runner " +
+			"minutes` on both usage pages, the theme toggle's `System`) PASS in run 35872640708, so they are " +
+			"gone from this row.",
 	},
 });
+
 
 /**
  * Which section owns which live predicate, checked in both directions.
