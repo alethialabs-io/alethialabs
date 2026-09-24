@@ -19,9 +19,12 @@ manual fallback only.
 - **`dev`** (`protect-dev`): created off `staging`; feature PRs target it. **PR + green CI, 0 approvals,
   MERGIFY QUEUE.** No force-push/deletion. Mergify builds speculative branches on the projected `dev`
   tip, reruns the required checks, and squash-merges in FIFO order. It does **not** emit GitHub's native
-  `merge_group` event. The `provision-e2e` job and `scripts/merge-signal-health.sh` still read that dead
-  event source, so T1 currently has no live queue trigger and the weekly report fails loudly instead of
-  promoting stale evidence (#4173). The maintainer reviews the integrated `dev`
+  `merge_group` event: a queue build is a `pull_request` CI run on the draft PR Mergify opens from a
+  `mergify/merge-queue/*` branch. The `provision-e2e` (T1) job runs on those builds, and
+  `scripts/merge-signal-health.sh` grades the observe-only signals over them (#2759). Promoting one
+  to required means naming it here in `required_status_checks` AND in both `.mergify.yml` lists —
+  and only after its job always reports, because Mergify's `check-success=` does not accept a
+  skipped job. The maintainer reviews the integrated `dev`
   (`dev.alethialabs.io`) and promotes `dev → staging → main`.
   - **Repo settings prerequisite** (not TF-managed — the repo resource isn't in this stack): the queue
     needs `allow_auto_merge` **on** so `--auto` can enqueue. Set once:
