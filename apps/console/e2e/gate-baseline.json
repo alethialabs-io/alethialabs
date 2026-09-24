@@ -585,8 +585,7 @@
 				"RBAC — General settings › general page loads with the org profile prefilled": "passed",
 				"RBAC — General settings › profile fields render (name prefilled, description, URL)": "passed",
 				"RBAC — General settings › Save changes and Danger zone controls are present": "passed",
-				"RBAC — General settings › Delete organization opens a confirm dialog — Cancel aborts (no delete)": "passed",
-				"RBAC — General settings › Transfer ownership is a stub → surfaces a 'coming soon' toast": "passed"
+				"RBAC — General settings › Delete organization opens a confirm dialog — Cancel aborts (no delete)": "passed"
 			},
 			"flows/runners.negative.spec.ts": {
 				"Runners — the byoRunners gate is deployment-mode scoped › a Hobby org reaches the runner surface, because the upsell is hosted-only": "passed",

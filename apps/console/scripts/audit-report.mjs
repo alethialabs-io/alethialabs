@@ -545,6 +545,12 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * `[project]/jobs` F8/F9 read NOT MEASURED (the list rendered 0 rows), a withheld measurement that
  * never scores as a pass.
  *
+ * THE FIFTH IMPORT — run 35896826914 @ `633ca6efa`, `audit` + `audit-interaction` of ONE run, on
+ * #4996's branch. `routes` and `permissions` reproduced all 387 verdicts key-for-key. R8 PASSES on
+ * all four routes the row named: `Fit view`, the three `Link` buttons, `Transfer` now render disabled
+ * with a reason, `Design with the agent` counts its sonner toast. R8 fails nowhere, so its row is
+ * gone. F8 on `~/settings/members` FAILED again, on the reload half only (#4999).
+ *
  * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
@@ -553,21 +559,12 @@ export const LIVE_DEBT = /** @type {const} */ ({
 		owner: "#4999",
 		why:
 			"ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, " +
-			"read from the count pill). The fresh tab kept the param but no narrowed count was read back, so " +
-			"Reset was never reached. The cell PASSED in run 35867789835 and FAILED in run 35872640708 with the " +
+			"read from the count pill). The fresh tab kept the param but no narrowed count was read back; " +
+			"Reset was correct in run 35896826914. The cell PASSED in run 35867789835 and FAILED in runs " +
+			"35872640708 and 35896826914, with the " +
 			"members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and " +
 			"`~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while " +
 			"the URL is unread or the rows are placeholder data.",
-	},
-	R8: {
-		owner: "#4996",
-		why:
-			"FOUR routes, six controls with no state attribute whose click showed nothing within 1 000 ms: " +
-			"`Fit view` on `[project]/architecture`, `Link GitHub`/`Link GitLab`/`Link Bitbucket` on " +
-			"`[project]/settings/preview` and on `~/new`, `Design with the agent` on `~/new`, and `Transfer` " +
-			"on `~/settings/general`. The three pick-one buttons the previous row also named (`Runner " +
-			"minutes` on both usage pages, the theme toggle's `System`) PASS in run 35872640708, so they are " +
-			"gone from this row.",
 	},
 });
 

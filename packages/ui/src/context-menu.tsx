@@ -6,6 +6,7 @@ import * as React from "react";
 import { Menu as MenuPrimitive } from "@base-ui-components/react/menu";
 import { CheckIcon } from "lucide-react";
 
+import { DisabledReasonItemBody, joinDescribedBy } from "./disabled-reason";
 import { cn } from "./utils";
 
 /**
@@ -169,10 +170,17 @@ function ContextMenuItem({
   variant = "default",
   onSelect,
   onClick,
+  disabled,
+  disabledReason,
+  children,
+  "aria-describedby": ariaDescribedBy,
   ...props
 }: Omit<React.ComponentProps<typeof MenuPrimitive.Item>, "onSelect"> & {
   inset?: boolean;
   variant?: "default" | "destructive";
+  /** Why the item cannot be used. Set, it disables the item and shows the reason IN the item (a menu
+   * cannot host a hover tooltip on a disabled row) — see disabled-reason.tsx. */
+  disabledReason?: string | null;
   /** Selection callback. base-ui's own `onSelect` is the DOM text-selection event, so this maps
    * onto `onClick`. */
   onSelect?: React.MouseEventHandler<HTMLElement>;
@@ -184,18 +192,35 @@ function ContextMenuItem({
           onClick?.(event);
         }
       : undefined;
+  const reasonId = React.useId();
   return (
     <MenuPrimitive.Item
       data-slot="context-menu-item"
       data-inset={inset}
       data-variant={variant}
+      disabled={disabledReason ? true : disabled}
+      aria-describedby={
+        disabledReason
+          ? joinDescribedBy(ariaDescribedBy, reasonId)
+          : ariaDescribedBy
+      }
       className={cn(
         "data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[variant=destructive]:text-destructive data-[variant=destructive]:data-[highlighted]:bg-destructive/10 dark:data-[variant=destructive]:data-[highlighted]:bg-destructive/20 data-[variant=destructive]:data-[highlighted]:text-destructive data-[variant=destructive]:*:[svg]:!text-destructive [&_svg:not([class*='text-'])]:text-muted-foreground relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[inset]:pl-8 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        // The reason must not be dimmed with the item: the label dims instead.
+        disabledReason && "data-[disabled]:opacity-100",
         className,
       )}
       {...props}
       onClick={handleClick}
-    />
+    >
+      {disabledReason ? (
+        <DisabledReasonItemBody id={reasonId} reason={disabledReason}>
+          {children}
+        </DisabledReasonItemBody>
+      ) : (
+        children
+      )}
+    </MenuPrimitive.Item>
   );
 }
 

@@ -7,6 +7,7 @@ import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
 import { SearchIcon } from "lucide-react"
 
+import { DisabledReasonItemBody, joinDescribedBy } from "./disabled-reason"
 import { cn } from "./utils"
 import {
   Dialog,
@@ -143,19 +144,42 @@ function CommandSeparator({
   )
 }
 
+/** A palette row. `disabledReason` disables it and shows the reason IN the row — see disabled-reason.tsx. */
 function CommandItem({
   className,
+  disabled,
+  disabledReason,
+  children,
+  "aria-describedby": ariaDescribedBy,
   ...props
-}: React.ComponentProps<typeof CommandPrimitive.Item>) {
+}: React.ComponentProps<typeof CommandPrimitive.Item> & {
+  /** Why the row cannot be run. Set, it disables the row and renders the reason as secondary text. */
+  disabledReason?: string | null
+}) {
+  const reasonId = React.useId()
   return (
     <CommandPrimitive.Item
       data-slot="command-item"
+      disabled={disabledReason ? true : disabled}
+      aria-describedby={
+        disabledReason ? joinDescribedBy(ariaDescribedBy, reasonId) : ariaDescribedBy
+      }
       className={cn(
         "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        // The reason must not be dimmed with the row: the label dims instead.
+        disabledReason && "data-[disabled=true]:opacity-100",
         className
       )}
       {...props}
-    />
+    >
+      {disabledReason ? (
+        <DisabledReasonItemBody id={reasonId} reason={disabledReason}>
+          {children}
+        </DisabledReasonItemBody>
+      ) : (
+        children
+      )}
+    </CommandPrimitive.Item>
   )
 }
 

@@ -18,7 +18,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
-import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
+import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, STATUS_SELECTOR_WITHOUT_SONNER, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
 import { hitTest } from "./overlays";
 import {
 	controlFixture,
@@ -426,6 +426,19 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/pressed toggle reported "already-current"/);
 	});
 
+	test("R8 — the control names the toast arm when a sonner toast stops counting as an effect", async ({ page }) => {
+		// #4996. Sonner's toast carries no role and renders outside `main`: without `[data-sonner-toast]`
+		// in the status selector the toast button reads inert, which is how `Design with the agent`
+		// on `~/new` was filed "did nothing" while it toasted.
+		expect((await interactionControl(page, CONTROL_FIXTURE, { statusSelector: STATUS_SELECTOR_WITHOUT_SONNER })).join(" ")).toMatch(
+			/sonner toast button reported null/,
+		);
+		// And the fixture half: a toaster that renders nothing must not read as a toast.
+		const mutant = CONTROL_FIXTURE.replace('li.setAttribute("data-sonner-toast", "");', "");
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/sonner toast button reported null/);
+	});
+
 	test("R8 — enumerating at domcontentloaded sees the skeleton; waiting for readiness sees the page", async ({ page }) => {
 		// #4980, the defect and its fix on one fixture: `~/runners` and `[project]/architecture` were
 		// filed N/A `no-enabled-controls` from their `loading.tsx`.
@@ -456,7 +469,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 
 	test("R8 — a disabled control is COUNTED, with or without a reason, and never scored", async ({ page }) => {
 		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
-			<button disabled title="Ask an owner">With a reason</button>
+			<button disabled aria-describedby="why">With a reason</button><span id="why" class="sr-only">Ask an owner</span>
 			<button aria-disabled="true">With none</button>
 			<button>Enabled</button>
 		</main></body></html>`);
@@ -466,6 +479,29 @@ test.describe("the live predicates fail when the page is wrong", () => {
 			"disabled-no-reason",
 			"disabled-with-reason",
 		]);
+	});
+
+	test("R8 — a reason nobody can perceive is NO reason: a title, or a description that resolves to nothing", async ({ page }) => {
+		// The review of #5000. `disabled` + `title` was counted `disabled-with-reason` while the title
+		// could never be shown — the button's `disabled:pointer-events-none` swallows the hover, and a
+		// disabled button takes no focus. So was an `aria-describedby` pointing at no element.
+		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+			<button disabled title="Ask an owner">Titled only</button>
+			<button disabled aria-describedby="nowhere">Dangling</button>
+			<button disabled aria-describedby="empty">Empty</button><span id="empty"> </span>
+			<button disabled aria-describedby="nowhere why">One of two resolves</button><span id="why" hidden>Ask an owner</span>
+		</main></body></html>`);
+		const found = await enumerateControls(page, "main", "main");
+		expect(Object.fromEntries(found.disabled.map((d) => [d.name, d.reason]))).toEqual({
+			"Titled only": "disabled-no-reason",
+			Dangling: "disabled-no-reason",
+			Empty: "disabled-no-reason",
+			"One of two resolves": "disabled-with-reason",
+		});
+		// And the control fixture names it: the same button described by a DANGLING id is not a reason.
+		const mutant = CONTROL_FIXTURE.replace('<span id="why" hidden>You do not have permission</span>', "");
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/was not counted as `disabled-with-reason`/);
 	});
 
 	test("R8 — an external link PASSES on its href and is never enumerated for a click", async ({ page }) => {

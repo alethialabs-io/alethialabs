@@ -105,8 +105,20 @@ const MODAL_SELECTOR = `${CONFIRM_SELECTOR}, [role="menu"]`;
  */
 export const OVERLAY_SELECTOR_WITHOUT_MENUS = '[data-slot$="-content"]:not([role="menu"]), [role="dialog"], [role="alertdialog"], [role="listbox"]';
 
-/** A toast, either polite or assertive. */
-const STATUS_SELECTOR = '[role="status"], [role="alert"]';
+/**
+ * A toast, either polite or assertive — and a sonner toast, which carries neither role.
+ *
+ * Every toast in this console is sonner's (`toast.*` from "sonner"). Sonner announces through an
+ * `aria-live` region on its `<section>` and renders each toast as an `<li data-sonner-toast>` with no
+ * `role` at all, outside `<main>` — so neither the role match nor the `main` mutation observer saw
+ * one, and a control whose effect IS a toast ("Describe what you want to run first." on `~/new`'s
+ * Design with the agent) read as inert (#4996). Counting the live region instead would not do: it
+ * is mounted once for the page's life, so its count never rises.
+ */
+export const STATUS_SELECTOR = '[role="status"], [role="alert"], [data-sonner-toast]';
+
+/** What {@link STATUS_SELECTOR} was before #4996 — the self-test proves the toast arm fails on it. */
+export const STATUS_SELECTOR_WITHOUT_SONNER = '[role="status"], [role="alert"]';
 
 /**
  * The verbs that make an accessible name read as destructive.
@@ -183,7 +195,15 @@ export interface EnumeratedControl {
 export interface DisabledControl {
 	role: string;
 	name: string;
-	/** `aria-disabled` or `disabled` with a `title` / `aria-describedby` saying why. */
+	/**
+	 * `aria-disabled` or `disabled`, and whether its `aria-describedby` RESOLVES to text saying why.
+	 *
+	 * A `title` does not count, and did until the review of #5000: `@repo/ui`'s Button carries
+	 * `disabled:pointer-events-none` and menu items `data-[disabled]:pointer-events-none`, so a
+	 * disabled control never gets the hover that would show its title, and a natively disabled button
+	 * takes no focus. A title on one reaches nobody. Nor does an `aria-describedby` that names no
+	 * element, or an empty one — the attribute is not the reason, the text it points at is.
+	 */
 	reason: "disabled-with-reason" | "disabled-no-reason";
 }
 
@@ -376,8 +396,13 @@ export async function enumerateControls(page: Page, scope: string, origin: Enume
 					href: el.getAttribute("href"),
 					ariaDisabled: el.getAttribute("aria-disabled"),
 					nativeDisabled: el.hasAttribute("disabled"),
-					title: el.getAttribute("title"),
-					describedBy: el.getAttribute("aria-describedby"),
+					// The text `aria-describedby` resolves to, "" when it names nothing that exists. Hidden
+					// nodes count: a description may reference a visually hidden one (DisabledReason).
+					description: (el.getAttribute("aria-describedby") ?? "")
+						.split(/\s+/)
+						.map((id) => (id === "" ? "" : (document.getElementById(id)?.textContent ?? "")))
+						.join(" ")
+						.trim(),
 					ariaLabel: el.getAttribute("aria-label"),
 					text: el.textContent ?? "",
 					visible: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
@@ -400,7 +425,7 @@ export async function enumerateControls(page: Page, scope: string, origin: Enume
 			disabled.push({
 				role,
 				name,
-				reason: probed.title || probed.describedBy ? "disabled-with-reason" : "disabled-no-reason",
+				reason: probed.description !== "" ? "disabled-with-reason" : "disabled-no-reason",
 			});
 			continue;
 		}
@@ -672,6 +697,8 @@ export interface ActivateOptions {
 	networkUsable: boolean;
 	/** What counts as "a new overlay". Menu items pass `OVERLAY_SELECTOR_WITHOUT_MENUS`. */
 	overlaySelector?: string;
+	/** What counts as "a new toast". Defaults to {@link STATUS_SELECTOR}; the self-test overrides it. */
+	statusSelector?: string;
 }
 
 /**
@@ -744,7 +771,7 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true });
 			window.__alethiaR8.observer = observer;
 		},
-		{ overlaySel: options.overlaySelector ?? OVERLAY_SELECTOR, statusSel: STATUS_SELECTOR },
+		{ overlaySel: options.overlaySelector ?? OVERLAY_SELECTOR, statusSel: options.statusSelector ?? STATUS_SELECTOR },
 	);
 
 	const requests: string[] = [];
@@ -804,7 +831,7 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 						statuses: document.querySelectorAll(statusSel).length,
 						before: { overlays: window.__alethiaR8?.overlays ?? 0, statuses: window.__alethiaR8?.statuses ?? 0 },
 					}),
-					{ overlaySel: options.overlaySelector ?? OVERLAY_SELECTOR, statusSel: STATUS_SELECTOR },
+					{ overlaySel: options.overlaySelector ?? OVERLAY_SELECTOR, statusSel: options.statusSelector ?? STATUS_SELECTOR },
 				)
 				// A navigation mid-evaluate destroys the execution context; the url check above
 				// catches it on the next turn of the loop.
@@ -969,7 +996,11 @@ export function emptinessProblems(records: ScoredRecord[], withheld: string | un
  * @param page a page this function may navigate and overwrite
  * @param fixture optional replacement markup, so the self-test can break one arm at a time
  */
-export async function interactionControl(page: Page, fixture: string = CONTROL_FIXTURE): Promise<string[]> {
+export async function interactionControl(
+	page: Page,
+	fixture: string = CONTROL_FIXTURE,
+	options: { statusSelector?: string } = {},
+): Promise<string[]> {
 	const problems: string[] = [];
 	await page.setContent(fixture);
 
@@ -979,7 +1010,7 @@ export async function interactionControl(page: Page, fixture: string = CONTROL_F
 	if (!names.includes("Open the dialog")) problems.push("R8: the enumeration did not find the dialog opener.");
 	if (names.includes("Unavailable")) problems.push("R8: an `aria-disabled` control was enumerated as enabled — R8 must not score a control a person cannot press.");
 	if (enumerated.disabled.some((d) => d.name === "Unavailable" && d.reason === "disabled-with-reason") === false) {
-		problems.push("R8: a disabled control carrying a `title` was not counted as `disabled-with-reason`.");
+		problems.push("R8: a disabled control described by a reason (`aria-describedby`) was not counted as `disabled-with-reason`.");
 	}
 	if (enumerated.external.some((e) => e.name === "Docs") === false) {
 		problems.push("R8: a cross-origin link was not recorded as external — it must PASS on its href and never be clicked.");
@@ -1027,6 +1058,23 @@ export async function interactionControl(page: Page, fixture: string = CONTROL_F
 		const locator = await resolve(page, opener);
 		const observed = locator === null ? null : (await activate(page, locator, { networkUsable: false })).effect;
 		if (observed !== "overlay") problems.push(`R8: the dialog opener reported ${JSON.stringify(observed)} rather than an overlay — the PASS arm does not fire.`);
+	}
+
+	// THE TOAST ARM (#4996). A button whose only effect is a sonner toast — an `<li
+	// data-sonner-toast>` outside `main`, with no role — must read as a toast, not as inert.
+	const toaster = enumerated.controls.find((c) => c.name === "Show a toast");
+	if (toaster === undefined) {
+		problems.push('R8: the enumeration did not find the control named "Show a toast".');
+	} else {
+		await page.setContent(fixture);
+		const locator = await resolve(page, toaster);
+		const observed =
+			locator === null
+				? "(unresolved)"
+				: (await activate(page, locator, { networkUsable: false, statusSelector: options.statusSelector })).effect;
+		if (observed !== "toast") {
+			problems.push(`R8: the sonner toast button reported ${JSON.stringify(observed)} rather than "toast" — every control whose effect is a toast would be filed inert.`);
+		}
 	}
 
 	// THE ALREADY-CURRENT ARM, BOTH WAYS (#4980). A handler-less row that says it is the current
@@ -1118,16 +1166,23 @@ export const LOADING_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 l
  * The control's page. A real doctype, because `setContent` without one is QUIRKS mode and this
  * repo has already paid for a fixture that measured something the console never renders (#3804).
  */
-export const CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 control</title></head><body><main>
+export const CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 control</title></head><body><section aria-label="Notifications" aria-live="polite"><ol id="sonner" data-sonner-toaster></ol></section><main>
 	<button id="inert">Nothing happens</button>
 	<button id="opener">Open the dialog</button>
-	<button aria-disabled="true" title="You do not have permission">Unavailable</button>
+	<button aria-disabled="true" aria-describedby="why">Unavailable</button><span id="why" hidden>You do not have permission</span>
 	<a href="https://example.invalid/docs">Docs</a>
 	<nav><button aria-current="true">Current row</button></nav>
 	<div><button aria-pressed="true">Pressed toggle</button></div>
 	<div><button aria-pressed="true">Chosen option</button><button aria-pressed="false">Other option</button></div>
+	<button id="toaster">Show a toast</button>
 	<div id="layer"></div>
 </main><script>
+	document.getElementById("toaster").addEventListener("click", function () {
+		var li = document.createElement("li");
+		li.setAttribute("data-sonner-toast", "");
+		li.textContent = "Saved";
+		document.getElementById("sonner").appendChild(li);
+	});
 	document.getElementById("opener").addEventListener("click", function () {
 		var d = document.createElement("div");
 		d.setAttribute("role", "dialog");

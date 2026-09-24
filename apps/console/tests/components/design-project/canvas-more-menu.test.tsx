@@ -13,7 +13,12 @@ import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 
 vi.mock("@xyflow/react", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@xyflow/react")>();
-	return { ...actual, useReactFlow: () => ({ fitView: vi.fn(), zoomIn: vi.fn(), zoomOut: vi.fn() }) };
+	return {
+		...actual,
+		useReactFlow: () => ({ fitView: vi.fn(), zoomIn: vi.fn(), zoomOut: vi.fn() }),
+		useStore: <T,>(selector: (s: { nodeLookup: Map<string, unknown> }) => T): T =>
+			selector({ nodeLookup: new Map([["n0", {}]]) }),
+	};
 });
 
 beforeEach(() => {

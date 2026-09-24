@@ -15,9 +15,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The pane menu's Auto-arrange and Fit view need React Flow's viewport API, which only exists
 // inside a provider. Mock the one hook rather than mounting a board (canvas-more-menu.test.tsx
 // does the same).
+// `useStore` feeds "Fit view" the DRAWN node count (#4996); `flow.drawn` sets it per test.
+const flow = vi.hoisted(() => ({ drawn: 1 }));
 vi.mock("@xyflow/react", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@xyflow/react")>();
-	return { ...actual, useReactFlow: () => ({ fitView: vi.fn() }) };
+	return {
+		...actual,
+		useReactFlow: () => ({ fitView: vi.fn() }),
+		useStore: <T,>(selector: (s: { nodeLookup: Map<string, unknown> }) => T): T =>
+			selector({ nodeLookup: new Map(Array.from({ length: flow.drawn }, (_, i) => [`n${i}`, {}])) }),
+	};
 });
 
 import {
@@ -27,6 +34,7 @@ import {
 	type CanvasPointerEvent,
 } from "@/components/design-project/canvas/canvas-context-menu";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
+import { NOTHING_TO_FIT } from "@/components/design-project/canvas/use-has-drawn-nodes";
 import type {
 	CanvasNode,
 	NodeKind,
@@ -315,5 +323,21 @@ describe("CanvasContextMenu — selection", () => {
 		expect(
 			await screen.findByRole("menuitem", { name: /duplicate/i }),
 		).toHaveAttribute("data-disabled");
+	});
+});
+
+describe("CanvasContextMenu — Fit view on an empty board", () => {
+	it("is disabled with the reason when the board draws nothing", async () => {
+		flow.drawn = 0;
+		try {
+			seed([makeRoot()]);
+			renderMenu({ kind: "pane" });
+			const item = await screen.findByRole("menuitem", { name: /fit view/i });
+			expect(item).toHaveAttribute("data-disabled");
+			expect(item).toHaveAccessibleDescription(NOTHING_TO_FIT);
+			expect(item).toHaveTextContent(NOTHING_TO_FIT);
+		} finally {
+			flow.drawn = 1;
+		}
 	});
 });

@@ -84,6 +84,7 @@ function renderPanel(initialConfig = null) {
 			fabrics={[...FABRICS]}
 			gitCredentials={[...CREDS]}
 			gitlabBaseUrl="https://gitlab.com"
+			providerAvailability={{ github: true, gitlab: true, bitbucket: true }}
 		/>,
 	);
 }
