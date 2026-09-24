@@ -5,10 +5,16 @@
 # dedicated E2E assertion broker (apps/e2e-issuer, contract in packages/workload-identity/src/
 # broker.ts), in ADDITION to the GitHub Actions OIDC trust in oidc.tf / roles.tf.
 #
-# OFF BY DEFAULT. `e2e_broker_issuer_url = null` (the committed value in terraform.tfvars) creates no
-# provider and appends no trust statement, so a plan on this change alone is a no-op. Setting it
-# creates one RAM OIDC provider and appends one statement to the role's trust document; setting it
-# back to null removes exactly those two. The GitHub provider and Statement[0] are never touched.
+# GATED ON THE ISSUER, NOT OFF. The committed terraform.tfvars sets `e2e_broker_issuer_url` to
+# https://e2e-issuer.alethialabs.io (#5004), and the broker trust is created whenever it is non-null
+# — so any plan or apply of this stack proposes one RAM OIDC provider and one appended trust
+# statement. Apply only after the issuer serves at that origin (docs/testing/e2e-state-migration.md,
+# infra/e2e-issuer/README.md). To plan without the broker, pass
+# `-var-file=<(printf 'e2e_broker_issuer_url = null\n')` — a plain `-var e2e_broker_issuer_url=null`
+# passes the string "null", not null.
+# Setting it creates one RAM OIDC provider and appends one statement to the role's trust document;
+# setting it back to null removes exactly those two. The GitHub provider and Statement[0] are never
+# touched.
 #
 # WHAT RAM CAN PIN. RAM's OIDC condition keys are `oidc:iss`, `oidc:aud` and `oidc:sub`, so the
 # statement pins, with StringEquals:
