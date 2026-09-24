@@ -101,13 +101,8 @@ jobs:
 
       # Gated on the PUSH. The task definition pulls from ECR, so rolling the service when the
       # new image never reached it restarts every task onto the OLD image and calls it a deploy.
-      - name: Force new Fargate deployment
+      # No fleet exists, by ruling on #3438. The shared script skips with a ::notice:: when the
+      # cluster or service is absent and fails on every other error. Its header explains why.
+      - name: Force new Fargate deployment (skipped when no fleet exists)
         if: ${{ !cancelled() && steps.ecr-push.outcome == 'success' }}
-        run: |
-          set -euo pipefail
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --force-new-deployment \
-            --region "$AWS_REGION"
-          echo "Deployment triggered. Fargate will roll to the new image."
+        run: bash .github/scripts/runner-ecs-roll.sh
