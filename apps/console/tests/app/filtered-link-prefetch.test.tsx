@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // A pasted FILTERED link must have its filtered list on the wire (#4980, the audit's F8 on
-// `~/runners?versions=…` and `~/alerts?policyStatus=…`).
+// `~/runners?versions=…` and `~/alerts?policyStatus=…`; #4999 on `~/settings/members?statuses=…`).
 //
 // Both routes used to prefetch only the pristine key. The client renders pristine, reads the URL
 // in a mount effect, and then asks for the filtered key — which arrived with no data, so
@@ -20,7 +20,7 @@ import { QueryClient, type DehydratedState } from "@tanstack/react-query";
 import { isValidElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getRunnersPage, getAlertPoliciesPage, getAlertChannelsPage, getAlertDeliveriesPage } = vi.hoisted(() => {
+const { getRunnersPage, getAlertPoliciesPage, getAlertChannelsPage, getAlertDeliveriesPage, getMembersPage } = vi.hoisted(() => {
 	/** A server action that answers with the query it was asked, so the dehydrated data names it. */
 	const action = () => vi.fn(async (query: unknown) => ({ query, rows: [] }));
 	return {
@@ -28,6 +28,7 @@ const { getRunnersPage, getAlertPoliciesPage, getAlertChannelsPage, getAlertDeli
 		getAlertPoliciesPage: action(),
 		getAlertChannelsPage: action(),
 		getAlertDeliveriesPage: action(),
+		getMembersPage: action(),
 	};
 });
 
@@ -48,11 +49,15 @@ vi.mock("@/app/server/actions/alerts", () => ({
 }));
 vi.mock("@/components/alerts/alerts-page", () => ({ AlertsPage: () => null }));
 
+vi.mock("@/app/server/actions/members", () => ({ getMembersPage }));
+vi.mock("@/components/settings/members/members-table", () => ({ MembersTable: () => null }));
+
 // A fresh client per route call — the browser singleton would carry one test's keys into the next.
 vi.mock("@/lib/query/client", () => ({ getQueryClient: () => new QueryClient() }));
 
 import AlertsRoute from "@/app/(private)/[org]/~/alerts/page";
 import RunnersRoute from "@/app/(private)/[org]/~/runners/page";
+import MembersRoute from "@/app/(private)/[org]/~/settings/members/page";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -85,6 +90,13 @@ async function runners(searchParams: SearchParams): Promise<DehydratedState> {
 async function alerts(searchParams: SearchParams): Promise<DehydratedState> {
 	return dehydratedOf(
 		await AlertsRoute({ params: Promise.resolve({ org: "acme" }), searchParams: Promise.resolve(searchParams) }),
+	);
+}
+
+/** Render the members route for one link. */
+async function members(searchParams: SearchParams): Promise<DehydratedState> {
+	return dehydratedOf(
+		await MembersRoute({ params: Promise.resolve({ org: "acme" }), searchParams: Promise.resolve(searchParams) }),
 	);
 }
 
@@ -128,5 +140,29 @@ describe("~/alerts prefetches each panel's filtered list", () => {
 		expect(dataAt(state, ["alerts", "channels", "acme", { types: ["slack"] }])).toBeDefined();
 		expect(dataAt(state, ["alerts", "deliveries", "acme", { status: ["failed"] }])).toBeDefined();
 		expect(getAlertPoliciesPage).not.toHaveBeenCalledWith(expect.objectContaining({ status: expect.anything() }));
+	});
+});
+
+describe("~/settings/members prefetches the link's filtered list (#4999)", () => {
+	it("dehydrates the FILTERED key the client settles on, with the server's filtered answer", async () => {
+		const state = await members({ statuses: "pending", roles: "viewer,admin", search: "  ann " });
+		// Trimmed and sorted by the normalize step — the key the client builds, character for character.
+		const query = { search: "ann", statuses: ["pending"], roles: ["admin", "viewer"] };
+		expect(dataAt(state, ["members", "acme", query])).toEqual({ query, rows: [] });
+		expect(getMembersPage).toHaveBeenCalledWith(query);
+	});
+
+	it("still dehydrates the pristine key — the hydration render holds the store's defaults", async () => {
+		const state = await members({ statuses: "pending" });
+		expect(dataAt(state, ["members", "acme", {}])).toEqual({ query: {}, rows: [] });
+		// Never the bare `["members", org]` key: that is the unfiltered `getMembers()` read, a
+		// different payload shape, and seeding it with a page would serve the wrong one.
+		expect(keysOf(state)).not.toContain(JSON.stringify(["members", "acme"]));
+	});
+
+	it("ignores params the members filters do not map", async () => {
+		await members({ versions: "1.4.0" });
+		expect(getMembersPage).toHaveBeenCalledTimes(1);
+		expect(getMembersPage).toHaveBeenCalledWith({});
 	});
 });
