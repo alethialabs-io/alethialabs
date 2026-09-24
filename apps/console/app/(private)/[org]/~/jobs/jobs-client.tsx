@@ -99,7 +99,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	const filters = useJobsFilters((s) => s.filters);
 	const set = useJobsFilters((s) => s.set);
 	const reset = useJobsFilters((s) => s.reset);
-	useFilterUrlSync(useJobsFilters, DEFAULT_JOBS_FILTERS);
+	const urlRead = useFilterUrlSync(useJobsFilters, DEFAULT_JOBS_FILTERS);
 	const [range, setRange] = useState<DateRange>(() =>
 		presetRange(JOBS_DEFAULT_PRESET),
 	);
@@ -114,7 +114,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	// Search stays responsive (bound to filters.search) but only re-keys the query after a
 	// 300ms pause — the input recomputes the memo on every keystroke, yet the normalized
 	// object (and so the structural TanStack key) is stable until the debounced value moves.
-	const debouncedSearch = useDebouncedValue(filters.search, 300);
+	const debouncedSearch = useDebouncedValue(filters.search, 300, { urlRead });
 
 	// The normalized query IS the key: equal filters hit the cache, and the range's
 	// concrete ISO bounds only change when the user picks a range.
@@ -180,6 +180,14 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	// row, that's a distinct "no match" state — never the same copy as onboarding.
 	const total = page.data?.total ?? 0;
 	const noMatch = !page.isPending && total > 0 && rows.length === 0;
+	// The list is BUSY while what it shows may not answer the URL and the bar: before the link has
+	// been read into the store, before the first answer, while the rows are the previous query's
+	// placeholder, and while a typed search is still inside its debounce — the runners list's rule
+	// (#4980). Before the first answer this page renders the bar over an EMPTY table with no count,
+	// which reads exactly like a project with no jobs; `aria-busy` is what tells the two apart, for
+	// assistive tech and for the audit's F8–F9 read, which scored `/[org]/[project]/jobs` as a
+	// zero-row list while its fetch was still queued (#5045).
+	const busy = !urlRead || page.isPending || page.isPlaceholderData || filters.search !== debouncedSearch;
 
 	/** Reset every filter surface — the store filters AND the local date range. */
 	const clearAll = () => {
@@ -192,7 +200,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	};
 
 	return (
-		<div className="space-y-6">
+		<div className="space-y-6" aria-busy={busy}>
 			{page.isError ? (
 					// A fetch failure must NOT fall through to the empty state — that would tell the
 					// user they have no jobs when the request actually failed.
