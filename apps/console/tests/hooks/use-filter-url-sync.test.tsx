@@ -115,4 +115,23 @@ describe("useFilterUrlSync", () => {
 		expect(store.getState().filters.search).toBe("api");
 		expect(replace).not.toHaveBeenCalled();
 	});
+
+	it("reports the URL unread on its first render and read once the store holds it (#4980)", () => {
+		// A list marks itself `aria-busy` off this value. On the first render the store still holds
+		// its defaults whatever the link says, so the rows on screen answer nothing yet.
+		const store = makeStore();
+		currentSearch = "stages=production";
+		const seen: { synced: boolean; stages: string[] }[] = [];
+
+		const { result } = renderHook(() => {
+			const synced = useFilterUrlSync(store, DEFAULTS);
+			seen.push({ synced, stages: store.getState().filters.stages });
+			return synced;
+		});
+
+		expect(seen[0]).toEqual({ synced: false, stages: [] });
+		expect(result.current).toBe(true);
+		// Never "read" over the pre-URL state: the render that says read already holds the link.
+		for (const r of seen) if (r.synced) expect(r.stages).toEqual(["production"]);
+	});
 });

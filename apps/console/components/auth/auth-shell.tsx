@@ -107,10 +107,19 @@ export function AuthShell({
             <span className="hidden text-ui-md text-text-tertiary sm:inline">
               {switchPrompt}
             </span>
+            {/* `role="link"` restores what this element IS: an `<a href>` to the other
+                front door. base-ui's Button stamps `role="button"` on any non-native
+                render (external props win that merge — the same fix as the 404 pages'
+                "Go home"), and as a button it shared its accessible name with the
+                no-account card's real "Create an account" button on /login: two
+                BUTTONS of one name, one of which navigates and one of which carries the
+                email the visitor just typed. A screen reader could not tell them apart,
+                and neither could the negatives suite (strict mode, run 35917620550). */}
             <Button
               variant="outline"
               size="sm"
               nativeButton={false}
+              role="link"
               render={<Link href={switchHref} />}
             >
               {switchLabel}

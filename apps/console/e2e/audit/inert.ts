@@ -105,8 +105,20 @@ const MODAL_SELECTOR = `${CONFIRM_SELECTOR}, [role="menu"]`;
  */
 export const OVERLAY_SELECTOR_WITHOUT_MENUS = '[data-slot$="-content"]:not([role="menu"]), [role="dialog"], [role="alertdialog"], [role="listbox"]';
 
-/** A toast, either polite or assertive. */
-const STATUS_SELECTOR = '[role="status"], [role="alert"]';
+/**
+ * A toast, either polite or assertive — and a sonner toast, which carries neither role.
+ *
+ * Every toast in this console is sonner's (`toast.*` from "sonner"). Sonner announces through an
+ * `aria-live` region on its `<section>` and renders each toast as an `<li data-sonner-toast>` with no
+ * `role` at all, outside `<main>` — so neither the role match nor the `main` mutation observer saw
+ * one, and a control whose effect IS a toast ("Describe what you want to run first." on `~/new`'s
+ * Design with the agent) read as inert (#4996). Counting the live region instead would not do: it
+ * is mounted once for the page's life, so its count never rises.
+ */
+export const STATUS_SELECTOR = '[role="status"], [role="alert"], [data-sonner-toast]';
+
+/** What {@link STATUS_SELECTOR} was before #4996 — the self-test proves the toast arm fails on it. */
+export const STATUS_SELECTOR_WITHOUT_SONNER = '[role="status"], [role="alert"]';
 
 /**
  * The verbs that make an accessible name read as destructive.
@@ -183,7 +195,15 @@ export interface EnumeratedControl {
 export interface DisabledControl {
 	role: string;
 	name: string;
-	/** `aria-disabled` or `disabled` with a `title` / `aria-describedby` saying why. */
+	/**
+	 * `aria-disabled` or `disabled`, and whether its `aria-describedby` RESOLVES to text saying why.
+	 *
+	 * A `title` does not count, and did until the review of #5000: `@repo/ui`'s Button carries
+	 * `disabled:pointer-events-none` and menu items `data-[disabled]:pointer-events-none`, so a
+	 * disabled control never gets the hover that would show its title, and a natively disabled button
+	 * takes no focus. A title on one reaches nobody. Nor does an `aria-describedby` that names no
+	 * element, or an empty one — the attribute is not the reason, the text it points at is.
+	 */
 	reason: "disabled-with-reason" | "disabled-no-reason";
 }
 
@@ -209,8 +229,10 @@ export type Effect =
 	| "aria-state"
 	| "toast"
 	| "download"
+	| "new-tab"
 	| "dom-mutation"
 	| "network"
+	| "already-current"
 	| null;
 
 /** One control's outcome. `effect: null` with no `excluded` is the FAIL R8 exists to find. */
@@ -226,6 +248,23 @@ export interface Observation {
 /** Collapse whitespace so a two-line button label is one name. */
 function normalise(text: string): string {
 	return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * A control's accessible name, in the order the accname algorithm reads it: `aria-label` first,
+ * then the text content.
+ *
+ * It read the TEXT first, and that inverted the one case where the two differ on purpose. The
+ * project danger row renders `<button aria-label="Delete project">Delete</button>` — the visible
+ * word is short because the row's title sits beside it, and the label carries the object. R8 read
+ * "Delete", found no ledger entry by that name, and filed `unregistered-destructive` against a
+ * control `destructive-actions.yaml` declares as `project.delete` (#4939). Playwright's `getByRole`,
+ * which `destructive.spec.ts` drives the same entry with, reads "Delete project" — so the two
+ * instruments disagreed about one button's name. `aria-labelledby` is not resolved here; no control
+ * this instrument enumerates carries one today, and it would need the referenced node's text.
+ */
+export function accessibleName(ariaLabel: string | null, text: string): string {
+	return normalise(ariaLabel ?? "") || normalise(text) || "(unnamed)";
 }
 
 /** What R8 treats as an activatable control, before any enabled/visible filtering. */
@@ -357,26 +396,36 @@ export async function enumerateControls(page: Page, scope: string, origin: Enume
 					href: el.getAttribute("href"),
 					ariaDisabled: el.getAttribute("aria-disabled"),
 					nativeDisabled: el.hasAttribute("disabled"),
-					title: el.getAttribute("title"),
-					describedBy: el.getAttribute("aria-describedby"),
+					// The text `aria-describedby` resolves to, "" when it names nothing that exists. Hidden
+					// nodes count: a description may reference a visually hidden one (DisabledReason).
+					description: (el.getAttribute("aria-describedby") ?? "")
+						.split(/\s+/)
+						.map((id) => (id === "" ? "" : (document.getElementById(id)?.textContent ?? "")))
+						.join(" ")
+						.trim(),
 					ariaLabel: el.getAttribute("aria-label"),
 					text: el.textContent ?? "",
 					visible: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
+					// An `inert` subtree cannot be clicked, focused or found by assistive tech: the
+					// browser removes it from the interaction model outright. The message scroller's
+					// "Scroll to latest" is rendered `inert` (and faded out) whenever there is nothing
+					// to scroll to, and R8 used to click it and call the silence a finding (#4939).
+					inert: el.closest("[inert]") !== null,
 				};
 			}, undefined, { timeout: READ_TIMEOUT_MS })
 			.catch(() => null);
 		// A node that vanished between `count()` and the read is a page still settling, not a
 		// finding. It is skipped rather than recorded, and the route's `enumerated` count says so.
-		if (probed === null || !probed.visible) continue;
+		if (probed === null || !probed.visible || probed.inert) continue;
 
 		const role = probed.role ?? (probed.tag === "a" ? "link" : "button");
-		const name = normalise(probed.text) || normalise(probed.ariaLabel ?? "") || "(unnamed)";
+		const name = accessibleName(probed.ariaLabel, probed.text);
 
 		if (probed.nativeDisabled || probed.ariaDisabled === "true") {
 			disabled.push({
 				role,
 				name,
-				reason: probed.title || probed.describedBy ? "disabled-with-reason" : "disabled-no-reason",
+				reason: probed.description !== "" ? "disabled-with-reason" : "disabled-no-reason",
 			});
 			continue;
 		}
@@ -397,6 +446,161 @@ export async function enumerateControls(page: Page, scope: string, origin: Enume
 	return { controls, disabled, external, hasMain };
 }
 
+// ── readiness: enumerate the page, not its loading state (#4980) ─────────────────────────────────
+//
+// R8 used to enumerate the moment `domcontentloaded` fired. On a streamed route that is often the
+// route's `loading.tsx` — a column of `Skeleton`s with nothing to press — and the run then recorded
+// N/A `no-enabled-controls` against `~/runners` and `[project]/architecture`, whose previous run on
+// the SAME head had found 18 and 6 controls there. An N/A is a claim about the PAGE; "it had not
+// loaded yet" is a claim about the RUN, and belongs in NOT MEASURED.
+
+/** One look at `main`: how many enabled controls it offers, and whether it says it is still loading. */
+export interface ReadinessRead {
+	hasMain: boolean;
+	/** Visible, enabled, non-`inert` controls — the same parts `enumerateControls()` scores. */
+	controls: number;
+	/** `main` or anything in it is `aria-busy="true"`. */
+	busy: boolean;
+	/** Visible `data-slot="skeleton"` placeholders — a `loading.tsx` or a pending list. */
+	skeletons: number;
+}
+
+/** Reads a page must hold still for before it counts as loaded: a page WITH controls, and one without. */
+export const READY_STABLE_READS = { withControls: 2, empty: 6 } as const;
+
+/** How often readiness is sampled. */
+export const READY_POLL_MS = 250;
+
+/** Whether this read is of a page that says it is still loading (or has no `main` yet). */
+export function isLoadingRead(read: ReadinessRead): boolean {
+	return !read.hasMain || read.busy || read.skeletons > 0;
+}
+
+/**
+ * Whether a sequence of reads (oldest first) ends on a LOADED page: the last few reads are all not
+ * loading and agree on the control count. A page offering nothing must hold still for longer
+ * (`READY_STABLE_READS.empty`) than one offering controls, because "nothing yet" and "nothing"
+ * look identical in any single read and differ only in whether they last.
+ */
+export function hasSettled(reads: readonly ReadinessRead[]): boolean {
+	const last = reads.at(-1);
+	if (last === undefined) return false;
+	const need = last.controls > 0 ? READY_STABLE_READS.withControls : READY_STABLE_READS.empty;
+	if (reads.length < need) return false;
+	const tail = reads.slice(-need);
+	return tail.every((r) => !isLoadingRead(r) && r.controls === last.controls);
+}
+
+/** The outcome of waiting: whether the page settled, and the last thing seen. */
+export interface Readiness {
+	settled: boolean;
+	last: ReadinessRead;
+	waitedMs: number;
+}
+
+/** One readiness read of `main`. */
+async function readReadiness(page: Page): Promise<ReadinessRead> {
+	const selector = controlSelector("main");
+	return page
+		.evaluate((sel) => {
+			const main = document.querySelector("main");
+			const shown = (el: Element) => {
+				const style = window.getComputedStyle(el);
+				const r = el.getBoundingClientRect();
+				return style.visibility !== "hidden" && style.display !== "none" && r.width > 0 && r.height > 0;
+			};
+			if (main === null) return { hasMain: false, controls: 0, busy: false, skeletons: 0 };
+			const controls = [...document.querySelectorAll(sel)].filter(
+				(el) => shown(el) && el.closest("[inert]") === null && !el.hasAttribute("disabled") && el.getAttribute("aria-disabled") !== "true",
+			).length;
+			return {
+				hasMain: true,
+				controls,
+				busy: main.matches('[aria-busy="true"]') || main.querySelector('[aria-busy="true"]') !== null,
+				skeletons: [...main.querySelectorAll('[data-slot="skeleton"]')].filter(shown).length,
+			};
+		}, selector)
+		.catch(() => ({ hasMain: false, controls: 0, busy: false, skeletons: 0 }));
+}
+
+/**
+ * The readiness budget for a route's FIRST load. A route that has not settled inside it is recorded
+ * NOT MEASURED `page-not-ready` as a whole and is not driven (#4980): every later re-navigation
+ * would pay the same budget again, and 60 of them overrun the leg's 120 s per-route test timeout —
+ * a Playwright timeout in place of a verdict.
+ */
+export const ROUTE_READY_BUDGET_MS = 15_000;
+
+/**
+ * The readiness budget for a RE-navigation, after a control dirtied the page. The route already
+ * settled once, so this only has to outlast a warm reload; a re-navigation that does not settle in
+ * it throws `PageNotReady` and the route stops there. That bounds a route's readiness spend at
+ * `ROUTE_READY_BUDGET_MS` plus ONE of these, however many controls it has.
+ */
+export const RENAVIGATION_READY_BUDGET_MS = 3_000;
+
+/**
+ * Wait until the page in front of R8 is the page, not its loading state: `load`, then `hasSettled()`
+ * over reads `READY_POLL_MS` apart, for at most `budgetMs`. Returns what it last saw either way — the
+ * caller decides what an unsettled page means for its verdict.
+ */
+export async function awaitReady(page: Page, budgetMs: number = ROUTE_READY_BUDGET_MS): Promise<Readiness> {
+	const start = Date.now();
+	await page.waitForLoadState("load", { timeout: budgetMs }).catch(() => {});
+	const reads: ReadinessRead[] = [];
+	for (;;) {
+		reads.push(await readReadiness(page));
+		if (hasSettled(reads)) return { settled: true, last: reads[reads.length - 1], waitedMs: Date.now() - start };
+		if (Date.now() - start >= budgetMs) return { settled: false, last: reads[reads.length - 1], waitedMs: Date.now() - start };
+		await page.waitForTimeout(READY_POLL_MS);
+	}
+}
+
+/**
+ * Why a route cannot be measured from this readiness, or `null` when it can. A page that never
+ * settled is NOT MEASURED `page-not-ready` — whatever it enumerated (nothing, or the controls of its
+ * loading state) is a claim about this run, not about the page, and an empty enumeration of it is
+ * never N/A `no-enabled-controls` (#4980).
+ *
+ * @returns `null` when the page loaded, else the NOT MEASURED reason
+ */
+export function notReadyReason(readiness: Readiness): string | null {
+	if (readiness.settled && !isLoadingRead(readiness.last)) return null;
+	const { last } = readiness;
+	const seen = !last.hasMain
+		? "no `<main>`"
+		: [last.busy ? "`aria-busy`" : null, last.skeletons > 0 ? `${last.skeletons} skeleton(s)` : null, `${last.controls} control(s)`].filter(Boolean).join(", ");
+	return `page-not-ready — the route had not finished loading after ${readiness.waitedMs}ms (last read: ${seen}), so what it offered is a claim about this run, not the page`;
+}
+
+/** A re-navigation that did not settle inside `RENAVIGATION_READY_BUDGET_MS`: the route stops here. */
+export class PageNotReady extends Error {
+	/** The NOT MEASURED reason, starting `page-not-ready`. */
+	readonly reason: string;
+	/** What the wait last saw. */
+	readonly readiness: Readiness;
+
+	/** Wrap an unsettled readiness as the route's stop signal. */
+	constructor(reason: string, readiness: Readiness) {
+		super(reason);
+		this.name = "PageNotReady";
+		this.reason = reason;
+		this.readiness = readiness;
+	}
+}
+
+/**
+ * Wait for readiness after a RE-navigation, on the short budget, and throw `PageNotReady` when the
+ * page does not settle — so a route whose reloads stop settling costs one short wait, not one per
+ * remaining control.
+ */
+export async function awaitReadyAfterReload(page: Page, budgetMs: number = RENAVIGATION_READY_BUDGET_MS): Promise<Readiness> {
+	const readiness = await awaitReady(page, budgetMs);
+	const reason = notReadyReason(readiness);
+	if (reason !== null) throw new PageNotReady(`${reason} (on a re-navigation)`, readiness);
+	return readiness;
+}
+
 /**
  * Turn an enumerated control back into a locator, refusing when the list has moved under us.
  *
@@ -410,11 +614,8 @@ export async function resolve(page: Page, control: EnumeratedControl): Promise<L
 	if ((await nodes.count()) <= control.index) return null;
 	const node = nodes.nth(control.index);
 	const name = await node
-		.evaluate(
-			(el) => (el.textContent ?? "").replace(/\s+/g, " ").trim() || (el.getAttribute("aria-label") ?? "").trim() || "(unnamed)",
-			undefined,
-			{ timeout: READ_TIMEOUT_MS },
-		)
+		.evaluate((el) => ({ ariaLabel: el.getAttribute("aria-label"), text: el.textContent ?? "" }), undefined, { timeout: READ_TIMEOUT_MS })
+		.then((read) => accessibleName(read.ariaLabel, read.text))
 		.catch(() => null);
 	return name === control.name ? node : null;
 }
@@ -445,12 +646,59 @@ function isChatter(url: string): boolean {
 	return /\/_next\/(static|image)\//.test(url) || /\/favicon\.|\.(png|jpe?g|svg|webp|woff2?|css|map)(\?|$)/.test(url);
 }
 
+/** The attributes that say a control is ALREADY the selected member of its set. */
+export interface SelectionState {
+	role: string | null;
+	current: string | null;
+	selected: string | null;
+	checked: string | null;
+	/** `aria-pressed` on the control itself. */
+	pressed: string | null;
+	/** How many OTHER elements under the same parent carry `aria-pressed` — a one-of-N set when > 0. */
+	pressedSiblings: number;
+}
+
+/**
+ * Whether a control reports that it is already in the state activating it selects — so that
+ * nothing happening is the RIGHT answer, not an inert control (#4980).
+ *
+ * `~/settings/roles` selects the built-in `owner` role on arrival; clicking its rail row again
+ * changes nothing, correctly, and R8 filed it inert on every run where no unrelated re-render
+ * happened to land inside the window. What the rule reads is the control's OWN claim, never an
+ * inference from its styling:
+ *
+ *  - `aria-current` with any token but `false` — the current item of a set (a rail, a nav, a
+ *    stepper). Selecting the current item again is a no-op by definition.
+ *  - `aria-selected="true"` — a selected option, tab or row.
+ *  - `aria-checked="true"` on a `radio` or `menuitemradio` — a radio stays checked when pressed.
+ *  - `aria-pressed="true"` on a button with `aria-pressed` SIBLINGS — a one-of-N choice built from
+ *    pressed buttons, which is how the console builds them (`@repo/ui/theme-toggle`, the usage
+ *    metric group). Pressing the chosen one again is a no-op, like a radio.
+ *
+ * A LONE `aria-pressed="true"` toggle is still NOT excused: a toggle is expected to UNPRESS when
+ * activated, so one that does nothing is exactly the inert control R8 exists to find. The sibling
+ * test is the boundary, and it is stated rather than hidden: a MULTI-select group of pressed chips
+ * (a filter bar) also has pressed siblings, so a chip in one that fails to unpress would be excused
+ * — when nothing at all happens. That leans toward PASS, which is this instrument's stated bias
+ * (see the header); run 35867789835 is why the sibling case was added, after `Runner minutes` and
+ * the theme menu's `System` were filed inert for doing, correctly, nothing. A checkbox's
+ * `aria-checked` is never read.
+ */
+export function isAlreadySelected(state: SelectionState): boolean {
+	if (state.current !== null && state.current !== "false") return true;
+	if (state.selected === "true") return true;
+	if (state.pressed === "true" && state.pressedSiblings > 0) return true;
+	return state.checked === "true" && (state.role === "radio" || state.role === "menuitemradio");
+}
+
 /** Options `activate()` needs from the route loop. */
 export interface ActivateOptions {
 	/** False on a route `measureQuiescence()` found chattering — the network signal is withheld. */
 	networkUsable: boolean;
 	/** What counts as "a new overlay". Menu items pass `OVERLAY_SELECTOR_WITHOUT_MENUS`. */
 	overlaySelector?: string;
+	/** What counts as "a new toast". Defaults to {@link STATUS_SELECTOR}; the self-test overrides it. */
+	statusSelector?: string;
 }
 
 /**
@@ -462,7 +710,7 @@ export interface ActivateOptions {
  * one is open.
  *
  * The effects are checked in ATTRIBUTABILITY ORDER, not in the rubric's listing order. A navigation,
- * a new overlay, an aria flip on the control itself, a toast and a download are all consequences of
+ * a new overlay, an aria flip on the control itself, a toast, a download and a new tab are all consequences of
  * this click. A DOM mutation anywhere in `<main>` and a network request are not necessarily, so
  * they are checked last — see this file's header.
  */
@@ -489,6 +737,18 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 		undefined,
 		{ timeout: READ_TIMEOUT_MS },
 	);
+	const selection = await locator.evaluate(
+		(el) => ({
+			role: el.getAttribute("role"),
+			current: el.getAttribute("aria-current"),
+			selected: el.getAttribute("aria-selected"),
+			checked: el.getAttribute("aria-checked"),
+			pressed: el.getAttribute("aria-pressed"),
+			pressedSiblings: el.parentElement === null ? 0 : [...el.parentElement.children].filter((c) => c !== el && c.hasAttribute("aria-pressed")).length,
+		}),
+		undefined,
+		{ timeout: READ_TIMEOUT_MS },
+	);
 
 	await page.evaluate(
 		({ overlaySel, statusSel }) => {
@@ -511,7 +771,7 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true });
 			window.__alethiaR8.observer = observer;
 		},
-		{ overlaySel: options.overlaySelector ?? OVERLAY_SELECTOR, statusSel: STATUS_SELECTOR },
+		{ overlaySel: options.overlaySelector ?? OVERLAY_SELECTOR, statusSel: options.statusSelector ?? STATUS_SELECTOR },
 	);
 
 	const requests: string[] = [];
@@ -526,9 +786,20 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 	const onDownload = () => {
 		downloaded = true;
 	};
+	// A `target="_blank"` link opens a NEW page and leaves this one exactly as it was: no
+	// navigation, no overlay, no mutation. Without this listener every same-origin docs link in
+	// the console read as inert (#4939: "Docs" on ~/alerts, "What is classification?" on
+	// ~/settings/classification). The tab is closed at once — what it loads is not R8's question,
+	// for the reason an external link is never clicked at all.
+	let openedTab = false;
+	const onPopup = (popup: Page) => {
+		openedTab = true;
+		void popup.close().catch(() => {});
+	};
 	page.on("request", onRequest);
 	page.once("filechooser", onFileChooser);
 	page.once("download", onDownload);
+	page.on("popup", onPopup);
 
 	try {
 		// `force` because R8's question is "does this control do anything", not "is it hit-testable"
@@ -548,6 +819,10 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 				effect = "download";
 				break;
 			}
+			if (openedTab) {
+				effect = "new-tab";
+				break;
+			}
 			const now = await page
 				.evaluate(
 					({ overlaySel, statusSel }) => ({
@@ -556,7 +831,7 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 						statuses: document.querySelectorAll(statusSel).length,
 						before: { overlays: window.__alethiaR8?.overlays ?? 0, statuses: window.__alethiaR8?.statuses ?? 0 },
 					}),
-					{ overlaySel: options.overlaySelector ?? OVERLAY_SELECTOR, statusSel: STATUS_SELECTOR },
+					{ overlaySel: options.overlaySelector ?? OVERLAY_SELECTOR, statusSel: options.statusSelector ?? STATUS_SELECTOR },
 				)
 				// A navigation mid-evaluate destroys the execution context; the url check above
 				// catches it on the next turn of the loop.
@@ -602,6 +877,7 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			if (Date.now() >= deadline) {
 				if (page.url() !== beforeUrl) effect = "navigation";
 				else if (downloaded) effect = "download";
+				else if (openedTab) effect = "new-tab";
 				break;
 			}
 			await page.waitForTimeout(POLL_MS);
@@ -613,6 +889,10 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			mutated = mutated || (await page.evaluate(() => window.__alethiaR8?.mutated === true).catch(() => false));
 			if (mutated) effect = "dom-mutation";
 			else if (options.networkUsable && requests.length > 0) effect = "network";
+			// LAST, and only when nothing at all was observed: a control already in the state it
+			// selects is correct to do nothing. Read BEFORE the click, so a control that reports
+			// itself current only because the click made it so is an aria flip above, not this.
+			else if (isAlreadySelected(selection)) effect = "already-current";
 		}
 		return {
 			effect,
@@ -620,12 +900,14 @@ export async function activate(page: Page, locator: Locator, options: ActivateOp
 			// Anything that moved the page means the next control must start from a fresh load: a
 			// stale async mutation is the one signal this instrument cannot attribute, so it is not
 			// allowed to accumulate across controls.
-			dirtied: effect !== null || fileChooser,
+			// `already-current` moved nothing, so it does not force a reload.
+			dirtied: (effect !== null && effect !== "already-current") || fileChooser,
 		};
 	} finally {
 		page.off("request", onRequest);
 		page.off("filechooser", onFileChooser);
 		page.off("download", onDownload);
+		page.off("popup", onPopup);
 		await page.evaluate(() => window.__alethiaR8?.observer?.disconnect()).catch(() => {});
 	}
 }
@@ -714,7 +996,11 @@ export function emptinessProblems(records: ScoredRecord[], withheld: string | un
  * @param page a page this function may navigate and overwrite
  * @param fixture optional replacement markup, so the self-test can break one arm at a time
  */
-export async function interactionControl(page: Page, fixture: string = CONTROL_FIXTURE): Promise<string[]> {
+export async function interactionControl(
+	page: Page,
+	fixture: string = CONTROL_FIXTURE,
+	options: { statusSelector?: string } = {},
+): Promise<string[]> {
 	const problems: string[] = [];
 	await page.setContent(fixture);
 
@@ -724,7 +1010,7 @@ export async function interactionControl(page: Page, fixture: string = CONTROL_F
 	if (!names.includes("Open the dialog")) problems.push("R8: the enumeration did not find the dialog opener.");
 	if (names.includes("Unavailable")) problems.push("R8: an `aria-disabled` control was enumerated as enabled — R8 must not score a control a person cannot press.");
 	if (enumerated.disabled.some((d) => d.name === "Unavailable" && d.reason === "disabled-with-reason") === false) {
-		problems.push("R8: a disabled control carrying a `title` was not counted as `disabled-with-reason`.");
+		problems.push("R8: a disabled control described by a reason (`aria-describedby`) was not counted as `disabled-with-reason`.");
 	}
 	if (enumerated.external.some((e) => e.name === "Docs") === false) {
 		problems.push("R8: a cross-origin link was not recorded as external — it must PASS on its href and never be clicked.");
@@ -773,20 +1059,130 @@ export async function interactionControl(page: Page, fixture: string = CONTROL_F
 		const observed = locator === null ? null : (await activate(page, locator, { networkUsable: false })).effect;
 		if (observed !== "overlay") problems.push(`R8: the dialog opener reported ${JSON.stringify(observed)} rather than an overlay — the PASS arm does not fire.`);
 	}
+
+	// THE TOAST ARM (#4996). A button whose only effect is a sonner toast — an `<li
+	// data-sonner-toast>` outside `main`, with no role — must read as a toast, not as inert.
+	const toaster = enumerated.controls.find((c) => c.name === "Show a toast");
+	if (toaster === undefined) {
+		problems.push('R8: the enumeration did not find the control named "Show a toast".');
+	} else {
+		await page.setContent(fixture);
+		const locator = await resolve(page, toaster);
+		const observed =
+			locator === null
+				? "(unresolved)"
+				: (await activate(page, locator, { networkUsable: false, statusSelector: options.statusSelector })).effect;
+		if (observed !== "toast") {
+			problems.push(`R8: the sonner toast button reported ${JSON.stringify(observed)} rather than "toast" — every control whose effect is a toast would be filed inert.`);
+		}
+	}
+
+	// THE ALREADY-CURRENT ARM, BOTH WAYS (#4980). A handler-less row that says it is the current
+	// member of its set, and the chosen button of a one-of-N pressed group, must not be filed inert;
+	// a LONE handler-less toggle that says it is PRESSED must still be — it was expected to unpress,
+	// and pressing it did nothing.
+	for (const [name, want] of [
+		["Current row", "already-current"],
+		["Chosen option", "already-current"],
+		["Pressed toggle", null],
+	] as const) {
+		const control = enumerated.controls.find((c) => c.name === name);
+		if (control === undefined) {
+			problems.push(`R8: the enumeration did not find the control named ${JSON.stringify(name)}.`);
+			continue;
+		}
+		await page.setContent(fixture);
+		const locator = await resolve(page, control);
+		const observed = locator === null ? "(unresolved)" : (await activate(page, locator, { networkUsable: false })).effect;
+		if (observed !== want) {
+			problems.push(`R8: the ${name.toLowerCase()} reported ${JSON.stringify(observed)} rather than ${JSON.stringify(want)} — a control already in the state it selects is not inert, and a pressed toggle that does not unpress is.`);
+		}
+	}
+
+	// THE READINESS ARM, BOTH WAYS (#4980). A page that streams its controls in behind a skeleton
+	// must be enumerated after they arrive; a page that never leaves its skeleton must NOT read as a
+	// page with nothing to press.
+	await page.setContent(LOADING_FIXTURE);
+	const late = await awaitReady(page, 8_000);
+	if (!late.settled || late.last.controls !== 1) {
+		problems.push(`R8: readiness settled=${late.settled} on ${late.last.controls} control(s) for a page whose one control arrives after its skeleton — the enumeration would run against the loading state.`);
+	}
+	await page.setContent(LOADING_FIXTURE.replace("__ARRIVE_MS__", "600000"));
+	const stuck = await awaitReady(page, 2_000);
+	if (notReadyReason(stuck) === null) {
+		problems.push("R8: a page still showing its skeleton when the budget ran out was accepted as loaded — its empty enumeration would be filed N/A `no-enabled-controls`, a claim about the page the run never saw.");
+	}
+
+	// THE RE-NAVIGATION BUDGET (#4980 review). A reload that never settles must STOP the route with
+	// `page-not-ready` inside the short budget — not return quietly and let the next control pay the
+	// full route budget again, which is how 60 reloads overran the 120 s test timeout.
+	problems.push(...(await reloadBudgetProblems(page)));
 	return problems;
 }
+
+/** Slack over the budget for the last poll and the `load` wait to return. */
+const READY_BUDGET_SLACK_MS = 1_500;
+
+/**
+ * Drive `awaitReadyAfterReload()` against a page that never leaves its skeleton and report what it
+ * got wrong: it must throw `PageNotReady` with a `page-not-ready` reason, within
+ * `RENAVIGATION_READY_BUDGET_MS` (plus slack). Empty means the bound holds.
+ *
+ * @param page a page this function may overwrite
+ * @param wait the re-navigation wait under test — a parameter so the self-test can hand it a broken one
+ */
+export async function reloadBudgetProblems(page: Page, wait: (page: Page) => Promise<Readiness> = awaitReadyAfterReload): Promise<string[]> {
+	await page.setContent(LOADING_FIXTURE.replace("__ARRIVE_MS__", "600000"));
+	const start = Date.now();
+	let thrown: unknown = null;
+	try {
+		await wait(page);
+	} catch (err) {
+		thrown = err;
+	}
+	const took = Date.now() - start;
+	const problems: string[] = [];
+	if (!(thrown instanceof PageNotReady) || !thrown.reason.startsWith("page-not-ready")) {
+		problems.push("R8: a re-navigation that never settled did not stop the route with `page-not-ready` — every remaining control would pay the readiness budget again, and the route would end in a Playwright timeout instead of a verdict.");
+	}
+	if (took > RENAVIGATION_READY_BUDGET_MS + READY_BUDGET_SLACK_MS) {
+		problems.push(`R8: an unsettled re-navigation took ${took}ms, over its ${RENAVIGATION_READY_BUDGET_MS}ms budget — the route's readiness spend is not bounded.`);
+	}
+	return problems;
+}
+
+/**
+ * A route in its `loading.tsx`: a skeleton in `main`, replaced by one button after `__ARRIVE_MS__`
+ * (1.5 s unless the arm overrides it — well past `domcontentloaded`).
+ */
+export const LOADING_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 loading</title></head><body><main>
+	<div data-slot="skeleton" style="width: 200px; height: 20px"></div>
+</main><script>
+	var at = Number("__ARRIVE_MS__") || 1500;
+	setTimeout(function () { document.querySelector("main").innerHTML = '<button type="button">Arrived</button>'; }, at);
+</script></body></html>`;
 
 /**
  * The control's page. A real doctype, because `setContent` without one is QUIRKS mode and this
  * repo has already paid for a fixture that measured something the console never renders (#3804).
  */
-export const CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 control</title></head><body><main>
+export const CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><title>R8 control</title></head><body><section aria-label="Notifications" aria-live="polite"><ol id="sonner" data-sonner-toaster></ol></section><main>
 	<button id="inert">Nothing happens</button>
 	<button id="opener">Open the dialog</button>
-	<button aria-disabled="true" title="You do not have permission">Unavailable</button>
+	<button aria-disabled="true" aria-describedby="why">Unavailable</button><span id="why" hidden>You do not have permission</span>
 	<a href="https://example.invalid/docs">Docs</a>
+	<nav><button aria-current="true">Current row</button></nav>
+	<div><button aria-pressed="true">Pressed toggle</button></div>
+	<div><button aria-pressed="true">Chosen option</button><button aria-pressed="false">Other option</button></div>
+	<button id="toaster">Show a toast</button>
 	<div id="layer"></div>
 </main><script>
+	document.getElementById("toaster").addEventListener("click", function () {
+		var li = document.createElement("li");
+		li.setAttribute("data-sonner-toast", "");
+		li.textContent = "Saved";
+		document.getElementById("sonner").appendChild(li);
+	});
 	document.getElementById("opener").addEventListener("click", function () {
 		var d = document.createElement("div");
 		d.setAttribute("role", "dialog");

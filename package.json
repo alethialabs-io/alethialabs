@@ -78,6 +78,7 @@
     "source:community": "bash scripts/create-community-source.sh",
     "sync:connector-assets": "node scripts/sync-connector-assets.mjs",
     "env:box": "bash scripts/env.sh box",
+    "env:allow-ip": "bash scripts/env.sh allow-ip",
     "env:up": "bash scripts/env.sh up",
     "env:push": "bash scripts/env.sh push",
     "env:down": "bash scripts/env.sh down",

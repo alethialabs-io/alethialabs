@@ -20,7 +20,7 @@ import {
 	DEFAULT_RUNNER_FILTERS,
 	normalizeRunnersQuery,
 	type RunnerPageFilters,
-} from "@/lib/stores/use-runner-filters";
+} from "@/components/runners/runners-query";
 
 /** Filter state with every dimension set, overridable per case. */
 function filters(over: Partial<RunnerPageFilters> = {}): RunnerPageFilters {

@@ -254,13 +254,18 @@ func TestBuildHetznerBuckets(t *testing.T) {
 	}
 	got := buildHetznerBuckets([]types.ProjectStorageBucketConfig{
 		{Name: "b", Versioning: true, EncryptionEnabled: false, PublicAccess: false},
+		{Name: "smuggled", ProviderConfig: map[string]any{"encryption_enabled": true}},
 	})
+	if _, leaked := got[1]["encryption_enabled"]; leaked {
+		t.Errorf("encryption_enabled reached the bucket entry through provider_config: %#v", got[1])
+	}
+	// No `encryption_enabled`: DELETED from the template by #4320 (Hetzner supports SSE-C only, so no
+	// resource could ever write it). DeepEqual is what makes its absence part of the assertion.
 	want := map[string]interface{}{
-		"name":               "b",
-		"versioning":         true,
-		"encryption_enabled": false,
-		"public_access":      false,
-		"cors_origins":       []string{},
+		"name":          "b",
+		"versioning":    true,
+		"public_access": false,
+		"cors_origins":  []string{},
 	}
 	if !reflect.DeepEqual(got[0], want) {
 		t.Errorf("bucket = %#v, want %#v", got[0], want)

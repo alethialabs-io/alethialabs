@@ -353,9 +353,18 @@ if [ -n "$NORM_FN" ]; then
 	# idle_normalise directly. What they cannot see is whether cmd_reap does. The ssh answer is
 	# the ONLY arrival point for an idle report, so it must be the one place this is applied.
 	# shellcheck disable=SC2016  # literal $ — grep patterns over env.sh's source
+	#
+	# Two lines since #5025, because the ssh's exit code is now read (255 = unreachable refuses
+	# rather than folding to 0): the arrival lands in idle_raw, and idle is ONLY ever idle_raw folded.
 	arrivals="$(grep -cE 'env-registry\.sh idle-minutes' "$ENV_SH" || true)"
 	# shellcheck disable=SC2016
-	wrapped="$(grep -cE 'idle_normalise "\$\(ssh_box .*idle-minutes' "$ENV_SH" || true)"
+	landed="$(grep -cE '^[[:space:]]*idle_raw="\$\(ssh_box .*idle-minutes' "$ENV_SH" || true)"
+	# shellcheck disable=SC2016
+	folded="$(grep -cE '^[[:space:]]*idle="\$\(idle_normalise "\$idle_raw"\)"' "$ENV_SH" || true)"
+	# shellcheck disable=SC2016
+	assigned="$(grep -cE '^[[:space:]]*idle=' "$ENV_SH" || true)"
+	wrapped=0
+	[ "$landed" = 1 ] && [ "$folded" = 1 ] && [ "$assigned" = 1 ] && wrapped=1
 	if [ "$arrivals" = 1 ] && [ "$wrapped" = 1 ]; then
 		ok "the box's idle report is folded at its single arrival point in env.sh"
 	else

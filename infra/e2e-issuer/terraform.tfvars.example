@@ -1,0 +1,13 @@
+# infra/e2e-issuer inputs.
+#
+# terraform.tfvars IS COMMITTED in this stack (see .gitignore) and carries zone_name and hostname.
+# This example exists for the input that is NOT committed:
+#
+#   cloudflare_account_id   REQUIRED, no default, never committed. Supply it as
+#                           TF_VAR_cloudflare_account_id, or copy this file to account.auto.tfvars
+#                           (gitignored) and fill it in.
+#
+# The Cloudflare API token is NOT a variable: export CLOUDFLARE_API_TOKEN (the zone-scoped apply token
+# in README.md), so it never lands in a plan file or state.
+
+# cloudflare_account_id = "0123456789abcdef0123456789abcdef"

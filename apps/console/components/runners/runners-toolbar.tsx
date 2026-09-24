@@ -16,10 +16,8 @@ import { FilterChipGroup } from "@repo/ui/filter-chip";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { CloudFilter, type CloudFilterOption } from "@/components/filters/cloud-filter";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
-import {
-	DEFAULT_RUNNER_FILTERS,
-	useRunnerFilters,
-} from "@/lib/stores/use-runner-filters";
+import { DEFAULT_RUNNER_FILTERS } from "@/components/runners/runners-query";
+import { useRunnerFilters } from "@/lib/stores/use-runner-filters";
 
 /** Active filter selections for the runners grid (sans search). Empty = "no filter". */
 export interface RunnerFilters {

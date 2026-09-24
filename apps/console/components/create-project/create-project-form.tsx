@@ -10,6 +10,7 @@ import { toast } from "sonner";
 
 import { globalHref } from "@/lib/routing";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
+import type { GitProviderAvailability } from "@/lib/connectors/git-providers";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { Button } from "@repo/ui/button";
 import { Textarea } from "@repo/ui/textarea";
@@ -35,6 +36,8 @@ interface CreateProjectChooserProps {
 	byoHelmEnabled?: boolean;
 	/** Server flag — shows the BYO IaC scratch card. */
 	byoIacEnabled?: boolean;
+	/** Which git providers this instance can link (server-computed) — passed to the import panel. */
+	providerAvailability: GitProviderAvailability;
 }
 
 /**
@@ -49,11 +52,18 @@ export function CreateProjectForm({
 	canCollaborate,
 	byoHelmEnabled,
 	byoIacEnabled,
+	providerAvailability,
 }: CreateProjectChooserProps) {
 	const router = useRouter();
 	const { openUpgrade } = useUpgradeSheet();
 	const [prompt, setPrompt] = useState("");
 	const [launching, setLaunching] = useState(false);
+	// `launching` spins the button until the agent surface is up. Once that surface CLOSES the
+	// button must come back: without this it stayed spinning and disabled for the life of the page
+	// (#4996). Adjusted during render, not in an effect, so no committed frame shows a closed modal
+	// behind a still-spinning button.
+	const elenchOpen = useElenchStore((s) => s.open);
+	if (launching && !elenchOpen) setLaunching(false);
 
 	/** Hands the hero prompt to the global Elench surface as a seed and opens it in org context. */
 	const onAskAgent = () => {
@@ -161,7 +171,7 @@ export function CreateProjectForm({
 			<div className="grid gap-6 lg:grid-cols-2">
 				<div className="space-y-3">
 					<ColHead>Import Git Repository</ColHead>
-					<RepoImportPanel />
+					<RepoImportPanel providerAvailability={providerAvailability} />
 				</div>
 				<div className="space-y-3">
 					<ColHead>Start from scratch</ColHead>

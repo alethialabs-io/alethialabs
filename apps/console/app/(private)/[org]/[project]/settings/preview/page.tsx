@@ -10,6 +10,8 @@ import {
 import { resolveProjectId } from "@/app/server/actions/resolve";
 import { PreviewSettings } from "@/components/settings/preview/preview-settings";
 import { getGitlabBaseUrl } from "@/lib/config/auth";
+import { computePlatformConfigured } from "@/lib/connectors/cloud-connect-setup";
+import { gitProviderAvailability } from "@/lib/connectors/git-providers";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
@@ -44,6 +46,7 @@ export default async function ProjectPreviewSettingsPage({
 			fabrics={fabrics}
 			gitCredentials={gitCredentials}
 			gitlabBaseUrl={getGitlabBaseUrl()}
+			providerAvailability={gitProviderAvailability(computePlatformConfigured())}
 		/>
 	);
 }

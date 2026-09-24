@@ -23,7 +23,7 @@
 		"notInstrumented": 0,
 		"findings": 24,
 		"findingFiles": 15,
-		"liveNotMeasured": 33
+		"liveNotMeasured": 34
 	},
 	"ledgers": {
 		"baseline": 16,
@@ -31,8 +31,8 @@
 	},
 	"live": {
 		"source": {
-			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35713083980",
-			"commit": "c776a4d15a119ad8ee5178d8820d8c38f635999b"
+			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35896826914",
+			"commit": "633ca6efaa4e888b773157f691b3543a06961bd8"
 		},
 		"sections": {
 			"routes": {
@@ -85,19 +85,9 @@
 		},
 		"debt": {
 			"F8": {
-				"owner": "#4939",
-				"why": "ONE route, and the URL half only. `~/connectors` narrows 42 rows to 2 on `health=Connected` and writes the param; a FRESH TAB on that URL keeps the param and renders 42 rows again. Reset is correct in both halves, so the bar is linkable in name and not in effect — which is the defect F2's static matcher structurally cannot see, since the `useFilterUrlSync` call it reads is present and correct.",
+				"owner": "#4999",
+				"why": "ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, read from the count pill). The fresh tab kept the param but no narrowed count was read back; Reset was correct in run 35896826914. The cell PASSED in run 35867789835 and FAILED in runs 35872640708 and 35896826914, with the members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and `~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while the URL is unread or the rows are placeholder data.",
 				"fail": 1
-			},
-			"F10": {
-				"owner": "#4939",
-				"why": "TWO routes, and the EMPTY-STATE half only — both debounce cleanly. `~/alerts` and `~/settings/roles` render no `[data-slot=\"empty\"]` inside `main` for a token that matches nothing, and `~/alerts` renders 2 hand-rolled 'no results' messages outside it. This is CLAUDE.md §6's `@repo/ui/empty` row observed rather than grepped: H9 scores the FILE, F10 scores what the page put on screen once the list emptied, and these two pages pass H9.",
-				"fail": 2
-			},
-			"R8": {
-				"owner": "#4939",
-				"why": "FOUR routes, 39 controls enumerated between them, and two different findings. Three INERT controls produced no navigation, no overlay, no DOM mutation and no aria flip within 1 000 ms — `link \"Docs\"` on `~/alerts`, `link \"What is classification?\"` on `~/settings/classification`, `button \"Scroll to latest\"` on `~/support/ask`. Two more read a destructive verb that `destructive-actions.yaml` does not declare, and RUBRIC.md says that is a finding either way: the ledger is short an entry, or the control wears a verb it does not carry out.",
-				"fail": 4
 			}
 		}
 	},
@@ -454,58 +444,57 @@
 			"instrument": "check-filter-standard",
 			"owner": null,
 			"pass": 12,
-			"fail": 3,
+			"fail": 0,
 			"na": 24,
-			"notMeasured": 1,
+			"notMeasured": 4,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
-				"the only facet-bearing builder(s) this page reaches (getJobsPage) are declared undriven — F7 is a behaviour and nothing ran it here": 1
+				"the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here": 3,
+				"the only facet-bearing builder(s) this page reaches (getJobsPage, queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here": 1
 			},
-			"score": 0.8
+			"score": 1
 		},
 		"F8": {
 			"family": "F",
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"debt": "#4939",
-			"pass": 6,
+			"debt": "#4999",
+			"pass": 7,
 			"fail": 1,
 			"na": 24,
-			"notMeasured": 9,
+			"notMeasured": 8,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
 				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 3,
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 2,
+				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 2,
 				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
-				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 1,
-				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1,
 				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
 			},
-			"score": 0.8571
+			"score": 0.875
 		},
 		"F9": {
 			"family": "F",
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"pass": 7,
+			"pass": 8,
 			"fail": 0,
 			"na": 24,
-			"notMeasured": 9,
+			"notMeasured": 8,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
 				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 3,
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 2,
+				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 2,
 				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
-				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 1,
-				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1,
 				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
 			},
 			"score": 1
@@ -515,9 +504,8 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"debt": "#4939",
-			"pass": 13,
-			"fail": 2,
+			"pass": 15,
+			"fail": 0,
 			"na": 24,
 			"notMeasured": 1,
 			"naReasons": {
@@ -526,7 +514,7 @@
 			"notMeasuredReasons": {
 				"the page's store declares a `search` filter and no `FilterSearch` input rendered in `main` — a tabbed or conditional bar this pass did not reach": 1
 			},
-			"score": 0.8667
+			"score": 1
 		},
 		"R1": {
 			"family": "R",
@@ -632,24 +620,23 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"debt": "#4939",
-			"pass": 25,
-			"fail": 4,
-			"na": 11,
+			"pass": 35,
+			"fail": 0,
+			"na": 5,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4,
-				"no-enabled-controls": 7
+				"no-enabled-controls": 1
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8621
+			"score": 1
 		}
 	},
 	"routes": [
 		{
 			"route": "/[org]",
 			"redirectOnly": false,
-			"surfaceFiles": 289,
+			"surfaceFiles": 294,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -767,7 +754,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"redirectOnly": false,
-			"surfaceFiles": 406,
+			"surfaceFiles": 413,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -826,7 +813,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"redirectOnly": false,
-			"surfaceFiles": 167,
+			"surfaceFiles": 228,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -885,7 +872,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"redirectOnly": false,
-			"surfaceFiles": 239,
+			"surfaceFiles": 244,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -944,7 +931,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 224,
+			"surfaceFiles": 276,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1062,7 +1049,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 217,
+			"surfaceFiles": 292,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1121,7 +1108,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 282,
+			"surfaceFiles": 288,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1180,7 +1167,7 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"redirectOnly": false,
-			"surfaceFiles": 218,
+			"surfaceFiles": 223,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1221,25 +1208,25 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 1,
+				"pass": 26,
+				"fail": 0,
 				"na": 11,
 				"notMeasured": 1,
-				"score": 0.9615
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"redirectOnly": false,
-			"surfaceFiles": 145,
+			"surfaceFiles": 266,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1298,7 +1285,7 @@
 		{
 			"route": "/[org]/[project]/usage",
 			"redirectOnly": false,
-			"surfaceFiles": 150,
+			"surfaceFiles": 226,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1357,7 +1344,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"redirectOnly": false,
-			"surfaceFiles": 297,
+			"surfaceFiles": 303,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1389,34 +1376,34 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 32,
-				"fail": 4,
+				"pass": 34,
+				"fail": 2,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.8889
+				"score": 0.9444
 			}
 		},
 		{
 			"route": "/[org]/~/clusters",
 			"redirectOnly": false,
-			"surfaceFiles": 166,
+			"surfaceFiles": 227,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1475,7 +1462,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"redirectOnly": false,
-			"surfaceFiles": 214,
+			"surfaceFiles": 287,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1507,11 +1494,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
-					"fail": 2,
+					"pass": 9,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.8
+					"notMeasured": 1,
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1524,17 +1511,17 @@
 				}
 			},
 			"overall": {
-				"pass": 33,
-				"fail": 2,
+				"pass": 34,
+				"fail": 0,
 				"na": 3,
-				"notMeasured": 0,
-				"score": 0.9429
+				"notMeasured": 1,
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/evidence",
 			"redirectOnly": false,
-			"surfaceFiles": 153,
+			"surfaceFiles": 236,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1567,10 +1554,10 @@
 					"instrumented": 10,
 					"of": 10,
 					"pass": 7,
-					"fail": 1,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 2,
-					"score": 0.875
+					"notMeasured": 3,
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1584,16 +1571,16 @@
 			},
 			"overall": {
 				"pass": 33,
-				"fail": 1,
+				"fail": 0,
 				"na": 2,
-				"notMeasured": 2,
-				"score": 0.9706
+				"notMeasured": 3,
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 223,
+			"surfaceFiles": 275,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1652,7 +1639,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"redirectOnly": false,
-			"surfaceFiles": 228,
+			"surfaceFiles": 233,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1693,25 +1680,25 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 1,
-				"na": 12,
+				"na": 11,
 				"notMeasured": 1,
-				"score": 0.96
+				"score": 0.9615
 			}
 		},
 		{
 			"route": "/[org]/~/new",
 			"redirectOnly": false,
-			"surfaceFiles": 371,
+			"surfaceFiles": 376,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1770,7 +1757,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"redirectOnly": false,
-			"surfaceFiles": 279,
+			"surfaceFiles": 313,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1802,10 +1789,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 1,
 					"score": 1
 				},
 				"R": {
@@ -1819,10 +1806,10 @@
 				}
 			},
 			"overall": {
-				"pass": 33,
+				"pass": 35,
 				"fail": 0,
 				"na": 2,
-				"notMeasured": 3,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -1888,7 +1875,7 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 216,
+			"surfaceFiles": 291,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1947,7 +1934,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 281,
+			"surfaceFiles": 287,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2006,7 +1993,7 @@
 		{
 			"route": "/[org]/~/settings/billing",
 			"redirectOnly": false,
-			"surfaceFiles": 199,
+			"surfaceFiles": 274,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2047,17 +2034,17 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 0,
-				"na": 14,
+				"na": 13,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -2065,7 +2052,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"redirectOnly": false,
-			"surfaceFiles": 194,
+			"surfaceFiles": 269,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2124,7 +2111,7 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"redirectOnly": false,
-			"surfaceFiles": 149,
+			"surfaceFiles": 228,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2165,25 +2152,25 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 25,
+				"fail": 0,
 				"na": 13,
 				"notMeasured": 0,
-				"score": 0.96
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/settings/general",
 			"redirectOnly": false,
-			"surfaceFiles": 138,
+			"surfaceFiles": 220,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2224,17 +2211,17 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 0,
-				"na": 14,
+				"na": 13,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -2242,7 +2229,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"redirectOnly": false,
-			"surfaceFiles": 225,
+			"surfaceFiles": 299,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2259,65 +2246,6 @@
 					"pass": 4,
 					"fail": 0,
 					"na": 3,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 9,
-					"of": 9,
-					"pass": 9,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 10,
-					"of": 10,
-					"pass": 10,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"R": {
-					"instrumented": 8,
-					"of": 8,
-					"pass": 7,
-					"fail": 0,
-					"na": 1,
-					"notMeasured": 0,
-					"score": 1
-				}
-			},
-			"overall": {
-				"pass": 34,
-				"fail": 0,
-				"na": 4,
-				"notMeasured": 0,
-				"score": 1
-			}
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"redirectOnly": false,
-			"surfaceFiles": 226,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 5,
-					"fail": 0,
-					"na": 2,
 					"notMeasured": 0,
 					"score": 1
 				},
@@ -2350,17 +2278,76 @@
 				}
 			},
 			"overall": {
-				"pass": 35,
+				"pass": 34,
 				"fail": 1,
+				"na": 3,
+				"notMeasured": 0,
+				"score": 0.9714
+			}
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"redirectOnly": false,
+			"surfaceFiles": 298,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 5,
+					"fail": 0,
+					"na": 2,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 10,
+					"of": 10,
+					"pass": 10,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"R": {
+					"instrumented": 8,
+					"of": 8,
+					"pass": 8,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				}
+			},
+			"overall": {
+				"pass": 36,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9722
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"redirectOnly": false,
-			"surfaceFiles": 215,
+			"surfaceFiles": 289,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2419,7 +2406,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"redirectOnly": false,
-			"surfaceFiles": 220,
+			"surfaceFiles": 295,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2460,17 +2447,17 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 33,
+				"pass": 34,
 				"fail": 0,
-				"na": 3,
+				"na": 2,
 				"notMeasured": 2,
 				"score": 1
 			}
@@ -2537,7 +2524,7 @@
 		{
 			"route": "/[org]/~/support/abuse",
 			"redirectOnly": false,
-			"surfaceFiles": 138,
+			"surfaceFiles": 220,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2596,7 +2583,7 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"redirectOnly": false,
-			"surfaceFiles": 202,
+			"surfaceFiles": 276,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2637,25 +2624,25 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 25,
+				"fail": 0,
 				"na": 13,
 				"notMeasured": 0,
-				"score": 0.96
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/support/cases/[id]",
 			"redirectOnly": false,
-			"surfaceFiles": 159,
+			"surfaceFiles": 238,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2714,7 +2701,7 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"redirectOnly": false,
-			"surfaceFiles": 151,
+			"surfaceFiles": 234,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2747,10 +2734,10 @@
 					"instrumented": 10,
 					"of": 10,
 					"pass": 9,
-					"fail": 1,
+					"fail": 0,
 					"na": 0,
-					"notMeasured": 0,
-					"score": 0.9
+					"notMeasured": 1,
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -2764,16 +2751,16 @@
 			},
 			"overall": {
 				"pass": 35,
-				"fail": 1,
+				"fail": 0,
 				"na": 2,
-				"notMeasured": 0,
-				"score": 0.9722
+				"notMeasured": 1,
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/support/submit",
 			"redirectOnly": false,
-			"surfaceFiles": 148,
+			"surfaceFiles": 228,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2832,7 +2819,7 @@
 		{
 			"route": "/[org]/~/usage",
 			"redirectOnly": false,
-			"surfaceFiles": 189,
+			"surfaceFiles": 264,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2873,17 +2860,17 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 0,
-				"na": 14,
+				"na": 13,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -2950,7 +2937,7 @@
 		{
 			"route": "/dashboard/[[...rest]]",
 			"redirectOnly": true,
-			"surfaceFiles": 129,
+			"surfaceFiles": 211,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -4686,13 +4673,13 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -4980,8 +4967,7 @@
 		{
 			"route": "/[org]/[project]/settings/general",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "1 control named a destructive verb the ledger does not declare — of 1 control enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/general",
@@ -5454,8 +5440,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F10",
-			"verdict": "FAIL",
-			"detail": "a nonsense search rendered no `[data-slot=\"empty\"]` inside `main`; 2 hand-rolled \"no results\" messages outside the shared empty state"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5582,8 +5567,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "1 enabled control did nothing within 1000ms, 1 control named a destructive verb the ledger does not declare — of 29 controls enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -5885,14 +5869,13 @@
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "F7",
-			"verdict": "FAIL",
-			"detail": "this page owns useConnectorFilters and its closure reaches no server read that returns facets — so its filter options come from somewhere other than the unfiltered universe"
+			"verdict": "NOT MEASURED",
+			"reason": "the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here"
 		},
 		{
 			"route": "/[org]/~/connectors",
 			"predicate": "F8",
-			"verdict": "FAIL",
-			"detail": "reload() kept the param but not the narrowed list"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6081,8 +6064,8 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F7",
-			"verdict": "FAIL",
-			"detail": "this page owns useEvidenceFilters and its closure reaches no server read that returns facets — so its filter options come from somewhere other than the unfiltered universe"
+			"verdict": "NOT MEASURED",
+			"reason": "the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -6577,8 +6560,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -6882,19 +6864,17 @@
 			"route": "/[org]/~/runners",
 			"predicate": "F7",
 			"verdict": "NOT MEASURED",
-			"reason": "the only facet-bearing builder(s) this page reaches (getJobsPage) are declared undriven — F7 is a behaviour and nothing ran it here"
+			"reason": "the only facet-bearing builder(s) this page reaches (getJobsPage, queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -7493,13 +7473,13 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
+			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -7789,8 +7769,7 @@
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -8192,8 +8171,7 @@
 		{
 			"route": "/[org]/~/settings/classification",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "1 enabled control did nothing within 1000ms — of 4 controls enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/classification",
@@ -8397,8 +8375,7 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/general",
@@ -8502,7 +8479,8 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "F8",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "reload() kept the param but not the narrowed list"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -8593,8 +8571,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -8662,8 +8639,7 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F10",
-			"verdict": "FAIL",
-			"detail": "a nonsense search rendered no `[data-slot=\"empty\"]` inside `main`"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -9181,8 +9157,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -9793,8 +9768,7 @@
 		{
 			"route": "/[org]/~/support/ask",
 			"predicate": "R8",
-			"verdict": "FAIL",
-			"detail": "1 enabled control did nothing within 1000ms — of 5 controls enumerated on this route"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/ask",
@@ -10095,8 +10069,8 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F7",
-			"verdict": "FAIL",
-			"detail": "this page owns useSupportFilters and its closure reaches no server read that returns facets — so its filter options come from somewhere other than the unfiltered universe"
+			"verdict": "NOT MEASURED",
+			"reason": "the only facet-bearing builder(s) this page reaches (queryProjects) are declared undriven — F7 is a behaviour and nothing ran it here"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
@@ -10599,8 +10573,7 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/usage",
