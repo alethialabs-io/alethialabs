@@ -144,8 +144,12 @@ variable "e2e_dns_zone_name" {
 variable "e2e_broker_issuer_url" {
   description = <<-EOT
     The HTTPS origin of the E2E assertion broker (apps/e2e-issuer) — exactly the `E2E_ISSUER_URL` the
-    Worker is deployed with, which is the `iss` of every assertion it mints. null (the committed value
-    in terraform.tfvars) creates NO broker trust, so a plan without it changes nothing.
+    Worker is deployed with, which is the `iss` of every assertion it mints. The committed
+    terraform.tfvars sets it to https://e2e-issuer.alethialabs.io; the broker trust is created
+    whenever it is non-null, and null (the default here) creates none. Apply only after the issuer
+    serves at that origin (docs/testing/e2e-state-migration.md, infra/e2e-issuer/README.md). To plan
+    without the broker, pass -var-file=<(printf 'e2e_broker_issuer_url = null\n'); a plain -var
+    e2e_broker_issuer_url=null passes the string "null", not null.
 
     A bare origin only: no path, no port, no trailing slash, lowercase host. That is the only shape
     the Worker serves (normalizedIssuer() in apps/e2e-issuer/src/worker.ts refuses anything with a
@@ -154,7 +158,8 @@ variable "e2e_broker_issuer_url" {
 
     Choosing the origin is the maintainer's decision (#4547); see
     docs/testing/e2e-federation-apply-runbook.md. Set it in terraform.tfvars in a reviewed PR, never
-    with -var at apply time: the next bare apply would read null and REMOVE the trust.
+    with -var at apply time: the next bare apply reads terraform.tfvars again and rewrites or
+    REMOVES the trust.
   EOT
   type        = string
   default     = null
