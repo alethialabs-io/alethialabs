@@ -18,7 +18,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
-import { CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, namesDestructiveAction, preActivationExclusion } from "./inert";
+import { accessibleName, activate, CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, namesDestructiveAction, preActivationExclusion } from "./inert";
 import { hitTest } from "./overlays";
 import {
 	controlFixture,
@@ -522,6 +522,51 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		expect(isSameOrigin("https://alethialabs.io/pricing", "http://localhost:3000/org")).toBe(false);
 		expect(isSameOrigin("http://localhost:3000/x", "http://localhost:3000/org")).toBe(true);
 		expect(isSameOrigin("mailto:support@example.invalid", "http://localhost:3000/org")).toBe(false);
+	});
+
+	test("R8 — a control's name is read the way accname reads it: aria-label before the text", async ({ page }) => {
+		// The project danger row's button (#4939): visible "Delete", accessible name "Delete
+		// project". Read text-first, the ledger's `project.delete` could never match it.
+		expect(accessibleName("Delete project", "Delete")).toBe("Delete project");
+		expect(accessibleName(null, "  Save\n changes ")).toBe("Save changes");
+		expect(accessibleName("   ", "Docs")).toBe("Docs");
+		expect(accessibleName(null, "")).toBe("(unnamed)");
+		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+			<button aria-label="Delete project">Delete</button>
+		</main></body></html>`);
+		const found = await enumerateControls(page, "main", "main");
+		expect(found.controls.map((c) => c.name), "the enumerator and Playwright's getByRole agree").toEqual(["Delete project"]);
+		await expect(page.getByRole("button", { name: "Delete project", exact: true })).toHaveCount(1);
+	});
+
+	test("R8 — a control inside an `inert` subtree is not an enabled control", async ({ page }) => {
+		// The message scroller's "Scroll to latest" is `inert` while there is nothing to scroll to
+		// (#4939). The browser will not click it either, so scoring it would file a FAIL against a
+		// control no user can reach. The negative stays: the same button without `inert` is enumerated.
+		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+			<button inert>Scroll to latest</button>
+			<div inert><button>Inside an inert region</button></div>
+			<button>Live</button>
+		</main></body></html>`);
+		const found = await enumerateControls(page, "main", "main");
+		expect(found.controls.map((c) => c.name)).toEqual(["Live"]);
+	});
+
+	test("R8 — a same-origin link that opens a NEW TAB did something, and the tab is closed", async ({ page }) => {
+		// #4939: `target="_blank"` docs links leave the page untouched, and nothing listened for the
+		// tab they open — so every one of them read as inert. Both directions: the popup arm must
+		// fire on the tab, and must NOT turn a link that opens nothing into a pass.
+		const body = `<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+			<a id="tab" href="/docs/x" target="_blank" rel="noopener noreferrer">Docs</a>
+			<a id="nowhere" href="#" onclick="event.preventDefault()">Nowhere</a>
+		</main></body></html>`;
+		await page.context().route("http://app.test/**", (route) => route.fulfill({ contentType: "text/html", body }));
+		await page.goto("http://app.test/org");
+		const tab = await activate(page, page.locator("#tab"), { networkUsable: false });
+		expect(tab.effect, "the opened tab is the link's effect").toBe("new-tab");
+		await expect.poll(() => page.context().pages().length, { message: "and the tab it opened does not outlive the measurement" }).toBe(1);
+		const nowhere = await activate(page, page.locator("#nowhere"), { networkUsable: false });
+		expect(nowhere.effect, "a link that opens nothing is still inert").toBeNull();
 	});
 
 	test("R8 — the one control it may not press is the one that ends the run's own session", () => {

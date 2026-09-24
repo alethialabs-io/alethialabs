@@ -76,11 +76,16 @@ export function RecipientsEditor({
 						className="flex items-center gap-1.5 rounded-full border border-border/60 bg-background px-2.5 py-1 font-mono text-foreground text-xs"
 					>
 						{r}
+						{/* "Remove recipient <address>", naming WHAT it removes: the chip sits beside other
+						    "Remove …" controls on the alerts page (a policy's channel routing), and this
+						    is the name `destructive-actions.yaml` registers it under
+						    (`alerts.channel.recipient.remove`). The click only stages the removal in the
+						    edit draft — the channel's dirty Save/Discard bar is what decides it. */}
 						<button
 							type="button"
 							onClick={() => onChange(recipients.filter((x) => x !== r))}
 							className="text-muted-foreground hover:text-foreground"
-							aria-label={`Remove ${r}`}
+							aria-label={`Remove recipient ${r}`}
 						>
 							<X className="size-3" />
 						</button>

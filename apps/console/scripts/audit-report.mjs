@@ -514,6 +514,15 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * added and nothing dropped. A withheld measurement would have arrived as `NOT MEASURED`, which is
  * never a pass, rather than as silence.
  *
+ * THE SECOND IMPORT — run 35851828028 @ `6bcf7425b`, the `audit` and `audit-interaction` legs of
+ * ONE run, so all three sections share one `source`. All seven cells #4939 named now PASS, and
+ * F10 fails nowhere, so its row is gone. The `routes` and `permissions` sections reproduced all
+ * 387 verdicts key-for-key again. Three NEW FAILs arrived, and none of them is one of the seven.
+ * The F8 and R8 rows below now describe those three and nothing else. Each of the three
+ * reversed verdict between runs on UNCHANGED code (see each row), so each row records a timing
+ * question the instrument cannot yet settle, not a proven product defect. `#4939` stays the
+ * owner only until a follow-up issue is filed for them.
+ *
  * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
@@ -521,31 +530,24 @@ export const LIVE_DEBT = /** @type {const} */ ({
 	F8: {
 		owner: "#4939",
 		why:
-			"ONE route, and the URL half only. `~/connectors` narrows 42 rows to 2 on `health=Connected` " +
-			"and writes the param; a FRESH TAB on that URL keeps the param and renders 42 rows again. " +
-			"Reset is correct in both halves, so the bar is linkable in name and not in effect — which " +
-			"is the defect F2's static matcher structurally cannot see, since the `useFilterUrlSync` " +
-			"call it reads is present and correct.",
-	},
-	F10: {
-		owner: "#4939",
-		why:
-			"TWO routes, and the EMPTY-STATE half only — both debounce cleanly. `~/alerts` and " +
-			"`~/settings/roles` render no `[data-slot=\"empty\"]` inside `main` for a token that matches " +
-			"nothing, and `~/alerts` renders 2 hand-rolled 'no results' messages outside it. This is " +
-			"CLAUDE.md §6's `@repo/ui/empty` row observed rather than grepped: H9 scores the FILE, F10 " +
-			"scores what the page put on screen once the list emptied, and these two pages pass H9.",
+			"TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and " +
+			"`~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param " +
+			"and reads the FULL count, while Reset is correct in both halves. Both cells PASSED in run " +
+			"35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between " +
+			"those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the " +
+			"URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data " +
+			"until the filtered fetch returns. `settle()` takes two equal reads 300 ms apart as settled, so " +
+			"it cannot tell a slow placeholder from an answer. Flake or defect is not settled yet.",
 	},
 	R8: {
 		owner: "#4939",
 		why:
-			"FOUR routes, 39 controls enumerated between them, and two different findings. Three INERT " +
-			"controls produced no navigation, no overlay, no DOM mutation and no aria flip within " +
-			"1 000 ms — `link \"Docs\"` on `~/alerts`, `link \"What is classification?\"` on " +
-			"`~/settings/classification`, `button \"Scroll to latest\"` on `~/support/ask`. Two more read " +
-			"a destructive verb that `destructive-actions.yaml` does not declare, and RUBRIC.md says that " +
-			"is a finding either way: the ledger is short an entry, or the control wears a verb it does " +
-			"not carry out.",
+			"ONE route, ONE control: `button \"owner39\"` on `~/settings/roles`, which is the built-in " +
+			"`owner` rail row, selected by default. Clicking the row that is already selected changes " +
+			"nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that " +
+			"could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a " +
+			"DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 has " +
+			"no rule for a control that is already in the state it selects.",
 	},
 });
 
