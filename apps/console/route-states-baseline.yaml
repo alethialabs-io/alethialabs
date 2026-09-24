@@ -29,7 +29,6 @@ predicates:
       - /dashboard/[[...rest]]: redirect-only
   S2:
     fail:
-      - /[org]/[project]/environments
       - /[org]/~/alerts
       # A RECORDED DECISION, and the only line in this file that is one. Everything else here is
       # a defect waiting for the lane that owns it; this route is built this way on purpose and
@@ -56,7 +55,6 @@ predicates:
       # SAME constant rather than repeating it. Change the column in `detail-column.ts` and both
       # move together; hard-code it in either and S3 goes quiet while the skeleton stops matching.
       - /[org]/~/jobs/[id]
-      - /[org]/~/new
     na:
       - /[org]/[project]/settings: redirect-only
       - /[org]/[project]: redirect-only

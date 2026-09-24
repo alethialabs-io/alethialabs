@@ -110,15 +110,15 @@
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 32,
-			"fail": 4,
+			"pass": 34,
+			"fail": 2,
 			"na": 4,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8889
+			"score": 0.9444
 		},
 		"S3": {
 			"family": "S",
@@ -877,11 +877,11 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 7,
@@ -921,11 +921,11 @@
 				}
 			},
 			"overall": {
-				"pass": 25,
-				"fail": 1,
+				"pass": 26,
+				"fail": 0,
 				"na": 11,
 				"notMeasured": 1,
-				"score": 0.9615
+				"score": 1
 			}
 		},
 		{
@@ -1703,11 +1703,11 @@
 				"S": {
 					"instrumented": 4,
 					"of": 4,
-					"pass": 3,
-					"fail": 1,
+					"pass": 4,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.75
+					"score": 1
 				},
 				"T": {
 					"instrumented": 7,
@@ -1747,11 +1747,11 @@
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 25,
+				"fail": 0,
 				"na": 13,
 				"notMeasured": 0,
-				"score": 0.96
+				"score": 1
 			}
 		},
 		{
@@ -3972,8 +3972,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "two widths: ProjectShell max-w-[1200px] and the page's max-w-4xl"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -6774,8 +6773,7 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "S2",
-			"verdict": "FAIL",
-			"detail": "two widths: AppShell max-w-[1200px] and the page's max-w-5xl"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/new",
