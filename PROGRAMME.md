@@ -249,7 +249,7 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 
 ## Where the programme actually is
 
-**23 of 35 proof cells are proven.** 0 failing · 0 contested (the ledger and the board disagree) · 1 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
+**24 of 35 proof cells are proven.** 0 failing · 0 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -258,7 +258,7 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 | cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 | CLI-driven |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **aws** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
-| **gcp** | ♻️ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
+| **gcp** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 | **azure** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 | **alibaba** | · | · | · | · | · | · | · |
 | **hetzner** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
@@ -267,25 +267,25 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 <details><summary>Every cell that has any evidence at all</summary>
 
-- `aws/floor` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T125612Z`
+- `aws/floor` **proven** — ledger 2026-09-24, bundle `demos/proofs/aws/20260924T093515Z`
 - `aws/maxconfig` **proven** — ledger 2026-08-26, bundle `demos/proofs/aws/20260826T114712Z`
 - `aws/addons` **proven** — ledger 2026-08-30, bundle `demos/proofs/aws/20260830T100243Z`
 - `aws/gitops` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T142417Z`
 - `aws/byo-iac` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T155743Z`
 - `aws/day2` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T190408Z`
-- `gcp/floor` **stale** — ledger 2026-09-02 — but #3855 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#3855)
+- `gcp/floor` **proven** — ledger 2026-09-24, bundle `demos/proofs/gcp/20260924T090109Z`
 - `gcp/maxconfig` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T124233Z`
 - `gcp/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/gcp/20260829T093816Z` (⚠️ argocd counts unmeasured: pre-#3281 binary (A0.6's convergence loop wrote no summary); the assertion DID run and pass — run 33243600150 logs `all 20 asserted ArgoCD Applications are Healthy+Synced (1 withheld)`)
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
 - `gcp/byo-iac` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T110456Z`
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
-- `azure/floor` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T215237Z`
+- `azure/floor` **proven** — ledger 2026-09-24, bundle `demos/proofs/azure/20260924T091428Z`
 - `azure/maxconfig` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T211849Z`
 - `azure/addons` **proven** — ledger 2026-08-30, bundle `demos/proofs/azure/20260830T005214Z`
 - `azure/gitops` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
 - `azure/byo-iac` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T204358Z`
 - `azure/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T235236Z`
-- `hetzner/floor` **proven** — ledger 2026-08-27, bundle `demos/proofs/hetzner/20260827T192915Z`
+- `hetzner/floor` **proven** — ledger 2026-09-24, bundle `demos/proofs/hetzner/20260924T084044Z`
 - `hetzner/maxconfig` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T105705Z`
 - `hetzner/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T085104Z`
 - `hetzner/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/2026-08-25T175213Z`
@@ -296,13 +296,12 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`gcp/floor`** — stale. ledger 2026-09-02 — but #3855 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix
+**`alibaba/floor`** — never_run. no surviving ledger claim
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
 <details><summary>The next 10</summary>
 
-1. `gcp/floor` — stale
 1. `alibaba/floor` — never_run
 1. `alibaba/maxconfig` — never_run
 1. `alibaba/addons` — never_run
@@ -312,6 +311,7 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 1. `aws/cli-demo` — never_run
 1. `gcp/cli-demo` — never_run
 1. `azure/cli-demo` — never_run
+1. `alibaba/cli-demo` — never_run
 
 </details>
 
@@ -370,14 +370,7 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 ### Open REDs
 
-| cell | state | issue | issue state |
-|---|---|---|:---:|
-| `gcp/floor` | stale | #3855 | ⛔ **CLOSED** |
-
-♻️ **1 cell(s) cite a CLOSED issue**, so they are rendered `stale` rather than `failing`: the cause is fixed and what they need is a **re-run**, not a fix. They rank first in the mechanical next for exactly that reason — it is the cheapest action on the board.
-
-The ledger row itself is not wrong and is not rewritten (it is append-only, and it was true when written). What was wrong was reading it as open work — the same defect that had the parity board citing four closed issues as live floor blockers.
-
+No cell is failing or blocked.
 
 ### Orphan reaper — nothing standing
 
@@ -444,7 +437,7 @@ The timestamp is printed VERBATIM from the snapshot, never as an age. An age is 
 
 Gate inventory observed: **2026-09-08T16:35:27Z** — carried forward on every refresh whose token cannot list repo variables or secrets. Past 7 days behind the snapshot it stops being a measurement of today, and every declared gate degrades to `unknown`.
 
-Ledger rows read: **62** · surviving claims: **27** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
+Ledger rows read: **66** · surviving claims: **27** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
 
 _Generated by `scripts/programme-rollup.mjs`. Do not edit below the marker — run `pnpm gen:programme`._
 

@@ -1,0 +1,19 @@
+    t2_provision_test.go:144: A0.6: ArgoCD-with-repos ENABLED — apps repo "https://github.com/alethialabs-io/alethia-e2e-apps" + BYO chart repo "https://github.com/alethialabs-io/alethia-e2e-chart" will be wired and asserted
+    t2_provision_test.go:164: #1268: cross-account keyless secrets SKIPPED — set ALETHIA_E2E_SECRETS_XACCT (+ its target vars) to enable.
+    t2_provision_test.go:179: #1773: ACM certificate ENABLED — issuing for *.35975152791-1.e2e.alethialabs.io, validating in the pre-delegated zone Z0395392Z0SAB8SFGNLX
+    t2_provision_test.go:210: #1511: keyless DB auth SKIPPED — set ALETHIA_E2E_KEYLESS_DB (+ its engine vars) to enable.
+    t2_provision_test.go:310: A0.5: seeded console graph (project=f12a1928-dc68-4994-ae37-612260ee01c0 env=09934798-27ff-49a0-a5fb-059d7f8e8f82) + loaded the aws fidelity fixture; enforce=false real_snapshot=false
+    t2_provision_test.go:340: #1773: seeding the DEPLOY job with the delegated zone Z0395392Z0SAB8SFGNLX and acm_certificate=true for *.35975152791-1.e2e.alethialabs.io
+    t2_provision_test.go:399: A0.5: no divergence across the 2 key(s) this compares [addons provider] against the aws fixture — NOT a statement about the other 33 fixture key(s), which the seed does not carry; addons compared element-wise by id: 1 of 1 [reloader]
+    t2_provision_test.go:698: asserting ArgoCD Applications reach Healthy+Synced: [addon-byo-e2e addon-reloader apps aws-load-balancer-controller cert-manager external-dns external-secrets-operator metrics-server]
+    t2_provision_test.go:733: A0.6: repo-apps (apps) + repo-byo (addon-byo-e2e) derived + credentialed; converging (BYO auto-syncs, unaided)...
+    t2_provision_test.go:746: A0.6: ArgoCD-with-repos proven — repo-apps + repo-byo Applications Healthy+Synced and managing real resources on real infra
+    t2_provision_test.go:759: all 8 asserted ArgoCD Applications are Healthy+Synced (0 withheld)
+    t2_provision_test.go:816: A0.5: replayed real finalizeDeployment; shim: finalizeDeployment(686bec2e-9303-4b9c-8c08-f03ded3aa1e1) completed
+    t2_provision_test.go:816: A0.5: env 09934798-27ff-49a0-a5fb-059d7f8e8f82 is ACTIVE (real finalizeDeployment)
+    t2_provision_test.go:816: A0.5: persisted reloader health row: health="Healthy" status="ACTIVE"
+    t2_provision_test.go:816: A0.5: persisted Trivy security-posture row present (bonus)
+    t2_provision_test.go:848: A0.3 soak: SKIPPED (ALETHIA_E2E_SOAK unset) — base T2 proof unchanged
+--- PASS: TestT2RealCloudProvisioning (3980.36s)
+PASS
+ok  	github.com/alethialabs-io/alethialabs/test/e2e	3980.370s
