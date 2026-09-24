@@ -83,7 +83,7 @@ export function CreateProjectForm({
 	};
 
 	return (
-		<div className="mx-auto w-full max-w-5xl space-y-9 pb-20">
+		<div className="space-y-9 pb-20">
 			{/* ===== agent hero (full width) ===== */}
 			<section className="space-y-5">
 				<div className="flex items-center justify-between gap-4">
