@@ -252,6 +252,9 @@ test.describe("Projects — the template path", () => {
 		await expect(owner.page.getByText("Standard template")).toBeVisible();
 		await expect(owner.page.getByText("start from a template")).toBeVisible();
 		await expect(owner.page.getByText("an empty canvas")).toHaveCount(0);
+		// #4110: the Template section IS a step only this path adds — the picker renders for
+		// `?scratch=template` alone, so this heading is the hand-off's second own marker.
+		await expect(owner.page.getByRole("heading", { name: "Template", exact: true })).toBeVisible();
 	});
 
 	test("each cloud tile is a named group, and a seeded account reads Connected", async ({
