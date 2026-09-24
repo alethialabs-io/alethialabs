@@ -8,7 +8,7 @@
 # of ci.yml pull_request runs (paged), each run's job list, and `gh run list` for the release gate
 # (always empty here — that section is not under test). No network, no token.
 #
-# It then MUTATES the script five times — each mutation undoes one property the scenarios claim to
+# It then MUTATES the script six times — each mutation undoes one property the scenarios claim to
 # pin — and requires the suite to FAIL on every mutant. A mutation whose anchor no longer matches is
 # itself a failure: a mutant identical to the original would "survive" for the wrong reason.
 #
@@ -54,8 +54,11 @@ ELENCH="E2E (browser · Elench AI journeys · scripted model)"
 # ISO-8601 UTC timestamp `$1` hours ago (BSD and GNU date).
 ago_h() { date -u -v-"$1"H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "$1 hours ago" +%Y-%m-%dT%H:%M:%SZ; }
 
-# Appends one run to the fixture's run table: id, hours-ago, head branch, status.
-add_run() { printf '%s\t%s\t%s\t%s\n' "$1" "$(ago_h "$2")" "$3" "$4" >>"$FIXTURE/runs.tsv"; }
+REPO="alethialabs-io/alethialabs"
+
+# Appends one run to the fixture's run table: id, hours-ago, head branch, status, and optionally the
+# head repository (default: this repo; `null` = a deleted fork, which the API reports as null).
+add_run() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$(ago_h "$2")" "$3" "$4" "${5:-$REPO}" >>"$FIXTURE/runs.tsv"; }
 
 # Writes a run's job list. Each of T1/HERO/ELENCH gets a conclusion, or `absent` to omit the job.
 add_jobs() {
@@ -69,9 +72,11 @@ add_jobs() {
 # Splits runs.tsv (newest first) into REST pages of $PER_PAGE, the shape the script pages through.
 paginate() {
   local per="$1"
-  jq -R -s --argjson per "$per" '
+  jq -R -s --argjson per "$per" --arg repo "$REPO" '
     split("\n") | map(select(length > 0) | split("\t")
-      | {id: (.[0] | tonumber), created_at: .[1], head_branch: .[2], status: .[3], event: "pull_request"})
+      | {id: (.[0] | tonumber), created_at: .[1], head_branch: .[2], status: .[3], event: "pull_request",
+         head_repository: (if .[4] == "null" then null else {full_name: .[4]} end),
+         repository: {full_name: $repo}})
     | sort_by(.created_at) | reverse
     | [range(0; length; $per) as $i | .[$i:$i + $per]]' "$FIXTURE/runs.tsv" |
     jq -c '.[]' | {
@@ -182,6 +187,22 @@ suite() {
   invoke "$subject"
   [ "$CODE" -eq 1 ] && has "refusing to grade a partial sample" && ok "H: an unreadable job list is a refusal" || bad "H: partial sample not refused (exit $CODE)"
 
+  # I — fork PRs named like queue branches (#5029 review): a fork chooses its branch name and its own
+  # ci.yml, so its all-green T1 must not be counted. 20 real queue builds grade 18/20; the 10 fork
+  # runs (and one whose fork was deleted, head_repository null) would lift that to a PROMOTE.
+  fresh fork
+  for i in $(seq 1 20); do
+    add_run "$((1000 + i))" "$((i + 2))" "mergify/merge-queue/q$i" completed
+    if [ "$i" -le 2 ]; then add_jobs "$((1000 + i))" failure skipped skipped; else add_jobs "$((1000 + i))" success skipped skipped; fi
+  done
+  for i in $(seq 1 10); do add_run "$((4000 + i))" 1 "mergify/merge-queue/f$i" completed "mallory/alethialabs"; add_jobs "$((4000 + i))" success skipped skipped; done
+  add_run 4099 1 "mergify/merge-queue/gone" completed null; add_jobs 4099 success skipped skipped
+  paginate 100
+  invoke "$subject"
+  has "90%  (18/20 graded, 0 skipped)  → OBSERVE" && ok "I: fork runs on a queue-named branch are not graded" \
+    || bad "I: T1 not graded 18/20 — a fork run was counted as a queue build"
+  grep -q 'actions/runs/40' "$FAKE_LOG" && bad "I: fetched a fork run's jobs" || ok "I: never fetched a fork run's jobs"
+
   return "$fails"
 }
 
@@ -207,6 +228,7 @@ MUTANTS=(
   'counts in-progress builds|select(.created_at >= $c and .status == "completed")] | sort_by|select(.created_at >= $c)] | sort_by'
   'drops the queue-class UNREACHABLE|elif [ "$total" -eq 0 ] && [ "$class" = "queue" ]; then|elif false; then'
   'makes UNREACHABLE exit 0|if [ "$unreachable" -ne 0 ]; then|if false; then'
+  'drops the head-repository check|and (.head_repository.full_name // "") == (.repository.full_name // "-")|and true'
 )
 echo "── mutations (each must be KILLED)"
 n=0

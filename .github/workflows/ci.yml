@@ -2601,7 +2601,11 @@ jobs:
     #
     # A Mergify queue build is a `pull_request` run whose head is the draft PR Mergify opens from
     # `mergify/merge-queue/<hash>`, so `github.head_ref` is the selector. On a feature PR's own run
-    # this job is `skipped`; on the queue build it runs.
+    # this job is `skipped`; on the queue build it runs. The branch name alone is not an identity —
+    # anyone can open a PR from a fork branch with that name — so the head repository must also be
+    # this one; Mergify pushes its queue branches here. (A fork that edits ci.yml can rewrite this
+    # `if:` too; scripts/merge-signal-health.sh applies the same head-repository test, so such a
+    # run is never graded as queue evidence either way.)
     #
     # WHY THIS CANNOT WEDGE THE QUEUE: it is OBSERVE-ONLY. The name is in none of the three
     # required-check lists (infra/github/variables.tf, .mergify.yml merge_conditions and
@@ -2623,7 +2627,9 @@ jobs:
     # cannot hollow out. Extends the in-process T0 (which stays in the `go` job as a compile check).
     if: >-
       github.event_name == 'merge_group'
-      || (github.event_name == 'pull_request' && startsWith(github.head_ref, 'mergify/merge-queue/'))
+      || (github.event_name == 'pull_request'
+          && startsWith(github.head_ref, 'mergify/merge-queue/')
+          && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     services:
       # Mirrors the `integration` job: a throwaway Postgres that db:migrate turns into

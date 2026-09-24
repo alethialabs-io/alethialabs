@@ -23,6 +23,14 @@
 # results, so at most MAX_PAGES (10) pages of 100 are read; the report names the window it actually
 # covered rather than implying MAX_AGE_DAYS was reached.
 #
+# A BRANCH NAME IS NOT AN IDENTITY. Anyone opening a PR against this public repo chooses its head
+# branch, so `mergify/merge-queue/x` from a fork (or any feature branch pushed from one) would match
+# the prefix alone — and a fork PR's run uses the fork's own ci.yml, so it can make T1 pass
+# trivially and pad the pass-rate up to a PROMOTE. A run counts only when its head repository IS
+# this repository: Mergify pushes its queue branches here, and every queue run observed on
+# 2026-09-24 (32 of 32) has head_repository == repository. A null head repository (deleted fork)
+# never matches. ci.yml's T1 `if:` applies the same test.
+#
 # ── WHAT EACH SIGNAL IS EXPECTED TO DO ON THAT SOURCE ─────────────────────────────────────────────
 #
 # `queue` — scheduled on EVERY queue build (T1's job `if:` selects mergify/merge-queue/* heads).
@@ -177,7 +185,9 @@ while [ "$page" -le "$MAX_PAGES" ]; do
   fi
   pages_read=$page
   queue_runs=$(printf '%s' "$page_json" | jq -c --argjson acc "$queue_runs" --arg p "$QUEUE_PREFIX" \
-    '$acc + [.workflow_runs[] | select((.head_branch // "") | startswith($p))
+    '$acc + [.workflow_runs[]
+             | select(((.head_branch // "") | startswith($p))
+                      and (.head_repository.full_name // "") == (.repository.full_name // "-"))
              | {id, created_at, status}]')
   n=$(printf '%s' "$page_json" | jq '.workflow_runs | length')
   page_oldest=$(printf '%s' "$page_json" | jq -r '[.workflow_runs[].created_at] | min // ""')
