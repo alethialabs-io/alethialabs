@@ -31,8 +31,8 @@
 	},
 	"live": {
 		"source": {
-			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35851828028",
-			"commit": "6bcf7425b0b429dc9a3f1dc53e703c04c852b429"
+			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35872640708",
+			"commit": "b417c13e18b30f0785234e7896cc0528d1ea93f8"
 		},
 		"sections": {
 			"routes": {
@@ -85,14 +85,14 @@
 		},
 		"debt": {
 			"F8": {
-				"owner": "#4939",
-				"why": "TWO routes, and the reload half only: `~/alerts` on `policyStatus` (3 rows narrowed to 2) and `~/runners` on `versions` (4 narrowed to 1). A FRESH TAB on the filtered URL keeps the param and reads the FULL count, while Reset is correct in both halves. Both cells PASSED in run 35848311879 and FAILED in runs 35850426603 and 35851828028, and neither page changed between those runs. Both pages prefetch only the PRISTINE query on the server, and the store reads the URL in a mount effect, so a filtered link first shows the pristine rows as placeholder data until the filtered fetch returns. `settle()` takes two equal reads 300 ms apart as settled, so it cannot tell a slow placeholder from an answer. Flake or defect is not settled yet.",
-				"fail": 2
+				"owner": "#4999",
+				"why": "ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, read from the count pill). The fresh tab kept the param but no narrowed count was read back, so Reset was never reached. The cell PASSED in run 35867789835 and FAILED in run 35872640708 with the members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and `~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while the URL is unread or the rows are placeholder data.",
+				"fail": 1
 			},
 			"R8": {
-				"owner": "#4939",
-				"why": "ONE route, ONE control: `button \"owner39\"` on `~/settings/roles`, which is the built-in `owner` rail row, selected by default. Clicking the row that is already selected changes nothing, and the row exposes no selection state (no `aria-current` or `aria-pressed`) that could flip. The same cell PASSED in runs 35848311879 and 35850426603 on unchanged code, so a DOM mutation that happened to land inside the 1 000 ms window decided those verdicts. R8 has no rule for a control that is already in the state it selects.",
-				"fail": 1
+				"owner": "#4996",
+				"why": "FOUR routes, six controls with no state attribute whose click showed nothing within 1 000 ms: `Fit view` on `[project]/architecture`, `Link GitHub`/`Link GitLab`/`Link Bitbucket` on `[project]/settings/preview` and on `~/new`, `Design with the agent` on `~/new`, and `Transfer` on `~/settings/general`. The three pick-one buttons the previous row also named (`Runner minutes` on both usage pages, the theme toggle's `System`) PASS in run 35872640708, so they are gone from this row.",
+				"fail": 4
 			}
 		}
 	},
@@ -466,9 +466,9 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"debt": "#4939",
-			"pass": 6,
-			"fail": 2,
+			"debt": "#4999",
+			"pass": 7,
+			"fail": 1,
 			"na": 24,
 			"notMeasured": 8,
 			"naReasons": {
@@ -476,13 +476,12 @@
 			},
 			"notMeasuredReasons": {
 				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 2,
-				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 1,
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 3,
 				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
 				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1,
 				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
 			},
-			"score": 0.75
+			"score": 0.875
 		},
 		"F9": {
 			"family": "F",
@@ -498,8 +497,7 @@
 			},
 			"notMeasuredReasons": {
 				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 2,
-				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 1,
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 3,
 				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
 				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1,
 				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
@@ -627,17 +625,17 @@
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"debt": "#4939",
-			"pass": 26,
-			"fail": 1,
-			"na": 13,
+			"debt": "#4996",
+			"pass": 31,
+			"fail": 4,
+			"na": 5,
 			"notMeasured": 0,
 			"naReasons": {
 				"redirect-only": 4,
-				"no-enabled-controls": 9
+				"no-enabled-controls": 1
 			},
 			"notMeasuredReasons": {},
-			"score": 0.963
+			"score": 0.8857
 		}
 	},
 	"routes": [
@@ -804,18 +802,18 @@
 					"instrumented": 8,
 					"of": 8,
 					"pass": 7,
-					"fail": 0,
-					"na": 1,
+					"fail": 1,
+					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.875
 				}
 			},
 			"overall": {
 				"pass": 25,
-				"fail": 0,
-				"na": 12,
+				"fail": 1,
+				"na": 11,
 				"notMeasured": 1,
-				"score": 1
+				"score": 0.9615
 			}
 		},
 		{
@@ -939,7 +937,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 275,
+			"surfaceFiles": 276,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1057,7 +1055,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 291,
+			"surfaceFiles": 292,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1116,7 +1114,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 287,
+			"surfaceFiles": 288,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1275,19 +1273,19 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 8,
-					"fail": 0,
+					"pass": 7,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.875
 				}
 			},
 			"overall": {
-				"pass": 26,
-				"fail": 0,
+				"pass": 25,
+				"fail": 1,
 				"na": 11,
 				"notMeasured": 1,
-				"score": 1
+				"score": 0.9615
 			}
 		},
 		{
@@ -1352,7 +1350,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"redirectOnly": false,
-			"surfaceFiles": 302,
+			"surfaceFiles": 303,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1384,11 +1382,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1401,11 +1399,11 @@
 				}
 			},
 			"overall": {
-				"pass": 33,
-				"fail": 3,
+				"pass": 34,
+				"fail": 2,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9167
+				"score": 0.9444
 			}
 		},
 		{
@@ -1470,7 +1468,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"redirectOnly": false,
-			"surfaceFiles": 286,
+			"surfaceFiles": 287,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1529,7 +1527,7 @@
 		{
 			"route": "/[org]/~/evidence",
 			"redirectOnly": false,
-			"surfaceFiles": 235,
+			"surfaceFiles": 236,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1588,7 +1586,7 @@
 		{
 			"route": "/[org]/~/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 274,
+			"surfaceFiles": 275,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1688,19 +1686,19 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 1,
-				"na": 12,
+				"na": 11,
 				"notMeasured": 1,
-				"score": 0.96
+				"score": 0.9615
 			}
 		},
 		{
@@ -1747,25 +1745,25 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 8,
-					"fail": 0,
+					"pass": 7,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.875
 				}
 			},
 			"overall": {
-				"pass": 24,
-				"fail": 1,
+				"pass": 23,
+				"fail": 2,
 				"na": 13,
 				"notMeasured": 0,
-				"score": 0.96
+				"score": 0.92
 			}
 		},
 		{
 			"route": "/[org]/~/runners",
 			"redirectOnly": false,
-			"surfaceFiles": 311,
+			"surfaceFiles": 313,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1797,28 +1795,28 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
-					"fail": 1,
+					"pass": 9,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 1,
-					"score": 0.8889
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 33,
-				"fail": 1,
-				"na": 3,
+				"pass": 35,
+				"fail": 0,
+				"na": 2,
 				"notMeasured": 1,
-				"score": 0.9706
+				"score": 1
 			}
 		},
 		{
@@ -1883,7 +1881,7 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 290,
+			"surfaceFiles": 291,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1942,7 +1940,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 286,
+			"surfaceFiles": 287,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2042,17 +2040,17 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 0,
-				"na": 14,
+				"na": 13,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -2060,7 +2058,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"redirectOnly": false,
-			"surfaceFiles": 268,
+			"surfaceFiles": 269,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2220,24 +2218,24 @@
 					"instrumented": 8,
 					"of": 8,
 					"pass": 7,
-					"fail": 0,
-					"na": 1,
+					"fail": 1,
+					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.875
 				}
 			},
 			"overall": {
 				"pass": 24,
-				"fail": 0,
-				"na": 14,
+				"fail": 1,
+				"na": 13,
 				"notMeasured": 0,
-				"score": 1
+				"score": 0.96
 			}
 		},
 		{
 			"route": "/[org]/~/settings/members",
 			"redirectOnly": false,
-			"surfaceFiles": 297,
+			"surfaceFiles": 298,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2269,34 +2267,34 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
 				"pass": 34,
-				"fail": 0,
-				"na": 4,
+				"fail": 1,
+				"na": 3,
 				"notMeasured": 0,
-				"score": 1
+				"score": 0.9714
 			}
 		},
 		{
 			"route": "/[org]/~/settings/roles",
 			"redirectOnly": false,
-			"surfaceFiles": 297,
+			"surfaceFiles": 298,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2337,25 +2335,25 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
-					"fail": 1,
+					"pass": 8,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.875
+					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 35,
-				"fail": 1,
+				"pass": 36,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 0.9722
+				"score": 1
 			}
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"redirectOnly": false,
-			"surfaceFiles": 288,
+			"surfaceFiles": 289,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2414,7 +2412,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"redirectOnly": false,
-			"surfaceFiles": 294,
+			"surfaceFiles": 295,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2455,17 +2453,17 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 33,
+				"pass": 34,
 				"fail": 0,
-				"na": 3,
+				"na": 2,
 				"notMeasured": 2,
 				"score": 1
 			}
@@ -2709,7 +2707,7 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"redirectOnly": false,
-			"surfaceFiles": 233,
+			"surfaceFiles": 234,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2868,17 +2866,17 @@
 				"R": {
 					"instrumented": 8,
 					"of": 8,
-					"pass": 7,
+					"pass": 8,
 					"fail": 0,
-					"na": 1,
+					"na": 0,
 					"notMeasured": 0,
 					"score": 1
 				}
 			},
 			"overall": {
-				"pass": 24,
+				"pass": 25,
 				"fail": 0,
-				"na": 14,
+				"na": 13,
 				"notMeasured": 0,
 				"score": 1
 			}
@@ -3565,8 +3563,8 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "FAIL",
+			"detail": "1 enabled control did nothing within 1000ms — of 7 controls enumerated on this route"
 		},
 		{
 			"route": "/[org]/[project]/architecture",
@@ -4682,13 +4680,13 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -5179,7 +5177,8 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"predicate": "R8",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "3 enabled controls did nothing within 1000ms — of 7 controls enumerated on this route"
 		},
 		{
 			"route": "/[org]/[project]/settings/preview",
@@ -5485,8 +5484,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F8",
-			"verdict": "FAIL",
-			"detail": "reload() kept the param but not the narrowed list"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -6570,8 +6568,7 @@
 		{
 			"route": "/[org]/~/jobs/[id]",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/jobs/[id]",
@@ -6775,7 +6772,8 @@
 		{
 			"route": "/[org]/~/new",
 			"predicate": "R8",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "4 enabled controls did nothing within 1000ms — of 11 controls enumerated on this route"
 		},
 		{
 			"route": "/[org]/~/new",
@@ -6880,8 +6878,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "F8",
-			"verdict": "FAIL",
-			"detail": "reload() kept the param but not the narrowed list"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -6972,8 +6969,7 @@
 		{
 			"route": "/[org]/~/runners",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -7782,8 +7778,7 @@
 		{
 			"route": "/[org]/~/settings/billing",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing",
@@ -8389,400 +8384,399 @@
 		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/general",
-			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "F1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "F10",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "F2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "F3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "F4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "F5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "F6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "F7",
-			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "F8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "F9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "R5",
-			"verdict": "PASS",
-			"detail": "themes dark, light"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "T5",
-			"verdict": "N/A",
-			"reason": "no-empty-state"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/members",
-			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "F1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "F10",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "F2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "F3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "F4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "F5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "F6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "F7",
-			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "F8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "F9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "R5",
-			"verdict": "PASS",
-			"detail": "themes dark, light"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/roles",
-			"predicate": "R8",
 			"verdict": "FAIL",
-			"detail": "1 enabled control did nothing within 1000ms — of 19 controls enumerated on this route"
+			"detail": "1 enabled control did nothing within 1000ms — of 8 controls enumerated on this route"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T5",
+			"verdict": "N/A",
+			"reason": "no-empty-state"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/general",
+			"predicate": "T7",
+			"verdict": "N/A",
+			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F10",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F8",
+			"verdict": "FAIL",
+			"detail": "reload() kept the param but not the narrowed list; Reset left a filter param in the URL — 1 later step not reached"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "F9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "R8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T5",
+			"verdict": "N/A",
+			"reason": "no-empty-state"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/members",
+			"predicate": "T7",
+			"verdict": "N/A",
+			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F10",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "F9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/roles",
+			"predicate": "R8",
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -9173,8 +9167,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -10590,8 +10583,7 @@
 		{
 			"route": "/[org]/~/usage",
 			"predicate": "R8",
-			"verdict": "N/A",
-			"reason": "no-enabled-controls"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/usage",

@@ -8,8 +8,9 @@
 // the other two.
 //
 // Because they share a URL, their search params are prefixed (channel* / policy* /
-// activity*) where useFilterUrlSync is wired up in components/alerts/alerts-filters.ts —
-// an unprefixed `search` from three stores would collide.
+// activity*) — an unprefixed `search` from three stores would collide. The prefix maps
+// are `*_URL_PARAMS` in components/alerts/alerts-query.ts, read by both the client's
+// useFilterUrlSync and the route's server prefetch.
 
 import {
 	type ActivityFilters,
