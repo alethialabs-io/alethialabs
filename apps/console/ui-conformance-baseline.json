@@ -192,13 +192,13 @@
 			"family": "T",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 36,
-			"fail": 4,
+			"pass": 40,
+			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
 			"naReasons": {},
 			"notMeasuredReasons": {},
-			"score": 0.9
+			"score": 1
 		},
 		"T5": {
 			"family": "T",
@@ -695,7 +695,7 @@
 		{
 			"route": "/[org]/[project]",
 			"redirectOnly": true,
-			"surfaceFiles": 1,
+			"surfaceFiles": 2,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -709,11 +709,11 @@
 				"T": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 1,
-					"fail": 1,
+					"pass": 2,
+					"fail": 0,
 					"na": 4,
 					"notMeasured": 1,
-					"score": 0.5
+					"score": 1
 				},
 				"H": {
 					"instrumented": 9,
@@ -744,11 +744,11 @@
 				}
 			},
 			"overall": {
-				"pass": 14,
-				"fail": 1,
+				"pass": 15,
+				"fail": 0,
 				"na": 22,
 				"notMeasured": 1,
-				"score": 0.9333
+				"score": 1
 			}
 		},
 		{
@@ -990,7 +990,7 @@
 		{
 			"route": "/[org]/[project]/settings",
 			"redirectOnly": true,
-			"surfaceFiles": 1,
+			"surfaceFiles": 2,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1004,11 +1004,11 @@
 				"T": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 1,
-					"fail": 1,
+					"pass": 2,
+					"fail": 0,
 					"na": 4,
 					"notMeasured": 1,
-					"score": 0.5
+					"score": 1
 				},
 				"H": {
 					"instrumented": 9,
@@ -1039,11 +1039,11 @@
 				}
 			},
 			"overall": {
-				"pass": 14,
-				"fail": 1,
+				"pass": 15,
+				"fail": 0,
 				"na": 22,
 				"notMeasured": 1,
-				"score": 0.9333
+				"score": 1
 			}
 		},
 		{
@@ -1816,7 +1816,7 @@
 		{
 			"route": "/[org]/~/settings",
 			"redirectOnly": true,
-			"surfaceFiles": 1,
+			"surfaceFiles": 2,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1830,11 +1830,11 @@
 				"T": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 1,
-					"fail": 1,
+					"pass": 2,
+					"fail": 0,
 					"na": 5,
 					"notMeasured": 0,
-					"score": 0.5
+					"score": 1
 				},
 				"H": {
 					"instrumented": 9,
@@ -1865,11 +1865,11 @@
 				}
 			},
 			"overall": {
-				"pass": 14,
-				"fail": 1,
+				"pass": 15,
+				"fail": 0,
 				"na": 23,
 				"notMeasured": 0,
-				"score": 0.9333
+				"score": 1
 			}
 		},
 		{
@@ -2937,7 +2937,7 @@
 		{
 			"route": "/dashboard/[[...rest]]",
 			"redirectOnly": true,
-			"surfaceFiles": 211,
+			"surfaceFiles": 212,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2951,11 +2951,11 @@
 				"T": {
 					"instrumented": 7,
 					"of": 7,
-					"pass": 2,
-					"fail": 1,
+					"pass": 3,
+					"fail": 0,
 					"na": 4,
 					"notMeasured": 0,
-					"score": 0.6667
+					"score": 1
 				},
 				"H": {
 					"instrumented": 9,
@@ -2986,11 +2986,11 @@
 				}
 			},
 			"overall": {
-				"pass": 15,
-				"fail": 1,
+				"pass": 16,
+				"fail": 0,
 				"na": 22,
 				"notMeasured": 0,
-				"score": 0.9375
+				"score": 1
 			}
 		}
 	],
@@ -3392,8 +3392,7 @@
 		{
 			"route": "/[org]/[project]",
 			"predicate": "T4",
-			"verdict": "FAIL",
-			"detail": "no metadata title on the page or its own layout"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]",
@@ -4412,8 +4411,7 @@
 		{
 			"route": "/[org]/[project]/settings",
 			"predicate": "T4",
-			"verdict": "FAIL",
-			"detail": "no metadata title on the page or its own layout"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings",
@@ -7213,8 +7211,7 @@
 		{
 			"route": "/[org]/~/settings",
 			"predicate": "T4",
-			"verdict": "FAIL",
-			"detail": "no metadata title on the page or its own layout"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings",
@@ -11033,8 +11030,7 @@
 		{
 			"route": "/dashboard/[[...rest]]",
 			"predicate": "T4",
-			"verdict": "FAIL",
-			"detail": "no metadata title on the page or its own layout"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/dashboard/[[...rest]]",

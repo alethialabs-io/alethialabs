@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { redirect } from "next/navigation";
+import { pageMetadata } from "@/lib/seo/page-metadata";
+
+/** T4: a redirect still owns a title — named for the view it lands on. */
+export const metadata = pageMetadata({
+	title: "Architecture",
+	description: "Design this project's multi-cloud infrastructure.",
+});
 
 /**
  * `/{org}/{project}` — the project has no plain landing surface; it redirects to its default view,

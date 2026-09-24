@@ -121,9 +121,5 @@ predicates:
       - /cli/login: does-not-call-not-found
       - /dashboard/[[...rest]]: does-not-call-not-found
   T4:
-    fail:
-      - /[org]/[project]
-      - /[org]/[project]/settings
-      - /[org]/~/settings
-      - /dashboard/[[...rest]]
+    fail: []
     na: []
