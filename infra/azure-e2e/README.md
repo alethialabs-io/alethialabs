@@ -59,7 +59,9 @@ cd infra/azure-e2e/bootstrap
 cp terraform.tfvars.example terraform.tfvars     # same subscription_id + YOUR Entra object id
 $EDITOR terraform.tfvars                         # then UNCOMMENT state_network_allowed_cidrs and
                                                  # answer it — `tofu plan` refuses until you do
-tofu init -backend=false && tofu apply
+printf 'terraform {\n  backend "local" {}\n}\n' > backend_override.tf   # FIRST apply only; `-backend=false` cannot plan
+tofu init && tofu plan -out=bootstrap.tfplan && tofu apply bootstrap.tfplan
+rm backend_override.tf bootstrap.tfplan                    # BEFORE the migrate init, or it stays on local
 cp backend.hcl.example backend.hcl && $EDITOR backend.hcl   # names from `tofu output`
 tofu init -backend-config=backend.hcl -migrate-state
 
