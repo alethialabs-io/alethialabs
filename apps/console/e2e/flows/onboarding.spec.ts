@@ -126,10 +126,8 @@ async function settleOrgHandoff(page: Page, timeoutMs: number): Promise<"gate" |
  * acceptance (app/server/actions/legal.ts · getPendingAcceptance) — so a journey that is NOT about
  * the gate must pass it either way. The gate's own behaviour is asserted by the clickwrap test.
  *
- * Walking past the gate asserts NOTHING about what it says or records. A first signup is shown
- * "Our Terms have changed" and its acceptance is stored with context "reacceptance"
- * (accept-terms-form.tsx) — an open product question on #5009 that this helper does not settle
- * and no journey here can expose.
+ * Walking past the gate asserts NOTHING about what it says or records. What a first signup is
+ * shown is the clickwrap test's to assert, not this helper's.
  */
 async function throughTermsToOverview(page: Page, timeoutMs: number): Promise<void> {
 	await settleOrgHandoff(page, timeoutMs);
@@ -422,6 +420,13 @@ test.describe("Onboarding — the clickwrap gate", () => {
 		// merely being on /accept-terms only says onboarding sent us here.
 		await page.goto("/dashboard");
 		await expect(page).toHaveURL(/\/accept-terms/);
+
+		// A fresh account has never agreed to anything, so it is asked to ACCEPT the Terms — not told
+		// they "have changed", which describes a history it does not have (#5009). The server decides
+		// this per document from the stored acceptances (legal.ts · isFirstAcceptance), and records
+		// the acceptance below as `signup` from the same answer.
+		await expect(page.getByRole("heading", { name: "Accept our Terms" })).toBeVisible();
+		await expect(page.getByText(/nothing has been removed/i)).toHaveCount(0);
 
 		// The box starts UNTICKED and the button is inert until it is ticked. That IS the
 		// clickwrap; a pre-ticked box is consent that was never given.
