@@ -11,5 +11,9 @@
 #
 # The GCS backend locks natively (object generation preconditions) — nothing else to configure.
 
-bucket = "alethia-tofu-state-alethia-e2e-nightly"
+# The derived name is alethia-tofu-state-<project_id>, where project_id is the live e2e project named
+# in the E2E_GCP_SA_EMAIL repo variable — NOT "alethia-e2e-nightly", which is the service account's id.
+# Its id is not written in this repo (pnpm check:forbidden-names): replace the placeholder with
+# `tofu -chdir=infra/gcp-e2e/bootstrap output -raw state_bucket`.
+bucket = "alethia-tofu-state-REPLACE-WITH-GCP_E2E_PROJECT_ID"
 prefix = "gcp-e2e"
