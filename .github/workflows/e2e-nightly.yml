@@ -99,6 +99,10 @@ on:
           - cli-demo
           - full
         default: ""
+      cli_demo_grid:
+        description: "CLI-DEMO GRID (#4227). Requires dimension=cli-demo; IGNORES `provider`. Runs hetzner → aws → gcp → azure ONE AT A TIME and stops at the first red leg (a later leg is cancelled before it buys anything). Each managed leg proves the E2E assertion broker path before any spend, and green-skips while that cloud's broker trust is not wired (vars.E2E_ISSUER_URL + E2E_ISSUER_GITHUB_AUDIENCE, and on gcp E2E_GCP_BROKER_WIF_AUDIENCE). Alibaba is excluded by maintainer ruling. Dispatch from dev: the broker admits e2e-nightly.yml@refs/heads/dev only."
+        type: boolean
+        default: false
       full_bar:
         description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws/gcp/azure; hetzner and alibaba are guarded by a pre-apply shape control instead (server-type cap; prepaid refusal). Dispatch one cloud at a time and watch it."
         type: boolean
@@ -143,9 +147,18 @@ jobs:
           DISPATCH_DIMENSION: ${{ github.event.inputs.dimension }}
           SCHEDULE: ${{ github.event.schedule }}
           E2E_SOAK: ${{ vars.E2E_SOAK }}
+          CLI_DEMO_GRID: ${{ github.event.inputs.cli_demo_grid }}
         run: |
           dim="$(bash scripts/e2e/resolve-dimension.sh)"
           heavy="$(bash scripts/e2e/resolve-dimension.sh --heavy "$dim")"
+          # The grid (#4227) is a SERIAL, stop-on-first-red run of the cli-demo dimension across
+          # four clouds. On any other dimension it would fan a floor/maxconfig/… run out to four
+          # clouds one at a time for no reason anyone asked for, so it is refused here — before the
+          # runner image is built or any cloud is touched.
+          if [ "${CLI_DEMO_GRID:-false}" = "true" ] && [ "$dim" != "cli-demo" ]; then
+            echo "::error::cli_demo_grid requires dimension=cli-demo (resolved: $dim) — refusing before anything is built or bought."
+            exit 1
+          fi
           {
             echo "dimension=$dim"
             echo "heavy=$heavy"
@@ -344,10 +357,20 @@ jobs:
       group: e2e-nightly-${{ matrix.provider }}
       cancel-in-progress: false
     strategy:
-      fail-fast: false
+      # ── THE CLI-DEMO GRID (#4227) is the one run that is SERIAL and STOPS ON THE FIRST RED. ──
+      #
+      # Everywhere else the legs are independent proofs, so one red must not cancel another
+      # (fail-fast: false) and three may run at once. The grid is a sequence of PAID proofs of one
+      # claim — "the whole product is drivable from the terminal, on every cloud" — so a red leg
+      # answers the question for the run, and buying the next cloud after it is spend with no
+      # information in it. max-parallel 1 makes the legs run one at a time in matrix order
+      # (hetzner, the cheapest, first); fail-fast then cancels every leg still QUEUED when one goes
+      # red. The red leg itself is never cut short: its conclusion only exists after its own
+      # always() teardown and teardown verification have run, so fail-fast cannot interrupt a sweep.
+      fail-fast: ${{ github.event.inputs.cli_demo_grid == 'true' }}
       # Never run more than 3 real provisions at once (cost + shared-account API pressure);
       # the per-provider concurrency group already serializes same-cloud runs (BYOC A3.2).
-      max-parallel: 3
+      max-parallel: ${{ github.event.inputs.cli_demo_grid == 'true' && 1 || 3 }}
       matrix:
         # On the nightly `schedule` run the full set; on a manual `workflow_dispatch` run ONLY
         # the chosen provider (so dispatching "aws" doesn't also spin up hetzner). Derived from
@@ -357,7 +380,11 @@ jobs:
         # design, and only happens AFTER that cloud's manual dispatch + kill-drill. To add a
         # cloud: extend the `options:` above, this array, the gate `case`, the credential step,
         # and the sweeper `case` in teardown.
-        provider: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.provider)) || fromJSON('["hetzner","aws","gcp","azure","alibaba"]') }}
+        #
+        # The cli-demo grid (#4227) is a DISPATCH-only third branch, in serial order, cheapest first;
+        # alibaba is excluded by maintainer ruling. The scheduled set stays the LAST literal on this
+        # line — scripts/check-e2e-spend-guard.mjs reads it from there.
+        provider: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.cli_demo_grid == 'true' && fromJSON('["hetzner","aws","gcp","azure"]') || fromJSON(format('["{0}"]', github.event.inputs.provider))) || fromJSON('["hetzner","aws","gcp","azure","alibaba"]') }}
     services:
       # Mirrors ci.yml's integration/provision-e2e jobs: a throwaway Postgres that
       # db:migrate turns into the real control-plane schema + programmables
@@ -440,6 +467,12 @@ jobs:
         id: gate
         env:
           PROVIDER: ${{ matrix.provider }}
+          DIMENSION: ${{ needs.resolve.outputs.dimension }}
+          # The cli-demo BROKER gate's inputs (#4227). Repo VARIABLES — an origin, an audience and a
+          # pool name are identifiers, not credentials. The matching trust is #4226's to apply.
+          E2E_ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
+          E2E_ISSUER_GITHUB_AUDIENCE: ${{ vars.E2E_ISSUER_GITHUB_AUDIENCE }}
+          E2E_GCP_BROKER_WIF_AUDIENCE: ${{ vars.E2E_GCP_BROKER_WIF_AUDIENCE }}
         run: |
           case "$PROVIDER" in
             hetzner) TOKEN="$HCLOUD_TOKEN";              SECRET_NAME="HCLOUD_TOKEN (repo secret)" ;;
@@ -449,13 +482,56 @@ jobs:
             alibaba) TOKEN="$E2E_ALIBABA_ROLE_ARN";      SECRET_NAME="E2E_ALIBABA_ROLE_ARN (repo variable)" ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
           esac
-          if [ -n "$TOKEN" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::T2 real-cloud proof ENABLED for $PROVIDER ($SECRET_NAME present) — provisioning a real ephemeral cluster."
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
+          if [ -z "$TOKEN" ]; then
+            { echo "run=false"; echo "skip_kind=cloud"; } >> "$GITHUB_OUTPUT"
             echo "::warning::T2 real-cloud proof SKIPPED for $PROVIDER — repo secret $SECRET_NAME is not set. This nightly is a no-op (green) until a maintainer opts in. To enable it: docs/testing/e2e-nightly-enablement.md (apply the stack, set the companion vars FIRST, dispatch this cloud alone, kill-drill, then set the gate)."
+            exit 0
           fi
+          # ── THE CLI-DEMO BROKER GATE (#4227). On aws, gcp and azure the `connector` beat can only
+          #    COMPLETE when the console under test gets its assertions from the E2E assertion broker
+          #    and the cloud trusts that broker (#4226). Until a maintainer has applied that trust and
+          #    set the variables that name it, the leg would build the console (~10 min) and then be
+          #    refused by AssertCLIDemoConnectorIsDrivable — a red that says nothing new, every run.
+          #    So it green-SKIPS here with a notice instead, before anything is built or bought, and
+          #    records `outcome: skipped` (never a pass) through its OWN proof step below — not
+          #    `Record gate-off proof`, whose conclusion scripts/programme-fetch.sh reads as "this
+          #    CLOUD's credential gate is off". Routing a broker skip through it would report aws's
+          #    credentials unwired on a night they were present (skip_kind keeps the two apart).
+          #
+          #    This decides only whether the trust is WIRED. Whether it WORKS is measured, before any
+          #    spend, by the "cli-demo — prove the broker assertion path" step, which reds the leg on
+          #    any refusal. Alibaba is excluded from the grid by maintainer ruling; hetzner has no
+          #    issuer in its path and is unaffected. ──
+          if [ "$DIMENSION" = "cli-demo" ]; then
+            case "$PROVIDER" in
+              aws | azure) NEED="E2E_ISSUER_URL E2E_ISSUER_GITHUB_AUDIENCE" ;;
+              gcp)         NEED="E2E_ISSUER_URL E2E_ISSUER_GITHUB_AUDIENCE E2E_GCP_BROKER_WIF_AUDIENCE" ;;
+              alibaba)
+                {
+                  echo "run=false"
+                  echo "skip_kind=cli-demo"
+                  echo "skip_reason=cli-demo excludes alibaba by maintainer ruling (#4227)"
+                } >> "$GITHUB_OUTPUT"
+                echo "::notice::cli-demo SKIPPED for alibaba — excluded from the broker-backed CLI demo by maintainer ruling on #4227. Nothing was built or bought."
+                exit 0 ;;
+              *) NEED="" ;;
+            esac
+            MISSING=""
+            for v in $NEED; do
+              [ -n "${!v:-}" ] || MISSING="$MISSING $v"
+            done
+            if [ -n "$MISSING" ]; then
+              {
+                echo "run=false"
+                echo "skip_kind=cli-demo"
+                echo "skip_reason=cli-demo broker trust not wired (#4226)"
+              } >> "$GITHUB_OUTPUT"
+              echo "::notice::cli-demo SKIPPED for $PROVIDER — the E2E assertion broker trust is not wired (unset:${MISSING}). The connector beat cannot complete without it, so nothing is built or bought. To enable: apply #4226's trust for $PROVIDER (docs/testing/e2e-federation-apply-runbook.md, part two), then set the variable(s)."
+              exit 0
+            fi
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::T2 real-cloud proof ENABLED for $PROVIDER ($SECRET_NAME present) — provisioning a real ephemeral cluster."
 
       # A gate-off matrix job still exists in the Actions jobs API, so job existence cannot say
       # whether this cloud ran. Emit the same run-scoped summary contract as a real proof instead:
@@ -472,7 +548,7 @@ jobs:
       # never mentions this one. Purely ADDITIVE: the path and every existing field are unchanged,
       # so the existing inference keeps working until the rollup is taught to prefer the stamp.
       - name: Record gate-off proof
-        if: steps.gate.outputs.run == 'false'
+        if: steps.gate.outputs.run == 'false' && steps.gate.outputs.skip_kind == 'cloud'
         env:
           PROVIDER: ${{ matrix.provider }}
           RUN_ID: ${{ github.run_id }}
@@ -485,6 +561,28 @@ jobs:
             --arg run_tag "nightly-${RUN_ID}-${RUN_ATTEMPT}" \
             --arg verdict "${PROVIDER}: SKIPPED — gate off, no secret/var wired" \
             '{provider: $provider, run_tag: $run_tag, outcome: "skipped", emitted_by: "gate-off", verdict: $verdict}' \
+            > "$OUT/provision-summary.json"
+
+      # The cli-demo broker gate's skip (#4227) — the SAME inert bundle contract as the step above
+      # (directory `gate-<run_id>-<attempt>`, no deploy_stage), so the per-leg rollup reads the leg
+      # as a SKIP rather than a red. A separate step, and a separate name, on purpose: this leg's
+      # CLOUD gate was ON, and `Record gate-off proof` must stay the one step whose conclusion means
+      # "this cloud's credentials are not wired" (scripts/programme-fetch.sh reads it by name).
+      - name: Record cli-demo broker-gate skip proof
+        if: steps.gate.outputs.run == 'false' && steps.gate.outputs.skip_kind == 'cli-demo'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SKIP_REASON: ${{ steps.gate.outputs.skip_reason }}
+        run: |
+          OUT="demos/proofs/${PROVIDER}/gate-${RUN_ID}-${RUN_ATTEMPT}"
+          mkdir -p "$OUT"
+          jq -n \
+            --arg provider "$PROVIDER" \
+            --arg run_tag "nightly-${RUN_ID}-${RUN_ATTEMPT}" \
+            --arg verdict "${PROVIDER}: SKIPPED — ${SKIP_REASON}" \
+            '{provider: $provider, run_tag: $run_tag, outcome: "skipped", emitted_by: "cli-demo-broker-gate", verdict: $verdict}' \
             > "$OUT/provision-summary.json"
 
       # ── Deterministic, unique-per-run cluster identity + region. `<project>-<env>` is the
@@ -1270,6 +1368,49 @@ jobs:
       #
       #    The database and the workspace are already here — the job has a postgres service, and
       #    `pnpm install` + `db:migrate` ran above. ──
+      # ── THE BROKER PATH, PROVEN BEFORE ANY SPEND (#4227). ──
+      #
+      #    On aws, gcp and azure the `connector` beat completes only if the console's assertion is
+      #    one the cloud trusts. This console borrows its assertions from the E2E assertion broker
+      #    (apps/e2e-issuer, see the start step's ALETHIA_E2E_ASSERTION_BROKER_URL), so this step
+      #    does that exact exchange once, here, and then presents the result to the cloud's own
+      #    token service: GitHub OIDC → broker assertion (claims checked) → AWS STS / Google STS +
+      #    IAM Credentials / Entra. A credential coming back is the only proof that #4226's trust is
+      #    APPLIED and not merely committed. Every token is discarded; none is printed.
+      #
+      #    Exit 0 ⇒ it writes ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN=<this cloud>, the ONE thing that
+      #    lifts AssertCLIDemoConnectorIsDrivable in the nightly (t2_cli_demo_provision.go), and on
+      #    gcp the broker WIF config the beat uploads (ALETHIA_E2E_CLI_DEMO_GCP_WIF_CONFIG). Exit 10 ⇒
+      #    the trust is not wired: a notice, green — the gate above normally catches that first.
+      #    Anything else ⇒ red, before ~10 minutes of console build and before any cloud resource is
+      #    bought, with the refusing link named (a broker allowlist that does not admit this ref, an
+      #    audience mismatch, a trust not applied).
+      #
+      #    Needs the job's `id-token: write`, which is already here for the clouds' own federation;
+      #    the workflow stays schedule/dispatch-only (scripts/check-workflow-oidc-isolation.mjs). ──
+      - name: cli-demo — prove the broker assertion path (no spend)
+        if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo' && (matrix.provider == 'aws' || matrix.provider == 'gcp' || matrix.provider == 'azure')
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          E2E_ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
+          E2E_ISSUER_GITHUB_AUDIENCE: ${{ vars.E2E_ISSUER_GITHUB_AUDIENCE }}
+          E2E_GCP_BROKER_WIF_AUDIENCE: ${{ vars.E2E_GCP_BROKER_WIF_AUDIENCE }}
+        run: |
+          set -uo pipefail
+          WIF="${RUNNER_TEMP}/cli-demo-gcp-broker-wif.json"
+          rc=0
+          node scripts/e2e/refresh-e2e-issuer-token.mjs prove --provider "$PROVIDER" --gcp-wif-config-out "$WIF" || rc=$?
+          case "$rc" in
+            0)
+              echo "ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN=${PROVIDER}" >> "$GITHUB_ENV"
+              if [ "$PROVIDER" = "gcp" ]; then
+                [ -s "$WIF" ] || { echo "::error::the broker proof passed on gcp but wrote no WIF config — the connector beat would upload nothing"; exit 1; }
+                echo "ALETHIA_E2E_CLI_DEMO_GCP_WIF_CONFIG=${WIF}" >> "$GITHUB_ENV"
+              fi ;;
+            10) echo "the broker trust is not wired for ${PROVIDER} — the connector refusal stands (see the notice above)" ;;
+            *) exit "$rc" ;;
+          esac
+
       - name: cli-demo — build @alethia/ee, then the console
         if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
         # ── THE BUILD NEEDS THE AUTH SETTINGS TOO, AND THAT IS NOT OBVIOUS ──
@@ -1340,7 +1481,21 @@ jobs:
           ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
           ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
           ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+          # ── THE CONSOLE'S ASSERTION SOURCE (#4227). With these two set, every assertion this
+          #    console presents to a cloud — the connector's inline probe included — comes from the
+          #    E2E assertion broker (apps/console/lib/oidc/assertion-source.ts), authenticated with a
+          #    fresh GitHub OIDC token per assertion from this job's `id-token: write`. Set ONLY on the
+          #    cloud whose broker path the step above PROVED (ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN), so an
+          #    unproven cloud keeps the local source and its refusal reads exactly as before. Hetzner
+          #    has no issuer in its path. Identifiers, not secrets. ──
+          CLI_DEMO_BROKER_URL: ${{ vars.E2E_ISSUER_URL }}
+          CLI_DEMO_BROKER_AUDIENCE: ${{ vars.E2E_ISSUER_GITHUB_AUDIENCE }}
         run: |
+          if [ -n "${ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN:-}" ]; then
+            export ALETHIA_E2E_ASSERTION_BROKER_URL="$CLI_DEMO_BROKER_URL"
+            export ALETHIA_E2E_ASSERTION_BROKER_AUDIENCE="$CLI_DEMO_BROKER_AUDIENCE"
+            echo "::notice::the cli-demo console takes its assertions from the E2E assertion broker (${CLI_DEMO_BROKER_URL}) — proven for ${ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN}"
+          fi
           pnpm -F console exec next start -p 3000 >"${RUNNER_TEMP}/cli-demo-console.log" 2>&1 &
           # POLL for a real answer rather than sleeping. A fixed sleep is either too short — and the
           # first beat fails on a console that was still booting, reported as "the CLI cannot reach
@@ -2384,6 +2539,37 @@ jobs:
           path: ${{ runner.temp }}/teardown-verify/out/teardown-verify.json
           if-no-files-found: warn
           retention-days: 30
+
+      # ── CLI-DEMO: AN UNVERIFIED TEARDOWN IS A RED LEG (#4227). ──
+      #
+      #    The verification above deliberately never reds a leg, and for the provisioning legs that
+      #    stays true: "it provisioned" and "the account is clean" are two claims, kept on two axes
+      #    since #2330. The cli-demo claim is different in kind — "a prospect gets from an empty
+      #    account to a running, verified, TORN-DOWN cluster using `alethia` alone" — so a teardown
+      #    nobody could verify leaves that claim unproven, and #4227's acceptance says so outright: a
+      #    failed teardown is a red result. It is also what stops the serial grid: fail-fast cancels
+      #    the next cloud only on a red, and buying aws while hetzner may still be billing is the
+      #    spend the grid's order exists to avoid.
+      #
+      #    Reads the RECEIPT, never the step's exit code, and only CLEAN passes. RESIDUAL,
+      #    UNVERIFIABLE and an absent receipt (the scrub deleted it, or nothing wrote it) are all red:
+      #    each is "nothing here proves the account is empty". Runs on success AND failure
+      #    (`always()`), after the receipt exists, and changes nothing in the cloud. ──
+      - name: cli-demo — the teardown must be VERIFIED CLEAN
+        if: always() && steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          set -uo pipefail
+          RECEIPT="${RUNNER_TEMP}/teardown-verify/out/teardown-verify.json"
+          verdict="$(jq -r '.verdict // "UNVERIFIABLE"' "$RECEIPT" 2>/dev/null || echo ABSENT)"
+          [ -n "$verdict" ] || verdict=ABSENT
+          if [ "$verdict" = "CLEAN" ]; then
+            echo "::notice::cli-demo ${PROVIDER}: teardown verified CLEAN — the cloud was re-listed and holds nothing for this run."
+            exit 0
+          fi
+          echo "::error::cli-demo ${PROVIDER}: teardown verdict ${verdict} — not verified clean, so this leg is RED (#4227) and the grid stops here. The receipt and the sweep above say what is standing; e2e-orphan-reaper.yml reclaims out of band."
+          exit 1
 
       # ── WHY THIS RUNS LAST, and not before the apply (where it used to sit). ──
       #

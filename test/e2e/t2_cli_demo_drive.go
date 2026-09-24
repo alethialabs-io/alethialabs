@@ -530,27 +530,33 @@ func AssertCLIDemoBeatFlagsAreRegistered(ctx context.Context, t *testing.T, run 
 // runner row already exist by then. What the refusal buys is the cloud spend, which is the
 // expensive half; the twelve minutes are already gone.
 //
-// It lifts from the OUTSIDE: set ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED once the e2e console has an
-// issuer the clouds trust, and the run proceeds with no code change. Refuse what is KNOWN broken,
-// and always ship the escape hatch.
+// It lifts from the OUTSIDE, two ways (cliDemoConnectorLift): in the nightly, by the workflow's
+// pre-spend broker proof for exactly this cloud (ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN, #4227); on a
+// laptop, by ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED. Either way the run proceeds with no code change.
+// Refuse what is KNOWN broken, and always ship the escape hatch.
 func AssertCLIDemoConnectorIsDrivable(t *testing.T, run *CLIDemoRun) {
 	t.Helper()
 
-	if t2Truthy(os.Getenv(cliDemoConnectorIssuerTrustEnv)) {
+	if lift := cliDemoConnectorLift(run.Provider, os.Getenv); lift != "" {
 		// THE LIFT IS A STATEMENT ABOUT THE ISSUER, NOT ABOUT THE CREDENTIALS. It used to return
 		// here on the strength of that one variable, which made it the one path where an unset repo
 		// variable reached the CLI as an empty flag value — and an empty value does not fail, it
 		// falls through to the cloud's LOCAL setup flow and creates real identity (see
-		// cliDemoConnectorEmptyFlags). The maintainer opting in to the issuer cannot also mean the
-		// role ARN is present, so that is asked separately, and still before any spend.
+		// cliDemoConnectorEmptyFlags). An issuer being trusted cannot also mean the role ARN (or, on
+		// gcp, the broker WIF config) is present, so that is asked separately, still before spend.
 		if empty := cliDemoConnectorEmptyFlags(run); len(empty) > 0 {
-			t.Fatalf("cli-demo: %s is set, but `connector %s` would be invoked with %d empty flag "+
-				"value(s): %s.\n\nAn empty value is NOT a parse error — the command falls through to "+
-				"its local setup flow and creates real cloud identity (aws: a CloudFormation stack with "+
-				"an IAM OIDC provider and AlethiaProvisionerRole, which aws-cleanup.sh does not sweep). "+
-				"Set the variable(s) behind those flags, or clear %s.",
-				cliDemoConnectorIssuerTrustEnv, run.Provider, len(empty), strings.Join(empty, ", "),
-				cliDemoConnectorIssuerTrustEnv)
+			t.Fatalf("cli-demo: the connector refusal is lifted (%s), but `connector %s` would be "+
+				"invoked with %d empty flag value(s): %s.\n\nAn empty value is NOT a parse error — the "+
+				"command falls through to its local setup flow and creates real cloud identity (aws: a "+
+				"CloudFormation stack with an IAM OIDC provider and AlethiaProvisionerRole, which "+
+				"aws-cleanup.sh does not sweep). Set the variable(s) behind those flags.",
+				lift, run.Provider, len(empty), strings.Join(empty, ", "))
+		}
+		if lift == "broker" {
+			t.Logf("cli-demo: the E2E assertion broker path was PROVEN for %s before spend (%s) — "+
+				"driving `connector %s` against a console whose assertions come from the broker",
+				run.Provider, cliDemoBrokerProvenEnv, run.Provider)
+			return
 		}
 		t.Logf("cli-demo: %s is set — driving `connector %s` on the maintainer's word that this "+
 			"console's OIDC issuer is trusted by that cloud", cliDemoConnectorIssuerTrustEnv, run.Provider)
@@ -572,12 +578,13 @@ func AssertCLIDemoConnectorIsDrivable(t *testing.T, run *CLIDemoRun) {
 		"assertion the CONSOLE signs, and this console is started with "+
 		"NEXT_PUBLIC_APP_URL=http://localhost:3000 and no ALETHIA_OIDC_SIGNING_KEY, so no cloud can "+
 		"verify it.\n\n"+
-		"Unblocking it is a maintainer decision about the e2e console's identity, not a harness "+
-		"change. Once that console has an issuer the cloud trusts, set %s=1 and re-dispatch — this "+
-		"refusal reads that variable and nothing else.\n\n"+
+		"In the nightly this lifts when the workflow's pre-spend broker proof passes for this cloud "+
+		"(scripts/e2e/refresh-e2e-issuer-token.mjs → %s=%s, #4227): apply #4226's trust, set "+
+		"E2E_ISSUER_URL and E2E_ISSUER_GITHUB_AUDIENCE, and dispatch from dev. On a laptop, set "+
+		"%s=1 once the console you drive has an issuer the cloud trusts.\n\n"+
 		"Refused before any cloud resource is bought, rather than at the beat. (Not before the console "+
 		"build — that has already happened by the time `go test` runs; see this function's doc.)",
-		run.Provider, why, run.Provider, run.Provider, cliDemoConnectorIssuerTrustEnv)
+		run.Provider, why, run.Provider, run.Provider, cliDemoBrokerProvenEnv, run.Provider, cliDemoConnectorIssuerTrustEnv)
 }
 
 // DriveCLIDemoPhase executes every beat in one phase, in table order, against the real binary.
