@@ -37,6 +37,40 @@ tofu apply         # a human runs this, never an agent
 
 Then, from the repo root, `pnpm env:up`.
 
+## The SSH allowlist follows your IP
+
+`hcloud_firewall.sandbox` admits SSH only from `ssh_allowed_cidrs` in `terraform.tfvars`, and
+every `env:*` command that touches the box is SSH, `env:reap` and the idle timer included. A
+home or mobile IP changes. On 2026-09-23 that stranded a restored box for ~10h: nothing could
+reach it to use it or to reap it (#5025).
+
+So before its first SSH, every `env:*` command that needs the box checks this machine's public
+IPv4 (`curl -4` to an IP echo service) against `ssh_allowed_cidrs` and the live firewall's SSH
+rule (when `hcloud` can read it). `env:reap --dry-run` is the exception: it changes nothing, so
+it only reports a mismatch. When the IP is not admitted, it:
+
+1. replaces the **one** IPv4 `/32` in `ssh_allowed_cidrs` with the new address. It keeps a
+   backup next to the file (`terraform.<UTC>.backup.tfvars`, gitignored). Zero or several `/32`s
+   are refused: the script does not guess which one is yours.
+2. plans with `-target=hcloud_firewall.sandbox`, reads the plan back with `tofu show -json`, and
+   **refuses** unless every change in it is an in-place update of that firewall that changes only
+   its rules' `source_ips` and afterwards admits the new `/32`. A plan that touches the server,
+   replaces the firewall, imports or moves anything, or changes a port is refused. Nothing is
+   applied, and the tfvars backup is restored.
+3. applies that saved plan file and nothing else, then prints what changed.
+
+If the IP cannot be determined, the command stops (fails closed). `pnpm env:allow-ip` runs the
+same refresh on its own.
+
+On a fixed IP that is already allowlisted, set `ALETHIA_SANDBOX_NO_IP_REFRESH=1` to skip the
+refresh. `env:box` still checks the IP in that mode, and refuses to build a box that this
+machine could not reach. If SSH fails anyway, `env:reap` still refuses to reap (the env registry
+is the only evidence of who is using the box). Its error names the IP mismatch and
+`pnpm env:allow-ip`.
+
+`scripts/lib/env-allowlist-test.sh` drives all of this offline with stubbed `curl`, `tofu`,
+`hcloud` and `ssh`, and CI runs it.
+
 ## Sizing and cost
 
 Default **`cpx42`** (8 vCPU / 16 GB / 320 GB), holding **`env_cap = 2`**.
