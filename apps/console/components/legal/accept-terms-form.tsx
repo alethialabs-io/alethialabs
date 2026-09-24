@@ -19,6 +19,8 @@ export interface PendingDocument {
 	title: string;
 	version: string;
 	path: string;
+	/** True when the user has never accepted any version of this document (server-decided). */
+	firstAcceptance: boolean;
 }
 
 const schema = z.object({
@@ -37,6 +39,27 @@ type FormValues = z.infer<typeof schema>;
 /** Where the marketing site serving the legal documents lives. */
 const MARKETING_ORIGIN =
 	process.env.NEXT_PUBLIC_MARKETING_URL ?? "https://alethialabs.io";
+
+/**
+ * The gate's heading and lede, chosen from what the server says about each pending document.
+ *
+ * A person who has never agreed to anything must not be told the Terms "have changed", or that
+ * "nothing has been removed" — both describe a history they do not have (#5009). Only when EVERY
+ * pending document is a first acceptance is this a first agreement; one document the user has
+ * accepted before makes it an update, and the update copy is the honest one for it.
+ */
+function gateCopy(documents: PendingDocument[]): { heading: string; body: string } {
+	if (documents.every((d) => d.firstAcceptance)) {
+		return {
+			heading: "Accept our Terms",
+			body: "Review and accept to continue.",
+		};
+	}
+	return {
+		heading: documents.length > 1 ? "Updated agreements" : "Our Terms have changed",
+		body: "Read and accept to continue. Your work is untouched — nothing has been removed and nothing expires while you decide.",
+	};
+}
 
 /**
  * The clickwrap itself.
@@ -66,6 +89,7 @@ export function AcceptTermsForm({
 		mode: "onChange",
 	});
 	const { isSubmitting, isValid } = formState;
+	const copy = gateCopy(documents);
 
 	async function onSubmit() {
 		setError(null);
@@ -73,8 +97,9 @@ export function AcceptTermsForm({
 			await acceptLegalDocuments({
 				documentIds: documents.map((d) => d.id),
 				locale: "en",
-				surface: "console-gate",
-				context: "reacceptance",
+				// No context and no surface: WHY this acceptance happened (a first agreement or a
+				// re-acceptance) and where it was shown are decided by the server from the stored
+				// history, never asserted from here (#5009).
 				// The browser's own clock, recorded alongside the server's. A large gap between the two
 				// is itself a signal, and reconciling them later needs both.
 				clientTimestamp: new Date().toISOString(),
@@ -91,12 +116,9 @@ export function AcceptTermsForm({
 		<form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-6">
 			<div className="flex flex-col gap-2">
 				<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
-					{documents.length > 1 ? "Updated agreements" : "Our Terms have changed"}
+					{copy.heading}
 				</h1>
-				<p className="text-sm text-text-tertiary">
-					Read and accept to continue. Your work is untouched — nothing has been
-					removed and nothing expires while you decide.
-				</p>
+				<p className="text-sm text-text-tertiary">{copy.body}</p>
 			</div>
 
 			<ul className="flex flex-col gap-2 text-sm">
