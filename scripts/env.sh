@@ -366,14 +366,15 @@ tfvars_cidrs() {
   printf '%s' "${BASH_REMATCH[1]}" | grep -Eo '"[^"]*"' | tr -d '"' || true
 }
 
-# The LIVE rule's sources — what the firewall actually admits, which is the thing SSH meets.
+# The LIVE SSH rule's sources (inbound, port 22) — what the firewall actually admits, which is the
+# thing SSH meets. Another inbound rule (say, 443 from anywhere) must not read as "SSH admitted".
 # tfvars alone can say "allowed" about a firewall nobody applied (a rewrite whose apply failed).
 live_firewall_cidrs() {
   local js
   js="$(hc firewall describe "$FIREWALL_NAME" -o json 2>/dev/null)" || return 1
   # -r, not -e: a rule set with no inbound sources is a valid answer ("admits nobody"), and -e
   # would turn its empty output into a failure, i.e. into "cannot read the live rule".
-  printf '%s' "$js" | jq -r '[.rules[]? | select(.direction == "in") | .source_ips[]?] | .[]' 2>/dev/null
+  printf '%s' "$js" | jq -r '[.rules[]? | select(.direction == "in" and .port == "22") | .source_ips[]?] | .[]' 2>/dev/null
 }
 
 # ok        tfvars and the live firewall both admit <ip>
@@ -411,7 +412,7 @@ allowlist_state() { # <ip>
 # THE CHECK THAT MAKES THE APPLY SAFE. Reads `tofu show -json` of the saved, targeted plan and
 # prints ONE verdict:
 #   apply            every change is an in-place update of hcloud_firewall.sandbox, and after it
-#                    the firewall's inbound rules admit <ip>
+#                    the firewall's SSH rule (inbound, port 22) admits <ip>
 #   noop             nothing changes and the firewall already admits <ip>
 #   refuse:<reason>  anything else — including JSON that does not parse
 #
@@ -457,9 +458,10 @@ firewall_plan_verdict() { # <plan-json> <ip>
     return 0
     ;;
   esac
-  # Coverage, not string equality: a tfvars entry wider than a /32 legitimately admits the IP.
+  # Coverage, not string equality: a tfvars entry wider than a /32 legitimately admits the IP. Only
+  # the SSH rule (inbound, port 22) counts.
   after="$(printf '%s' "$1" | jq -r --arg fw "$FIREWALL_ADDR" \
-    '.resource_changes[]? | select(.address == $fw) | .change.after.rule[]? | select(.direction == "in") | .source_ips[]?' 2>/dev/null || true)"
+    '.resource_changes[]? | select(.address == $fw) | .change.after.rule[]? | select(.direction == "in" and .port == "22") | .source_ips[]?' 2>/dev/null || true)"
   if ! printf '%s\n' "$after" | cidrs_cover "$2"; then
     printf 'refuse:after the plan %s would still not admit %s' "$FIREWALL_ADDR" "$2"
     return 0
@@ -568,7 +570,9 @@ refresh_ssh_allowlist() { # <ip>
     fi
     echo "✓ SSH allowlist: $FIREWALL_ADDR now admits $ip/32 (targeted apply, firewall only)." >&2
     ;;
-  noop) echo "✓ SSH allowlist: $FIREWALL_ADDR already admits $ip/32 in state; nothing applied." >&2 ;;
+  # OpenTofu refreshed the firewall and found nothing to change, so it already admits the IP — which
+  # contradicts the hcloud read that sent us here. Say so rather than claim a fix.
+  noop) echo "⚠ SSH allowlist: the targeted plan finds $FIREWALL_ADDR already admitting $ip, but hcloud's read of it did not — nothing applied." >&2 ;;
   *)
     rm -f "$plan" "$log"
     allowlist_fail "Refusing to apply the SSH-allowlist refresh: ${verdict#refuse:}.
@@ -662,6 +666,8 @@ ensure_box_allowlist() {
   fi
   ALLOWLIST_BACKUP=""
   rewrite_tfvars_cidr "$ip"
+  # Kept even if the apply below fails: the new /32 is the right value, and the next env:* command
+  # sees a live firewall that disagrees with tfvars and applies just the firewall.
   ALLOWLIST_BACKUP=""
 }
 
@@ -1995,7 +2001,8 @@ cmd_reap_dry_run() { # <include-mine 0|1>
       echo "box already down — env:reap would do nothing."
       return 0
     }
-    ensure_ssh_allowlist
+    # NO ensure_ssh_allowlist here: the dry run mutates nothing, and a refresh is an apply. If SSH
+    # is refused, reap_guard's empty-registry refusal names the IP mismatch and `pnpm env:allow-ip`.
     reg="$(read_registry)"
   fi
   echo "→ I am $(env_owner)"
@@ -2265,8 +2272,9 @@ PLIST
 }
 
 # Every command that SSHes to the box gets the allowlist checked first (#5025). Not box (its own,
-# stricter check runs inside cmd_box), reap (inside cmd_reap, after its flags are parsed: a dry run
-# against a fixture registry is offline by contract), timer and allow-ip (no SSH / is the refresh).
+# stricter check runs inside cmd_box), reap (inside cmd_reap, after its flags are parsed, and only
+# for a REAL reap: --dry-run mutates nothing, so it reports a mismatch instead of fixing it), timer
+# (no SSH) or allow-ip (it is the refresh).
 case "${1:-}" in
 up | push | down | status | verify | logs | open | ssh | check | test | runner) ensure_ssh_allowlist ;;
 esac

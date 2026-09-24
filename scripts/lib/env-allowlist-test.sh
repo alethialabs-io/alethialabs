@@ -27,12 +27,14 @@
 #      `pnpm env:allow-ip`, and never snapshots or destroys
 #  10  tfvars already admits the IP but the live firewall does not → apply, no rewrite
 #  11  tfvars holds two /32s → refused (which one is "mine" is not guessed)
-#  12  the firewall update also changes a rule's port → refused ("firewall-only" ≠ "opens a port")
+#  12  the firewall update also adds a rule opening 443 → refused ("firewall-only" ≠ "opens a port")
 #  13  a no-op entry that IMPORTS another resource → refused (it writes state)
 #  14  a no-op entry that MOVES another resource → refused
 #  15  a plan that does not mention the firewall at all → refused, not "nothing to do"
 #  16  tfvars holds a /24 that admits the IP, the live firewall is stale → applied (coverage, not
 #      string equality, decides "admits")
+#  17  env:reap --dry-run with the IP not admitted → no plan, no apply, tfvars untouched (a dry run
+#      mutates nothing), and the refusal names the IP
 #
 # Section M mutates env.sh and requires each mutant to FAIL a named case. An assertion nothing has
 # ever made fail is a claim, not a check.
@@ -145,8 +147,8 @@ plan_json() { # <name> <json> → path
 }
 
 # A realistic in-place update: before and after identical except the rule's source_ips.
-fw_attrs() { # <cidr> [port]
-	printf '{"id":"1","name":"alethia-sandbox","labels":{},"rule":[{"direction":"in","protocol":"tcp","port":"%s","source_ips":["%s"],"destination_ips":[],"description":""}]}' "${2:-22}" "$1"
+fw_attrs() { # <cidr> [extra-rule-json]
+	printf '{"id":"1","name":"alethia-sandbox","labels":{},"rule":[{"direction":"in","protocol":"tcp","port":"22","source_ips":["%s"],"destination_ips":[],"description":""}%s]}' "$1" "${2:+,$2}"
 }
 FW_CHANGE="{\"address\":\"hcloud_firewall.sandbox\",\"change\":{\"actions\":[\"update\"],\"before\":$(fw_attrs "$OLD_IP/32"),\"after\":$(fw_attrs "$NEW_IP/32")}}"
 PLAN_OK="$(plan_json ok "{\"resource_changes\":[$FW_CHANGE]}")"
@@ -157,7 +159,9 @@ PLAN_REPLACE="$(plan_json replace "{\"resource_changes\":[{\"address\":\"hcloud_
 # A well-formed source_ips-only update that lands on SOMEONE ELSE's /32 — only the "does it admit
 # this IP afterwards" check can refuse it.
 PLAN_STILL_OLD="$(plan_json stillold "{\"resource_changes\":[{\"address\":\"hcloud_firewall.sandbox\",\"change\":{\"actions\":[\"update\"],\"before\":$(fw_attrs "$OLD_IP/32"),\"after\":$(fw_attrs "203.0.113.200/32")}}]}")"
-PLAN_PORT="$(plan_json port "{\"resource_changes\":[{\"address\":\"hcloud_firewall.sandbox\",\"change\":{\"actions\":[\"update\"],\"before\":$(fw_attrs "$OLD_IP/32"),\"after\":$(fw_attrs "$NEW_IP/32" 1-65535)}}]}")"
+# The SSH rule is exactly right, and the update ALSO opens 443 to the world: only the
+# before/after comparison can refuse it.
+PLAN_PORT="$(plan_json port "{\"resource_changes\":[{\"address\":\"hcloud_firewall.sandbox\",\"change\":{\"actions\":[\"update\"],\"before\":$(fw_attrs "$OLD_IP/32"),\"after\":$(fw_attrs "$NEW_IP/32" '{"direction":"in","protocol":"tcp","port":"443","source_ips":["0.0.0.0/0"],"destination_ips":[],"description":""}')}}]}")"
 PLAN_IMPORT="$(plan_json import "{\"resource_changes\":[$FW_CHANGE,{\"address\":\"hcloud_server.sandbox\",\"change\":{\"actions\":[\"no-op\"],\"importing\":{\"id\":\"42\"}}}]}")"
 PLAN_MOVED="$(plan_json moved "{\"resource_changes\":[$FW_CHANGE,{\"address\":\"hcloud_server.other\",\"previous_address\":\"hcloud_server.sandbox\",\"change\":{\"actions\":[\"no-op\"]}}]}")"
 PLAN_EMPTY="$(plan_json empty '{"resource_changes":[]}')"
@@ -253,7 +257,7 @@ refused_case() { # <env.sh> <plan-json> <label>
 case_3() { refused_case "$1" "$PLAN_SERVER" "server in plan"; }
 case_4() { refused_case "$1" "$PLAN_REPLACE" "firewall replaced"; }
 case_5() { refused_case "$1" "$PLAN_STILL_OLD" "firewall still old"; }
-case_12() { refused_case "$1" "$PLAN_PORT" "firewall update also opens ports"; }
+case_12() { refused_case "$1" "$PLAN_PORT" "firewall update also opens a port"; }
 case_13() { refused_case "$1" "$PLAN_IMPORT" "a no-op that imports"; }
 case_14() { refused_case "$1" "$PLAN_MOVED" "a no-op that moves"; }
 case_15() { refused_case "$1" "$PLAN_EMPTY" "a plan without the firewall"; }
@@ -322,6 +326,18 @@ case_16() {
 	grep -q '"198.51.100.0/24"' "$r/infra/sandbox/terraform.tfvars" || { echo "  the /24 was rewritten"; return 1; }
 }
 
+case_17() {
+	local r before
+	r="$(repo "$1" "\"$OLD_IP/32\"")"
+	before="$(cat "$r/infra/sandbox/terraform.tfvars")"
+	STUB_SSH_RC=255 STUB_IP=$NEW_IP STUB_FW_JSON="$(fw_json "$OLD_IP/32")" STUB_PLAN_JSON=$PLAN_OK run "$r" reap --dry-run
+	[ "$RC" != 0 ] || { echo "  dry run reported success with SSH refused"; return 1; }
+	has '^tofu .* plan' && { echo "  the dry run planned"; return 1; }
+	has '^tofu .* apply' && { echo "  the dry run applied"; return 1; }
+	[ "$(cat "$r/infra/sandbox/terraform.tfvars")" = "$before" ] || { echo "  the dry run rewrote tfvars"; return 1; }
+	printf '%s' "$OUT" | grep -q "public IP ($NEW_IP) is not on the box's SSH allowlist" || { echo "  does not name the IP: $OUT"; return 1; }
+}
+
 case_11() {
 	local r
 	r="$(repo "$1" "\"$OLD_IP/32\", \"203.0.113.99/32\"")"
@@ -332,7 +348,7 @@ case_11() {
 }
 
 echo "# cases against scripts/env.sh"
-for c in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+for c in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17; do
 	if why="$("case_$c" "$ENV_SH")"; then ok "case $c"; else bad "case $c"$'\n'"$why"; fi
 done
 
@@ -378,6 +394,9 @@ mutant no-dispatch 2 's/^up | push | down | status | verify | logs | open | ssh 
 mutant box-unchecked 7 '/^  ensure_box_allowlist$/d'
 # An undeterminable IP is waved through instead of failing closed.
 mutant ip-fail-open 6 '/IP_ECHO_URLS)\.$/ s/|| die "/|| return 0; die "/'
+# The dry run starts refreshing (an apply) instead of only reporting.
+# shellcheck disable=SC2016  # literal $ — a sed program over env.sh's source
+mutant dry-run-refreshes 17 's/^    reg="\$(read_registry)"$/    ensure_ssh_allowlist; reg="$(read_registry)"/'
 # The reap hint is never printed.
 mutant no-reap-hint 9 's/^    ssh_unreachable_hint$/    :/'
 

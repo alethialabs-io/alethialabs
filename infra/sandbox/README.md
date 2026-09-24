@@ -45,8 +45,9 @@ home or mobile IP changes. On 2026-09-23 that stranded a restored box for ~10h: 
 reach it to use it or to reap it (#5025).
 
 So before its first SSH, every `env:*` command that needs the box checks this machine's public
-IPv4 (`curl -4` to an IP echo service) against `ssh_allowed_cidrs` and the live firewall. When
-the IP is not admitted, it:
+IPv4 (`curl -4` to an IP echo service) against `ssh_allowed_cidrs` and the live firewall's SSH
+rule (when `hcloud` can read it). `env:reap --dry-run` is the exception: it changes nothing, so
+it only reports a mismatch. When the IP is not admitted, it:
 
 1. replaces the **one** IPv4 `/32` in `ssh_allowed_cidrs` with the new address. It keeps a
    backup next to the file (`terraform.<UTC>.backup.tfvars`, gitignored). Zero or several `/32`s
