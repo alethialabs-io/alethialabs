@@ -2235,7 +2235,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"redirectOnly": false,
-			"surfaceFiles": 298,
+			"surfaceFiles": 299,
 			"families": {
 				"S": {
 					"instrumented": 4,
