@@ -28,18 +28,67 @@ import { getServiceDb } from "@/lib/db";
 import { legalAcceptance, organizationBilling } from "@/lib/db/schema";
 import type { LegalAcceptanceEvidence } from "@/types/jsonb.types";
 
-/** Where the acceptance was presented. Finite and known, so a union — never a bare string. */
-const acceptanceSurface = z.enum(["signup", "console-gate", "checkout"]);
+/**
+ * What the CLIENT may say about an acceptance — and deliberately nothing about WHY it happened or
+ * WHERE it was shown (#5009).
+ *
+ * `context` and `surface` used to be client input, and the one caller hardcoded "reacceptance", so
+ * every first acceptance on record was mislabelled as a re-acceptance of terms the person had never
+ * seen. Both are facts the server can establish on its own — whether an earlier acceptance of the
+ * document exists is a query, and the only surface that calls this is the console gate — and a fact
+ * the server can establish must never be one the browser can assert. `.strict()` REJECTS a request
+ * that still carries either key rather than dropping it silently: a caller that believes it is
+ * choosing the context is wrong, and saying so is cheaper than a record that disagrees with it.
+ */
+const acceptDocumentsSchema = z
+	.object({
+		/** The document ids being accepted, which must cover every acceptance-required document. */
+		documentIds: z.array(z.string().min(1)).min(1),
+		locale: z.string().min(2).max(16).default("en"),
+		/** The browser's own clock, for reconciling against the server's. Optional and untrusted. */
+		clientTimestamp: z.string().datetime().nullable().default(null),
+	})
+	.strict();
 
-const acceptDocumentsSchema = z.object({
-	/** The document ids being accepted, which must cover every acceptance-required document. */
-	documentIds: z.array(z.string().min(1)).min(1),
-	locale: z.string().min(2).max(16).default("en"),
-	surface: acceptanceSurface,
-	context: z.enum(["signup", "paid_conversion", "reacceptance"]),
-	/** The browser's own clock, for reconciling against the server's. Optional and untrusted. */
-	clientTimestamp: z.string().datetime().nullable().default(null),
-});
+/**
+ * The surface this action records. The console gate (`/accept-terms`) is its only caller; the
+ * checkout surface records its own acceptance with its order and never comes through here.
+ */
+const GATE_SURFACE: LegalAcceptanceEvidence["surface"] = "console-gate";
+
+/** The two contexts an acceptance through the gate can carry. `paid_conversion` is not one. */
+type GateAcceptanceContext = "signup" | "reacceptance";
+
+/**
+ * Whether this user has NEVER accepted any version of this document — the single definition of a
+ * "first acceptance", shared by the write (`acceptLegalDocuments`, which records it as the row's
+ * context) and the read (`getPendingAcceptance`, which tells the gate which copy to show), so the
+ * words on the screen and the context on the record cannot disagree.
+ *
+ * ANY version, on purpose: a person who accepted v1 and is now shown v2 is re-accepting, and a
+ * person with no row at all is agreeing for the first time — which is what `signup` means.
+ */
+async function isFirstAcceptance(
+	userId: string,
+	documentId: string,
+): Promise<boolean> {
+	const [prior] = await getServiceDb()
+		.select({ id: legalAcceptance.id })
+		.from(legalAcceptance)
+		.where(
+			and(
+				eq(legalAcceptance.userId, userId),
+				eq(legalAcceptance.documentId, documentId),
+			),
+		)
+		.limit(1);
+	return !prior;
+}
+
+/** The context a gate acceptance is recorded under, decided from the stored history alone. */
+function gateAcceptanceContext(first: boolean): GateAcceptanceContext {
+	return first ? "signup" : "reacceptance";
+}
 
 export type AcceptDocumentsInput = z.input<typeof acceptDocumentsSchema>;
 
@@ -49,6 +98,10 @@ export type AcceptDocumentsInput = z.input<typeof acceptDocumentsSchema>;
  * The version and hash come from LEGAL_DOCUMENTS at write time and are COPIED IN. A record that
  * stored only the id and resolved the version on read would silently re-describe the past every
  * time the copy changed — which is the one thing this table exists to prevent.
+ *
+ * WHY the acceptance happened is decided here, never taken from the caller: `signup` when the user
+ * has no earlier acceptance of that document at any version, `reacceptance` otherwise
+ * (`isFirstAcceptance`). `paid_conversion` is unreachable from this action.
  *
  * Idempotent per (user, document, version): re-submitting the same acceptance does not stack rows,
  * because a double-click is not a second agreement. A NEW version always writes a new row, and the
@@ -78,7 +131,7 @@ export async function acceptLegalDocuments(
 		ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() || null,
 		userAgent: h.get("user-agent") || null,
 		clientTimestamp: parsed.clientTimestamp,
-		surface: parsed.surface,
+		surface: GATE_SURFACE,
 	};
 
 	const db = getServiceDb();
@@ -101,6 +154,11 @@ export async function acceptLegalDocuments(
 			)
 			.limit(1);
 		if (existing) continue;
+		// Decided per DOCUMENT, and before this row exists: a user re-accepting the Terms at v2 may be
+		// accepting a newly-required document for the first time in the same submission.
+		const context = gateAcceptanceContext(
+			await isFirstAcceptance(actor.userId, doc.id),
+		);
 		await db.insert(legalAcceptance).values({
 			userId: actor.userId,
 			organizationId,
@@ -108,7 +166,7 @@ export async function acceptLegalDocuments(
 			documentVersion: doc.version,
 			documentHash: doc.contentHash,
 			locale: parsed.locale,
-			context: parsed.context,
+			context,
 			evidence,
 		});
 		accepted += 1;
@@ -125,6 +183,11 @@ export interface PendingAcceptance {
 		readonly title: string;
 		readonly version: string;
 		readonly path: string;
+		/**
+		 * True when the user has never accepted ANY version of this document — the same answer
+		 * `acceptLegalDocuments` records as `signup`. The gate words itself from it.
+		 */
+		readonly firstAcceptance: boolean;
 	}[];
 }
 
@@ -163,6 +226,7 @@ export async function getPendingAcceptance(): Promise<PendingAcceptance> {
 				title: doc.title,
 				version: doc.version,
 				path: doc.path,
+				firstAcceptance: await isFirstAcceptance(actor.userId, doc.id),
 			});
 		}
 	}
