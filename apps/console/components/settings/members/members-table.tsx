@@ -9,16 +9,23 @@
 // live in members/page.tsx.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
+import type { CellContext, ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Shield, Users } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { setMemberSuspended } from "@/app/server/actions/members";
 import { getCollaborationAccess } from "@/app/server/actions/billing";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
+import type { AssignedValue } from "@/lib/queries/classification";
 import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
@@ -234,6 +241,277 @@ function RoleSelect({
   );
 }
 
+// ── STABLE CELLS (#5023) ─────────────────────────────────────────────────────────────────────
+//
+// Every cell below is a MODULE-LEVEL component, and the columns that name them are memoized on
+// `canManage` alone. That is the whole fix, and the reason is how the table renders a cell:
+// `DataTable` calls TanStack's `flexRender(columnDef.cell, ctx)`, which for a function is
+// `React.createElement(cell, ctx)` — the `cell` function IS the component type. The columns used to
+// be array literals rebuilt on every render of `MembersTable`, so every `({ row }) => …` was a NEW
+// type each time, and React unmounted and re-created every cell on every re-render. A window-focus
+// refetch, a `useSession` tick, the collaboration or classification query settling, a debounced
+// keystroke, a checkbox ticked in another row — any of them tore down the cell holding an open Base
+// UI row menu, which closed it under the person using it. `e2e/audit/destructive.spec.ts` saw the
+// same thing as a withheld verdict ("not rendered … for this persona").
+//
+// What changes from render to render — the selection, the pending-action writer, the role writer,
+// the classification map — travels through `MembersCellsContext` instead. A context change
+// RE-RENDERS a consumer; only a new component type REMOUNTS it.
+// `tests/components/members-table-stable-cells.test.tsx` holds a real menu open across both.
+
+/** The per-render state the table's cells read, delivered by context so no cell type changes. */
+interface MembersCells {
+  canManage: boolean;
+  selected: ReadonlySet<string>;
+  toggle: (key: string) => void;
+  askFor: (action: PendingMemberAction) => void;
+  changeRole: (memberId: string, value: string) => Promise<void>;
+  classMap: Record<string, AssignedValue[]>;
+}
+
+const MembersCellsContext = createContext<MembersCells | null>(null);
+
+/**
+ * The classification map before its query answers. One module-level object rather than a `{}`
+ * default in the destructure, which would be a new value every render and re-render every cell
+ * through the context for nothing.
+ */
+const NO_CLASSIFICATIONS: Record<string, AssignedValue[]> = {};
+
+/** The members table's cell state; a cell rendered outside `MembersTable` is a wiring defect. */
+function useMembersCells(): MembersCells {
+  const ctx = useContext(MembersCellsContext);
+  if (!ctx) {
+    throw new Error("A members-table cell rendered outside MembersCellsContext.");
+  }
+  return ctx;
+}
+
+/** The row-selection checkbox. */
+function SelectCell({ row }: CellContext<MemberRowView, unknown>) {
+  const { selected, toggle } = useMembersCells();
+  const r = row.original;
+  return (
+    <input
+      type="checkbox"
+      aria-label={`Select ${r.name}`}
+      className="size-4 cursor-pointer accent-ink align-middle"
+      checked={selected.has(r.key)}
+      onChange={() => toggle(r.key)}
+    />
+  );
+}
+
+/** Avatar, name, address and (members only) classification chips. */
+function MemberCell({ row }: CellContext<MemberRowView, unknown>) {
+  const { canManage, classMap } = useMembersCells();
+  const r = row.original;
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-full border bg-muted font-mono text-ui-xs text-muted-foreground">
+        {r.avatar}
+      </span>
+      {/* THE MEMBER CELL WRAPS, so the row's LAST column stays on screen. Table cells are
+          `whitespace-nowrap`, and the shell's table wrapper is `overflow-x: clip` (no scroll
+          container, by design — `@repo/ui/table`), so one long monospace address used to set
+          this column's width and push Status, Last active and the "Manage …" trigger every
+          per-row destructive control hangs off past the clip edge. Measured on the release
+          gate at 1280px: all three clipped, unreachable by a person and by Playwright alike.
+          `break-all` on the address gives the column a small min-content width, so the
+          table's auto layout shrinks this column instead of overflowing. */}
+      <div className="flex min-w-0 flex-col whitespace-normal">
+        <span className="flex items-center gap-1.5 break-words text-foreground">
+          {r.name}
+          {r.isYou && (
+            <span className="rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-muted-foreground">
+              You
+            </span>
+          )}
+        </span>
+        <span className="break-all font-mono text-ui-2xs text-muted-foreground">
+          {r.meta}
+        </span>
+        {/* Classification (Workstream B) — members only (not invites). */}
+        {r.kind === "member" && (
+          <ClassificationControl
+            kind="member"
+            id={r.refId}
+            canEdit={canManage}
+            initialAssignments={classMap[r.refId]}
+            className="mt-1"
+            compact
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The owner's fixed label, an editable role for a manageable member, plain text otherwise. */
+function RoleCell({ row }: CellContext<MemberRowView, unknown>) {
+  const { canManage, changeRole } = useMembersCells();
+  const r = row.original;
+  if (r.kind === "member" && r.role === "owner") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 text-xs font-medium text-foreground">
+        <Shield size={13} className="text-muted-foreground" />
+        Owner
+      </span>
+    );
+  }
+  if (r.kind === "member" && canManage) {
+    return (
+      <RoleSelect
+        value={r.role}
+        disabled={r.status === "suspended"}
+        onChange={(v) => void changeRole(r.refId, v)}
+      />
+    );
+  }
+  return (
+    <span className="px-2 text-xs font-medium capitalize text-foreground">
+      {r.role}
+    </span>
+  );
+}
+
+/** A row's team chips, or a dashed "No team" placeholder. */
+function TeamsCell({ row }: CellContext<MemberRowView, unknown>) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {row.original.teams.length > 0 ? (
+        row.original.teams.map((t) => (
+          <span
+            key={t}
+            className="whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground"
+          >
+            {t}
+          </span>
+        ))
+      ) : (
+        <span className="rounded-full border border-dashed px-2 py-0.5 font-mono text-ui-2xs text-text-tertiary">
+          No team
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** The row's lifecycle pill. */
+function StatusCell({ row }: CellContext<MemberRowView, unknown>) {
+  return <MemberStatusBadge status={row.original.status} />;
+}
+
+/** When the member was last active, already formatted by the row builder. */
+function ActivityCell({ row }: CellContext<MemberRowView, unknown>) {
+  return (
+    <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+      {row.original.activity}
+    </span>
+  );
+}
+
+/**
+ * One row's "Manage …" menu. Every item only RECORDS the action (`askFor`); the table's one
+ * `ConfirmDialog` decides whether it happens. The owner's row has no menu.
+ */
+function ActionsCell({ row }: CellContext<MemberRowView, unknown>) {
+  const { askFor } = useMembersCells();
+  const r = row.original;
+  if (r.kind === "member" && r.role === "owner") return null;
+  return (
+    <div className="text-right">
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              aria-label={`Manage ${rowMenuSubject(r)}`}
+            >
+              <MoreHorizontal size={16} />
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="end" className="w-44">
+          {r.kind === "member" ? (
+            <>
+              {r.status === "suspended" ? (
+                <DropdownMenuItem
+                  onClick={() =>
+                    askFor({ kind: "reactivate", memberId: r.refId, who: r.name })
+                  }
+                >
+                  Reactivate
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  onClick={() =>
+                    askFor({ kind: "suspend", memberId: r.refId, who: r.name })
+                  }
+                >
+                  Suspend
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() =>
+                  askFor({ kind: "remove", memberId: r.refId, who: r.name })
+                }
+              >
+                Remove from organization
+              </DropdownMenuItem>
+            </>
+          ) : (
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() =>
+                askFor({
+                  kind: "cancel-invite",
+                  invitationId: r.refId,
+                  who: r.name,
+                })
+              }
+            >
+              Cancel invitation
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+/**
+ * The table's columns. They depend on `canManage` ONLY — whether the select and actions columns
+ * exist at all — and every `cell` is a module-level component, so the same `canManage` always
+ * yields the same component types.
+ */
+function membersColumns(canManage: boolean): ColumnDef<MemberRowView>[] {
+  const selectCols: ColumnDef<MemberRowView>[] = canManage
+    ? [{ id: "select", header: "", enableSorting: false, cell: SelectCell }]
+    : [];
+  const actionCols: ColumnDef<MemberRowView>[] = canManage
+    ? [{ id: "actions", header: "", enableSorting: false, cell: ActionsCell }]
+    : [];
+  return [
+    ...selectCols,
+    { id: "member", header: "Member", enableSorting: false, cell: MemberCell },
+    { id: "role", header: "Role", enableSorting: false, cell: RoleCell },
+    { id: "teams", header: "Teams", enableSorting: false, cell: TeamsCell },
+    { accessorKey: "status", header: "Status", cell: StatusCell },
+    {
+      accessorKey: "activity",
+      header: "Last active",
+      enableSorting: false,
+      cell: ActivityCell,
+    },
+    ...actionCols,
+  ];
+}
+
+/** Settings · Members: the filterable members + invitations table and its confirmations. */
 export function MembersTable() {
   const canManage = useEntitlement("organizations");
   const { data: session } = authClient.useSession();
@@ -371,7 +649,7 @@ export function MembersTable() {
 
   // One batched query hydrates every member row's classification chips (invites aren't
   // classifiable). Keyed on the member row id (member.id).
-  const { data: classMap = {} } = useAssignmentsForKind(
+  const { data: classMap = NO_CLASSIFICATIONS } = useAssignmentsForKind(
     "member",
     rows.filter((r) => r.kind === "member").map((r) => r.refId),
   );
@@ -437,231 +715,13 @@ export function MembersTable() {
     load();
   }
 
-  const selectCols: ColumnDef<MemberRowView>[] = canManage
-    ? [
-        {
-          id: "select",
-          header: "",
-          enableSorting: false,
-          cell: ({ row }) => (
-            <input
-              type="checkbox"
-              aria-label={`Select ${row.original.name}`}
-              className="size-4 cursor-pointer accent-ink align-middle"
-              checked={selected.has(row.original.key)}
-              onChange={() => toggle(row.original.key)}
-            />
-          ),
-        },
-      ]
-    : [];
-  const actionCols: ColumnDef<MemberRowView>[] = canManage
-    ? [
-        {
-          id: "actions",
-          header: "",
-          enableSorting: false,
-          cell: ({ row }) => {
-            const r = row.original;
-            if (r.kind === "member" && r.role === "owner") return null;
-            return (
-              <div className="text-right">
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7"
-                        aria-label={`Manage ${rowMenuSubject(r)}`}
-                      >
-                        <MoreHorizontal size={16} />
-                      </Button>
-                    }
-                  />
-                  <DropdownMenuContent align="end" className="w-44">
-                    {r.kind === "member" ? (
-                      <>
-                        {r.status === "suspended" ? (
-                          <DropdownMenuItem
-                            onClick={() =>
-                              askFor({
-                                kind: "reactivate",
-                                memberId: r.refId,
-                                who: r.name,
-                              })
-                            }
-                          >
-                            Reactivate
-                          </DropdownMenuItem>
-                        ) : (
-                          <DropdownMenuItem
-                            onClick={() =>
-                              askFor({
-                                kind: "suspend",
-                                memberId: r.refId,
-                                who: r.name,
-                              })
-                            }
-                          >
-                            Suspend
-                          </DropdownMenuItem>
-                        )}
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onClick={() =>
-                            askFor({
-                              kind: "remove",
-                              memberId: r.refId,
-                              who: r.name,
-                            })
-                          }
-                        >
-                          Remove from organization
-                        </DropdownMenuItem>
-                      </>
-                    ) : (
-                      <DropdownMenuItem
-                        className="text-destructive focus:text-destructive"
-                        onClick={() =>
-                          askFor({
-                            kind: "cancel-invite",
-                            invitationId: r.refId,
-                            who: r.name,
-                          })
-                        }
-                      >
-                        Cancel invitation
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            );
-          },
-        },
-      ]
-    : [];
-
-  const columns: ColumnDef<MemberRowView>[] = [
-    ...selectCols,
-    {
-      id: "member",
-      header: "Member",
-      enableSorting: false,
-      cell: ({ row }) => {
-        const r = row.original;
-        return (
-          <div className="flex items-center gap-2.5">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-full border bg-muted font-mono text-ui-xs text-muted-foreground">
-              {r.avatar}
-            </span>
-            {/* THE MEMBER CELL WRAPS, so the row's LAST column stays on screen. Table cells are
-                `whitespace-nowrap`, and the shell's table wrapper is `overflow-x: clip` (no scroll
-                container, by design — `@repo/ui/table`), so one long monospace address used to set
-                this column's width and push Status, Last active and the "Manage …" trigger every
-                per-row destructive control hangs off past the clip edge. Measured on the release
-                gate at 1280px: all three clipped, unreachable by a person and by Playwright alike.
-                `break-all` on the address gives the column a small min-content width, so the
-                table's auto layout shrinks this column instead of overflowing. */}
-            <div className="flex min-w-0 flex-col whitespace-normal">
-              <span className="flex items-center gap-1.5 break-words text-foreground">
-                {r.name}
-                {r.isYou && (
-                  <span className="rounded-full border px-1.5 py-px font-mono text-ui-3xs uppercase tracking-wide text-muted-foreground">
-                    You
-                  </span>
-                )}
-              </span>
-              <span className="break-all font-mono text-ui-2xs text-muted-foreground">
-                {r.meta}
-              </span>
-              {/* Classification (Workstream B) — members only (not invites). */}
-              {r.kind === "member" && (
-                <ClassificationControl
-                  kind="member"
-                  id={r.refId}
-                  canEdit={canManage}
-                  initialAssignments={classMap[r.refId]}
-                  className="mt-1"
-                  compact
-                />
-              )}
-            </div>
-          </div>
-        );
-      },
-    },
-    {
-      id: "role",
-      header: "Role",
-      enableSorting: false,
-      cell: ({ row }) => {
-        const r = row.original;
-        if (r.kind === "member" && r.role === "owner") {
-          return (
-            <span className="inline-flex items-center gap-1.5 px-2 text-xs font-medium text-foreground">
-              <Shield size={13} className="text-muted-foreground" />
-              Owner
-            </span>
-          );
-        }
-        if (r.kind === "member" && canManage) {
-          return (
-            <RoleSelect
-              value={r.role}
-              disabled={r.status === "suspended"}
-              onChange={(v) => void changeRole(r.refId, v)}
-            />
-          );
-        }
-        return (
-          <span className="px-2 text-xs font-medium capitalize text-foreground">
-            {r.role}
-          </span>
-        );
-      },
-    },
-    {
-      id: "teams",
-      header: "Teams",
-      enableSorting: false,
-      cell: ({ row }) => (
-        <div className="flex flex-wrap gap-1.5">
-          {row.original.teams.length > 0 ? (
-            row.original.teams.map((t) => (
-              <span
-                key={t}
-                className="whitespace-nowrap rounded-full border px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground"
-              >
-                {t}
-              </span>
-            ))
-          ) : (
-            <span className="rounded-full border border-dashed px-2 py-0.5 font-mono text-ui-2xs text-text-tertiary">
-              No team
-            </span>
-          )}
-        </div>
-      ),
-    },
-    {
-      accessorKey: "status",
-      header: "Status",
-      cell: ({ row }) => <MemberStatusBadge status={row.original.status} />,
-    },
-    {
-      accessorKey: "activity",
-      header: "Last active",
-      enableSorting: false,
-      cell: ({ row }) => (
-        <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-          {row.original.activity}
-        </span>
-      ),
-    },
-    ...actionCols,
-  ];
+  // Memoized on `canManage` alone, and every `cell` is a module-level component (see STABLE
+  // CELLS above): a re-render of this table must never hand DataTable a new cell TYPE.
+  const columns = useMemo(() => membersColumns(canManage), [canManage]);
+  const cells = useMemo<MembersCells>(
+    () => ({ canManage, selected, toggle, askFor, changeRole, classMap }),
+    [canManage, selected, toggle, askFor, changeRole, classMap],
+  );
 
   if (page.isPending) {
     return (
@@ -820,7 +880,9 @@ export function MembersTable() {
         <div
           className={page.isPlaceholderData ? "opacity-60 transition-opacity" : undefined}
         >
-          <DataTable columns={columns} data={filtered} pageSize={20} />
+          <MembersCellsContext.Provider value={cells}>
+            <DataTable columns={columns} data={filtered} pageSize={20} />
+          </MembersCellsContext.Provider>
         </div>
       )}
 
