@@ -51,8 +51,14 @@ const acceptDocumentsSchema = z
 	.strict();
 
 /**
- * The surface this action records. The console gate (`/accept-terms`) is its only caller; the
- * checkout surface records its own acceptance with its order and never comes through here.
+ * The surface this action records. The console gate (`/accept-terms`) is its only caller.
+ *
+ * Nothing in product code writes a `checkout` surface or a `paid_conversion` context today: this
+ * action and the seed builder are the only writers of `legal_acceptance`. Checkout does not capture
+ * consent of its own — it REFUSES to proceed (`terms_not_accepted`, in `lib/billing/eligibility.ts`)
+ * until a row written HERE covers the current documents. A checkout-time acceptance would be new
+ * code with its own writer; it must not be routed through this action, whose context is decided
+ * from history and can never be `paid_conversion`.
  */
 const GATE_SURFACE: LegalAcceptanceEvidence["surface"] = "console-gate";
 
