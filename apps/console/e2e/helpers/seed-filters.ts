@@ -8,9 +8,13 @@
 // values DIFFER. This file writes that minimum for the lists it can reach with a plain insert, and
 // nothing else: every extra row is a page some other audit can no longer read the empty state of.
 //
-// WHAT IT DOES NOT SEED, AND WHY THAT IS NOT SILENT. Members and connectors need a second person
-// or a provider round-trip; the activity feeds (org and project) are seeded, but their bar renders
-// no counted facet at all, so no row written here can make them measurable. The spec does not
+// WHAT IT DOES NOT SEED, AND WHY THAT IS NOT SILENT. Members, connectors, roles and org-level
+// access are not written here: the rows other fixtures already put in the run's org give each of
+// them a narrowing option (measured on run 36052124183), and a second copy would only move counts
+// `inert.spec.ts` reads. The activity feeds (org and project) are not seeded, for two reasons that
+// each suffice: their bar renders no counted facet at all, so no row could make them measurable;
+// and `authz_activity_log` is append-only — a DELETE outside the retention GC raises, so a row
+// written here could never be removed again (measured on run 36055847035). The spec does not
 // guess: a list that still renders fewer than two rows — or a bar with no counted option — is
 // recorded NOT MEASURED naming why, so the gap is a column in the scoreboard rather than a PASS over
 // nothing. Extending coverage is adding a row here, not editing a verdict.
@@ -40,8 +44,6 @@ export interface FilterFixtures {
 	grantIds: string[];
 	ssoProviderIds: string[];
 	invoiceIds: string[];
-	/** `authz_activity_log.id` is a bigint identity; postgres.js hands it back as a string. */
-	activityIds: string[];
 }
 
 /**
@@ -69,7 +71,6 @@ export async function seedFilterFixtures(owner: Owner): Promise<FilterFixtures> 
 		grantIds: [],
 		ssoProviderIds: [],
 		invoiceIds: [],
-		activityIds: [],
 	};
 	try {
 		await seedRows(owner, stamp, written);
@@ -184,27 +185,6 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
 	written.grantIds.push(await grant("allow"));
 	written.grantIds.push(await grant("deny"));
 
-	// Project activity (`/[org]/[project]/settings/activity`): two entries about this project. The
-	// feed's bar carries no counted facet, so this moves the route from "0 rows" to the reason that
-	// is actually true of it — see the header.
-	/** Insert one activity entry about this project. */
-	const activity = async (action: string, decision: boolean) => {
-		const [row] = await sql<{ id: string }[]>`
-			insert into authz_activity_log ${sql({
-				org_id: owner.orgId,
-				actor_id: owner.userId,
-				action,
-				resource_type: "project",
-				resource_id: project.projectId,
-				decision,
-				reason: "e2e filter fixture",
-			})}
-			returning id`;
-		return String(row.id);
-	};
-	written.activityIds.push(await activity("update", true));
-	written.activityIds.push(await activity("delete", false));
-
 	// SSO (`/[org]/~/settings/sso`): differ on TYPE (OIDC vs SAML) and STATUS (verified vs pending).
 	// Two rows of its own rather than one beside `fixtures-destructive.ts`'s: that fixture is written
 	// on demand by another spec, so whether it exists when this pass reaches the page is an ordering
@@ -260,7 +240,6 @@ export async function cleanFilterFixtures(f: FilterFixtures): Promise<void> {
 	const sql = db();
 	if (f.invoiceIds.length > 0) await sql`delete from invoice where id in ${sql(f.invoiceIds)}`;
 	if (f.ssoProviderIds.length > 0) await sql`delete from sso_provider where id in ${sql(f.ssoProviderIds)}`;
-	if (f.activityIds.length > 0) await sql`delete from authz_activity_log where id in ${sql(f.activityIds)}`;
 	if (f.grantIds.length > 0) await sql`delete from grants where id in ${sql(f.grantIds)}`;
 	if (f.teamIds.length > 0) await sql`delete from team where id in ${sql(f.teamIds)}`;
 	if (f.supportCaseIds.length > 0) {
