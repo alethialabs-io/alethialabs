@@ -83,7 +83,13 @@ ALICLOUD_PROFILE=default tofu apply tfplan
 > without it the plan fails with "no valid credential sources", which looks like a missing
 > credential rather than an unset variable.
 
-## 3 · `infra/azure-e2e` — IMPORT, not apply.
+## 3 · `infra/azure-e2e` — IMPORT, not apply. **DONE — kept for the record.**
+
+> **Nothing is left to import.** `azuread_application_federated_identity_credential.github["env"]`
+> has been in state since 2026-08-25 (`tofu state show` read it on 2026-09-24: `credential_id =
+> eae3cf58-…`, `display_name = gh-oidc-env`), and #2462 is closed with that evidence. The
+> `import {}` block this section describes was therefore inert and `infra/azure-e2e/imports.tf` has
+> been **deleted**. The text below is how it was adopted, not a step to run.
 
 **An apply here would collide.** The federated credential `gh-oidc-env` already exists live —
 hand-created, with exactly the name and subject tofu would use — but is absent from state, so the
@@ -95,7 +101,7 @@ gh-oidc-env   repo:alethialabs-io/alethialabs:environment:e2e-dev
 gh-oidc-ref   repo:alethialabs-io/alethialabs:ref:refs/heads/main
 ```
 
-Adopt it instead. **The import is now declarative**: `infra/azure-e2e/imports.tf` carries an
+Adopt it instead. **The import is now declarative**: `infra/azure-e2e/imports.tf` carried an
 `import {}` block with the ID below, so the next plan shows `1 to import` for
 `github["env"]` instead of `1 to add`, and the apply that follows adopts the credential rather
 than colliding with it. Do **not** also run `tofu import` by hand — the block does it. After that
@@ -149,7 +155,7 @@ empty. There is no IAM diff.
 |---|---|---|
 | `gcp-e2e` | apply | `gcp/floor` and everything above it — currently dies at `secrets-encryption.tf` |
 | `alibaba-e2e` | apply | alibaba dispatch-from-`dev` at all, plus its CMK path |
-| `azure-e2e` | import (declarative, `imports.tf`) | nothing today; prevents the next apply colliding |
+| `azure-e2e` | ~~import~~ — done; the credential is in state and `imports.tf` is deleted (#2462) | nothing left |
 | `aws-oidc` | — | already authoritative |
 
 ## A trap that cost a session

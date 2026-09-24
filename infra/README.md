@@ -70,7 +70,8 @@ Each bootstrap is admin-applied once and owns **all IAM** so the CI deploy roles
 
 The e2e federation stacks follow the same shape, per cloud and admin-applied throughout:
 `<stack>/bootstrap/` (the state container) **then** `<stack>/`. The bootstrap's own state goes into
-the container it just created, via one two-phase `tofu init -backend=false` → apply →
+the container it just created, via one two-phase init: apply under a temporary `backend_override.tf`
+forcing `backend "local" {}` (not `tofu init -backend=false`, which cannot plan), delete it, then
 `tofu init -backend-config=backend.hcl -migrate-state`.
 
 ## State

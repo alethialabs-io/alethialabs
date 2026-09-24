@@ -11,7 +11,8 @@
 # side, which is why `infra/aws-oidc` has had a remote backend all along.
 #
 # This stack's OWN state goes into the bucket it creates, via one documented two-phase init
-# (`-backend=false` → apply → `-migrate-state`). The recursion terminates there; see
+# (temporary local-backend override → apply → delete it →
+# `-migrate-state`; `-backend=false` cannot plan). The recursion terminates there; see
 # docs/testing/e2e-state-migration.md.
 
 locals {
