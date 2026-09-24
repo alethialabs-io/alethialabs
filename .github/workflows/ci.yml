@@ -1578,6 +1578,15 @@ jobs:
       - name: "Suite-reap trap + scope — replays incident #4343 (15 mutations, 5 on the call sites)"
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/env-suite-reap-test.sh
+      # A dynamic Mac IP stranded a billing box for ~10h: every env:* command, env:reap and the idle
+      # timer all need SSH, and the allowlist was a hand-edited /32 (#5025). env.sh now refreshes it
+      # with an OpenTofu apply confined to the firewall — and "confined" is a jq filter over a plan,
+      # so this step drives it against fixture plans that also touch the server, replace or re-port
+      # the firewall, import, move, or omit it, with stubbed curl/tofu/hcloud/ssh; then mutates
+      # env.sh nine times and requires every mutant to fail a named case.
+      - name: "SSH allowlist refresh is firewall-only and fails closed (#5025, 16 cases + 9 mutations)"
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/lib/env-allowlist-test.sh
       - name: Worktree landed-detection (squash merges; merged-PR-plus-new-commit is NOT landed)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-landed-test.sh
