@@ -2,59 +2,77 @@
 #
 # merge-signal-health — is a heavy CI signal reliable enough to GATE merges yet?
 #
-# The merge queue (protect-dev ruleset, infra/github/main.tf) gates on the 7 fast required checks.
-# The heavy real/browser signals run on every `merge_group` build but are OBSERVE-ONLY (not required)
-# so a flaky real-cloud/browser run can't wedge the whole queue. This script turns "observe for a
-# while, then promote" from a calendar reminder into a DATA verdict: it reads the conclusion of each
-# heavy signal across the last N merge_group CI runs, computes its pass-rate, and says PROMOTE when a
-# signal has earned the right to block merges (>= PROMOTE_RATE% over >= MIN_RUNS merge_group runs).
+# The dev merge queue is MERGIFY (.mergify.yml). It gates on the protect-dev required checks. The
+# heavy real/browser signals are OBSERVE-ONLY (not required), so a flaky real-runner/browser run
+# cannot wedge the whole queue. This script turns "observe for a while, then promote" from a
+# calendar reminder into a DATA verdict: it reads the conclusion of each heavy signal across the last
+# N MERGE-QUEUE builds, computes its pass-rate, and says PROMOTE when a signal has earned the right to
+# block merges (>= PROMOTE_RATE% over >= MIN_RUNS graded queue builds).
 #
-# Promotion itself is then a one-line change: add the signal's check name to
-# `var.required_status_checks` (infra/github/variables.tf) and re-apply infra/github — the report
-# prints the exact name to add.
+# ── THE SOURCE: Mergify's speculative builds (#2759) ─────────────────────────────────────────────
+#
+# A Mergify queue build is an ordinary ci.yml run with event=pull_request, on the draft PR Mergify
+# opens from a `mergify/merge-queue/<hash>` branch. It is NOT `merge_group`: that event fires only
+# under GitHub's native queue, which .mergify.yml replaced on 2026-07-21, and every merge_group run
+# in the repo is from 2026-07-18..21 (#4173). This script graded merge_group until 2026-09-24 and,
+# with a dead source, could only ever refuse.
+#
+# The listing is the REST endpoint, not `gh run list`: `gh run list` was observed returning stale
+# data for this query. There is no server-side filter for a branch PREFIX, so it pages through
+# event=pull_request runs and keeps the queue branches. GitHub caps a filtered run listing at 1000
+# results, so at most MAX_PAGES (10) pages of 100 are read; the report names the window it actually
+# covered rather than implying MAX_AGE_DAYS was reached.
+#
+# ── WHAT EACH SIGNAL IS EXPECTED TO DO ON THAT SOURCE ─────────────────────────────────────────────
+#
+# `queue` — scheduled on EVERY queue build (T1's job `if:` selects mergify/merge-queue/* heads).
+#   Zero graded builds over a non-empty sample means its `if:` does not reach the source: UNREACHABLE.
+# `paths` — path-gated (detect-changes): it runs only on a queue build whose PRs changed its surface.
+#   Zero graded builds is "no evidence", not a fault — no sampled build touched those paths.
+# Either class: a name that appears in NO sampled build's job list at all (renamed, removed, or the
+#   whole workflow failed before creating jobs) is UNREACHABLE.
+# UNREACHABLE exits 1 after the full report is published. It is a statement about the instrument,
+# so it must not render as "keep observing" — that is how this report stayed green for six weeks.
 #
 # Usage:
 #   scripts/merge-signal-health.sh              # human report to stdout
 #   scripts/merge-signal-health.sh --issue <n>  # ALSO upsert the report onto tracking issue #<n>
 #
-# Env: RUNS (merge_group runs to sample, default 60), MIN_RUNS (default 20), PROMOTE_RATE (default
-#      95), MAX_AGE_DAYS (how recent a run must be to count as evidence, default 14).
+# Env: RUNS (queue builds to sample, default 60), MIN_RUNS (default 20), PROMOTE_RATE (default 95),
+#      MAX_AGE_DAYS (how recent a build must be to count as evidence, default 14), MAX_PAGES (REST
+#      pages of 100 to read, default 10 = GitHub's 1000-result cap), PER_PAGE (default 100).
+#
+# Test: scripts/merge-signal-health-test.sh (offline, a fake `gh` on PATH; the exit code is the test).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 RUNS="${RUNS:-60}"
 MIN_RUNS="${MIN_RUNS:-20}"
 PROMOTE_RATE="${PROMOTE_RATE:-95}"
+MAX_PAGES="${MAX_PAGES:-10}"
+PER_PAGE="${PER_PAGE:-100}"
+QUEUE_PREFIX="mergify/merge-queue/"
 # A PASS-RATE IS A CLAIM ABOUT TODAY, AND A RUN IS ONLY EVIDENCE WHILE IT IS RECENT.
 #
-# Measured 2026-09-03: every one of the 107 `merge_group` CI runs in the repo is dated 2026-07-18 to
-# 2026-07-21 — `.mergify.yml` replaced GitHub's native queue on the 21st and the event has not fired
-# since. This script had no age bound, so it graded those six-week-old runs as current and printed
-#
-#     READY TO PROMOTE — "E2E (browser · Playwright hero path)"  (60/60 = 100%)
-#
-# while that same check was failing on EVERY open PR. Promotion adds a check to
-# var.required_status_checks; acting on that recommendation would have made a universally-failing
-# job required and wedged the entire repository.
-#
-# That is worse than the silent-green it looks like: the script was not saying nothing, it was
-# confidently recommending a repo-wide outage from data that had stopped being true.
+# Measured 2026-09-03: every one of the 107 `merge_group` CI runs in the repo was dated 2026-07-18 to
+# 2026-07-21. This script had no age bound then, so it graded those six-week-old runs as current and
+# printed READY TO PROMOTE for "E2E (browser · Playwright hero path)" (60/60 = 100%) while that same
+# check was failing on EVERY open PR. Acting on it would have made a universally-failing job required
+# and wedged the repository. The bound stays under the new source for the same reason: if Mergify's
+# queue stops (or its branch naming changes), the last good builds must age out into a refusal.
 MAX_AGE_DAYS="${MAX_AGE_DAYS:-14}"
 ISSUE=""
 [ "${1:-}" = "--issue" ] && ISSUE="${2:-}"
 
-# Prints a report for the workflow summary and, when configured, records the same verdict on the
-# tracking issue so a failing run cannot leave an older green recommendation as the latest evidence.
-# Set by `gate_section` before the merge_group guards run, and appended by every publish.
+# Set by `gate_section` before the queue-source guards run, and appended by every publish.
 #
 # WHY IT IS A GLOBAL AND NOT INLINE: the release-gate verdict used to be computed at the BOTTOM of
-# this script, below two `exit 1` guards that fire whenever `run_ids` is empty — which this file's
-# own comments establish is permanent, because `merge_group` has not fired since .mergify.yml
-# replaced the native queue on 2026-07-21. So the block could never execute, and the staging→main
-# promotion decision it exists to inform was never printed. The two sources are independent: one
-# being dead must not silence the other.
+# this script, below `exit 1` guards that fired on every run while the source was dead. The two
+# sources are independent: one being dead must not silence the other.
 GATE_SECTION=""
 
+# Prints a report for the workflow summary and, when configured, records the same verdict on the
+# tracking issue so a failing run cannot leave an older green recommendation as the latest evidence.
 publish_report() {
   local summary="$1${GATE_SECTION}"
   printf '%s\n' "$summary"
@@ -67,21 +85,17 @@ $summary
   fi
 }
 
-# The observe-only heavy signals we're deciding whether to promote. These are the exact GitHub check
-# names (job `name:` in ci.yml) — they must match `var.required_status_checks` entries verbatim to gate.
+# The observe-only heavy signals we're deciding whether to promote, as `<class>|<check name>`. The
+# names are the exact GitHub check names (job `name:` in ci.yml) — they must match the required-check
+# lists verbatim to gate. The class is what the job's `if:` makes it do on a queue build (see header).
 SIGNALS=(
-  "Provisioning E2E (T1 · real runner → kind)"
-  "E2E (browser · Playwright hero path)"
-  "E2E (browser · Elench AI journeys · scripted model)"
+  "queue|Provisioning E2E (T1 · real runner → kind)"
+  "paths|E2E (browser · Playwright hero path)"
+  "paths|E2E (browser · Elench AI journeys · scripted model)"
 )
 
-echo "→ sampling the last $RUNS merge_group CI runs…" >&2
-# The queued-merge builds are CI runs with event=merge_group. Grab their ids (most recent first).
-runs_json=$(gh run list --workflow ci.yml --event merge_group -L "$RUNS" --json databaseId,createdAt)
 cutoff=$(date -u -d "${MAX_AGE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -v-"${MAX_AGE_DAYS}"d +%Y-%m-%dT%H:%M:%SZ)
-newest=$(printf '%s' "$runs_json" | jq -r '[.[].createdAt] | max // ""')
-run_ids=$(printf '%s' "$runs_json" | jq -r --arg c "$cutoff" '.[] | select(.createdAt >= $c) | .databaseId')
 
 # ── THE RELEASE GATE — a second signal source, graded the same way ─────────────────────────────
 # release-gate.yml runs on every non-draft PR into main or staging (and on a labelled dev PR). Its
@@ -89,13 +103,10 @@ run_ids=$(printf '%s' "$runs_json" | jq -r --arg c "$cutoff" '.[] | select(.crea
 # `Release gate (<leg>)` contexts over the last $RUNS of those runs so the staging→main promotion
 # decision (delete the staging exclusions in infra/github/main.tf) is a data verdict, not a feeling.
 #
-# "No runs yet" is printed as exactly that. Unlike the merge_group source, this workflow is NEW and
-# a zero sample is not a dead event source — but it is also NOT evidence, and no PROMOTE line is
+# "No runs yet" is printed as exactly that. A zero sample is NOT evidence, and no PROMOTE line is
 # ever produced from it.
 #
-# COMPUTED HERE, ABOVE THE merge_group GUARDS, and published by `publish_report` on every exit
-# path. Below them it was unreachable: both guards `exit 1` whenever `run_ids` is empty, which is
-# every invocation since the native merge queue was retired.
+# COMPUTED HERE, ABOVE THE queue-source guards, and published by `publish_report` on every exit path.
 gate_section() {
   local gate_runs_json gate_ids gate_jobs gate_report gate_count sig total passed rate leg
   gate_runs_json=$(gh run list --workflow release-gate.yml --event pull_request -L "$RUNS" --json databaseId,createdAt 2>/dev/null || echo '[]')
@@ -148,67 +159,102 @@ staging exclusions in infra/github/main.tf, once every leg is green at the bar a
 
 GATE_SECTION="$(gate_section)"
 
-if [ -n "$newest" ] && [ -z "$run_ids" ]; then
-  summary="✗ Every merge_group CI run is older than ${MAX_AGE_DAYS} days (newest: $newest).
+# ── LIST THE QUEUE BUILDS ──────────────────────────────────────────────────────────────────────────
+# Pages newest-first until it has RUNS completed in-window queue builds, reaches a run older than the
+# cutoff, runs out of pages, or hits MAX_PAGES. A page whose body is not a run listing is a REFUSAL:
+# parsing an error body as "zero runs" is how an instrument reports a dead source as an empty one.
+echo "→ listing ci.yml pull_request runs on ${QUEUE_PREFIX}* (up to $MAX_PAGES pages of $PER_PAGE)…" >&2
+queue_runs='[]'
+pages_read=0
+listing_oldest=""
+page=1
+while [ "$page" -le "$MAX_PAGES" ]; do
+  page_json=$(gh api "repos/{owner}/{repo}/actions/workflows/ci.yml/runs?event=pull_request&per_page=${PER_PAGE}&page=${page}") \
+    || { publish_report "✗ Could not list ci.yml pull_request runs (page $page) — refusing to grade an unreadable source."; exit 1; }
+  if ! printf '%s' "$page_json" | jq -e '.workflow_runs | type == "array"' >/dev/null 2>&1; then
+    publish_report "✗ The ci.yml run listing (page $page) did not return a workflow_runs array — refusing to grade an unreadable source."
+    exit 1
+  fi
+  pages_read=$page
+  queue_runs=$(printf '%s' "$page_json" | jq -c --argjson acc "$queue_runs" --arg p "$QUEUE_PREFIX" \
+    '$acc + [.workflow_runs[] | select((.head_branch // "") | startswith($p))
+             | {id, created_at, status}]')
+  n=$(printf '%s' "$page_json" | jq '.workflow_runs | length')
+  page_oldest=$(printf '%s' "$page_json" | jq -r '[.workflow_runs[].created_at] | min // ""')
+  [ -n "$page_oldest" ] && listing_oldest="$page_oldest"
+  have=$(printf '%s' "$queue_runs" | jq --arg c "$cutoff" '[.[] | select(.created_at >= $c and .status == "completed")] | length')
+  [ "$n" -lt "$PER_PAGE" ] && break
+  [ -n "$page_oldest" ] && [[ "$page_oldest" < "$cutoff" ]] && break
+  [ "$have" -ge "$RUNS" ] && break
+  page=$((page + 1))
+done
 
-  The runs exist, so this is NOT 'no data yet' — the EVENT SOURCE HAS STOPPED.
-  \`merge_group\` fires only under GitHub's native merge queue, which .mergify.yml
-  replaced on 2026-07-21. Grading those runs would report a pass-rate from a mechanism
-  that no longer exists, and PROMOTE on it — which adds a check to
-  var.required_status_checks and would wedge every PR if that check now fails.
+newest=$(printf '%s' "$queue_runs" | jq -r '[.[].created_at] | max // ""')
+# In-progress builds are left out: their heavy jobs have no conclusion yet, and counting the build
+# while dropping the job would shrink every signal's denominator unevenly.
+sample_json=$(printf '%s' "$queue_runs" | jq -c --arg c "$cutoff" --argjson n "$RUNS" \
+  '[.[] | select(.created_at >= $c and .status == "completed")] | sort_by(.created_at) | reverse | .[:$n]')
+run_ids=$(printf '%s' "$sample_json" | jq -r '.[].id')
+oldest_sampled=$(printf '%s' "$sample_json" | jq -r '[.[].created_at] | min // ""')
 
-  Point SOURCE at an event that actually fires, or retire the promotion path. See #4173."
-  publish_report "$summary"
+if [ -z "$newest" ]; then
+  # THIS USED TO `exit 0`, AND THAT IS WHY NOBODY NOTICED. A guard whose "nothing found" branch is
+  # indistinguishable from "nothing wrong" reported green every Monday for six weeks while the
+  # promote-on-data mechanism had no data at all. It fails loudly instead.
+  publish_report "✗ No ci.yml pull_request runs on ${QUEUE_PREFIX}* in the $pages_read page(s) read (back to ${listing_oldest:-nothing}).
+
+  The heavy signals are graded over Mergify's queue builds, and there is no sample. Either the
+  queue has not run in that window, or Mergify's branch naming changed and QUEUE_PREFIX no longer
+  matches. Nothing can be promoted from here until it reads builds that exist. See #2759."
   exit 1
 fi
 
 if [ -z "$run_ids" ]; then
-  # THIS USED TO `exit 0`, AND THAT IS WHY NOBODY NOTICED.
-  #
-  # `merge_group` fires only under GitHub's NATIVE merge queue. `.mergify.yml` replaced that queue
-  # on 2026-07-21 (the native queue's merge_group-only T1 job failed on missing auth env and wedged
-  # every queued PR), so the event has not fired since — measured 2026-09-03: the last twelve
-  # merge_group CI runs are all dated 2026-07-21 and all twelve FAILED.
-  #
-  # So for six weeks this script has printed "nothing to evaluate", exited 0, and reported green
-  # every Monday, while the promote-on-data mechanism it exists to drive had no data source at all.
-  # A guard whose "nothing found" branch is indistinguishable from "nothing wrong" is the failure
-  # this repo names most often; here it was reporting on its own liveness.
-  #
-  # Fails loudly instead. If the event source is deliberately gone, the fix is to change SOURCE
-  # below — not to make this quiet again.
-  summary="✗ No CI runs found for event=merge_group.
+  publish_report "✗ No COMPLETED queue build is newer than ${MAX_AGE_DAYS} days (newest seen: $newest).
 
-  This script grades the observe-only heavy signals over merge-queue builds, and it has no
-  sample. That is not 'no data yet' — it means the EVENT SOURCE IS DEAD. \`merge_group\`
-  fires only under GitHub's native merge queue, which .mergify.yml replaced on 2026-07-21.
-
-  Nothing can ever be promoted from here until this reads an event that actually fires.
-  See #4173."
-  publish_report "$summary"
+  The builds exist, so this is not 'no data yet' — the source is stale or still running. Grading
+  old builds would report a pass-rate about a tree that is no longer dev, and PROMOTE on it would
+  add a check to the required lists that may now fail on every PR. See #2759."
   exit 1
 fi
 
-# Pull every job (name, conclusion) from every sampled run in one pass, so each signal is tallied
-# across the same set of runs. Only success/failure count as a "graded" run; skipped/cancelled/null
-# (e.g. a run that errored before the job, or the job was not reached) are ignored, not counted as fail.
+# Pull every job (run, name, conclusion) from every sampled build in one pass, so each signal is
+# tallied across the same set of builds. Only success/failure count as "graded"; skipped, cancelled
+# and null are not counted as failures. `cancelled` is expected: once Mergify merges a batch it closes
+# the draft PR, and a still-running heavy job on it can be cut off.
 jobs_json="$(for id in $run_ids; do
-  gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" --jq '.jobs[] | {name, conclusion}'
-done)"
+  body=$(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs?per_page=100")
+  printf '%s' "$body" | jq -e '.jobs | type == "array"' >/dev/null 2>&1 \
+    || { echo "✗ run $id: job listing is not a jobs array" >&2; exit 1; }
+  printf '%s' "$body" | jq -c --arg id "$id" '.jobs[] | {run: $id, name, conclusion}'
+done)" || { publish_report "✗ Could not read the job list of every sampled queue build — refusing to grade a partial sample."; exit 1; }
 
+sample_count=$(printf '%s\n' "$run_ids" | grep -c .)
 report=""
 promote_lines=""
-for sig in "${SIGNALS[@]}"; do
-  # Count graded runs (success|failure) and successes for this signal.
-  total=$(printf '%s\n' "$jobs_json" | jq -rs --arg n "$sig" \
-    '[.[] | select(.name==$n and (.conclusion=="success" or .conclusion=="failure"))] | length')
-  passed=$(printf '%s\n' "$jobs_json" | jq -rs --arg n "$sig" \
-    '[.[] | select(.name==$n and .conclusion=="success")] | length')
-  total=${total:-0}; passed=${passed:-0}
+unreachable=0
+for entry in "${SIGNALS[@]}"; do
+  class="${entry%%|*}"
+  sig="${entry#*|}"
+  counts=$(printf '%s\n' "$jobs_json" | jq -rs --arg n "$sig" '
+    [.[] | select(.name == $n)] as $j
+    | [ ($j | map(select(.conclusion == "success" or .conclusion == "failure")) | length),
+        ($j | map(select(.conclusion == "success")) | length),
+        ($j | map(select(.conclusion == "skipped")) | length),
+        ($j | map(.run) | unique | length) ] | @tsv')
+  read -r total passed skipped present <<<"$counts"
 
-  if [ "$total" -eq 0 ]; then
-    line=$(printf "  %-52s  no graded runs yet" "$sig")
+  if [ "$present" -eq 0 ]; then
+    verdict="UNREACHABLE"
+    line=$(printf "  %-52s  in none of %d queue builds' job lists — renamed, removed, or never created  → %s" "$sig" "$sample_count" "$verdict")
+    unreachable=1
+  elif [ "$total" -eq 0 ] && [ "$class" = "queue" ]; then
+    verdict="UNREACHABLE"
+    line=$(printf "  %-52s  skipped on all %d queue builds — its if: does not select ${QUEUE_PREFIX}*  → %s" "$sig" "$present" "$verdict")
+    unreachable=1
+  elif [ "$total" -eq 0 ]; then
     verdict="OBSERVE"
+    line=$(printf "  %-52s  no graded runs — path-gated, and none of %d queue builds changed its paths" "$sig" "$present")
   else
     rate=$(( passed * 100 / total ))
     if [ "$total" -ge "$MIN_RUNS" ] && [ "$rate" -ge "$PROMOTE_RATE" ]; then
@@ -217,21 +263,42 @@ for sig in "${SIGNALS[@]}"; do
     else
       verdict="OBSERVE"
     fi
-    line=$(printf "  %-52s  %3d%%  (%d/%d graded)  → %s" "$sig" "$rate" "$passed" "$total" "$verdict")
+    line=$(printf "  %-52s  %3d%%  (%d/%d graded, %d skipped)  → %s" "$sig" "$rate" "$passed" "$total" "$skipped" "$verdict")
   fi
   report+="$line"$'\n'
 done
 
-sample_count=$(printf '%s' "$runs_json" | jq 'length')
-summary="Merge-signal health — last $sample_count merge_group runs (requested $RUNS; promote at ≥${PROMOTE_RATE}% over ≥${MIN_RUNS} graded)
+summary="Merge-signal health — last $sample_count Mergify queue builds (${QUEUE_PREFIX}*, $oldest_sampled .. $newest; requested $RUNS within ${MAX_AGE_DAYS}d; promote at ≥${PROMOTE_RATE}% over ≥${MIN_RUNS} graded)
 
 $report"
 if [ -n "$promote_lines" ]; then
+  # THE ADVICE NAMES EVERY PLACE, because promoting into one of them is a wedge, not a half-step.
+  # A context the ruleset requires and Mergify does not wait for queues, looks mergeable, and is
+  # refused at merge time; scripts/ci/check-required-checks.mjs fails a PR that does that, and fails
+  # one whose two .mergify.yml lists differ. The always-report rule is the part no list can check.
   summary+="
-READY TO PROMOTE — add each to var.required_status_checks (infra/github/variables.tf) and re-apply infra/github:$promote_lines"
+READY TO PROMOTE:$promote_lines
+
+  A check gates only once it is named, verbatim, in ALL THREE places — one PR, so
+  scripts/ci/check-required-checks.mjs sees them agree:
+    1. var.required_status_checks            infra/github/variables.tf (the maintainer applies infra/github)
+    2. queue_rules[dev].merge_conditions     .mergify.yml
+    3. merge_protections[\"dev required CI\"]  .mergify.yml success_conditions
+  .mergify.yml takes effect only once it reaches main (Mergify reads the default branch).
+
+  ALWAYS-REPORT RULE — check this BEFORE the lists. A required check must report on every PR into
+  dev and on every queue build. A job-level \`if:\` that skips it (T1 is queue-only; the browser E2Es
+  are path-gated) leaves the context \`skipped\`, which Mergify's \`check-success=\` does not accept:
+  merge_protections are evaluated on the PR itself, so the PR is never auto-queued. Move the gate
+  from the job to its STEPS (as validate-console.yml does) so the job always runs and passes fast
+  when it has nothing to do — then promote."
 else
   summary+="
 No signal has met the bar yet — keep observing."
 fi
 
 publish_report "$summary"
+if [ "$unreachable" -ne 0 ]; then
+  echo "✗ at least one signal is UNREACHABLE on the queue source — the instrument cannot grade it (exit 1)." >&2
+  exit 1
+fi
