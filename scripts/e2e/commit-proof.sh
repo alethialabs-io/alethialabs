@@ -14,9 +14,13 @@
 #
 # Usage: scripts/e2e/commit-proof.sh <run_id> <cloud>
 #
-# It is deliberately NOT idempotent-by-guessing: every ambiguity (no new bundle, more than one new
-# bundle, more than one new ledger row) is a hard error, because each one means the run did not have
-# the shape this script assumes and a silent choice would put a wrong claim in the ledger.
+# Run it once PER CLOUD of a multi-cloud nightly: each call commits that leg's bundle, carries its
+# post-teardown verification receipt into it when the run has one, and appends that leg's row.
+#
+# It is deliberately NOT idempotent-by-guessing: every ambiguity (no bundle carrying this run's
+# run_tag, more than one, no row naming this leg's artifact, more than one, a bundle or row already
+# in the tree) is a hard error, because each one means the run did not have the shape this script
+# assumes and a silent choice would put a wrong claim in the ledger.
 set -euo pipefail
 
 run_id="${1:?usage: commit-proof.sh <run_id> <cloud>}"
@@ -37,6 +41,7 @@ id_for() { printf '%s' "$art_json" | jq -r --arg n "$1" '.artifacts[] | select(.
 
 proof_id="$(id_for "e2e-proof-${cloud}-${run_id}")"
 ledger_id="$(id_for "provisioning-e2e-log-${run_id}")"
+teardown_id="$(id_for "e2e-teardown-verify-${cloud}-${run_id}")"
 [ -n "$proof_id" ]  || { echo "commit-proof: no artifact e2e-proof-${cloud}-${run_id} on run $run_id" >&2; exit 1; }
 [ -n "$ledger_id" ] || { echo "commit-proof: no artifact provisioning-e2e-log-${run_id} on run $run_id" >&2; exit 1; }
 
@@ -45,41 +50,81 @@ gh api "repos/$repo/actions/artifacts/$ledger_id/zip" > "$tmp/ledger.zip"
 unzip -oq "$tmp/proof.zip"  -d "$tmp/proof"
 unzip -oq "$tmp/ledger.zip" -d "$tmp/ledger"
 
-# The NEW bundle is whichever stamp directory the tree does not already carry. Comparing against the
-# tree rather than picking "the newest" matters: the artifact holds every bundle that was in the
-# checkout at capture time, so "newest" would happily re-commit one that is already here.
-mkdir -p "$dest"
-new_bundles=()
+# ── WHICH BUNDLE IS THIS RUN'S. Asked of the PAYLOAD (`run_tag`), never of where a path says it is —
+#    the same contract e2e-nightly.yml's `Resolve this run's proof bundle` step and nightly-rollup.sh
+#    discover on (#1613).
+#
+#    The artifact has had TWO layouts, and this script must read both:
+#      - before #4766 (2026-09-18) the upload named the tracked provider DIRECTORY, so the artifact
+#        held `<stamp>/…` subdirectories — this run's bundle plus every historical one in the checkout;
+#      - since #4766 it names this run's bundle directory itself, so upload-artifact roots the zip AT
+#        it: the bundle's files sit at the top level and the `<stamp>` directory name is gone.
+#    The old loop here only knew the first layout. On the second it globbed zero subdirectories,
+#    bash left the pattern literal, and `*` was counted as the one new bundle — every nightly after
+#    #4766 went unrecorded because the ledger-row check below happened to refuse first.
+#
+#    On the flat layout the stamp is recovered from the bundle's own `captured_at`, which
+#    capture-proof.sh writes from the SAME variable it names the directory with.
+run_tag_prefix="nightly-${run_id}-"
+candidates=()
+[ -f "$tmp/proof/provision-summary.json" ] && candidates+=("$tmp/proof")
 for d in "$tmp/proof"/*/; do
-  stamp="$(basename "$d")"
-  [ -e "$dest/$stamp" ] || new_bundles+=("$stamp")
+  [ -f "${d}provision-summary.json" ] && candidates+=("${d%/}")
 done
-[ "${#new_bundles[@]}" -eq 1 ] || {
-  echo "commit-proof: expected exactly ONE new bundle under demos/proofs/$cloud, found ${#new_bundles[@]}: ${new_bundles[*]:-none}" >&2
-  echo "  (none = this proof is already committed; more than one = commit them one run at a time)" >&2
+mine=()
+for d in "${candidates[@]}"; do
+  case "$(jq -r '.run_tag // empty' "$d/provision-summary.json" 2>/dev/null)" in
+    "$run_tag_prefix"*) mine+=("$d") ;;
+  esac
+done
+[ "${#mine[@]}" -eq 1 ] || {
+  echo "commit-proof: expected exactly ONE bundle in e2e-proof-${cloud}-${run_id} carrying run_tag ${run_tag_prefix}<attempt>, found ${#mine[@]}" >&2
+  echo "  (none = the leg captured nothing publishable — a CAPTURE-ABORTED marker, or a gate-off; more than one = the run_tag is not unique and picking one would be a guess)" >&2
   exit 1
 }
-stamp="${new_bundles[0]}"
+src="${mine[0]}"
+if [ "$src" = "$tmp/proof" ]; then
+  stamp="$(jq -r '.captured_at // empty' "$src/provision-summary.json")"
+else
+  stamp="$(basename "$src")"
+fi
+[[ "$stamp" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || {
+  echo "commit-proof: bundle stamp '${stamp}' is not a UTC stamp (YYYYMMDDTHHMMSSZ) — refusing to invent a directory name" >&2
+  exit 1
+}
+mkdir -p "$dest"
+[ ! -e "$dest/$stamp" ] || {
+  echo "commit-proof: demos/proofs/$cloud/$stamp already exists — this proof is already committed" >&2
+  exit 1
+}
 
-# Exactly one row must be ADDED. A leg that recorded nothing, or a ledger that moved underneath us,
-# both land here rather than in the ledger.
-mapfile -t added < <(diff "$ledger" "$tmp/ledger/provisioning-e2e-log.md" | sed -n 's/^> //p')
+# ── WHICH LEDGER ROW IS THIS LEG'S. A multi-cloud nightly appends one row PER LEG to the one ledger
+#    file, so "exactly one added row" (the old rule) refused every run with more than one cloud —
+#    and recording a second cloud from the same run would see the first cloud's rewritten row as a
+#    change too. The row is instead selected by the one thing that identifies it: its bundle column
+#    names THIS leg's artifact. Exactly one, or refuse.
+artifact_ref="\`e2e-proof-${cloud}-${run_id}\`"
+mapfile -t added < <(grep -F -- "$artifact_ref" "$tmp/ledger/provisioning-e2e-log.md" || true)
 [ "${#added[@]}" -eq 1 ] || {
-  echo "commit-proof: expected exactly ONE new ledger row, found ${#added[@]}" >&2
+  echo "commit-proof: expected exactly ONE ledger row naming ${artifact_ref} in provisioning-e2e-log-${run_id}, found ${#added[@]}" >&2
   printf '  %s\n' "${added[@]:-}" >&2
   exit 1
 }
 row="${added[0]}"
+row_cloud="$(printf '%s' "$row" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $4); print $4}')"
+[ "$row_cloud" = "$cloud" ] || {
+  echo "commit-proof: the row naming ${artifact_ref} is for cloud '${row_cloud}', not '${cloud}' — refusing:" >&2
+  echo "  $row" >&2; exit 1
+}
+if grep -qF -- "$row" "$ledger"; then
+  echo "commit-proof: that exact row is already in the ledger — refusing to append it twice" >&2
+  exit 1
+fi
 
 # The rewrite this whole script exists for.
-artifact_ref="\`e2e-proof-${cloud}-${run_id}\`"
 committed_ref="\`demos/proofs/${cloud}/${stamp}\`"
-case "$row" in
-  *"$artifact_ref"*) row="${row//$artifact_ref/$committed_ref}" ;;
-  *"demos/proofs/"*) echo "commit-proof: row already references a committed path; leaving it alone" >&2 ;;
-  *) echo "commit-proof: row references neither the artifact nor a committed path — refusing to guess:" >&2
-     echo "  $row" >&2; exit 1 ;;
-esac
+# (The row was SELECTED by containing the artifact reference, so it always has one to rewrite.)
+row="${row//$artifact_ref/$committed_ref}"
 
 # ── INTEGRITY GATE (#3281). The ledger row and the committed path are what PROGRAMME.md counts,
 #    and neither looks inside the bundle. A hetzner/addons run that drove 22 Applications to
@@ -96,7 +141,7 @@ dimension="$(printf '%s' "$row" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $5); p
   echo "  $row" >&2; exit 1
 }
 integrity_reason=""
-if ! integrity_out="$(bash "$root/demos/proofs/check-proof-integrity.sh" "$tmp/proof/$stamp" --dimension "$dimension" 2>&1)"; then
+if ! integrity_out="$(bash "$root/demos/proofs/check-proof-integrity.sh" "$src" --dimension "$dimension" 2>&1)"; then
   if [ -z "${ALETHIA_ACCEPT_UNMEASURED:-}" ]; then
     echo "$integrity_out" >&2
     echo "commit-proof: REFUSING to commit demos/proofs/$cloud/$stamp as a '$dimension' proof." >&2
@@ -121,7 +166,27 @@ if [ -n "$integrity_reason" ]; then
   esac
 fi
 
-cp -R "$tmp/proof/$stamp" "$dest/$stamp"
+mkdir -p "$dest/$stamp"
+cp -R "$src"/. "$dest/$stamp"/
+
+# ── TEARDOWN EVIDENCE. The post-teardown verification receipt (#4398) is a SEPARATE artifact, and
+#    like every artifact it expires in 30 days. Carried verbatim into the bundle it becomes the only
+#    durable record of whether this run left anything behind. It is not a gate on the row — the
+#    row claims provisioning, and a measured leak is filed by the rollup as its own issue — so a
+#    missing or non-CLEAN receipt is REPORTED, never hidden and never refused.
+if [ -n "$teardown_id" ]; then
+  gh api "repos/$repo/actions/artifacts/$teardown_id/zip" > "$tmp/teardown.zip"
+  unzip -oq "$tmp/teardown.zip" -d "$tmp/teardown"
+  if [ -f "$tmp/teardown/teardown-verify.json" ]; then
+    cp "$tmp/teardown/teardown-verify.json" "$dest/$stamp/teardown-verify.json"
+    echo "commit-proof: teardown-verify: $(jq -r '"\(.verdict) — \(.reason); unverifiable=\(.unverifiable|length) unattributable=\(.unattributable|join(",") | if .=="" then "none" else . end)"' "$dest/$stamp/teardown-verify.json")"
+  else
+    echo "commit-proof: WARNING: e2e-teardown-verify-${cloud}-${run_id} holds no teardown-verify.json — teardown is NOT verified for this bundle" >&2
+  fi
+else
+  echo "commit-proof: WARNING: no e2e-teardown-verify-${cloud}-${run_id} artifact — teardown is NOT verified for this bundle" >&2
+fi
+
 printf '%s\n' "$row" >> "$ledger"
 
 echo "commit-proof: committed demos/proofs/$cloud/$stamp and appended its row."
