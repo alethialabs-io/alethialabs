@@ -6,6 +6,7 @@ require (
 	github.com/alethialabs-io/alethialabs/packages/core v0.0.0
 	github.com/hashicorp/terraform-json v0.28.0
 	github.com/jackc/pgx/v5 v5.7.6
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -74,7 +75,6 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 replace github.com/alethialabs-io/alethialabs/packages/core => ../../packages/core
