@@ -1552,6 +1552,13 @@ jobs:
       - name: 'Worktree dehydrate — what survives an rm -rf, and who is refused'
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/worktree.sh --self-test
+      # release-runner's ECS roll skips when there is no fleet (#3438 ruling) and must fail on
+      # every other error. That split is only checked on a real release, which is far too late, so
+      # this pins it against a stub `aws`: absent → notice and pass, AccessDenied → fail, and a
+      # roll error on an ACTIVE service → fail.
+      - name: 'Runner ECS roll — skips an absent fleet, fails on everything else'
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash .github/scripts/runner-ecs-roll.sh --self-test
       # The env registry used to key ownership on `user@host`, which every agent, worktree and shell
       # on one machine shares — so env:reap's "someone else is working on this box" could not fire
       # locally, and a finished lane deleted the box out from under a live one (#3841). The identity
