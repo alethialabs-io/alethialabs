@@ -1,0 +1,29 @@
+Starting deployment for project: alethia-nl (provider: azure)
+Verification gate: verdict=pass (pass=3 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 9b0ed03a24e344d7, plan sha256 9a75b1383526…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 30 added, 0 changed, 0 destroyed.
+Waiting for the cluster to become reachable (timeout 15m 0s)...
+Cluster API server is reachable.
+1/1 nodes Ready.
+ArgoCD installed.
+ArgoCD ready (no ingress on this cloud yet — access via port-forward; retrieve the admin password on-demand from argocd-initial-admin-secret).
+Deployment completed successfully.
+Starting deployment for project: alethia-nl (provider: azure)
+Starting deployment for project: alethia-nl (provider: azure)
+Verification gate: verdict=pass (pass=3 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 9b0ed03a24e344d7, plan sha256 e137101dc340…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+Deployment completed successfully.
+Starting deployment for project: alethia-nl (provider: azure)
+Verification gate: verdict=pass (pass=3 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 9b0ed03a24e344d7, plan sha256 2b1ecbcb836c…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
+Deployment completed successfully.
+   Skipping load-balancer release: the cluster is not reachable (no AKS cluster name in outputs).
+Destroy complete! Resources: 1 destroyed.

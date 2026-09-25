@@ -1,0 +1,18 @@
+    t2_provision_test.go:144: A0.6: ArgoCD-with-repos ENABLED — apps repo "https://github.com/alethialabs-io/alethia-e2e-apps" + BYO chart repo "https://github.com/alethialabs-io/alethia-e2e-chart" will be wired and asserted
+    t2_provision_test.go:164: #1268: cross-account keyless secrets SKIPPED — set ALETHIA_E2E_SECRETS_XACCT (+ its target vars) to enable.
+    t2_provision_test.go:185: #1773: ACM certificate NOT RUN on gcp — GCP: TLS is issued in-cluster by cert-manager, not by a cloud certificate resource — #1858 deleted google_compute_managed_ssl_certificate and the pre-shared-cert annotation that named it, so there is no cloud-side certificate for this scenario to assert.
+    t2_provision_test.go:210: #1511: keyless DB auth SKIPPED — set ALETHIA_E2E_KEYLESS_DB (+ its engine vars) to enable.
+    t2_provision_test.go:310: A0.5: seeded console graph (project=d12eab55-b483-4849-aafe-146e7cd48843 env=7648ef7b-1bf8-46d4-ac4d-538a93aaa17b) + loaded the gcp fidelity fixture; enforce=false real_snapshot=false
+    t2_provision_test.go:399: A0.5: no divergence across the 2 key(s) this compares [addons provider] against the gcp fixture — NOT a statement about the other 33 fixture key(s), which the seed does not carry; addons compared element-wise by id: 1 of 1 [reloader]
+    t2_provision_test.go:698: asserting ArgoCD Applications reach Healthy+Synced: [addon-byo-e2e addon-reloader apps external-secrets-operator]
+    t2_provision_test.go:733: A0.6: repo-apps (apps) + repo-byo (addon-byo-e2e) derived + credentialed; converging (BYO auto-syncs, unaided)...
+    t2_provision_test.go:746: A0.6: ArgoCD-with-repos proven — repo-apps + repo-byo Applications Healthy+Synced and managing real resources on real infra
+    t2_provision_test.go:759: all 4 asserted ArgoCD Applications are Healthy+Synced (0 withheld)
+    t2_provision_test.go:816: A0.5: replayed real finalizeDeployment; shim: finalizeDeployment(5c22ebd5-45a1-4174-a126-55d518993570) completed
+    t2_provision_test.go:816: A0.5: env 7648ef7b-1bf8-46d4-ac4d-538a93aaa17b is ACTIVE (real finalizeDeployment)
+    t2_provision_test.go:816: A0.5: persisted reloader health row: health="Healthy" status="ACTIVE"
+    t2_provision_test.go:816: A0.5: persisted Trivy security-posture row present (bonus)
+    t2_provision_test.go:848: A0.3 soak: SKIPPED (ALETHIA_E2E_SOAK unset) — base T2 proof unchanged
+--- PASS: TestT2RealCloudProvisioning (1965.06s)
+PASS
+ok  	github.com/alethialabs-io/alethialabs/test/e2e	1965.072s
