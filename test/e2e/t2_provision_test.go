@@ -461,7 +461,11 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		// A workflow step cannot get ahead of this: the destroy runs IN-PROCESS below, inside this
 		// closure. So the capture is here, writing to the file the sweeper reads back — the same
 		// $RUNNER_TEMP hand-off the harness already uses for ALETHIA_E2E_ARGOCD_SUMMARY.
-		captureHetznerLoadBalancers(t, provider, clusterName)
+		//
+		// The target is re-derived HERE, not taken from `clusterName` above: on the cli-demo path
+		// the CLI authored the project, and the destroy must name what the beats built (#5095).
+		tdProject, tdEnv := t2ClusterTarget(project, env, cliDemo)
+		captureHetznerLoadBalancers(t, provider, tdProject+"-"+tdEnv)
 
 		// Per-provider, and the SAME function ResolveT2Budget reserves the window with — a
 		// flat 15m here was hetzner's number charged to every cloud (#2729).
@@ -489,7 +493,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Logf("──── runner process output ────\n%s", runnerOut.String())
 		}
 
-		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, project, env, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
+		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, tdProject, tdEnv, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
 			// The sweeper NAME follows the provider, and a window that EXPIRED is reported as a
 			// window rather than as a destroy error — the two are opposite findings that arrive
 			// wearing the same `signal: interrupt`. Both live in t2TeardownFailureLine, which is
@@ -634,7 +638,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//     for. Each cloud names its cluster differently (Talos/ACK: `<project>-<env>`;
 	//     EKS/GKE/AKS: `<kind>-<regionShort>-<env>-<project>`), so the check is
 	//     provider-aware — see t2ValidateClusterName.
-	if err := t2ValidateClusterName(provider, project, env, meta.ClusterName); err != nil {
+	//     The expected pair is the one the teardown destroys (t2ClusterTarget), so the assertion
+	//     and the destroy cannot disagree about which cluster is this run's (#5095).
+	wantProject, wantEnv := t2ClusterTarget(project, env, cliDemo)
+	if err := t2ValidateClusterName(provider, wantProject, wantEnv, meta.ClusterName); err != nil {
 		t.Fatalf("cluster_name assertion: %v", err)
 	}
 	// (2) cluster_ready ⇒ the reachability gate proved a live cluster, not just apply=0.
