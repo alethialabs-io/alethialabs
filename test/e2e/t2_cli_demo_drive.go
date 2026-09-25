@@ -262,35 +262,62 @@ func captureIdentityID(r *CLIDemoRun, out string) error {
 		r.Provider, len(ids), r.Provider, out)
 }
 
-// captureDefaultEnv reads the DEFAULT environment's name out of `project env list --output json`.
+// assertRunTaggedEnv is the `project-env` beat's claim: the environment the beat just ADDED is
+// stored under exactly the name the run asked for, and it is placed `dedicated` (#5095).
 //
-// It is captured rather than assumed because the CLI creates the environments, not the harness:
-// `project create --stage development` makes `development` (default) and `preview`, and the
-// harness's own `env` variable names something else entirely. Addressing the wrong one fails with
-// `Environment "x" not found` — a 404 that reads as a CLI defect and is a harness assumption.
-func captureDefaultEnv(r *CLIDemoRun, out string) error {
+// It READS the name and never WRITES it. Its predecessor, captureDefaultEnv, overwrote
+// `r.EnvName` with the project's default environment — `development`, which `project create
+// --stage development` names after the stage — so the CLI deployed `<project>-development` while
+// the harness's sweep, LB capture and teardown all targeted `<project>-<run_id>-<attempt>`. A
+// cluster name without the run tag defeats run-scoped teardown, so the name is now an input to the
+// run and this function only proves the server kept it.
+//
+// Exact equality, not "contains": the console normalises an environment name to a slug
+// (lib/validations/names.ts), and a name it rewrote would rename the cluster just as surely as
+// the old overwrite did. Refused here, before a cluster is bought, rather than at the post-deploy
+// cluster_name assertion after one has been.
+func assertRunTaggedEnv(r *CLIDemoRun, out string) error {
 	start := strings.Index(out, "[")
 	end := strings.LastIndex(out, "]")
 	if start == -1 || end <= start {
 		return fmt.Errorf("`project env list --output json` produced no JSON array:\n%s", out)
 	}
 	var envs []struct {
-		Name      string `json:"name"`
-		IsDefault bool   `json:"is_default"`
+		Name          string `json:"name"`
+		PlacementMode string `json:"placement_mode"`
 	}
 	if err := json.Unmarshal([]byte(out[start:end+1]), &envs); err != nil {
 		return fmt.Errorf("parsing the environment list: %w\n%s", err, out)
 	}
+	names := make([]string, 0, len(envs))
 	for _, e := range envs {
-		if e.IsDefault && e.Name != "" {
-			r.EnvName = e.Name
-			return nil
+		names = append(names, e.Name)
+		if e.Name != r.EnvName {
+			continue
 		}
+		if e.PlacementMode != "dedicated" {
+			return fmt.Errorf("environment %q was added with placement %q, want `dedicated` — a shared "+
+				"placement lands on the default Fabric, which this run never provisions, so the deploy "+
+				"would not build the run-tagged cluster the teardown targets", e.Name, e.PlacementMode)
+		}
+		return nil
 	}
-	// Falling back to "the first one" would work today and silently address the wrong environment
-	// the day a project is created with two. A project with no default is a product question, not
-	// something for this harness to paper over.
-	return fmt.Errorf("no DEFAULT environment among %d — every later beat addresses one by name:\n%s", len(envs), out)
+	return fmt.Errorf("`project env add %s` succeeded but no environment is stored under exactly that "+
+		"name (listed: %s). The cluster is named `<project>-<environment name>`, so a rewritten name "+
+		"would deploy a cluster the sweep and the teardown do not target (they target %q):\n%s",
+		r.EnvName, strings.Join(names, ", "), CLIDemoClusterName(r), out)
+}
+
+// CLIDemoClusterName is the cluster the CLI-authored project provisions, derived from the SAME
+// CLIDemoRun fields the beats pass to `project create` and `project env add` (#5095).
+//
+// It mirrors the hetzner/alibaba template naming, `${var.project_name}-${var.environment}`, where
+// `environment` is the environment's NAME (apps/console/lib/queries/cli-config.ts emits
+// `environment_stage: env.name`). That is the same `<project>-<env>` the seeded path builds and the
+// workflow exports as E2E_CLUSTER, which is the claim the pure test pins. EKS/GKE/AKS embed the
+// same two parts (t2ValidateClusterName), so the run tag reaches every cloud through EnvName.
+func CLIDemoClusterName(r *CLIDemoRun) string {
+	return r.Project + "-" + r.EnvName
 }
 
 // firstJSONID pulls a top-level `"id"` out of the first JSON object in the output, if there is one.
@@ -803,7 +830,7 @@ func readCLIDemoEnvStatus(ctx context.Context, run *CLIDemoRun) (string, error) 
 // An absent environment is an error, not an empty status: "" is not in-flight, so reading it as a
 // status would end the wait on an env that was never found.
 func cliDemoEnvStatusFrom(out []byte, envName string) (string, error) {
-	// Sliced to the array the way captureDefaultEnv does, so both readers of this command accept
+	// Sliced to the array the way assertRunTaggedEnv does, so both readers of this command accept
 	// the same output.
 	start, end := bytes.IndexByte(out, '['), bytes.LastIndexByte(out, ']')
 	if start == -1 || end <= start {
