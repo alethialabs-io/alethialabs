@@ -1,0 +1,181 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Control-name exceptions and measured drift — the ledger of `check:control-names`
+# (apps/console/scripts/check-control-names.mjs, #5046). That check fails on any console control
+# with no role or no accessible name: a button or link whose content renders no text and whose tag
+# names nothing (`control_name`), a non-interactive element with `onClick` and no `role`
+# (`clickable_role`), and a form field with no label (`field_label`). Unless it is listed here.
+#
+# TWO KINDS OF ENTRY, the same two as shared-surface-allowlist.yaml and for the same reason:
+#
+#   reason:  A DECISION. This control is named, or is not a control, by a route the check cannot
+#            see — a name that arrives through a spread, a wrapper, an id paired in another file.
+#            NEVER "we haven't got to it yet". Counted against `baseline`.
+#
+#   lifts:   DEBT. A measured, real defect, recorded per file and per occurrence so it can only
+#            shrink, naming the board issue that removes it — quoted, because a bare `#` opens a
+#            comment in every YAML reader that is not the check's own. Counted against `debt`.
+#
+# Every `lifts:` row names #5056, NOT #5046. #5046 is the unit that landed the check and it closes
+# when that PR merges; a `lifts:` naming a closed issue is debt with no owner, and nothing here can
+# see that (it checks that a row names an issue, not that the issue is open).
+#
+# BOTH ledgers are checked in BOTH directions: a file with more findings than its `hits:` is new
+# drift, a file with fewer is an unrecorded win (lower the number — otherwise the next change
+# spends it silently), and a row whose file has no findings at all fails. The shrink-only property
+# of `baseline`/`debt` themselves is enforced by REVIEW: a diff that raises either is the thing
+# to stop.
+#
+# DO NOT TYPE `baseline:` OR `debt:`. They are entry counts DERIVED from the rows —
+# `pnpm -C apps/console run gen:control-names` writes them, the check refuses a file whose counters
+# disagree, and CI runs the generator and diffs. On a merge conflict at those two lines, take
+# either side and run the generator.
+#
+# Fields: `path` (repo-relative, as the check prints it; one entry per file per section), `hits`
+# (occurrences covered — exact, both directions), and ONE of `reason:` / `lifts:`.
+
+baseline: 1
+debt: 40
+
+floors:
+  # The minimum the scan must have READ, so a walker, a root or a tag list that quietly stopped
+  # matching fails instead of printing a clean result over nothing. Measured 2026-09-24: 433 files,
+  # 504 name-from-content controls, 131 fields, 10 clickable non-controls. Set with headroom so an
+  # ordinary deletion does not trip them. `clickable_role` is 0 on purpose: fixing that rule's debt
+  # REMOVES the shape it examines (an `onClick` moves onto a `<button>`), so a floor there would
+  # fight the fix. Its liveness is carried instead by the permanent probes and by the wrapper
+  # derivation, which refuses to run when it reads nothing.
+  files: 350
+  control_name: 400
+  clickable_role: 0
+  field_label: 100
+
+control_name:
+  - path: apps/console/components/ai-elements/prompt-input.tsx
+    hits: 1
+    reason: PromptInputButton is a pass-through — it renders nothing of its own, and every caller's children, aria-label and tooltip arrive through the spread, which is where each of those callers is named.
+
+clickable_role:
+  - path: apps/console/components/agent/widgets/bodies/tables.tsx
+    hits: 2
+    lifts: "#5056 a clickable non-control (table row / sortable header / rail row) announced as nothing and reached by no key"
+  - path: apps/console/components/classification/dimension-rail.tsx
+    hits: 1
+    lifts: "#5056 a clickable non-control (table row / sortable header / rail row) announced as nothing and reached by no key"
+  - path: apps/console/components/data-table.tsx
+    hits: 2
+    lifts: "#5056 a clickable non-control (table row / sortable header / rail row) announced as nothing and reached by no key"
+  - path: apps/console/components/evidence/evidence-table.tsx
+    hits: 1
+    lifts: "#5056 a clickable non-control (table row / sortable header / rail row) announced as nothing and reached by no key"
+
+field_label:
+  - path: apps/console/components/addons/addon-config-card.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/agent/agent-knowledge-panel.tsx
+    hits: 3
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/agent/elench/elench-conversation-switcher.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/agent/thread-rail.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/agent/widgets/artifact-controls.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/ai-elements/prompt-input.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/alerts/channels-panel.tsx
+    hits: 3
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/alerts/policies-panel.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/alerts/recipients-editor.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/alerts/throttle-field.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/auth/onboarding-form.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/billing/billing-checkout-form.tsx
+    hits: 7
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/billing/payer-declaration-form.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/classification/dimension-detail.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/classification/dimension-editor-sheet.tsx
+    hits: 4
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/classification/value-editor.tsx
+    hits: 3
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/connectors/gcp-connection.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/create-project/create-project-form.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/design-project/canvas/inspector/bindings-field.tsx
+    hits: 2
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/design-project/canvas/inspector/card-header.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/design-project/canvas/inspector/chart-workload-panel.tsx
+    hits: 5
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/design-project/canvas/inspector/collection-panel.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/design-project/canvas/inspector/config-fields.tsx
+    hits: 3
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/org/create-org-sheet.tsx
+    hits: 2
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/org/org-purchase-ui.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/overview/overview-toolbar.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/repository-selector.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/runners/add-runner-dialog.tsx
+    hits: 2
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/runners/fleet-pool-wizard.tsx
+    hits: 5
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/settings/general/org-general.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/settings/members/invite-member-dialog.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/settings/roles/role-sheet.tsx
+    hits: 2
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/settings/settings-ui.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/settings/sso/provider-sheet.tsx
+    hits: 2
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/support/attachment-picker.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+  - path: apps/console/components/support/cases/case-composer.tsx
+    hits: 1
+    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
