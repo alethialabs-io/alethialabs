@@ -101,20 +101,25 @@ type CLIDemoRun struct {
 // CLIDemoPhase says WHERE in the provisioning spine a beat can run. It exists because the demo's
 // order and the harness's order are not the same order, and pretending otherwise deadlocks.
 //
-// The spine registers a runner row, enqueues a job, THEN starts the runner process, then waits.
-// A beat that enqueues a job and blocks on it (`--wait`) before that process exists would wait
-// forever on a claimer that has not started. A beat that reads the cluster before convergence
-// would read nothing. So each beat declares the window it is valid in, and the driver runs one
-// window at a time from the place in the spine that window means.
+// The spine registers a runner row, starts the runner process, and only then lets the CLI enqueue
+// jobs (#5090). A beat that reads the cluster before convergence would read nothing. So each beat
+// declares the window it is valid in, and the driver runs one window at a time from the place in the
+// spine that window means.
 type CLIDemoPhase string
 
 const (
 	// CLIDemoAuthoring — needs the CONSOLE only: identity, the connector, and authoring the
 	// project. No job, no runner, no cluster.
 	CLIDemoAuthoring CLIDemoPhase = "authoring"
-	// CLIDemoEnqueue — creates the PLAN and DEPLOY jobs. Runs where the spine used to seed its job
-	// row, so the runner process starts immediately after and claims both. These beats must NOT
-	// pass `--wait`: the CLI would block on a runner that does not exist yet.
+	// CLIDemoEnqueue — creates the PLAN and then the DEPLOY job, ONE AT A TIME. It runs AFTER the
+	// runner process has started (#5090), because the two cannot both be queued: every enqueue moves
+	// the environment to QUEUED through the env-status CAS, and `enqueueDeploy` does not accept
+	// QUEUED (apps/console/lib/db/env-status.ts) — a second job on an env with one in flight is
+	// refused. So `project plan` passes `--wait`, which needs a live claimer, and `project apply`
+	// runs only once the PLAN is terminal. That is also the order a person types them in.
+	//
+	// It used to run BEFORE the runner started, on the belief that the runner would "claim both".
+	// It never could: run 36130590853's `apply` was refused because the PLAN was still QUEUED.
 	CLIDemoEnqueue CLIDemoPhase = "enqueue"
 	// CLIDemoConverged — the read-backs, valid only once the cluster is up and asserted: logs, the
 	// cluster, the signed receipt, drift, cost, add-ons.
@@ -158,6 +163,15 @@ type CLIDemoBeat struct {
 	Timeout time.Duration
 	// Why documents anything surprising about the invocation. Optional.
 	Why string
+	// AwaitEnvSettled holds the beat until the run's environment is SETTLED — out of
+	// QUEUED/PROVISIONING/DESTROYING — before it runs (#5090). Set on every beat that enqueues a
+	// job after an earlier one did: the console refuses an enqueue on an env with a job in flight,
+	// and under this harness the env does not settle when the job ends. The runner reports to the
+	// Go shim, which runs the job-status SQL but not the console's env-status move (its FIDELITY
+	// BOUNDARY, controlplane.go handleStatus), so the env waits for the console's convergence
+	// backstop (lib/reconcile/converge.ts). A person on a real console never waits: the status
+	// route settles it in the same request.
+	AwaitEnvSettled bool
 }
 
 // cliDemoNotDriven records, per step id, WHY the provisioning run does not perform it. Every entry
@@ -319,10 +333,16 @@ var CLIDemoBeats = []CLIDemoBeat{
 		StepID: "plan",
 		Phase:  CLIDemoEnqueue,
 		Args: func(r *CLIDemoRun) []string {
-			// NO --wait. The runner process starts AFTER this phase, so blocking here would wait
-			// on a claimer that does not exist. The spine waits instead, on the DEPLOY job.
-			return []string{"project", "plan", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--no-input"}
+			// --wait, and it is REQUIRED (#5090): the environment admits one job in flight, so the
+			// `apply` beat below is refused while this PLAN is still QUEUED or PROCESSING. The runner
+			// process is already running when this phase executes, so the wait has a claimer.
+			return []string{"project", "plan", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--wait", "--no-input"}
 		},
+		// A real `tofu plan` on the runner, not a console round-trip: the default bound is sized
+		// for the latter.
+		Timeout: cliDemoPlanWait,
+		Why: "the prospect's order — plan, read it, then apply. `--wait` is what makes the next beat " +
+			"legal: an env with a job in flight refuses a second one (409, #5090).",
 	},
 	{
 		StepID: "apply",
@@ -330,7 +350,8 @@ var CLIDemoBeats = []CLIDemoBeat{
 		Args: func(r *CLIDemoRun) []string {
 			return []string{"project", "apply", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--no-input"}
 		},
-		After: captureApplyJobID,
+		After:           captureApplyJobID,
+		AwaitEnvSettled: true,
 		Why: "the beat the whole dimension exists for — the DEPLOY job is enqueued BY THE CLI, not by a " +
 			"seeded row. --runner-id is REQUIRED: without it the CLI calls selectRunner(), which prompts, " +
 			"and a prompt in CI hangs until the context kills it and reports as an unreachable command.",
@@ -380,8 +401,9 @@ var CLIDemoBeats = []CLIDemoBeat{
 		Args: func(r *CLIDemoRun) []string {
 			return []string{"project", "destroy", "--project-id", r.ProjectID, "--env", r.EnvName, "--yes", "--wait", "--no-input"}
 		},
-		Timeout: 30 * time.Minute,
-		Why:     "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
+		Timeout:         30 * time.Minute,
+		AwaitEnvSettled: true,
+		Why:             "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
 	},
 }
 

@@ -69,7 +69,14 @@ const (
 	// reserved as deploy-wait. It covers the ordered command sequence plus the console the job
 	// booted answering them — generous, because a beat that times out on a slow first request would
 	// report the CLI cannot reach something it can.
+	//
+	// It also covers the two waits #5090 added in front of `project apply`: `project plan --wait`
+	// (bounded by cliDemoPlanWait) and the env settling after it (cliDemoEnvSettleWindow). The
+	// authoring beats took 25s in total on run 36130590853; 10m + 7m + that fits inside 20m.
 	cliDemoProvisionBudget = 20 * time.Minute
+	// cliDemoPlanWait bounds `project plan --wait` — a real `tofu init` + `tofu plan` on the runner.
+	// It sits INSIDE cliDemoProvisionBudget and is smaller than it on purpose.
+	cliDemoPlanWait = 10 * time.Minute
 
 	// The day-2 access layer had NO ladder term at all, so its probes spent against `headroom`
 	// unnoticed. At the old flat 3m that was survivable by luck; with a URL ceiling sized for an
