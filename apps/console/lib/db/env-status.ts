@@ -77,6 +77,27 @@ export const ENV_TRANSITIONS = {
 	destroyFailed: { from: ["QUEUED", "DESTROYING"], to: "FAILED" },
 } satisfies Record<string, EnvTransition>;
 
+/**
+ * A user-driven enqueue was refused because the env is not in a legal from-state for it — almost
+ * always because another job on it is still QUEUED / PROVISIONING / DESTROYING. It is a CONFLICT
+ * with the resource's current state, not a server fault: the request was well-formed and will
+ * succeed once the in-flight job settles. Typed so an HTTP edge can answer 409 without matching on
+ * the message text (a reworded message would silently turn it back into a 500).
+ */
+export class EnvStateConflictError extends Error {
+	/** The transition-table context that was refused, e.g. "enqueueDeploy". */
+	readonly context: EnvTransitionContext;
+
+	/** Builds the conflict for the refused transition `context`. */
+	constructor(context: EnvTransitionContext) {
+		super(
+			"Environment is not in a valid state for this operation — a job may already be in progress.",
+		);
+		this.name = "EnvStateConflictError";
+		this.context = context;
+	}
+}
+
 /** A key of the transition table — the flow context a caller passes to `transitionEnv`. */
 export type EnvTransitionContext = keyof typeof ENV_TRANSITIONS;
 

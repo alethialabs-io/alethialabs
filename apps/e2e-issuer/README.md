@@ -12,7 +12,7 @@ The `e2e-issuer` GitHub environment supplies these deployment values. The enviro
 | Secret   | `CLOUDFLARE_ACCOUNT_ID` | Worker deployment only                                                  |
 | Secret   | `SIGNING_KEYS_JSON`     | Rotation-aware RSA signing keys; uploaded only by a rotation dispatch   |
 | Variable | `E2E_ISSUER_URL`        | `https://e2e-issuer.alethialabs.io` — the one origin the Worker serves |
-| Variable | `GITHUB_TOKEN_AUDIENCE` | Audience requested from GitHub OIDC                                     |
+| Variable | `E2E_ISSUER_GITHUB_AUDIENCE` | Audience requested from GitHub OIDC. A **repository** variable, read by both the deploy (as the Worker's `GITHUB_TOKEN_AUDIENCE` binding) and the caller in `e2e-nightly.yml`. GitHub refuses variable names that start with `GITHUB_`, so the binding's own name can never be a variable |
 | Variable | `ALLOWED_REPOSITORIES`  | Comma-separated exact repository names                                  |
 | Variable | `ALLOWED_WORKFLOW_REFS` | Comma-separated exact `workflow_ref` claims                             |
 

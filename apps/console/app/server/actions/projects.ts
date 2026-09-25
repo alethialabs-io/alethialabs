@@ -20,7 +20,11 @@ import {
 	clusterAdminsByCluster,
 	serviceBindingsByOwner,
 } from "@/lib/db/normalized-reads";
-import { type EnvTransitionContext, transitionEnv } from "@/lib/db/env-status";
+import {
+	EnvStateConflictError,
+	type EnvTransitionContext,
+	transitionEnv,
+} from "@/lib/db/env-status";
 import {
 	auditLog,
 	cloudIdentities,
@@ -2017,10 +2021,8 @@ async function enqueueEnvTransition(
 	meta: { orgId: string; projectId: string },
 ): Promise<void> {
 	const moved = await transitionEnv(tx, envId, context, jobId, meta);
-	if (!moved)
-		throw new Error(
-			"Environment is not in a valid state for this operation — a job may already be in progress.",
-		);
+	// Typed, so POST /api/jobs answers 409 (a state conflict) rather than 500 (#5090).
+	if (!moved) throw new EnvStateConflictError(context);
 }
 
 export async function planProject(
