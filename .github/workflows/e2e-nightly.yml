@@ -600,7 +600,7 @@ jobs:
           # operator-facing line was the last place it did not.
           case "$dim" in
             full)
-              echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (18) + the day-2 soak on this run (heavy node shape; raised cost ceiling on aws; UNPRICED elsewhere)." ;;
+              echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (18) + the day-2 soak on this run (heavy node shape; raised cost ceiling on aws, gcp and azure; server-type cap on hetzner; prepaid purchases refused on alibaba unless this dispatch waives them)." ;;
             maxconfig)
               echo "::notice::MAX-CONFIG dimension — the 11-kind surface on the heavy node shape. No add-on sweep, no day-2 soak." ;;
             addons)
