@@ -143,9 +143,17 @@ func ResolveCLIDemoRun(t *testing.T) *CLIDemoRun {
 			"console this job booted.", cliDemoConsoleURLEnv, apiBase)
 	}
 	run := &CLIDemoRun{Bin: CLIDemoBinary(), Token: creds.Token, OrgID: creds.OrgID, APIBase: apiBase}
-	if _, err := os.Stat(run.Bin); err != nil {
-		t.Fatalf("cli-demo: the binary under test is not at %q: %v — build it before dispatching this dimension", run.Bin, err)
+	// exec.LookPath, not os.Stat: CLIDemoBinary's default is the BARE name `alethia`, which it
+	// documents as "whatever is on PATH" — os.Stat resolves a bare name against the cwd and can
+	// never find it there. LookPath searches PATH for a bare name and checks a path as given.
+	resolved, err := exec.LookPath(run.Bin)
+	if err != nil {
+		t.Fatalf("cli-demo: the binary under test %q does not resolve to an executable: %v — "+
+			"ALETHIA_E2E_CLI_BIN is %q. Build it before dispatching this dimension; in CI the "+
+			"cli-demo build step exports it to $GITHUB_ENV, and a step-level `env:` entry for it "+
+			"shadows that export (#5055).", run.Bin, err, os.Getenv("ALETHIA_E2E_CLI_BIN"))
 	}
+	run.Bin = resolved
 	return run
 }
 
