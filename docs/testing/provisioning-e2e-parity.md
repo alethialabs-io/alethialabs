@@ -35,14 +35,23 @@ on `tofu validate` alone; and a green-SKIPPED nightly is neither a proof nor a l
 
 ## What's left
 
-- [ ] **AWS floor (#1714)** — the EKS access-entry defect in closed #1040 is resolved and its real-run
-      teardown was clean; the shared `addon-reloader` convergence defect now blocks the floor. A fresh signed
-      real-cloud run is required after that fix before this becomes a floor PASS.
-- [ ] **GCP floor (#1716, #1714, #1722)** — the node-pool name can overflow, and the add-on gate has two
-      independent convergence defects. The observed failed run tore down cleanly, but it is not a floor PASS.
-- [ ] **Azure floor (#1722)** — AKS's platform metrics-server collided with ours; the render gate now skips
-      it there. The observed failed run tore down cleanly; a real run is still required for floor proof.
-- [ ] **Hetzner `addons` dimension — first real run, FAIL at the ArgoCD gate**
+Which cells are still open, and which one to drive next, is derived in `PROGRAMME.md` under "The
+mechanical next". This list used to name per-cloud floor blockers (#1714, #1716, #1722, #2058). All four
+are closed, so this file no longer lists them. Two items are not cells, so they stay here:
+
+- [ ] **A full-bar schedule.** `.github/workflows/e2e-nightly.yml` deliberately has no full-bar cron.
+      The `full` dimension (`ALETHIA_E2E_MAX_CONFIG` + `ALETHIA_E2E_ALL_ADDONS`, resolved in
+      `scripts/e2e/resolve-dimension.sh`) runs only on dispatch, and the nightly stays the cheap
+      green-floor smoke. Since #4977, every matrix cloud has a spend control
+      that runs before apply, so `scripts/check-e2e-spend-guard.mjs` no longer refuses a full-bar cron.
+      A cron still waits for a committed full-bar PASS row per cloud, which the proof grid (#2896) tracks.
+- [ ] **Per-cloud `alethia-security-review`** before each dimension flips ✅.
+
+## History the ledger cannot hold
+
+Decisions, post-mortems and measurements, kept for their reasoning. None of them is current status.
+
+- **Hetzner `addons` dimension — first real run, FAIL at the ArgoCD gate**
       ([`20260805T064043Z`](../../demos/proofs/hetzner/20260805T064043Z), 2026-08-05). This is the first
       time `ALETHIA_E2E_ALL_ADDONS` has been driven against a real cluster on **any** cloud, and it
       settled three open questions at once.
@@ -70,18 +79,15 @@ on `tofu validate` alone; and a green-SKIPPED nightly is neither a proof nor a l
       values and its fail-closed exit discarded the record (#2062). The row was appended by hand with
       `RECORD_ONLY`. The bundle was independently checked for the live token, certificate material and a
       kubeconfig body — none present.
-- [ ] **Alibaba floor** — pending enablement and its first real run; no floor or teardown verdict exists.
-- [ ] **Raise the nightly (or a dispatch/weekly full-bar job) to the FULLY-TESTED dimensions** —
-      `MAX_CONFIG` (11 kinds) + `ALL_ADDONS` (19) + A0.6 BYO/services + a real day-2 access assertion — per
-      cloud. Because the full surface is heavy + costly, drive it as an **opt-in full-bar dimension**
-      (dispatch input / weekly cron) so the cheap nightly stays the green-floor smoke.
-- [x] **Heavy fixtures** — all five now ship (`cluster_json.heavy.{aws,gcp,azure,hetzner,alibaba}.json`),
+
+      Both defects the run found are closed since (#2058 on 2026-08-05, #2062 on 2026-08-05).
+- **Heavy fixtures** — all five now ship (`cluster_json.heavy.{aws,gcp,azure,hetzner,alibaba}.json`),
       so a full-bar run no longer hard-errors in the workflow's "Compute cluster shape" step. Each is
       checked on every PR: it must clear its cloud's floor, pin an instance type
       `packages/core/catalog/catalog.json` actually offers, and declare a `node_size` matching that
       instance's catalogued vCPU/memory (the pair used to be self-attested, and `aws` pinned the
       non-catalog `m5.xlarge`).
-- [x] **Hetzner's three in-cluster kinds are seeded by the harness** — `database`/`cache`/`queue` are
+- **Hetzner's three in-cluster kinds are seeded by the harness** — `database`/`cache`/`queue` are
       `CarriedInCluster` and asserted against the converged ArgoCD Application set, and the DEPLOY
       snapshot now carries the charts that produce those Applications. Previously it did not: the Go
       harness seeded add-ons from `seedAddOns`/`AllCatalogAddOns` alone, which can never hold the
@@ -104,7 +110,7 @@ on `tofu validate` alone; and a green-SKIPPED nightly is neither a proof nor a l
       read-back compares them with the real `MaxConfigProjectConfig("hetzner")` instead of trusting
       that two lists were kept in step by hand. The seed is per-cloud: the other four clouds' add-on
       set is untouched (asserted).
-- [x] **Azure full-bar feasibility — MEASURED, and it is feasible.** The e2e subscription
+- **Azure full-bar feasibility — MEASURED, and it is feasible.** The e2e subscription
       (`32f3d6ca…`) has a **10 vCPU** Total Regional quota and AKS renders
       a single pool, so the old `Standard_D4s_v5` ×3 fixture (12 vCPU) could never create. The open
       question was whether the separate per-family quota also blocked the replacement. It did:
@@ -125,18 +131,15 @@ on `tofu validate` alone; and a green-SKIPPED nightly is neither a proof nor a l
       **not** lowered for Azure, so the SKU must be exactly 2 vCPU / 16 GiB — which is why the
       catalogued 4 vCPU alternatives (`D4s_v5`, `D4as_v5`) do not help: ×3 exceeds the 10 vCPU cap.
       **No support ticket is required, and Azure does not become a documented exclusion.**
-- [ ] **Day-2 access surface** — the maintainer flagged the missing kubeconfig / ArgoCD-URL surface as the
-      gap that motivated the bar (opening `:6443` returned a client-cert 401 — by design, but no access
-      path is surfaced). Build + assert it.
-- [ ] **Per-cloud `alethia-security-review`** before each dimension flips ✅.
+- **Day-2 access surface.** The maintainer flagged the missing kubeconfig / ArgoCD-URL surface as the
+      gap that motivated the bar: opening `:6443` returned a client-cert 401, which is by design, but no
+      access path was surfaced. The surface and its assertion shipped under #1067 (closed 2026-07-22). The
+      `day2` cells are in `PROGRAMME.md`.
 
 ## Flagged issues
 
-| Issue | Cloud | Dimension | Status |
-|-------|-------|-----------|--------|
-| **#1714** | GCP · Hetzner | Provision + cluster_ready | OPEN — add-on Deployment default drift prevents ArgoCD convergence |
-| **#1716** | GCP | Provision + cluster_ready | OPEN — GKE node-pool name can exceed the provider limit |
-| **#1722** | GCP · Azure · Alibaba | Provision + cluster_ready | FIXED — the platform metrics-server collided with ours on all three (ACK was the unlogged third); `metrics-server.yaml` now renders on AWS/Hetzner only. Needs a real run per cloud to become a floor PASS |
+The three issues this table once listed as floor blockers are closed: #1714 (2026-07-31), #1716
+(2026-08-02) and #1722 (2026-08-02). Open blockers are derived in `PROGRAMME.md`, not listed here.
 
 ## Security findings
 
@@ -144,10 +147,12 @@ _(none yet — `alethia-security-review` findings land here as dimensions are dr
 
 ## AI-caught improvements
 
-- **CLI `--no-input` destroy is a no-op** (`apps/cli/cmd/helpers.go:30` `confirm()` ignores `noInputMode`;
-  on a non-TTY it prints "Cancelled" and never queues DESTROY). Hands-on teardown must go via the cloud
-  sweepers or the API/server action, not the CLI destroy — otherwise a "torn-down" run silently leaks.
-- **AWS EKS pathed-role 401 is a real product gap, not e2e-only** — any customer whose provisioning role
-  carries an IAM path hits the same post-apply `Unauthorized`. The fix belongs in the template, benefiting
-  all pathed roles ([[cloud-parity-rule]]: EKS-specific by nature — GCP/Azure authorize via IAM roles / AAD
-  groups and don't path-strip; documented specificity, not a silent gap).
+- **CLI `--no-input` destroy was a no-op — fixed.** `confirm()` used to ignore `noInputMode`, so on a
+  non-TTY it printed "Cancelled" and never queued DESTROY, and a "torn-down" run silently leaked. Today
+  `project destroy` goes through `confirmDestructive` (`apps/cli/cmd/helpers.go`): without `--yes` and
+  without a terminal it fails with `errConfirmRequiresYes` and exits non-zero. It no longer succeeds
+  while doing nothing.
+- **The AWS EKS 401 was not a pathed-role gap — retracted.** This file once said that any customer whose
+  provisioning role carries an IAM path hits a post-apply `Unauthorized`, and that the fix belongs in
+  the template. The cause of #1040 turned out to be the EKS presigned token missing `X-Amz-Expires`, fixed
+  in the runner by #1209 (merged 2026-07-23). The aws cells have since passed on real applies.
