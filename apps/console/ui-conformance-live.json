@@ -9,8 +9,8 @@
 	],
 	"version": 1,
 	"source": {
-		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35896826914",
-		"commit": "633ca6efaa4e888b773157f691b3543a06961bd8"
+		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/36058527139",
+		"commit": "8f5c3953a19062f4d725accfd6cbca53b4c1b7f0"
 	},
 	"runs": {
 		"routes": {
@@ -19,7 +19,7 @@
 			"persona": "the run's own owner",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names",
-			"runKey": "e2e-e2e-1790185298517-455111",
+			"runKey": "e2e-e2e-1790284776229-271151",
 			"records": [
 				{
 					"route": "/[org]",
@@ -1911,7 +1911,7 @@
 			"persona": "the `member` persona, compared against the owner of the same org",
 			"org": "a SECOND organisation, created by that spec and never touched by the primary run",
 			"covers": "only the org-only routes; the parameterised ones need a project the persona cannot be given",
-			"runKey": "e2e-e2e-audit-owner-1790185303207-1",
+			"runKey": "e2e-e2e-audit-owner-1790284780636-1",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2081,7 +2081,7 @@
 			"persona": "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
-			"runKey": "e2e-e2e-1790185294150-518910",
+			"runKey": "e2e-e2e-1790284806754-823087",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2207,14 +2207,12 @@
 				{
 					"route": "/[org]/[project]/jobs",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/jobs",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/jobs",
@@ -2253,14 +2251,12 @@
 				{
 					"route": "/[org]/[project]/settings/access",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/access",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/access",
@@ -2276,13 +2272,13 @@
 					"route": "/[org]/[project]/settings/activity",
 					"predicate": "F8",
 					"verdict": "NOT MEASURED",
-					"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 				},
 				{
 					"route": "/[org]/[project]/settings/activity",
 					"predicate": "F9",
 					"verdict": "NOT MEASURED",
-					"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 				},
 				{
 					"route": "/[org]/[project]/settings/activity",
@@ -2429,14 +2425,13 @@
 				{
 					"route": "/[org]/~/evidence",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+					"verdict": "FAIL",
+					"detail": "Reset left a filter param in the URL — 1 later step not reached"
 				},
 				{
 					"route": "/[org]/~/evidence",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/evidence",
@@ -2582,13 +2577,13 @@
 					"route": "/[org]/~/settings/activity",
 					"predicate": "F8",
 					"verdict": "NOT MEASURED",
-					"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+					"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
 				},
 				{
 					"route": "/[org]/~/settings/activity",
 					"predicate": "F9",
 					"verdict": "NOT MEASURED",
-					"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+					"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
 				},
 				{
 					"route": "/[org]/~/settings/activity",
@@ -2627,14 +2622,12 @@
 				{
 					"route": "/[org]/~/settings/billing/invoices",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
@@ -2695,16 +2688,15 @@
 				{
 					"route": "/[org]/~/settings/members",
 					"predicate": "F8",
-					"verdict": "FAIL",
-					"detail": "reload() kept the param but not the narrowed list"
-				},
-				{
-					"route": "/[org]/~/settings/members",
-					"predicate": "F9",
 					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/members",
+					"predicate": "F9",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/settings/members",
 					"predicate": "R8",
 					"verdict": "PASS"
 				},
@@ -2736,14 +2728,12 @@
 				{
 					"route": "/[org]/~/settings/sso",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/sso",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/sso",
@@ -2758,14 +2748,12 @@
 				{
 					"route": "/[org]/~/settings/teams",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/teams",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/teams",
