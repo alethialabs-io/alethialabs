@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "webhook_ca_consumers" text[] DEFAULT '{}' NOT NULL;

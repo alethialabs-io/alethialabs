@@ -169,7 +169,6 @@
 				"Alerts — empty states, through EmptyState › channels: the shared EmptyState, its title in the outline, and the Add action": "passed",
 				"Alerts — empty states, through EmptyState › policies: the shared EmptyState, its title in the outline, and the New action": "passed",
 				"Alerts — empty states, through EmptyState › an empty universe leaves both count pills reading 0": "passed",
-				"Alerts — empty states, through EmptyState › the ledger's empty state is the table's own message, not an EmptyState": "passed",
 				"Alerts — the guided add-a-channel sheet › opens with the transport gallery": "passed",
 				"Alerts — the guided add-a-channel sheet › picking a transport swaps the credential field": "passed",
 				"Alerts — the guided add-a-channel sheet › email: a blank name is rejected inline": "passed",
@@ -186,7 +185,6 @@
 				"Alerts — the channel filter store (channel*) › typing in the bar narrows the rail and writes `channel` to the URL": "passed",
 				"Alerts — the channel filter store (channel*) › a `channelStatus` deep link arrives already filtered": "passed",
 				"Alerts — the channel filter store (channel*) › facet counts stay over the unfiltered universe while a filter is on": "passed",
-				"Alerts — the channel filter store (channel*) › a filter that matches nothing shows the filtered message, not the EmptyState": "passed",
 				"Alerts — policies › opens the New alert policy sheet": "passed",
 				"Alerts — policies › submitting an empty sheet reports the missing name and events": "passed",
 				"Alerts — policies › security (PDP) events are locked without the advanced entitlement": "passed",
@@ -456,7 +454,7 @@
 				"Navigation shell — mobile viewport › tapping a row in the drawer navigates and closes it": "passed"
 			},
 			"flows/onboarding.negative.spec.ts": {
-				"Onboarding negatives — login gating › login with an unknown email shows the no-account screen (no silent signup)": "failed",
+				"Onboarding negatives — login gating › login with an unknown email shows the no-account screen (no silent signup)": "passed",
 				"Onboarding negatives — login gating › an invalid email format does not advance past the email step": "passed",
 				"Onboarding negatives — OTP code › a wrong 6-digit code is rejected with an inline error": "passed",
 				"Onboarding negatives — OTP code › the code step lets you go back to change the email": "passed",
@@ -478,11 +476,11 @@
 				"Onboarding — public auth pages › signup ?email= prefills the email and skips the provider grid": "passed",
 				"Onboarding — public auth pages › signup page has no serious a11y violations": "passed",
 				"Onboarding — fresh signup + plan pick › onboarding wizard shows both self-serve plan tiles": "passed",
-				"Onboarding — fresh signup + plan pick › onboarding lets you customize the org URL slug": "failed",
-				"Onboarding — fresh signup + plan pick › full Hobby signup lands on the org overview": "failed",
+				"Onboarding — fresh signup + plan pick › onboarding lets you customize the org URL slug": "passed",
+				"Onboarding — fresh signup + plan pick › full Hobby signup lands on the org overview": "passed",
 				"Onboarding — fresh signup + plan pick › full Pro-trial signup lands on the org overview": "passed",
 				"Onboarding — returning user login › an already-onboarded account logs in and skips onboarding": "passed",
-				"Onboarding — org switcher + create-org sheet › switcher shows the active org and its plan badge": "failed",
+				"Onboarding — org switcher + create-org sheet › switcher shows the active org and its plan badge": "passed",
 				"Onboarding — org switcher + create-org sheet › switcher exposes the create-organization action": "passed",
 				"Onboarding — org switcher + create-org sheet › create-organization opens the purchase sheet": "passed",
 				"Onboarding — org switcher + create-org sheet › create-org name step advances to the card-less trial panel": "passed",
@@ -587,8 +585,7 @@
 				"RBAC — General settings › general page loads with the org profile prefilled": "passed",
 				"RBAC — General settings › profile fields render (name prefilled, description, URL)": "passed",
 				"RBAC — General settings › Save changes and Danger zone controls are present": "passed",
-				"RBAC — General settings › Delete organization opens a confirm dialog — Cancel aborts (no delete)": "passed",
-				"RBAC — General settings › Transfer ownership is a stub → surfaces a 'coming soon' toast": "passed"
+				"RBAC — General settings › Delete organization opens a confirm dialog — Cancel aborts (no delete)": "passed"
 			},
 			"flows/runners.negative.spec.ts": {
 				"Runners — the byoRunners gate is deployment-mode scoped › a Hobby org reaches the runner surface, because the upsell is hosted-only": "passed",

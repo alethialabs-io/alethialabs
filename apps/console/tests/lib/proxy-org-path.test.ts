@@ -12,7 +12,11 @@
 import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { proxy } from "@/proxy";
-import { ORG_PATH_HEADER } from "@/lib/authz/org-path";
+import {
+	ACTION_FORWARDED_HEADER,
+	ORG_PATH_HEADER,
+	namesNoOrg,
+} from "@/lib/authz/org-path";
 
 const at = (url: string, headers?: HeadersInit) =>
 	new NextRequest(new Request(`https://console.example.invalid${url}`, { headers }));
@@ -64,4 +68,122 @@ describe("the proxy publishes the request path", () => {
 		const res = proxy(at("/acme/hero-app", { [ORG_PATH_HEADER]: "/victim-org/secrets" }));
 		await expect(published(res)).resolves.toBe("/acme/hero-app");
 	});
+});
+
+// #5001. Next forwards a server action posted to a page whose bundle lacks it: it re-POSTs to the
+// worker's ROUTE PATTERN (`/[org]`), copies the original headers — including the path this proxy
+// published on the first pass — and adds `x-action-forwarded: 1`. Publishing the pattern overwrote
+// the real address, `currentActor()` looked up an org slugged `[org]`, threw notFound(), and Next
+// answered with the `/[org]` tree for an org named "[org]": "Organization not found" on the
+// user's own org, in the qa gate on promotion #4959.
+describe("a server action Next forwards to another worker", () => {
+	const firstPass = "/acme/~/new";
+	/** Any action id: the forwarded POST keeps `next-action`; Next's redirect render drops it. */
+	const ACTION_ID = "00ab12cd34";
+
+	it("keeps the address published on the first pass, not the worker's route pattern", async () => {
+		const res = proxy(
+			at("/[org]", { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass, "next-action": ACTION_ID }),
+		);
+		await expect(published(res)).resolves.toBe(firstPass);
+	});
+
+	it("...whether the pattern arrives raw or percent-encoded", async () => {
+		const res = proxy(
+			at("/%5Borg%5D", { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass, "next-action": ACTION_ID }),
+		);
+		await expect(published(res)).resolves.toBe(firstPass);
+	});
+
+	// The worker Next picks is the FIRST in its manifest that has the action, and that can be a
+	// static page: `/start` imports billing.ts, `/` and `/dashboard` import resolve.ts, and `[org]`
+	// pages import both. Publishing `/start` would make urlOrgSlug() read a reserved segment and fall
+	// back to the session's org — the action run against a tenant the address did not name.
+	it.each(["/start", "/", "/accept-terms"])(
+		"keeps the first-pass address when the worker is the static page %s",
+		async (target) => {
+			const res = proxy(
+				at(target, { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass, "next-action": ACTION_ID }),
+			);
+			await expect(published(res)).resolves.toBe(firstPass);
+		},
+	);
+
+	// THE SECURITY CASE. The `[org]` layout scopes from `params.org` — the FIRST segment — and the
+	// readers under it from this header. A bracket in a LATER segment must not buy the carried value
+	// a way past a concrete first segment, or one request could scope the layout to org-a and the
+	// page to org-b.
+	it.each(["/org-a/%5Bx%5D", "/org-a/[x]", "/~/[x]"])(
+		"a concrete org first segment wins even with a bracket later: %s",
+		async (target) => {
+			const res = proxy(
+				at(target, {
+					[ACTION_FORWARDED_HEADER]: "1",
+					[ORG_PATH_HEADER]: "/org-b",
+					"next-action": ACTION_ID,
+				}),
+			);
+			await expect(published(res)).resolves.toBe(target);
+		},
+	);
+
+	// A forwarded action that calls redirect(): Next renders the TARGET page with a copy of the
+	// forwarded headers minus `next-action`. That render must be scoped by its own address, or a
+	// redirect to `/dashboard` after leaving `acme` renders the dashboard as `acme` (#5005 review).
+	it.each(["/accept-terms", "/start", "/"])(
+		"the redirect render of a forwarded action (no next-action) publishes its own path: %s",
+		async (target) => {
+			const res = proxy(at(target, { [ACTION_FORWARDED_HEADER]: "1", [ORG_PATH_HEADER]: firstPass }));
+			await expect(published(res)).resolves.toBe(target);
+		},
+	);
+
+	// The exception is as narrow as its four conditions. Each case below drops one of them, and
+	// each is the anti-forgery replacement above, unchanged.
+	it("a real address still wins over an inbound value, even with the forwarded header", async () => {
+		const res = proxy(
+			at("/acme/hero-app", {
+				[ACTION_FORWARDED_HEADER]: "1",
+				[ORG_PATH_HEADER]: "/victim-org/secrets",
+			}),
+		);
+		await expect(published(res)).resolves.toBe("/acme/hero-app");
+	});
+
+	it("a route-pattern path WITHOUT the forwarded header publishes the path itself", async () => {
+		const res = proxy(at("/[org]", { [ORG_PATH_HEADER]: "/victim-org/secrets" }));
+		await expect(published(res)).resolves.toBe("/[org]");
+	});
+
+	it("a forwarded request with nothing carried publishes the path itself", async () => {
+		const res = proxy(at("/[org]", { [ACTION_FORWARDED_HEADER]: "1" }));
+		await expect(published(res)).resolves.toBe("/[org]");
+	});
+});
+
+describe("namesNoOrg — the first segment decides, the only one urlOrgSlug() reads", () => {
+	it.each([
+		"/",
+		"/[org]",
+		"/[org]/~/new",
+		"/%5Borg%5D",
+		"/%5borg%5d/x",
+		"/start",
+		"/dashboard/[[...rest]]",
+		"/cli/login",
+		"/onboarding",
+		"/accept-terms",
+	])("%s names no org", (p) => expect(namesNoOrg(p)).toBe(true));
+	it.each([
+		"/acme",
+		"/acme/~/new",
+		"/e2e-hobby-e2e-ownerhobby-1/~/new",
+		"/org-a/[x]",
+		"/org-a/%5Bx%5D",
+		"/~/evidence",
+		"/~/[x]",
+		"/[slug]",
+		"/[ORG]",
+		"/[org]x",
+	])("%s names an org, or is not the [org] pattern", (p) => expect(namesNoOrg(p)).toBe(false));
 });

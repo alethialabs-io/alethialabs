@@ -82,7 +82,9 @@ export ALICLOUD_ACCESS_KEY=...  ALICLOUD_SECRET_KEY=...  # (admin — used only 
 #    and a stack cannot keep its state in a bucket it has not created yet.
 cd infra/alibaba-e2e/bootstrap
 cp terraform.tfvars.example terraform.tfvars   # region must match backend.hcl
-tofu init -backend=false && tofu apply
+printf 'terraform {\n  backend "local" {}\n}\n' > backend_override.tf   # FIRST apply only; `-backend=false` cannot plan
+tofu init && tofu plan -out=bootstrap.tfplan && tofu apply bootstrap.tfplan
+rm backend_override.tf bootstrap.tfplan                    # BEFORE the migrate init, or it stays on local
 cp backend.hcl.example backend.hcl && $EDITOR backend.hcl   # bucket = `tofu output -raw state_bucket`
 tofu init -backend-config=backend.hcl -migrate-state
 

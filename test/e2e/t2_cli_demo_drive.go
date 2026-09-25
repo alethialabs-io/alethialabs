@@ -16,14 +16,16 @@ package e2e
 // ── WHY PHASES RATHER THAN ONE LOOP ──
 //
 // The demo's order and the harness's order are not the same order. A prospect types plan, apply,
-// then watches. The spine registers a runner row, enqueues a job, THEN starts the runner process,
-// then waits for it. Run the whole table in one pass at the top and `project apply --wait` blocks
-// forever on a claimer that has not started; run it at the bottom and there is no cluster to read
-// back. Neither failure looks like what it is — both read as "the CLI cannot do this".
+// then watches. The spine authors the project, starts the runner process, and only THEN lets the
+// CLI queue jobs — one at a time, because an environment admits one job in flight (#5090). Run the
+// whole table in one pass at the top and `project plan --wait` blocks forever on a claimer that
+// has not started; run it at the bottom and there is no cluster to read back. Neither failure
+// looks like what it is — both read as "the CLI cannot do this".
 //
 // So the driver runs one window at a time and the spine calls it four times.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -143,9 +145,17 @@ func ResolveCLIDemoRun(t *testing.T) *CLIDemoRun {
 			"console this job booted.", cliDemoConsoleURLEnv, apiBase)
 	}
 	run := &CLIDemoRun{Bin: CLIDemoBinary(), Token: creds.Token, OrgID: creds.OrgID, APIBase: apiBase}
-	if _, err := os.Stat(run.Bin); err != nil {
-		t.Fatalf("cli-demo: the binary under test is not at %q: %v — build it before dispatching this dimension", run.Bin, err)
+	// exec.LookPath, not os.Stat: CLIDemoBinary's default is the BARE name `alethia`, which it
+	// documents as "whatever is on PATH" — os.Stat resolves a bare name against the cwd and can
+	// never find it there. LookPath searches PATH for a bare name and checks a path as given.
+	resolved, err := exec.LookPath(run.Bin)
+	if err != nil {
+		t.Fatalf("cli-demo: the binary under test %q does not resolve to an executable: %v — "+
+			"ALETHIA_E2E_CLI_BIN is %q. Build it before dispatching this dimension; in CI the "+
+			"cli-demo build step exports it to $GITHUB_ENV, and a step-level `env:` entry for it "+
+			"shadows that export (#5055).", run.Bin, err, os.Getenv("ALETHIA_E2E_CLI_BIN"))
 	}
+	run.Bin = resolved
 	return run
 }
 
@@ -252,35 +262,62 @@ func captureIdentityID(r *CLIDemoRun, out string) error {
 		r.Provider, len(ids), r.Provider, out)
 }
 
-// captureDefaultEnv reads the DEFAULT environment's name out of `project env list --output json`.
+// assertRunTaggedEnv is the `project-env` beat's claim: the environment the beat just ADDED is
+// stored under exactly the name the run asked for, and it is placed `dedicated` (#5095).
 //
-// It is captured rather than assumed because the CLI creates the environments, not the harness:
-// `project create --stage development` makes `development` (default) and `preview`, and the
-// harness's own `env` variable names something else entirely. Addressing the wrong one fails with
-// `Environment "x" not found` — a 404 that reads as a CLI defect and is a harness assumption.
-func captureDefaultEnv(r *CLIDemoRun, out string) error {
+// It READS the name and never WRITES it. Its predecessor, captureDefaultEnv, overwrote
+// `r.EnvName` with the project's default environment — `development`, which `project create
+// --stage development` names after the stage — so the CLI deployed `<project>-development` while
+// the harness's sweep, LB capture and teardown all targeted `<project>-<run_id>-<attempt>`. A
+// cluster name without the run tag defeats run-scoped teardown, so the name is now an input to the
+// run and this function only proves the server kept it.
+//
+// Exact equality, not "contains": the console normalises an environment name to a slug
+// (lib/validations/names.ts), and a name it rewrote would rename the cluster just as surely as
+// the old overwrite did. Refused here, before a cluster is bought, rather than at the post-deploy
+// cluster_name assertion after one has been.
+func assertRunTaggedEnv(r *CLIDemoRun, out string) error {
 	start := strings.Index(out, "[")
 	end := strings.LastIndex(out, "]")
 	if start == -1 || end <= start {
 		return fmt.Errorf("`project env list --output json` produced no JSON array:\n%s", out)
 	}
 	var envs []struct {
-		Name      string `json:"name"`
-		IsDefault bool   `json:"is_default"`
+		Name          string `json:"name"`
+		PlacementMode string `json:"placement_mode"`
 	}
 	if err := json.Unmarshal([]byte(out[start:end+1]), &envs); err != nil {
 		return fmt.Errorf("parsing the environment list: %w\n%s", err, out)
 	}
+	names := make([]string, 0, len(envs))
 	for _, e := range envs {
-		if e.IsDefault && e.Name != "" {
-			r.EnvName = e.Name
-			return nil
+		names = append(names, e.Name)
+		if e.Name != r.EnvName {
+			continue
 		}
+		if e.PlacementMode != "dedicated" {
+			return fmt.Errorf("environment %q was added with placement %q, want `dedicated` — a shared "+
+				"placement lands on the default Fabric, which this run never provisions, so the deploy "+
+				"would not build the run-tagged cluster the teardown targets", e.Name, e.PlacementMode)
+		}
+		return nil
 	}
-	// Falling back to "the first one" would work today and silently address the wrong environment
-	// the day a project is created with two. A project with no default is a product question, not
-	// something for this harness to paper over.
-	return fmt.Errorf("no DEFAULT environment among %d — every later beat addresses one by name:\n%s", len(envs), out)
+	return fmt.Errorf("`project env add %s` succeeded but no environment is stored under exactly that "+
+		"name (listed: %s). The cluster is named `<project>-<environment name>`, so a rewritten name "+
+		"would deploy a cluster the sweep and the teardown do not target (they target %q):\n%s",
+		r.EnvName, strings.Join(names, ", "), CLIDemoClusterName(r), out)
+}
+
+// CLIDemoClusterName is the cluster the CLI-authored project provisions, derived from the SAME
+// CLIDemoRun fields the beats pass to `project create` and `project env add` (#5095).
+//
+// It mirrors the hetzner/alibaba template naming, `${var.project_name}-${var.environment}`, where
+// `environment` is the environment's NAME (apps/console/lib/queries/cli-config.ts emits
+// `environment_stage: env.name`). That is the same `<project>-<env>` the seeded path builds and the
+// workflow exports as E2E_CLUSTER, which is the claim the pure test pins. EKS/GKE/AKS embed the
+// same two parts (t2ValidateClusterName), so the run tag reaches every cloud through EnvName.
+func CLIDemoClusterName(r *CLIDemoRun) string {
+	return r.Project + "-" + r.EnvName
 }
 
 // firstJSONID pulls a top-level `"id"` out of the first JSON object in the output, if there is one.
@@ -530,27 +567,33 @@ func AssertCLIDemoBeatFlagsAreRegistered(ctx context.Context, t *testing.T, run 
 // runner row already exist by then. What the refusal buys is the cloud spend, which is the
 // expensive half; the twelve minutes are already gone.
 //
-// It lifts from the OUTSIDE: set ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED once the e2e console has an
-// issuer the clouds trust, and the run proceeds with no code change. Refuse what is KNOWN broken,
-// and always ship the escape hatch.
+// It lifts from the OUTSIDE, two ways (cliDemoConnectorLift): in the nightly, by the workflow's
+// pre-spend broker proof for exactly this cloud (ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN, #4227); on a
+// laptop, by ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED. Either way the run proceeds with no code change.
+// Refuse what is KNOWN broken, and always ship the escape hatch.
 func AssertCLIDemoConnectorIsDrivable(t *testing.T, run *CLIDemoRun) {
 	t.Helper()
 
-	if t2Truthy(os.Getenv(cliDemoConnectorIssuerTrustEnv)) {
+	if lift := cliDemoConnectorLift(run.Provider, os.Getenv); lift != "" {
 		// THE LIFT IS A STATEMENT ABOUT THE ISSUER, NOT ABOUT THE CREDENTIALS. It used to return
 		// here on the strength of that one variable, which made it the one path where an unset repo
 		// variable reached the CLI as an empty flag value — and an empty value does not fail, it
 		// falls through to the cloud's LOCAL setup flow and creates real identity (see
-		// cliDemoConnectorEmptyFlags). The maintainer opting in to the issuer cannot also mean the
-		// role ARN is present, so that is asked separately, and still before any spend.
+		// cliDemoConnectorEmptyFlags). An issuer being trusted cannot also mean the role ARN (or, on
+		// gcp, the broker WIF config) is present, so that is asked separately, still before spend.
 		if empty := cliDemoConnectorEmptyFlags(run); len(empty) > 0 {
-			t.Fatalf("cli-demo: %s is set, but `connector %s` would be invoked with %d empty flag "+
-				"value(s): %s.\n\nAn empty value is NOT a parse error — the command falls through to "+
-				"its local setup flow and creates real cloud identity (aws: a CloudFormation stack with "+
-				"an IAM OIDC provider and AlethiaProvisionerRole, which aws-cleanup.sh does not sweep). "+
-				"Set the variable(s) behind those flags, or clear %s.",
-				cliDemoConnectorIssuerTrustEnv, run.Provider, len(empty), strings.Join(empty, ", "),
-				cliDemoConnectorIssuerTrustEnv)
+			t.Fatalf("cli-demo: the connector refusal is lifted (%s), but `connector %s` would be "+
+				"invoked with %d empty flag value(s): %s.\n\nAn empty value is NOT a parse error — the "+
+				"command falls through to its local setup flow and creates real cloud identity (aws: a "+
+				"CloudFormation stack with an IAM OIDC provider and AlethiaProvisionerRole, which "+
+				"aws-cleanup.sh does not sweep). Set the variable(s) behind those flags.",
+				lift, run.Provider, len(empty), strings.Join(empty, ", "))
+		}
+		if lift == "broker" {
+			t.Logf("cli-demo: the E2E assertion broker path was PROVEN for %s before spend (%s) — "+
+				"driving `connector %s` against a console whose assertions come from the broker",
+				run.Provider, cliDemoBrokerProvenEnv, run.Provider)
+			return
 		}
 		t.Logf("cli-demo: %s is set — driving `connector %s` on the maintainer's word that this "+
 			"console's OIDC issuer is trusted by that cloud", cliDemoConnectorIssuerTrustEnv, run.Provider)
@@ -572,12 +615,13 @@ func AssertCLIDemoConnectorIsDrivable(t *testing.T, run *CLIDemoRun) {
 		"assertion the CONSOLE signs, and this console is started with "+
 		"NEXT_PUBLIC_APP_URL=http://localhost:3000 and no ALETHIA_OIDC_SIGNING_KEY, so no cloud can "+
 		"verify it.\n\n"+
-		"Unblocking it is a maintainer decision about the e2e console's identity, not a harness "+
-		"change. Once that console has an issuer the cloud trusts, set %s=1 and re-dispatch — this "+
-		"refusal reads that variable and nothing else.\n\n"+
+		"In the nightly this lifts when the workflow's pre-spend broker proof passes for this cloud "+
+		"(scripts/e2e/refresh-e2e-issuer-token.mjs → %s=%s, #4227): apply #4226's trust, set "+
+		"E2E_ISSUER_URL and E2E_ISSUER_GITHUB_AUDIENCE, and dispatch from dev. On a laptop, set "+
+		"%s=1 once the console you drive has an issuer the cloud trusts.\n\n"+
 		"Refused before any cloud resource is bought, rather than at the beat. (Not before the console "+
 		"build — that has already happened by the time `go test` runs; see this function's doc.)",
-		run.Provider, why, run.Provider, run.Provider, cliDemoConnectorIssuerTrustEnv)
+		run.Provider, why, run.Provider, run.Provider, cliDemoBrokerProvenEnv, run.Provider, cliDemoConnectorIssuerTrustEnv)
 }
 
 // DriveCLIDemoPhase executes every beat in one phase, in table order, against the real binary.
@@ -592,6 +636,13 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 	for _, b := range CLIDemoBeats {
 		if b.Phase != phase {
 			continue
+		}
+		if b.AwaitEnvSettled {
+			if err := awaitCLIDemoEnvSettled(ctx, run, func(c context.Context) (string, error) {
+				return readCLIDemoEnvStatus(c, run)
+			}); err != nil {
+				t.Fatalf("cli-demo beat %q: %v", b.StepID, err)
+			}
 		}
 		argv := b.Args(run)
 		bound := cliDemoBeatTimeout
@@ -702,6 +753,114 @@ func awaitCLIDemoClaim(ctx context.Context, run *CLIDemoRun, status func(context
 		"and the deploy wait would have run to its full deadline reporting a timeout that names the cluster.",
 		run.ApplyJobID, last, cliDemoClaimWindow, run.OrgID)
 }
+
+// cliDemoInFlightEnvStatuses are the environment statuses in which the console refuses a new
+// enqueue from at least one verb — the three the enqueue from-sets in ENV_TRANSITIONS
+// (apps/console/lib/db/env-status.ts) are built to exclude. `enqueueDestroy` alone accepts
+// PROVISIONING; waiting it out as well costs nothing, because the job behind it is already
+// terminal whenever this is asked.
+var cliDemoInFlightEnvStatuses = map[string]bool{"QUEUED": true, "PROVISIONING": true, "DESTROYING": true}
+
+// awaitCLIDemoEnvSettled waits until the run's environment leaves the in-flight statuses, so the
+// next CLI enqueue is not refused (#5090). It is the decision, separated from the CLI read so its
+// failure message is testable without a console.
+//
+// WHY THE HARNESS HAS TO WAIT AT ALL. On a real console the job-status route settles the env in
+// the same request the runner reports on. Here the runner reports to the Go shim, which runs the
+// job-status SQL and deliberately none of the route's TypeScript (controlplane.go handleStatus,
+// FIDELITY BOUNDARY), so the env stays where the ENQUEUE put it — QUEUED — until the console's
+// convergence backstop (lib/reconcile/converge.ts) moves it to where the finished job says. That
+// backstop is the product's own code and its own CAS; the harness waits on it rather than
+// re-implementing the move in Go, which would also have made A0.5's "finalizeDeployment moved
+// the env" assertion pass without finalizeDeployment doing anything.
+func awaitCLIDemoEnvSettled(ctx context.Context, run *CLIDemoRun, status func(context.Context) (string, error)) error {
+	deadline := time.Now().Add(cliDemoEnvSettleWindow)
+	last := "(never read)"
+	var lastErr error
+	for {
+		s, err := status(ctx)
+		if err == nil {
+			last, lastErr = s, nil
+			if !cliDemoInFlightEnvStatuses[s] {
+				return nil
+			}
+		} else {
+			lastErr = err
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("cancelled while waiting for environment %q to settle: %w", run.EnvName, ctx.Err())
+		case <-time.After(cliDemoEnvSettlePoll):
+		}
+	}
+	readErr := ""
+	if lastErr != nil {
+		readErr = fmt.Sprintf(" (the last read failed: %v)", lastErr)
+	}
+	return fmt.Errorf("environment %q of project %s is still %s after %s%s, so the console would refuse "+
+		"the next job with \"a job may already be in progress\" (409).\n"+
+		"The job before this beat is terminal, but under this harness nothing settles its env on the "+
+		"live path: the runner reports to the Go shim, which does not run the console's env-status move. "+
+		"The console's convergence backstop (lib/reconcile/converge.ts) is what settles it, once the job "+
+		"has been terminal for ALETHIA_CONVERGE_MIN_AGE_MINUTES and the reconcile loop ticks (60s). "+
+		"If it never did, check that the console step sets that variable and that the loop started.",
+		run.EnvName, run.ProjectID, last, cliDemoEnvSettleWindow, readErr)
+}
+
+// readCLIDemoEnvStatus reads the run's environment status THROUGH THE CLI — `project env list`,
+// the same surface a person would look at — rather than from the database the harness also holds,
+// so the wait observes what the console reports.
+func readCLIDemoEnvStatus(ctx context.Context, run *CLIDemoRun) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, cliDemoBeatTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, run.Bin, "project", "env", "list",
+		"--project", run.ProjectID, "--output", "json", "--no-input")
+	cmd.Env = cliDemoEnv(run)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("`alethia project env list`: %w", err)
+	}
+	return cliDemoEnvStatusFrom(out, run.EnvName)
+}
+
+// cliDemoEnvStatusFrom picks one environment's status out of `project env list --output json`.
+// An absent environment is an error, not an empty status: "" is not in-flight, so reading it as a
+// status would end the wait on an env that was never found.
+func cliDemoEnvStatusFrom(out []byte, envName string) (string, error) {
+	// Sliced to the array the way assertRunTaggedEnv does, so both readers of this command accept
+	// the same output.
+	start, end := bytes.IndexByte(out, '['), bytes.LastIndexByte(out, ']')
+	if start == -1 || end <= start {
+		return "", fmt.Errorf("`project env list --output json` produced no JSON array:\n%s", out)
+	}
+	var envs []struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(out[start:end+1], &envs); err != nil {
+		return "", fmt.Errorf("parsing `project env list --output json`: %w", err)
+	}
+	for _, e := range envs {
+		if e.Name == envName {
+			if e.Status == "" {
+				return "", fmt.Errorf("environment %q is listed with no status", envName)
+			}
+			return e.Status, nil
+		}
+	}
+	return "", fmt.Errorf("environment %q is not in `project env list` (%d listed)", envName, len(envs))
+}
+
+// cliDemoEnvSettlePoll is how often the env status is re-read. A var for the pure test.
+var cliDemoEnvSettlePoll = 10 * time.Second
+
+// cliDemoEnvSettleWindow bounds the settle wait: the console step's 1-minute staleness gate plus a
+// 60s reconcile tick is ~2m, and 7m still covers the product DEFAULT of 5m should that variable
+// ever stop reaching the console. A var for the pure test.
+var cliDemoEnvSettleWindow = 7 * time.Minute
 
 // cliDemoClaimPoll is how often the claim is re-read. A variable so the pure test can drive the
 // loop in milliseconds rather than making the suite wait out a real poll interval.

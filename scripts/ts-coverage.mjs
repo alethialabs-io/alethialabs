@@ -430,8 +430,12 @@ function runCheck(project) {
 	// covers that); it parses to a PARTIAL — directories missing, denominators collapsed — which
 	// compared naively is a catastrophic fake regression across the whole project. The
 	// discriminator is the DENOMINATOR: a directory's `total` is its statement count and can only
-	// change when code changes. Safe because vitest's `coverage.all` defaults to true, so a
-	// directory leaves the measurement by losing all its FILES, never by losing its tests.
+	// change when code changes. Safe because every project in scripts/ts-coverage-sweep.json sets
+	// `coverage.include`, so untested files matching it are still reported (at zero) and a
+	// directory leaves the measurement by losing all its FILES, never by losing its tests. Under
+	// vitest <= 3 that came from `coverage.all` defaulting to true; vitest 4 REMOVED the option
+	// (#5048) and reports only files some test loaded UNLESS `coverage.include` is set — so a
+	// project whose coverage block drops its `include` would silently turn this check unsound.
 	/** @type {string[]} */
 	const suspect = [];
 	for (const [dir, floor] of Object.entries(recorded)) {

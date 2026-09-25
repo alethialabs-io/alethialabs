@@ -290,6 +290,7 @@ describe("settings pages — accessible names", () => {
 					},
 				]}
 				gitlabBaseUrl="https://gitlab.com"
+				providerAvailability={{ github: true, gitlab: true, bitbucket: true }}
 			/>,
 		);
 		// RepositorySelector loads its provider list asynchronously; the icon-only git-provider
@@ -306,6 +307,7 @@ describe("settings pages — accessible names", () => {
 				fabrics={[]}
 				gitCredentials={[]}
 				gitlabBaseUrl="https://gitlab.com"
+				providerAvailability={{ github: true, gitlab: true, bitbucket: true }}
 			/>,
 		);
 		// "Placement" is the row label and cannot name two controls, so each says which half it is —

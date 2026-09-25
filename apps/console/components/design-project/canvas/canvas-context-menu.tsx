@@ -28,6 +28,7 @@ import { kindFromCollectionId } from "@/lib/canvas/collections";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
 import type { CanvasNode, NodeKind } from "./graph/types";
 import { NODE_REGISTRY } from "./graph/node-registry";
+import { NOTHING_TO_FIT, useHasDrawnNodes } from "./use-has-drawn-nodes";
 
 /**
  * What a right-click pointed at. `pane` is empty board; `node` is one card (a real store node or a
@@ -194,6 +195,7 @@ export function CanvasContextMenu({
 	onAddService,
 }: CanvasContextMenuProps) {
 	const { fitView } = useReactFlow();
+	const canFit = useHasDrawnNodes();
 	const nodes = useCanvasStore((s) => s.nodes);
 	const openCard = useCanvasStore((s) => s.openCard);
 	const removeNodes = useCanvasStore((s) => s.removeNodes);
@@ -249,7 +251,10 @@ export function CanvasContextMenu({
 							<Shuffle className="mr-2 h-4 w-4 text-muted-foreground" />
 							Repair overlaps
 						</ContextMenuItem>
-						<ContextMenuItem onSelect={() => void fitView({ padding: 0.3 })}>
+						<ContextMenuItem
+							disabledReason={canFit ? null : NOTHING_TO_FIT}
+							onSelect={() => void fitView({ padding: 0.3 })}
+						>
 							<Maximize className="mr-2 h-4 w-4 text-muted-foreground" />
 							Fit view
 						</ContextMenuItem>

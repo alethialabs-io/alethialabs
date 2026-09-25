@@ -21,6 +21,7 @@
 #               [--now] [--include-mine] [--dry-run = decide and print, destroy nothing]
 #   env:timer   reap the box automatically once idle   [off|status]
 #   env:box     create or restore the box   [--fresh = ignore snapshots]
+#   env:allow-ip  put this machine's public IP on the box's SSH allowlist (firewall only)
 set -euo pipefail
 
 # ── $ROOT was doing three jobs at once, and only the first was right ──────────────
@@ -279,6 +280,397 @@ ssh_box() {
   ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@"
 }
 
+# ── The SSH allowlist follows the caller (#5025) ──────────────────────────────────
+#
+# The box admits SSH from `ssh_allowed_cidrs` in the gitignored terraform.tfvars and from nowhere
+# else (infra/sandbox/network.tf), and every env:* command that touches the box is SSH — including
+# env:reap, whose registry read is the ownership evidence it refuses to reap without. The Mac's
+# public IP is dynamic. On 2026-09-23 it moved, and a restored box billed for ~10h because
+# env:up, env:reap and the idle timer all failed on the same closed port.
+#
+# So before a command's first SSH, ensure_ssh_allowlist asks what this machine's public IPv4 is and
+# whether the firewall admits it. If not, it rewrites the ONE /32 in tfvars (backup kept beside
+# it) and applies a plan TARGETED at hcloud_firewall.sandbox — and only after reading that plan
+# back and confirming every change in it is an in-place update of that firewall which ends up
+# admitting this IP (firewall_plan_verdict). The saved plan file is what gets applied, so the
+# plan that was checked is the plan that runs.
+#
+# ALETHIA_SANDBOX_NO_IP_REFRESH=1 turns the rewrite off for a caller on a fixed IP. env:box still
+# checks the IP in that mode, and refuses to build a box the caller could not reach.
+TFVARS="$TF_DIR/terraform.tfvars"
+FIREWALL_ADDR="hcloud_firewall.sandbox"
+FIREWALL_NAME="alethia-sandbox"
+# HTTPS, IPv4-only (-4): the box is reached on its IPv4 address, so the IPv4 egress address is the
+# one the firewall sees. Two services so one being down is not an outage of every env:* command.
+IP_ECHO_URLS="https://api.ipify.org https://ipv4.icanhazip.com"
+ALLOWLIST_BACKUP=""
+ALLOWLIST_LOCK=""
+
+ipv4_valid() { # <ip> — dotted quad, each octet 0-255
+  local a b c d o
+  [[ "$1" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r a b c d <<<"$1"
+  for o in "$a" "$b" "$c" "$d"; do [ $((10#$o)) -le 255 ] || return 1; done
+}
+
+ipv4_int() { # <ip> → the address as one integer
+  local a b c d
+  IFS=. read -r a b c d <<<"$1"
+  printf '%s' $(((10#$a << 24) + (10#$b << 16) + (10#$c << 8) + 10#$d))
+}
+
+# IPv4 only. An IPv6 entry (`::/0`) never covers: the caller's address is detected over -4, and
+# the box is reached on its IPv4 address.
+cidr_covers() { # <cidr> <ip>
+  local net="${1%/*}" bits=32 mask
+  case "$1" in */*) bits="${1#*/}" ;; esac
+  ipv4_valid "$net" || return 1
+  [[ "$bits" =~ ^[0-9]{1,2}$ ]] && [ $((10#$bits)) -le 32 ] || return 1
+  bits=$((10#$bits))
+  [ "$bits" -eq 0 ] && return 0
+  mask=$(((0xFFFFFFFF << (32 - bits)) & 0xFFFFFFFF))
+  [ $(($(ipv4_int "$net") & mask)) -eq $(($(ipv4_int "$2") & mask)) ]
+}
+
+cidrs_cover() { # <ip> — reads one CIDR per line on stdin; 0 if any covers
+  local c
+  while IFS= read -r c; do
+    [ -n "$c" ] && cidr_covers "$c" "$1" && return 0
+  done
+  return 1
+}
+
+# This machine's public IPv4, or failure. Never a guess: a wrong answer would be written into the
+# firewall.
+caller_ip() {
+  local u out
+  for u in $IP_ECHO_URLS; do
+    out="$(curl -4 -fsS --max-time 5 "$u" 2>/dev/null | tr -d '[:space:]')" || continue
+    ipv4_valid "$out" && {
+      printf '%s' "$out"
+      return 0
+    }
+  done
+  return 1
+}
+
+# The CIDRs terraform.tfvars assigns, one per line.
+#   0  parsed        2  no assignment (the variable's default, 0.0.0.0/0, applies)
+#   1  present but not the one-line `ssh_allowed_cidrs = ["…", …]` shape — refuse, never guess
+tfvars_cidrs() {
+  local lines re='^[[:space:]]*ssh_allowed_cidrs[[:space:]]*=[[:space:]]*\[([^]]*)\][[:space:]]*(#.*)?$'
+  lines="$(grep -E '^[[:space:]]*ssh_allowed_cidrs[[:space:]]*=' "$TFVARS" 2>/dev/null || true)"
+  [ -n "$lines" ] || return 2
+  [ "$(printf '%s\n' "$lines" | grep -c .)" = 1 ] || return 1
+  [[ "$lines" =~ $re ]] || return 1
+  printf '%s' "${BASH_REMATCH[1]}" | grep -Eo '"[^"]*"' | tr -d '"' || true
+}
+
+# The LIVE SSH rule's sources (inbound, port 22) — what the firewall actually admits, which is the
+# thing SSH meets. Another inbound rule (say, 443 from anywhere) must not read as "SSH admitted".
+# tfvars alone can say "allowed" about a firewall nobody applied (a rewrite whose apply failed).
+live_firewall_cidrs() {
+  local js
+  js="$(hc firewall describe "$FIREWALL_NAME" -o json 2>/dev/null)" || return 1
+  # -r, not -e: a rule set with no inbound sources is a valid answer ("admits nobody"), and -e
+  # would turn its empty output into a failure, i.e. into "cannot read the live rule".
+  printf '%s' "$js" | jq -r '[.rules[]? | select(.direction == "in" and .port == "22") | .source_ips[]?] | .[]' 2>/dev/null
+}
+
+# ok        tfvars and the live firewall both admit <ip>
+# tfvars    tfvars does not admit it — the rewrite is needed
+# live      tfvars does, the live firewall does not — only the apply is needed
+# unparsed  tfvars cannot be read safely
+#
+# When the live rule cannot be read (hcloud down, no context), the tfvars answer stands: this only
+# decides whether to REFRESH, and the SSH that follows is the real test of reachability.
+allowlist_state() { # <ip>
+  local ip="$1" cidrs live rc=0
+  cidrs="$(tfvars_cidrs)" || rc=$?
+  case "$rc" in
+  0) printf '%s\n' "$cidrs" | cidrs_cover "$ip" || {
+    echo tfvars
+    return 0
+  } ;;
+  2) ;;
+  *)
+    echo unparsed
+    return 0
+    ;;
+  esac
+  live="$(live_firewall_cidrs)" || {
+    echo ok
+    return 0
+  }
+  printf '%s\n' "$live" | cidrs_cover "$ip" || {
+    echo live
+    return 0
+  }
+  echo ok
+}
+
+# THE CHECK THAT MAKES THE APPLY SAFE. Reads `tofu show -json` of the saved, targeted plan and
+# prints ONE verdict:
+#   apply            every change is an in-place update of hcloud_firewall.sandbox, and after it
+#                    the firewall's SSH rule (inbound, port 22) admits <ip>
+#   noop             nothing changes and the firewall already admits <ip>
+#   refuse:<reason>  anything else — including JSON that does not parse
+#
+# "Every change" means every resource_changes entry whose actions are not exactly ["no-op"], plus
+# any no-op that imports or moves (`.change.importing`, `.previous_address`) — those write state
+# too. A replacement (["delete","create"]), a create against empty state, a deposed object, a data
+# read and any other address are all refusals. The firewall must appear exactly once, so a plan that
+# does not mention it cannot pass on an empty change set. And the update itself may change ONLY the
+# rules' source_ips: everything else in before and after — the name, the labels, each rule's
+# direction, protocol and port — must be identical, so "firewall-only" cannot become "opens a port".
+firewall_plan_verdict() { # <plan-json> <ip>
+  local v after
+  v="$(printf '%s' "$1" | jq -r --arg fw "$FIREWALL_ADDR" '
+    def rules_sans_sources: [ .rule[]? | del(.source_ips) ] | sort;
+    [ .resource_changes[]?
+      | select((.change.actions // []) != ["no-op"]
+          or .change.importing != null
+          or ((.previous_address // .address) != .address)) ] as $ch
+    | [ .resource_changes[]? | select(.address == $fw) ] as $fws
+    | $fws[0].change as $c
+    | if ($fws | length) != 1 then
+        "refuse:the plan does not contain \($fw) exactly once"
+      elif ([ $ch[] | select(.address != $fw) ] | length) > 0 then
+        "refuse:the plan would also change " + ([ $ch[] | select(.address != $fw) | .address ] | unique | join(", "))
+      elif ([ $ch[] | select(.change.actions != ["update"]
+                             or .change.importing != null
+                             or ((.previous_address // .address) != .address)) ] | length) > 0 then
+        "refuse:\($fw) would be " + ($c.actions | join("+")) + " (or moved/imported), not updated in place"
+      elif ($ch | length) > 0
+           and ((($c.before // {}) | del(.rule)) != (($c.after // {}) | del(.rule))
+                or (($c.before // {}) | rules_sans_sources) != (($c.after // {}) | rules_sans_sources)) then
+        "refuse:the plan changes more of \($fw) than the source_ips of its rules"
+      elif ($ch | length) == 0 then "noop"
+      else "apply" end' 2>/dev/null || true)"
+  case "$v" in
+  apply | noop) ;;
+  refuse:*)
+    printf '%s' "$v"
+    return 0
+    ;;
+  *)
+    printf 'refuse:the plan JSON did not parse'
+    return 0
+    ;;
+  esac
+  # Coverage, not string equality: a tfvars entry wider than a /32 legitimately admits the IP. Only
+  # the SSH rule (inbound, port 22) counts.
+  after="$(printf '%s' "$1" | jq -r --arg fw "$FIREWALL_ADDR" \
+    '.resource_changes[]? | select(.address == $fw) | .change.after.rule[]? | select(.direction == "in" and .port == "22") | .source_ips[]?' 2>/dev/null || true)"
+  if ! printf '%s\n' "$after" | cidrs_cover "$2"; then
+    printf 'refuse:after the plan %s would still not admit %s' "$FIREWALL_ADDR" "$2"
+    return 0
+  fi
+  printf '%s' "$v"
+}
+
+# Serialises refreshes between instances on this machine (a worktree's env:up and the timer's reap
+# can race). It is a mkdir lock with dead-holder stealing, and the steal is not atomic: two waiters
+# that both see a dead holder can both proceed. The backstop is OpenTofu itself — its state lock,
+# and a saved plan that refuses to apply once the state it was planned against has moved.
+allowlist_lock() {
+  local d="$TF_DIR/.terraform/alethia-ip-refresh.lock" i=0 holder
+  mkdir -p "$TF_DIR/.terraform"
+  until mkdir "$d" 2>/dev/null; do
+    holder="$(cat "$d/pid" 2>/dev/null || true)"
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      rm -rf "$d"
+      continue
+    fi
+    i=$((i + 1))
+    [ "$i" -le 120 ] || die "another env.sh has held $d for 2 minutes — not refreshing the SSH allowlist."
+    sleep 1
+  done
+  echo $$ >"$d/pid"
+  ALLOWLIST_LOCK="$d"
+}
+
+allowlist_unlock() {
+  [ -n "$ALLOWLIST_LOCK" ] && rm -rf "$ALLOWLIST_LOCK"
+  ALLOWLIST_LOCK=""
+}
+
+# Undo the rewrite, release the lock, fail. A rewritten tfvars left behind a failed apply would
+# make the NEXT run read "tfvars admits me" and skip the rewrite (the live check still catches it,
+# but the file should say what the firewall says).
+allowlist_fail() {
+  if [ -n "$ALLOWLIST_BACKUP" ] && [ -f "$ALLOWLIST_BACKUP" ]; then
+    cat "$ALLOWLIST_BACKUP" >"$TFVARS"
+    echo "  restored $TFVARS from $ALLOWLIST_BACKUP" >&2
+  fi
+  ALLOWLIST_BACKUP=""
+  allowlist_unlock
+  die "$@"
+}
+
+# Replace the ONE IPv4 /32 in ssh_allowed_cidrs with <ip>/32, keeping every other entry. Zero or
+# several /32s is refused: which one is "this machine's" is not something to guess.
+rewrite_tfvars_cidr() { # <ip>
+  local ip="$1" cidrs rc=0 old n tmp
+  cidrs="$(tfvars_cidrs)" || rc=$?
+  [ "$rc" = 0 ] || allowlist_fail "cannot rewrite ssh_allowed_cidrs in $TFVARS (expected one line: ssh_allowed_cidrs = [\"a.b.c.d/32\"]). Edit it by hand to include \"$ip/32\"."
+  n="$(printf '%s\n' "$cidrs" | grep -cE '^[0-9]{1,3}(\.[0-9]{1,3}){3}/32$' || true)"
+  [ "$n" = 1 ] || allowlist_fail "ssh_allowed_cidrs in $TFVARS holds $n IPv4 /32 entries — cannot tell which is this machine's. Edit it by hand to include \"$ip/32\"."
+  old="$(printf '%s\n' "$cidrs" | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}/32$')"
+
+  # *.tfvars is gitignored in infra/sandbox; a `terraform.tfvars.<ts>` name would NOT be, and the
+  # file holds the Hetzner and Cloudflare tokens. Not *.auto.tfvars either, which tofu would load.
+  ALLOWLIST_BACKUP="$TF_DIR/terraform.$(date -u +%Y%m%dT%H%M%SZ).backup.tfvars"
+  cp -p "$TFVARS" "$ALLOWLIST_BACKUP"
+  tmp="$(mktemp)"
+  sed -E "/^[[:space:]]*ssh_allowed_cidrs[[:space:]]*=/ s#\"${old//./\\.}\"#\"$ip/32\"#" "$TFVARS" >"$tmp"
+  cat "$tmp" >"$TFVARS" # not mv: keep the file's mode (it holds tokens)
+  rm -f "$tmp"
+  tfvars_cidrs | cidrs_cover "$ip" ||
+    allowlist_fail "rewrote $TFVARS but it still does not admit $ip — refusing to continue."
+  echo "  tfvars: ssh_allowed_cidrs $old → $ip/32   (backup: $ALLOWLIST_BACKUP)" >&2
+}
+
+# The mutating half. Runs under a lock, re-reads the state under it (another instance may have just
+# done this), and applies only a plan firewall_plan_verdict accepted.
+refresh_ssh_allowlist() { # <ip>
+  local ip="$1" state plan js verdict log
+  [ -s "$TF_DIR/terraform.tfstate" ] ||
+    die "cannot refresh the SSH allowlist: no OpenTofu state in $TF_DIR."
+  need tofu
+  need jq
+  allowlist_lock
+  ALLOWLIST_BACKUP=""
+  state="$(allowlist_state "$ip")"
+  case "$state" in
+  ok)
+    allowlist_unlock
+    return 0
+    ;;
+  unparsed) allowlist_fail "cannot read ssh_allowed_cidrs in $TFVARS safely. Edit it by hand to include \"$ip/32\"." ;;
+  tfvars) rewrite_tfvars_cidr "$ip" ;;
+  live) echo "  tfvars already admits $ip; the live firewall does not — applying it." >&2 ;;
+  esac
+
+  plan="$(mktemp)"
+  log="$(mktemp)"
+  if ! tofu -chdir="$TF_DIR" plan -input=false -lock-timeout=60s -target="$FIREWALL_ADDR" -out="$plan" >"$log" 2>&1; then
+    tail -20 "$log" >&2
+    rm -f "$plan" "$log"
+    allowlist_fail "the targeted plan for $FIREWALL_ADDR failed — nothing applied."
+  fi
+  js="$(tofu -chdir="$TF_DIR" show -json "$plan" 2>/dev/null || true)"
+  verdict="$(firewall_plan_verdict "$js" "$ip")"
+  case "$verdict" in
+  apply)
+    if ! tofu -chdir="$TF_DIR" apply -input=false -lock-timeout=60s "$plan" >"$log" 2>&1; then
+      tail -20 "$log" >&2
+      rm -f "$plan" "$log"
+      allowlist_fail "applying the firewall-only plan failed."
+    fi
+    echo "✓ SSH allowlist: $FIREWALL_ADDR now admits $ip/32 (targeted apply, firewall only)." >&2
+    ;;
+  # OpenTofu refreshed the firewall and found nothing to change, so it already admits the IP — which
+  # contradicts the hcloud read that sent us here. Say so rather than claim a fix.
+  noop) echo "⚠ SSH allowlist: the targeted plan finds $FIREWALL_ADDR already admitting $ip, but hcloud's read of it did not — nothing applied." >&2 ;;
+  *)
+    rm -f "$plan" "$log"
+    allowlist_fail "Refusing to apply the SSH-allowlist refresh: ${verdict#refuse:}.
+  Only an in-place update of $FIREWALL_ADDR is ever applied by this path. Run
+  \`tofu -chdir=$TF_DIR plan -target=$FIREWALL_ADDR\` to see what else it wanted."
+    ;;
+  esac
+  rm -f "$plan" "$log"
+  ALLOWLIST_BACKUP=""
+  allowlist_unlock
+}
+
+# Before a command's FIRST ssh. Once per process: every later ssh_box of the command runs after it.
+ensure_ssh_allowlist() {
+  local ip state
+  # No state: nothing to refresh, and require_box explains the real problem.
+  [ -s "$TF_DIR/terraform.tfstate" ] || return 0
+  [ "${ALETHIA_SANDBOX_NO_IP_REFRESH:-}" = 1 ] && return 0
+  need curl
+  need jq
+  ip="$(caller_ip)" || die "cannot determine this machine's public IPv4 (tried: $IP_ECHO_URLS).
+  The box's firewall admits SSH only from ssh_allowed_cidrs, so this refuses rather than guess.
+  On a fixed IP that is already allowlisted:  ALETHIA_SANDBOX_NO_IP_REFRESH=1 pnpm env:<cmd>"
+  state="$(allowlist_state "$ip")"
+  [ "$state" = ok ] && return 0
+  echo "→ this machine's public IP ($ip) is not on the box's SSH allowlist — refreshing it." >&2
+  refresh_ssh_allowlist "$ip"
+}
+
+# What to say when SSH to the box failed. Best-effort and read-only: it names the IP mismatch and
+# the command that fixes it, or rules the allowlist out.
+ssh_unreachable_hint() {
+  local ip state
+  ip="$(caller_ip 2>/dev/null)" || {
+    echo "  (could not determine this machine's public IP, so cannot say whether the SSH allowlist is the cause)" >&2
+    return 0
+  }
+  state="$(allowlist_state "$ip")"
+  if [ "$state" = ok ]; then
+    echo "  This machine's IP ($ip) IS on the box's SSH allowlist, so the firewall is not the cause —" >&2
+    echo "  the box may still be booting, or sshd is down." >&2
+    return 0
+  fi
+  {
+    echo "  ✗ SSH is refused because this machine's public IP ($ip) is not on the box's SSH allowlist"
+    case "$state" in
+    tfvars) echo "    (ssh_allowed_cidrs in $TFVARS does not include it)." ;;
+    live) echo "    ($TFVARS includes it, but the live $FIREWALL_NAME firewall was never updated)." ;;
+    *) echo "    (ssh_allowed_cidrs in $TFVARS could not be read safely)." ;;
+    esac
+    [ "${ALETHIA_SANDBOX_NO_IP_REFRESH:-}" = 1 ] &&
+      echo "    ALETHIA_SANDBOX_NO_IP_REFRESH=1 is set, so env.sh did not refresh it."
+    echo "    Fix:  pnpm env:allow-ip      then re-run this command."
+  } >&2
+}
+
+# `pnpm env:allow-ip` — the refresh on its own, and the one command the reap error names. An
+# explicit request, so ALETHIA_SANDBOX_NO_IP_REFRESH does not apply to it.
+cmd_allow_ip() {
+  local ip state
+  need curl
+  need jq
+  [ -s "$TF_DIR/terraform.tfstate" ] || die "no OpenTofu state in $TF_DIR — nothing to refresh."
+  ip="$(caller_ip)" || die "cannot determine this machine's public IPv4 (tried: $IP_ECHO_URLS)."
+  state="$(allowlist_state "$ip")"
+  if [ "$state" = ok ]; then
+    echo "✓ $ip is already on the box's SSH allowlist."
+    return 0
+  fi
+  refresh_ssh_allowlist "$ip"
+}
+
+# env:box, BEFORE it creates anything: never build a box this machine cannot reach. With the
+# refresh on, the /32 is rewritten here and the full apply below carries it into the firewall.
+# With it off, a caller whose IP tfvars does not admit is refused.
+ensure_box_allowlist() {
+  local ip rc=0 cidrs
+  need curl
+  ip="$(caller_ip)" || die "cannot determine this machine's public IPv4 (tried: $IP_ECHO_URLS) —
+  refusing to build a box whose SSH allowlist may not admit this machine."
+  cidrs="$(tfvars_cidrs)" || rc=$?
+  case "$rc" in
+  2) return 0 ;; # no assignment: the variable's default admits everything
+  0) printf '%s\n' "$cidrs" | cidrs_cover "$ip" && return 0 ;;
+  *) die "cannot read ssh_allowed_cidrs in $TFVARS safely — refusing to build a box. Edit it to include \"$ip/32\"." ;;
+  esac
+  if [ "${ALETHIA_SANDBOX_NO_IP_REFRESH:-}" = 1 ]; then
+    die "refusing to build a box this machine cannot reach: its public IP ($ip) is not in
+  ssh_allowed_cidrs ($(printf '%s' "$cidrs" | tr '\n' ' ')) in $TFVARS, and
+  ALETHIA_SANDBOX_NO_IP_REFRESH=1 is set. Unset it (env:box then rewrites the /32), or add \"$ip/32\" by hand."
+  fi
+  ALLOWLIST_BACKUP=""
+  rewrite_tfvars_cidr "$ip"
+  # Kept even if the apply below fails: the new /32 is the right value, and the next env:* command
+  # sees a live firewall that disagrees with tfvars and applies just the firewall.
+  ALLOWLIST_BACKUP=""
+}
+
 # The domain comes from state, or not at all. Both call sites used to fall back to the
 # literal "dev.alethialabs.io", which turned a state-read failure into a confident wrong
 # answer — and is why `env:open` appeared to work from a worktree while every other
@@ -372,7 +764,13 @@ read_registry() {
 # Fails CLOSED: if the registry cannot be read, assume someone is there.
 reap_guard() { # <registry-json> <include-mine 0|1>
   local reg="$1" include_mine="${2:-0}" me cut rows verdict rc=0
-  [ -n "$reg" ] || die "cannot read the env registry — refusing to reap a box that might be in use."
+  if [ -z "$reg" ]; then
+    # Still fail CLOSED — the registry is the only evidence of who is using the box — but say
+    # whether the SSH allowlist is why it could not be read (#5025). Not against a fixture: that
+    # path is offline by contract, and the hint makes a network call.
+    [ -n "${ALETHIA_ENV_REGISTRY_FILE:-}" ] || ssh_unreachable_hint
+    die "cannot read the env registry — refusing to reap a box that might be in use."
+  fi
   me="$(env_owner)"
   cut="$(reap_cutoff)"
 
@@ -508,9 +906,12 @@ cmd_box() {
   require_main_checkout "env:box"
   need tofu
   need jq
-  refuse_public_net_change_on_running_box
   [ -f "$TF_DIR/terraform.tfvars" ] ||
     die "no $TF_DIR/terraform.tfvars — copy terraform.tfvars.example and fill it in."
+  # Before ANY plan or apply: a box this machine cannot SSH to cannot be provisioned, used or
+  # reaped, and bills until someone notices (#5025).
+  ensure_box_allowlist
+  refuse_public_net_change_on_running_box
 
   preflight_capacity
 
@@ -1600,6 +2001,8 @@ cmd_reap_dry_run() { # <include-mine 0|1>
       echo "box already down — env:reap would do nothing."
       return 0
     }
+    # NO ensure_ssh_allowlist here: the dry run mutates nothing, and a refresh is an apply. If SSH
+    # is refused, reap_guard's empty-registry refusal names the IP mismatch and `pnpm env:allow-ip`.
     reg="$(read_registry)"
   fi
   echo "→ I am $(env_owner)"
@@ -1684,7 +2087,17 @@ cmd_reap() {
     echo "box already down — nothing billing but the IP (EUR 0.50/mo) and the snapshot."
     return 0
   }
-  idle="$(idle_normalise "$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")")"
+  ensure_ssh_allowlist
+  # 255 is ssh's own transport failure. It used to fold into idle=0 like any other empty answer, so
+  # an unreachable box read as "most recent env activity was 0m ago" on every timer tick, for ever
+  # (#5025). Unreachable is not idle and not busy: it is "cannot decide", so it refuses and says why.
+  local idle_raw idle_rc=0
+  idle_raw="$(ssh_box "$REMOTE/bin/env-registry.sh idle-minutes")" || idle_rc=$?
+  if [ "$idle_rc" = 255 ]; then
+    ssh_unreachable_hint
+    die "cannot reach the box over SSH — not reaping (the env registry is the only evidence of who is using it)."
+  fi
+  idle="$(idle_normalise "$idle_raw")"
   # Row count, for the MESSAGES only — it is what lets them say "no activity recorded"
   # rather than "activity was 0m ago". Deliberately fail-soft: a failure leaves it empty
   # and the wording falls back. It must never reach a decision, only an echo.
@@ -1858,11 +2271,20 @@ PLIST
   echo "  guarantees a forgotten box dies within ${REAP_AFTER_MIN}m rather than billing all month."
 }
 
+# Every command that SSHes to the box gets the allowlist checked first (#5025). Not box (its own,
+# stricter check runs inside cmd_box), reap (inside cmd_reap, after its flags are parsed, and only
+# for a REAL reap: --dry-run mutates nothing, so it reports a mismatch instead of fixing it), timer
+# (no SSH) or allow-ip (it is the refresh).
+case "${1:-}" in
+up | push | down | status | verify | logs | open | ssh | check | test | runner) ensure_ssh_allowlist ;;
+esac
+
 case "${1:-}" in
 box)
   shift || true
   cmd_box "$@"
   ;;
+allow-ip) cmd_allow_ip ;;
 up)
   shift || true
   cmd_up "$@"
@@ -1892,10 +2314,10 @@ timer)
   cmd_timer "$@"
   ;;
 *)
-  # 5,23 is exactly the header block above (it grew a line when env:reap gained its
-  # flags). It read 5,25 once and so printed `set -euo pipefail` and the first line of
-  # the next comment section as if they were usage.
-  sed -n '5,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # 5,24 is exactly the header block above (it grew a line when env:reap gained its
+  # flags, and another for env:allow-ip). It read 5,25 once and so printed `set -euo pipefail`
+  # and the first line of the next comment section as if they were usage.
+  sed -n '5,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 1
   ;;
 esac

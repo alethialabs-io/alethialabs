@@ -30,7 +30,6 @@ predicates:
   S2:
     fail:
       - /[org]/[project]/environments
-      - /[org]/~/alerts
       # A RECORDED DECISION, and the only line in this file that is one. Everything else here is
       # a defect waiting for the lane that owns it; this route is built this way on purpose and
       # will keep failing S2 for as long as it is.
@@ -70,8 +69,7 @@ predicates:
       - /[org]/~/settings: redirect-only
       - /dashboard/[[...rest]]: redirect-only
   S4:
-    fail:
-      - /[org]/~/alerts
+    fail: []
     na:
       - /[org]/[project]/settings: redirect-only
       - /[org]/[project]: redirect-only
@@ -121,9 +119,5 @@ predicates:
       - /cli/login: does-not-call-not-found
       - /dashboard/[[...rest]]: does-not-call-not-found
   T4:
-    fail:
-      - /[org]/[project]
-      - /[org]/[project]/settings
-      - /[org]/~/settings
-      - /dashboard/[[...rest]]
+    fail: []
     na: []

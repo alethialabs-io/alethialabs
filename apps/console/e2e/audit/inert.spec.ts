@@ -40,11 +40,15 @@ import { closeDb } from "../helpers/db";
 import { materialize, restoreContext, resolveOrgSlug, resolveOwner, saveContext, seedRouteFixtures, type AuditContext } from "./context";
 import {
 	activate,
+	awaitReady,
+	awaitReadyAfterReload,
 	emptinessProblems,
 	enumerateControls,
 	interactionControl,
 	measureQuiescence,
+	notReadyReason,
 	OVERLAY_SELECTOR_WITHOUT_MENUS,
+	PageNotReady,
 	preActivationExclusion,
 	recover,
 	resolve,
@@ -205,6 +209,10 @@ async function driveControls(page: Page, route: string, url: string, controls: E
 		const clean = await recover(page);
 		if (seen.dirtied || !clean || page.url() !== url) {
 			await page.goto(url, { waitUntil: "domcontentloaded" });
+			// The next control is re-resolved BY INDEX, so the page it is resolved in must be the
+			// loaded one — against the skeleton it is `control-list-moved` for the wrong reason. The
+			// SHORT budget, and a throw when it runs out: see `RENAVIGATION_READY_BUDGET_MS`.
+			await awaitReadyAfterReload(page);
 		}
 	}
 	return observations;
@@ -232,10 +240,21 @@ async function auditRoute(route: RouteRecord, page: Page): Promise<void> {
 	}
 
 	await page.goto(url, { waitUntil: "domcontentloaded" });
+	// Enumerate the PAGE, not its `loading.tsx` (#4980): a streamed route answers
+	// `domcontentloaded` with a column of skeletons and nothing to press.
+	const readiness = await awaitReady(page);
 
 	const main = await enumerateControls(page, "main", "main");
 	if (!main.hasMain) {
 		report.notMeasured({ route: route.route, url, predicate: "R8", reason: "the page rendered no `<main>` — nothing was enumerated, which is a claim about this run and not about the page" });
+		return;
+	}
+	// A route that did not settle on its FIRST load is NOT MEASURED as a whole and is not driven:
+	// what it enumerated is its loading state, and driving it would pay the readiness budget again on
+	// every re-navigation — enough of them overrun the test timeout and leave no verdict at all.
+	const notReady = notReadyReason(readiness);
+	if (notReady !== null) {
+		report.notMeasured({ route: route.route, url, predicate: "R8", reason: notReady, evidence: { readiness } });
 		return;
 	}
 
@@ -252,6 +271,8 @@ async function auditRoute(route: RouteRecord, page: Page): Promise<void> {
 	];
 
 	if (controls.length === 0 && external.length === 0) {
+		// N/A says the PAGE offers nothing to press — said only here, below the readiness check, so
+		// only of a page that loaded.
 		report.record({ route: route.route, url, predicate: "R8", verdict: "N/A", reason: "no-enabled-controls" });
 		return;
 	}
@@ -267,13 +288,23 @@ async function auditRoute(route: RouteRecord, page: Page): Promise<void> {
 	}
 
 	const quiescence = await measureQuiescence(page);
-	const observations = await driveControls(page, route.route, url, controls, quiescence.quiet);
-
-	// A menu is a control whose effect is more controls. Depth ONE only, and declared: an item that
-	// opens a submenu is enumerated and activated like any other, but its submenu is not descended
-	// into. Two levels would multiply a route's cost by the fan-out of its deepest menu, and the
-	// shapes this console builds are one level.
-	const menuObservations = await driveMenus(page, route.route, url, observations, quiescence.quiet);
+	let observations: Observation[];
+	let menuObservations: Observation[];
+	try {
+		observations = await driveControls(page, route.route, url, controls, quiescence.quiet);
+		// A menu is a control whose effect is more controls. Depth ONE only, and declared: an item that
+		// opens a submenu is enumerated and activated like any other, but its submenu is not descended
+		// into. Two levels would multiply a route's cost by the fan-out of its deepest menu, and the
+		// shapes this console builds are one level.
+		menuObservations = await driveMenus(page, route.route, url, observations, quiescence.quiet);
+	} catch (err) {
+		if (!(err instanceof PageNotReady)) throw err;
+		// A re-navigation stopped settling: the verdicts so far are over a page the rest of the route
+		// could not be measured on, so the ROUTE is NOT MEASURED — a partial PASS is a denominator
+		// nobody can see.
+		report.notMeasured({ route: route.route, url, predicate: "R8", reason: err.reason, evidence: { readiness: err.readiness } });
+		return;
+	}
 
 	const all = [...observations, ...menuObservations];
 	const inert = all.filter((o) => o.excluded === undefined && o.effect === null);
@@ -316,6 +347,7 @@ async function driveMenus(page: Page, route: string, url: string, observations: 
 	for (const opener of openers) {
 		if (budgetLeft <= 0) break;
 		await page.goto(url, { waitUntil: "domcontentloaded" });
+		await awaitReadyAfterReload(page);
 		const locator = await resolve(page, opener.control);
 		if (locator === null) continue;
 		await locator.click({ force: true, noWaitAfter: true, timeout: 2_000 }).catch(() => {});
@@ -339,6 +371,7 @@ async function driveMenus(page: Page, route: string, url: string, observations: 
 			// Re-open the menu for THIS item: the previous item's activation closed it.
 			if ((await page.locator('[role="menu"]').count()) === 0) {
 				await page.goto(url, { waitUntil: "domcontentloaded" });
+				await awaitReadyAfterReload(page);
 				const again = await resolve(page, opener.control);
 				if (again === null) break;
 				await again.click({ force: true, noWaitAfter: true, timeout: 2_000 }).catch(() => {});

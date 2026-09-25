@@ -18,7 +18,9 @@ import (
 	"time"
 )
 
-// runT2FabricDemo drives the #845 acceptance gate on the Fabric the base run provisioned: place each
+// runT2FabricDemo drives the #845 acceptance gate on the Fabric the base run provisioned: check the
+// base deploy's snapshot is the prod tier's DEDICATED placement (which provisioned this Fabric by
+// construction — see the package comment), place each
 // tier as a namespace env syncing its OWN Kustomize overlay, place one tier as a vcluster env, prove
 // every placement genuinely CAUSED the artifacts it is credited with, re-prove the Fabric's drift
 // posture, and record the whole thing as a machine-readable verdict.
@@ -68,6 +70,24 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 	// than quietly reporting placements on an unproven cluster.
 	summary.FabricPlanSHA = strings.TrimSpace(p.planSHA)
 
+	// ── (P) The PROD tier — the DEDICATED placement that provisioned this Fabric ────────────────
+	//    Checked from the base DEPLOY job's config_snapshot, before any tenant is placed: it must
+	//    resolve to the dedicated path. Cheap (one DB read, no cloud time), so it runs first and a
+	//    base deploy submitted as a namespace/vcluster placement fails before a tenant is seeded.
+	//    That the Fabric (p.fabricClust) and receipt (p.planSHA) belong to this job holds BY
+	//    CONSTRUCTION — both were read from its execution_metadata — so they are not re-checked.
+	prodSnap, err := fabricDemoBaseJobSnapshot(ctx, cp, p.deployJobID)
+	if err != nil {
+		t.Fatalf("fabric-demo: prod tier: %v", err)
+	}
+	prod, err := assertFabricDemoProd(p.deployJobID, prodSnap)
+	summary.Prod = prod
+	if err != nil {
+		t.Fatalf("fabric-demo: prod tier: %v", err)
+	}
+	t.Logf("fabric-demo: prod tier = DEDICATED placement (base DEPLOY %s, placement_mode=%s, stage label %q); Fabric %q and its receipt come from that same job",
+		prod.DeployJob, prod.PlacementMode, prod.StageLabel, p.fabricClust)
+
 	timeout := fabricDemoTimeout()
 	t.Logf("fabric-demo (#845): placing %d namespace tier(s) %v + one vcluster tier (%s) onto Fabric %q from %s (bound %s)",
 		len(tiers), tiers, vcTier.Tier, p.fabricClust, repo, timeout)
@@ -93,10 +113,17 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 		len(beforeApps), len(beforeProjects), len(beforeNS))
 
 	// ArgoCD must survive every placement — capture its identity once, before any of them.
-	argoBefore, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
+	//    Found BY LABEL (#5082): the chart names the Deployment `argo-cd-argocd-server`, never
+	//    `argocd-server`. pickArgocdServer requires exactly one match.
+	argoBeforeRaw, err := nsKubectl(ctx, kc, argocdServerKubectlArgs()...)
 	if err != nil {
-		t.Fatalf("fabric-demo: read argocd-server before placements: %v\n%s", err, argoBefore)
+		t.Fatalf("fabric-demo: read argocd-server before placements: %v\n%s", err, argoBeforeRaw)
 	}
+	argoServer, argoBefore, err := pickArgocdServer(argoBeforeRaw)
+	if err != nil {
+		t.Fatalf("fabric-demo: read argocd-server before placements: %v", err)
+	}
+	t.Logf("fabric-demo: ArgoCD server Deployment %q created %s", argoServer, argoBefore)
 
 	// ── (1) Place every tier as a namespace env on the SAME Fabric, and prove what it delivered ──
 	for _, tier := range tiers {
@@ -266,9 +293,13 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 	}
 
 	// ── (3) ArgoCD was never reinstalled by any placement ─────────────────────────────────────
-	argoAfter, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
+	argoAfterRaw, err := nsKubectl(ctx, kc, argocdServerKubectlArgs()...)
 	if err != nil {
-		t.Fatalf("fabric-demo: read argocd-server after placements: %v\n%s", err, argoAfter)
+		t.Fatalf("fabric-demo: read argocd-server after placements: %v\n%s", err, argoAfterRaw)
+	}
+	_, argoAfter, err := pickArgocdServer(argoAfterRaw)
+	if err != nil {
+		t.Fatalf("fabric-demo: read argocd-server after placements: %v", err)
 	}
 	if err := argocdNotReinstalled(argoBefore, argoAfter); err != nil {
 		t.Fatalf("fabric-demo: no-reinstall assertion: %v", err)
@@ -290,6 +321,22 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 		t.Fatalf("fabric-demo (#845) FAILED: %s", fabricDemoSummaryVerdict(summary))
 	}
 	t.Logf("fabric-demo (#845) PROVEN: %s", fabricDemoSummaryVerdict(summary))
+}
+
+// fabricDemoBaseJobSnapshot reads the base DEPLOY job's config_snapshot — the column
+// assertFabricDemoProd judges the prod tier's dedicated placement by. An empty job id is not an
+// error here: assertFabricDemoProd refuses it with the reason, so the summary still records it.
+func fabricDemoBaseJobSnapshot(ctx context.Context, cp *ControlPlane, jobID string) (snapshot []byte, err error) {
+	if strings.TrimSpace(jobID) == "" {
+		return nil, nil
+	}
+	err = cp.pool.QueryRow(ctx,
+		`SELECT config_snapshot FROM public.jobs WHERE id = $1`, jobID).
+		Scan(&snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("read base DEPLOY job %s config_snapshot: %w", jobID, err)
+	}
+	return snapshot, nil
 }
 
 // kubeIdentsOf lists a kind and returns name → identity, for the causality baseline. ns == "" lists

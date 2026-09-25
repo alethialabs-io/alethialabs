@@ -1,0 +1,21 @@
+{
+  "$comment": "The reviewed SHA-1 fingerprints of the CA certificates the E2E issuer's host serves in its TLS chain. ONE copy, read by infra/alibaba-e2e (the RAM OIDC provider's fingerprint set, max 5) and by scripts/ci/check-e2e-issuer-health.mjs (the scheduled check that the live chain is still covered). Populate or extend it ONLY with `node scripts/ci/check-e2e-issuer-health.mjs --print-pin --expected-url <url> --out infra/e2e-issuer/tls-ca-pin.json` (never a `>` redirect, which empties this file before it is read), which reads the VERIFIED live chain and merges atomically, and commit it in a reviewed PR. Empty = not yet observed: alibaba-e2e refuses to plan the broker trust and the health check reports the pin as missing. See infra/e2e-issuer/README.md.",
+  "issuer_url": "https://e2e-issuer.alethialabs.io",
+  "algorithm": "sha1",
+  "fingerprints": [
+    {
+      "sha1": "108fbf794e18ec5347a414e4370cc4506c297ab2",
+      "subject": "C=US, O=Google Trust Services, CN=WE1",
+      "issuer": "C=US, O=Google Trust Services LLC, CN=GTS Root R4",
+      "not_after": "Feb 20 14:00:00 2029 GMT",
+      "observed_at": "2026-09-24"
+    },
+    {
+      "sha1": "932bed339aa69212c89375b79304b475490b89a0",
+      "subject": "C=US, O=Google Trust Services LLC, CN=GTS Root R4",
+      "issuer": "C=BE, O=GlobalSign nv-sa, OU=Root CA, CN=GlobalSign Root CA",
+      "not_after": "Jan 28 00:00:42 2028 GMT",
+      "observed_at": "2026-09-24"
+    }
+  ]
+}

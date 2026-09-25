@@ -3,7 +3,7 @@
 
 import { getSessionCookie } from "better-auth/cookies";
 import { type NextRequest, NextResponse } from "next/server";
-import { ORG_PATH_HEADER } from "@/lib/authz/org-path";
+import { ORG_PATH_HEADER, orgPathToPublish } from "@/lib/authz/org-path";
 
 // Routes that require a session. The post-signup onboarding flow (/onboarding) is
 // gated too so unauthenticated hits bounce to /login instead of erroring server-side.
@@ -59,8 +59,12 @@ export async function proxy(request: NextRequest) {
 	// `set` REPLACES any inbound value, which is the whole anti-forgery story: a client that sends
 	// its own `x-alethia-path` has it overwritten on every path this matcher covers, and the matcher
 	// covers everything but static assets.
+	//
+	// The one exception is a server action Next forwards to another worker. That request's URL is
+	// the worker's route pattern (`/[org]`), not an address, so the path published on the first pass
+	// is kept (#5001). `orgPathToPublish` states the conditions and what forging them would get.
 	const forwarded = new Headers(request.headers);
-	forwarded.set(ORG_PATH_HEADER, path);
+	forwarded.set(ORG_PATH_HEADER, orgPathToPublish(path, request.headers));
 	return NextResponse.next({ request: { headers: forwarded } });
 }
 

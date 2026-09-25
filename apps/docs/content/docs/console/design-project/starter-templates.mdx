@@ -24,6 +24,21 @@ All three are licensed Apache-2.0. Each carries a `TEMPLATE_VERSION` file and a 
 `CHANGELOG.md`. A change to a chart's `values.schema.json` is a major bump, because that file is
 the interface your values are written against.
 
+## Pick one when you create a project
+
+When you create a project with **Start from a template**, the **Template** section offers three
+choices. Each one gives you a starter repository to copy:
+
+| Template | Starter repository |
+|---|---|
+| Standard | alethia-starter-apps |
+| AI Workloads | alethia-starter-ai |
+| Custom | None. You attach your own repositories. |
+
+The choice does not change the cluster. All three create the same node pool, with no GPU. Use
+**Use this template** to copy the starter, then attach your copy to the environment as this page
+describes.
+
 ## The two trust levels
 
 Your manifests run under one of two ArgoCD projects. They are not the same shape, and which one
@@ -102,6 +117,23 @@ It splits across both:
 
 Qdrant is the instructive case. It is a database, and it could have gone on either side. What puts
 it in the chart is that this particular chart ships no operator.
+
+### KServe needs cert-manager
+
+KServe signs its admission webhook with a cert-manager certificate. Without cert-manager, KServe
+does not start. Alethia installs cert-manager as part of the platform. The add-on marketplace has
+no cert-manager entry, and you must not add one to `addons/`. A second copy fights the platform
+copy over the same CustomResourceDefinitions.
+
+How you get cert-manager depends on how you created the project:
+
+| You created the project | What to do |
+|---|---|
+| From the **AI Workloads** template | Nothing. Alethia installs cert-manager for you on every cloud, and you need no domain |
+| From another template, or you copied the repository yourself | Turn on a managed certificate. On the DNS component, set **Domain name** and turn on **Managed TLS certificate**. This works on AWS, Google Cloud and Azure |
+
+A managed certificate installs cert-manager and also gives it a public issuer for your domain.
+KServe does not need that issuer. KServe creates its own self-signed issuer in its own namespace.
 
 <Callout type="warn">
   **This template provisions no GPU.** It runs CPU-only by default. A GPU node pool is the most

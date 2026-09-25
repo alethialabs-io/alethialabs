@@ -23,3 +23,27 @@ export function asGitProvider(s: string): GitProvider {
 export function isGitProvider(s: string): s is GitProvider {
 	return isEnumMember(s, GIT_PROVIDERS);
 }
+
+/**
+ * Which git providers THIS instance can link: each needs its OAuth app registered in Better Auth,
+ * or `authClient.linkSocial` rejects and a "Link" button is a click that can only fail.
+ */
+export type GitProviderAvailability = Record<GitProvider, boolean>;
+
+/** What an unconfigured provider's Link button says instead of offering a doomed link. */
+export const GIT_PROVIDER_NOT_ENABLED = "Not enabled on this instance";
+
+/**
+ * Narrows `computePlatformConfigured()`'s per-connector map to the three git providers. A slug the
+ * map does not carry reads as NOT available: this answers "can a link succeed", and an unknown
+ * answer is not a yes.
+ */
+export function gitProviderAvailability(
+	platformConfigured: Record<string, boolean>,
+): GitProviderAvailability {
+	return {
+		github: platformConfigured.github === true,
+		bitbucket: platformConfigured.bitbucket === true,
+		gitlab: platformConfigured.gitlab === true,
+	};
+}

@@ -514,40 +514,60 @@ export const LIVE_NA_REASONS = /** @type {const} */ ({
  * added and nothing dropped. A withheld measurement would have arrived as `NOT MEASURED`, which is
  * never a pass, rather than as silence.
  *
+ * THE SECOND IMPORT — run 35851828028 @ `6bcf7425b`, the `audit` and `audit-interaction` legs of
+ * ONE run, so all three sections share one `source`. All seven cells #4939 named now PASS, and
+ * F10 fails nowhere, so its row is gone. The `routes` and `permissions` sections reproduced all
+ * 387 verdicts key-for-key again. Three NEW FAILs arrived, and none of them is one of the seven.
+ * The F8 and R8 rows below now describe those three and nothing else. Each of the three
+ * reversed verdict between runs on UNCHANGED code (see each row), so each row records a timing
+ * question the instrument cannot yet settle, not a proven product defect. They moved to #4980,
+ * which fixed both halves (the routes prefetch a filtered link's list and mark it `aria-busy`;
+ * `settle()` refuses a busy read; the roles rail says `aria-current`; R8 reads a control already in
+ * the state it selects as `already-current`). The rows stay, owned by #4980, until an imported run
+ * proves the cells — the import that clears them deletes them in the same commit.
+ *
+ * THE THIRD IMPORT — run 35867789835 @ `d69e62699`, `audit` + `audit-interaction` of ONE run
+ * again, on #4980's branch. The `routes` and `permissions` sections reproduced all 387 verdicts
+ * key-for-key. All three #4980 cells are proven: F8 PASSES on `~/alerts` and `~/runners`, which
+ * leaves F8 failing nowhere, so its row is gone. `owner39` on `~/settings/roles` PASSES. R8's N/A
+ * `no-enabled-controls` fell from 9 routes to 1 (`/cli/login`), because the enumeration now waits
+ * for the page instead of reading its skeleton. The seven R8 FAILs below are what those newly
+ * measured pages show, and what a settled page no longer hides. None of them is a #4980 cell.
+ *
+ * THE FOURTH IMPORT — run 35872640708 @ `b417c13e1`, `audit` + `audit-interaction` of ONE run, the
+ * second on #4980's branch. `routes` and `permissions` reproduced all 387 verdicts key-for-key again,
+ * and all three #4980 cells PASSED a second time (F8 `~/alerts`, F8 `~/runners`, R8
+ * `~/settings/roles`), which is the issue's stability condition. The three pick-one buttons
+ * `6c70a6b62` excuses now PASS (`/[org]`, `~/usage`, `[project]/usage`), so the R8 row below names
+ * only the four routes still red, and moves to #4996. One NEW F8 FAIL arrived on
+ * `~/settings/members`, a cell that PASSED in the third import on an unchanged table: the #4980
+ * class on a page #4980 did not touch, so it gets its own row and its own issue (#4999).
+ * `[project]/jobs` F8/F9 read NOT MEASURED (the list rendered 0 rows), a withheld measurement that
+ * never scores as a pass.
+ *
+ * THE FIFTH IMPORT — run 35896826914 @ `633ca6efa`, `audit` + `audit-interaction` of ONE run, on
+ * #4996's branch. `routes` and `permissions` reproduced all 387 verdicts key-for-key. R8 PASSES on
+ * all four routes the row named: `Fit view`, the three `Link` buttons, `Transfer` now render disabled
+ * with a reason, `Design with the agent` counts its sonner toast. R8 fails nowhere, so its row is
+ * gone. F8 on `~/settings/members` FAILED again, on the reload half only (#4999).
+ *
  * Do NOT read a row here as permanent, and do not read the table's size as the console's health.
  * The next import can empty it or refill it, and a FAIL with no row here still raises.
  */
 export const LIVE_DEBT = /** @type {const} */ ({
 	F8: {
-		owner: "#4939",
+		owner: "#4999",
 		why:
-			"ONE route, and the URL half only. `~/connectors` narrows 42 rows to 2 on `health=Connected` " +
-			"and writes the param; a FRESH TAB on that URL keeps the param and renders 42 rows again. " +
-			"Reset is correct in both halves, so the bar is linkable in name and not in effect — which " +
-			"is the defect F2's static matcher structurally cannot see, since the `useFilterUrlSync` " +
-			"call it reads is present and correct.",
-	},
-	F10: {
-		owner: "#4939",
-		why:
-			"TWO routes, and the EMPTY-STATE half only — both debounce cleanly. `~/alerts` and " +
-			"`~/settings/roles` render no `[data-slot=\"empty\"]` inside `main` for a token that matches " +
-			"nothing, and `~/alerts` renders 2 hand-rolled 'no results' messages outside it. This is " +
-			"CLAUDE.md §6's `@repo/ui/empty` row observed rather than grepped: H9 scores the FILE, F10 " +
-			"scores what the page put on screen once the list emptied, and these two pages pass H9.",
-	},
-	R8: {
-		owner: "#4939",
-		why:
-			"FOUR routes, 39 controls enumerated between them, and two different findings. Three INERT " +
-			"controls produced no navigation, no overlay, no DOM mutation and no aria flip within " +
-			"1 000 ms — `link \"Docs\"` on `~/alerts`, `link \"What is classification?\"` on " +
-			"`~/settings/classification`, `button \"Scroll to latest\"` on `~/support/ask`. Two more read " +
-			"a destructive verb that `destructive-actions.yaml` does not declare, and RUBRIC.md says that " +
-			"is a finding either way: the ledger is short an entry, or the control wears a verb it does " +
-			"not carry out.",
+			"ONE route, the reload half: `~/settings/members` on `statuses` (`Pending`, 6 rows narrowed to 1, " +
+			"read from the count pill). The fresh tab kept the param but no narrowed count was read back; " +
+			"Reset was correct in run 35896826914. The cell PASSED in run 35867789835 and FAILED in runs " +
+			"35872640708 and 35896826914, with the " +
+			"members table unchanged between them. The table has the defect #4980 fixed on `~/alerts` and " +
+			"`~/runners`: the route prefetches only the pristine query and the list sets no `aria-busy` while " +
+			"the URL is unread or the rows are placeholder data.",
 	},
 });
+
 
 /**
  * Which section owns which live predicate, checked in both directions.

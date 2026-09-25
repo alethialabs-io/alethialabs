@@ -66,7 +66,6 @@ package e2e
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -286,11 +285,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	stagedTemplate := filepath.Join(stage, "project-templates", provider)
 	t2CopyTree(t, realTemplateSrc, stagedTemplate)
 
-	// ── Receipt signing key: runner gets the private half; we keep pub to VERIFY. ──
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	// ── Receipt signing key: runner gets the private half; we keep pub to VERIFY. On cli-demo it
+	// is the run's SHARED key, the one the CI console also holds, because `verify receipt` trusts
+	// only what that console vouches for (#5098, t2_cli_demo_receipt_key.go). ──
+	pub, priv, keySource, err := ResolveT2ReceiptKey(cliDemo != nil)
 	if err != nil {
-		t.Fatalf("generate ed25519 key: %v", err)
+		t.Fatalf("receipt signing key: %v", err)
 	}
+	t.Logf("receipt signing key: %s", keySource)
 
 	// ── Real control plane over real Postgres (reused verbatim from controlplane.go). ──
 	cp, err := NewControlPlane(ctx, dbURL)
@@ -422,14 +424,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		AssertCLIDemoBeatsAreLeafCommands(ctx, t, cliDemo)
 		AssertCLIDemoBeatFlagsAreRegistered(ctx, t, cliDemo)
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoAuthoring)
-		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoEnqueue)
-		jobID = cliDemo.ApplyJobID
-		if jobID == "" {
-			t.Fatal("cli-demo: `project apply` reported no job id — there is nothing to wait on")
-		}
-		t.Logf("cli-demo: DEPLOY job %s was created BY THE CLI (project %s)", jobID, cliDemo.ProjectID)
-		// The CLAIM is asserted separately, just after the runner process starts — see the call
-		// below. It cannot be asserted here: nothing is running yet to claim anything.
+		// The ENQUEUE phase is NOT driven here (#5090). `project plan --wait` needs a runner to
+		// claim its PLAN, and `project apply` is refused until that PLAN is terminal — so both run
+		// just after the runner process starts, below. `jobID` stays empty until then; the teardown
+		// closure reads it when it RUNS, not when it is registered.
 	} else {
 		var jerr error
 		jobID, jerr = seedT2DeployJob(ctx, cp, full, a05.jobGraph(), owner)
@@ -465,7 +463,11 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		// A workflow step cannot get ahead of this: the destroy runs IN-PROCESS below, inside this
 		// closure. So the capture is here, writing to the file the sweeper reads back — the same
 		// $RUNNER_TEMP hand-off the harness already uses for ALETHIA_E2E_ARGOCD_SUMMARY.
-		captureHetznerLoadBalancers(t, provider, clusterName)
+		//
+		// The target is re-derived HERE, not taken from `clusterName` above: on the cli-demo path
+		// the CLI authored the project, and the destroy must name what the beats built (#5095).
+		tdProject, tdEnv := t2ClusterTarget(project, env, cliDemo)
+		captureHetznerLoadBalancers(t, provider, tdProject+"-"+tdEnv)
 
 		// Per-provider, and the SAME function ResolveT2Budget reserves the window with — a
 		// flat 15m here was hetzner's number charged to every cloud (#2729).
@@ -493,7 +495,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Logf("──── runner process output ────\n%s", runnerOut.String())
 		}
 
-		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, project, env, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
+		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, tdProject, tdEnv, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
 			// The sweeper NAME follows the provider, and a window that EXPIRED is reported as a
 			// window rather than as a destroy error — the two are opposite findings that arrive
 			// wearing the same `signal: interrupt`. Both live in t2TeardownFailureLine, which is
@@ -564,6 +566,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// reported as a deploy TIMEOUT — naming the cluster when the fault is a tenancy mismatch
 	// (#392) that was decidable in ninety seconds. Cheap half first.
 	if cliDemo != nil {
+		// Here and not above: the runner is now live, so `project plan --wait` has a claimer and
+		// its PLAN goes terminal before `project apply` enqueues the DEPLOY (#5090).
+		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoEnqueue)
+		jobID = cliDemo.ApplyJobID
+		if jobID == "" {
+			t.Fatal("cli-demo: `project apply` reported no job id — there is nothing to wait on")
+		}
+		t.Logf("cli-demo: DEPLOY job %s was created BY THE CLI (project %s)", jobID, cliDemo.ProjectID)
 		AssertCLIDemoJobClaimed(ctx, t, cp, cliDemo)
 	}
 
@@ -630,7 +640,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//     for. Each cloud names its cluster differently (Talos/ACK: `<project>-<env>`;
 	//     EKS/GKE/AKS: `<kind>-<regionShort>-<env>-<project>`), so the check is
 	//     provider-aware — see t2ValidateClusterName.
-	if err := t2ValidateClusterName(provider, project, env, meta.ClusterName); err != nil {
+	//     The expected pair is the one the teardown destroys (t2ClusterTarget), so the assertion
+	//     and the destroy cannot disagree about which cluster is this run's (#5095).
+	wantProject, wantEnv := t2ClusterTarget(project, env, cliDemo)
+	if err := t2ValidateClusterName(provider, wantProject, wantEnv, meta.ClusterName); err != nil {
 		t.Fatalf("cluster_name assertion: %v", err)
 	}
 	// (2) cluster_ready ⇒ the reachability gate proved a live cluster, not just apply=0.

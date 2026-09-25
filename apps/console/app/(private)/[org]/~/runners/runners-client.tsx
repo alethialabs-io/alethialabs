@@ -27,8 +27,8 @@ import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import {
 	DEFAULT_RUNNER_FILTERS,
 	normalizeRunnersQuery,
-	useRunnerFilters,
-} from "@/lib/stores/use-runner-filters";
+} from "@/components/runners/runners-query";
+import { useRunnerFilters } from "@/lib/stores/use-runner-filters";
 import { PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
@@ -100,8 +100,10 @@ export function RunnersClient() {
 	// search → normalize → the TanStack key → the SERVER's filtered read. The narrowing and the
 	// facet tally used to happen in this component over the whole universe (#4890).
 	const filters = useRunnerFilters((s) => s.filters);
-	useFilterUrlSync(useRunnerFilters, DEFAULT_RUNNER_FILTERS);
-	const search = useDebouncedValue(filters.search, 300);
+	const urlRead = useFilterUrlSync(useRunnerFilters, DEFAULT_RUNNER_FILTERS);
+	// Seeded from the URL, so a pasted `?search=…&versions=…` asks for the key the route
+	// prefetched first — not `{versions}` alone, which it did not (#4980 review).
+	const search = useDebouncedValue(filters.search, 300, { urlRead });
 	const query = useMemo(
 		() => normalizeRunnersQuery(filters, search),
 		[filters, search],
@@ -114,6 +116,14 @@ export function RunnersClient() {
 		refetch,
 	} = useRunnersPageQuery(query);
 	const [page, setPage] = useState(1);
+	// The grid is BUSY while what it shows may not answer the URL and the bar: before the link
+	// has been read into the store, before the first answer, while the rows are the previous
+	// query's placeholder, and while a typed search is still inside its debounce. Exposed as
+	// `aria-busy` on the column, so assistive tech — and the audit's F8 read, which used to accept
+	// a placeholder as an answer (#4980) — can tell an answer from a stand-in. The dim below is
+	// the placeholder half only: dimming the first paint of every visit would flash a page that
+	// is correct.
+	const busy = !urlRead || isLoading || isPlaceholderData || filters.search !== search;
 
 	// Pool editor dialog: null pool = create, a row = edit.
 	const [poolDialogOpen, setPoolDialogOpen] = useState(false);
@@ -280,7 +290,7 @@ export function RunnersClient() {
 				</div>
 
 				{/* Right column — runners. */}
-				<div className="min-w-0 space-y-4">
+				<div className="min-w-0 space-y-4" aria-busy={busy}>
 					{/* The section heading and its result count come from the shared primitives. Both
 					    were hand-rolled here — a `font-display text-ui-lg` span for the heading and a
 					    bordered `rounded-full` span for the pill, the latter under a comment claiming

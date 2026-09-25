@@ -1721,10 +1721,14 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				//
 				// That comment used to add "which on every Alethia cluster it does: cert-manager is
 				// the platform TLS mechanism". THAT IS NOT TRUE, and it matters here: cert-manager
-				// installs CONDITIONALLY — `CertManagerEnabled` is `ManagedCertificate && DNSEnabled
-				// && DomainName != "" && CertManagerSolver() != ""` (infra_facts.go). A cluster with
-				// no managed certificate has no cert-manager and no terminating certificate, so on
-				// the default path there is nothing for `certSource: none` to defer to.
+				// installs CONDITIONALLY, and even where it installs it may issue nothing.
+				// `CertManagerEnabled` is `CertManagerIssuerEnabled() || CertManagerWebhookCARequired()`
+				// (infra_facts.go): the first is `ManagedCertificate && DNSEnabled && DomainName != ""
+				// && CertManagerSolver() != ""` and is the ONLY arm that creates a ClusterIssuer; the
+				// second installs the controller issuer-free for an admission-webhook CA
+				// (scylla-operator, or KServe via a project's webhook_ca_consumers, #4990). So a
+				// cluster with no managed certificate has no terminating certificate either way, and
+				// on the default path there is nothing for `certSource: none` to defer to.
 				//
 				// Off the ingress path there is no ingress TLS Secret at all, so #2823's
 				// non-determinism cannot arise and enabling TLS would only promise an https

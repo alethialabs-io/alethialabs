@@ -18,7 +18,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { TEMPLATE_KNOBS, knobsFor } from "@/lib/cloud-providers/template-knobs";
+import { TEMPLATE_KNOBS, type TemplateKnob, isRead, knobsFor, offerableKnobs } from "@/lib/cloud-providers/template-knobs";
 
 describe("the committed manifest", () => {
 	it("parses against the schema — importing the module is the assertion", () => {
@@ -109,5 +109,72 @@ describe("knobsFor", () => {
 		const scoped = TEMPLATE_KNOBS.knobs.filter((k) => k.itemScope !== undefined);
 		expect(scoped.length).toBeGreaterThan(0);
 		for (const knob of scoped) expect(knob.reachable).toBe(true);
+	});
+});
+
+describe("offerableKnobs — a knob nothing reads is never offered (#4320)", () => {
+	/** A knob that passes every OTHER filter, so the READ filter is the only thing deciding. */
+	const knob = (name: string, over: Partial<TemplateKnob> = {}): TemplateKnob => ({
+		cloud: "gcp",
+		component: "cluster",
+		name,
+		kind: "number",
+		typeExpr: "number",
+		required: false,
+		description: "",
+		sensitive: false,
+		declaredAt: "infra/templates/project/gcp/variables.tf:1",
+		readBy: ["gcp"],
+		reportedByOutput: false,
+		ceiling: false,
+		reachable: true,
+		ownedByProvider: false,
+		typed: false,
+		...over,
+	});
+
+	const fixture = [
+		knob("live"),
+		// The `gke_log_retention_days` shape: declared, reachable, read by nothing.
+		knob("dead", { readBy: [] }),
+		// The brought-resource shape (#4531): no resource reads it BY DESIGN, an output echoes it.
+		knob("reported", { readBy: [], reportedByOutput: true }),
+		// A recorded provider ceiling (#4320) — withheld even if something were to read it.
+		knob("ceiling", { ceiling: true }),
+	];
+
+	it("offers a knob a resource reads", () => {
+		expect(offerableKnobs(fixture, "gcp", "cluster").map((k) => k.name)).toContain("live");
+	});
+
+	it("withholds a knob that is reachable and read by nothing", () => {
+		expect(offerableKnobs(fixture, "gcp", "cluster").map((k) => k.name)).not.toContain("dead");
+	});
+
+	it("withholds a recorded provider ceiling", () => {
+		expect(offerableKnobs(fixture, "gcp", "cluster").map((k) => k.name)).not.toContain("ceiling");
+	});
+
+	it("marks alibaba's managed-certificate knob as a ceiling in the committed manifest", () => {
+		const k = TEMPLATE_KNOBS.knobs.find((x) => x.cloud === "alibaba" && x.name === "alidns_managed_certificate");
+		expect(k?.ceiling).toBe(true);
+		expect(knobsFor("alibaba", "dns").some((x) => x.name === "alidns_managed_certificate")).toBe(false);
+	});
+
+	it("still offers a brought-resource knob an output reports", () => {
+		expect(offerableKnobs(fixture, "gcp", "cluster").map((k) => k.name)).toContain("reported");
+	});
+
+	it("is what knobsFor applies to the committed manifest", () => {
+		for (const cloud of TEMPLATE_KNOBS.clouds) {
+			for (const kind of ["cluster", "database", "cache", "dns", "registry", "bucket", "queue", "nosql"] as const) {
+				expect(knobsFor(cloud, kind)).toEqual(offerableKnobs(TEMPLATE_KNOBS.knobs, cloud, kind));
+				for (const k of knobsFor(cloud, kind)) expect(isRead(k)).toBe(true);
+			}
+		}
+	});
+
+	it("no longer offers gke_log_retention_days, which the template deleted", () => {
+		expect(TEMPLATE_KNOBS.knobs.some((k) => k.name === "gke_log_retention_days")).toBe(false);
 	});
 });

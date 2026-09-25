@@ -5,10 +5,16 @@
 # assertion broker (apps/e2e-issuer, contract in packages/workload-identity/src/broker.ts), in
 # ADDITION to the GitHub Actions federated credentials in main.tf.
 #
-# OFF BY DEFAULT. `e2e_broker_issuer_url = null` (the committed value in terraform.tfvars) creates
-# nothing, so a plan on this change alone is a no-op. Setting it creates ONE more federated identity
-# credential on the same application; setting it back to null destroys exactly that one. Each
-# credential is its own object in Entra, so adding or removing this one cannot touch `gh-oidc-*`.
+# GATED ON THE ISSUER, NOT OFF. The committed terraform.tfvars sets `e2e_broker_issuer_url` to
+# https://e2e-issuer.alethialabs.io (#5004), and the broker trust is created whenever it is non-null
+# — so any plan or apply of this stack proposes one federated identity credential. Apply only after
+# the issuer serves at that origin (docs/testing/e2e-state-migration.md,
+# infra/e2e-issuer/README.md). To plan without the broker, pass
+# `-var-file=<(printf 'e2e_broker_issuer_url = null\n')` — a plain `-var e2e_broker_issuer_url=null`
+# passes the string "null", not null.
+# Setting it creates ONE more federated identity credential on the same application; setting it back
+# to null destroys exactly that one. Each credential is its own object in Entra, so adding or
+# removing this one cannot touch `gh-oidc-*`.
 #
 # WHAT ENTRA CAN PIN. A federated identity credential matches three fields exactly — issuer, subject
 # and audience — and nothing else about the token:

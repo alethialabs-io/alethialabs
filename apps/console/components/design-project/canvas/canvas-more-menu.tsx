@@ -28,6 +28,7 @@ import { arrangeBoard } from "@/lib/canvas/arrange";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { CanvasInteractionContext } from "./canvas-flow";
 import { addableKindsFor, NODE_REGISTRY } from "./graph/node-registry";
+import { NOTHING_TO_FIT, useHasDrawnNodes } from "./use-has-drawn-nodes";
 
 /**
  * The board's ⋯ menu — everything that is not Run or Add, in one place.
@@ -53,6 +54,7 @@ export function CanvasMoreMenu({
 	onShowShortcuts: () => void;
 }) {
 	const { fitView } = useReactFlow();
+	const canFit = useHasDrawnNodes();
 	const openCard = useCanvasStore((s) => s.openCard);
 	const showConnections = useCanvasStore((s) => s.showConnections);
 	const toggleConnections = useCanvasStore((s) => s.toggleConnections);
@@ -111,7 +113,10 @@ export function CanvasMoreMenu({
 					<Shuffle className="mr-2 h-4 w-4 text-muted-foreground" />
 					Repair overlaps
 				</DropdownMenuItem>
-				<DropdownMenuItem onSelect={() => void fitView({ padding: 0.3 })}>
+				<DropdownMenuItem
+					disabledReason={canFit ? null : NOTHING_TO_FIT}
+					onSelect={() => void fitView({ padding: 0.3 })}
+				>
 					<Maximize className="mr-2 h-4 w-4 text-muted-foreground" />
 					Fit view
 				</DropdownMenuItem>

@@ -71,3 +71,35 @@ export function filterBuiltins(
 			(r.description?.toLowerCase().includes(q) ?? false),
 	);
 }
+
+/** What {@link hasNoMatches} decides from — counts of the rows each bucket kept. */
+export interface NoMatchesInput {
+	/** Active filter count (search + facets); zero means the rail is unfiltered. */
+	activeFilters: number;
+	builtinCount: number;
+	customCount: number;
+	/**
+	 * The custom-role query has answered the CURRENT search: not pending, and not showing the
+	 * previous search's placeholder data. An unsettled count is not evidence of "no match".
+	 */
+	settled: boolean;
+}
+
+/** True when the zero-result empty state should replace the master-detail. */
+export function hasNoMatches(input: NoMatchesInput): boolean {
+	return (
+		input.settled &&
+		input.activeFilters > 0 &&
+		input.builtinCount + input.customCount === 0
+	);
+}
+
+/**
+ * The zero-result empty state's description. `total` is the role UNIVERSE (every built-in plus
+ * every custom role, unsearched) — never the search result, which is what the state is saying
+ * is empty. Unknown until the unsearched list loads, and then the number is left out.
+ */
+export function noMatchesDescription(total: number | undefined): string {
+	if (total === undefined) return "No roles match these filters.";
+	return `None of the ${total} ${total === 1 ? "role matches" : "roles match"} these filters.`;
+}

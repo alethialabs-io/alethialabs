@@ -265,17 +265,17 @@ variable "buckets" {
     fails when a backend does not implement them — so a CORS request here is honoured where Hetzner
     supports it and is a no-op where it does not, never an apply error.
 
-    `encryption_enabled` is INFORMATIONAL and reaches no resource, deliberately: Hetzner Object
-    Storage supports exactly one encryption type, SSE-C — per-request keys the caller supplies —
-    and no bucket-level default-encryption configuration. There is nothing for a resource to write.
-    Objects are encrypted at rest regardless; this field cannot turn that off.
+    There is no `encryption_enabled` (#4320): Hetzner Object Storage supports exactly one
+    encryption type, SSE-C — per-request keys the caller supplies — and no bucket-level
+    default-encryption configuration, so no resource could write it. Objects are encrypted at rest
+    regardless. An old tfvars still carrying the key is harmless: tofu drops object attributes the
+    declared type omits.
   EOT
   type = list(object({
-    name               = string
-    versioning         = optional(bool, false)
-    encryption_enabled = optional(bool, true)
-    public_access      = optional(bool, false)
-    cors_origins       = optional(list(string), [])
+    name          = string
+    versioning    = optional(bool, false)
+    public_access = optional(bool, false)
+    cors_origins  = optional(list(string), [])
   }))
   default = []
 }

@@ -8,7 +8,7 @@
 // enable switch that confirms on disable, the unified ChannelVerify re-verify control, and
 // a confirmed Delete. "Used by" cross-links into the Policies section.
 
-import { Plus, Send, Trash2 } from "lucide-react";
+import { Plus, SearchX, Send, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -32,6 +32,7 @@ import { CHANNEL_TYPE_META } from "@/components/alerts/channel-meta";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { FieldHelp } from "@/components/alerts/field-help";
 import { RecipientsEditor } from "@/components/alerts/recipients-editor";
+import { useAlertChannelFilters } from "@/lib/stores/use-alerts-filters";
 import { useAlertsSection } from "@/lib/stores/use-alerts-section";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
@@ -83,6 +84,7 @@ export function ChannelsPanel({
 		channels.map((c) => c.id),
 	);
 	const { rows, facets, stale } = view;
+	const resetFilters = useAlertChannelFilters((s) => s.reset);
 
 	const doDelete = async (c: ChannelDTO) => {
 		try {
@@ -138,9 +140,19 @@ export function ChannelsPanel({
 								Configured channels
 							</div>
 							{rows.length === 0 ? (
-								<div className="px-4 py-4 text-text-tertiary text-xs">
-									No channels match these filters.
-								</div>
+								// The shared empty state, not a line of muted text: the zero-result answer
+								// is the same component on every console list, and it carries the way out
+								// (the audit's F10 reads `[data-slot="empty"]` for exactly this, #4939).
+								<EmptyState
+									icon={<SearchX />}
+									title="No channels match"
+									description={`None of the ${channels.length} channels match these filters.`}
+									action={
+										<Button variant="outline" size="sm" onClick={resetFilters}>
+											Reset filters
+										</Button>
+									}
+								/>
 							) : (
 								/*
 								 * A single-select rail, so it is a listbox of options — not a stack of

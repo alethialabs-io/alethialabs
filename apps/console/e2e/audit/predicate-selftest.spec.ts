@@ -18,7 +18,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { errorStateSignature, rendersSharedErrorState } from "./error-state";
 import { CONTROL_FIXTURE as FILTERS_FIXTURE, filtersControl } from "./filters";
-import { CONTROL_FIXTURE, emptinessProblems, endsTheSession, enumerateControls, interactionControl, isSameOrigin, namesDestructiveAction, preActivationExclusion } from "./inert";
+import { accessibleName, activate, awaitReady, CONTROL_FIXTURE, emptinessProblems, STATUS_SELECTOR_WITHOUT_SONNER, endsTheSession, enumerateControls, interactionControl, isSameOrigin, LOADING_FIXTURE, namesDestructiveAction, preActivationExclusion, reloadBudgetProblems } from "./inert";
 import { hitTest } from "./overlays";
 import {
 	controlFixture,
@@ -410,6 +410,55 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		expect(problems.join(" "), "the control says the PASS arm stopped firing").toMatch(/dialog opener reported/);
 	});
 
+	test("R8 — the control names the already-current arm when the current row stops saying so", async ({ page }) => {
+		// #4980. Without `aria-current` the row is an ordinary handler-less button and MUST read inert;
+		// the arm has to go red here, or the rule could be deleted and the control would stay green.
+		const mutant = CONTROL_FIXTURE.replace('<button aria-current="true">', "<button>");
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/current row reported null/);
+	});
+
+	test("R8 — the control names the already-current arm when it starts excusing a lone pressed toggle", async ({ page }) => {
+		// The other direction: a LONE pressed toggle that does not unpress is inert. Give it a pressed
+		// sibling and the rule reads a one-of-N group — the arm that expects inert must name itself.
+		const mutant = CONTROL_FIXTURE.replace('<div><button aria-pressed="true">Pressed toggle</button></div>', '<div><button aria-pressed="true">Pressed toggle</button><button aria-pressed="false">Sibling</button></div>');
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/pressed toggle reported "already-current"/);
+	});
+
+	test("R8 — the control names the toast arm when a sonner toast stops counting as an effect", async ({ page }) => {
+		// #4996. Sonner's toast carries no role and renders outside `main`: without `[data-sonner-toast]`
+		// in the status selector the toast button reads inert, which is how `Design with the agent`
+		// on `~/new` was filed "did nothing" while it toasted.
+		expect((await interactionControl(page, CONTROL_FIXTURE, { statusSelector: STATUS_SELECTOR_WITHOUT_SONNER })).join(" ")).toMatch(
+			/sonner toast button reported null/,
+		);
+		// And the fixture half: a toaster that renders nothing must not read as a toast.
+		const mutant = CONTROL_FIXTURE.replace('li.setAttribute("data-sonner-toast", "");', "");
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/sonner toast button reported null/);
+	});
+
+	test("R8 — enumerating at domcontentloaded sees the skeleton; waiting for readiness sees the page", async ({ page }) => {
+		// #4980, the defect and its fix on one fixture: `~/runners` and `[project]/architecture` were
+		// filed N/A `no-enabled-controls` from their `loading.tsx`.
+		await page.setContent(LOADING_FIXTURE);
+		expect((await enumerateControls(page, "main", "main")).controls, "the loading state offers nothing").toHaveLength(0);
+		const ready = await awaitReady(page, 8_000);
+		expect(ready.settled).toBe(true);
+		expect((await enumerateControls(page, "main", "main")).controls.map((c) => c.name)).toEqual(["Arrived"]);
+	});
+
+	test("R8 — a re-navigation that never settles stops the route with page-not-ready, inside its short budget", async ({ page }) => {
+		// #4980 review: every reload paid the full 15 s route budget, so a never-settling route ran
+		// into the 120 s test timeout instead of a verdict.
+		expect(await reloadBudgetProblems(page), "the shipped re-navigation wait is bounded and stops the route").toEqual([]);
+		// The pre-fix shape: the full-budget wait that returns quietly. Both arms must name it.
+		const unbounded = await reloadBudgetProblems(page, (p) => awaitReady(p, 6_000));
+		expect(unbounded.join(" ")).toMatch(/did not stop the route with `page-not-ready`/);
+		expect(unbounded.join(" ")).toMatch(/over its \d+ms budget/);
+	});
+
 	test("R8 — the control names the enumeration when a disabled control starts being scored", async ({ page }) => {
 		const mutant = CONTROL_FIXTURE.replace('aria-disabled="true" ', "");
 		const problems = await interactionControl(page, mutant);
@@ -420,7 +469,7 @@ test.describe("the live predicates fail when the page is wrong", () => {
 
 	test("R8 — a disabled control is COUNTED, with or without a reason, and never scored", async ({ page }) => {
 		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
-			<button disabled title="Ask an owner">With a reason</button>
+			<button disabled aria-describedby="why">With a reason</button><span id="why" class="sr-only">Ask an owner</span>
 			<button aria-disabled="true">With none</button>
 			<button>Enabled</button>
 		</main></body></html>`);
@@ -430,6 +479,29 @@ test.describe("the live predicates fail when the page is wrong", () => {
 			"disabled-no-reason",
 			"disabled-with-reason",
 		]);
+	});
+
+	test("R8 — a reason nobody can perceive is NO reason: a title, or a description that resolves to nothing", async ({ page }) => {
+		// The review of #5000. `disabled` + `title` was counted `disabled-with-reason` while the title
+		// could never be shown — the button's `disabled:pointer-events-none` swallows the hover, and a
+		// disabled button takes no focus. So was an `aria-describedby` pointing at no element.
+		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+			<button disabled title="Ask an owner">Titled only</button>
+			<button disabled aria-describedby="nowhere">Dangling</button>
+			<button disabled aria-describedby="empty">Empty</button><span id="empty"> </span>
+			<button disabled aria-describedby="nowhere why">One of two resolves</button><span id="why" hidden>Ask an owner</span>
+		</main></body></html>`);
+		const found = await enumerateControls(page, "main", "main");
+		expect(Object.fromEntries(found.disabled.map((d) => [d.name, d.reason]))).toEqual({
+			"Titled only": "disabled-no-reason",
+			Dangling: "disabled-no-reason",
+			Empty: "disabled-no-reason",
+			"One of two resolves": "disabled-with-reason",
+		});
+		// And the control fixture names it: the same button described by a DANGLING id is not a reason.
+		const mutant = CONTROL_FIXTURE.replace('<span id="why" hidden>You do not have permission</span>', "");
+		expect(mutant, "the mutation must apply").not.toBe(CONTROL_FIXTURE);
+		expect((await interactionControl(page, mutant)).join(" ")).toMatch(/was not counted as `disabled-with-reason`/);
 	});
 
 	test("R8 — an external link PASSES on its href and is never enumerated for a click", async ({ page }) => {
@@ -522,6 +594,51 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		expect(isSameOrigin("https://alethialabs.io/pricing", "http://localhost:3000/org")).toBe(false);
 		expect(isSameOrigin("http://localhost:3000/x", "http://localhost:3000/org")).toBe(true);
 		expect(isSameOrigin("mailto:support@example.invalid", "http://localhost:3000/org")).toBe(false);
+	});
+
+	test("R8 — a control's name is read the way accname reads it: aria-label before the text", async ({ page }) => {
+		// The project danger row's button (#4939): visible "Delete", accessible name "Delete
+		// project". Read text-first, the ledger's `project.delete` could never match it.
+		expect(accessibleName("Delete project", "Delete")).toBe("Delete project");
+		expect(accessibleName(null, "  Save\n changes ")).toBe("Save changes");
+		expect(accessibleName("   ", "Docs")).toBe("Docs");
+		expect(accessibleName(null, "")).toBe("(unnamed)");
+		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+			<button aria-label="Delete project">Delete</button>
+		</main></body></html>`);
+		const found = await enumerateControls(page, "main", "main");
+		expect(found.controls.map((c) => c.name), "the enumerator and Playwright's getByRole agree").toEqual(["Delete project"]);
+		await expect(page.getByRole("button", { name: "Delete project", exact: true })).toHaveCount(1);
+	});
+
+	test("R8 — a control inside an `inert` subtree is not an enabled control", async ({ page }) => {
+		// The message scroller's "Scroll to latest" is `inert` while there is nothing to scroll to
+		// (#4939). The browser will not click it either, so scoring it would file a FAIL against a
+		// control no user can reach. The negative stays: the same button without `inert` is enumerated.
+		await page.setContent(`<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+			<button inert>Scroll to latest</button>
+			<div inert><button>Inside an inert region</button></div>
+			<button>Live</button>
+		</main></body></html>`);
+		const found = await enumerateControls(page, "main", "main");
+		expect(found.controls.map((c) => c.name)).toEqual(["Live"]);
+	});
+
+	test("R8 — a same-origin link that opens a NEW TAB did something, and the tab is closed", async ({ page }) => {
+		// #4939: `target="_blank"` docs links leave the page untouched, and nothing listened for the
+		// tab they open — so every one of them read as inert. Both directions: the popup arm must
+		// fire on the tab, and must NOT turn a link that opens nothing into a pass.
+		const body = `<!doctype html><html lang="en"><head><title>t</title></head><body><main>
+			<a id="tab" href="/docs/x" target="_blank" rel="noopener noreferrer">Docs</a>
+			<a id="nowhere" href="#" onclick="event.preventDefault()">Nowhere</a>
+		</main></body></html>`;
+		await page.context().route("http://app.test/**", (route) => route.fulfill({ contentType: "text/html", body }));
+		await page.goto("http://app.test/org");
+		const tab = await activate(page, page.locator("#tab"), { networkUsable: false });
+		expect(tab.effect, "the opened tab is the link's effect").toBe("new-tab");
+		await expect.poll(() => page.context().pages().length, { message: "and the tab it opened does not outlive the measurement" }).toBe(1);
+		const nowhere = await activate(page, page.locator("#nowhere"), { networkUsable: false });
+		expect(nowhere.effect, "a link that opens nothing is still inert").toBeNull();
 	});
 
 	test("R8 — the one control it may not press is the one that ends the run's own session", () => {
@@ -622,6 +739,16 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		const mutant = FILTERS_FIXTURE.replace('if (MODE === "per-keystroke") {', 'if (MODE === "never") {');
 		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
 		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/fetches per keystroke reported F10 PASS/);
+	});
+
+	test("F8 — the control names the arm when the slow bar stops declaring its placeholder busy", async ({ page }) => {
+		test.setTimeout(300_000);
+		// #4980. Without `aria-busy` the placeholder is indistinguishable from an answer by stillness —
+		// which is what `settle()` used to accept. The arm must go red when the page stops saying so,
+		// or the busy wait could be deleted and the control would still read green.
+		const mutant = FILTERS_FIXTURE.replace('document.querySelector("main").setAttribute("aria-busy", "true");', "");
+		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
+		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/loads slowly under aria-busy reported F8 FAIL/);
 	});
 
 	test("F8–F9 — the control names the arm when the one-kind bar gains an option that narrows", async ({ page }) => {

@@ -14,7 +14,9 @@
 // The only button this file ever clicks inside a dialog is Cancel. `confirm_action` is read so the
 // destructive button can be FOUND and asserted; it is never activated. That is not a convention to
 // remember — `assertNeverPressed()` below fails the test if the located confirm button is ever the
-// click target, so the rule is enforced rather than trusted.
+// click target, so the rule is enforced rather than trusted. A `confirm: staged` control has a save
+// bar where a dialog would be, and the same rule holds there: its Save is asserted and never
+// pressed, and Discard is the one button clicked (`observeStaged`).
 //
 // ── "NOTHING MUTATED", TWO WAYS ─────────────────────────────────────────────────────────────────
 //
@@ -114,6 +116,12 @@ interface ControlEntry {
 	dialog_title?: string;
 	/** For `confirm: undo`: the key chord that takes the action back (`Meta+Z`). */
 	undo?: { shortcut?: string };
+	/**
+	 * For `confirm: staged`: the save bar's two buttons — the one that decides, and the way out —
+	 * and `table`, the table the save REWRITES IN PLACE. The row-count fingerprint cannot see an
+	 * update, so the spec hashes this table's rows for the org before the click and after Discard.
+	 */
+	staged?: { save?: string; discard?: string; table?: string };
 	fixture?: string;
 	persona?: string;
 	status?: string;
@@ -468,6 +476,32 @@ async function fingerprint(): Promise<Map<string, number>> {
 }
 
 /**
+ * A content hash of one table's rows for one org — the "nothing was persisted" check for a
+ * `confirm: staged` control.
+ *
+ * A staged control's save is an UPDATE in place (`updateChannel` rewrites a channel's `config`),
+ * so {@link fingerprint}'s row counts are identical whether or not the change was saved, and its
+ * mutation is a server action the request deny-list cannot attribute. Hashing every column of the
+ * org's rows sees the update. Scoped to `org_id` so another org's writes cannot move it; the table
+ * name comes from the registry and is checked against the catalogue before it is interpolated.
+ * Returns `null` when the table has no such name or no `org_id` column — the caller treats that as
+ * a finding, never as "unchanged". `rows` is returned so the caller can refuse an EMPTY scope: two
+ * hashes of zero rows are equal whatever happened, which would make this check unable to fail.
+ */
+async function stagedContent(table: string, orgId: string): Promise<{ rows: number; hash: string } | null> {
+	const sql = db();
+	const cols = await sql<{ column_name: string }[]>`
+		SELECT column_name FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = ${table} AND column_name = 'org_id'`;
+	if (cols.length === 0) return null;
+	const rows = await sql.unsafe<{ n: number; h: string }[]>(
+		`SELECT count(*)::int AS n, md5(coalesce(string_agg(t::text, E'\n' ORDER BY t::text), '')) AS h FROM public."${table}" t WHERE t.org_id = $1`,
+		[orgId],
+	);
+	return { rows: rows[0].n, hash: rows[0].h };
+}
+
+/**
  * Tables the console's own BACKGROUND WORK grows while a dialog is open, with who grows them.
  *
  * The fingerprint is table-agnostic, so it also counts writes nobody clicked for. Measured on this
@@ -690,6 +724,56 @@ async function amendForClosedMenu(page: Page, entry: ControlEntry, reason: strin
 	return `${reason} — and no menu was open when the item was read, so the menu opened by {menu: "${step.menu}"} was lost between the reach and the count; the item's absence says nothing about the persona`;
 }
 
+/** How many times the reach is re-walked when the menu holding the control was lost before the count. */
+const REACH_REWALK_ATTEMPTS = 2;
+
+/**
+ * Was the control's MENU lost, rather than the control never offered? True only when the entry's
+ * LAST reach step is a `menu:` step (so the control lives inside that menu), the count found
+ * nothing, and no menu is open now. A chain that ends in some other step legitimately closes its
+ * menu on the way (`{menu: "More"}, {open: "Environment settings"}`), so a shut menu there is not a
+ * loss, and re-walking it would re-click an `open:` step.
+ */
+async function lostTheControlsMenu(page: Page, entry: ControlEntry, reason: string): Promise<boolean> {
+	const last = entry.reach?.at(-1);
+	if (typeof last?.menu !== "string" || !reason.includes("is not rendered")) return false;
+	return !(await openMenuLocator(page).isVisible().catch(() => false));
+}
+
+/**
+ * `resolveTrigger`, with the one retry a LOST MENU licenses.
+ *
+ * A row menu can be torn down by a re-render between `walkReach` opening it and the item being
+ * counted (#5023: `members-table.tsx` rebuilt its cell components on every render, so a refetch
+ * remounted the cell and shut the menu). The item's absence then says nothing about the persona,
+ * and the fix is to open the menu again — the thing a person would do. So when the count withholds
+ * "not rendered" AND `lostTheControlsMenu` says the menu is gone, the reach is re-walked (at most
+ * `REACH_REWALK_ATTEMPTS` times) and the count taken again. A re-walk that cannot be taken stops the
+ * retries at once and its reason is appended.
+ *
+ * Only then is the verdict withheld, with `amendForClosedMenu`'s reason unchanged at its head: the
+ * retry buys a measurement when the loss was transient and changes nothing when it persists. It
+ * never turns a withhold into a pass by itself — a locator comes back only from a count of one.
+ */
+async function resolveAfterReach(page: Page, entry: ControlEntry, where: string, settleMs = 8_000): Promise<Resolution> {
+	let resolved = await resolveTrigger(page, entry, where, settleMs);
+	let rewalks = 0;
+	let rewalkFailure: string | null = null;
+	while ("withhold" in resolved && rewalks < REACH_REWALK_ATTEMPTS && (await lostTheControlsMenu(page, entry, resolved.withhold))) {
+		rewalks++;
+		rewalkFailure = await walkReach(page, entry);
+		if (rewalkFailure) break;
+		resolved = await resolveTrigger(page, entry, where, settleMs);
+	}
+	if ("locator" in resolved) return resolved;
+	const amended = await amendForClosedMenu(page, entry, resolved.withhold);
+	if (rewalks === 0) return { withhold: amended };
+	const retried = rewalkFailure
+		? `the reach was re-walked ${rewalks} time(s) and the last re-walk could not be taken: ${rewalkFailure}`
+		: `the reach was re-walked ${rewalks} time(s) and the item was still not on the page`;
+	return { withhold: `${amended} (${retried})` };
+}
+
 /**
  * Attach what the page looked like when a reach step could not be taken: a screenshot and the
  * accessibility tree of the scope the step searched.
@@ -750,6 +834,31 @@ async function observeUndo(page: Page, entry: ControlEntry): Promise<Observed> {
 	await page.keyboard.press(entry.undo?.shortcut ?? "ControlOrMeta+Z");
 	const restored = await node.waitFor({ state: "visible", timeout: 5_000 }).then(() => true).catch(() => false);
 	return restored ? "confirmed" : "missing";
+}
+
+/**
+ * Measure a `confirm: staged` control: the click has already fired, and all it may have done is
+ * stage the change in an edit draft.
+ *
+ * The draft's save bar IS the confirmation, so it is held to what a dialog is held to: the button
+ * that decides (`staged.save`) must appear and is ASSERTED, never pressed; the way out
+ * (`staged.discard`) is the one button pressed, and the control must come back — a discard that
+ * does not restore what was staged is no way out at all. The "nothing was persisted" half is
+ * {@link stagedContent}, taken by the caller before the click and after this returns — NOT the row
+ * fingerprint, which counts rows and so cannot see the in-place update a staged save performs.
+ * `recipients-editor.tsx`'s chip is the first entry of this shape (#4939).
+ */
+async function observeStaged(page: Page, entry: ControlEntry, trigger: Locator): Promise<Observed> {
+	const save = entry.staged?.save;
+	const discard = entry.staged?.discard;
+	if (!save || !discard) return "missing";
+	const saveButton = assertNeverPressed(page.getByRole("button", { name: controlNameMatcher(save) }).first(), entry.id);
+	const staged = await saveButton.waitFor({ state: "visible", timeout: 5_000 }).then(() => true).catch(() => false);
+	if (!staged) return "missing";
+	await page.getByRole("button", { name: controlNameMatcher(discard) }).first().click();
+	const restored = await trigger.waitFor({ state: "visible", timeout: 5_000 }).then(() => true).catch(() => false);
+	const barGone = await saveButton.waitFor({ state: "hidden", timeout: 5_000 }).then(() => true).catch(() => false);
+	return restored && barGone ? "confirmed" : "missing";
 }
 
 /**
@@ -1005,15 +1114,28 @@ for (const entry of CONTROLS) {
 			return;
 		}
 
-		const resolved = await resolveTrigger(page, entry, url);
+		// A menu lost between the reach and the count is re-opened (bounded) before anything is
+		// withheld — see `resolveAfterReach`.
+		const resolved = await resolveAfterReach(page, entry, url);
 		if ("withhold" in resolved) {
-			withholdWithFixture(entry, await amendForClosedMenu(page, entry, resolved.withhold));
+			withholdWithFixture(entry, resolved.withhold);
 			return;
 		}
 		const trigger = resolved.locator;
 
 		// ── both observations start BEFORE the click.
 		const before = await fingerprint();
+		// A staged control's save updates in place, which the row counts cannot see; its table is
+		// hashed as well. A registry entry that names no table is a finding, not a skipped check.
+		const stagedTable = entry.confirm === "staged" ? entry.staged?.table : undefined;
+		if (entry.confirm === "staged") {
+			expect(stagedTable, `${entry.id}: a \`confirm: staged\` entry must name \`staged.table\` — without it nothing can see the in-place save`).toBeTruthy();
+		}
+		const stagedBefore = stagedTable ? await stagedContent(stagedTable, ctx.owner.orgId) : null;
+		if (stagedTable) {
+			expect(stagedBefore, `${entry.id}: \`staged.table: ${stagedTable}\` is not a public table with an org_id column`).not.toBeNull();
+			expect(stagedBefore?.rows ?? 0, `${entry.id}: the org has no \`${stagedTable}\` rows, so the content hash cannot see a save — the fixture is not in the audit org`).toBeGreaterThan(0);
+		}
 		const watch = watchMutations(page);
 
 		await trigger.click();
@@ -1043,7 +1165,7 @@ for (const entry of CONTROLS) {
 					await expect(dialog, `${entry.id}: a renamed dialog is a finding, not a pass — expected a title beginning "${literal}"`).toContainText(new RegExp(escapeRe(literal), "i"));
 				}
 			}
-			// The ONLY button this file ever presses.
+			// The ONLY button this file ever presses inside a dialog.
 			const cancel = dialog.getByRole("button", { name: /^(cancel|no|keep|nevermind|never mind)\b/i }).first();
 			await expect(cancel, `${entry.id}: a confirmation with no way out is worse than none`).toBeVisible();
 			// Pinned BEFORE the click: `dialog` is a lazy `.first()` over every dialog on the page,
@@ -1054,6 +1176,8 @@ for (const entry of CONTROLS) {
 			observed = "confirmed";
 		} else if (entry.confirm === "undo") {
 			observed = await observeUndo(page, entry);
+		} else if (entry.confirm === "staged") {
+			observed = await observeStaged(page, entry, trigger);
 		} else {
 			// `none` / `popover`: the registry records that a bare click fires. The spec asserts the
 			// RECORDED state — a dialog appearing here is stale evidence, and the lane that added it
@@ -1069,7 +1193,14 @@ for (const entry of CONTROLS) {
 		const after = await fingerprint();
 		const moved = diffFingerprints(before, after);
 
-		if (expectsDialog) {
+		// A staged control's way out was pressed exactly as a dialog's Cancel is. Its "nothing was
+		// persisted" half is the content hash of `staged.table` — the save is an update in place,
+		// which the row counts below cannot see. The counts still run, for anything else it moved.
+		if (stagedTable) {
+			const stagedAfter = await stagedContent(stagedTable, ctx.owner.orgId);
+			expect(stagedAfter?.hash, `${entry.id}: Discard was pressed and the org's \`${stagedTable}\` rows still changed — the staged edit was persisted before Save`).toBe(stagedBefore?.hash);
+		}
+		if (expectsDialog || entry.confirm === "staged") {
 			// ── WHAT EACH OBSERVATION CAN AND CANNOT PROVE ──────────────────────────────────
 			//
 			// The header comment used to claim these were two independent proofs of "nothing
@@ -1301,7 +1432,8 @@ test("the run measured something — a withheld verdict is not a pass", async ()
 // one match, two identically-named controls, a visible control beside an A11Y-HIDDEN duplicate (NOT
 // ambiguity), a visible control beside a ZERO-BOX duplicate (ambiguity), and a name that is a
 // mid-word PREFIX of another control's (not a candidate). A seventh test drives `walkReach`'s
-// overlay scoping, the step before it. Each drives the REAL
+// overlay scoping, the step before it, and two more drive `resolveAfterReach`'s bounded re-walk of a
+// LOST menu in both directions (re-opened → measured; lost for good → still withheld, #5023). Each drives the REAL
 // function, not a restatement of it — a self-test that re-implements the rule verifies a copy.
 //
 // The last two are not decoration. They are the only assertions on the ⚠ in `resolveTrigger`'s
@@ -1531,6 +1663,70 @@ test("self-test — a menu LOST after the reach withholds naming the menu, not t
 	expect(amended, "and the finding names the menu it lost").toContain(`the menu opened by {menu: "Manage member"} was lost between the reach and the count`);
 });
 
+test("self-test — a menu LOST once is re-walked, and the item is then MEASURED", async ({ page }) => {
+	// #5023's shape: the menu opens, a re-render removes it, and it opens again on the next click.
+	// `resolveAfterReach` must re-walk the reach and resolve the item rather than withhold it.
+	await page.setContent(`
+		<main>
+			<button aria-label="Manage member Audit Active Colleague" aria-haspopup="menu" aria-expanded="false"
+				onclick="
+					this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1);
+					this.setAttribute('aria-expanded', 'true');
+					const menu = document.createElement('div');
+					menu.id = 'row-menu';
+					menu.setAttribute('role', 'menu');
+					menu.innerHTML = '<div role=&quot;menuitem&quot; tabindex=&quot;-1&quot;>Suspend</div>';
+					document.body.appendChild(menu);
+				">…</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Suspend"), control: { role: "menuitem", name: "Suspend" }, reach: [{ menu: "Manage member" }] };
+	expect(await walkReach(page, entry), "premise: the first reach opened the menu").toBeNull();
+	// The re-render, driven once rather than timed.
+	await page.evaluate(() => {
+		document.getElementById("row-menu")?.remove();
+		document.querySelector("button")?.setAttribute("aria-expanded", "false");
+	});
+	const resolved = await resolveAfterReach(page, entry, "about:self-test", 1_000);
+	expect("locator" in resolved, `a menu lost ONCE must be re-opened and the item measured: ${"withhold" in resolved ? resolved.withhold : ""}`).toBe(true);
+	if (!("locator" in resolved)) return;
+	await expect(resolved.locator).toHaveText("Suspend");
+	await expect(page.getByRole("button", { name: /Manage member/ }), "exactly one re-walk: the reach, then the re-open").toHaveAttribute("data-clicks", "2");
+});
+
+test("self-test — a menu LOST for good still withholds, with the lost-menu reason and the re-walk named", async ({ page }) => {
+	// The persistence direction: the trigger opens its menu on the FIRST click only, so once the
+	// menu is gone every re-walk fails. The retry must change nothing about the verdict — it is
+	// still withheld, the lost-menu amendment still heads it, and the retries are bounded.
+	await page.setContent(`
+		<main>
+			<button aria-label="Manage member Audit Active Colleague" aria-haspopup="menu" aria-expanded="false"
+				onclick="
+					this.dataset.clicks = String(Number(this.dataset.clicks || 0) + 1);
+					if (this.dataset.clicks !== '1') return;
+					this.setAttribute('aria-expanded', 'true');
+					const menu = document.createElement('div');
+					menu.id = 'row-menu';
+					menu.setAttribute('role', 'menu');
+					menu.innerHTML = '<div role=&quot;menuitem&quot; tabindex=&quot;-1&quot;>Suspend</div>';
+					document.body.appendChild(menu);
+				">…</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Suspend"), control: { role: "menuitem", name: "Suspend" }, reach: [{ menu: "Manage member" }] };
+	expect(await walkReach(page, entry), "premise: the first reach opened the menu").toBeNull();
+	await page.evaluate(() => {
+		document.getElementById("row-menu")?.remove();
+		document.querySelector("button")?.setAttribute("aria-expanded", "false");
+	});
+	const resolved = await resolveAfterReach(page, entry, "about:self-test", 1_000);
+	expect("withhold" in resolved, "a menu that never comes back cannot be measured").toBe(true);
+	if (!("withhold" in resolved)) return;
+	expect(resolved.withhold, "the observation is kept").toContain("is not rendered at about:self-test");
+	expect(resolved.withhold, "the lost-menu amendment still names the menu").toContain(`the menu opened by {menu: "Manage member"} was lost between the reach and the count`);
+	expect(resolved.withhold, "and the retry is on the record").toContain("the reach was re-walked 1 time(s) and the last re-walk could not be taken");
+	const clicks = Number(await page.getByRole("button", { name: /Manage member/ }).getAttribute("data-clicks"));
+	expect(clicks, "the re-walks are bounded").toBeLessThanOrEqual(1 + REACH_REWALK_ATTEMPTS * MENU_OPEN_ATTEMPTS);
+});
+
 test("self-test — a control whose item is genuinely absent from an OPEN menu keeps the persona reason", async ({ page }) => {
 	// The other direction, and the one that keeps the amendment honest: a menu that is open and
 	// simply does not carry the item is exactly the finding `resolveTrigger` words, and adding a
@@ -1545,6 +1741,10 @@ test("self-test — a control whose item is genuinely absent from an OPEN menu k
 	if (!("withhold" in resolved)) throw new Error("premise: `Suspend` is not in this menu, so the verdict must be withheld");
 	const amended = await amendForClosedMenu(page, entry, resolved.withhold);
 	expect(amended, "nothing was lost — the menu is right there").toBe(resolved.withhold);
+	// And no re-walk: an open menu without the item is not a loss, so the retry must not fire (this
+	// markup has no trigger, so a re-walk would fail and append its reason).
+	const viaRetry = await resolveAfterReach(page, entry, "about:self-test", 1_000);
+	expect(viaRetry, "the retry path withholds with the same persona reason, untouched").toEqual({ withhold: resolved.withhold });
 });
 
 // ── the floor's own test ────────────────────────────────────────────────────────────────────────

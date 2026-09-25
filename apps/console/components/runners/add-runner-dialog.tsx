@@ -454,7 +454,13 @@ function CopyField({ label, value }: { label: string; value: string }) {
 				<code className="flex-1 break-all rounded-md border border-border/50 bg-muted px-3 py-2 font-mono text-xs">
 					{value}
 				</code>
-				<Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={copy}>
+				<Button
+					variant="outline"
+					size="icon"
+					className="h-9 w-9 shrink-0"
+					onClick={copy}
+					aria-label={copied ? `${label} copied` : `Copy ${label}`}
+				>
 					{copied ? <Check className="h-3.5 w-3.5 text-foreground" /> : <Copy className="h-3.5 w-3.5" />}
 				</Button>
 			</div>
