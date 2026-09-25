@@ -130,10 +130,19 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
-          GITHUB_TOKEN_AUDIENCE: ${{ vars.GITHUB_TOKEN_AUDIENCE }}
+          # GitHub refuses any variable name starting with `GITHUB_` (HTTP 422), so the audience
+          # could never be set under the Worker's own binding name. It is read from the one
+          # repository variable the caller also reads (e2e-nightly.yml), so both sides of the match
+          # come from one value.
+          GITHUB_TOKEN_AUDIENCE: ${{ vars.E2E_ISSUER_GITHUB_AUDIENCE }}
           ALLOWED_REPOSITORIES: ${{ vars.ALLOWED_REPOSITORIES }}
           ALLOWED_WORKFLOW_REFS: ${{ vars.ALLOWED_WORKFLOW_REFS }}
+        # An empty value deploys a Worker that refuses every caller, while the deploy still reports
+        # green. Refuse the deploy instead, and name the missing variable.
         run: >-
+          for v in GITHUB_TOKEN_AUDIENCE ALLOWED_REPOSITORIES ALLOWED_WORKFLOW_REFS; do
+          [ -n "${!v}" ] || { echo "::error title=broker config missing::$v is empty (GITHUB_TOKEN_AUDIENCE comes from vars.E2E_ISSUER_GITHUB_AUDIENCE; the other two are e2e-issuer environment variables) — see apps/e2e-issuer/README.md"; exit 1; };
+          done;
           pnpm dlx wrangler@4.33.1 deploy
           --var "ISSUER_URL:$ISSUER_URL"
           --var "GITHUB_TOKEN_AUDIENCE:$GITHUB_TOKEN_AUDIENCE"
