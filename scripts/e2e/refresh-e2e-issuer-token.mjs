@@ -213,7 +213,9 @@ export function resolveConfig(provider, env) {
       );
     }
     config.serviceAccount = value("E2E_GCP_SA_EMAIL");
-    if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$/.test(config.serviceAccount)) {
+    // Only the characters a service account email can hold, so the value cannot reshape the
+    // generateAccessToken URL it is interpolated into. Not a name grammar: Google owns that.
+    if (!/^[a-z0-9-]{6,30}@[a-z0-9-]{6,30}\.iam\.gserviceaccount\.com$/.test(config.serviceAccount)) {
       throw new ProofError(EXIT_REFUSED, "E2E_GCP_SA_EMAIL is not a service account email");
     }
   }
