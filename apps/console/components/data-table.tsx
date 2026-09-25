@@ -311,6 +311,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 										className="h-7 w-7"
 										onClick={() => table.previousPage()}
 										disabled={!table.getCanPreviousPage()}
+										aria-label="Previous page"
 									>
 										<ChevronLeft className="h-3.5 w-3.5" />
 									</Button>
@@ -320,6 +321,7 @@ export function DataTable<TData extends { id?: string }, TValue>({
 										className="h-7 w-7"
 										onClick={() => table.nextPage()}
 										disabled={!table.getCanNextPage()}
+										aria-label="Next page"
 									>
 										<ChevronRight className="h-3.5 w-3.5" />
 									</Button>
