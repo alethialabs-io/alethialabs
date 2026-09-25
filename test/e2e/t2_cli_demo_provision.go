@@ -483,16 +483,19 @@ var cliDemoConnectorFlags = map[string]func() []string{
 	// ARN is an identifier — the same reason it is safe in argv here.
 	"aws": func() []string { return []string{"--role-arn", t2Env("E2E_AWS_ROLE_ARN", "")} },
 
-	// --wif-config takes a PATH (or "-" for stdin), and google-github-actions/auth has already
-	// written exactly that file and exported its path. Handing over the path rather than the bytes
-	// keeps the harness out of the business of parsing a credential config it does not own.
+	// --wif-config takes a PATH (or "-" for stdin). It is the BROKER's config (#4227), written by
+	// scripts/e2e/refresh-e2e-issuer-token.mjs only after that script proved the broker path on gcp:
+	// the broker pool's provider as audience and the e2e SA to impersonate. It is NOT the file
+	// google-github-actions/auth wrote (GOOGLE_APPLICATION_CREDENTIALS), which names the GITHUB pool —
+	// a pool whose provider cannot verify an assertion this console presents — so uploading it could
+	// never complete. Unset ⇒ an empty flag value ⇒ cliDemoConnectorEmptyFlags refuses before spend.
 	//
 	// --project is required by the command under --no-input even though /connect derives the
 	// project from the WIF config: without it `connector gcp` refuses with "no project given".
 	"gcp": func() []string {
 		return []string{
 			"--project", t2AmbientAccountID("gcp"),
-			"--wif-config", t2Env("GOOGLE_APPLICATION_CREDENTIALS", ""),
+			"--wif-config", t2Env(cliDemoGCPWifConfigEnv, ""),
 		}
 	},
 
@@ -508,7 +511,7 @@ var cliDemoConnectorFlags = map[string]func() []string{
 	},
 
 	// The RAM role, shaped like aws's. Present so the table covers the provider list; the
-	// dimension is not being driven on alibaba.
+	// dimension is not driven on alibaba (excluded by maintainer ruling on #4227).
 	"alibaba": func() []string { return []string{"--role-arn", t2Env("E2E_ALIBABA_ROLE_ARN", "")} },
 }
 
@@ -568,10 +571,49 @@ func cliDemoConnectorStdin(r *CLIDemoRun) string {
 	return ""
 }
 
-// cliDemoConnectorIssuerTrustEnv is the maintainer's opt-in: set it once the console this dimension
-// boots has an OIDC issuer the clouds below actually trust, and the refusal lifts with no code
-// change.
+// cliDemoConnectorIssuerTrustEnv is the maintainer's MANUAL opt-in, for a local run: set it once the
+// console being driven has an OIDC issuer the clouds actually trust, and the refusal lifts with no
+// code change. The nightly never sets it — it lifts through cliDemoBrokerProvenEnv instead, which
+// is a measurement rather than a statement.
 const cliDemoConnectorIssuerTrustEnv = "ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED"
+
+// cliDemoBrokerProvenEnv names the ONE cloud whose broker path the workflow proved before any spend
+// (#4227): scripts/e2e/refresh-e2e-issuer-token.mjs minted a broker assertion for this run, checked
+// its claims, and the cloud's own token service accepted it. e2e-nightly.yml writes it only after
+// that script exits 0, and starts the console with the broker as its assertion source — so on that
+// cloud the connector's inline probe authenticates with an assertion the cloud is proven to trust.
+//
+// It carries the PROVIDER, not a boolean, so a value left over from another leg can never lift this
+// one: a mismatch reads as "not proven".
+const cliDemoBrokerProvenEnv = "ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN"
+
+// cliDemoGCPWifConfigEnv is the path of the broker WIF config the same script writes on gcp — see
+// cliDemoConnectorFlags["gcp"].
+const cliDemoGCPWifConfigEnv = "ALETHIA_E2E_CLI_DEMO_GCP_WIF_CONFIG"
+
+// cliDemoBrokerClouds are the clouds whose connector the E2E assertion broker can lift. Alibaba is
+// excluded by maintainer ruling (#4227); hetzner needs no issuer at all. A closed list on purpose:
+// a sixth cloud does not inherit the lift, it has to be added here with a trust behind it.
+var cliDemoBrokerClouds = map[string]bool{"aws": true, "gcp": true, "azure": true}
+
+// cliDemoConnectorLift answers whether the refusal in cliDemoConnectorIssuerTrust is lifted for
+// provider, and on whose authority. Pure — it reads the environment through getenv — so every
+// branch is unit-tested without a cloud.
+//
+//	"broker"     — the workflow PROVED the broker path for exactly this cloud (preferred: measured)
+//	"maintainer" — ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED is set by hand (a local run's statement)
+//	""           — not lifted; the table's reason stands
+//
+// A broker proof for a cloud outside cliDemoBrokerClouds lifts nothing, whatever the variable says.
+func cliDemoConnectorLift(provider string, getenv func(string) string) string {
+	if cliDemoBrokerClouds[provider] && strings.TrimSpace(getenv(cliDemoBrokerProvenEnv)) == provider {
+		return "broker"
+	}
+	if t2Truthy(getenv(cliDemoConnectorIssuerTrustEnv)) {
+		return "maintainer"
+	}
+	return ""
+}
 
 // cliDemoConnectorIssuerTrust records, per cloud, why `connector <cloud>` cannot COMPLETE against
 // the console this dimension boots — or "" when it can.
@@ -599,28 +641,34 @@ const cliDemoConnectorIssuerTrustEnv = "ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED"
 // Hetzner is unaffected because its connector has no issuer in the path — the token is encrypted
 // and the probe is a bearer GET against api.hetzner.cloud.
 //
-// So these three cells are blocked on a MAINTAINER decision about the e2e console's identity, not
-// on this harness. Recorded here, refused loudly before spend (AssertCLIDemoConnectorIsDrivable),
-// and liftable in one repo variable — never silently skipped, which would report a cell the run
-// never drove.
+// ── WHAT LIFTS IT (#4227) ──
+//
+// The console does not need its own trusted issuer if it borrows one: with
+// ALETHIA_E2E_ASSERTION_BROKER_URL set, apps/console/lib/oidc/assertion-source.ts asks the E2E
+// assertion broker (apps/e2e-issuer) for each assertion instead of minting it, and #4226 makes the
+// e2e identities on aws, gcp and azure trust that broker. The nightly proves the chain before any
+// spend and records it in cliDemoBrokerProvenEnv; cliDemoConnectorLift reads it. The reasons below
+// are what stands on a cloud where that proof has NOT happened, which is why they stay.
+//
+// Recorded here, refused loudly before spend (AssertCLIDemoConnectorIsDrivable) — never silently
+// skipped, which would report a cell the run never drove.
 var cliDemoConnectorIssuerTrust = map[string]string{
 	"hetzner": "",
 	"aws": "`connector aws` submits a role ARN and the console then runs AssumeRoleWithWebIdentity " +
 		"with a token it signed itself. The e2e role trusts token.actions.githubusercontent.com only " +
-		"(infra/aws-oidc/e2e-nightly.tf), so the console's assertion is refused and the beat exits 1.",
+		"(infra/aws-oidc/e2e-nightly.tf), so the console's assertion is refused and the beat exits 1. " +
+		"Lifted by a proven broker path (#4227), whose E2EBrokerAssertion statement #4226 adds.",
 	"gcp": "`connector gcp` submits a WIF credential config and the console then exchanges its own " +
-		"minted subject token at Google STS. The e2e pool's provider trusts GitHub's issuer, not this " +
-		"console's, so the exchange is refused and the beat exits 1. SECOND, INDEPENDENT BLOCKER: the " +
-		"config this beat uploads is the one google-github-actions/auth wrote, and with no token_format " +
-		"that is an external_account whose credential_source.file is a RUNNER-LOCAL path holding a " +
-		"short-lived GitHub OIDC token. The console stores it verbatim and can never resolve that path, " +
-		"so lifting the issuer decision alone does not make this cell drivable — it needs a credential " +
-		"whose source the console can read.",
+		"minted subject token at Google STS. The e2e GitHub pool's provider trusts GitHub's issuer, not " +
+		"this console's, so the exchange is refused and the beat exits 1. Lifted by a proven broker path " +
+		"(#4227), which also writes the config the beat uploads: the broker pool's provider as audience " +
+		"(the console supplies the subject token itself, so credential_source is never read).",
 	"azure": "`connector azure` submits tenant/client/subscription and the console then presents a " +
 		"client assertion it signed itself. The managed identity's federated credential names GitHub's " +
-		"issuer, so Entra answers AADSTS70021 and the beat exits 1.",
-	"alibaba": "same keyless shape as aws, and the dimension is not being driven on alibaba — the " +
-		"maintainer's cli-demo scope is hetzner, aws, gcp and azure.",
+		"issuer, so Entra answers AADSTS70021 and the beat exits 1. Lifted by a proven broker path " +
+		"(#4227), whose e2e-assertion-broker federated credential #4226 adds.",
+	"alibaba": "same keyless shape as aws, and the dimension is not driven on alibaba — excluded from " +
+		"the broker proof by maintainer ruling on #4227; the cli-demo scope is hetzner, aws, gcp and azure.",
 }
 
 // ValidateCLIDemoBeats holds the two tables to each other. Returns every problem at once, because
