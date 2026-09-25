@@ -1461,6 +1461,19 @@ jobs:
           pnpm -F console exec tsx scripts/seed-cli-demo-token.mts --out "${RUNNER_TEMP}/cli-demo-creds.json"
           echo "ALETHIA_E2E_CLI_DEMO_CREDS=${RUNNER_TEMP}/cli-demo-creds.json" >> "$GITHUB_ENV"
 
+      # ── ONE THROWAWAY RECEIPT KEY FOR THE RUNNER AND THE CONSOLE (#5098). `verify receipt` trusts
+      #    only the platform key this console derives from ITS ALETHIA_RECEIPT_SIGNING_KEY, so the
+      #    runner must sign with that same key or the receipt-verify beat reports every receipt as
+      #    untrusted. The console starts before the spine, so the key is made here: fresh per run,
+      #    never a repo secret, masked, in a 0600 file. Only the file's PATH goes to $GITHUB_ENV.
+      #    The start step below reads the file, and the spine reads it for the runner
+      #    (test/e2e/t2_cli_demo_receipt_key.go). The tool's stdout is the ::add-mask:: command, so it
+      #    must NOT be redirected into $GITHUB_ENV. ──
+      - name: cli-demo — make this run's throwaway receipt-signing key
+        if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
+        working-directory: test/e2e
+        run: GOWORK=off go run ./cmd/clidemoreceiptkey --dir "$RUNNER_TEMP" --github-env "$GITHUB_ENV"
+
       - name: cli-demo — start the console and wait for it to answer
         if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
         env:
@@ -1504,6 +1517,11 @@ jobs:
             export ALETHIA_E2E_ASSERTION_BROKER_AUDIENCE="$CLI_DEMO_BROKER_AUDIENCE"
             echo "::notice::the cli-demo console takes its assertions from the E2E assertion broker (${CLI_DEMO_BROKER_URL}) — proven for ${ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN}"
           fi
+          # The run's shared receipt key (#5098), read from the file the step above wrote. Exported
+          # for this process only; it is never echoed, and the step above masked it.
+          [ -s "${ALETHIA_E2E_CLI_DEMO_RECEIPT_KEY_FILE:-}" ] || { echo "::error::ALETHIA_E2E_CLI_DEMO_RECEIPT_KEY_FILE is unset or empty — the console would vouch for no platform key and receipt-verify could never pass"; exit 1; }
+          ALETHIA_RECEIPT_SIGNING_KEY="$(cat "$ALETHIA_E2E_CLI_DEMO_RECEIPT_KEY_FILE")"
+          export ALETHIA_RECEIPT_SIGNING_KEY
           pnpm -F console exec next start -p 3000 >"${RUNNER_TEMP}/cli-demo-console.log" 2>&1 &
           # POLL for a real answer rather than sleeping. A fixed sleep is either too short — and the
           # first beat fails on a console that was still booting, reported as "the CLI cannot reach
