@@ -16,14 +16,16 @@ package e2e
 // ── WHY PHASES RATHER THAN ONE LOOP ──
 //
 // The demo's order and the harness's order are not the same order. A prospect types plan, apply,
-// then watches. The spine registers a runner row, enqueues a job, THEN starts the runner process,
-// then waits for it. Run the whole table in one pass at the top and `project apply --wait` blocks
-// forever on a claimer that has not started; run it at the bottom and there is no cluster to read
-// back. Neither failure looks like what it is — both read as "the CLI cannot do this".
+// then watches. The spine authors the project, starts the runner process, and only THEN lets the
+// CLI queue jobs — one at a time, because an environment admits one job in flight (#5090). Run the
+// whole table in one pass at the top and `project plan --wait` blocks forever on a claimer that
+// has not started; run it at the bottom and there is no cluster to read back. Neither failure
+// looks like what it is — both read as "the CLI cannot do this".
 //
 // So the driver runs one window at a time and the spine calls it four times.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -608,6 +610,13 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 		if b.Phase != phase {
 			continue
 		}
+		if b.AwaitEnvSettled {
+			if err := awaitCLIDemoEnvSettled(ctx, run, func(c context.Context) (string, error) {
+				return readCLIDemoEnvStatus(c, run)
+			}); err != nil {
+				t.Fatalf("cli-demo beat %q: %v", b.StepID, err)
+			}
+		}
 		argv := b.Args(run)
 		bound := cliDemoBeatTimeout
 		if b.Timeout > 0 {
@@ -717,6 +726,114 @@ func awaitCLIDemoClaim(ctx context.Context, run *CLIDemoRun, status func(context
 		"and the deploy wait would have run to its full deadline reporting a timeout that names the cluster.",
 		run.ApplyJobID, last, cliDemoClaimWindow, run.OrgID)
 }
+
+// cliDemoInFlightEnvStatuses are the environment statuses in which the console refuses a new
+// enqueue from at least one verb — the three the enqueue from-sets in ENV_TRANSITIONS
+// (apps/console/lib/db/env-status.ts) are built to exclude. `enqueueDestroy` alone accepts
+// PROVISIONING; waiting it out as well costs nothing, because the job behind it is already
+// terminal whenever this is asked.
+var cliDemoInFlightEnvStatuses = map[string]bool{"QUEUED": true, "PROVISIONING": true, "DESTROYING": true}
+
+// awaitCLIDemoEnvSettled waits until the run's environment leaves the in-flight statuses, so the
+// next CLI enqueue is not refused (#5090). It is the decision, separated from the CLI read so its
+// failure message is testable without a console.
+//
+// WHY THE HARNESS HAS TO WAIT AT ALL. On a real console the job-status route settles the env in
+// the same request the runner reports on. Here the runner reports to the Go shim, which runs the
+// job-status SQL and deliberately none of the route's TypeScript (controlplane.go handleStatus,
+// FIDELITY BOUNDARY), so the env stays where the ENQUEUE put it — QUEUED — until the console's
+// convergence backstop (lib/reconcile/converge.ts) moves it to where the finished job says. That
+// backstop is the product's own code and its own CAS; the harness waits on it rather than
+// re-implementing the move in Go, which would also have made A0.5's "finalizeDeployment moved
+// the env" assertion pass without finalizeDeployment doing anything.
+func awaitCLIDemoEnvSettled(ctx context.Context, run *CLIDemoRun, status func(context.Context) (string, error)) error {
+	deadline := time.Now().Add(cliDemoEnvSettleWindow)
+	last := "(never read)"
+	var lastErr error
+	for {
+		s, err := status(ctx)
+		if err == nil {
+			last, lastErr = s, nil
+			if !cliDemoInFlightEnvStatuses[s] {
+				return nil
+			}
+		} else {
+			lastErr = err
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("cancelled while waiting for environment %q to settle: %w", run.EnvName, ctx.Err())
+		case <-time.After(cliDemoEnvSettlePoll):
+		}
+	}
+	readErr := ""
+	if lastErr != nil {
+		readErr = fmt.Sprintf(" (the last read failed: %v)", lastErr)
+	}
+	return fmt.Errorf("environment %q of project %s is still %s after %s%s, so the console would refuse "+
+		"the next job with \"a job may already be in progress\" (409).\n"+
+		"The job before this beat is terminal, but under this harness nothing settles its env on the "+
+		"live path: the runner reports to the Go shim, which does not run the console's env-status move. "+
+		"The console's convergence backstop (lib/reconcile/converge.ts) is what settles it, once the job "+
+		"has been terminal for ALETHIA_CONVERGE_MIN_AGE_MINUTES and the reconcile loop ticks (60s). "+
+		"If it never did, check that the console step sets that variable and that the loop started.",
+		run.EnvName, run.ProjectID, last, cliDemoEnvSettleWindow, readErr)
+}
+
+// readCLIDemoEnvStatus reads the run's environment status THROUGH THE CLI — `project env list`,
+// the same surface a person would look at — rather than from the database the harness also holds,
+// so the wait observes what the console reports.
+func readCLIDemoEnvStatus(ctx context.Context, run *CLIDemoRun) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, cliDemoBeatTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, run.Bin, "project", "env", "list",
+		"--project", run.ProjectID, "--output", "json", "--no-input")
+	cmd.Env = cliDemoEnv(run)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("`alethia project env list`: %w", err)
+	}
+	return cliDemoEnvStatusFrom(out, run.EnvName)
+}
+
+// cliDemoEnvStatusFrom picks one environment's status out of `project env list --output json`.
+// An absent environment is an error, not an empty status: "" is not in-flight, so reading it as a
+// status would end the wait on an env that was never found.
+func cliDemoEnvStatusFrom(out []byte, envName string) (string, error) {
+	// Sliced to the array the way captureDefaultEnv does, so both readers of this command accept
+	// the same output.
+	start, end := bytes.IndexByte(out, '['), bytes.LastIndexByte(out, ']')
+	if start == -1 || end <= start {
+		return "", fmt.Errorf("`project env list --output json` produced no JSON array:\n%s", out)
+	}
+	var envs []struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(out[start:end+1], &envs); err != nil {
+		return "", fmt.Errorf("parsing `project env list --output json`: %w", err)
+	}
+	for _, e := range envs {
+		if e.Name == envName {
+			if e.Status == "" {
+				return "", fmt.Errorf("environment %q is listed with no status", envName)
+			}
+			return e.Status, nil
+		}
+	}
+	return "", fmt.Errorf("environment %q is not in `project env list` (%d listed)", envName, len(envs))
+}
+
+// cliDemoEnvSettlePoll is how often the env status is re-read. A var for the pure test.
+var cliDemoEnvSettlePoll = 10 * time.Second
+
+// cliDemoEnvSettleWindow bounds the settle wait: the console step's 1-minute staleness gate plus a
+// 60s reconcile tick is ~2m, and 7m still covers the product DEFAULT of 5m should that variable
+// ever stop reaching the console. A var for the pure test.
+var cliDemoEnvSettleWindow = 7 * time.Minute
 
 // cliDemoClaimPoll is how often the claim is re-read. A variable so the pure test can drive the
 // loop in milliseconds rather than making the suite wait out a real poll interval.
