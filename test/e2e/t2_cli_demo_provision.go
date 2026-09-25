@@ -58,9 +58,13 @@ type CLIDemoRun struct {
 	Provider string
 	// Region is the region the project provisions into.
 	Region string
-	// Project is the project NAME the run creates.
+	// Project is the project NAME the run creates. It is the harness's ALETHIA_E2E_PROJECT.
 	Project string
-	// EnvName is the environment the beats plan/apply/destroy against.
+	// EnvName is the environment the beats plan/apply/destroy against. It is the harness's
+	// ALETHIA_E2E_ENV (`<run_id>-<attempt>` in CI), and the `project-env` beat CREATES an
+	// environment with exactly this name (#5095). It is set once, before the first beat, and no
+	// beat may overwrite it: the cluster is named `<project>-<env NAME>` (CLIDemoClusterName), so
+	// this value is the run tag the in-run sweep, the LB capture and the teardown all key on.
 	EnvName string
 
 	// ── minted as the run proceeds ──
@@ -256,13 +260,23 @@ var CLIDemoBeats = []CLIDemoBeat{
 		StepID: "project-env",
 		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
+			// `dedicated` is spelled out: the route's default for an ADDED environment is
+			// `namespace`, which would place this tier on the default Fabric — a Fabric no job
+			// here ever provisions — instead of giving it the cluster the demo deploys.
+			return []string{
+				"project", "env", "add", r.EnvName, "--project", r.ProjectID,
+				"--stage", "development", "--placement-mode", "dedicated", "--no-input",
+			}
+		},
+		ReadBack: func(r *CLIDemoRun) []string {
 			return []string{"project", "env", "list", "--project", r.ProjectID, "--output", "json", "--no-input"}
 		},
-		After: captureDefaultEnv,
-		Why: "captures the DEFAULT environment rather than assuming one. `project create --stage " +
-			"development` makes `development` and `preview`, and the harness's own env name is a " +
-			"different thing entirely — addressing the wrong one fails with `Environment \"x\" not " +
-			"found`, which reads as a CLI defect and is a harness assumption.",
+		After: assertRunTaggedEnv,
+		Why: "the environment carries the RUN TAG, through the same input a person uses to name one " +
+			"(#5095). The cluster is named `<project>-<environment name>`, and `project create --stage " +
+			"development` names the default environment `development`, which carries no run tag. A " +
+			"cluster without the tag defeats the run-scoped sweep (`cluster=<project>-<env>`) and the " +
+			"in-process teardown, which derive the name from the same CLIDemoRun fields.",
 	},
 	{
 		StepID: "component-kinds",
@@ -364,7 +378,10 @@ var CLIDemoBeats = []CLIDemoBeat{
 	{
 		StepID: "cluster-get",
 		Phase:  CLIDemoConverged,
-		Args:   func(r *CLIDemoRun) []string { return []string{"clusters", "get", r.ProjectID, "--no-input"} },
+		Args:   func(r *CLIDemoRun) []string { return []string{"clusters", "get", r.Project, "--no-input"} },
+		Why: "BY PROJECT NAME. `cluster get`'s selector matches a project name, a cluster name or a " +
+			"CLUSTER id (apps/cli/cmd/clusters_get.go clusterMatches) — never a project id, so " +
+			"passing ProjectID matched nothing and exited non-zero.",
 	},
 	{
 		StepID: "receipt-verify",
@@ -405,6 +422,25 @@ var CLIDemoBeats = []CLIDemoBeat{
 		AwaitEnvSettled: true,
 		Why:             "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
 	},
+}
+
+// t2ClusterTarget names the project and environment this run's cluster is built from — the pair
+// the in-process teardown destroys, the hetzner LB capture scopes to, and the cluster_name
+// assertion checks (#5095).
+//
+// On the seeded path that is the harness's own ALETHIA_E2E_PROJECT / ALETHIA_E2E_ENV. On the
+// cli-demo path the CLI authored the project, so the answer is whatever the beats actually passed
+// to `project create` and `project env add` — read off the run, never restated. Run 36135826614
+// is why: the beats deployed `alethia-nl-development` while the teardown destroyed
+// `alethia-nl-36135826614-1`, and only the state-driven destroy kept that from being a leak.
+//
+// Called when the teardown RUNS rather than when it is registered, so it sees the run as the beats
+// left it.
+func t2ClusterTarget(project, env string, cliDemo *CLIDemoRun) (string, string) {
+	if cliDemo != nil {
+		return cliDemo.Project, cliDemo.EnvName
+	}
+	return project, env
 }
 
 // cliDemoManifestPath is where this run's `alethia.yaml` lives.
