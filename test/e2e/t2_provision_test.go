@@ -66,7 +66,6 @@ package e2e
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -286,11 +285,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	stagedTemplate := filepath.Join(stage, "project-templates", provider)
 	t2CopyTree(t, realTemplateSrc, stagedTemplate)
 
-	// ── Receipt signing key: runner gets the private half; we keep pub to VERIFY. ──
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	// ── Receipt signing key: runner gets the private half; we keep pub to VERIFY. On cli-demo it
+	// is the run's SHARED key, the one the CI console also holds, because `verify receipt` trusts
+	// only what that console vouches for (#5098, t2_cli_demo_receipt_key.go). ──
+	pub, priv, keySource, err := ResolveT2ReceiptKey(cliDemo != nil)
 	if err != nil {
-		t.Fatalf("generate ed25519 key: %v", err)
+		t.Fatalf("receipt signing key: %v", err)
 	}
+	t.Logf("receipt signing key: %s", keySource)
 
 	// ── Real control plane over real Postgres (reused verbatim from controlplane.go). ──
 	cp, err := NewControlPlane(ctx, dbURL)
