@@ -422,14 +422,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		AssertCLIDemoBeatsAreLeafCommands(ctx, t, cliDemo)
 		AssertCLIDemoBeatFlagsAreRegistered(ctx, t, cliDemo)
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoAuthoring)
-		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoEnqueue)
-		jobID = cliDemo.ApplyJobID
-		if jobID == "" {
-			t.Fatal("cli-demo: `project apply` reported no job id — there is nothing to wait on")
-		}
-		t.Logf("cli-demo: DEPLOY job %s was created BY THE CLI (project %s)", jobID, cliDemo.ProjectID)
-		// The CLAIM is asserted separately, just after the runner process starts — see the call
-		// below. It cannot be asserted here: nothing is running yet to claim anything.
+		// The ENQUEUE phase is NOT driven here (#5090). `project plan --wait` needs a runner to
+		// claim its PLAN, and `project apply` is refused until that PLAN is terminal — so both run
+		// just after the runner process starts, below. `jobID` stays empty until then; the teardown
+		// closure reads it when it RUNS, not when it is registered.
 	} else {
 		var jerr error
 		jobID, jerr = seedT2DeployJob(ctx, cp, full, a05.jobGraph(), owner)
@@ -564,6 +560,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// reported as a deploy TIMEOUT — naming the cluster when the fault is a tenancy mismatch
 	// (#392) that was decidable in ninety seconds. Cheap half first.
 	if cliDemo != nil {
+		// Here and not above: the runner is now live, so `project plan --wait` has a claimer and
+		// its PLAN goes terminal before `project apply` enqueues the DEPLOY (#5090).
+		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoEnqueue)
+		jobID = cliDemo.ApplyJobID
+		if jobID == "" {
+			t.Fatal("cli-demo: `project apply` reported no job id — there is nothing to wait on")
+		}
+		t.Logf("cli-demo: DEPLOY job %s was created BY THE CLI (project %s)", jobID, cliDemo.ProjectID)
 		AssertCLIDemoJobClaimed(ctx, t, cp, cliDemo)
 	}
 

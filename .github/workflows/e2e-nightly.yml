@@ -1482,6 +1482,13 @@ jobs:
           ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
           ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
           ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+          # The env-status convergence backstop's staleness gate (lib/reconcile/converge.ts), in whole
+          # minutes. The runner reports to the Go shim, which does not move env status (its FIDELITY
+          # BOUNDARY), so every job the CLI enqueues leaves its env QUEUED until this backstop
+          # settles it — and the next CLI enqueue is refused until then (#5090). The product default
+          # is 5; 1 is the smallest value `make_interval(mins => …)` accepts. The beats wait for the
+          # settle either way (awaitCLIDemoEnvSettled); this only makes the wait short.
+          ALETHIA_CONVERGE_MIN_AGE_MINUTES: "1"
           # ── THE CONSOLE'S ASSERTION SOURCE (#4227). With these two set, every assertion this
           #    console presents to a cloud — the connector's inline probe included — comes from the
           #    E2E assertion broker (apps/console/lib/oidc/assertion-source.ts), authenticated with a
