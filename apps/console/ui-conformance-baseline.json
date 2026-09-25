@@ -23,7 +23,7 @@
 		"notInstrumented": 0,
 		"findings": 24,
 		"findingFiles": 15,
-		"liveNotMeasured": 34
+		"liveNotMeasured": 22
 	},
 	"ledgers": {
 		"baseline": 16,
@@ -31,8 +31,8 @@
 	},
 	"live": {
 		"source": {
-			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35896826914",
-			"commit": "633ca6efaa4e888b773157f691b3543a06961bd8"
+			"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/36058527139",
+			"commit": "8f5c3953a19062f4d725accfd6cbca53b4c1b7f0"
 		},
 		"sections": {
 			"routes": {
@@ -462,40 +462,34 @@
 			"section": "interaction",
 			"owner": null,
 			"debt": "#4999",
-			"pass": 7,
+			"pass": 13,
 			"fail": 1,
 			"na": 24,
-			"notMeasured": 8,
+			"notMeasured": 2,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
-				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 2,
-				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 2,
-				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
-				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
+				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1
 			},
-			"score": 0.875
+			"score": 0.9286
 		},
 		"F9": {
 			"family": "F",
 			"instrument": "live",
 			"section": "interaction",
 			"owner": null,
-			"pass": 8,
+			"pass": 14,
 			"fail": 0,
 			"na": 24,
-			"notMeasured": 8,
+			"notMeasured": 2,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
-				"the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
-				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 2,
-				"the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow": 2,
-				"no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one": 2,
-				"the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1
+				"the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface": 1,
+				"no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one": 1
 			},
 			"score": 1
 		},
@@ -963,10 +957,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 2,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
@@ -980,10 +974,10 @@
 				}
 			},
 			"overall": {
-				"pass": 34,
+				"pass": 36,
 				"fail": 0,
 				"na": 1,
-				"notMeasured": 3,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -1081,10 +1075,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 2,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
@@ -1098,10 +1092,10 @@
 				}
 			},
 			"overall": {
-				"pass": 35,
+				"pass": 37,
 				"fail": 0,
 				"na": 0,
-				"notMeasured": 3,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -1553,11 +1547,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
-					"fail": 0,
+					"pass": 8,
+					"fail": 1,
 					"na": 0,
-					"notMeasured": 3,
-					"score": 1
+					"notMeasured": 1,
+					"score": 0.8889
 				},
 				"R": {
 					"instrumented": 8,
@@ -1570,11 +1564,11 @@
 				}
 			},
 			"overall": {
-				"pass": 33,
-				"fail": 0,
+				"pass": 34,
+				"fail": 1,
 				"na": 2,
-				"notMeasured": 3,
-				"score": 1
+				"notMeasured": 1,
+				"score": 0.9714
 			}
 		},
 		{
@@ -2084,10 +2078,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
+					"pass": 9,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 3,
+					"notMeasured": 1,
 					"score": 1
 				},
 				"R": {
@@ -2101,10 +2095,10 @@
 				}
 			},
 			"overall": {
-				"pass": 32,
+				"pass": 34,
 				"fail": 0,
 				"na": 3,
-				"notMeasured": 3,
+				"notMeasured": 1,
 				"score": 1
 			}
 		},
@@ -2261,11 +2255,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -2278,11 +2272,11 @@
 				}
 			},
 			"overall": {
-				"pass": 34,
-				"fail": 1,
+				"pass": 35,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 0.9714
+				"score": 1
 			}
 		},
 		{
@@ -2379,10 +2373,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 2,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
@@ -2396,10 +2390,10 @@
 				}
 			},
 			"overall": {
-				"pass": 35,
+				"pass": 37,
 				"fail": 0,
 				"na": 1,
-				"notMeasured": 2,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -2438,10 +2432,10 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
+					"pass": 10,
 					"fail": 0,
 					"na": 0,
-					"notMeasured": 2,
+					"notMeasured": 0,
 					"score": 1
 				},
 				"R": {
@@ -2455,10 +2449,10 @@
 				}
 			},
 			"overall": {
-				"pass": 34,
+				"pass": 36,
 				"fail": 0,
 				"na": 2,
-				"notMeasured": 2,
+				"notMeasured": 0,
 				"score": 1
 			}
 		},
@@ -4065,14 +4059,12 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4475,14 +4467,12 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -4671,13 +4661,13 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -6066,14 +6056,13 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+			"verdict": "FAIL",
+			"detail": "Reset left a filter param in the URL — 1 later step not reached"
 		},
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -7468,13 +7457,13 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F8",
 			"verdict": "NOT MEASURED",
-			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+			"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F9",
 			"verdict": "NOT MEASURED",
-			"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+			"reason": "no facet option carrying a count was found in the bar — `CountFigure` is the anchor every shared facet primitive renders, and nothing revealed one"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -7869,14 +7858,12 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -8474,8 +8461,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "F8",
-			"verdict": "FAIL",
-			"detail": "reload() kept the param but not the narrowed list"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -8864,14 +8850,12 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -9059,14 +9043,12 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
