@@ -113,10 +113,17 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 		len(beforeApps), len(beforeProjects), len(beforeNS))
 
 	// ArgoCD must survive every placement — capture its identity once, before any of them.
-	argoBefore, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
+	//    Found BY LABEL (#5082): the chart names the Deployment `argo-cd-argocd-server`, never
+	//    `argocd-server`. pickArgocdServer requires exactly one match.
+	argoBeforeRaw, err := nsKubectl(ctx, kc, argocdServerKubectlArgs()...)
 	if err != nil {
-		t.Fatalf("fabric-demo: read argocd-server before placements: %v\n%s", err, argoBefore)
+		t.Fatalf("fabric-demo: read argocd-server before placements: %v\n%s", err, argoBeforeRaw)
 	}
+	argoServer, argoBefore, err := pickArgocdServer(argoBeforeRaw)
+	if err != nil {
+		t.Fatalf("fabric-demo: read argocd-server before placements: %v", err)
+	}
+	t.Logf("fabric-demo: ArgoCD server Deployment %q created %s", argoServer, argoBefore)
 
 	// ── (1) Place every tier as a namespace env on the SAME Fabric, and prove what it delivered ──
 	for _, tier := range tiers {
@@ -286,9 +293,13 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 	}
 
 	// ── (3) ArgoCD was never reinstalled by any placement ─────────────────────────────────────
-	argoAfter, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
+	argoAfterRaw, err := nsKubectl(ctx, kc, argocdServerKubectlArgs()...)
 	if err != nil {
-		t.Fatalf("fabric-demo: read argocd-server after placements: %v\n%s", err, argoAfter)
+		t.Fatalf("fabric-demo: read argocd-server after placements: %v\n%s", err, argoAfterRaw)
+	}
+	_, argoAfter, err := pickArgocdServer(argoAfterRaw)
+	if err != nil {
+		t.Fatalf("fabric-demo: read argocd-server after placements: %v", err)
 	}
 	if err := argocdNotReinstalled(argoBefore, argoAfter); err != nil {
 		t.Fatalf("fabric-demo: no-reinstall assertion: %v", err)
