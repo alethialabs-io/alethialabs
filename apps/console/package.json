@@ -176,7 +176,7 @@
     "sonner": "^2.0.8",
     "streamdown": "^2.6.0",
     "stripe": "^22.6.2",
-    "undici": "^8.11.0",
+    "undici": "^8.11.2",
     "use-stick-to-bottom": "^1.1.6",
     "yaml": "^2.9.1",
     "zod": "^4.6.5",
