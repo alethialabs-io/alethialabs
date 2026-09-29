@@ -74,6 +74,7 @@ export function ElenchConversationSwitcher({
             <div className="mb-1 flex items-center gap-2 bg-muted px-2.5 py-1.5">
               <Search className="h-3.5 w-3.5 flex-none text-muted-foreground" />
               <input
+                aria-label="Search conversations"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search…"

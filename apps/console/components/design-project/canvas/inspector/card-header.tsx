@@ -55,6 +55,7 @@ export function CardHeader({
 				<div className="flex flex-wrap items-center gap-2">
 					{onNameChange ? (
 						<Input
+							aria-label="Name"
 							value={name ?? ""}
 							maxLength={nameMaxLength}
 							placeholder={namePlaceholder}

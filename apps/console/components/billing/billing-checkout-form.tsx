@@ -22,7 +22,7 @@ import {
 } from "@stripe/react-stripe-js";
 import { ChevronRight, Info, Lock, Plus, X } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Controller, type UseFormReturn, useForm } from "react-hook-form";
 import { z } from "zod";
 import { cardElementStyle } from "@/components/billing/stripe-elements";
@@ -342,11 +342,14 @@ export function BillingCheckoutForm({
 
           {/* full name */}
           <Field label="Full name" error={form.formState.errors.name?.message}>
-            <Input
-              placeholder="Jane Doe"
-              autoComplete="name"
-              {...form.register("name")}
-            />
+            {(id) => (
+              <Input
+                id={id}
+                placeholder="Jane Doe"
+                autoComplete="name"
+                {...form.register("name")}
+              />
+            )}
           </Field>
 
           {/* country */}
@@ -372,50 +375,65 @@ export function BillingCheckoutForm({
             label="Address line 1"
             error={form.formState.errors.line1?.message}
           >
-            <Input
-              placeholder="123 Main St"
-              autoComplete="address-line1"
-              {...form.register("line1")}
-            />
+            {(id) => (
+              <Input
+                id={id}
+                placeholder="123 Main St"
+                autoComplete="address-line1"
+                {...form.register("line1")}
+              />
+            )}
           </Field>
 
           {/* address line 2 (optional) */}
           <Field label="Address line 2" optional>
-            <Input
-              placeholder="Suite, unit, floor"
-              autoComplete="address-line2"
-              {...form.register("line2")}
-            />
+            {(id) => (
+              <Input
+                id={id}
+                placeholder="Suite, unit, floor"
+                autoComplete="address-line2"
+                {...form.register("line2")}
+              />
+            )}
           </Field>
 
           {/* city + postal code */}
           <div className="grid grid-cols-2 gap-3">
             <Field label="City" error={form.formState.errors.city?.message}>
-              <Input
-                placeholder="Berlin"
-                autoComplete="address-level2"
-                {...form.register("city")}
-              />
+              {(id) => (
+                <Input
+                  id={id}
+                  placeholder="Berlin"
+                  autoComplete="address-level2"
+                  {...form.register("city")}
+                />
+              )}
             </Field>
             <Field
               label="Postal code"
               error={form.formState.errors.postalCode?.message}
             >
-              <Input
-                placeholder="10115"
-                autoComplete="postal-code"
-                {...form.register("postalCode")}
-              />
+              {(id) => (
+                <Input
+                  id={id}
+                  placeholder="10115"
+                  autoComplete="postal-code"
+                  {...form.register("postalCode")}
+                />
+              )}
             </Field>
           </div>
 
           {/* state / province (optional) */}
           <Field label="State / province" optional>
-            <Input
-              placeholder="Optional"
-              autoComplete="address-level1"
-              {...form.register("state")}
-            />
+            {(id) => (
+              <Input
+                id={id}
+                placeholder="Optional"
+                autoComplete="address-level1"
+                {...form.register("state")}
+              />
+            )}
           </Field>
 
           {/* use as primary address */}
@@ -559,6 +577,7 @@ function TaxIdSection({
   onHide: () => void;
   form: UseFormReturn<FormData>;
 }) {
+  const taxValueId = useId();
   if (!show) {
     return (
       <button
@@ -575,9 +594,9 @@ function TaxIdSection({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
-        <span className="text-ui-md font-medium text-text-primary">
+        <label htmlFor={taxValueId} className="text-ui-md font-medium text-text-primary">
           Tax ID
-        </span>
+        </label>
         <button
           type="button"
           onClick={onHide}
@@ -619,6 +638,7 @@ function TaxIdSection({
           )}
         />
         <Input
+          id={taxValueId}
           placeholder={taxIdOption(taxType).example}
           autoComplete="off"
           {...form.register("taxValue")}
@@ -647,19 +667,33 @@ function Field({
   label: string;
   optional?: boolean;
   error?: string;
-  children: React.ReactNode;
+  /** A render function receives the `id` its `<label htmlFor>` names, so the label is the
+   * field's accessible name; a plain node (a composite control with no single field) gets the
+   * same text with no association. */
+  children: React.ReactNode | ((id: string) => React.ReactNode);
 }) {
+  const id = useId();
+  const text = (
+    <>
+      {label}
+      {optional && (
+        <span className="font-mono text-ui-2xs uppercase tracking-wide text-text-tertiary">
+          optional
+        </span>
+      )}
+    </>
+  );
+  const labelClass = "flex items-center gap-1.5 text-ui-md font-medium text-text-primary";
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center gap-1.5 text-ui-md font-medium text-text-primary">
-        {label}
-        {optional && (
-          <span className="font-mono text-ui-2xs uppercase tracking-wide text-text-tertiary">
-            optional
-          </span>
-        )}
-      </div>
-      {children}
+      {typeof children === "function" ? (
+        <label htmlFor={id} className={labelClass}>
+          {text}
+        </label>
+      ) : (
+        <div className={labelClass}>{text}</div>
+      )}
+      {typeof children === "function" ? children(id) : children}
       {error && <p className="text-ui-xs text-destructive">{error}</p>}
     </div>
   );

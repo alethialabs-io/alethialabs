@@ -242,6 +242,7 @@ export function InviteMemberDialog({
                       <FormItem className="flex-1">
                         <FormControl>
                           <Input
+                            aria-label={`Email address ${i + 1}`}
                             type="email"
                             placeholder="teammate@company.com"
                             autoFocus={i === 0}

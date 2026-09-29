@@ -639,18 +639,16 @@ function FieldRow({
 		field.type === "bindings" ||
 		field.type === "radio-card" ||
 		field.type === "repository";
+	// The one id both halves of the binding read: the `<Label htmlFor>` here, and the `id` FieldControl
+	// puts on the input it renders.
+	const id = composite ? undefined : fieldId;
 
 	return (
 		<div className={cn("space-y-1.5", full && "col-span-full")}>
-			<Label htmlFor={composite ? undefined : fieldId} className="text-xs">
+			<Label htmlFor={id} className="text-xs">
 				{label}
 			</Label>
-			<FieldControl
-				field={field}
-				ctx={ctx}
-				buffer={buffer}
-				id={composite ? undefined : fieldId}
-			/>
+			<FieldControl field={field} ctx={ctx} buffer={buffer} id={id} />
 			{error ? (
 				// The inline zod error replaces the description while the field is invalid (W4). Grayscale
 				// per the design system — emphasis reads through weight, not hue.

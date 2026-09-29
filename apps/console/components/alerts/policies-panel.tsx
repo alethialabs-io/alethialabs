@@ -501,6 +501,7 @@ function PolicyDetail({
 						</div>
 						{ed ? (
 							<Textarea
+								aria-label="Policy description"
 								rows={2}
 								value={description}
 								onChange={(e) => patch({ description: e.target.value })}

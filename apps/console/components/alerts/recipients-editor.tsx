@@ -92,6 +92,7 @@ export function RecipientsEditor({
 					</span>
 				))}
 				<input
+					aria-label="Add recipient email"
 					value={value}
 					onChange={(e) => {
 						setValue(e.target.value);
