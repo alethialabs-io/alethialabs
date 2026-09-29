@@ -109,3 +109,4 @@ audit trail; git history is the timeline. Parity board:
 | 2026-09-29 | 3d63d36 | aws | floor | **PASS** | aws: ✅ apply(126 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (8/8 asserted)→destroyed(1) | `demos/proofs/aws/20260929T110032Z` | — |
 | 2026-09-29 | 3d63d36 | gcp | floor | **PASS** | gcp: ✅ apply(25 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (4/4 asserted)→destroyed(1) | `demos/proofs/gcp/20260929T102050Z` | — |
 | 2026-09-29 | 3d63d36 | azure | floor | **PASS** | azure: ✅ apply(30 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (4/4 asserted)→destroyed(1) | `demos/proofs/azure/20260929T103904Z` | — |
+| 2026-09-29 | a64083b | hetzner | cli-demo | **PASS** | hetzner: ✅ apply(22 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (4/4 asserted)→destroyed(1) | `demos/proofs/hetzner/20260929T170219Z` | — |

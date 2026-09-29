@@ -1,0 +1,17 @@
+    t2_provision_test.go:143: A0.6: ArgoCD-with-repos ENABLED — apps repo "https://github.com/alethialabs-io/alethia-e2e-apps" + BYO chart repo "https://github.com/alethialabs-io/alethia-e2e-chart" will be wired and asserted
+    t2_provision_test.go:163: #1268: cross-account keyless secrets SKIPPED — set ALETHIA_E2E_SECRETS_XACCT (+ its target vars) to enable.
+    t2_provision_test.go:184: #1773: ACM certificate NOT RUN on hetzner — hetzner: no managed-certificate resource in the template, and no certificate output for the product to consume.
+    t2_provision_test.go:209: #1511: keyless DB auth SKIPPED — set ALETHIA_E2E_KEYLESS_DB (+ its engine vars) to enable.
+    t2_provision_test.go:312: A0.5: seeded console graph (project=7aba176d-190a-425c-aa91-33505da87e51 env=1f127c9a-dc22-451e-925a-60b91870f871) + loaded the hetzner fidelity fixture; enforce=false real_snapshot=false
+    t2_provision_test.go:401: A0.5: no divergence across the 2 key(s) this compares [addons provider] against the hetzner fixture — NOT a statement about the other 33 fixture key(s), which the seed does not carry; addons compared element-wise by id: 1 of 1 [reloader]
+    t2_provision_test.go:711: asserting ArgoCD Applications reach Healthy+Synced: [addon-byo-e2e apps external-secrets-operator metrics-server]
+    t2_provision_test.go:746: A0.6: repo-apps (apps) + repo-byo (addon-byo-e2e) derived + credentialed; converging (BYO auto-syncs, unaided)...
+    t2_provision_test.go:759: A0.6: ArgoCD-with-repos proven — repo-apps + repo-byo Applications Healthy+Synced and managing real resources on real infra
+    t2_provision_test.go:772: all 4 asserted ArgoCD Applications are Healthy+Synced (0 withheld)
+    t2_provision_test.go:829: A0.5: replayed real finalizeDeployment; shim: {"level":"warn","time":"2026-09-29T16:57:55.907Z","job_id":"ee88115f-db9f-4fc4-a828-f076fcba12e1","org_id":"4cc465b6-3d13-5183-a5cc-940e6d4709b5","env_id":"4eb2c3d5-e7e2-4d88-85e2-0ba124e5b802","project_id":"5aaea118-d441-43a3-bff1-028ef1c0d0d6","context":"deploySuccess","expected_from":["PROVISIONING","QUEUED"],"attempted_to":"ACTIVE","msg":"env-status transition rejected (CAS lost race)"}
+    t2_provision_test.go:829: A0.5 WARN (set ALETHIA_E2E_A05_ENFORCE to hard-fail): env status = "QUEUED", want ACTIVE — finalizeDeployment's deploySuccess CAS did not move it
+    t2_provision_test.go:829: A0.5 WARN (set ALETHIA_E2E_A05_ENFORCE to hard-fail): reloader add-on health row absent/empty — finalizeDeployment.recordAddonHealth did not persist real ArgoCD health
+    t2_provision_test.go:861: A0.3 soak: SKIPPED (ALETHIA_E2E_SOAK unset) — base T2 proof unchanged
+--- PASS: TestT2RealCloudProvisioning (909.94s)
+PASS
+ok  	github.com/alethialabs-io/alethialabs/test/e2e	909.950s
