@@ -547,6 +547,9 @@ importers:
       knip:
         specifier: ^6.38.0
         version: 6.38.0
+      prettier:
+        specifier: ^3.9.9
+        version: 3.9.9
       react-email:
         specifier: ^6.9.5
         version: 6.9.5(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
