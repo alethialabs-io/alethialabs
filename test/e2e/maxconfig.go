@@ -541,11 +541,13 @@ var MaxConfigKinds = []MaxConfigKind{
 			case "azure":
 				instanceTypes = []string{"Standard_D2s_v3"}
 			case "hetzner":
-				// cx33 (x86, 4 vCPU/8 GB). NOT a cax* type: those are Ampere ARM, hetznerServerArch
+				// cpx32 (x86, 4 vCPU/8 GB). NOT a cax* type: those are Ampere ARM, hetznerServerArch
 				// flips the whole Talos image to arm64, and a chart shipping an amd64-only image then
 				// CrashLoops — the fleet runner-arch churn class. m5.large used to land here and be
-				// passed straight to hcloud_server.server_type, which is not a Hetzner SKU at all.
-				instanceTypes = []string{"cx33"}
+				// passed straight to hcloud_server.server_type, which is not a Hetzner SKU at all. It was
+				// cx33 until #5069: same shape, but Hetzner lists cx33 as AVAILABLE in no datacenter, so
+				// the capacity preflight refused every run (t2_preflight.go).
+				instanceTypes = []string{"cpx32"}
 			case "alibaba":
 				// ecs.g6.large (2 vCPU/8 GB) — the catalog default, ACK's analogue of e2-standard-2.
 				// m5.large used to land in ack_instance_types, which ACK rejects.
