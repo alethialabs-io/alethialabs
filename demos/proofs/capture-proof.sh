@@ -208,6 +208,32 @@ if [ "${1:-}" = "--self-test" ]; then
 		fails=$((fails + 1))
 	fi
 
+	# 7 · THE RECEIPT A BUNDLE CLAIMS IS THE APPLY'S, NOT THE DRY RUN'S. cli-demo plans before it
+	#     applies, and both sign a receipt; the dry run's comes first in the log. Shape copied from
+	#     run 36560987784's runner log, where `head -1` picked the dry run.
+	printf '%s\n' \
+		'Evidence receipt signed (key dde43f0644284c12, plan sha256 6299b3517874…)' \
+		'Dry-run complete. Plan and cost analysis finished.' \
+		'Evidence receipt signed (key dde43f0644284c12, plan sha256 fa541c3d171d…)' \
+		'Applying OpenTofu changes...' \
+		'Apply complete! Resources: 22 added, 0 changed, 0 destroyed.' \
+		'Evidence receipt signed (key dde43f0644284c12, plan sha256 1aa415750fee…)' \
+		'Applying OpenTofu changes...' \
+		>"$tmp/cli-demo-runner.log"
+	cli_dir="$(ALETHIA_E2E_T2_RUNNER_LOG="$tmp/cli-demo-runner.log" _capture clidemo success "$tmp/pass.json" cli-demo)"
+	_t "the bundle claims the first APPLIED plan, not the dry run's" ".receipt_plan_sha256" "$(_field "$cli_dir" .receipt_plan_sha256)" "fa541c3d171d"
+	# NEGATIVE CONTROL: a log whose only receipt is a dry run has no applied plan to claim.
+	printf '%s\n' \
+		'Evidence receipt signed (key dde43f0644284c12, plan sha256 6299b3517874…)' \
+		'Dry-run complete. Plan and cost analysis finished.' \
+		>"$tmp/dryrun-only.log"
+	dry_dir="$(ALETHIA_E2E_T2_RUNNER_LOG="$tmp/dryrun-only.log" _capture dryonly success "$tmp/pass.json" cli-demo)"
+	case "$(_field "$dry_dir" .receipt_plan_sha256)" in
+		6299b3517874) echo "  ✗ a dry-run-only log claimed the dry run's plan as the applied one" >&2; fails=$((fails + 1)) ;;
+		READ-FAILED) echo "  ✗ the dry-run-only bundle is unreadable — the check above proves nothing" >&2; fails=$((fails + 1)) ;;
+		*) echo "  ✓ a dry-run-only log claims no applied plan" ;;
+	esac
+
 	if [ "$fails" -ne 0 ]; then
 		echo "capture-proof --self-test: $fails assertion(s) FAILED" >&2
 		exit 1
@@ -268,11 +294,24 @@ log_has "ArgoCD ready" && deploy_stage="argocd-ready"
 extract_int() { [ "$have_log" = 1 ] && grep -oE "$1" "$runner_log" | grep -oE '[0-9]+' | head -1 || true; }
 resources_added="$(extract_int 'Apply complete! Resources: [0-9]+ added')"
 resources_destroyed="$(extract_int 'Destroy complete! Resources: [0-9]+ destroyed')"
+# receipt_plan_for_first_apply <log> — prints the plan sha of the first receipt that an APPLY
+# followed. The first receipt in the log is not that: cli-demo runs `alethia plan --wait` before
+# `apply`, and the dry run signs a receipt too ("Dry-run complete." follows it, never "Applying").
+# Taking `head -1` reported that dry-run plan as the one this bundle proves, while the DEPLOY-job
+# receipt pulled below attested the real apply, so check-proof-integrity.sh refused the first
+# green cli-demo bundle (run 36560987784: dry run 6299b3517874, apply fa541c3d171d).
+receipt_plan_for_first_apply() {
+	awk '
+		/Evidence receipt signed/ { if (match($0, /plan sha256 [0-9a-f]+/)) { s = substr($0, RSTART + 12, RLENGTH - 12) } ; next }
+		/Dry-run complete/ { s = ""; next }
+		/Applying OpenTofu changes/ { if (s != "") { print s; exit } }
+	' "$1" 2>/dev/null || true
+}
 receipt_signed=false
 receipt_plan_sha=""
 if log_has "Evidence receipt signed"; then
 	receipt_signed=true
-	receipt_plan_sha="$(grep -oE 'plan sha256 [0-9a-f]+' "$runner_log" | grep -oE '[0-9a-f]+$' | head -1 || true)"
+	receipt_plan_sha="$(receipt_plan_for_first_apply "$runner_log")"
 fi
 destroyed=false
 log_has "Destroy complete!" && destroyed=true
