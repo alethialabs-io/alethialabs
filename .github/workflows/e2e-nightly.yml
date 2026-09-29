@@ -103,6 +103,10 @@ on:
         description: "CLI-DEMO GRID (#4227). Requires dimension=cli-demo; IGNORES `provider`. Runs hetzner → aws → gcp → azure ONE AT A TIME and stops at the first red leg (a later leg is cancelled before it buys anything). Each managed leg proves the E2E assertion broker path before any spend, and green-skips while that cloud's broker trust is not wired (vars.E2E_ISSUER_URL + E2E_ISSUER_GITHUB_AUDIENCE, and on gcp E2E_GCP_BROKER_WIF_AUDIENCE). Alibaba is excluded by maintainer ruling. Dispatch from dev: the broker admits e2e-nightly.yml@refs/heads/dev only."
         type: boolean
         default: false
+      fabric_demo:
+        description: "FABRIC DEMO (#845) for THIS RUN ONLY. Same effect as setting vars.E2E_FABRIC_DEMO, without the variable: a repo variable reaches every later run, including the scheduled nightly on main (the 2026-09-25 leak ran fabric on all four clouds). A dispatch input dies with the run. The variable still works as the maintainer's standing switch."
+        type: boolean
+        default: false
       full_bar:
         description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws/gcp/azure; hetzner and alibaba are guarded by a pre-apply shape control instead (server-type cap; prepaid refusal). Dispatch one cloud at a time and watch it."
         type: boolean
@@ -339,7 +343,7 @@ jobs:
     # 180 → 195 (fabric 275 → 290) with the managed teardown window's 30m → 45m, measured on
     # aws/floor run 33155063965. Same rule as every other move here: the ladder rung moved, so its
     # outermost backstop moves with it, and the offline guard is what said so.
-    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 300 || 205 }}
+    timeout-minutes: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '') && 300 || 205 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -746,7 +750,7 @@ jobs:
           PROVIDER: ${{ matrix.provider }}
           # Read here, not only in the T2 step, because the fabric demo needs a BIGGER POOL and the
           # shape is decided here. See the demo branch below.
-          E2E_FABRIC_DEMO: ${{ vars.E2E_FABRIC_DEMO }}
+          E2E_FABRIC_DEMO: ${{ inputs.fabric_demo && '1' || vars.E2E_FABRIC_DEMO }}
         run: |
           # NET = per-provider network-block override (t2MergeNetworkJSON → snapshot `network`).
           # AWS folds single_nat_gateway=true into the FULL snapshot (one NAT vs one-per-AZ ≈ halves
@@ -1557,7 +1561,7 @@ jobs:
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 285 || 190 }}
+        timeout-minutes: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '') && 285 || 190 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -1684,7 +1688,7 @@ jobs:
           #    E2E_FABRIC_DEMO is the only variable a maintainer must set to turn it on. UNSET ⇒
           #    empty ⇒ a clean skip, so these lines change nothing until then. Real-apply is
           #    main-gated, so this exercises meaningfully only from `main`. ──
-          ALETHIA_E2E_FABRIC_DEMO: ${{ vars.E2E_FABRIC_DEMO }}
+          ALETHIA_E2E_FABRIC_DEMO: ${{ inputs.fabric_demo && '1' || vars.E2E_FABRIC_DEMO }}
           ALETHIA_E2E_FABRIC_DEMO_REPO: ${{ vars.E2E_FABRIC_DEMO_REPO }}
           ALETHIA_E2E_FABRIC_DEMO_OVERLAYS: ${{ vars.E2E_FABRIC_DEMO_OVERLAYS }}
           ALETHIA_E2E_FABRIC_DEMO_VCLUSTER: ${{ vars.E2E_FABRIC_DEMO_VCLUSTER }}
@@ -2050,7 +2054,7 @@ jobs:
           #    $300 it would be refused on every gcp/azure/aws leg (PR #4977 review). `!= ''` is the
           #    same test the job/step caps use. ──
           INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
-          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || matrix.provider == 'gcp' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_GCP_COST_CEILING_FULL_USD || '600') || (vars.E2E_GCP_COST_CEILING_USD || '300')) || matrix.provider == 'azure' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_AZURE_COST_CEILING_FULL_USD || '600') || (vars.E2E_AZURE_COST_CEILING_USD || '300')) || '' }}
+          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && ((env.E2E_HEAVY_SHAPE == 'true' || (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '')) && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || matrix.provider == 'gcp' && ((env.E2E_HEAVY_SHAPE == 'true' || (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '')) && (vars.E2E_GCP_COST_CEILING_FULL_USD || '600') || (vars.E2E_GCP_COST_CEILING_USD || '300')) || matrix.provider == 'azure' && ((env.E2E_HEAVY_SHAPE == 'true' || (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '')) && (vars.E2E_AZURE_COST_CEILING_FULL_USD || '600') || (vars.E2E_AZURE_COST_CEILING_USD || '300')) || '' }}
           # ── Pre-apply SHAPE controls for the clouds Infracost cannot price (#2385). Read by the
           #    runner (stage.go spendPolicyFromEnv) and enforced after the plan, before the apply.
           #
@@ -2125,8 +2129,8 @@ jobs:
           # this offline on every PR, across every cloud x dimension, and additionally holds these
           # two to being the SAME expressions as the `timeout-minutes:` above — which the
           # "if you change one, change both" instruction asked for and nothing enforced.
-          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 285 || 190 }}
-          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 300 || 205 }}
+          T2_STEP_CAP_MINUTES: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '') && 285 || 190 }}
+          T2_JOB_CAP_MINUTES: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '') && 300 || 205 }}
           # Where the go-test stream is teed so capture-proof.sh can put the ASSERTIONS in the
           # committed bundle. ALETHIA_E2E_T2_RUNNER_LOG above is the RUNNER's deployment log — a
           # different stream, which carries no `--- PASS` and no A0.x decision lines.
