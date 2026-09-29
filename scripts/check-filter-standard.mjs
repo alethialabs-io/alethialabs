@@ -389,7 +389,10 @@ export function readConsole(io) {
  * @property {string} symbol   the exported store hook, e.g. `useTeamsFilters`
  * @property {string} file     the store module, repo-relative
  * @property {string} factory  what created it — `createFilterStore` or a bare `create`
- * @property {string[]} consumers modules naming `symbol`, excluding the store module
+ * @property {string[]} consumers modules naming `symbol`, excluding the store module, plus the two
+ *   hops below — the NEIGHBOURHOOD the per-surface predicates read
+ * @property {string[]} namers the subset of `consumers` whose own text names `symbol` — the only
+ *   modules whose presence in a page closure means the page CONSUMES this store (see `ownedSurfaces`)
  */
 
 /**
@@ -409,7 +412,7 @@ export function deriveSurfaces(sources) {
 		if (path.dirname(file) !== STORE_DIR || !STORE_FILE.test(path.basename(file))) continue;
 		const re = /export const (use\w+)\s*=\s*(createFilterStore|create)\b/g;
 		let m;
-		while ((m = re.exec(text)) !== null) surfaces.push({ symbol: m[1], file, factory: m[2], consumers: [] });
+		while ((m = re.exec(text)) !== null) surfaces.push({ symbol: m[1], file, factory: m[2], consumers: [], namers: [] });
 	}
 	/** @type {Map<string, Surface>} */
 	const bySymbol = new Map();
@@ -425,6 +428,9 @@ export function deriveSurfaces(sources) {
 			if (file === s.file) continue;
 			if (new RegExp(`\\b${s.symbol}\\b`).test(text)) s.consumers.push(file);
 		}
+		// Taken BEFORE either hop below: a hop module is evidence for the predicates, never proof
+		// that a page reaching it consumes this store. `ownedSurfaces` reads this list (#5066).
+		s.namers = [...s.consumers].sort();
 		// ONE HOP, into the surface's OWN query hook and nothing else.
 		//
 		// Why a hop at all: `lib/query/README.md`'s table puts the per-resource hooks in
@@ -840,8 +846,18 @@ export function deriveUrlParams(surface, sources) {
 }
 
 /**
- * The surfaces a route OWNS: its page closure reaches both the store module and a module that
- * names the store's symbol.
+ * The surfaces a route OWNS: its page closure reaches both the store module and a module whose OWN
+ * TEXT names the store's symbol — a `namer`, never a module one of the two hops added.
+ *
+ * The hops are the per-surface predicates' neighbourhood, and they are the wrong question here —
+ * measured (#5066): the query-hook hop adds `lib/query/use-activity-query.ts` to `useActivityFilters`,
+ * and that module is reached by every settings page whose closure touches the settings store module
+ * (it also exports `useMembersQuery`). Admitting it handed a phantom `useActivityFilters` to
+ * invoices, members, roles, sso, teams and both access routes, none of which renders an activity
+ * bar, and the live F10 pass then expected a `FilterSearch` on invoices that cannot exist. A hop
+ * module does not name the store, so reaching it is not consuming it; a namer that the page
+ * reaches is. The view-hook hop loses nothing by this: the module that DEFINES the view hook names
+ * the symbol in that hook's body, so it is a namer and is in the importing page's closure too.
  *
  * ONE definition, used by the static route join below AND by `apps/console/scripts/audit-report.mjs
  * --filter-surfaces`, which hands the live F8–F10 pass its subject set. Two copies of "which
@@ -853,7 +869,7 @@ export function deriveUrlParams(surface, sources) {
  * @returns {Surface[]}
  */
 export function ownedSurfaces(surfaces, closure) {
-	return surfaces.filter((s) => closure.has(s.file) && s.consumers.some((c) => closure.has(c)));
+	return surfaces.filter((s) => closure.has(s.file) && s.namers.some((c) => closure.has(c)));
 }
 
 // ── the predicates ───────────────────────────────────────────────────────────────────────────
@@ -1276,7 +1292,8 @@ export function scan(io, undriven = F7_UNDRIVEN, debt = FILTER_STANDARD_DEBT, fl
  * Family F's verdicts, per route.
  *
  * A route OWNS a surface when its page closure reaches both the surface's store module and at
- * least one module that names the surface's symbol. Both halves are needed and the second is what
+ * least one module that names the surface's symbol — `ownedSurfaces()`, which reads the NAMERS and
+ * not the hop-widened neighbourhood (#5066). Both halves are needed and the second is what
  * makes the join usable: seven settings surfaces share one store module, so the module alone
  * would hand all seven to every settings route.
  *
@@ -1710,6 +1727,35 @@ export function positiveControl() {
 		problems.push("a list page whose closure reaches NO facet-bearing builder did not FAIL F7.");
 	}
 
+	// Ownership reads the NAMERS, not the hop-widened neighbourhood (#5066). The fixture's client
+	// imports its own query hook, which does not name the store; the hop must admit that hook to
+	// the neighbourhood (else this control proves nothing) and a page reaching only the store
+	// module and that hook must NOT own the surface — the settings pages' phantom
+	// `useActivityFilters`, in miniature.
+	const HOP = "apps/console/lib/query/use-widgets-query.ts";
+	const hopped = scan(
+		fixtureIo({
+			[CLIENT]: `import { useWidgetsQuery } from '@/lib/query/use-widgets-query';\n${clean.readFile(CLIENT)}`,
+			[HOP]: "export function useWidgetsQuery(q) { return q; }\nexport function useOtherQuery() { return null; }",
+		}),
+		{},
+		{},
+		NO_FLOORS,
+	);
+	const hopSurface = hopped.surfaces.find((s) => s.symbol === "useWidgetFilters");
+	if (hopSurface === undefined || !hopSurface.consumers.includes(HOP) || hopSurface.namers.includes(HOP)) {
+		problems.push(
+			`the ownership control's premise failed — the query hook should be a hop CONSUMER and not a NAMER: ${JSON.stringify(hopSurface)}`,
+		);
+	} else {
+		if (ownedSurfaces(hopped.surfaces, new Set([STORE, HOP])).length !== 0) {
+			problems.push("a page reaching only the store module and a HOP module owned the surface — the phantom-surface defect of #5066.");
+		}
+		if (ownedSurfaces(hopped.surfaces, new Set([STORE, CLIENT])).length !== 1) {
+			problems.push("a page reaching the store module and a module that NAMES the store did not own the surface.");
+		}
+	}
+
 	return problems;
 }
 
@@ -1760,6 +1806,7 @@ function main() {
 						file: s.file,
 						factory: s.factory,
 						consumers: s.consumers,
+						namers: s.namers,
 						// The URL half, for the live F8–F10 pass: every param this surface's
 						// `useFilterUrlSync` call writes, and which of them is the free-text one.
 						params: scanned.urlParams[s.symbol]?.params ?? [],
