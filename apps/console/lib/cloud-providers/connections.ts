@@ -368,7 +368,12 @@ async function loadIdentity(scope: ConnScope, identityId: string) {
 
 // --- AWS ---
 
-const ARN_REGEX = /^arn:aws:iam::(\d{12}):role\/[\w+=,.@-]+$/;
+// A role may live under an IAM PATH — `role/alethia-e2e/alethia-e2e-nightly` — and AWS returns the
+// path as part of the ARN. The old `role\/[\w+=,.@-]+$` refused every such role, which is what
+// failed the aws cli-demo leg (run 36599467921) at `connector aws`. The path is matched as
+// non-empty segments, so `role//x` and a trailing `/` are still refused. Partitions other than
+// `aws` stay refused here; packages/core/cloud/aws/tenant_identity.go's roleARNRe is the wider one.
+const ARN_REGEX = /^arn:aws:iam::(\d{12}):role\/(?:[\w+=,.@-]+\/)*[\w+=,.@-]+$/;
 
 /**
  * Validates an AWS IAM Role ARN and extracts its 12-digit account id. Throws on a
