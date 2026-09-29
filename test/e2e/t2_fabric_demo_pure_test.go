@@ -50,24 +50,52 @@ func TestFabricDemoSlug(t *testing.T) {
 	}
 }
 
-func TestFabricDemoVClusterSlugIsDisjoint(t *testing.T) {
-	const env = "run-1"
-	got := fabricDemoVClusterSlug(env)
+// TestFabricDemoVClusterDeploysIntoTheOverlaysNamespace pins the cause of run 36634781502's vcluster
+// tier sitting at health=Missing sync=OutOfSync: the snapshot's `namespace` is the in-vcluster
+// destination namespace (the ONE namespace CreateNamespace=true creates), so it must be the
+// namespace the overlay stamps on every resource — never a run-scoped slug.
+func TestFabricDemoVClusterDeploysIntoTheOverlaysNamespace(t *testing.T) {
+	tiers, err := fabricDemoTiers("run-1", "hetzner")
+	if err != nil {
+		t.Fatalf("tiers: %v", err)
+	}
+	vcTier, err := fabricDemoVClusterTier("hetzner", tiers)
+	if err != nil {
+		t.Fatalf("vcluster tier: %v", err)
+	}
+	p := fabricDemoParams{project: "shop", env: "run-1", provider: "hetzner", region: "nbg1", fabricClust: "fabric", owner: "o"}
+	vp, err := fabricDemoVClusterParams(p, vcTier, fabricDemoDefaultRepo)
+	if err != nil {
+		t.Fatalf("params: %v", err)
+	}
+	snap := buildVClusterSnapshot(vp, vclusterTenantName(vp))
+	if got := snap["namespace"]; got != vcTier.Namespace {
+		t.Fatalf("vcluster snapshot namespace = %v, want %q — the overlay %s stamps every resource into %q and ships no Namespace; ArgoCD's CreateNamespace creates only destination.namespace, so any other value leaves the sync asking an empty vcluster for a namespace that does not exist",
+			got, vcTier.Namespace, fabricDemoOverlayPath(vcTier.Tier), vcTier.Namespace)
+	}
+	repos, _ := snap["repositories"].(map[string]any)
+	if repos["apps_path"] != fabricDemoOverlayPath(vcTier.Tier) {
+		t.Fatalf("vcluster apps_path = %v, want %q", repos["apps_path"], fabricDemoOverlayPath(vcTier.Tier))
+	}
 
-	// #845 places its own vcluster inside the SAME Fabric lifetime as #1308's. Identical names would
+	// #845 places its vcluster inside the SAME Fabric lifetime as #1308's. Identical names would
 	// have the two scenarios helm-install over each other and destroy each other's registration.
-	if got == vclusterTenantSlug(env) {
-		t.Fatalf("fabric-demo vcluster %q collides with #1308's %q", got, vclusterTenantSlug(env))
+	if vp.vcName == vclusterTenantSlug(p.env) {
+		t.Fatalf("fabric-demo vcluster %q collides with #1308's", vp.vcName)
 	}
-	if got == namespaceTenantSlug(env) {
-		t.Fatalf("fabric-demo vcluster %q collides with #959's namespace", got)
+}
+
+func TestFabricDemoVClusterNameBounds(t *testing.T) {
+	if _, err := fabricDemoVClusterName(fabricDemoOverlayTier{Tier: "staging"}); err == nil {
+		t.Fatal("a tier with no namespace must be refused, not named")
 	}
-	// The host namespace is `vcluster-<name>` (prefix adds 9), which must still fit 63.
-	if len(got) > 54 {
-		t.Fatalf("vcluster name %q is %d chars — `vcluster-` + it would exceed the 63-char namespace limit", got, len(got))
+	// `vcluster-` (9) + name must fit the 63-char namespace limit.
+	long := fabricDemoOverlayTier{Tier: "staging", Namespace: strings.Repeat("a", 55)}
+	if _, err := fabricDemoVClusterName(long); err == nil {
+		t.Fatal("a 55-char namespace must be refused as a vcluster name")
 	}
-	if len(fabricDemoVClusterSlug(strings.Repeat("longenv", 20))) > 54 {
-		t.Fatal("a long env must still be bounded to 54 chars")
+	if _, err := fabricDemoVClusterName(fabricDemoOverlayTier{Tier: "staging", Namespace: "Bad_NS"}); err == nil {
+		t.Fatal("a non-RFC-1123 namespace must be refused")
 	}
 }
 
