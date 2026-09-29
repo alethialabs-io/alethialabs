@@ -801,12 +801,11 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	// placement on hetzner — a dedicated apply produces its own `kubeconfig` output and needs no mint.
 	talosConfig := ""
 	if provider == "hetzner" && isTalosPlacementMode(vc.PlacementMode) {
-		if fetched, fetchErr := w.api.FetchFabricTalosconfig(job.ID); fetchErr != nil {
-			// Fail-safe: proceed; the placement's mint path fails closed if the config is truly absent.
-			fmt.Fprintf(stderr, "Warning: failed to fetch Fabric talosconfig: %v\n", fetchErr)
-		} else {
-			talosConfig = fetched
+		fetched, fetchErr := fetchPlacementTalosconfig(w.api, job.ID)
+		if fetchErr != nil {
+			return fetchErr
 		}
+		talosConfig = fetched
 	}
 
 	sec := stageSecrets{GitToken: gitToken, GitTokens: gitTokens, StateToken: stateBackend.Token, AddonSecrets: addonSecrets, TalosConfig: talosConfig}
@@ -859,9 +858,37 @@ func isTalosPlacementMode(pm types.PlacementMode) bool {
 	return pm == types.PlacementModeNamespace || pm == types.PlacementModeVcluster
 }
 
+// fetchPlacementTalosconfig fetches the Fabric's persisted admin talosconfig for a hetzner
+// namespace/vcluster placement and fails the placement CLOSED, naming the real cause, when it cannot.
+//
+// Talos has no cloud API to re-mint kube access, so without this credential the placement cannot reach
+// its Fabric at all. It used to warn and proceed, and the stage then failed much later in
+// mintClusterOutputs with "none was provided — this is a runner wiring bug", which named neither the
+// failed fetch nor the Fabric that never persisted a talosconfig (#845, run 36626677124). The talosconfig
+// itself is never placed in either error.
+func fetchPlacementTalosconfig(api JobAPI, jobID string) (string, error) {
+	fetched, err := api.FetchFabricTalosconfig(jobID)
+	if err != nil {
+		return "", fmt.Errorf("hetzner placement cannot reach its Fabric: fetching the Fabric's persisted admin talosconfig failed: %w", err)
+	}
+	if strings.TrimSpace(fetched) == "" {
+		return "", fmt.Errorf("hetzner placement cannot reach its Fabric: the Fabric has no persisted admin talosconfig — the dedicated deploy that provisioned it did not write it back (look for %q in that deploy's log); redeploying the Fabric persists it", talosWriteBackFailedMarker)
+	}
+	return fetched, nil
+}
+
+// talosWriteBackFailedMarker opens the line a dedicated hetzner deploy logs when the Fabric's admin
+// talosconfig could not be persisted. A placement that finds no talosconfig quotes it, so the reader is
+// sent to the deploy that actually failed.
+const talosWriteBackFailedMarker = "ERROR: the Fabric's admin talosconfig was NOT persisted"
+
 // writeBackTalosconfig reads the completed dedicated apply's talosconfig output and persists it to the
-// console (encrypted at rest there). Best-effort: a missing output or a post failure just logs — the
-// Fabric provisioned fine; only future placements onto it would then lack kube access (and fail closed).
+// console (encrypted at rest there). A missing output is silent (not every hetzner apply is a Talos
+// Fabric). A failed post does NOT fail the deploy, deliberately: the console refuses the write-back with a
+// 409 for an environment not (yet) linked to a Fabric (createProject inserts fabric_id NULL and a backfill
+// links it later), and such an environment has no placements to protect, so failing it would turn a
+// working deploy red. Instead it logs an unmistakable ERROR naming the consequence, and a later placement
+// that finds no talosconfig quotes that line (fetchPlacementTalosconfig) instead of failing obscurely.
 func (w *Runner) writeBackTalosconfig(jobID, workDir string, stderr *JobLogger) {
 	result, err := readPlanResult(workDir)
 	if err != nil || result == nil {
@@ -872,7 +899,7 @@ func (w *Runner) writeBackTalosconfig(jobID, workDir string, stderr *JobLogger) 
 		return
 	}
 	if err := w.api.PutFabricTalosconfig(jobID, talos); err != nil {
-		fmt.Fprintf(stderr, "Warning: failed to persist Fabric talosconfig for placement re-mint: %v\n", err)
+		fmt.Fprintf(stderr, "%s (%v): every namespace/vcluster placement onto this Fabric will fail until a redeploy persists it\n", talosWriteBackFailedMarker, err)
 	}
 }
 
