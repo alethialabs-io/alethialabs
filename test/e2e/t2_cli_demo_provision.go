@@ -38,6 +38,7 @@ package e2e
 // performed would be claiming the one thing it cannot do.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -100,6 +101,12 @@ type CLIDemoRun struct {
 	// context kills it, reporting as "the CLI cannot reach apply" when the truth is that nobody
 	// answered it.
 	RunnerID string
+	// GitOps holds the A0.6 repo coordinates the `apps-repo` and `chart-attach` beats wire into the
+	// project (#5109): the apps-destination repo and the BYO chart. They come from the same
+	// t2ArgoReposFromEnv the seeded path's applyToSnapshot reads, so the two paths wire the same
+	// repos and the spine's A0.6 assertions address the same Application and Secret names on both.
+	// ResolveCLIDemoRun sets it and refuses the run when the inputs are not wired.
+	GitOps t2ArgoRepos
 }
 
 // CLIDemoPhase says WHERE in the provisioning spine a beat can run. It exists because the demo's
@@ -187,13 +194,13 @@ var cliDemoNotDriven = map[string]string{
 		"authenticates with a service token this job minted, so the step is performed by a different " +
 		"mechanism than a prospect would use — recorded rather than counted.",
 
-	// The BYO surfaces. Each needs a customer fixture repo, and each already has a dimension that
-	// proves it end to end with those fixtures wired. Re-driving them here would buy the same proof
-	// through a different actor while doubling the fixtures this dimension depends on.
-	"chart-attach": "a customer Helm chart needs the A0.6 fixture repos, which the `gitops` dimension " +
-		"wires and proves (E2E_ARGO_BYO_CHART_*). Driving it here would duplicate that dimension's " +
-		"fixture surface without proving anything new about the CLI as the actor.",
-	"chart-scan": "same fixture surface as chart-attach — proven by the `gitops` dimension.",
+	// The BYO surfaces. `chart-attach` IS driven (#5109): the nightly runs A0.6 on this leg too, and
+	// on the CLI path nothing but the CLI can put the BYO chart into the project. The rest each need
+	// their own fixture and already have a dimension that proves them end to end.
+	"chart-scan": "`chart attach` already queues the scan itself (attachByoChart calls scanByoChart), so " +
+		"a scan beat would put a second CHART_SCAN job in front of the PLAN. Its verdict would also never " +
+		"be recorded here: finalizeChartScan runs in the console's job-status route, and this harness's " +
+		"runner reports to the Go shim instead. The deploy does not gate on it.",
 	"iac": "the BYO-IaC custody chain is the `byo-iac` dimension's whole assertion (a customer " +
 		"OpenTofu root refused when unsafe, applied through the state proxy, drifted, healed, " +
 		"destroyed, state cleared). It needs its own fixture module and its own budget.",
@@ -333,6 +340,57 @@ var CLIDemoBeats = []CLIDemoBeat{
 		After: assertManifestPlanIsClean,
 		Why: "`alethia plan` over the file `alethia init` just wrote must find the project ALREADY " +
 			"there — the commands and the file describe one project, or they describe two.",
+	},
+	// ── THE TWO A0.6 REPOS (#5109). On the seeded path t2ArgoRepos.applyToSnapshot writes both
+	//    into the job row. Here the console builds the snapshot from what the CLI authored, so
+	//    unless a beat wires them the deploy correctly derives no `apps` Application. Run 36141504059
+	//    got that far: deploy SUCCESS, then A0.6 red on "apps" missing.
+	//
+	//    Both come AFTER manifest-plan on purpose. That beat asserts the file `init` wrote and the
+	//    project the commands built are the same shape, and neither beat below is something `init`
+	//    writes. Both come BEFORE the enqueue phase, because the PLAN and the DEPLOY snapshot what
+	//    exists when they are enqueued. ──
+	{
+		StepID: "apps-repo",
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			return []string{
+				"project", "component", "add", "--project", r.ProjectID, "--kind", "repositories",
+				"--env", r.EnvName, "--set", "apps_destination_repo=" + r.GitOps.appsRepo, "--no-input",
+			}
+		},
+		ReadBack: func(r *CLIDemoRun) []string {
+			return []string{
+				"project", "component", "list", "--project", r.ProjectID, "--env", r.EnvName,
+				"--kind", "repositories", "--output", "json", "--no-input",
+			}
+		},
+		After: assertAppsRepoWired,
+		Why: "the `repositories` singleton is what buildConfigSnapshot emits as " +
+			"repositories.apps_destination_repo, which is what makes the runner render the `apps` " +
+			"app-of-apps and its `repo-apps` credential.",
+	},
+	{
+		StepID: "chart-attach",
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			// The id is the seeded path's byoAddonID, so the spine's A0.6 assertions address
+			// `addon-byo-e2e` and `repo-byo-<hash>` on both paths without a second set of names.
+			return []string{
+				"chart", "attach", byoAddonID, "--project", r.ProjectID, "--env", r.EnvName,
+				"--repo", r.GitOps.byoChartRepo, "--chart-path", r.GitOps.byoChartPath,
+				"--ref", r.GitOps.byoRevision, "--namespace", r.GitOps.byoNamespace, "--no-input",
+			}
+		},
+		ReadBack: func(r *CLIDemoRun) []string {
+			return []string{
+				"chart", "list", "--project", r.ProjectID, "--env", r.EnvName, "--output", "json", "--no-input",
+			}
+		},
+		After: assertByoChartAttached,
+		Why: "a `source='byo'` project_addons row, which resolveByoChartInstall renders as the same " +
+			"managed git-source add-on the seeded path appends. The attach also queues a CHART_SCAN, " +
+			"which the runner claims once it starts. The deploy does not wait for its verdict.",
 	},
 	{
 		StepID: "staged",
@@ -498,6 +556,111 @@ func assertManifestPlanIsClean(r *CLIDemoRun, out string) error {
 			"declares:\n%s", wantSummary, out)
 	}
 	return nil
+}
+
+// assertAppsRepoWired is the `apps-repo` beat's read-back: the run's environment holds a
+// `repositories` component whose apps_destination_repo is EXACTLY the repo the beat set (#5109).
+//
+// Exact equality, because this is the value the runner derives the `apps` Application and the
+// `repo-apps` credential from. A normalised or truncated URL would get past this check and fail
+// later as an A0.6 convergence timeout, after the cluster has been paid for.
+func assertAppsRepoWired(r *CLIDemoRun, out string) error {
+	want := r.GitOps.appsRepo
+	if want == "" {
+		return fmt.Errorf("the run carries no apps repo, so there was nothing to wire; ResolveCLIDemoRun should have refused before any beat ran")
+	}
+	start := strings.Index(out, "[")
+	end := strings.LastIndex(out, "]")
+	if start == -1 || end <= start {
+		return fmt.Errorf("`project component list --output json` produced no JSON array:\n%s", out)
+	}
+	var comps []struct {
+		Kind   string         `json:"kind"`
+		Config map[string]any `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &comps); err != nil {
+		return fmt.Errorf("parsing the component list: %w\n%s", err, out)
+	}
+	for _, c := range comps {
+		if c.Kind != "repositories" {
+			continue
+		}
+		got, _ := c.Config["apps_destination_repo"].(string)
+		if got != want {
+			return fmt.Errorf("environment %q stores apps_destination_repo %q, want %q. The deploy renders "+
+				"the `apps` Application from the stored value, so A0.6 would assert a repo the beat did not set",
+				r.EnvName, got, want)
+		}
+		return nil
+	}
+	return fmt.Errorf("`project component add --kind repositories` succeeded, but environment %q lists no "+
+		"repositories component. The deploy would render no `apps` Application, and A0.6 would fail after "+
+		"the cluster was bought:\n%s", r.EnvName, out)
+}
+
+// assertByoChartAttached is the `chart-attach` beat's read-back: the run's environment holds the
+// BYO chart under the seeded id with the coordinates the beat sent (#5109).
+//
+// Every coordinate is compared, not just the id. The runner renders the Application from repo,
+// path and ref, and the credential Secret's name is a hash of the repo URL. So any rewritten field
+// would produce a different Application or a different Secret, and the spine's A0.6 assertions,
+// which address them by the seeded names, would fail only after the cluster was bought.
+func assertByoChartAttached(r *CLIDemoRun, out string) error {
+	g := r.GitOps
+	if g.byoChartRepo == "" {
+		return fmt.Errorf("the run carries no BYO chart repo, so there was nothing to attach; ResolveCLIDemoRun should have refused before any beat ran")
+	}
+	start := strings.Index(out, "{")
+	end := strings.LastIndex(out, "}")
+	if start == -1 || end <= start {
+		return fmt.Errorf("`chart list --output json` produced no JSON object:\n%s", out)
+	}
+	var view struct {
+		Environment string `json:"environment"`
+		Charts      []struct {
+			ID        string `json:"id"`
+			RepoURL   string `json:"repo_url"`
+			ChartPath string `json:"chart_path"`
+			Ref       string `json:"ref"`
+			Namespace string `json:"namespace"`
+		} `json:"charts"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &view); err != nil {
+		return fmt.Errorf("parsing the chart list: %w\n%s", err, out)
+	}
+	if view.Environment != r.EnvName {
+		return fmt.Errorf("`chart list --env %s` answered for environment %q. The chart would be attached "+
+			"to a tier the deploy does not build", r.EnvName, view.Environment)
+	}
+	for _, c := range view.Charts {
+		if c.ID != byoAddonID {
+			continue
+		}
+		var diffs []string
+		for _, f := range []struct{ name, got, want string }{
+			{"repo_url", c.RepoURL, g.byoChartRepo},
+			{"chart_path", c.ChartPath, g.byoChartPath},
+			{"ref", c.Ref, g.byoRevision},
+			{"namespace", c.Namespace, g.byoNamespace},
+		} {
+			if f.got != f.want {
+				diffs = append(diffs, fmt.Sprintf("%s=%q (want %q)", f.name, f.got, f.want))
+			}
+		}
+		if len(diffs) > 0 {
+			return fmt.Errorf("chart %q is stored with %s. The deploy renders %s from the stored "+
+				"values, so A0.6 would assert a chart the beat did not attach", byoAddonID,
+				strings.Join(diffs, ", "), g.byoAppName())
+		}
+		return nil
+	}
+	ids := make([]string, 0, len(view.Charts))
+	for _, c := range view.Charts {
+		ids = append(ids, c.ID)
+	}
+	return fmt.Errorf("`chart attach %s` succeeded, but environment %q lists no chart with that id "+
+		"(listed: %v). The server keeps an id that is already a slug unchanged, so a different id means "+
+		"the attach went somewhere else:\n%s", byoAddonID, r.EnvName, ids, out)
 }
 
 // cliDemoConnectorFlags is the NON-INTERACTIVE invocation of `connector <cloud>`, per cloud.

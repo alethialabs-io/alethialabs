@@ -1502,6 +1502,10 @@ jobs:
           # is 5; 1 is the smallest value `make_interval(mins => …)` accepts. The beats wait for the
           # settle either way (awaitCLIDemoEnvSettled); this only makes the wait short.
           ALETHIA_CONVERGE_MIN_AGE_MINUTES: "1"
+          # The `chart-attach` beat wires the A0.6 BYO chart through `alethia chart attach` (#5109).
+          # attachByoChart refuses with a 501 unless this is on (lib/addons/byo-flag.ts). The seeded
+          # path never needed it, because it writes the chart into the job row and skips the console.
+          ALETHIA_BYO_HELM_ENABLED: "true"
           # ── THE CONSOLE'S ASSERTION SOURCE (#4227). With these two set, every assertion this
           #    console presents to a cloud — the connector's inline probe included — comes from the
           #    E2E assertion broker (apps/console/lib/oidc/assertion-source.ts), authenticated with a
