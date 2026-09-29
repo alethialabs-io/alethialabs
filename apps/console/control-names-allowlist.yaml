@@ -35,8 +35,8 @@
 # Fields: `path` (repo-relative, as the check prints it; one entry per file per section), `hits`
 # (occurrences covered — exact, both directions), and ONE of `reason:` / `lifts:`.
 
-baseline: 1
-debt: 40
+baseline: 4
+debt: 0
 
 floors:
   # The minimum the scan must have READ, so a walker, a root or a tag list that quietly stopped
@@ -57,125 +57,14 @@ control_name:
     reason: PromptInputButton is a pass-through — it renders nothing of its own, and every caller's children, aria-label and tooltip arrive through the spread, which is where each of those callers is named.
 
 clickable_role:
-  - path: apps/console/components/agent/widgets/bodies/tables.tsx
-    hits: 2
-    lifts: "#5056 a clickable non-control (table row / sortable header / rail row) announced as nothing and reached by no key"
-  - path: apps/console/components/classification/dimension-rail.tsx
-    hits: 1
-    lifts: "#5056 a clickable non-control (table row / sortable header / rail row) announced as nothing and reached by no key"
-  - path: apps/console/components/data-table.tsx
-    hits: 2
-    lifts: "#5056 a clickable non-control (table row / sortable header / rail row) announced as nothing and reached by no key"
-  - path: apps/console/components/evidence/evidence-table.tsx
-    hits: 1
-    lifts: "#5056 a clickable non-control (table row / sortable header / rail row) announced as nothing and reached by no key"
 
 field_label:
-  - path: apps/console/components/addons/addon-config-card.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/agent/agent-knowledge-panel.tsx
-    hits: 3
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/agent/elench/elench-conversation-switcher.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/agent/thread-rail.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/agent/widgets/artifact-controls.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/ai-elements/prompt-input.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/alerts/channels-panel.tsx
-    hits: 3
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/alerts/policies-panel.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/alerts/recipients-editor.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/alerts/throttle-field.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/auth/onboarding-form.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/billing/billing-checkout-form.tsx
-    hits: 7
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
   - path: apps/console/components/billing/payer-declaration-form.tsx
     hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/classification/dimension-detail.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/classification/dimension-editor-sheet.tsx
-    hits: 4
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/classification/value-editor.tsx
-    hits: 3
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/connectors/gcp-connection.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/create-project/create-project-form.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/design-project/canvas/inspector/bindings-field.tsx
-    hits: 2
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/design-project/canvas/inspector/card-header.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/design-project/canvas/inspector/chart-workload-panel.tsx
-    hits: 5
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/design-project/canvas/inspector/collection-panel.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/design-project/canvas/inspector/config-fields.tsx
-    hits: 3
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+    reason: The field's label is org-purchase-ui.tsx's `Field`, which renders a real `<label htmlFor={id}>` and hands that `id` to this file's render-prop child, which puts it on the input — an id paired with a `htmlFor` in ANOTHER file, which this check cannot follow.
   - path: apps/console/components/org/create-org-sheet.tsx
-    hits: 2
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/org/org-purchase-ui.tsx
     hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/overview/overview-toolbar.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/repository-selector.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/runners/add-runner-dialog.tsx
-    hits: 2
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+    reason: The field's label is org-purchase-ui.tsx's `Field`, which renders a real `<label htmlFor={id}>` and hands that `id` to this file's render-prop child, which puts it on the input — an id paired with a `htmlFor` in ANOTHER file, which this check cannot follow.
   - path: apps/console/components/runners/fleet-pool-wizard.tsx
-    hits: 5
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/settings/general/org-general.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/settings/members/invite-member-dialog.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/settings/roles/role-sheet.tsx
-    hits: 2
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/settings/settings-ui.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/settings/sso/provider-sheet.tsx
-    hits: 2
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/support/attachment-picker.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
-  - path: apps/console/components/support/cases/case-composer.tsx
-    hits: 1
-    lifts: "#5056 a field whose visible label is not associated with it (sibling label with no htmlFor/id pair, or a placeholder alone)"
+    hits: 4
+    reason: Each field's label is runners/field-help.tsx's `FieldLabel`, given `htmlFor={xId}` here while the input carries `id={xId}` — a `<Label htmlFor>` rendered in ANOTHER file, which this check cannot follow. The pairs are useId() values declared in this file.

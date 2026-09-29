@@ -267,6 +267,7 @@ export function AgentKnowledgePanel({
 									{projectId ? "this project" : "org chats"}. Rides every turn.
 								</p>
 								<Textarea
+									aria-label="Instructions"
 									data-testid="knowledge-instructions"
 									value={instructions}
 									readOnly={!canEdit}
@@ -382,6 +383,7 @@ export function AgentKnowledgePanel({
 								{editing ? (
 									<div className="space-y-2 border border-border bg-muted/30 p-3">
 										<Input
+											aria-label="Document title"
 											data-testid="knowledge-doc-title"
 											value={editing.title}
 											onChange={(e) =>
@@ -391,6 +393,7 @@ export function AgentKnowledgePanel({
 											className="h-8 rounded-none text-sm"
 										/>
 										<Textarea
+											aria-label="Document content"
 											data-testid="knowledge-doc-content"
 											value={editing.content}
 											onChange={(e) =>

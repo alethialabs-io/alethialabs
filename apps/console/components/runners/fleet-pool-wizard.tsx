@@ -49,7 +49,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -216,6 +216,11 @@ export function FleetPoolWizard({
   const isEdit = pool !== null;
   const [step, setStep] = useState(0);
   const wasOpen = useRef(false);
+  // Each free-text field's `id`, paired with its `FieldLabel htmlFor` so the label names it.
+  const nameId = useId();
+  const locationsId = useId();
+  const versionId = useId();
+  const channelId = useId();
 
   const {
     control,
@@ -370,8 +375,8 @@ export function FleetPoolWizard({
                 />
               </div>
               <div className="space-y-1.5">
-                <FieldLabel>Display name (optional)</FieldLabel>
-                <Input placeholder="e.g. AWS primary" {...register("name")} />
+                <FieldLabel htmlFor={nameId}>Display name (optional)</FieldLabel>
+                <Input id={nameId} placeholder="e.g. AWS primary" {...register("name")} />
                 <FieldError message={errors.name?.message} />
                 <p className="text-ui-xs text-muted-foreground">
                   Shown on the pool card. Defaults to the provider name.
@@ -385,6 +390,7 @@ export function FleetPoolWizard({
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <FieldLabel
+                  htmlFor={locationsId}
                   required
                   help={{
                     title: "Locations",
@@ -394,7 +400,7 @@ export function FleetPoolWizard({
                 >
                   Locations
                 </FieldLabel>
-                <Input placeholder="fsn1, nbg1" {...register("locationsCsv")} />
+                <Input id={locationsId} placeholder="fsn1, nbg1" {...register("locationsCsv")} />
                 <FieldError message={errors.locationsCsv?.message} />
                 <p className="text-ui-xs text-muted-foreground">
                   Comma-separated region codes for {providerLabel}.
@@ -604,14 +610,18 @@ export function FleetPoolWizard({
               </div>
               {values.versionSource === "pin" ? (
                 <div className="space-y-1.5">
-                  <FieldLabel required>Pinned version</FieldLabel>
-                  <Input placeholder="e.g. v1.4.2" {...register("version")} />
+                  <FieldLabel htmlFor={versionId} required>
+                    Pinned version
+                  </FieldLabel>
+                  <Input id={versionId} placeholder="e.g. v1.4.2" {...register("version")} />
                   <FieldError message={errors.version?.message} />
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  <FieldLabel required>Channel</FieldLabel>
-                  <Input placeholder="stable" {...register("channel")} />
+                  <FieldLabel htmlFor={channelId} required>
+                    Channel
+                  </FieldLabel>
+                  <Input id={channelId} placeholder="stable" {...register("channel")} />
                   <FieldError message={errors.channel?.message} />
                   <p className="text-ui-xs text-muted-foreground">
                     Usually <span className="font-mono">stable</span>.
@@ -710,10 +720,11 @@ function NumberField({
   error?: string;
   required?: boolean;
 }) {
+  const id = useId();
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-1.5">
-        <Label className="text-xs">
+        <Label className="text-xs" htmlFor={id}>
           {label}
           {required && <RequiredMark />}
         </Label>
@@ -721,7 +732,7 @@ function NumberField({
           <FieldHelp title={help.title} description={help.description} />
         )}
       </div>
-      <Input type="number" min={0} aria-invalid={!!error} {...props} />
+      <Input id={id} type="number" min={0} aria-invalid={!!error} {...props} />
       {error ? (
         <FieldError message={error} />
       ) : (

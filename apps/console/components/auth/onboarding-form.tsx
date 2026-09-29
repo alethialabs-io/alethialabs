@@ -310,6 +310,7 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 							{orgHost()}/
 						</span>
 						<input
+							aria-label="URL slug"
 							className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
 							value={slug}
 							autoComplete="off"

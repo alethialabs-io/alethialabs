@@ -253,6 +253,25 @@ export function SettingsInput({
 }
 
 /**
+ * The `<textarea>` twin of `SettingsInput`: named by the enclosing `SettingsField`'s visible
+ * label through `aria-labelledby`, for the same reason and with the same rules — an explicit
+ * `aria-label` wins, and `className` is forwarded untouched.
+ */
+export function SettingsTextarea({
+	"aria-label": ariaLabel,
+	...props
+}: ComponentPropsWithRef<"textarea">) {
+	const fieldLabelId = useSettingsFieldLabelId();
+	return (
+		<textarea
+			aria-label={ariaLabel}
+			aria-labelledby={ariaLabel ? undefined : (fieldLabelId ?? undefined)}
+			{...props}
+		/>
+	);
+}
+
+/**
  * Tailwind classes for a settings form control (input / textarea / select), matching
  * the authored design's filled, squared field. Compose onto native elements or shadcn
  * Input: `className={cn(settingsControl, "...")}`.
@@ -380,6 +399,7 @@ export function SettingsSearch({
 		>
 			<Search className="size-[15px] shrink-0 text-text-tertiary" />
 			<input
+				aria-label={placeholder ? placeholder.replace(/…$/, "") : "Search"}
 				className="w-full border-0 bg-transparent text-ui-md text-text-primary outline-none placeholder:text-text-disabled"
 				placeholder={placeholder}
 				autoComplete="off"

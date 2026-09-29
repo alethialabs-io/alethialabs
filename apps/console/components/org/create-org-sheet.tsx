@@ -629,53 +629,59 @@ function NamePanel({
 			className="flex flex-col gap-4"
 		>
 			<Field label="Team name" required error={form.formState.errors.name?.message}>
-				<Input
-					placeholder="Acme Cloud"
-					autoComplete="off"
-					autoFocus
-					{...form.register("name")}
-					onChange={(e) => {
-						const v = e.target.value;
-						form.setValue("name", v, { shouldValidate: true });
-						if (!slugTouched)
-							form.setValue("slug", slugifyOrEmpty(v), { shouldValidate: true });
-					}}
-				/>
-				<div className="flex items-center justify-between pt-1">
-					<span className="font-mono text-ui-xs text-text-tertiary">
-						{orgHost()}/<span className="text-text-secondary">{slug || "org"}</span>
-					</span>
-					<button
-						type="button"
-						onClick={() => setShowUrl(!showUrl)}
-						className="font-mono text-ui-xs text-text-tertiary transition-colors hover:text-text-primary"
-					>
-						{showUrl ? "Done" : "Customize URL"}
-					</button>
-				</div>
-				{showUrl && (
-					<div className="flex h-9 items-center overflow-hidden rounded-sm border border-input bg-transparent focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
-						<span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-ui-sm text-text-tertiary">
-							{orgHost()}/
-						</span>
-						<input
-							className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
-							placeholder="acme-cloud"
+				{(id) => (
+					<>
+						<Input
+							id={id}
+							placeholder="Acme Cloud"
 							autoComplete="off"
-							value={slug}
+							autoFocus
+							{...form.register("name")}
 							onChange={(e) => {
-								setSlugTouched(true);
-								form.setValue("slug", slugifyOrEmpty(e.target.value), {
-									shouldValidate: true,
-								});
+								const v = e.target.value;
+								form.setValue("name", v, { shouldValidate: true });
+								if (!slugTouched)
+									form.setValue("slug", slugifyOrEmpty(v), { shouldValidate: true });
 							}}
 						/>
-					</div>
-				)}
-				{form.formState.errors.slug?.message && (
-					<p className="text-ui-xs text-destructive">
-						{form.formState.errors.slug.message}
-					</p>
+						<div className="flex items-center justify-between pt-1">
+							<span className="font-mono text-ui-xs text-text-tertiary">
+								{orgHost()}/<span className="text-text-secondary">{slug || "org"}</span>
+							</span>
+							<button
+								type="button"
+								onClick={() => setShowUrl(!showUrl)}
+								className="font-mono text-ui-xs text-text-tertiary transition-colors hover:text-text-primary"
+							>
+								{showUrl ? "Done" : "Customize URL"}
+							</button>
+						</div>
+						{showUrl && (
+							<div className="flex h-9 items-center overflow-hidden rounded-sm border border-input bg-transparent focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+								<span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-ui-sm text-text-tertiary">
+									{orgHost()}/
+								</span>
+								<input
+									aria-label="URL slug"
+									className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
+									placeholder="acme-cloud"
+									autoComplete="off"
+									value={slug}
+									onChange={(e) => {
+										setSlugTouched(true);
+										form.setValue("slug", slugifyOrEmpty(e.target.value), {
+											shouldValidate: true,
+										});
+									}}
+								/>
+							</div>
+						)}
+						{form.formState.errors.slug?.message && (
+							<p className="text-ui-xs text-destructive">
+								{form.formState.errors.slug.message}
+							</p>
+						)}
+					</>
 				)}
 			</Field>
 

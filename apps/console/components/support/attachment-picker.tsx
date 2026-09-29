@@ -58,6 +58,7 @@ export function AttachmentPicker({ files, onChange, onReject }: AttachmentPicker
 	return (
 		<div className="space-y-2">
 			<input
+				aria-label="Attach files"
 				ref={inputRef}
 				id={inputId}
 				type="file"

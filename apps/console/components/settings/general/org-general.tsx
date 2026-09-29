@@ -25,6 +25,7 @@ import {
   SettingsPanel,
   SettingsSection,
   SettingsSelect,
+  SettingsTextarea,
   settingsControl,
   settingsControlSize,
 } from "@/components/settings/settings-ui";
@@ -191,7 +192,7 @@ export function OrgGeneral() {
                 label="Description"
                 hint="Optional. A short line for teammates and audit context."
               >
-                <textarea
+                <SettingsTextarea
                   className={cn(
                     settingsControl,
                     "min-h-16 resize-y py-2.5 leading-normal",

@@ -213,6 +213,7 @@ function AddValue({ onAdd }: { onAdd: (label: string) => Promise<void> }) {
 		<div className="flex items-center gap-2 px-3 pb-3 pt-2">
 			<span className="size-[9px] shrink-0 rounded-full border-[1.5px] border-dashed border-border-strong" />
 			<Input
+				aria-label="New value label"
 				value={label}
 				onChange={(e) => setLabel(e.target.value)}
 				onKeyDown={(e) => {
