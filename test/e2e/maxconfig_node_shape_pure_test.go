@@ -238,7 +238,7 @@ func TestHeavyProfilesDeclareACatalogInstance(t *testing.T) {
 // state all three; hetzner's stated two, and the resulting ProjectConfig was rejected by
 // provider.ValidateConfig at deploy.go:502 — a plan-time hard failure on a real, main-gated leg, for
 // a purely harness reason. Neither of the two guards above could see it: the merged shape clears the
-// capacity floor (6 nodes, 24 vCPU, 48 GB) and cx33 is a real catalog instance.
+// capacity floor (6 nodes, 24 vCPU, 48 GB) and cpx32 is a real catalog instance.
 //
 // So this runs the composition the deploy actually runs: fold max-config, merge the profile exactly
 // as the run merges it, decode into the real ProjectConfig, and hand it to the REAL provider

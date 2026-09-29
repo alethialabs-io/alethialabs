@@ -2056,12 +2056,13 @@ jobs:
           #
           #    HETZNER — an allowlist of server types. Hetzner names do not sort by price (cpx, cx and
           #    ccx are three product lines), so "above the cap" means "not listed". The default admits
-          #    exactly what the e2e provisions: cpx22 (the template + hetzner_provider.go default),
-          #    cpx32 (cluster_json.heavy.hetzner.json) and cx33 (cluster_json.demo.hetzner.json and
-          #    maxconfig.go). The spend guard re-derives that list from those files on every PR, so a
-          #    fixture that moves to a bigger type fails CI rather than a paid run. A var widens it —
-          #    a standing, deliberate change.
-          ALETHIA_SPEND_HCLOUD_SERVER_TYPES: ${{ matrix.provider == 'hetzner' && (vars.E2E_HETZNER_SERVER_TYPES || 'cpx22,cpx32,cx33') || '' }}
+          #    exactly what the e2e provisions: cpx22 (the template + hetzner_provider.go default) and
+          #    cpx32 (cluster_json.heavy.hetzner.json, cluster_json.demo.hetzner.json and maxconfig.go).
+          #    cx33 was dropped with #5069: Hetzner offers it in no datacenter, so nothing provisions
+          #    it. The spend guard re-derives that list from those files on every PR, so a fixture
+          #    that moves to a bigger type fails CI rather than a paid run. A var widens it — a
+          #    standing, deliberate change.
+          ALETHIA_SPEND_HCLOUD_SERVER_TYPES: ${{ matrix.provider == 'hetzner' && (vars.E2E_HETZNER_SERVER_TYPES || 'cpx22,cpx32') || '' }}
           #    ALIBABA — refuse a prepaid (Subscription / PrePaid) purchase, which a monthly ceiling
           #    could never see: the money goes at purchase and a teardown does not reliably refund
           #    it (modules/cr/main.tf, #2333). ON BY DEFAULT, including every schedule. It DOES red an

@@ -107,7 +107,7 @@ pay-as-you-go model, so an alibaba `maxconfig`/`full` leg is refused unless the 
 runs that tick it.
 
 hetzner is controlled the same way: `ALETHIA_SPEND_HCLOUD_SERVER_TYPES` is an allowlist of server
-types (default `cpx22,cpx32,cx33` — exactly what the e2e provisions), and a planned `hcloud_server`
+types (default `cpx22,cpx32` — exactly what the e2e provisions), and a planned `hcloud_server`
 outside it is refused before apply.
 
 ### The guard that stops this regressing
