@@ -323,19 +323,50 @@ func fabricDemoVClusterTier(provider string, tiers []fabricDemoOverlayTier) (fab
 	return fabricDemoOverlayTier{}, fmt.Errorf("%s = %q, which is not one of the configured tiers %v", envFabricDemoVCluster, want, names)
 }
 
-// fabricDemoVClusterSlug names this scenario's vcluster. Disjoint from #1308's `e2e-vc-` so both can
-// live inside one Fabric lifetime. Bounded to 54 chars so the host namespace `vcluster-<name>` still
-// fits the 63-char limit.
-func fabricDemoVClusterSlug(env string) string {
-	clean := strings.Trim(fabricDemoSlugUnsafe.ReplaceAllString(strings.ToLower(strings.TrimSpace(env)), "-"), "-")
-	if clean == "" {
-		clean = "env"
+// fabricDemoVClusterName names this scenario's vcluster: the namespace the tier's overlay DECLARES.
+//
+// It used to be a run-scoped slug (`e2e-vcdemo-<env>`), and the vcluster tier could never converge.
+// A vcluster env's snapshot `namespace` is BOTH the virtual cluster's name AND the namespace its app
+// deploys into inside it (runVClusterDeploy → vclusterAppInput → the Application's
+// destination.namespace, packages/core/provisioner/deploy_vcluster.go). ArgoCD's
+// CreateNamespace=true creates exactly that one namespace — and nothing else. The overlay stamps
+// every resource into ITS namespace (`namespace: boutique-staging`) and deliberately ships no
+// Namespace object, so the sync asked a fresh, empty vcluster to create Deployments in a namespace
+// that did not exist there. Run 36634781502 (hetzner): registered, then
+// `health="Missing" sync="OutOfSync"` for the whole ten minutes — nothing was ever created.
+//
+// The namespace tiers never hit this because they already pass tier.Namespace — see
+// fabricDemoDefaultOverlays: "each mapped to the namespace ITS OVERLAY DECLARES … a mismatch can
+// never converge". The vcluster tier is held to the same contract.
+//
+// Collisions: the vcluster lives on its OWN API server, so sharing a name with the namespace tier
+// of the same overlay is safe — its host footprint is `vcluster-<name>`, its ArgoCD registration is
+// a cluster Secret, and its AppProject/Application carry the `vc-` prefixes. #1308's vcluster is
+// `e2e-vc-<env>`. Bounded to 54 chars so the host namespace `vcluster-<name>` still fits 63.
+func fabricDemoVClusterName(tier fabricDemoOverlayTier) (string, error) {
+	name := strings.TrimSpace(tier.Namespace)
+	if name == "" {
+		return "", fmt.Errorf("vcluster tier %q declares no namespace — the vcluster's in-cluster namespace must be the one its overlay stamps", tier.Tier)
 	}
-	name := "e2e-vcdemo-" + clean
-	if len(name) > 54 {
-		name = strings.TrimRight(name[:54], "-")
+	if !isRFC1123Label(name) || len(name) > 54 {
+		return "", fmt.Errorf("vcluster tier %q namespace %q is not a valid vcluster name (RFC-1123 label, at most 54 chars so `vcluster-<name>` fits 63)", tier.Tier, name)
 	}
-	return name
+	return name, nil
+}
+
+// fabricDemoVClusterParams builds the #1308 body's parameters for #845's vcluster tier. Pure, so the
+// contract that the snapshot's namespace is the overlay's namespace is pinned by a unit test.
+func fabricDemoVClusterParams(p fabricDemoParams, vcTier fabricDemoOverlayTier, repo string) (vclusterTenantParams, error) {
+	vcName, err := fabricDemoVClusterName(vcTier)
+	if err != nil {
+		return vclusterTenantParams{}, err
+	}
+	return vclusterTenantParams{
+		project: p.project, env: p.env, provider: p.provider, region: p.region,
+		fabricClust: p.fabricClust, owner: p.owner,
+		appsRepo: repo, appsPath: fabricDemoOverlayPath(vcTier.Tier),
+		vcName: vcName, label: "fabric-demo vcluster tier (#845)", requireAppResources: true,
+	}, nil
 }
 
 // sameRepoURL compares two git URLs modulo case, a trailing slash and a `.git` suffix — the three

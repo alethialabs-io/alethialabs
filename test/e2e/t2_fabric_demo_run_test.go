@@ -257,7 +257,11 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 	// ── (2) The vcluster tier — #845's headline differentiator ────────────────────────────────
 	//    Reuses #1308's whole proof body (place → register → deliver → deregister) rather than a
 	//    forked copy that would drift, with the resource floor and the overlay path turned ON.
-	vcName := fabricDemoVClusterSlug(p.env)
+	vcParams, err := fabricDemoVClusterParams(p, vcTier, repo)
+	if err != nil {
+		t.Fatalf("fabric-demo: %v", err)
+	}
+	vcName := vcParams.vcName
 	summary.VCluster = FabricDemoVCluster{Name: vcName, Tier: vcTier.Tier}
 	if _, exists := beforeNS[vcHostNamespacePrefix+vcName]; exists {
 		t.Fatalf("fabric-demo: host namespace %q already existed BEFORE the vcluster placement", vcHostNamespacePrefix+vcName)
@@ -273,12 +277,7 @@ func runT2FabricDemo(t *testing.T, ctx context.Context, cp *ControlPlane, kc str
 			summary.VCluster.ResourceCount = vcRes.ResourceCount
 			summary.VCluster.Deregistered = vcRes.Deregistered
 		}()
-		driveT2VClusterTenant(t, ctx, cp, kc, vclusterTenantParams{
-			project: p.project, env: p.env, provider: p.provider, region: p.region,
-			fabricClust: p.fabricClust, owner: p.owner,
-			appsRepo: repo, appsPath: fabricDemoOverlayPath(vcTier.Tier),
-			vcName: vcName, label: "fabric-demo vcluster tier (#845)", requireAppResources: true,
-		}, &vcRes)
+		driveT2VClusterTenant(t, ctx, cp, kc, vcParams, &vcRes)
 	}()
 
 	if vcRes.App != "" {
@@ -380,7 +379,10 @@ func waitNamespaceAppConverged(ctx context.Context, kc, ns string, timeout time.
 			}
 		}
 		if time.Now().After(deadline) {
-			return lastState, fmt.Errorf("the placement into %q did not converge within %s: %v", ns, timeout, last)
+			// Name the cause, not just the symptom: routing, sync policy, operationState and
+			// conditions of the matched Application (bounded — one 5s read).
+			return lastState, fmt.Errorf("the placement into %q did not converge within %s: %v%s", ns, timeout, last,
+				dumpArgoAppDiagnosis(ctx, kc, lastState.Metadata.Name, ""))
 		}
 		select {
 		case <-ctx.Done():
