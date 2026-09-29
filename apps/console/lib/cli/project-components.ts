@@ -129,7 +129,16 @@ const KINDS: Record<string, KindDef> = {
 		// needs a `.superRefine`, and validateComponentFields introspects `.shape` to reject
 		// unknown keys, which a ZodEffects wrapper would empty out. CloudProvider.ValidateConfig
 		// is the backstop that catches it on this path.
-		fields: createInsertSchema(projectCluster, clusterNodeSizingBounds)
+		//
+		// node_disk_size_gb is bounded HERE, not in clusterNodeSizingBounds: the canvas bounds it
+		// per field in its inspector (config-schema.ts), with a per-cloud floor this registry cannot
+		// apply because it has no provider in hand. 1..2000 matches the canvas max; the per-cloud
+		// floor (Azure 30, and so on) is enforced by validateNodeDiskSize in
+		// packages/core/cloud/validate.go, which every provider's ValidateConfig calls.
+		fields: createInsertSchema(projectCluster, {
+			...clusterNodeSizingBounds,
+			node_disk_size_gb: z.number().int().min(1).max(2000).nullable().optional(),
+		})
 			.pick({
 				cloud_identity_id: true,
 				region: true,
@@ -138,6 +147,7 @@ const KINDS: Record<string, KindDef> = {
 				node_min_size: true,
 				node_max_size: true,
 				node_desired_size: true,
+				node_disk_size_gb: true,
 				cluster_name: true,
 			})
 			.partial(),

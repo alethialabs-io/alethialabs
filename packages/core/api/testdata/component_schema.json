@@ -1,5 +1,5 @@
 {
-  "version": "7e65b8e5cc9b884d6cb97478dc63b7098ad816878bccd00d5a05424643e77a48",
+  "version": "ff886fc8b5f63b392c4ff09b003e558b5a7ba99f726a744d0e59a899f9ff6ab7",
   "kinds": [
     {
       "kind": "network",
@@ -30,47 +30,19 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "provision_network": {
             "type": "boolean"
           },
           "network_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "cidr_block": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "single_nat_gateway": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           },
           "allowed_cidr_blocks": {
             "anyOf": [
@@ -99,6 +71,7 @@
         "node_min_size",
         "node_max_size",
         "node_desired_size",
+        "node_disk_size_gb",
         "cluster_name"
       ],
       "schema": {
@@ -118,24 +91,10 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "cluster_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "instance_types": {
             "anyOf": [
@@ -186,15 +145,20 @@
               }
             ]
           },
-          "cluster_name": {
+          "node_disk_size_gb": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2000
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "cluster_name": {
+            "type": ["string", "null"]
           }
         }
       }
@@ -229,67 +193,25 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "enabled": {
             "type": "boolean"
           },
           "provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "zone_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "domain_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "managed_certificate": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           },
           "waf_enabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           }
         }
       }
@@ -315,27 +237,13 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "enabled": {
             "type": "boolean"
           },
           "provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           }
         }
       }
@@ -349,24 +257,10 @@
         "type": "object",
         "properties": {
           "apps_destination_repo": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "apps_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           }
         }
       }
@@ -402,34 +296,13 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "engine": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "engine_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "min_capacity": {
             "anyOf": [
@@ -480,14 +353,7 @@
             ]
           },
           "iam_auth": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           }
         }
       }
@@ -521,14 +387,7 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "engine": {
             "anyOf": [
@@ -542,14 +401,7 @@
             ]
           },
           "node_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "num_cache_nodes": {
             "anyOf": [
@@ -564,14 +416,7 @@
             ]
           },
           "multi_az": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           },
           "allowed_cidr_blocks": {
             "anyOf": [
@@ -616,24 +461,10 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "ordered": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           },
           "visibility_timeout": {
             "anyOf": [
@@ -683,14 +514,7 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           }
         }
       }
@@ -727,14 +551,7 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "table_type": {
             "anyOf": [
@@ -762,14 +579,7 @@
             ]
           },
           "sort_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "sort_key_type": {
             "anyOf": [
@@ -794,14 +604,7 @@
             ]
           },
           "point_in_time_recovery": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           },
           "global_replicas": {
             "anyOf": [
@@ -846,44 +649,16 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "immutable_tags": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           },
           "vulnerability_scanning": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           }
         }
       }
@@ -909,24 +684,10 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           }
         }
       }
@@ -959,34 +720,13 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "generate": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           },
           "length": {
             "anyOf": [
@@ -1001,14 +741,7 @@
             ]
           },
           "special_chars": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           }
         }
       }
@@ -1041,44 +774,16 @@
             ]
           },
           "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["string", "null"]
           },
           "versioning": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           },
           "encryption_enabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           },
           "public_access": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": ["boolean", "null"]
           },
           "cors_origins": {
             "anyOf": [

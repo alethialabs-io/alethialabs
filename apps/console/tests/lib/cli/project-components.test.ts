@@ -217,3 +217,41 @@ describe("validateComponentFields — repositories.apps_path (#1767)", () => {
       expect(res.error).toContain("Unknown field(s) for repositories");
   });
 });
+
+// #5087: the aws cli-demo leg sent `--set node_disk_size_gb=20` and got "Unknown field(s) for
+// cluster", because the registry's pick omitted a column the canvas exposes. The registry bounds
+// it 1..2000 (the canvas max); the per-cloud floor stays in Go's validateNodeDiskSize, since this
+// registry has no provider to pick a floor with.
+describe("validateComponentFields — cluster.node_disk_size_gb (#5087)", () => {
+  it.each([20, 32, 40, 1, 2000])("accepts %d", (value) => {
+    const res = validateComponentFields("cluster", { node_disk_size_gb: value });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.values.node_disk_size_gb).toBe(value);
+  });
+
+  it("accepts it alongside the node sizing fields the e2e harness sends", () => {
+    const res = validateComponentFields("cluster", {
+      node_min_size: 1,
+      node_max_size: 2,
+      node_desired_size: 1,
+      instance_types: ["t3.large"],
+      node_disk_size_gb: 20,
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it.each<[unknown, string]>([
+    [0, "zero"],
+    [-20, "a negative size"],
+    [2001, "one above the canvas max"],
+    [20.5, "a non-integer"],
+    ["20", "a string"],
+  ])("rejects %j (%s)", (value) => {
+    const res = validateComponentFields("cluster", { node_disk_size_gb: value });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toContain("node_disk_size_gb");
+      expect(res.error).not.toContain("Unknown field");
+    }
+  });
+});
