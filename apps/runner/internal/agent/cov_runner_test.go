@@ -53,6 +53,13 @@ func (s *covRunSandbox) Run(_ context.Context, spec sandbox.Spec, _ sandbox.Job)
 	return nil
 }
 
+// runs reports how many times the stage was run.
+func (s *covRunSandbox) runs() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.specs)
+}
+
 // lastSpec returns the spec of the most recent Run call.
 func (s *covRunSandbox) lastSpec() sandbox.Spec {
 	s.mu.Lock()
@@ -1189,20 +1196,28 @@ func TestRun_ExecuteDeploy_SucceedsAndPersistsMetadata(t *testing.T) {
 }
 
 // TestRun_ExecuteDeploy_MintsPlacementTalosconfig proves a hetzner namespace/vcluster placement
-// fetches the Fabric's persisted admin talosconfig (and proceeds fail-safe when it cannot).
+// fetches the Fabric's persisted admin talosconfig, and fails CLOSED — before the stage runs, naming
+// the real cause — when it cannot. It used to warn and proceed, and the stage then failed with
+// "none was provided — this is a runner wiring bug", which named neither cause (#845).
 func TestRun_ExecuteDeploy_MintsPlacementTalosconfig(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		fetchFn func(string) (string, error)
+		wantErr string // "" ⇒ the placement must succeed
 	}{
-		{"fetched", func(string) (string, error) { return "COVRUN-FABRIC-TALOS", nil }},
-		{"fetch fails fail-safe", func(string) (string, error) { return "", errors.New("no fabric config") }},
+		{"fetched", func(string) (string, error) { return "COVRUN-FABRIC-TALOS", nil }, ""},
+		{"fetch refused", func(string) (string, error) {
+			return "", errors.New("fetch talosconfig returned status 404")
+		}, "fetch talosconfig returned status 404"},
+		{"fabric has none", func(string) (string, error) { return "", nil }, talosWriteBackFailedMarker},
+		{"whitespace only", func(string) (string, error) { return " \n", nil }, "no persisted admin talosconfig"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := newCovRunAPI()
 			api.talosFetchFn = tc.fetchFn
 			w := NewWithAPI(Config{Operator: "self", RunnerID: "r-placement"}, api)
-			w.sandbox = &covRunSandbox{}
+			sb := &covRunSandbox{}
+			w.sandbox = sb
 
 			stdout := NewJobLogger(api, "covrun-placement", "STDOUT")
 			stderr := NewJobLogger(api, "covrun-placement", "STDERR")
@@ -1211,8 +1226,23 @@ func TestRun_ExecuteDeploy_MintsPlacementTalosconfig(t *testing.T) {
 				"hetzner", nil, nil, stdout, stderr)
 			stdout.Close()
 			stderr.Close()
-			if err != nil {
-				t.Fatalf("a placement deploy must succeed: %v", err)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("a placement deploy must succeed: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("a hetzner placement with no reachable talosconfig must fail closed, not proceed to a stage that cannot mint")
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("error = %q, want it to name the cause %q", err, tc.wantErr)
+				}
+				if strings.Contains(err.Error(), "wiring bug") {
+					t.Errorf("error = %q still blames runner wiring for a missing Fabric credential", err)
+				}
+				if sb.runs() != 0 {
+					t.Errorf("the stage ran %d time(s) for a placement that cannot reach its Fabric", sb.runs())
+				}
 			}
 			// A placement runs no tofu, so nothing is written back.
 			api.mu.Lock()
@@ -1220,6 +1250,11 @@ func TestRun_ExecuteDeploy_MintsPlacementTalosconfig(t *testing.T) {
 			api.mu.Unlock()
 			if puts != 0 {
 				t.Errorf("a placement must not write back a talosconfig, got %d puts", puts)
+			}
+			for _, l := range api.getLogChunks() {
+				if strings.Contains(l.chunk, "COVRUN-FABRIC-TALOS") {
+					t.Fatalf("the admin talosconfig reached the job log: %q", l.chunk)
+				}
 			}
 		})
 	}
@@ -1267,8 +1302,9 @@ func TestRun_ExecuteDeploy_FlagsOrphanRiskOnMidApplyTeardown(t *testing.T) {
 	}
 }
 
-// TestRun_ExecuteDeploy_WarnsWhenTalosWriteBackFails covers the best-effort write-back arms: an
-// unreadable stage result, a result with no talosconfig output, and a failing console post.
+// TestRun_ExecuteDeploy_WarnsWhenTalosWriteBackFails covers the non-fatal write-back arms: an
+// unreadable stage result, a result with no talosconfig output, and a failing console post — which
+// must log the ERROR line a later placement's refusal points at, and never the talosconfig itself.
 func TestRun_ExecuteDeploy_WarnsWhenTalosWriteBackFails(t *testing.T) {
 	t.Run("no stage result at all", func(t *testing.T) {
 		api := newCovRunAPI()
@@ -1332,6 +1368,18 @@ func TestRun_ExecuteDeploy_WarnsWhenTalosWriteBackFails(t *testing.T) {
 		api.mu.Unlock()
 		if len(puts) != 1 || puts[0] != "BARE-STRING-TALOS" {
 			t.Errorf("a bare-string talosconfig output must still be persisted, got %v", puts)
+		}
+		var logged bool
+		for _, l := range api.getLogChunks() {
+			if strings.Contains(l.chunk, "BARE-STRING-TALOS") {
+				t.Fatalf("the admin talosconfig reached the job log: %q", l.chunk)
+			}
+			if strings.Contains(l.chunk, talosWriteBackFailedMarker) && strings.Contains(l.chunk, "console rejected it") {
+				logged = true
+			}
+		}
+		if !logged {
+			t.Errorf("a failed write-back must log %q with its cause — a placement's refusal sends the reader there", talosWriteBackFailedMarker)
 		}
 	})
 }

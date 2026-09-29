@@ -117,10 +117,11 @@ func assertSafeTalosEndpoints(cfg *talosconfig.Config) error {
 }
 
 // newTalosKubeconfigMinter returns the provisioner.TalosKubeconfigMinter for a hetzner placement job,
-// closing over the job's DECRYPTED admin talosconfig (delivered on the claim, decrypted at claim). The
+// closing over the Fabric's admin talosconfig (decrypted by the console, fetched over the job channel). The
 // config/clusterName the seam passes are unused — the talosconfig alone identifies + reaches the cluster —
 // but kept in the signature so the seam is uniform across clouds. Returns nil when the job carries no
-// talosconfig (a hetzner placement then fails closed in mintClusterOutputs with a wiring-bug error).
+// talosconfig. executeDeploy refuses a hetzner placement with no talosconfig before the stage runs
+// (fetchPlacementTalosconfig), so a nil minter reaching mintClusterOutputs really is a wiring bug.
 func newTalosKubeconfigMinter(talosconfigYAML string) provisioner.TalosKubeconfigMinter {
 	if strings.TrimSpace(talosconfigYAML) == "" {
 		return nil
