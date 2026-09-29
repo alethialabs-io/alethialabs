@@ -144,7 +144,11 @@ func ResolveCLIDemoRun(t *testing.T) *CLIDemoRun {
 			"against production with a token minted in this job's throwaway database. Point it at the "+
 			"console this job booted.", cliDemoConsoleURLEnv, apiBase)
 	}
-	run := &CLIDemoRun{Bin: CLIDemoBinary(), Token: creds.Token, OrgID: creds.OrgID, APIBase: apiBase}
+	gitOps, err := cliDemoGitOps(t2ArgoReposFromEnv())
+	if err != nil {
+		t.Fatalf("cli-demo: %v", err)
+	}
+	run := &CLIDemoRun{Bin: CLIDemoBinary(), Token: creds.Token, OrgID: creds.OrgID, APIBase: apiBase, GitOps: gitOps}
 	// exec.LookPath, not os.Stat: CLIDemoBinary's default is the BARE name `alethia`, which it
 	// documents as "whatever is on PATH" — os.Stat resolves a bare name against the cwd and can
 	// never find it there. LookPath searches PATH for a bare name and checks a path as given.
@@ -157,6 +161,28 @@ func ResolveCLIDemoRun(t *testing.T) *CLIDemoRun {
 	}
 	run.Bin = resolved
 	return run
+}
+
+// cliDemoGitOps returns the A0.6 repo inputs the `apps-repo` and `chart-attach` beats wire, and
+// refuses a run that does not have all of them (#5109).
+//
+// WHY A REFUSAL AND NOT A SKIP. The two beats are the only way the repos reach a CLI-authored
+// project. Without the inputs they would pass empty values: `chart attach` refuses an empty --repo,
+// and an empty apps_destination_repo renders no `apps` Application. Skipping the beats instead would drop A0.6 from the one path where the CLI is the actor, and the
+// run would still report the demo as driven. The nightly always has the inputs: it sets
+// E2E_ARGO_APPS_REPO, and that is what switches ALETHIA_E2E_ARGO_REPOS_REQUIRE on. So the refusal
+// only fires on a dispatch that is missing them, and it fires before anything is bought.
+func cliDemoGitOps(c t2ArgoRepos) (t2ArgoRepos, error) {
+	enabled, err := c.decide()
+	if err != nil {
+		return t2ArgoRepos{}, err
+	}
+	if !enabled {
+		return t2ArgoRepos{}, fmt.Errorf("the A0.6 inputs are not wired (%s, %s, %s). The `apps-repo` and "+
+			"`chart-attach` beats are how the apps repo and the BYO chart reach a CLI-authored project, and "+
+			"without them there is nothing to wire", envArgoAppsRepo, envArgoByoChartRepo, envArgoGitToken)
+	}
+	return c, nil
 }
 
 // cliDemoConsoleURLEnv names the real console the beats drive.

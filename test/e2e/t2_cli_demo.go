@@ -284,6 +284,16 @@ var CLIDemoSteps = []DemoStep{
 		Reach: CLIDriven,
 	},
 	{
+		ID:    "apps-repo",
+		Title: "Point the environment's GitOps at the apps repository",
+		Argv:  []string{"project", "component", "add"},
+		Reach: CLIDriven,
+		Why: "the `repositories` singleton, authored with `--kind repositories --set apps_destination_repo=<url>`. " +
+			"It is what makes the deploy render the `apps` app-of-apps and its `repo-apps` credential (#5109). " +
+			"It is a step of its own rather than part of component-add because the product reads it for a " +
+			"different purpose: component-add says what to build, and this says where the workloads come from",
+	},
+	{
 		ID:    "manifest-init",
 		Title: "Write the project down as a file",
 		Argv:  []string{"init"},
