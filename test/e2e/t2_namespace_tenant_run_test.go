@@ -13,6 +13,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,19 @@ import (
 func nsKubectl(ctx context.Context, kc string, args ...string) (string, error) {
 	out, err := kubectlRead(ctx, 60*time.Second, kc, args...)
 	return string(out), err
+}
+
+// argocdServerCreated reads the creationTimestamp of the shared Fabric's argocd-server Deployment,
+// found BY LABEL through argocdServerKubectlArgs/pickArgocdServer (#5082, #5085). The argo-cd
+// chart names it `argo-cd-argocd-server`, so the literal `deployment argocd-server` this used to
+// read does not exist on any cluster we provision. pickArgocdServer requires exactly one match.
+func argocdServerCreated(ctx context.Context, kc string) (string, error) {
+	raw, err := nsKubectl(ctx, kc, argocdServerKubectlArgs()...)
+	if err != nil {
+		return "", fmt.Errorf("%w\n%s", err, raw)
+	}
+	_, created, err := pickArgocdServer(raw)
+	return created, err
 }
 
 // runT2NamespaceTenant drives the namespace-placement scenario: seed a second DEPLOY job onto the
@@ -63,9 +77,9 @@ func runT2NamespaceTenant(t *testing.T, ctx context.Context, cp *ControlPlane, k
 
 	// Capture the argocd-server creationTimestamp BEFORE — the namespace deploy must NOT reinstall the
 	// shared Fabric's ArgoCD.
-	argoBefore, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
+	argoBefore, err := argocdServerCreated(ctx, kc)
 	if err != nil {
-		t.Fatalf("read argocd-server before namespace deploy: %v\n%s", err, argoBefore)
+		t.Fatalf("read argocd-server before namespace deploy: %v", err)
 	}
 
 	// Seed the second DEPLOY job (lean/unlinked — provisioning-only; owner = the SeedRunner owner so
@@ -138,9 +152,9 @@ func runT2NamespaceTenant(t *testing.T, ctx context.Context, cp *ControlPlane, k
 	}
 
 	// (6) ArgoCD was NOT reinstalled — creationTimestamp unchanged.
-	argoAfter, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
+	argoAfter, err := argocdServerCreated(ctx, kc)
 	if err != nil {
-		t.Fatalf("read argocd-server after namespace deploy: %v\n%s", err, argoAfter)
+		t.Fatalf("read argocd-server after namespace deploy: %v", err)
 	}
 	if err := argocdNotReinstalled(argoBefore, argoAfter); err != nil {
 		t.Fatalf("no-reinstall assertion: %v", err)

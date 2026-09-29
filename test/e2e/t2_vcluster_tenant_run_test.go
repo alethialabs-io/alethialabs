@@ -65,9 +65,9 @@ func driveT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, 
 
 	// Capture the argocd-server creationTimestamp BEFORE — the vcluster deploy must NOT reinstall the
 	// shared Fabric's ArgoCD (it belongs to the Fabric; the vcluster registers WITH it).
-	argoBefore, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
+	argoBefore, err := argocdServerCreated(ctx, kc)
 	if err != nil {
-		t.Fatalf("read argocd-server before vcluster deploy: %v\n%s", err, argoBefore)
+		t.Fatalf("read argocd-server before vcluster deploy: %v", err)
 	}
 
 	// ── 1. Seed the vcluster DEPLOY job (owner = the SeedRunner owner so the running base runner claims it). ──
@@ -152,9 +152,9 @@ func driveT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, 
 	}
 
 	// (e) ArgoCD was NOT reinstalled — creationTimestamp unchanged.
-	argoAfter, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
+	argoAfter, err := argocdServerCreated(ctx, kc)
 	if err != nil {
-		t.Fatalf("read argocd-server after vcluster deploy: %v\n%s", err, argoAfter)
+		t.Fatalf("read argocd-server after vcluster deploy: %v", err)
 	}
 	if err := argocdNotReinstalled(argoBefore, argoAfter); err != nil {
 		t.Fatalf("no-reinstall assertion: %v", err)
