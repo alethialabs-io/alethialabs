@@ -44,6 +44,7 @@ import { test, expect, type PersonaSession } from "../fixtures/qa";
 import type { Locator, Page } from "@playwright/test";
 import { personaOwner, removeSeededMember, seedOrgMember, type SeededMember } from "../helpers/seed-rbac";
 import type { Owner } from "../helpers/seed";
+import { facetTrigger } from "../helpers/facet";
 
 // `undefined` until the seed has run, and the teardown below READS that rather than assuming it.
 // `personaOwner` is written to throw — ownerTeam is best-effort in global-setup when Stripe is not
@@ -80,7 +81,7 @@ test.afterAll(async () => {
 async function membersReady(session: PersonaSession): Promise<void> {
 	await session.page.goto(`/${session.orgSlug}/~/settings/members`);
 	await expect(session.page).not.toHaveURL(/\/login/);
-	await expect(session.page.getByRole("button", { name: /^Status/ })).toBeVisible({ timeout: 30_000 });
+	await expect(facetTrigger(session.page, /^Status/)).toBeVisible({ timeout: 30_000 });
 }
 
 /**
@@ -235,7 +236,7 @@ test.describe("RBAC — member permission denials", () => {
 
 		// The optimistic UI is not evidence — reload and read the row the server actually holds.
 		await member.page.reload();
-		await expect(member.page.getByRole("button", { name: /^Status/ })).toBeVisible({ timeout: 30_000 });
+		await expect(facetTrigger(member.page, /^Status/)).toBeVisible({ timeout: 30_000 });
 		await expect(victimRow(member.page).getByRole("combobox", { name: "Role" })).toContainText(/viewer/i);
 	});
 
@@ -273,7 +274,7 @@ test.describe("RBAC — member permission denials", () => {
 		// attributable response to assert on, and the honest measurement is the STATE. The member
 		// stays Active because `authorize("manage_members")` refused the write.
 		await member.page.reload();
-		await expect(member.page.getByRole("button", { name: /^Status/ })).toBeVisible({ timeout: 30_000 });
+		await expect(facetTrigger(member.page, /^Status/)).toBeVisible({ timeout: 30_000 });
 		await expect(victimRow(member.page)).toContainText(/active/i);
 	});
 
@@ -290,6 +291,6 @@ test.describe("RBAC — member permission denials", () => {
 		// The org survives — the member is still inside it, not bounced to a dashboard.
 		await expect(member.page).not.toHaveURL(/\/dashboard$/);
 		await member.page.goto(`/${member.orgSlug}/~/settings/members`);
-		await expect(member.page.getByRole("button", { name: /^Status/ })).toBeVisible({ timeout: 30_000 });
+		await expect(facetTrigger(member.page, /^Status/)).toBeVisible({ timeout: 30_000 });
 	});
 });

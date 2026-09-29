@@ -66,6 +66,9 @@ export function DimensionEditorSheet({
 	const [addLabel, setAddLabel] = useState("");
 	// The switch is named by its visible row title, by reference (#4352).
 	const multiLabelId = useId();
+	const labelFieldId = useId();
+	const keyFieldId = useId();
+	const descriptionFieldId = useId();
 
 	const form = useForm<DimensionInput>({
 		resolver: zodResolver(dimensionInputSchema),
@@ -218,8 +221,11 @@ export function DimensionEditorSheet({
 						)}
 
 						<div>
-							<label className="mb-1.5 block text-xs font-medium">Label</label>
+							<label htmlFor={labelFieldId} className="mb-1.5 block text-xs font-medium">
+								Label
+							</label>
 							<Input
+								id={labelFieldId}
 								autoFocus
 								placeholder="Environment"
 								{...form.register("label")}
@@ -233,7 +239,10 @@ export function DimensionEditorSheet({
 						</div>
 
 						<div>
-							<label className="mb-1.5 flex items-center gap-1.5 text-xs font-medium">
+							<label
+								htmlFor={keyFieldId}
+								className="mb-1.5 flex items-center gap-1.5 text-xs font-medium"
+							>
 								Key
 								<InfoHint>
 									The stable, URL/wire-safe identifier. It{"'"}s fixed after creation so
@@ -241,6 +250,7 @@ export function DimensionEditorSheet({
 								</InfoHint>
 							</label>
 							<Input
+								id={keyFieldId}
 								placeholder="environment"
 								className="font-mono text-xs"
 								disabled={isEdit}
@@ -249,11 +259,12 @@ export function DimensionEditorSheet({
 						</div>
 
 						<div>
-							<label className="mb-1.5 block text-xs font-medium">
+							<label htmlFor={descriptionFieldId} className="mb-1.5 block text-xs font-medium">
 								Description{" "}
 								<span className="font-normal text-text-tertiary">— optional</span>
 							</label>
 							<Textarea
+								id={descriptionFieldId}
 								rows={2}
 								placeholder="What this axis means."
 								{...form.register("description")}
@@ -345,6 +356,7 @@ export function DimensionEditorSheet({
 								)}
 								<div className="flex items-center gap-2">
 									<Input
+										aria-label="New value label"
 										value={addLabel}
 										onChange={(e) => setAddLabel(e.target.value)}
 										onKeyDown={(e) => {

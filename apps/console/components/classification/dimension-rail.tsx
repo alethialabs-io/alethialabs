@@ -64,7 +64,19 @@ export function DimensionRail({
 							}
 							dragId.current = null;
 						}}
+						// A selectable row: a button to a screen reader, reached by Tab and chosen with
+						// Enter/Space like one. (Drag-to-reorder stays pointer-only.)
+						role="button"
+						tabIndex={0}
+						aria-pressed={selected}
 						onClick={() => onSelect(d.id)}
+						onKeyDown={(e) => {
+							if (e.target !== e.currentTarget) return;
+							if (e.key === "Enter" || e.key === " ") {
+								e.preventDefault();
+								onSelect(d.id);
+							}
+						}}
 						className={cn(
 							"flex cursor-pointer items-center gap-2 rounded-[3px] px-2 py-2 transition-colors hover:bg-surface-muted",
 							selected && "bg-surface-muted",

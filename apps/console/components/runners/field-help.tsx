@@ -26,21 +26,30 @@ export function FieldHelp({
 	return <UiFieldHelp title={title}>{description}</UiFieldHelp>;
 }
 
-/** A field's label row: text + optional required mark + optional help popover. */
+/**
+ * A field's label row: text + optional required mark + optional help popover.
+ *
+ * `htmlFor` names the `id` of the field this labels, so the label IS the field's accessible name
+ * and clicking it focuses the field. Without it the label is only text sitting next to an input.
+ * (`check:control-names` cannot follow a `htmlFor` through this wrapper, so a caller that pairs
+ * one records it as a `reason:` row in apps/console/control-names-allowlist.yaml.)
+ */
 export function FieldLabel({
 	children,
 	required,
 	help,
 	className,
+	htmlFor,
 }: {
 	children: React.ReactNode;
 	required?: boolean;
 	help?: { title: string; description: string };
 	className?: string;
+	htmlFor?: string;
 }) {
 	return (
 		<div className={cn("flex items-center gap-1.5", className)}>
-			<Label className="text-sm">
+			<Label className="text-sm" htmlFor={htmlFor}>
 				{children}
 				{required && <RequiredMark />}
 			</Label>

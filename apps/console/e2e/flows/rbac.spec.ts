@@ -27,6 +27,7 @@
 
 import { test, expect } from "../fixtures/qa";
 import { scanA11y } from "../helpers/a11y";
+import { facetTrigger } from "../helpers/facet";
 
 /**
  * A members row's actions trigger and its select checkbox, BY PREFIX.
@@ -60,7 +61,7 @@ async function membersReady(session: {
 }): Promise<void> {
 	await session.page.goto(`/${session.orgSlug}/~/settings/members`);
 	await expect(session.page).not.toHaveURL(/\/login/);
-	await expect(session.page.getByRole("button", { name: /^Status/ })).toBeVisible({ timeout: 30_000 });
+	await expect(facetTrigger(session.page, /^Status/)).toBeVisible({ timeout: 30_000 });
 }
 
 // On a Pro org the "Invite member" button is remounted when `canInvite` resolves async
@@ -122,7 +123,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		// and the figures are the Status facet's option counts.
 		await expect(owner.page.getByText("Organization members and pending invitations.")).toBeVisible();
 		await expect(owner.page.getByPlaceholder("Search name or email")).toBeVisible();
-		await expect(owner.page.getByRole("button", { name: /^Role/ })).toBeVisible();
+		await expect(facetTrigger(owner.page, /^Role/)).toBeVisible();
 		// The deleted strip, asserted as deleted. Its headings were the only "Seats" / "Pending
 		// invites" text on the page, so their absence is what says the strip did not come back.
 		await expect(owner.page.getByText("Seats")).toHaveCount(0);
@@ -159,7 +160,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		// The strip's "Pending invites" figure is this option's hint. A fresh Hobby org has none,
 		// and selecting the option clears the table — which is the same statement the old
 		// "Pending tab is empty" test made, against the control that exists.
-		await owner.page.getByRole("button", { name: /^Status/ }).click();
+		await facetTrigger(owner.page, /^Status/).click();
 		await expect(owner.page.getByRole("option", { name: /Pending/ })).toBeVisible();
 		await owner.page.getByRole("option", { name: /Pending/ }).click();
 		await owner.page.keyboard.press("Escape");
@@ -176,7 +177,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		await membersReady(owner);
 		// The lone member is the Owner — filtering to Viewer clears the table. The role filter is a
 		// FACET now, not the Radix Select the console filter standard bans from a filter bar.
-		await owner.page.getByRole("button", { name: /^Role/ }).click();
+		await facetTrigger(owner.page, /^Role/).click();
 		await owner.page.getByRole("option", { name: /Viewer/ }).click();
 		await owner.page.keyboard.press("Escape");
 		await expect(owner.page.getByText("No matching members")).toBeVisible();
@@ -184,7 +185,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 
 	test("the Suspended facet option is empty on a fresh org", async ({ owner }) => {
 		await membersReady(owner);
-		await owner.page.getByRole("button", { name: /^Status/ }).click();
+		await facetTrigger(owner.page, /^Status/).click();
 		await owner.page.getByRole("option", { name: /Suspended/ }).click();
 		await owner.page.keyboard.press("Escape");
 		await expect(owner.page.getByText("No matching members")).toBeVisible();

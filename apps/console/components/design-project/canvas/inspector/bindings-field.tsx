@@ -310,6 +310,7 @@ export function BindingsField({
 								) : (
 									// No resource of this kind on the canvas yet — let them type the name it will have.
 									<Input
+										aria-label={`${binding.target.kind} name`}
 										value={binding.target.name}
 										placeholder={`no ${binding.target.kind} on canvas`}
 										className="h-8 font-mono text-xs"
@@ -331,6 +332,7 @@ export function BindingsField({
 								// eslint-disable-next-line react/no-array-index-key
 								<div key={ii} className="flex items-center gap-1.5">
 									<Input
+										aria-label="Environment variable to inject"
 										value={inj.env}
 										placeholder="ENV_VAR"
 										className="h-8 flex-1 font-mono text-xs"

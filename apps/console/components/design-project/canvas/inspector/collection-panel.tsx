@@ -110,6 +110,7 @@ export function CollectionPanel({ kind }: { kind: NodeKind }) {
 			<div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
 				{/* A vault with forty entries needs a filter, or the list is as unusable as forty cards. */}
 				<Input
+					aria-label={`Filter ${singular}s`}
 					value={filter}
 					onChange={(e) => setFilter(e.target.value)}
 					placeholder={`Filter ${singular}s…`}

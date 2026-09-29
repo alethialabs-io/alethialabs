@@ -161,7 +161,11 @@ function EnvRow({
 }) {
 	const stale = isStale(row);
 	return (
+		// `role="row"` restates the role the `<tr>` has: the row click is a pointer convenience,
+		// and the keyboard route to the same drawer is the environment-name `<button>` below — a
+		// `tabIndex` here would only add a second tab stop that does the same thing.
 		<TableRow
+			role="row"
 			className="group/row cursor-pointer border-border-faint"
 			onClick={() => onOpen(row)}
 		>

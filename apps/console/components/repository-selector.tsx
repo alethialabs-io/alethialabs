@@ -376,6 +376,7 @@ export function RepositorySelector({
           </Button>
         </div>
         <Input
+          aria-label="Repository URL"
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
           placeholder="https://github.com/organization/repository"

@@ -1054,6 +1054,7 @@ export const PromptInputTextarea = ({
 
   return (
     <InputGroupTextarea
+      aria-label="Message"
       className={cn("field-sizing-content max-h-48 min-h-16", className)}
       name="message"
       onCompositionEnd={handleCompositionEnd}

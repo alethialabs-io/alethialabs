@@ -375,6 +375,7 @@ function FacetPanel({
         {title}
       </button>
       <Input
+        aria-label={placeholder.replace(/…$/, "")}
         value={search}
         onChange={(e) => onSearch(e.target.value)}
         placeholder={placeholder}

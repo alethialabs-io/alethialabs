@@ -119,6 +119,7 @@ export function CreateProjectForm({
 							<Sparkles className="size-4" />
 						</span>
 						<Textarea
+							aria-label="Describe your infrastructure"
 							value={prompt}
 							onChange={(e) => setPrompt(e.target.value)}
 							rows={2}

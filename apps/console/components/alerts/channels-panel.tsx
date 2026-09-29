@@ -9,7 +9,7 @@
 // a confirmed Delete. "Used by" cross-links into the Policies section.
 
 import { Plus, SearchX, Send, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import {
 	type AlertsBootstrap,
@@ -295,6 +295,10 @@ function ChannelDetail({
 	const [recipients, setRecipients] = useState<string[]>(channel.recipients);
 	const [url, setUrl] = useState("");
 	const [secret, setSecret] = useState("");
+	// Each credential field's `id`, paired with its `<Label htmlFor>` so the label names it.
+	const routingKeyId = useId();
+	const urlId = useId();
+	const secretId = useId();
 	const [routingKey, setRoutingKey] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [disableConfirm, setDisableConfirm] = useState(false);
@@ -464,9 +468,10 @@ function ChannelDetail({
 
 				{meta.credential === "routingKey" && (
 					<div className="space-y-2">
-						<Label>Integration routing key</Label>
+						<Label htmlFor={routingKeyId}>Integration routing key</Label>
 						{canManage ? (
 							<Input
+								id={routingKeyId}
 								value={routingKey}
 								onChange={(e) => setRoutingKey(e.target.value)}
 								placeholder="•••••• (leave blank to keep current)"
@@ -483,13 +488,14 @@ function ChannelDetail({
 				{meta.credential === "url" && (
 					<div className="space-y-4">
 						<div className="space-y-2">
-							<Label>
+							<Label htmlFor={urlId}>
 								{channel.type === "webhook"
 									? "Payload URL"
 									: `${meta.name} webhook URL`}
 							</Label>
 							{canManage ? (
 								<Input
+									id={urlId}
 									value={url}
 									onChange={(e) => setUrl(e.target.value)}
 									placeholder="•••••• (leave blank to keep current)"
@@ -506,7 +512,7 @@ function ChannelDetail({
 						{channel.type === "webhook" && canManage && (
 							<div className="space-y-2">
 								<div className="flex items-center gap-1.5">
-									<Label>Signing secret</Label>
+									<Label htmlFor={secretId}>Signing secret</Label>
 									<FieldHelp title="Signing secret">
 										Optional. If set, Alethia signs each request body and sends{" "}
 										<code className="font-mono">X-Alethia-Signature: sha256=…</code>{" "}
@@ -514,6 +520,7 @@ function ChannelDetail({
 									</FieldHelp>
 								</div>
 								<Input
+									id={secretId}
 									value={secret}
 									onChange={(e) => setSecret(e.target.value)}
 									placeholder="Leave blank to keep current"

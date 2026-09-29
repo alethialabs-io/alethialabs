@@ -11,6 +11,7 @@
 import { coerceEnum } from "@/lib/coerce";
 import { ArrowRight, CreditCard, Plus, X } from "lucide-react";
 import type React from "react";
+import { useId } from "react";
 import { z } from "zod";
 import { PlanChecklist } from "@/components/billing/plan-checklist";
 import type { PlanCatalogEntry } from "@repo/plan-catalog";
@@ -143,6 +144,7 @@ export function InviteView({
 
 			<div className="flex gap-2">
 				<Input
+					aria-label="Invite by email"
 					placeholder="name@company.com"
 					autoComplete="off"
 					value={inviteEmail}
@@ -238,7 +240,15 @@ export function RoleField({
 	);
 }
 
-/** A labeled form field with an optional error. */
+/**
+ * A labeled form field with an optional error.
+ *
+ * Pass `children` as a function to receive the `id` the rendered `<label htmlFor>` names, and put
+ * it on the field: the label is then the field's accessible name and clicking it focuses the field.
+ * A plain node (a composite control with no single field, such as a country select) gets the same
+ * text with no association. `check:control-names` cannot follow that pairing into a caller in
+ * another file, which is why such a caller carries a `reason:` row in control-names-allowlist.yaml.
+ */
 export function Field({
 	label,
 	required,
@@ -248,19 +258,30 @@ export function Field({
 	label: string;
 	required?: boolean;
 	error?: string;
-	children: React.ReactNode;
+	children: React.ReactNode | ((id: string) => React.ReactNode);
 }) {
+	const id = useId();
+	const text = (
+		<>
+			{label}
+			{required && (
+				<span className="font-mono text-ui-2xs uppercase tracking-wide text-text-tertiary">
+					required
+				</span>
+			)}
+		</>
+	);
+	const labelClass = "flex items-center gap-1.5 text-ui-md font-medium text-text-primary";
 	return (
 		<div className="space-y-1.5">
-			<div className="flex items-center gap-1.5 text-ui-md font-medium text-text-primary">
-				{label}
-				{required && (
-					<span className="font-mono text-ui-2xs uppercase tracking-wide text-text-tertiary">
-						required
-					</span>
-				)}
-			</div>
-			{children}
+			{typeof children === "function" ? (
+				<label htmlFor={id} className={labelClass}>
+					{text}
+				</label>
+			) : (
+				<div className={labelClass}>{text}</div>
+			)}
+			{typeof children === "function" ? children(id) : children}
 			{error && <p className="text-ui-xs text-destructive">{error}</p>}
 		</div>
 	);
