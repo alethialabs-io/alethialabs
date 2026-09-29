@@ -294,8 +294,8 @@ func TestMintTalosKubeconfig_FailsClosed(t *testing.T) {
 	}
 }
 
-// TestNewTalosKubeconfigMinter proves the provisioner seam: no persisted talosconfig ⇒ nil
-// (the placement then fails closed in mintClusterOutputs), and a present-but-unsafe one
+// TestNewTalosKubeconfigMinter proves the provisioner seam: no persisted talosconfig ⇒ nil (a second
+// fail-closed line behind executeDeploy's own refusal, fetchPlacementTalosconfig), and a present-but-unsafe one
 // still refuses rather than returning a partial kubeconfig.
 func TestNewTalosKubeconfigMinter(t *testing.T) {
 	if got := newTalosKubeconfigMinter("  "); got != nil {

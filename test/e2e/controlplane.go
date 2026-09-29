@@ -70,6 +70,15 @@ type ControlPlane struct {
 	addonSecretsMu sync.Mutex
 	addonSecrets   map[string]map[string]string
 
+	// The Fabric admin talosconfigs this control plane holds, in write order (#1389). Each entry is
+	// keyed by the dedicated DEPLOY job that wrote it; a placement resolves its Fabric by the cluster
+	// name that job reported. See handlePutTalosconfig.
+	talosMu   sync.Mutex
+	talosHeld []heldTalosconfig
+	// talosStore overrides the Postgres reads the talosconfig channel makes; nil ⇒ the real pool. A
+	// test seam only; the harness itself never sets it.
+	talosStore talosStore
+
 	// In-memory OpenTofu http state backend, keyed by a STORAGE KEY (state + lock).
 	// The key is the requesting job's id by default, but a job may be ALIASED onto
 	// another job's slot (AliasStateToJob) so a follow-on job — a DETECT_DRIFT after a
@@ -350,6 +359,11 @@ func (cp *ControlPlane) mux() http.Handler {
 	m.HandleFunc("POST /api/jobs/{id}/state-token", cp.handleStateToken)
 	m.HandleFunc("POST /api/jobs/{id}/git-token", cp.handleGitToken)
 	m.HandleFunc("POST /api/jobs/{id}/addon-secrets", cp.handleAddonSecrets)
+	// The hetzner-talos placement credential channel (#1389): a dedicated deploy PUTs the Fabric's
+	// admin talosconfig, a namespace/vcluster placement GETs it to mint kube access. Unserved, both
+	// 404'd and no hetzner placement could ever reach its Fabric (#845, run 36626677124).
+	m.HandleFunc("PUT /api/jobs/{id}/talosconfig", cp.handlePutTalosconfig)
+	m.HandleFunc("GET /api/jobs/{id}/talosconfig", cp.handleGetTalosconfig)
 	m.HandleFunc("POST /api/runners/heartbeat", cp.handleHeartbeat)
 	m.HandleFunc("GET /api/runners/wake", cp.handleWake)
 	// OpenTofu http state backend (in-memory). Lock is a distinct sub-path.
