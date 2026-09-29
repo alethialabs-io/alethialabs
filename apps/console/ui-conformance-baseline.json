@@ -1220,7 +1220,7 @@
 		{
 			"route": "/[org]/[project]/settings/preview",
 			"redirectOnly": false,
-			"surfaceFiles": 266,
+			"surfaceFiles": 267,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1456,7 +1456,7 @@
 		{
 			"route": "/[org]/~/connectors",
 			"redirectOnly": false,
-			"surfaceFiles": 287,
+			"surfaceFiles": 288,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1692,7 +1692,7 @@
 		{
 			"route": "/[org]/~/new",
 			"redirectOnly": false,
-			"surfaceFiles": 376,
+			"surfaceFiles": 377,
 			"families": {
 				"S": {
 					"instrumented": 4,
