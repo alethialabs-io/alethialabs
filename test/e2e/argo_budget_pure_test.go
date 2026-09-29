@@ -132,7 +132,7 @@ func e2eNightlyCaps(t *testing.T) (step, job t2WorkflowCaps) {
 	wf := string(raw)
 
 	read := func(name string) t2WorkflowCaps {
-		re := regexp.MustCompile(regexp.QuoteMeta(name) + `: \$\{\{ vars\.E2E_FABRIC_DEMO != '' && (\d+) \|\| (\d+) \}\}`)
+		re := regexp.MustCompile(regexp.QuoteMeta(name) + `: \$\{\{ \(inputs\.fabric_demo \|\| vars\.E2E_FABRIC_DEMO != ''\) && (\d+) \|\| (\d+) \}\}`)
 		m := re.FindStringSubmatch(wf)
 		if m == nil {
 			t.Fatalf("no %s expression of the expected shape in e2e-nightly.yml — this guard would be vacuous", name)
@@ -143,7 +143,7 @@ func e2eNightlyCaps(t *testing.T) (step, job t2WorkflowCaps) {
 			t.Fatalf("%s parsed as fabric=%d plain=%d", name, fabric, plain)
 		}
 		// The `timeout-minutes:` this value claims to mirror must be verbatim the same expression.
-		mirror := fmt.Sprintf("timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && %d || %d }}", fabric, plain)
+		mirror := fmt.Sprintf("timeout-minutes: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '') && %d || %d }}", fabric, plain)
 		if !strings.Contains(wf, mirror) {
 			t.Errorf("%s says fabric=%d plain=%d but no `%s` appears in e2e-nightly.yml —\n"+
 				"the cap cmd/t2budget verifies is not the cap GitHub enforces", name, fabric, plain, mirror)
