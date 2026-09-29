@@ -89,6 +89,14 @@ func TestCLIDemoBeatsApplyBeforeTheStepsThatReadIt(t *testing.T) {
 	mustPrecede := [][2]string{
 		{"project-create", "component-add"},
 		{"project-create", "plan"},
+		// #5109: the A0.6 repos are wired into the run's environment, after the manifest round
+		// trip, and before the PLAN and DEPLOY snapshot the project.
+		{"project-env", "apps-repo"},
+		{"project-env", "chart-attach"},
+		{"manifest-plan", "apps-repo"},
+		{"manifest-plan", "chart-attach"},
+		{"apps-repo", "plan"},
+		{"chart-attach", "plan"},
 		{"plan", "apply"},
 		{"apply", "jobs-logs"},
 		{"apply", "cluster-get"},
