@@ -15,7 +15,8 @@
 // not valid JSON" in grid run 36611808450. 8.10.2 and 8.11.2 force `allowH2: false`; this test fails
 // on any version that does not.
 
-import { Dispatcher, setGlobalDispatcher } from "undici";
+// NO top-level import of `undici`: importing it fills the global slot, which would make the first
+// case below unable to see whether the console's own import is what fills it.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const LEGACY_SLOT = Symbol.for("undici.globalDispatcher.1");
@@ -44,11 +45,21 @@ function isDispatcher(
 }
 
 describe("npm undici as the dispatcher behind Node's global fetch", () => {
-	it("forces HTTP/1.1 for a legacy (Node-bundled fetch) request", () => {
+	// The premise of the pin below: it is the console's OWN import of npm undici (ssrf-guard) that
+	// puts npm undici behind Node's global fetch. If that stops being true, the pin is about a
+	// dispatcher no console fetch uses, and this case says so instead of the pin passing quietly.
+	it("importing lib/net/ssrf-guard installs npm undici behind Node's global fetch", async () => {
+		expect(isDispatcher(saved.legacy)).toBe(false);
+		await import("@/lib/net/ssrf-guard");
+		expect(isDispatcher(Reflect.get(globalThis, LEGACY_SLOT))).toBe(true);
+	});
+
+	it("forces HTTP/1.1 for a legacy (Node-bundled fetch) request", async () => {
+		const { Dispatcher, setGlobalDispatcher } = await import("undici");
 		const inner = vi.fn((_opts: object) => true);
 		/** Records the options the wrapper forwards instead of opening a socket. */
 		class RecordingDispatcher extends Dispatcher {
-			dispatch(opts: Dispatcher.DispatchOptions): boolean {
+			dispatch(opts: object): boolean {
 				return inner(opts);
 			}
 		}
