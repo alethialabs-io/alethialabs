@@ -288,6 +288,16 @@ func (cp *ControlPlane) JobState(ctx context.Context, jobID string) (status stri
 	return status, metaRaw, err
 }
 
+// JobConfigSnapshot returns the job's config_snapshot (raw JSON): what the job was ASKED to build,
+// as opposed to what it built. On the cli-demo path the console wrote it from what the CLI authored,
+// so it is the only place the harness can see whether a request reached the job.
+func (cp *ControlPlane) JobConfigSnapshot(ctx context.Context, jobID string) ([]byte, error) {
+	var raw []byte
+	err := cp.pool.QueryRow(ctx,
+		`SELECT config_snapshot FROM public.jobs WHERE id = $1`, jobID).Scan(&raw)
+	return raw, err
+}
+
 // JobFailureDetail returns a job's error_message and execution_metadata — the two columns a
 // terminal-failure report needs. Kept separate from JobState (which three call sites share)
 // because only the failure path wants error_message; widening JobState would churn all of them.

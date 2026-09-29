@@ -411,6 +411,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		cliDemo.Project, cliDemo.EnvName = project, env
 		// The SAME shape the seeded path merges — read from ALETHIA_E2E_CLUSTER_JSON, not restated.
 		cliDemo.ClusterSets = CLIDemoClusterSets(t)
+		// #1773 on the CLI path: the zone and the certificate ask the seeded path writes into `full`
+		// never reach a CLI-created DEPLOY, so the `dns-cert` beat authors them. The same acmCert
+		// and the same verdict, so the beat runs exactly when runT2AcmCert will assert.
+		cliDemo.CertZone = cliDemoCertZoneFrom(acmCert, acmCertOn)
 		// ── Three refusals before anything is bought, cheapest first. ──
 		//
 		// 1. A cloud whose `connector` beat cannot COMPLETE against this dimension's console. Costs
@@ -1000,7 +1004,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if cliDemo != nil {
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoConverged)
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoTeardown)
-		t.Logf("cli-demo: all %d beats performed through the real binary — the CLI was the actor for the whole demo", len(CLIDemoBeats))
+		t.Logf("cli-demo: all %d beats performed through the real binary — the CLI was the actor for the whole demo", cliDemoPerformedBeatCount(cliDemo))
 	}
 }
 

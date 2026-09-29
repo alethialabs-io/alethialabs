@@ -659,10 +659,11 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 	t.Helper()
 
 	ran := 0
-	for _, b := range CLIDemoBeats {
-		if b.Phase != phase {
-			continue
-		}
+	beats, skipped := cliDemoBeatsFor(run, phase)
+	for _, why := range skipped {
+		t.Logf("cli-demo [%s] WITHHELD %s", phase, why)
+	}
+	for _, b := range beats {
 		if b.AwaitEnvSettled {
 			if err := awaitCLIDemoEnvSettled(ctx, run, func(c context.Context) (string, error) {
 				return readCLIDemoEnvStatus(c, run)
