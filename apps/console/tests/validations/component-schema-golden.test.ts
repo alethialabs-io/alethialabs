@@ -18,16 +18,16 @@ import {
 // old `version`, and every consumer stayed green. This is the comparison that was missing.
 
 const golden = () => readFileSync(COMPONENT_SCHEMA_GOLDEN, "utf8");
-const stale = `component_schema.json is stale against componentSchemaDocument() — run \`${REGENERATE_COMMAND}\``;
 
-describe("component_schema.json ↔ componentSchemaDocument()", () => {
+// Each case name carries the fix: vitest/valid-expect forbids a message argument on expect().
+describe(`component_schema.json ↔ componentSchemaDocument() — if stale, run ${REGENERATE_COMMAND}`, () => {
   it("holds the builder's document, including its version hash", () => {
     // Semantic first, so a content drift reports the differing field rather than a byte offset.
     // Round-tripped through JSON so the builder's value is compared as it goes over the wire.
     const published: unknown = JSON.parse(
       JSON.stringify(componentSchemaDocument()),
     );
-    expect(JSON.parse(golden()), stale).toStrictEqual(published);
+    expect(JSON.parse(golden())).toStrictEqual(published);
   });
 
   it("carries a version that is the hash of its own kinds", () => {
@@ -37,12 +37,12 @@ describe("component_schema.json ↔ componentSchemaDocument()", () => {
     const expected = createHash("sha256")
       .update(JSON.stringify(doc.kinds))
       .digest("hex");
-    expect(doc.version, stale).toBe(expected);
+    expect(doc.version).toBe(expected);
   });
 
   it("is byte-identical to the generator's formatted output", async () => {
     // The generator and this test render through one function, so a pass here means the
     // committed bytes are exactly what `gen:component-schema` writes.
-    expect(golden(), stale).toBe(await renderComponentSchemaGolden());
+    expect(golden()).toBe(await renderComponentSchemaGolden());
   });
 });
