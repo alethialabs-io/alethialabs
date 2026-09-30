@@ -717,10 +717,31 @@ func parseAddonSecretKeys(raw []byte) (map[string][]string, error) {
 	return out, nil
 }
 
+// handleHeartbeat records the runner's liveness through the real runner_heartbeat function and
+// answers with the server-side-cancelled job ids.
+//
+// The liveness write is not optional. It used to answer 200 and write nothing, which was harmless
+// while nothing read runners.last_heartbeat during a run. On cli-demo a REAL console runs against
+// the same database, and its recovery loop (lib/jobs/recovery.ts → recover_stale_jobs) requeues a
+// claimed job whose runner has not heartbeated for 5 minutes once the claim is 15 minutes old. With
+// last_heartbeat frozen at SeedRunner, every cli-demo DEPLOY longer than 15 minutes was requeued
+// mid-apply: its closing posts were refused as "not owned by this runner", its receipt was never
+// stored, and the runner applied the same job a second time (run 36652642517, aws + gcp).
 func (cp *ControlPlane) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := cp.authHash(r); !ok {
+	runnerID, tokenHash, ok := cp.authHash(r)
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
+	}
+	// NULL version/providers: runner_heartbeat COALESCEs both, keeping what SeedRunner wrote. A
+	// pool-less ControlPlane (newLockOnlyControlPlane, the cancel-path pure test) has no runners row
+	// to refresh and no recovery loop to outlive, so it only answers.
+	if cp.pool != nil {
+		if _, err := cp.pool.Exec(r.Context(),
+			`SELECT public.runner_heartbeat($1::uuid, $2::text, NULL::text, NULL::public.cloud_provider[])`, runnerID, tokenHash); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"cancelled_job_ids": cp.heartbeatCancelledJobs()})
 }
