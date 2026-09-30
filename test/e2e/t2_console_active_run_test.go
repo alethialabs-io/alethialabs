@@ -86,7 +86,7 @@ func setupA05(t *testing.T, ctx context.Context, cp *ControlPlane, root, project
 // (with per-run dynamic overrides) under ALETHIA_E2E_A05_REAL_SNAPSHOT. `full` clones `base` and
 // layers the A0.6 apps/BYO repo wiring + the per-cloud cluster-json override — the exact snapshot
 // the runner consumes. Cloning keeps `base` pristine so fidelity is judged on the un-mutated shape.
-func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, keyless keylessDBConfig, keylessEnabled bool, registry xacctRegistryConfig, registryEnabled bool, acmCert acmCertConfig, acmCertEnabled bool, s *a05Session) (base, full map[string]any, err error) {
+func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, keyless keylessDBConfig, keylessEnabled bool, registry xacctRegistryConfig, registryEnabled bool, acmCert acmCertConfig, acmCertEnabled bool, tmpl templatesConfig, tmplEnabled bool, s *a05Session) (base, full map[string]any, err error) {
 	t.Helper()
 	if s.enabled && a05RealSnapshotEnabled() {
 		envID := ""
@@ -122,6 +122,21 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 		if err := repos.applyToSnapshot(full); err != nil {
 			return nil, nil, fmt.Errorf("A0.6 repos: %w", err)
 		}
+	}
+	// #4113: the starter templates take the apps-destination slot (decide() has already made sure
+	// A0.6 is not also wiring it), add both templates' charts as BYO charts, and carry the AI
+	// Workloads template's webhook-CA marker. AFTER MaxConfigSnapshot for the reason every layer
+	// below gives — decide() refuses the heavy combination, but the ordering is what would keep a
+	// wholesale assignment from erasing this. On `full` ONLY (never `base`, the A0.5 fidelity target).
+	if tmplEnabled {
+		if reposEnabled {
+			return nil, nil, fmt.Errorf("#4113 starter templates: the A0.6 repos are also enabled — both would write repositories.apps_destination_repo")
+		}
+		if err := tmpl.applyToSnapshot(full); err != nil {
+			return nil, nil, fmt.Errorf("#4113 starter templates: %w", err)
+		}
+		t.Logf("#4113: seeding phase A — apps repo %s, BYO charts %s + %s, webhook_ca_consumers=[%s]",
+			starterAIRepo, starterChartRepo, starterAIRepo, templatesWebhookCAConsumer)
 	}
 	// #1268: layer the cross-account secret + the service binding that consumes it. MUST come AFTER
 	// MaxConfigSnapshot, which assigns whole snapshot keys (base[key] = decoded) and would otherwise

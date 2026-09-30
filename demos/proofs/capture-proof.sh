@@ -332,6 +332,25 @@ STUB
 		fails=$((fails + 1))
 	fi
 
+	# 9 · STARTER TEMPLATES (#4113): the assert-time summary is folded into the bundle and named in
+	#     the verdict — and its ABSENCE leaves no file, rather than an empty one reading as a claim.
+	printf '%s\n' '{"issue":"#4113","verdict":"PASS","templates":[{"template":"apps","verdict":"PASS","commit":"cfe20cf21f03ac6e87ca0be5ebc65939c88daef6","applications":[]},{"template":"chart","verdict":"PASS","applications":[]},{"template":"ai","verdict":"PASS","applications":[]}]}' >"$tmp/templates.json"
+	tpl_dir="$(ALETHIA_E2E_TEMPLATES_SUMMARY="$tmp/templates.json" _capture templates success "$tmp/pass.json" templates)"
+	_t "the templates summary is folded into the bundle" "templates-summary.json verdict" \
+		"$(jq -r '.verdict // "none"' "$tpl_dir/templates-summary.json" 2>/dev/null || echo none)" "PASS"
+	if grep -q '^templates: PASS — apps=PASS chart=PASS ai=PASS$' "$tpl_dir/VERDICT.txt" 2>/dev/null; then
+		echo "  ✓ VERDICT.txt names every template's verdict"
+	else
+		echo "  ✗ VERDICT.txt does not name the templates' verdicts: $(grep '^templates:' "$tpl_dir/VERDICT.txt" 2>/dev/null)" >&2
+		fails=$((fails + 1))
+	fi
+	if [ -e "$pass_dir/templates-summary.json" ]; then
+		echo "  ✗ a bundle with no templates summary carries a templates-summary.json anyway" >&2
+		fails=$((fails + 1))
+	else
+		echo "  ✓ no templates summary, no templates-summary.json"
+	fi
+
 	if [ "$fails" -ne 0 ]; then
 		echo "capture-proof --self-test: $fails assertion(s) FAILED" >&2
 		exit 1
@@ -733,6 +752,22 @@ if [ -n "$byo_iac_summary" ] && [ -f "$byo_iac_summary" ]; then
 	[ -n "$byo_iac_verdict" ] && echo "  · byo-iac: $byo_iac_verdict"
 fi
 
+# ── STARTER TEMPLATES (#4113). The T2 leg writes, per template, the commit its HEAD resolved to and,
+#    per Application, the sync revision, sync/health and managed-resource count — plus, for the AI
+#    template, the hourly price of every server the run provisioned. Names, public commits, counts
+#    and prices; never a secret (the templates are public and no token is served on this
+#    dimension). Folded in scrubbed as a backstop. Absent ⇒ the dimension was off and the capture is
+#    unchanged. scripts/e2e/commit-proof.sh splits it into demos/proofs/templates/<template>/<stamp>/.
+templates_summary="${ALETHIA_E2E_TEMPLATES_SUMMARY:-}"
+templates_verdict=""
+if [ -n "$templates_summary" ] && [ -f "$templates_summary" ]; then
+	scrub_stream <"$templates_summary" >"$out/templates-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/templates-summary.json" ]; then
+		templates_verdict="$(jq -r '"\(.verdict) — " + ([.templates[] | "\(.template)=\(.verdict)"] | join(" "))' "$out/templates-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$templates_verdict" ] && echo "  · templates: $templates_verdict"
+fi
+
 # ── Keyless database auth summary (#1511). The T2 layer writes verdicts, the mechanism it wired
 #    and the rotation dwell it actually held — booleans, names and a duration, never the canary
 #    (compared as a digest inside the test) and never a token. Fold it in (scrubbed as a backstop)
@@ -932,6 +967,7 @@ day2offer: ${day2_offer_verdict:-n/a (day-2 offer postures off or not reached)}
 fabric-demo: ${fabric_demo_verdict:-n/a (#845 Fabric placement gate off or not reached)}
 acm-cert: ${acm_cert_verdict:-n/a (#1773 ACM certificate gate off or not reached)}
 byo-iac:   ${byo_iac_verdict:-n/a (#1765 BYO-IaC continuous proof off or not reached)}
+templates: ${templates_verdict:-n/a (#4113 starter templates off or not reached)}
 xacct:     ${xacct_verdict:-n/a (#1268 cross-account secrets off or not reached)}
 keyless-db: ${keyless_verdict:-n/a (#1511 keyless DB auth off or not reached)}
 xacct-registry: ${registry_verdict:-n/a (#1047 cross-account registry off or not reached)}
@@ -1012,6 +1048,7 @@ echo "✓ proof bundle scrubbed + grep-clean: $out"
 	echo "| xacct secrets (#1268) | ${xacct_verdict:-n/a} |"
 	echo "| keyless DB (#1511) | ${keyless_verdict:-n/a} (rotation dwell ${keyless_dwell:-?}s) |"
 	echo "| xacct registry (#1047) | ${registry_verdict:-n/a} |"
+	echo "| starter templates (#4113) | ${templates_verdict:-n/a} |"
 	echo "| commit | \`${git_sha}\` |"
 	echo
 } >>"${GITHUB_STEP_SUMMARY:-/dev/stdout}"

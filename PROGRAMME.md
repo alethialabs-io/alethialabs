@@ -249,19 +249,19 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 
 ## Where the programme actually is
 
-**28 of 35 proof cells are proven.** 0 failing · 0 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 7 never run.
+**28 of 36 proof cells are proven.** 0 failing · 0 contested (the ledger and the board disagree) · 0 stale (cause fixed, needs a re-run) · 0 blocked · 8 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
 ### Proof grid — cloud × dimension
 
-| cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 | CLI-driven |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **gcp** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **azure** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **alibaba** | · | · | · | · | · | · | · |
-| **hetzner** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 | Starter templates | CLI-driven |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **aws** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| **gcp** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| **azure** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| **alibaba** | · | · | · | · | · | · | — | · |
+| **hetzner** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · | ✅ |
 
 Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · ⚠️ contested · — ceiling · 🔶 deferred · 💰 cost
 
@@ -273,6 +273,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `aws/gitops` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T142417Z`
 - `aws/byo-iac` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T155743Z`
 - `aws/day2` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T190408Z`
+- `aws/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `aws/cli-demo` **proven** — ledger 2026-09-30, bundle `demos/proofs/aws/20260930T061330Z`
 - `gcp/floor` **proven** — ledger 2026-09-29, bundle `demos/proofs/gcp/20260929T102050Z`
 - `gcp/maxconfig` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T124233Z`
@@ -280,6 +281,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
 - `gcp/byo-iac` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T110456Z`
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
+- `gcp/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `gcp/cli-demo` **proven** — ledger 2026-09-30, bundle `demos/proofs/gcp/20260930T065516Z`
 - `azure/floor` **proven** — ledger 2026-09-29, bundle `demos/proofs/azure/20260929T103904Z`
 - `azure/maxconfig` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T211849Z`
@@ -287,7 +289,9 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `azure/gitops` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
 - `azure/byo-iac` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T204358Z`
 - `azure/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T235236Z`
+- `azure/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `azure/cli-demo` **proven** — ledger 2026-09-30, bundle `demos/proofs/azure/20260930T095658Z`
+- `alibaba/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `hetzner/floor` **proven** — ledger 2026-09-29, bundle `demos/proofs/hetzner/20260929T100449Z`
 - `hetzner/maxconfig` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T105705Z`
 - `hetzner/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T085104Z`
@@ -312,6 +316,7 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 1. `alibaba/gitops` — never_run
 1. `alibaba/byo-iac` — never_run
 1. `alibaba/day2` — never_run
+1. `hetzner/templates` — never_run
 1. `alibaba/cli-demo` — never_run
 
 </details>
@@ -365,6 +370,7 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | GitOps repos | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ? unknown: `E2E_ARGO_APPS_REPO`<br>? unknown: `E2E_GIT_TOKEN` | a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource |
 | BYO-IaC | `ALETHIA_E2E_BYO_IAC` | ✅ by dimension: `ALETHIA_E2E_BYO_IAC` | a customer OpenTofu root module is refused when unsafe, applied through the state proxy, drifts, heals and destroys — with state cleared |
 | day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>? unknown: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
+| Starter templates | `ALETHIA_E2E_TEMPLATES` | ✅ by dimension: `ALETHIA_E2E_TEMPLATES` | alethia-starter-apps, -chart and -ai each converge at their template commit through the documented path, on one cluster |
 | CLI-driven | `ALETHIA_E2E_CLI_DEMO_PROVISION` | ✅ by dimension: `ALETHIA_E2E_CLI_DEMO_PROVISION` | a floor-shaped cluster provisioned through the real `alethia` binary rather than a seeded job row — the ACTOR, not the surface area |
 
 ⚠️ **The gate inventory is stale.** It was observed **2026-09-08T16:35:27Z**, more than 7 days before this snapshot was derived, so every **declared** gate above reads `unknown` rather than asserting a variable that may since have been deleted. An **observed** gate — a leg that actually got past it — still wins in both directions. The nightly's token cannot list repo variables or secrets at all, so the inventory only refreshes on a run carrying a PAT.
