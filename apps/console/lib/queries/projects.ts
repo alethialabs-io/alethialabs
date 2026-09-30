@@ -3,7 +3,6 @@
 
 import { eq } from "drizzle-orm";
 import type { Tx } from "@/lib/db";
-import { causeChain, pgErrorCode } from "@/lib/db/pg-error";
 import {
 	normalizeWebhookCaConsumers,
 	type WebhookCaConsumer,
@@ -201,6 +200,41 @@ export class ProjectNameTakenError extends Error {
 		);
 		this.name = "ProjectNameTakenError";
 	}
+}
+
+/** Every error in a `cause` chain, outermost first.
+ *
+ * Drizzle WRAPS the driver error: what a failing `.insert()` throws is a DrizzleQueryError whose
+ * message is "Failed query: insert into ..." and whose `cause` is the postgres.js error carrying
+ * `code` and `constraint_name`. Inspecting only the thrown object finds neither, so a check written
+ * against the driver's shape silently never fires and every unique violation falls through as an
+ * unmapped 500. That is not hypothetical — it is what the integration suite caught here. The depth
+ * bound is paranoia about a self-referential cause, not a real chain length. */
+function causeChain(err: unknown): unknown[] {
+	const chain: unknown[] = [];
+	let cur = err;
+	for (let i = 0; i < 8 && cur !== null && cur !== undefined; i++) {
+		chain.push(cur);
+		if (typeof cur !== "object" || cur === null || !("cause" in cur)) break;
+		// `in` narrows; no cast — CLAUDE.md §6 forbids `as`, and the narrowing is what makes the
+		// read safe rather than asserted.
+		const next: unknown = cur.cause;
+		if (next === cur) break;
+		cur = next;
+	}
+	return chain;
+}
+
+/** The Postgres error code, if this error or anything it wraps carries one (23505 = unique
+ * violation). */
+function pgErrorCode(err: unknown): string | undefined {
+	for (const link of causeChain(err)) {
+		if (typeof link === "object" && link !== null && "code" in link) {
+			const code: unknown = link.code;
+			if (typeof code === "string") return code;
+		}
+	}
+	return undefined;
 }
 
 /** Whether this error is the project-name unique violation — exported so `updateProjectName`,

@@ -15,8 +15,9 @@ export const JOB_NOT_OWNED_SQLSTATE = "AL409";
  * message is "Failed query: insert into ..." and whose `cause` is the postgres.js error carrying
  * `code` and `constraint_name`. Inspecting only the thrown object finds neither, so a check written
  * against the driver's shape silently never fires and every unique violation falls through as an
- * unmapped 500. That is not hypothetical — it is what the integration suite caught here. The depth
- * bound is paranoia about a self-referential cause, not a real chain length. */
+ * unmapped 500 (the integration suite caught exactly that in lib/queries/projects.ts, which still
+ * carries its own copy of these two helpers). The depth bound is paranoia about a self-referential
+ * cause, not a real chain length. */
 export function causeChain(err: unknown): unknown[] {
 	const chain: unknown[] = [];
 	let cur = err;
