@@ -479,6 +479,17 @@ export function canonicalDimension(token) {
 export const COMPOSITE_RED_DIMENSION = "full-bar";
 
 /**
+ * Red labels that name a SCENARIO riding a run rather than a dimension, and so contest NO grid cell.
+ *
+ * `fabric-demo` is emitted by `red_label()` in scripts/e2e/resolve-dimension.sh when the fabric demo
+ * (#845) rode the run (#5153). Run 36648775773 was a floor night that went red only in the fabric
+ * gate, with every floor assertion passing, and was titled "(floor)" — which contested a proven
+ * gcp/floor cell over a failure the floor never had. Known-with-no-cells is the honest answer: the
+ * label is recognised (so it is not reported as vocabulary drift) and it moves no cell.
+ */
+export const SCENARIO_RED_LABELS = ["fabric-demo"];
+
+/**
  * Which grid columns a nightly RED's dimension label refers to.
  *
  * THREE ANSWERS, NEVER TWO. A label this file does not recognise returns an EMPTY list with
@@ -500,6 +511,7 @@ export const COMPOSITE_RED_DIMENSION = "full-bar";
 export function redDimensions(label, dimensionIds, compositeIds) {
 	const dim = canonicalDimension(label);
 	if (dim === COMPOSITE_RED_DIMENSION) return { known: true, composite: true, dimensions: [...compositeIds] };
+	if (SCENARIO_RED_LABELS.includes(dim)) return { known: true, composite: false, dimensions: [] };
 	if (dimensionIds.includes(dim)) return { known: true, composite: false, dimensions: [dim] };
 	return { known: false, composite: false, dimensions: [] };
 }
@@ -3643,6 +3655,22 @@ function runSelfTest() {
 			"the composite expands to what the BAR runs, not to every column",
 			redDimensions(COMPOSITE_RED_DIMENSION, ids, comp).dimensions.length === comp.length && comp.length < ids.length,
 			`composite=${JSON.stringify(comp)} all=${JSON.stringify(ids)}`,
+		);
+		// red_label() (#5153) emits a SCENARIO label on a fabric night. Parsed from the resolver, not
+		// restated: renaming FABRIC_RED_LABEL there without teaching this file would report every
+		// fabric red as vocabulary drift — and, worse, a label that fell back to a real column would
+		// contest a cell the fabric failure never touched, which is the bug being fixed.
+		const fabricLabel = /^FABRIC_RED_LABEL="([^"]+)"/m.exec(resolver)?.[1] ?? "";
+		const fabricResolved = redDimensions(fabricLabel, ids, comp);
+		ok(
+			"red_label's fabric-demo label is a known SCENARIO label that contests no grid cell (#5153)",
+			fabricLabel !== "" && SCENARIO_RED_LABELS.includes(fabricLabel) && fabricResolved.known && fabricResolved.dimensions.length === 0,
+			`FABRIC_RED_LABEL=${JSON.stringify(fabricLabel)} resolved ${JSON.stringify(fabricResolved)}`,
+		);
+		ok(
+			"...and parseNightlyRed reads it out of a fabric red's title",
+			parseNightlyRed({ title: "e2e nightly: gcp RED (fabric-demo)", number: 1, createdAt: "2026-09-30" })?.dimension === fabricLabel,
+			JSON.stringify(parseNightlyRed({ title: "e2e nightly: gcp RED (fabric-demo)", number: 1, createdAt: "2026-09-30" })),
 		);
 	}
 

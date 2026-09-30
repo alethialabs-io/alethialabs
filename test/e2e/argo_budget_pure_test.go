@@ -114,9 +114,20 @@ func TestArgoBudgetFullSurfaceIsTheMeasuredConvergence(t *testing.T) {
 // verifies them at the top of the step, and why raising the Argo budget without raising them just
 // moves where the run dies, later and after the spend. This test moves that check to PR time.
 
-// t2WorkflowCaps is one `timeout-minutes` pair as e2e-nightly.yml expresses it: the fabric-demo
-// branch and the ordinary one.
-type t2WorkflowCaps struct{ fabric, plain int }
+// t2WorkflowCaps is one `timeout-minutes` pair as e2e-nightly.yml expresses it: the EXTENDED
+// branch — taken when the fabric demo or any RIDER scenario (keyless DB, cross-account secrets,
+// cross-account registry) is on, by dispatch input or by variable — and the ordinary one.
+type t2WorkflowCaps struct{ extended, plain int }
+
+// t2ExtendedCapCondition is the ONE condition every cap expression in e2e-nightly.yml branches on,
+// verbatim. It has to name every switch that can add a scenario term to ResolveT2Budget's ladder:
+// a rider enabled by a dispatch input the condition did not name would be verified by cmd/t2budget
+// against the ORDINARY cap, and refused before spend — the rider inputs would exist and never run.
+// The riders test a variable for non-empty, exactly as the fabric variable already was (see the
+// compute step).
+const t2ExtendedCapCondition = "(inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || " +
+	"inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || " +
+	"vars.E2E_XACCT_REGISTRY != '')"
 
 // e2eNightlyCaps reads the step and job caps out of the real workflow, and additionally holds the
 // workflow to its own "if you change one, change both" instruction: T2_STEP_CAP_MINUTES /
@@ -132,23 +143,23 @@ func e2eNightlyCaps(t *testing.T) (step, job t2WorkflowCaps) {
 	wf := string(raw)
 
 	read := func(name string) t2WorkflowCaps {
-		re := regexp.MustCompile(regexp.QuoteMeta(name) + `: \$\{\{ \(inputs\.fabric_demo \|\| vars\.E2E_FABRIC_DEMO != ''\) && (\d+) \|\| (\d+) \}\}`)
+		re := regexp.MustCompile(regexp.QuoteMeta(name+": ${{ "+t2ExtendedCapCondition+" && ") + `(\d+) \|\| (\d+) \}\}`)
 		m := re.FindStringSubmatch(wf)
 		if m == nil {
 			t.Fatalf("no %s expression of the expected shape in e2e-nightly.yml — this guard would be vacuous", name)
 		}
-		fabric, _ := strconv.Atoi(m[1])
+		extended, _ := strconv.Atoi(m[1])
 		plain, _ := strconv.Atoi(m[2])
-		if fabric <= 0 || plain <= 0 {
-			t.Fatalf("%s parsed as fabric=%d plain=%d", name, fabric, plain)
+		if extended <= 0 || plain <= 0 {
+			t.Fatalf("%s parsed as extended=%d plain=%d", name, extended, plain)
 		}
 		// The `timeout-minutes:` this value claims to mirror must be verbatim the same expression.
-		mirror := fmt.Sprintf("timeout-minutes: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '') && %d || %d }}", fabric, plain)
+		mirror := fmt.Sprintf("timeout-minutes: ${{ %s && %d || %d }}", t2ExtendedCapCondition, extended, plain)
 		if !strings.Contains(wf, mirror) {
-			t.Errorf("%s says fabric=%d plain=%d but no `%s` appears in e2e-nightly.yml —\n"+
-				"the cap cmd/t2budget verifies is not the cap GitHub enforces", name, fabric, plain, mirror)
+			t.Errorf("%s says extended=%d plain=%d but no `%s` appears in e2e-nightly.yml —\n"+
+				"the cap cmd/t2budget verifies is not the cap GitHub enforces", name, extended, plain, mirror)
 		}
-		return t2WorkflowCaps{fabric: fabric, plain: plain}
+		return t2WorkflowCaps{extended: extended, plain: plain}
 	}
 	return read("T2_STEP_CAP_MINUTES"), read("T2_JOB_CAP_MINUTES")
 }
@@ -224,16 +235,42 @@ func TestArgoBudgetCeilingFitsTheWorkflowCaps(t *testing.T) {
 
 	var checked int
 	var worstStep, worstJob T2Budget
-	for _, fabricOn := range []bool{false, true} {
+	// Four branches, because the extended cap is taken by EITHER family of switches and the two
+	// stack into one ctx. The riders are the reason this is not two: they exist so the keyless-DB,
+	// cross-account secrets and cross-account registry proofs ride ONE cluster instead of three, and
+	// a cap sized for the fabric demo alone refused that combination before spend (floor + all three
+	// riders needs a ~209m step against the ordinary 190m).
+	type capBranch struct {
+		name           string
+		fabric, riders bool
+	}
+	branches := []capBranch{
+		{"ordinary", false, false},
+		{"fabric-demo", true, false},
+		{"riders", false, true},
+		{"fabric-demo+riders", true, true},
+	}
+	for _, br := range branches {
 		caps := struct{ step, job int }{stepCap.plain, jobCap.plain}
-		branch := "ordinary"
-		if fabricOn {
-			caps = struct{ step, job int }{stepCap.fabric, jobCap.fabric}
-			branch = "fabric-demo"
+		if br.fabric || br.riders {
+			caps = struct{ step, job int }{stepCap.extended, jobCap.extended}
 		}
 		for _, dim := range dims {
+			heavy := fidelity[dim]["ALETHIA_E2E_ALL_ADDONS"] == "1" || fidelity[dim]["ALETHIA_E2E_MAX_CONFIG"] == "1"
+			// The workflow WITHHOLDS the riders on cli-demo (the CLI-created DEPLOY carries nothing
+			// for them to layer onto), so the ladder can never carry their terms there.
+			if br.riders && fidelity[dim]["ALETHIA_E2E_CLI_DEMO_PROVISION"] == "1" {
+				continue
+			}
+			// Fabric + every rider on a HEAVY dimension is not a composition the extended cap
+			// promises: full + fabric + riders needs a job longer than GitHub's 360-minute ceiling on
+			// a hosted runner, so no cap could contain it. cmd/t2budget refuses it before spend — which
+			// is the right answer — and TestExtendedCapRefusesTheHeavyFabricRiderStack pins that.
+			if br.fabric && br.riders && heavy {
+				continue
+			}
 			for _, cloud := range clouds {
-				name := fmt.Sprintf("%s/%s/%s", branch, cloud, dim)
+				name := fmt.Sprintf("%s/%s/%s", br.name, cloud, dim)
 				t.Run(name, func(t *testing.T) {
 					for _, v := range argoCapProbeEnv() {
 						t.Setenv(v, "")
@@ -243,8 +280,13 @@ func TestArgoBudgetCeilingFitsTheWorkflowCaps(t *testing.T) {
 					}
 					t.Setenv("ALETHIA_E2E_DAY2_ACCESS", "1")
 					t.Setenv(envAcmCert, "1")
-					if fabricOn {
+					if br.fabric {
 						t.Setenv(envFabricDemo, "1")
+					}
+					if br.riders {
+						for _, r := range t2RiderEnv() {
+							t.Setenv(r, "1")
+						}
 					}
 					// The dimensions that seed the full add-on surface are the only ones that can
 					// reach the ceiling, so only those are evaluated at it. Forcing 40m onto a lean
@@ -267,12 +309,12 @@ func TestArgoBudgetCeilingFitsTheWorkflowCaps(t *testing.T) {
 					if got := int(b.Step.Minutes()); got > caps.step {
 						t.Errorf("step needs %dm but the %s cap is %dm — the run would be KILLED mid-scenario\n  %s\n"+
 							"Raise T2_STEP_CAP_MINUTES *and* the step's timeout-minutes in .github/workflows/e2e-nightly.yml.",
-							got, branch, caps.step, b.Describe())
+							got, br.name, caps.step, b.Describe())
 					}
 					if got := int(b.Job.Minutes()); got > caps.job {
 						t.Errorf("job needs %dm but the %s cap is %dm\n  %s\n"+
 							"Raise T2_JOB_CAP_MINUTES *and* the job's timeout-minutes in .github/workflows/e2e-nightly.yml.",
-							got, branch, caps.job, b.Describe())
+							got, br.name, caps.job, b.Describe())
 					}
 				})
 			}
@@ -281,10 +323,55 @@ func TestArgoBudgetCeilingFitsTheWorkflowCaps(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("checked zero cloud x dimension combinations")
 	}
-	t.Logf("checked %d cloud x dimension x branch ladders against step %d/%d and job %d/%d (plain/fabric)",
-		checked, stepCap.plain, stepCap.fabric, jobCap.plain, jobCap.fabric)
+	t.Logf("checked %d cloud x dimension x branch ladders against step %d/%d and job %d/%d (plain/extended)",
+		checked, stepCap.plain, stepCap.extended, jobCap.plain, jobCap.extended)
 	t.Logf("widest step: %s", worstStep.Describe())
 	t.Logf("widest job:  %s", worstJob.Describe())
+}
+
+// t2RiderEnv is the harness-side switch of every RIDER scenario — the ones the workflow's extended
+// cap condition names alongside the fabric demo. Kept beside the cap test because that condition is
+// what it has to agree with.
+func t2RiderEnv() []string {
+	return []string{envKeylessDB, envSecretsXacct, envXacctRegistry}
+}
+
+// TestExtendedCapRefusesTheHeavyFabricRiderStack pins the one composition the extended cap does NOT
+// promise: the fabric demo plus every rider on the `full` bar. Its job needs more than GitHub's
+// 360-minute hosted-runner ceiling, so it is not a cap that is too small but a stack that cannot run
+// as one job at all. What must hold is that it is REFUSED BEFORE SPEND — cmd/t2budget compares the
+// ladder to the cap at the top of the step — rather than killed mid-scenario. If this ever starts to
+// fit, the skip in TestArgoBudgetCeilingFitsTheWorkflowCaps is hiding a composition that now runs
+// and should be checked like the others.
+func TestExtendedCapRefusesTheHeavyFabricRiderStack(t *testing.T) {
+	_, jobCap := e2eNightlyCaps(t)
+	_, fidelity := e2eDimensions(t)
+	for _, v := range argoCapProbeEnv() {
+		t.Setenv(v, "")
+	}
+	for k, v := range fidelity["full"] {
+		t.Setenv(k, v)
+	}
+	t.Setenv("ALETHIA_E2E_DAY2_ACCESS", "1")
+	t.Setenv(envFabricDemo, "1")
+	for _, r := range t2RiderEnv() {
+		t.Setenv(r, "1")
+	}
+	t.Setenv("ALETHIA_E2E_ARGO_TIMEOUT", argoBudgetCeiling.String())
+	b, err := ResolveT2Budget("aws", "ladder")
+	if err != nil {
+		t.Fatalf("ResolveT2Budget: %v", err)
+	}
+	if got := int(b.Job.Minutes()); got <= jobCap.extended {
+		t.Errorf("full + fabric-demo + every rider now fits the %dm extended job cap (needs %dm) — "+
+			"drop the heavy skip in TestArgoBudgetCeilingFitsTheWorkflowCaps so it is checked\n  %s",
+			jobCap.extended, got, b.Describe())
+	}
+	const githubHostedJobCeilingMinutes = 360
+	if jobCap.extended > githubHostedJobCeilingMinutes {
+		t.Errorf("the extended job cap is %dm, past GitHub's %dm hosted-runner ceiling — GitHub would kill it first",
+			jobCap.extended, githubHostedJobCeilingMinutes)
+	}
 }
 
 // The caps must not be sized by luck. A cap far larger than any real ladder is a cap nobody will
