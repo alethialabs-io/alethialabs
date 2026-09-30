@@ -14,9 +14,12 @@
 //
 // WHAT THIS GUARD DOES NOT COVER, stated plainly so nobody reads a pass as more than it is:
 // the check is FILE-level, so a MIXED file — user-facing actions that authorize, sitting beside
-// runner-callback exports that do not — passes. app/server/actions/{promotions,drift,cost,
-// byo-charts,byo-iac,reconcile}.ts are all mixed today. Auditing those export-by-export is
-// tracked separately; this guard only holds the line against a wholly unauthorized action file.
+// runner-callback exports that do not — passes. app/server/actions/{drift,cost,byo-charts,
+// byo-iac,reconcile}.ts are all mixed today (cost.ts's recordEnvironmentCost, for one). promotions.ts
+// was too until its service-role lifecycle moved to lib/promotions/lifecycle.ts, and cost.ts's
+// getPreviousEnvironmentCost to lib/cost/previous-environment-cost.ts. Auditing the rest
+// export-by-export is tracked separately; this guard only holds the line against a wholly
+// unauthorized action file.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";

@@ -292,12 +292,16 @@ baseline:
         listDimensionsWithValues,
         assignmentsForKind,
         listResourceIdsByValue,
-        getEnforcingValuesFor,
         countResourcesByKindForDimension,
       ]
     issue: "#2649"
     state: untested-export
-    reason: Dimension listing, per-kind assignment reads and the enforcing-value lookup are asserted by no suite.
+    reason: Dimension listing and per-kind assignment reads are asserted by no suite.
+  - path: lib/queries/classification.ts
+    symbols: [getEnforcingValuesFor]
+    issue: "#2649"
+    state: mock-only
+    reason: The enforcing-value lookup is referenced only through the promotion-lifecycle test's `vi.mock` of this module; no suite executes it for real.
 
   - path: lib/queries/runner-usage.ts
     symbols: [idleManagedRunnersForProvider]
