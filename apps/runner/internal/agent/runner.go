@@ -380,7 +380,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			if finding.Refuse {
 				jlog.Error("refusing job at claim time: operator cannot use this cloud identity",
 					"operator", w.config.Operator, "provider", claim.CloudIdentity.Provider)
-				w.postTerminal(jlog, job.ID, "FAILED", finding.Message, nil)
+				_ = w.postTerminal(jlog, job.ID, "FAILED", finding.Message, nil) // logged inside; this path already returns its error
 				return fmt.Errorf("operator %q cannot use the %s cloud identity this job was claimed with",
 					w.config.Operator, claim.CloudIdentity.Provider)
 			}
@@ -399,7 +399,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				if err != nil {
 					errMsg := fmt.Sprintf("Failed to activate AWS federation: %v", err)
 					fmt.Fprintln(stderrLogger, errMsg)
-					w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil)
+					_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 					return err
 				}
 				defer cleanup()
@@ -411,7 +411,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 					// SDK's own message names EC2 IMDS, which is its last source, not the cause.
 					errMsg := ambientCredentialFailure("Failed to assume role", "aws", w.config.Operator, err)
 					fmt.Fprintln(stderrLogger, errMsg)
-					w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil)
+					_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 					return err
 				}
 				defer ClearAssumedCredentials()
@@ -424,7 +424,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				if !isOidcWifJSON(claim.CloudIdentity.WifConfig) {
 					errMsg := "This GCP connection uses the retired AWS-hub setup. Reconnect it (Connectors → GCP) to migrate to direct-OIDC."
 					fmt.Fprintln(stderrLogger, errMsg)
-					w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil)
+					_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 					return fmt.Errorf("%s", errMsg)
 				}
 				fmt.Fprintf(stdoutLogger, "Activating keyless GCP OIDC for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
@@ -432,7 +432,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				if err != nil {
 					errMsg := fmt.Sprintf("Failed to activate GCP OIDC: %v", err)
 					fmt.Fprintln(stderrLogger, errMsg)
-					w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil)
+					_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 					return err
 				}
 				defer cleanup()
@@ -443,7 +443,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 					// #3348, the GCP half: ADC exhaustion reads the same way as the AWS IMDS 404.
 					errMsg := ambientCredentialFailure("Failed to activate GCP WIF", "gcp", w.config.Operator, err)
 					fmt.Fprintln(stderrLogger, errMsg)
-					w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil)
+					_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 					return err
 				}
 				defer cleanup()
@@ -454,7 +454,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate Azure federated identity: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
-				w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil)
+				_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 				return err
 			}
 			defer cleanup()
@@ -464,7 +464,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate %s token: %v", claim.CloudIdentity.Provider, err)
 				fmt.Fprintln(stderrLogger, errMsg)
-				w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil)
+				_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 				return err
 			}
 			defer cleanup()
@@ -483,7 +483,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate Alibaba OIDC: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
-				w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil)
+				_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 				return err
 			}
 			defer cleanup()
@@ -550,7 +550,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			}
 			fmt.Fprintln(stdoutLogger, "▸ Job cancelled — teardown complete.")
 			stderrLogger.Close()
-			w.postTerminal(jlog, job.ID, "CANCELLED", "Cancelled by user", meta)
+			_ = w.postTerminal(jlog, job.ID, "CANCELLED", "Cancelled by user", meta) // logged inside; this path already returns its error
 			return execErr
 		}
 		// Ownership was lost mid-run (#5162): the console refused one of this job's posts because
@@ -616,7 +616,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			fmt.Fprintf(stderrLogger, "ORPHAN RISK (%s) — %s\n", f.Evidence, f.Reason)
 		}
 		stderrLogger.Close()
-		w.postTerminal(jlog, job.ID, "FAILED", execErr.Error(), failMeta)
+		_ = w.postTerminal(jlog, job.ID, "FAILED", execErr.Error(), failMeta) // logged inside; this path already returns its error
 		return execErr
 	}
 
