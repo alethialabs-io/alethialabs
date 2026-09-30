@@ -23,7 +23,7 @@ import {
 	advancePromotionOnPlan,
 	failPromotionForJob,
 	finalizePromotionOnDeploy,
-} from "@/app/server/actions/promotions";
+} from "@/lib/promotions/lifecycle";
 import { recordProbeResult } from "@/lib/probes/persistence";
 import { maybeAutoHeal } from "@/app/server/actions/reconcile";
 import {

@@ -3,7 +3,8 @@
 
 // The race-safe approval-claim primitive for environment promotions. Isolated from the "use server"
 // action module (app/server/actions/promotions.ts) so it stays a plain, directly-testable helper
-// rather than an exported server action. See app/server/actions/promotions.ts (approvePromotion).
+// rather than an exported server action. Its caller is applyPromotionApproval in
+// lib/promotions/lifecycle.ts, reached from approvePromotion (which authorizes) in that action module.
 
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/lib/db";
