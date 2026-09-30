@@ -132,6 +132,110 @@ func TestClassifyCanI(t *testing.T) {
 	}
 }
 
+// azureRBACWildcardOut is the verbatim `kubectl auth can-i '*' '*'` answer from the azure cli-demo
+// leg of grid run 36652642517: AKS's Azure-RBAC guard webhook cannot evaluate a wildcard, and the
+// identity asking was the runner's, which that same run had just used to install ArgoCD.
+const azureRBACWildcardOut = `no - an error on the server ("unknown") has prevented the request from succeeding`
+
+func TestWildcardUnevaluable(t *testing.T) {
+	for _, out := range []string{
+		azureRBACWildcardOut,
+		"no - Wildcard support for Resource/Verb/Group is not enabled for request Group: *, Resource: *, Verb: *",
+	} {
+		if !wildcardUnevaluable(out) {
+			t.Errorf("wildcardUnevaluable(%q) = false, want true — an authorizer ERROR, not a decision", out)
+		}
+	}
+	// Every DECISION stays a decision: none of these may reach the weaker concrete fallback.
+	for _, out := range []string{
+		"no", "no\n", "yes",
+		"no - RBAC: user cannot list resource",
+		"error: You must be logged in to the server (Unauthorized)",
+		`Error from server (Forbidden): an error on the server ("unknown")`,
+		"", "wat",
+	} {
+		if wildcardUnevaluable(out) {
+			t.Errorf("wildcardUnevaluable(%q) = true, want false — this is a decision, not an evaluation error", out)
+		}
+	}
+}
+
+// fakeCanI answers `can-i` from a table keyed by the joined args and records every question.
+type fakeCanI struct {
+	answers map[string]string
+	asked   []string
+}
+
+func (f *fakeCanI) run(_ context.Context, args ...string) string {
+	q := strings.Join(args, " ")
+	f.asked = append(f.asked, q)
+	if a, ok := f.answers[q]; ok {
+		return a
+	}
+	return "yes\n"
+}
+
+func TestProbeKubeAuthorizedWith(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("wildcard yes is final and asks nothing else", func(t *testing.T) {
+		f := &fakeCanI{answers: map[string]string{"* *": "yes\n"}}
+		r, a, action, err := probeKubeAuthorizedWith(ctx, f.run, time.Second, time.Millisecond)
+		if !r || !a || err != nil || action != day2WildcardAction {
+			t.Fatalf("got (%t,%t,%q,%v), want authorized on the wildcard", r, a, action, err)
+		}
+		if len(f.asked) != 1 {
+			t.Fatalf("asked %v, want only the wildcard", f.asked)
+		}
+	})
+
+	// The grid run 36652642517 azure cli-demo shape: wildcard unevaluable, every concrete admin
+	// action permitted. Before the fallback this burned the 3m timeout and failed the leg.
+	t.Run("azure RBAC: wildcard unevaluable, concrete set all yes ⇒ authorized", func(t *testing.T) {
+		f := &fakeCanI{answers: map[string]string{"* *": azureRBACWildcardOut}}
+		r, a, action, err := probeKubeAuthorizedWith(ctx, f.run, 50*time.Millisecond, time.Millisecond)
+		if !r || !a || err != nil {
+			t.Fatalf("got (reachable=%t, authorized=%t, err=%v), want authorized via the concrete set", r, a, err)
+		}
+		if action != day2ConcreteAction {
+			t.Fatalf("action = %q, want %q — the summary must say the weaker question answered", action, day2ConcreteAction)
+		}
+		if got, want := len(f.asked), 1+len(day2ConcreteAdminChecks); got != want {
+			t.Fatalf("asked %d questions %v, want %d (wildcard + every concrete check)", got, f.asked, want)
+		}
+	})
+
+	t.Run("wildcard unevaluable, one concrete no ⇒ NOT authorized", func(t *testing.T) {
+		f := &fakeCanI{answers: map[string]string{
+			"* *":                          "no - an error on the server (\"unknown\") has prevented the request from succeeding",
+			"get secrets --all-namespaces": "no\n",
+		}}
+		r, a, action, err := probeKubeAuthorizedWith(ctx, f.run, 20*time.Millisecond, time.Millisecond)
+		if a || err == nil {
+			t.Fatalf("got authorized=%t err=%v, want a denial — a partial admin is not a cluster-admin", a, err)
+		}
+		if !r || action != day2ConcreteAction {
+			t.Fatalf("got reachable=%t action=%q, want reachable via the concrete set", r, action)
+		}
+		if !strings.Contains(err.Error(), "get secrets --all-namespaces") {
+			t.Fatalf("err does not name the denied question: %v", err)
+		}
+	})
+
+	t.Run("a plain wildcard no is a decision: no fallback, not authorized", func(t *testing.T) {
+		f := &fakeCanI{answers: map[string]string{"* *": "no\n"}}
+		_, a, action, err := probeKubeAuthorizedWith(ctx, f.run, 20*time.Millisecond, time.Millisecond)
+		if a || err == nil || action != day2WildcardAction {
+			t.Fatalf("got (authorized=%t, action=%q, err=%v), want a wildcard denial", a, action, err)
+		}
+		for _, q := range f.asked {
+			if q != "* *" {
+				t.Fatalf("asked %q after a plain \"no\" — a denial must never reach the weaker fallback", q)
+			}
+		}
+	})
+}
+
 func TestCountReadyNodeLines(t *testing.T) {
 	out := "ip-10-0-1-5   Ready    <none>   3m   v1.32\n" +
 		"ip-10-0-1-6   Ready    <none>   3m   v1.32\n" +
