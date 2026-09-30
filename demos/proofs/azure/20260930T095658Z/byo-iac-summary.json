@@ -1,0 +1,31 @@
+{
+  "enabled": true,
+  "provider": "azure",
+  "repo": "https://github.com/alethialabs-io/alethia-examples",
+  "ref": "main",
+  "path": "iac/drift/azure",
+  "pinned_commit_sha": "a0eaa1c55c05c3cdbb5cf41f845cfd084ae02a32",
+  "gate_blocked_non_allowlisted": true,
+  "clone_at_pinned_commit_logged": true,
+  "gate_passed_logged": true,
+  "deploy_status": "SUCCESS",
+  "receipt_plan_sha256": "0b5736184d962c0b1f8bb3e68f42ae721d849d83ae067f27b54bb9cee58ad33f",
+  "state_on_proxy": true,
+  "state_resources": 1,
+  "no_cluster_name_output": true,
+  "alethia_context": "alethia-nl/36695344199-1",
+  "drift_target": "alethia-byo-e2e36695",
+  "baseline_in_sync": true,
+  "mutation_applied": true,
+  "drifted_count": 1,
+  "drifted_types": [
+    "azurerm_resource_group"
+  ],
+  "drifted_is_probe_resource": true,
+  "heal_status": "SUCCESS",
+  "healed_in_sync": true,
+  "destroy_status": "SUCCESS",
+  "state_cleared": true,
+  "state_cleared_by": "delete",
+  "verdict": "✅ byo-iac on azure: iac/drift/azure@a0eaa1c55c05… https://github.com/alethialabs-io/alethia-examples · gate-blocks-bad=true · pinned-clone-logged=true · receipt=0b5736184d96… · state-on-proxy=true(1 res) · no-cluster-output=true · ctx=alethia-nl/36695344199-1 · drift baseline-in-sync=true → induced(alethia-byo-e2e36695)=1[azurerm_resource_group] → healed-in-sync=true · destroy=SUCCESS state-cleared=true"
+}
