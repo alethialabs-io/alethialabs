@@ -403,6 +403,12 @@
 			"why": "placement landed in #2313 — a two-tier project stops costing two clusters"
 		},
 		{
+			"id": "classify",
+			"title": "Classify the project with the org's taxonomy",
+			"reach": "cli",
+			"why": "the org's governed taxonomy reaches every cloud resource as an `alethia:\u003cdimension\u003e` tag. The demo assigns the `e2e-run` dimension its seed defined, and that tag is the only handle a leaked CLI-created stack carries that the orphan reaper can find (#5096): its project-id is the project's UUID, not an `e2e-` handle"
+		},
+		{
 			"id": "component-kinds",
 			"title": "Discover what this cloud offers",
 			"reach": "cli"

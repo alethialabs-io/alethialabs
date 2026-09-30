@@ -334,6 +334,47 @@ func assertRunTaggedEnv(r *CLIDemoRun, out string) error {
 		r.EnvName, strings.Join(names, ", "), CLIDemoClusterName(r), out)
 }
 
+// assertRunClassified is the `classify` beat's claim: the project now carries EXACTLY this run's
+// `e2e-run` value (#5096), read back from the product rather than inferred from the assign's exit
+// code.
+//
+// It is refused here, before a cluster is bought, because nothing later would notice. A project
+// that is not classified still plans, applies and converges — the only thing it loses is the tag,
+// and the tag is only ever read by a sweeper looking for a stack that LEAKED. A run that skipped
+// this would pass every assertion and leave behind exactly the stack #5096 is about.
+//
+// Exact equality on the value, not "some e2e-run value": the in-run teardown scopes on
+// `e2e-<ENV>` for THIS run, so another run's value would tag the stack with a handle this run's
+// teardown does not sweep.
+func assertRunClassified(r *CLIDemoRun, out string) error {
+	start := strings.Index(out, "[")
+	end := strings.LastIndex(out, "]")
+	if start == -1 || end <= start {
+		return fmt.Errorf("`classification show --output json` produced no JSON array — the project "+
+			"carries no classification, so no sweeper can find its stack if it leaks:\n%s", out)
+	}
+	var rows []struct {
+		DimensionKey string `json:"dimension_key"`
+		Value        string `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &rows); err != nil {
+		return fmt.Errorf("parsing the project's classification: %w\n%s", err, out)
+	}
+	want := e2eRunValue(r.EnvName)
+	var got []string
+	for _, row := range rows {
+		if row.DimensionKey != e2eRunDimension {
+			continue
+		}
+		if row.Value == want {
+			return nil
+		}
+		got = append(got, row.Value)
+	}
+	return fmt.Errorf("project %s carries %s=%v, want %q — the stack would be tagged with a handle this "+
+		"run's teardown does not sweep, or with none:\n%s", r.ProjectID, e2eRunDimension, got, want, out)
+}
+
 // CLIDemoClusterName is the cluster the CLI-authored project provisions, derived from the SAME
 // CLIDemoRun fields the beats pass to `project create` and `project env add` (#5095).
 //

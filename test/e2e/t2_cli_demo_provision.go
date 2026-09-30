@@ -315,6 +315,29 @@ var CLIDemoBeats = []CLIDemoBeat{
 			"in-process teardown, which derive the name from the same CLIDemoRun fields.",
 	},
 	{
+		StepID: "classify",
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			// All four positionals, as the command documents for a scripted caller: the dimension and
+			// the value are the ones the seed step defined in this org. `project`, not
+			// `project_environment`: the console folds the project's assignments into every
+			// environment's snapshot, and a project-level tag reaches every stack the demo builds.
+			return []string{
+				"classification", "assign", "project", r.ProjectID,
+				e2eRunDimension, e2eRunValue(r.EnvName), "--no-input",
+			}
+		},
+		ReadBack: func(r *CLIDemoRun) []string {
+			return []string{"classification", "show", "project", r.ProjectID, "--output", "json", "--no-input"}
+		},
+		After: assertRunClassified,
+		Why: "the `e2e-run` classification is the sweep handle (#5096). The console builds this " +
+			"project's config, so its `alethia:project-id` is the project's UUID and no sweeper selects " +
+			"on it; `alethia:e2e-run=e2e-<ENV>` is what the in-run teardown (ALETHIA_E2E_SCOPE_KEY) and " +
+			"the orphan reaper find it by. It runs before the PLAN because the plan and the deploy " +
+			"snapshot the classification that exists when they are enqueued.",
+	},
+	{
 		StepID: "component-kinds",
 		Phase:  CLIDemoAuthoring,
 		Args:   func(_ *CLIDemoRun) []string { return []string{"project", "component", "kinds", "--no-input"} },

@@ -272,6 +272,16 @@ var CLIDemoSteps = []DemoStep{
 		Why:   "placement landed in #2313 — a two-tier project stops costing two clusters",
 	},
 	{
+		ID:    "classify",
+		Title: "Classify the project with the org's taxonomy",
+		Argv:  []string{"classification", "assign"},
+		Reach: CLIDriven,
+		Why: "the org's governed taxonomy reaches every cloud resource as an `alethia:<dimension>` tag. " +
+			"The demo assigns the `e2e-run` dimension its seed defined, and that tag is the only handle a " +
+			"leaked CLI-created stack carries that the orphan reaper can find (#5096): its project-id is " +
+			"the project's UUID, not an `e2e-` handle",
+	},
+	{
 		ID:    "component-kinds",
 		Title: "Discover what this cloud offers",
 		Argv:  []string{"project", "component", "kinds"},
