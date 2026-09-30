@@ -1,0 +1,36 @@
+Starting deployment for project: alethia-nl (provider: aws)
+Verification gate: verdict=not_evaluable (pass=2 fail=0 warn=0 not_evaluable=1, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 41e750b3ff22b609, plan sha256 67a57fc87ea5…)
+Starting deployment for project: alethia-nl (provider: aws)
+Verification gate: verdict=not_evaluable (pass=2 fail=0 warn=0 not_evaluable=1, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 41e750b3ff22b609, plan sha256 aa9dc2b23595…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 116 added, 0 changed, 0 destroyed.
+Waiting for the cluster to become reachable (timeout 15m 0s)...
+Cluster API server is reachable.
+1/1 nodes Ready.
+ArgoCD installed.
+ArgoCD ready. URL: https://argocd.36670996446-1.e2e.alethialabs.io
+Deployment completed successfully.
+Probe: cluster unreachable (kubeconfig unavailable): no EKS cluster name in outputs
+Cluster is UNREACHABLE: cluster unreachable: kubeconfig unavailable
+Starting deployment for project: alethia-nl (provider: aws)
+Starting deployment for project: alethia-nl (provider: aws)
+Verification gate: verdict=pass (pass=3 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 41e750b3ff22b609, plan sha256 800e49f70328…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+Deployment completed successfully.
+Starting deployment for project: alethia-nl (provider: aws)
+Verification gate: verdict=pass (pass=3 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 41e750b3ff22b609, plan sha256 14bfbce264dc…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
+Deployment completed successfully.
+   Skipping load-balancer release: the cluster is not reachable (no EKS cluster name in outputs).
+Destroy complete! Resources: 1 destroyed.
+   Skipping load-balancer release: the cluster is not reachable (no EKS cluster name in outputs).
+Destroy complete! Resources: 0 destroyed.
