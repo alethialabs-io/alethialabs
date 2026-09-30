@@ -264,7 +264,7 @@ export function PreviewSettings({
 								providerAvailability={providerAvailability}
 							/>
 							<div className="flex items-center gap-2 text-ui-xs text-text-tertiary">
-								<GitProviderIcon provider={selectedProvider} size={14} />
+								<GitProviderIcon provider={selectedProvider} size={14} mono={false} />
 								<span className="font-mono">
 									{repoOwner || "owner"}/{repoName || "repo"}
 								</span>
