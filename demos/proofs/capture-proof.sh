@@ -751,6 +751,22 @@ if [ -n "$keyless_summary" ] && [ -f "$keyless_summary" ]; then
 	[ -n "$keyless_verdict" ] && echo "  · keyless-db: $keyless_verdict (rotation dwell ${keyless_dwell:-?}s)"
 fi
 
+# ── Cross-account keyless REGISTRY summary (#1047). The T2 layer writes it at
+#    ALETHIA_E2E_XACCT_REGISTRY_SUMMARY — a registry host, an image reference and booleans, never a
+#    pull token (that is minted in-cluster and never leaves it). It was WRITTEN on every nightly that
+#    ran the layer and folded into NOTHING: the workflow never passed the path to this step, so the
+#    bundle a rider night commits carried no registry verdict at all, and the per-gate record for
+#    #1046 existed only on scripts/e2e/registry-e2e.sh's local path. Absent ⇒ unchanged. ──
+registry_summary="${ALETHIA_E2E_XACCT_REGISTRY_SUMMARY:-}"
+registry_verdict=""
+if [ -n "$registry_summary" ] && [ -f "$registry_summary" ]; then
+	scrub_stream <"$registry_summary" >"$out/xacct-registry-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/xacct-registry-summary.json" ]; then
+		registry_verdict="$(jq -r '.verdict // empty' "$out/xacct-registry-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$registry_verdict" ] && echo "  · xacct-registry: $registry_verdict"
+fi
+
 # ── ArgoCD convergence counts (#2688) — the ONE summary that changes what a bundle MEANS. ──
 #
 #    Every other summary above enriches a verdict. This one supplies the verdict's evidence.
@@ -918,6 +934,7 @@ acm-cert: ${acm_cert_verdict:-n/a (#1773 ACM certificate gate off or not reached
 byo-iac:   ${byo_iac_verdict:-n/a (#1765 BYO-IaC continuous proof off or not reached)}
 xacct:     ${xacct_verdict:-n/a (#1268 cross-account secrets off or not reached)}
 keyless-db: ${keyless_verdict:-n/a (#1511 keyless DB auth off or not reached)}
+xacct-registry: ${registry_verdict:-n/a (#1047 cross-account registry off or not reached)}
 argocd:    ${argo_assert_verdict:-UNMEASURED (#2688 — no assertion summary; this bundle carries no ArgoCD counts)}
 EOF
 
@@ -994,6 +1011,7 @@ echo "✓ proof bundle scrubbed + grep-clean: $out"
 	echo "| fabric placements (#845) | ${fabric_demo_verdict:-n/a} |"
 	echo "| xacct secrets (#1268) | ${xacct_verdict:-n/a} |"
 	echo "| keyless DB (#1511) | ${keyless_verdict:-n/a} (rotation dwell ${keyless_dwell:-?}s) |"
+	echo "| xacct registry (#1047) | ${registry_verdict:-n/a} |"
 	echo "| commit | \`${git_sha}\` |"
 	echo
 } >>"${GITHUB_STEP_SUMMARY:-/dev/stdout}"
