@@ -107,6 +107,34 @@
  * the tree would otherwise look like they disagree, and the wrong way to resolve that is to
  * "fix" a site whose `length()` is the only shape that can express what it asks.
  *
+ * THE PROBE MUST NEVER CHOOSE A LIST'S LENGTH. `try(module.x[0].out, null) != null` is refresh-safe,
+ * and it is also UNKNOWN at plan on a fresh stack whenever `out` is known only after apply — an
+ * unknown value is not null, so the comparison cannot be decided. As a VALUE that is harmless. As a
+ * LENGTH it is fatal: `probe ? [module.x[0].out] : []` has an unknown length, and anything that
+ * counts it dies with "Invalid count argument" before a single resource exists. aws/rds.tf wrote
+ * exactly that into cloudposse/rds-cluster's `count = length(var.security_groups)` in #3509, and
+ * every fresh aws stack with a database failed its first plan for a month (keyless-db floor run
+ * 36711770548). Measured on OpenTofu 1.12.3 with nothing but terraform_data: the list-choosing shape
+ * fails the plan, the element-probing shape plans. `tofu test` cannot see it — its mocks return
+ * KNOWN values for computed attributes, so the cluster-ful run in
+ * aws/checks_cluster_optional.tftest.hcl planned it green throughout.
+ *
+ * So a probe whose TRUE ARM is a LIST LITERAL is its own finding, whatever consumes it.
+ *
+ * NOT a finding: `probe ? module.x[0].names : []`, where the output is ITSELF the list. The
+ * comparison is unknown only when the output is WHOLLY unknown (a known list holding unknown
+ * elements compares to null as known-true — cty asks only the top-level value), and then the true
+ * arm has an unknown length anyway; the probe loses nothing that was there. Eleven root outputs and
+ * alibaba/cluster.tf's `security_group_ids` have that shape. It is the literal that manufactures a
+ * known length out of a scalar, and so the literal that the probe can make unknown.
+ * The rewrite gates the length on something plan-known and keeps the probe on the element:
+ *
+ *     var.provision_x ? [try(module.x[0].out, null) != null ? module.x[0].out : null] : []
+ *
+ * A consumer that only renders the list (a jsonencode()d policy) would have survived the unknown
+ * length; it is reported anyway, because the guard reads lines, not sinks, and the element-probing
+ * shape costs nothing there (alibaba/workload-identity.tf).
+ *
  * WHAT IT DOES NOT COVER, each for a measured reason:
  *
  *   - a resource counted by anything but a 0-or-1 conditional (`count = var.vswitch_count`) —
@@ -405,6 +433,23 @@ function isModuleProbeGuarded(line, address, column) {
 	return arm !== null && column > arm.question && column < arm.colon;
 }
 
+/**
+ * Every single-output probe on a line whose TRUE ARM is a list literal — a probe that chooses a
+ * list's LENGTH, which is unknown at plan whenever the output is known-after-apply. Returns the
+ * probed addresses. Positional, like `ternaryArm`: the question is only what the arm STARTS with.
+ */
+function lengthChoosingProbes(line) {
+	const out = [];
+	const probe = /try\((module\.[a-z0-9_]+)\[0\]\.[a-z0-9_]+, null\) != null/gi;
+	let m;
+	while ((m = probe.exec(line))) {
+		const arm = ternaryArm(line, m.index + m[0].length);
+		if (arm === null) continue;
+		if (line.slice(arm.question + 1).trimStart().startsWith("[")) out.push(m[1]);
+	}
+	return out;
+}
+
 /** Every `module.x[*]` splat on a line — the whole-module edge that closes cycles (#3509). */
 const MODULE_SPLAT = /(?<![\w.])(module\.[a-z0-9_]+)\[\*\]/gi;
 
@@ -448,12 +493,13 @@ const REFERENCE =
 /**
  * Scan a template root for indexes into counted blocks.
  *
- * @returns {{findings: string[], modules: string[], splats: string[], multiCount: string[], files: number, dirs: number, counted: number}}
+ * @returns {{findings: string[], modules: string[], splats: string[], lengths: string[], multiCount: string[], files: number, dirs: number, counted: number}}
  */
 function scanRoot(root) {
 	const findings = [];
 	const modules = [];
 	const splats = [];
+	const lengths = [];
 	const multiCount = [];
 	let files = 0;
 	let dirs = 0;
@@ -531,6 +577,17 @@ function scanRoot(root) {
 					findings.push(`${where}: ${address}[0] — count = ${count}`);
 				}
 
+				// A probe that chooses a list's LENGTH. Not gated on the address being counted: the
+				// probe only exists for counted modules, and an uncounted one written this way has the
+				// same unknown length.
+				if (!isNonEvaluatedContext(lines, i)) {
+					for (const address of lengthChoosingProbes(line)) {
+						lengths.push(
+							`${path.join(dir, file)}:${i + 1}: ${address} probe chooses a list's length`,
+						);
+					}
+				}
+
 				// A splat into a 0-or-1 module is never acceptable, `try()`-wrapped or not: the
 				// hazard is the WHOLE-MODULE graph edge, not an evaluation error, so try() cannot
 				// excuse it.
@@ -552,7 +609,7 @@ function scanRoot(root) {
 		}
 	}
 
-	return { findings, modules, splats, multiCount, files, dirs, counted };
+	return { findings, modules, splats, lengths, multiCount, files, dirs, counted };
 }
 
 // ── self-test ─────────────────────────────────────────────────────────────────────────────────
@@ -615,6 +672,8 @@ resource "consumer" "c" {
   mod_falsearm = try(module.cluster[0].id, null) != null ? "" : module.cluster[0].id
   mod_many   = module.pool[0].id
   mod_manysplat = one(module.pool[*].id)
+  mod_listlen = try(module.cluster[0].sg, null) != null ? [module.cluster[0].sg] : []
+  mod_listelem = var.provision ? [try(module.cluster[0].sg, null) != null ? module.cluster[0].sg : null] : []
   mod_nocolon = try(module.cluster[0].id, null) != null ? module.cluster[0].id
   fallback_on_the_next_line = ""
   url         = "https://\${data.example_item.url[0].id}"
@@ -740,6 +799,21 @@ function selfTest() {
 			!result.multiCount.some((m) => m.includes("module.")),
 		`modules: ${JSON.stringify(result.modules)}; splats: ${JSON.stringify(result.splats)}; multiCount: ${JSON.stringify(result.multiCount)}`,
 	);
+	// #3509's own rewrite, and the aws keyless-db floor failure: the probe is unknown at plan on a
+	// fresh stack, so choosing a LIST'S LENGTH with it fails "Invalid count argument". The element
+	// form differs on that one axis and must stay clean — without the second half, a detector that
+	// flagged every probe inside brackets would pass.
+	const lengthReported = (needle) =>
+		result.lengths.some((m) => m.includes(`:${fixtureLine(needle)}: `));
+	check(
+		"a probe choosing a list's length is a finding; the probe on the element is not",
+		result.lengths.length === 1 &&
+			lengthReported("mod_listlen") &&
+			!lengthReported("mod_listelem") &&
+			!reported("mod_listlen") &&
+			!reported("mod_listelem"),
+		`lengths: ${JSON.stringify(result.lengths)}; modules: ${JSON.stringify(result.modules)}`,
+	);
 	check(
 		"a counted module splat is its own finding",
 		result.splats.length === 1 && result.splats[0].includes("module.cluster[*]"),
@@ -818,6 +892,10 @@ function selfTest() {
 			'mod_many   = try(module.pool[0].id, null) != null ? module.pool[0].id : ""',
 		)
 		.replace(
+			"mod_listlen = try(module.cluster[0].sg, null) != null ? [module.cluster[0].sg] : []",
+			"mod_listlen = var.provision ? [try(module.cluster[0].sg, null) != null ? module.cluster[0].sg : null] : []",
+		)
+		.replace(
 			"mod_nocolon = try(module.cluster[0].id, null) != null ? module.cluster[0].id\n  fallback_on_the_next_line = \"\"",
 			'mod_nocolon = try(module.cluster[0].id, null) != null ? module.cluster[0].id : ""',
 		);
@@ -827,8 +905,9 @@ function selfTest() {
 		"the same fixture reports nothing once every index is written in its own safe shape",
 		after.findings.length === 0 &&
 			after.modules.length === 0 &&
-			after.splats.length === 0,
-		`findings: ${JSON.stringify(after.findings)}, modules: ${JSON.stringify(after.modules)}, splats: ${JSON.stringify(after.splats)}`,
+			after.splats.length === 0 &&
+			after.lengths.length === 0,
+		`findings: ${JSON.stringify(after.findings)}, modules: ${JSON.stringify(after.modules)}, splats: ${JSON.stringify(after.splats)}, lengths: ${JSON.stringify(after.lengths)}`,
 	);
 
 	// THE REPORT IS THE PRODUCT. Everything above calls scanRoot() directly; this runs the guard the
@@ -845,6 +924,7 @@ function selfTest() {
 		cli.status === 1 &&
 			shown.includes(`main.tf:${fixtureLine("from_mod")}:`) &&
 			shown.includes(`main.tf:${fixtureLine("mod_splat")}:`) &&
+			shown.includes(`main.tf:${fixtureLine("mod_listlen")}:`) &&
 			shown.includes(`main.tf:${fixtureLine("identity   =")}:`) &&
 			shown.includes("try(module.x[0].out, null) != null"),
 		`status ${cli.status}; output: ${JSON.stringify(shown.slice(0, 400))}`,
@@ -866,7 +946,7 @@ if (process.argv.includes("--self-test")) {
 	selfTest();
 } else {
 	const root = process.argv[2] ?? "infra/templates/project";
-	const { findings, modules, splats, multiCount, files, dirs, counted } =
+	const { findings, modules, splats, lengths, multiCount, files, dirs, counted } =
 		scanRoot(root);
 	const examined = `examined ${files} .tf file(s) in ${dirs} module dir(s); ${counted} counted block(s)`;
 
@@ -911,6 +991,30 @@ if (process.argv.includes("--self-test")) {
 		console.error("");
 	}
 
+	if (lengths.length > 0) {
+		console.error(
+			`❌ plan-safety violation — ${lengths.length} existence probe(s) choosing a list's LENGTH:`,
+		);
+		console.error("");
+		for (const m of lengths) console.error(`  ${m}`);
+		console.error("");
+		console.error(
+			"On a fresh stack the probed output is known only after apply, so `try(…, null) != null`",
+		);
+		console.error(
+			"is UNKNOWN at plan and so is the list's length — any `count = length(…)` downstream fails",
+		);
+		console.error(
+			"\"Invalid count argument\" (aws/rds.tf, #3509). Gate the length on something plan-known and",
+		);
+		console.error("keep the probe on the element:");
+		console.error("");
+		console.error(
+			"  var.provision_x ? [try(module.x[0].out, null) != null ? module.x[0].out : null] : []",
+		);
+		console.error("");
+	}
+
 	if (findings.length > 0) {
 		console.error(
 			`❌ refresh-safety violation — ${findings.length} unprotected index(es) into a counted resource or data source:`,
@@ -938,7 +1042,12 @@ if (process.argv.includes("--self-test")) {
 
 	// ONE exit, after BOTH blocks. Exiting inside the module block sent an author who has both away
 	// with only half the worklist, to rediscover the rest on the next run.
-	if (modules.length > 0 || splats.length > 0 || findings.length > 0) {
+	if (
+		modules.length > 0 ||
+		splats.length > 0 ||
+		lengths.length > 0 ||
+		findings.length > 0
+	) {
 		console.error(examined);
 		process.exit(1);
 	}
