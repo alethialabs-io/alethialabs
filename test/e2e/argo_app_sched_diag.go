@@ -110,9 +110,13 @@ type podDiagView struct {
 	Spec struct {
 		NodeName   string `json:"nodeName"`
 		Containers []struct {
+			Name      string `json:"name"`
 			Resources struct {
 				Requests map[string]string `json:"requests"`
+				Limits   map[string]string `json:"limits"`
 			} `json:"resources"`
+			// LivenessProbe is read for its timing only (argo_app_crash_diag.go) — never its command.
+			LivenessProbe *probeTimingView `json:"livenessProbe"`
 		} `json:"containers"`
 	} `json:"spec"`
 	Status struct {
@@ -149,8 +153,10 @@ type containerStatusView struct {
 	} `json:"state"`
 	LastState struct {
 		Terminated *struct {
-			Reason   string `json:"reason"`
-			ExitCode int    `json:"exitCode"`
+			Reason     string `json:"reason"`
+			ExitCode   int    `json:"exitCode"`
+			StartedAt  string `json:"startedAt"`
+			FinishedAt string `json:"finishedAt"`
 		} `json:"terminated"`
 	} `json:"lastState"`
 }
