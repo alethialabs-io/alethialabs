@@ -922,7 +922,7 @@ func TestWeakestReasonIsReported(t *testing.T) {
 // only ever understate a dismissal. This fails the day someone adds one and forgets.
 func TestReasonStrengthCoversEveryReason(t *testing.T) {
 	for _, r := range []NormalizedReason{ReasonEmptyCollection, ReasonUndeclaredCollection, ReasonComputedAttribute,
-		ReasonSensitivityOnly, ReasonAssignmentBackReference, ReasonInapplicableField} {
+		ReasonSensitivityOnly, ReasonAssignmentBackReference, ReasonInapplicableField, ReasonKubernetesOwned} {
 		if reasonStrength(r) == 0 {
 			t.Errorf("reason %q has no strength rank — it would sort below every real one", r)
 		}
