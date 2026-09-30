@@ -3,9 +3,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # resolve-dimension.sh — resolve which DIMENSION one E2E-nightly run is proving. PURE: no network,
-# no gh, no token. Trigger in, ONE of the six dimension tokens out:
-#
-#   floor  maxconfig  addons  byo  day2  full
+# no gh, no token. Trigger in, ONE dimension token out (the whole vocabulary is DIMENSIONS below;
+# `--dimensions` prints it).
 #
 # It also owns two things DERIVED from that token, because both used to be retyped by a caller
 # and both were wrong: the run's FIDELITY (--fidelity) and whether it needs the provider's heavy
@@ -41,6 +40,7 @@
 #   resolve-dimension.sh --fidelity [dim]   # the NAME=value lines that turn its assertions on
 #   resolve-dimension.sh --heavy [dim]      # `true` when it needs the heavy node shape
 #   resolve-dimension.sh --label            # the words that go in an issue title
+#   resolve-dimension.sh --providers <dim>  # the clouds a dimension may run on (empty = every cloud)
 #   resolve-dimension.sh --dimensions       # the whole vocabulary
 #   resolve-dimension.sh --self-test        # run the offline cases
 #
@@ -114,7 +114,7 @@ resolve() {
 #
 # So the dimension DECIDES its assertions, and there is no per-run override: an override is exactly
 # how the divergence returns. A heavier claim gets a heavier dimension — that ladder already exists.
-DIMENSIONS="floor maxconfig addons gitops byo-iac day2 cli-demo full"
+DIMENSIONS="floor maxconfig addons gitops byo-iac day2 cli-demo templates full"
 
 # `byo` is the OLD name for `gitops`, kept as an accepted alias so no dispatch, no runbook and no
 # ledger row breaks. It is deliberately NOT in DIMENSIONS: the list drives the self-test's
@@ -131,7 +131,7 @@ DIMENSION_ALIASES="byo"
 #
 # So an omission is now a DECLARATION, and the self-test holds every dimension to being in exactly
 # one of the two sets. Adding a dimension without deciding this fails the build.
-FULL_EXCLUDES="byo-iac cli-demo"
+FULL_EXCLUDES="byo-iac cli-demo templates"
 
 # full_exclude_reason prints WHY a dimension is out of the composite. A reason nobody can read is
 # indistinguishable from an oversight, which is the shape this whole file exists to prevent.
@@ -155,6 +155,13 @@ full_exclude_reason() { # <dimension>
 		# It is also the only dimension needing a built console and a seeded service token, so it is
 		# dispatch-only by construction rather than by preference.
 		echo "re-drives the same spine through the CLI rather than a seeded job row; folding it in would buy a second cluster plus a console build per full bar and red three cells on a CLI defect"
+		;;
+	templates)
+		# The starter-template proof (#4113) OWNS the environment's single apps-destination slot: it
+		# points it at alethia-starter-ai, then redeploys it at alethia-starter-apps. `full` wires the
+		# A0.6 apps repo into that same slot, so the two cannot share one apply — and `templates` is
+		# hetzner-only (dimension_providers), which `full`, a per-cloud bar, is not.
+		echo "owns the single apps-destination slot (starter-ai, then a redeploy at starter-apps) that full's A0.6 repos also need, and is hetzner-only"
 		;;
 	*) return 1 ;;
 	esac
@@ -259,6 +266,20 @@ fidelity_env() { # <dimension>
 		echo "ALETHIA_E2E_SOAK=off"
 		echo "ALETHIA_E2E_BYO_IAC=1"
 		;;
+	templates)
+		# #4113: each PUBLIC starter template (alethia-starter-apps, -chart, -ai) deployed once, on
+		# hetzner, through the path the starter-templates docs page tells a user to follow — on ONE
+		# cluster (test/e2e/t2_templates.go). The repos and their ref are HARDCODED there, not read
+		# from repo variables: a variable could point the proof at a fork and still record it as the
+		# template's.
+		#
+		# NOT heavy (no MAX_CONFIG, no ALL_ADDONS), so heavy_shape stays false and the runner-image
+		# build stays skipped. Its node shape is its own fixture,
+		# test/e2e/fixtures/cluster_json.templates.hetzner.json, which the workflow's shape step
+		# loads for this dimension.
+		echo "ALETHIA_E2E_SOAK=off"
+		echo "ALETHIA_E2E_TEMPLATES=1"
+		;;
 	day2)
 		# The soak IS this dimension's vehicle. ${E2E_SOAK} lets a caller widen or narrow the window;
 		# it cannot turn it off, because a day-2 dimension with no soak asserts nothing.
@@ -281,6 +302,25 @@ fidelity_env() { # <dimension>
 	*)
 		echo "fidelity_env: unknown dimension '${1:-}' (want one of: $DIMENSIONS)" >&2
 		return 2
+		;;
+	esac
+}
+
+# dimension_providers prints the clouds a dimension may run on, space-separated, or NOTHING when it
+# may run on every cloud. The workflow's resolve job refuses a dispatch naming any other cloud before
+# anything is built or bought, and the T2 harness refuses it again before any spend
+# (templatesConfig.decide, test/e2e/t2_templates.go) — two refusals, because the workflow is not the
+# only way to run the harness.
+#
+# `templates` is hetzner-only BY DESIGN, not for want of wiring: #4113 asks for each starter template
+# to be proven ONCE, as cheaply as possible, and the tutorial it follows does not change per cloud.
+dimension_providers() { # <dimension>
+	case "${1:-}" in
+	templates) echo "hetzner" ;;
+	*)
+		# Refuse an unknown token rather than answer "every cloud" for it.
+		fidelity_env "${1:-}" >/dev/null || return 2
+		echo ""
 		;;
 	esac
 }
@@ -338,7 +378,7 @@ dimension_label() { # <token>
 	# orphan every open nightly issue titled "<cloud> RED (byo)" and immediately re-file each one
 	# under a new name. The dimension is renamed; its issue titles are not, and the two are allowed
 	# to differ precisely because one of them is a database key.
-	maxconfig | addons | byo | gitops | byo-iac | day2 | cli-demo) echo "$1" ;;
+	maxconfig | addons | byo | gitops | byo-iac | day2 | cli-demo | templates) echo "$1" ;;
 	floor) echo "floor" ;;
 	# The UNSET token only. A caller with no dimension in scope is running the floor, which is what
 	# nightly-rollup.sh's own `${E2E_DIMENSION:-floor}` default already says.
@@ -635,6 +675,30 @@ run_self_test() {
 		esac
 	done
 
+	# ── templates (#4113): its own switch, never heavy, and hetzner-only. ──
+	_a "ALETHIA_E2E_TEMPLATES=1" "$(_f templates | grep '^ALETHIA_E2E_TEMPLATES=')" "templates turns the starter-template proof on"
+	_a "ALETHIA_E2E_SOAK=off" "$(_f templates | grep '^ALETHIA_E2E_SOAK=')" "templates does not smuggle in the soak"
+	_a "" "$(_f templates | grep -E 'MAX_CONFIG|ALL_ADDONS|ARGO_REPOS_REQUIRE' || true)" "templates claims neither the heavy surface nor the A0.6 repos it supersedes"
+	_a "false" "$(_h templates)" "templates is not heavy — it carries its own shape fixture"
+	_a "templates" "$(_rd workflow_dispatch templates)" "a dispatch naming templates resolves templates"
+	_a "templates" "$(dimension_label templates)" "templates labels as templates, not floor"
+	_a "hetzner" "$(dimension_providers templates)" "templates may run on hetzner only"
+	_a "" "$(dimension_providers floor)" "floor may run on every cloud (empty = no restriction)"
+	_a "2" "$(dimension_providers nonesuch >/dev/null 2>&1; echo $?)" "an unknown dimension has no provider list, not an unrestricted one"
+	# Every restriction names only real clouds — a typo here would refuse every dispatch.
+	for _d in $DIMENSIONS; do
+		for _p in $(dimension_providers "$_d"); do
+			case " hetzner aws gcp azure alibaba " in
+			*" $_p "*) echo "ok   - $_d may run on a real cloud: $_p" ;;
+			*)
+				echo "FAIL - dimension_providers($_d) names '$_p', which is not a cloud the nightly runs" >&2
+				fails=$((fails + 1))
+				;;
+			esac
+		done
+	done
+	unset _d _p
+
 	# ── byo must not be able to record a PASS having proven nothing. ──
 	_a "ALETHIA_E2E_ARGO_REPOS_REQUIRE=1" "$(_f byo | grep '^ALETHIA_E2E_ARGO_REPOS_REQUIRE=')" "byo REQUIRES the A0.6 apps-repo proof rather than green-skipping it"
 	_a "" "$(_f floor | grep 'ARGO_REPOS_REQUIRE' || true)" "the floor does not require it — A0.6 is byo's assertion, not the floor's"
@@ -756,6 +820,7 @@ case "${1:-}" in
 	fi
 	;;
 --dimensions) echo "$DIMENSIONS" ;;
+--providers) dimension_providers "${2:-$(resolve)}" ;;
 --fidelity)
 	# `--fidelity` with no argument resolves the dimension from the trigger first, so the workflow
 	# never has to name it twice.
@@ -763,7 +828,7 @@ case "${1:-}" in
 	;;
 "") resolve ;;
 *)
-	echo "usage: resolve-dimension.sh [--self-test|--label|--dimensions|--fidelity [dimension]|--heavy [dimension]]" >&2
+	echo "usage: resolve-dimension.sh [--self-test|--label|--dimensions|--fidelity [dimension]|--heavy [dimension]|--providers [dimension]]" >&2
 	exit 2
 	;;
 esac

@@ -38,7 +38,12 @@ set -euo pipefail
 # CLAIM: the cell's verdict IS the ArgoCD convergence. What it asserts is that a derived set of
 # Applications reached Healthy+Synced, so a bundle that cannot say how many did has recorded no
 # claim at all. (`byo` is the legacy alias of `gitops` and resolves to itself, so it is listed.)
-ARGO_CLAIM_DIMENSIONS="addons maxconfig full gitops byo"
+#
+# `templates` (#4113) is a CLAIM dimension, and a stricter one: its cell asserts that each starter
+# template's Applications converged AT THE TEMPLATE'S COMMIT, so on top of the counts every claim
+# dimension needs, its bundle must carry templates-summary.json saying so — see
+# _templates_verdict.
+ARGO_CLAIM_DIMENSIONS="addons maxconfig full gitops byo templates"
 # SUPPORTING: the cell asserts something else and merely converges on the way. Missing counts are
 # a warning here; refusing would throw away real evidence over a missing nicety.
 #
@@ -48,6 +53,36 @@ ARGO_CLAIM_DIMENSIONS="addons maxconfig full gitops byo"
 # convergence `floor` already proves; refusing the bundle for want of counts would withhold the
 # only evidence that the CLI drove anything.
 ARGO_SUPPORTING_DIMENSIONS="floor byo-iac day2 cli-demo"
+
+# _templates_verdict <bundle-dir> → prints reason; returns 0 when the templates summary proves all
+# three templates, 1 otherwise. The summary is written by the T2 leg AT ASSERT TIME
+# (test/e2e/t2_templates.go); a bundle without one proves no template, whatever its counts say.
+_templates_verdict() {
+	local dir="$1" f bad
+	f="$dir/templates-summary.json"
+	if [ ! -f "$f" ]; then
+		echo "dimension=templates, but the bundle carries no templates-summary.json — no template's convergence was recorded (#4113)"
+		return 1
+	fi
+	# Every one of apps/chart/ai must be present and PASS, and every Application row must be ok, and
+	# every git-sourced row must have synced the template's own commit. Asked of the rows, not only
+	# of the summary's own verdict field: a verdict is a claim, the rows are the evidence.
+	bad="$(jq -r '
+		. as $s
+		| ( ["apps","chart","ai"] - [ $s.templates[]? | select(.verdict == "PASS") | .template ] ) as $missing
+		| ( [ $s.templates[]? | .template as $t | .commit as $c | .applications[]?
+		      | select((.ok != true) or (.source == "git" and (.sync_revision != $c or ($c // "") == "")))
+		      | "\($t)/\(.application)" ] ) as $rows
+		| ( ( $missing | map("template " + . + " is not PASS") ) + ( $rows | map(. + " is not proven at its template commit") )
+		    + ( [ $s.templates[]? | select((.applications // []) | length == 0) | "template " + .template + " records no Application" ] ) )
+		| join("; ")' "$f" 2>/dev/null)" || bad="templates-summary.json is not readable JSON"
+	if [ -n "$bad" ]; then
+		echo "dimension=templates, but templates-summary.json does not prove all three templates: $bad"
+		return 1
+	fi
+	echo "every starter template's Applications Healthy+Synced at the template's commit ($(jq -r '[.templates[] | "\(.template)@\(.commit[0:12])"] | join(" ")' "$f"))"
+	return 0
+}
 
 _integrity_verdict() { # _integrity_verdict <bundle-dir> <dimension>  → prints reason; returns 0/1/3
 	local dir="$1" dim="$2" outcome assert healthy plan_short plan_full
@@ -130,6 +165,12 @@ _integrity_verdict() { # _integrity_verdict <bundle-dir> <dimension>  → prints
 	esac
 
 	if [ "$assert" = "converged" ] && printf '%s' "$healthy" | grep -qE '^[0-9]+$'; then
+		if [ "$dim" = "templates" ]; then
+			local tv
+			tv="$(_templates_verdict "$dir")" || { echo "$tv"; return 1; }
+			echo "dimension=$dim — $healthy Applications measured Healthy+Synced; $tv"
+			return 0
+		fi
 		echo "dimension=$dim — $healthy Applications measured Healthy+Synced"
 		return 0
 	fi
@@ -169,6 +210,12 @@ if [ "${1:-}" = "--self-test" ]; then
 
 	echo "check-proof-integrity --self-test"
 	measured="$(_mk measured success converged 22)"
+	# A templates summary that proves all three, and variants that each break one thing.
+	jq -n '{verdict:"PASS", templates:[
+		{template:"apps",  commit:"aaaa", verdict:"PASS", applications:[{application:"apps", source:"git", sync_revision:"aaaa", ok:true}]},
+		{template:"chart", commit:"bbbb", verdict:"PASS", applications:[{application:"addon-starter-chart", source:"git", sync_revision:"bbbb", ok:true}]},
+		{template:"ai",    commit:"cccc", verdict:"PASS", applications:[{application:"kserve", source:"oci", sync_revision:"v0.15.2", ok:true},
+		                                                             {application:"addons", source:"git", sync_revision:"cccc", ok:true}]}]}' >"$tmp/tpl-pass.json"
 	unmeasured="$(_mk unmeasured success unmeasured null)"
 	vacuous="$(_mk vacuous success vacuous null)"
 	failed="$(_mk failed failure unmeasured null)"
@@ -177,7 +224,10 @@ if [ "${1:-}" = "--self-test" ]; then
 	# added to ARGO_CLAIM_DIMENSIONS without a row here changes no result and would go unnoticed —
 	# so the row count is asserted at the end.
 	rows=0
-	for dim in addons maxconfig full gitops byo; do
+	for dim in addons maxconfig full gitops byo templates; do
+		# `templates` is also judged on its templates-summary.json; the measured bundle gets a
+		# passing one here so this row tests the COUNTS, and the rows below test the summary.
+		[ "$dim" = "templates" ] && cp "$tmp/tpl-pass.json" "$measured/templates-summary.json"
 		_expect "a measured $dim bundle is promotable"   "$measured"   "$dim" 0
 		_expect "an unmeasured $dim bundle is REFUSED"   "$unmeasured" "$dim" 1
 		_expect "a vacuous $dim bundle is REFUSED"       "$vacuous"    "$dim" 1
@@ -188,6 +238,25 @@ if [ "${1:-}" = "--self-test" ]; then
 		_expect "a measured $dim bundle is promotable"   "$measured"   "$dim" 0
 		rows=$((rows + 2))
 	done
+	# ── templates: the summary is the claim. Each break is refused; the whole one passes. ──
+	for case_ in \
+		"no summary|" \
+		"a template not PASS|.templates[1].verdict = \"FAIL\"" \
+		"a template missing|.templates |= map(select(.template != \"apps\"))" \
+		"a row synced a stale commit|.templates[2].applications[1].sync_revision = \"0000\"" \
+		"a row not ok|.templates[2].applications[0].ok = false" \
+		"a template with no rows|.templates[0].applications = []"; do
+		name="${case_%%|*}"; filter="${case_#*|}"
+		b="$(_mk "tpl_${rows}" success converged 9 templates)"
+		[ -n "$filter" ] && jq "$filter" "$tmp/tpl-pass.json" >"$b/templates-summary.json"
+		_expect "templates: $name is REFUSED" "$b" templates 1
+		rows=$((rows + 1))
+	done
+	b="$(_mk tpl_ok success converged 9 templates)"
+	cp "$tmp/tpl-pass.json" "$b/templates-summary.json"
+	_expect "templates: a summary proving all three is promotable" "$b" templates 0
+	rows=$((rows + 1))
+
 	# A FAILING run is never refused, on the dimension that would otherwise refuse hardest.
 	_expect "a FAILED addons run keeps its evidence" "$failed" "addons" 0
 	# No dimension at all is indeterminate, NOT a pass.

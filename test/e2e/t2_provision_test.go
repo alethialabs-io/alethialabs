@@ -135,7 +135,31 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// above: "required" means "if the base T2 proof runs, the repos proof must too" — with no
 	// cloud creds there is no cluster to prove anything on, so the whole test skips first. ──
 	repos := t2ArgoReposFromEnv()
-	reposEnabled, reposErr := repos.decide()
+	// #4113: the starter-templates proof OWNS the apps-destination slot the A0.6 repos would fill,
+	// and is refused off hetzner or beside the heavy surface — both before any spend. Resolved
+	// FIRST, because on this dimension the A0.6 inputs are superseded rather than judged: the
+	// workflow serves no git token here (the templates are public), and the repo variables it still
+	// forwards would otherwise read as a half-wired A0.6 config and red the run for nothing.
+	tmpl := templatesFromEnv(provider)
+	tmplOn, tmplErr := tmpl.decide()
+	if tmplErr != nil {
+		t.Fatalf("#4113 starter templates: %v", tmplErr)
+	}
+	var tmplCommits map[string]string
+	var reposEnabled bool
+	var reposErr error
+	if tmplOn {
+		cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		tmplCommits, tmplErr = resolveTemplateCommits(cctx)
+		ccancel()
+		if tmplErr != nil {
+			t.Fatalf("#4113 starter templates: resolve each template's HEAD before any spend: %v", tmplErr)
+		}
+		t.Logf("#4113: starter templates ENABLED — apps %s, chart %s, ai %s (HEAD, resolved anonymously); the A0.6 repo inputs are SUPERSEDED on this dimension",
+			tmplCommits[starterAppsRepo], tmplCommits[starterChartRepo], tmplCommits[starterAIRepo])
+	} else {
+		reposEnabled, reposErr = repos.decide()
+	}
 	if reposErr != nil {
 		t.Fatalf("A0.6: %v", reposErr)
 	}
@@ -353,7 +377,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// fidelity check runs against (lean synthetic by default; the REAL console fixture shape under
 	// ALETHIA_E2E_A05_REAL_SNAPSHOT); `full` layers the A0.6 repos + the per-cloud cluster-json
 	// override the runner actually consumes.
-	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, registry, registryOn, acmCert, acmCertOn, a05)
+	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, registry, registryOn, acmCert, acmCertOn, tmpl, tmplOn, a05)
 	if err != nil {
 		t.Fatalf("build deploy snapshot: %v", err)
 	}
@@ -775,7 +799,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Fatalf("A0.6 repo-byo workload: %v", e)
 		}
 		t.Logf("A0.6: ArgoCD-with-repos proven — repo-apps + repo-byo Applications Healthy+Synced and managing real resources on real infra")
-	} else if err := AssertArgoAppsHealthy(ctx, kc, assertedApps, ArgoAssertTimeout()); err != nil {
+	} else if err := AssertArgoAppsHealthy(ctx, kc, assertedApps, argoTimeoutFor(tmplOn)); err != nil {
 		t.Fatalf("ArgoCD application health assertion failed: %v", err)
 	}
 	if AllAddOnsEnabled() {
@@ -845,6 +869,22 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//       row it wrote from the runner's real execution_metadata. Warn-only unless
 	//       ALETHIA_E2E_A05_ENFORCE; a no-op when A0.5 setup was disabled.
 	runA05ConsoleActive(t, ctx, cp, a05, root, jobID)
+
+	// (7.65) STARTER TEMPLATES (#4113). Off unless the `templates` dimension set ALETHIA_E2E_TEMPLATES.
+	//        Phase A (this deploy) is asserted explicitly — KServe, Kueue and the `addons` app-of-apps
+	//        are children of the customer repo, so the derived set above never saw them — then phase B
+	//        REDEPLOYS this same environment with the apps repository re-pointed at starter-apps and
+	//        asserts its root and both overlays. The verdict is written after each phase.
+	if tmplOn {
+		runT2Templates(t, ctx, cp, kc, templatesParams{
+			commits:     tmplCommits,
+			phaseAJobID: jobID,
+			phaseA:      full,
+			graph:       a05.jobGraph(),
+			owner:       owner,
+			clusterName: meta.ClusterName,
+		})
+	}
 
 	// (7.7) DAY-2 ACCESS surface (FULLY-TESTED P2-E). Opt-in via ALETHIA_E2E_DAY2_ACCESS — unset ⇒
 	//       a clean skip. Proves the SURFACED day-2 access path works: cluster_endpoint is surfaced in
@@ -1158,7 +1198,14 @@ func t2BaseSnapshot(project, env, provider, region string) map[string]any {
 // job takes the graph's user/org. Either way it MUST equal the SeedRunner owner, or the self-runner
 // claim (j.org_id = v_runner_org_id, #392) never matches and the job sits QUEUED until timeout.
 func seedT2DeployJob(ctx context.Context, cp *ControlPlane, snap map[string]any, g *a05Graph, leanOwnerID string) (string, error) {
-	jobID := newUUID()
+	return seedT2DeployJobWithID(ctx, cp, newUUID(), snap, g, leanOwnerID)
+}
+
+// seedT2DeployJobWithID is seedT2DeployJob with the job id chosen by the CALLER, so a follow-on
+// DEPLOY can have its tofu state aliased (ControlPlane.AliasStateToJob) BEFORE the row exists — a
+// runner that claimed the row between the insert and the alias would plan against an empty state
+// and try to build a second cluster.
+func seedT2DeployJobWithID(ctx context.Context, cp *ControlPlane, jobID string, snap map[string]any, g *a05Graph, leanOwnerID string) (string, error) {
 	snapshot, err := json.Marshal(snap)
 	if err != nil {
 		return "", err

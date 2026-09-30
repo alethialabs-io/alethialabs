@@ -192,6 +192,17 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 	if vclusterTenantEnabled() {
 		add("vcluster-placement", vclusterTenantBudget)
 	}
+	// The starter-templates proof (#4113): a wider window for the AI chart inside the base ArgoCD
+	// assertion, its own phase-A poll, a REDEPLOY of the same environment and that redeploy's poll.
+	// One named term, so the printed ladder says where the time goes.
+	//
+	// PROVIDER-GATED, unlike the terms above, and deliberately: the scenario is refused on every other
+	// cloud before anything is built (templatesConfig.decide, and the workflow's resolve job before
+	// that), so it can never SPEND there. Reserving an hour for it anyway put aws/gcp/azure/alibaba
+	// ladders past the workflow's caps for a run that cannot happen.
+	if templatesEnabled() && provider == templatesProvider {
+		add("templates", templatesBudget())
+	}
 	if fabricDemoEnabled() {
 		tiers, tErr := fabricDemoTiers(env, provider)
 		if tErr != nil {
@@ -249,6 +260,7 @@ func T2BudgetScenarioEnv() []string {
 		"ALETHIA_E2E_NAMESPACE_TENANT",
 		"ALETHIA_E2E_VCLUSTER",
 		envFabricDemo,
+		envTemplates,
 	}
 	sort.Strings(vars)
 	return vars
