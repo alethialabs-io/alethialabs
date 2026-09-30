@@ -40,7 +40,21 @@ module "rds_maindb" {
   #     on the INSTANCE can tell those two states apart.
   #
   # Enforced by scripts/check-templates-refresh-safe.mjs; its header carries the full table (#3509).
-  rds_security_groups = try(module.eks[0].node_security_group_id, null) != null ? [module.eks[0].node_security_group_id] : []
+  #
+  # AND THE LIST'S LENGTH MUST BE PLAN-KNOWN, which is why the probe sits INSIDE the list rather
+  # than choosing between `[id]` and `[]`. cloudposse/rds-cluster counts its ingress rule on
+  # `length(var.security_groups)`, and on a FRESH stack the node security group id is known only
+  # after apply — so `try(…, null) != null` is itself unknown, the list's length is unknown, and the
+  # plan dies with "Invalid count argument" before anything exists. #3509 shipped exactly that:
+  # every fresh aws stack with a database failed its first plan from 2026-09-01 (first seen on the
+  # keyless-db floor run 36711770548; the aws maxconfig proof, #2813, predates it). An existing
+  # stack never saw it because its node SG id is read from state. The length now follows
+  # `var.provision_eks`, which adds no graph edge and is always known; the ELEMENT stays probed, so
+  # the refresh-only case (#3351 — provision_eks true, module.eks not in state) yields `[null]`
+  # rather than an index abort. null is an accepted value for the rule's OPTIONAL
+  # source_security_group_id, and that rule has no state instance to refresh in that case.
+  # Enforced by the same guard (a probe may not choose a list's LENGTH).
+  rds_security_groups = var.provision_eks ? [try(module.eks[0].node_security_group_id, null) != null ? module.eks[0].node_security_group_id : null] : []
 
   rds_allowed_cidr_blocks = var.rds_allowed_cidr_blocks
 
