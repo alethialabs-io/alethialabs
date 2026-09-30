@@ -925,7 +925,7 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 276,
+			"surfaceFiles": 277,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1043,7 +1043,7 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 292,
+			"surfaceFiles": 293,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1102,7 +1102,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 288,
+			"surfaceFiles": 289,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1574,7 +1574,7 @@
 		{
 			"route": "/[org]/~/jobs",
 			"redirectOnly": false,
-			"surfaceFiles": 275,
+			"surfaceFiles": 276,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1869,7 +1869,7 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"redirectOnly": false,
-			"surfaceFiles": 291,
+			"surfaceFiles": 292,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1928,7 +1928,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"redirectOnly": false,
-			"surfaceFiles": 287,
+			"surfaceFiles": 288,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2046,7 +2046,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"redirectOnly": false,
-			"surfaceFiles": 269,
+			"surfaceFiles": 270,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2223,7 +2223,7 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"redirectOnly": false,
-			"surfaceFiles": 299,
+			"surfaceFiles": 300,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2282,7 +2282,7 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"redirectOnly": false,
-			"surfaceFiles": 298,
+			"surfaceFiles": 299,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2341,7 +2341,7 @@
 		{
 			"route": "/[org]/~/settings/sso",
 			"redirectOnly": false,
-			"surfaceFiles": 289,
+			"surfaceFiles": 290,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -2400,7 +2400,7 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"redirectOnly": false,
-			"surfaceFiles": 295,
+			"surfaceFiles": 296,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -4053,7 +4053,7 @@
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4461,7 +4461,7 @@
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -4654,7 +4654,7 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -6245,7 +6245,7 @@
 			"route": "/[org]/~/jobs",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -7255,7 +7255,7 @@
 			"route": "/[org]/~/settings/access",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -7449,7 +7449,7 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -7851,7 +7851,7 @@
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -8454,7 +8454,7 @@
 			"route": "/[org]/~/settings/members",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -8649,7 +8649,7 @@
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -8843,7 +8843,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryMembersPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -9036,7 +9036,7 @@
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/teams",

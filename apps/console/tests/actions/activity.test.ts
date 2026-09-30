@@ -64,7 +64,9 @@ function mockDb(rows: DbRow[]) {
 		select: () => db,
 		from: () => db,
 		leftJoin: () => db,
+		innerJoin: () => db,
 		where: () => db,
+		groupBy: () => db,
 		orderBy: () => db,
 		limit: (n: number) => {
 			calls.limit = n;

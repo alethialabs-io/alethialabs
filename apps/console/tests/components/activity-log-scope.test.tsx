@@ -62,16 +62,18 @@ import { getActivityLog } from "@/app/server/actions/activity";
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(getMembers).mockResolvedValue([]);
-	vi.mocked(getActivityLog).mockResolvedValue({ rows: [], nextCursor: null });
+	vi.mocked(getActivityLog).mockResolvedValue({ rows: [], nextCursor: null, facets: null });
 });
 
 describe("ActivityLog — project scope", () => {
 	it("forces the project's id, hides the Project facet + Export, and captions the scope", async () => {
 		render(<ActivityLog projectId="s1" />);
 
-		// Forced scope: the first query carries just the project id.
+		// Forced scope: the first query carries the project id as SCOPE, not as the Project
+		// facet's filter — the server's facet counts must see the one and never the other.
 		await waitFor(() => expect(getActivityLog).toHaveBeenCalled());
-		expect(vi.mocked(getActivityLog).mock.calls[0][0]?.resourceIds).toEqual(["s1"]);
+		expect(vi.mocked(getActivityLog).mock.calls[0][0]?.projectId).toBe("s1");
+		expect(vi.mocked(getActivityLog).mock.calls[0][0]?.resourceIds).toBeUndefined();
 
 		// Redundant controls are gone; the caption names the project.
 		expect(screen.queryByText("Project")).toBeNull();
@@ -87,6 +89,7 @@ describe("ActivityLog — org scope", () => {
 
 		await waitFor(() => expect(getActivityLog).toHaveBeenCalled());
 		expect(vi.mocked(getActivityLog).mock.calls[0][0]?.resourceIds).toBeUndefined();
+		expect(vi.mocked(getActivityLog).mock.calls[0][0]?.projectId).toBeUndefined();
 
 		expect(screen.getByText("Project")).toBeInTheDocument();
 		expect(screen.queryByText(/activity in/i)).toBeNull();

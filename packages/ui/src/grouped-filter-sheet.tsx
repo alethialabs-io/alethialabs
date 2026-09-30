@@ -5,7 +5,8 @@
 // A generic multi-select filter whose options are too many for a dropdown: a trigger opens
 // a Sheet of Collapsible groups, each a checklist. The group header carries a count and a
 // select-all toggle. Option-based and domain-free (no audit/event knowledge) — the caller
-// passes `groups` + `value` + `onChange`; used for the Activity event-type filter.
+// passes `groups` + `value` + `onChange`; used for the Activity event-type filter. An option's
+// `count` renders through `CountFigure`, the facet count every other filter primitive shares.
 
 import { Check, ChevronDown, type LucideIcon } from "lucide-react";
 import { useState } from "react";
@@ -16,6 +17,7 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "./collapsible";
+import { CountFigure } from "./count-pill";
 import {
 	Sheet,
 	SheetContent,
@@ -28,6 +30,9 @@ import { cn } from "./utils";
 export interface GroupedFilterOption {
 	value: string;
 	label: string;
+	/** How many rows this option covers in the UNFILTERED universe (the filter standard's facet
+	 *  count), rendered as the option's trailing figure. Omit while it is unknown. */
+	count?: number;
 }
 export interface GroupedFilterGroup {
 	label: string;
@@ -122,6 +127,11 @@ function Group({
 							>
 								<CheckBox on={on} />
 								<span className="text-[12.5px] text-text-secondary">{o.label}</span>
+								{o.count !== undefined && (
+									<CountFigure className="ml-auto shrink-0">
+										{String(o.count)}
+									</CountFigure>
+								)}
 							</button>
 						);
 					})}
