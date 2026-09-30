@@ -28,6 +28,7 @@ import { qk } from "@/lib/query/keys";
 export function normalizeActivityQuery(query: ActivityQuery): ActivityQuery {
 	const sorted = (xs?: string[]) => (xs && xs.length ? [...xs].sort() : undefined);
 	return {
+		...(query.projectId ? { projectId: query.projectId } : {}),
 		...(query.from ? { from: query.from } : {}),
 		...(query.to ? { to: query.to } : {}),
 		...(query.search?.trim() ? { search: query.search.trim() } : {}),
