@@ -18,8 +18,8 @@
 #                     trust is pattern-bound (infra/aws-secrets-e2e) because the cluster is
 #                     ephemeral; this stage proves the SHIPPED module's shape works too.
 #
-# AWS and GCP can run (GCP against an ADOPTED standing GSA, #1268). azure/alibaba record BLOCKED
-# with the reason from secretsXacctLane
+# AWS, GCP and Azure can run (GCP and Azure against an ADOPTED standing identity, #1268). alibaba
+# records BLOCKED with the reason from secretsXacctLane
 # (test/e2e/t2_secrets_xacct.go) — the SAME text the parity board quotes, so a lane cannot look
 # covered here while being blocked there. A run that can't proceed is recorded as BLOCKED, never
 # skipped silently: a SKIPPED test is classified BLOCKED, never PASS — and PASS is read from the
@@ -28,6 +28,8 @@
 # The caller exports the target env (see docs/testing/e2e-nightly-enablement.md):
 #   ALETHIA_E2E_SECRETS_XACCT=1 ALETHIA_E2E_SECRETS_XACCT_{ACCOUNT,REGION,ROLE_ARN,REMOTE_KEY,EXPECT_SHA256}
 #   (gcp: ALETHIA_E2E_SECRETS_XACCT_{PROJECT_ID,REMOTE_KEY,EXPECT_SHA256,ESO_GSA_EMAIL} instead)
+#   (azure: ALETHIA_E2E_SECRETS_XACCT_{ACCOUNT,REMOTE_KEY,EXPECT_SHA256}_AZURE plus
+#    ALETHIA_E2E_SECRETS_XACCT_{VAULT_URL,ESO_IDENTITY_NAME,ESO_IDENTITY_RG} — infra/azure-secrets-e2e)
 #   plus the provider creds the base T2 proof needs.
 #
 # Env knobs: NO_ISSUE=1 (don't file a GH issue on fail) · BLOCKED="<reason>" (force a BLOCKED record).
@@ -53,13 +55,12 @@ if [[ "$stage" == "strict" && "$cloud" != "aws" ]]; then
   echo "stage strict is aws-only: it closes the AWS exact-ARN trust divergence; $cloud has none to close" >&2; exit 2
 fi
 
-# ── the lane gate. AWS and GCP can be proven; the others record WHY, never a silent skip.
+# ── the lane gate. AWS, GCP and Azure can be proven; alibaba records WHY, never a silent skip.
 #    The authoritative reasons live in secretsXacctLane (test/e2e/t2_secrets_xacct.go) — a pure test
 #    asserts they stay substantive, and docs/testing/xacct-secrets-parity.md carries them in full.
 #    These are the one-line summaries; keep them pointing at that board rather than restating it.
 if [[ -z "${BLOCKED:-}" ]]; then
   case "$cloud" in
-    azure)   BLOCKED="azure: the cross-subscription role assignment binds the managed identity's object id, regenerated on every create (adopting a standing identity removes that half); still needs a second subscription in the same tenant and an account-B stack — see docs/testing/xacct-secrets-parity.md." ;;
     alibaba) BLOCKED="alibaba: ESO's RRSA needs a RAM OIDC provider registered against THIS cluster's ACK issuer — inherently per-cluster. Honest exclusion; see docs/testing/xacct-secrets-parity.md." ;;
   esac
 fi
@@ -80,7 +81,7 @@ else
   # PASS is read from the SCENARIO's own summary, never from `go test`'s exit code alone. The test
   # this runs is the BASE T2 proof; the cross-account read is one scenario inside it, and decide()
   # (test/e2e/t2_secrets_xacct.go) can turn that scenario OFF with a logged reason — a blocked
-  # lane, or a gcp run with neither PROJECT_ID nor ESO_GSA_EMAIL set — while the base proof passes
+  # lane, or a gcp/azure run with none of its own variables set — while the base proof passes
   # and the process exits 0. Reading the exit code recorded exactly that as PASS for a read that
   # never ran. runT2SecretsXacct writes this file ONLY when the scenario actually ran, and its
   # verdict starts as FAIL and becomes PASS only after the last assertion; so "no file" means "did
