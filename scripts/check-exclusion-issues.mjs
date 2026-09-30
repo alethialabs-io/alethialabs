@@ -48,6 +48,14 @@
 // everywhere else (`DemoStep.Validate`, enforced by `TestEveryShippedCeilingCarriesAProbe`). The
 // verdict IS the split. This guard reads it rather than adding a second one.
 //
+// AND THE SAME SPLIT, ONE FILE UP — the maintainer's ruling on #3524 (2026-09-30). An
+// addon_exclusions.go entry may be marked `Permanent: true`: the maintainer has ruled the add-on
+// needs something only a customer can bring (external-dns: a DNS zone and an identity allowed to
+// write it), so the exclusion is a standing classification, not a debt. Its `Issue` names that
+// RULING and need only be FILED — the CloudManual reasoning above, for the same reason. Every entry
+// NOT marked permanent is still held to the OPEN rule, so the flag cannot be read as a general
+// loosening: it is per row, read structurally, and its enforced arm is proven by mutation below.
+//
 // ⚠️ THE ENFORCED ARM IS VACUOUS ON TODAY'S TABLE, ON PURPOSE. There are ZERO `CLIGap` rows — the
 // CLI debt was cleared by #2331 — so a live run proves only that the table is empty. That is the
 // intended state and must not be dressed up as a clean one: an empty enforced arm prints its own
@@ -70,8 +78,23 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-/** The file whose contract is "the Issue must be OPEN", and the field that carries it. */
+/** The file whose contract is "the Issue must be OPEN" unless the entry is Permanent. */
 const GUARDED = "test/e2e/addon_exclusions.go";
+
+/**
+ * The per-row contract for GUARDED (#3524's ruling). The "verdict" is the entry's `Permanent:`
+ * field; an entry that does not state it is NOT permanent, which is Go's zero value and the
+ * fail-loud direction — an unmarked entry is held to the OPEN rule.
+ */
+const EXCLUSION = {
+	file: GUARDED,
+	/** The struct field whose value is the verdict. */
+	field: "Permanent",
+	/** Not permanent — a debt — so its tracker must be OPEN. Also what an ABSENT field means. */
+	enforced: "false",
+	/** Ruled permanent, so its tracker need only be filed. */
+	reported: "true",
+};
 
 /**
  * The file whose contract is PER-ROW, and the two verdicts that divide it.
@@ -233,8 +256,6 @@ export function reachConstants(source) {
 	return [...source.matchAll(/^\s*([A-Za-z_]\w*)\s+CLIReach\s*=\s*"/gm)].map((m) => m[1]);
 }
 
-/** `Reach: <ident>` — the verdict, at the top level of one composite literal. */
-const REACH_FIELD = /Reach:\s*([A-Za-z_]\w*)/y;
 /** `Issue:` — the field is MENTIONED, whatever shape its value is in. */
 const ISSUE_MENTION = /Issue:\s*/y;
 /** `Issue: "#<digits>"` — the field is mentioned in a shape this scan can READ. */
@@ -259,11 +280,15 @@ const ISSUE_NUMBER = /Issue:\s*"#(\d+)"/y;
  * first so a commented-out row is not read as a live one.
  *
  * @param {string} source comment-stripped Go source
+ * @param {string} [field] the struct field that carries the row's verdict — `Reach` for the CLI-demo
+ *   table, `Permanent` for the add-on exclusions. Its value is read into `reach` either way.
  * @returns {{reach: string, issue: number|null, mentions: number, readable: number, line: number,
  *   unbalanced?: boolean}[]} one entry per row, in source order, plus a flagged sentinel if the
  *   brace walk never balanced
  */
-export function demoRows(source) {
+export function demoRows(source, field = "Reach") {
+	/** `<field>: <ident>` — the verdict, at the top level of one composite literal. */
+	const verdictField = new RegExp(`${field}:\\s*([A-Za-z_]\\w*)`, "y");
 	/** @type {{reach: string, issue: number|null, mentions: number, readable: number, line: number, unbalanced?: boolean}[]} */
 	const rows = [];
 	/** @type {typeof rows} */
@@ -301,8 +326,8 @@ export function demoRows(source) {
 		// method-ish `s.Reach` in code cannot be read as a field either.
 		if (i > 0 && /[\w.]/.test(source[i - 1])) continue;
 		const top = stack[stack.length - 1];
-		REACH_FIELD.lastIndex = i;
-		const r = REACH_FIELD.exec(source);
+		verdictField.lastIndex = i;
+		const r = verdictField.exec(source);
 		if (r) {
 			top.reach = r[1];
 			continue;
@@ -327,6 +352,23 @@ export function demoRows(source) {
 		rows.push({ reach: "", issue: null, mentions: 0, readable: 0, line: stack[0].line, unbalanced: true });
 	}
 	return rows;
+}
+
+/**
+ * The add-on exclusion entries, each with its `Permanent` verdict — and an ABSENT field read as
+ * `false`, because that is what Go makes of it and because it is the fail-loud direction: an entry
+ * nobody marked is held to the OPEN rule, never quietly excused from it.
+ *
+ * Only rows that carry an `Issue` get the default. A row stating neither field is not a row (see
+ * demoRows), and an unbalanced sentinel keeps its empty verdict so splitVerdict still reds on it.
+ *
+ * @param {string} source comment-stripped Go source of addon_exclusions.go
+ * @returns {ReturnType<typeof demoRows>}
+ */
+export function exclusionRows(source) {
+	return demoRows(source, EXCLUSION.field).map((r) =>
+		r.reach === "" && !r.unbalanced && r.mentions > 0 ? { ...r, reach: EXCLUSION.enforced } : r,
+	);
 }
 
 /**
@@ -428,11 +470,12 @@ export function enforcedArmLine({ checked, open, findings }, contract, file) {
  * @param {string} source
  * @param {string} from the verdict identifier to replace
  * @param {string} to the verdict identifier to write
+ * @param {string} [field] the struct field carrying the verdict (`Reach`, or `Permanent`)
  * @returns {{source: string, applied: boolean}}
  */
-export function mutateOneReach(source, from, to) {
+export function mutateOneReach(source, from, to, field = "Reach") {
 	let applied = false;
-	const out = source.replace(new RegExp(`((?:^|[{,])\\s*Reach:\\s*)${from}\\b`, "m"), (_m, lead) => {
+	const out = source.replace(new RegExp(`((?:^|[{,])\\s*${field}:\\s*)${from}\\b`, "m"), (_m, lead) => {
 		applied = true;
 		return `${lead}${to}`;
 	});
@@ -745,6 +788,56 @@ if (process.argv.includes("--self-test")) {
 		t(after.unattributable.length === 0, "…and the mutated source is still fully attributable");
 	}
 
+	// ── The add-on exclusions' per-row split: the ruling on #3524. ──────────────────────────────
+	console.log("\n the add-on exclusion split (Permanent)");
+	{
+		const synthetic =
+			"var addOnExclusions = map[string]AddOnExclusion{\n" +
+			'\t"a": {\n\t\tKind: NeedsUserConfig,\n\t\tIssue: "#1",\n\t\tClouds: []string{"aws"},\n\t},\n' +
+			'\t"b": {\n\t\tIssue: "#2",\n\t\tPermanent: true,\n\t\tHealthFailsOpenOn: map[string]string{"aws": "x"},\n\t},\n' +
+			'\t"c": {Kind: K, Issue: "#3", Permanent: false},\n}\n';
+		const rows = exclusionRows(synthetic);
+		t(rows.length === 3, `a nested Clouds/HealthFailsOpenOn literal is not a row (saw ${rows.length}, want 3)`);
+		t(rows[0].reach === "false", "an entry that does NOT state Permanent is read as not permanent — the fail-loud default");
+		t(rows[1].reach === "true" && rows[1].issue === 2, "an entry stating Permanent: true pairs it with its OWN Issue");
+		t(rows[2].reach === "false", "an explicit Permanent: false is not permanent either");
+		const s = splitVerdict(rows, new Map([[1, "CLOSED"], [2, "CLOSED"], [3, "CLOSED"]]), EXCLUSION);
+		t(JSON.stringify(s.enforced.closed) === "[1,3]", "a NON-permanent entry citing a CLOSED issue is a FINDING");
+		t(JSON.stringify(s.reported.closed) === "[2]", "…and a Permanent entry on the SAME state is recorded, never enforced");
+		const unmarkedRow = exclusionRows('{\n\tIssue: trackerConst,\n}\n');
+		t(
+			splitVerdict(unmarkedRow, new Map(), EXCLUSION).unattributable.length === 1,
+			"an Issue in an unreadable shape is unattributable here too, whatever the default verdict",
+		);
+		const truncated = exclusionRows('map[string]AddOnExclusion{\n\t"a": {Issue: "#9"},\n');
+		t(
+			splitVerdict(truncated, new Map([[9, "OPEN"]]), EXCLUSION).unattributable.some((r) => r.unbalanced),
+			"an unbalanced walk over the exclusions is still flagged — the default verdict does not paper over it",
+		);
+	}
+
+	// …and against the REAL file, by mutation, for the same reason the CLI-demo arm is: the live
+	// file's only entry is Permanent, so the OPEN arm covers nothing on a live run.
+	console.log("\n the OPEN arm, against the REAL exclusions");
+	{
+		const real = stripLineComments(readFileSync(path.join(ROOT, EXCLUSION.file), "utf8"));
+		const realRows = exclusionRows(real);
+		const control = splitVerdict(realRows, new Map(), EXCLUSION);
+		t(control.unattributable.length === 0, "every Issue field in the real exclusions is attributable");
+		const { fields } = issueFieldOccurrences(real);
+		const inRows = realRows.reduce((n, r) => n + r.mentions, 0);
+		t(inRows === fields, `every Issue occurrence sits inside an entry (${inRows} of ${fields})`);
+		const permanent = realRows.filter((r) => r.reach === EXCLUSION.reported && r.issue !== null);
+		t(permanent.length > 0, `the real file still carries a Permanent entry (${permanent.length})`);
+		const { source: mutated, applied } = mutateOneReach(real, EXCLUSION.reported, EXCLUSION.enforced, EXCLUSION.field);
+		t(applied && mutated !== real, "the Permanent: true → false mutation APPLIED to the real source");
+		const mutatedRows = exclusionRows(mutated);
+		const allClosed = new Map(mutatedRows.filter((r) => r.issue !== null).map((r) => [r.issue, "CLOSED"]));
+		const after = splitVerdict(mutatedRows, allClosed, EXCLUSION);
+		t(after.enforced.closed.length >= 1, "an un-permanent entry citing a CLOSED issue REDS the OPEN arm");
+		t(after.unattributable.length === 0, "…and the mutated source is still fully attributable");
+	}
+
 	console.log("\n the verdict");
 	// verdict() takes states; readState() now returns {state, error} so gh's own words survive. The
 	// bare `catch` that discarded them let the caller assert a cause it had not measured.
@@ -837,6 +930,31 @@ if (fields !== readable) {
 	process.exit(1);
 }
 
+// …and every one of those fields attributed to an ENTRY, whose `Permanent:` verdict decides which
+// contract it is held to (#3524's ruling). Run before any state is asked for, so it reds in
+// --scan-only: an Issue this walk cannot place is one whose contract nobody knows.
+const exclRows = exclusionRows(source);
+const exclShape = splitVerdict(exclRows, new Map(), EXCLUSION);
+const exclInRows = exclRows.reduce((n, r) => n + r.mentions, 0);
+if (exclShape.unattributable.length > 0 || exclInRows !== fields) {
+	console.error(
+		`::error::check-exclusion-issues: ${GUARDED} has Issue field(s) this scan cannot attribute to an ` +
+			`entry's ${EXCLUSION.field} verdict (${exclInRows} of ${fields} placed, ` +
+			`${exclShape.unattributable.length} unattributable row(s)).`,
+	);
+	for (const r of exclShape.unattributable) {
+		console.error(
+			r.unbalanced
+				? `    the brace walk never balanced — it ended inside a literal opened near line ${r.line}.`
+				: `    line ~${r.line}: ${EXCLUSION.field} ${r.reach || "(none)"}, Issue mentioned ${r.mentions}×, readable ${r.readable}×`,
+		);
+	}
+	console.error("  An unattributable Issue is unchecked, and an unchecked one is indistinguishable from a");
+	console.error("  checked one in the output below.");
+	process.exit(1);
+}
+const exclPermanentSeen = exclRows.filter((r) => r.reach === EXCLUSION.reported).length;
+
 // ── the per-row file: the same scan, then the split the ruling on #3591 makes ─────────────────────
 
 const splitSource = stripLineComments(readSubject(SPLIT.file, "SPLIT.file"));
@@ -899,7 +1017,10 @@ if (splitShape.unattributable.length > 0) {
 const splitNumbers = [...new Set(splitIssueRows.map((r) => r.issue).filter((n) => n !== null))].sort((a, b) => a - b);
 
 if (scanOnly) {
-	console.log(`✓ scan: ${numbers.length} tracking issue(s) read from ${GUARDED} (${numbers.map((n) => `#${n}`).join(", ")})`);
+	console.log(
+		`✓ scan: ${numbers.length} tracking issue(s) read from ${GUARDED} (${numbers.map((n) => `#${n}`).join(", ")}) — ` +
+			`${exclRows.length - exclPermanentSeen} entries OPEN enforced, ${exclPermanentSeen} Permanent (filed only)`,
+	);
 	const enforcedSeen = splitRows.filter((r) => r.reach === SPLIT.enforced).length;
 	const reportedSeen = splitRows.filter((r) => r.reach === SPLIT.reported).length;
 	console.log(
@@ -916,9 +1037,15 @@ const allNumbers = [...new Set([...numbers, ...splitNumbers])].sort((a, b) => a 
 const states = new Map(allNumbers.map((n) => [n, readState(n)]));
 const reasons = new Map([...states.entries()].map(([n, r]) => [n, r.error]));
 const stateOf = new Map([...states.entries()].map(([n, r]) => [n, r.state]));
-const { closed, unreadable, open } = verdict(new Map(numbers.map((n) => [n, stateOf.get(n) ?? ""])));
+// The OPEN rule applies to the entries NOT ruled permanent; a Permanent entry's ruling is reported.
+const excl = splitVerdict(exclRows, stateOf, EXCLUSION);
+const closed = excl.enforced.closed;
+const unreadable = [...new Set([...excl.enforced.unreadable, ...excl.reported.unreadable])].sort((a, b) => a - b);
+const open = excl.enforced.open;
 
 for (const n of open) console.log(`  ✓ #${n} is OPEN`);
+for (const n of excl.reported.open) console.log(`  · #${n} (Permanent — the ruling) is OPEN; filed is all it needs to be`);
+for (const n of excl.reported.closed) console.log(`  · #${n} (Permanent — the ruling) is CLOSED, which is correct: see the ruling on #3524`);
 
 let bad = false;
 if (unreadable.length > 0) {
@@ -941,10 +1068,18 @@ if (closed.length > 0) {
 	console.error("  closed has nothing left to make it come off the list, which is how it becomes");
 	console.error("  permanent. Either the exclusion is no longer true (delete the entry), or it is");
 	console.error("  still true and needs a tracking issue that is still open (file one and point at it).");
+	console.error(`  (${EXCLUSION.field}: true is NOT the fix unless the maintainer has RULED the exclusion permanent.)`);
 }
 
-if (!bad) {
-	console.log(`✓ every tracking issue in ${GUARDED} is open (${open.length})`);
+// THE VACUITY FLOOR for this file too: today its only entry is Permanent, so the OPEN arm covers
+// nothing, and that must not print the same tick as an arm that checked something and passed.
+const exclEnforcedChecked = excl.enforced.open.length + excl.enforced.closed.length + excl.enforced.unreadable.length;
+if (exclEnforcedChecked === 0) {
+	console.log(`◻ the OPEN arm asserted NOTHING — every entry in ${GUARDED} is ${EXCLUSION.field}.`);
+	console.log("  That is the state the ruling on #3524 produced, not an error. That this arm can still");
+	console.log(`  discriminate is proven by --self-test, which flips the real ${EXCLUSION.field}: true to false and asserts it reds.`);
+} else if (!bad) {
+	console.log(`✓ every non-permanent tracking issue in ${GUARDED} is open (${open.length} of ${exclEnforcedChecked})`);
 }
 
 // ── the per-row arms ──────────────────────────────────────────────────────────────────────────────
