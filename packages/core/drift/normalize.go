@@ -30,6 +30,15 @@ const (
 	// from configuration at all. No configured intent can govern it and no apply can
 	// converge it.
 	ReasonComputedAttribute NormalizedReason = "computed_attribute"
+	// ReasonSensitivityOnly — OpenTofu reported the resource as changed, yet every attribute
+	// VALUE is identical and only the sensitivity MARKS differ (which paths OpenTofu redacts
+	// when it renders the value). A mark is display metadata held in state, not a property of
+	// the infrastructure. See sensitivityOnly for the full argument and its narrowings.
+	ReasonSensitivityOnly NormalizedReason = "sensitivity_only"
+	// ReasonAssignmentBackReference — the delta on this resource is exactly the reverse edge
+	// of an assignment ANOTHER managed resource in the same state declares and still holds
+	// (a primary IP or firewall reporting the server that attached it). See backref.go.
+	ReasonAssignmentBackReference NormalizedReason = "assignment_back_reference"
 )
 
 // reasonStrength ranks how firm each dismissal is, so examine can report the WEAKEST
@@ -37,24 +46,37 @@ const (
 //
 // The ordering is an argument, not a preference:
 //
-//   - empty_collection (3) needs no external evidence at all. It is a cardinality
+//   - empty_collection (5) needs no external evidence at all. It is a cardinality
 //     identity — null and [] both denote ∅ — so it is true by construction.
-//   - computed_attribute (2) rests on ONE fact read from the provider's own published
+//   - sensitivity_only (4) is also an identity — every value on both sides is equal — but
+//     it rests on one fact about OpenTofu rather than none: that a resource whose values
+//     are equal and whose types are equal (both sides are decoded against the same schema)
+//     can only differ in its marks. That is how OpenTofu's drift comparison is written
+//     (cty RawEquals compares marks), not a property of the data itself.
+//   - computed_attribute (3) rests on ONE fact read from the provider's own published
 //     schema: the attribute has no config path into it. Firm, but it is a fact about a
 //     document we fetched, and a wrong or stale schema would weaken it.
-//   - undeclared_collection (1) rests on the absence of a config expression PLUS an
+//   - undeclared_collection (2) rests on the absence of a config expression PLUS an
 //     inference about how the provider's Read behaved at create time. Two links, the
 //     second unverifiable from the plan.
+//   - assignment_back_reference (1) rests on a HAND-WRITTEN claim about one provider's API
+//     (that it reports an assignment made from the server back on the target), verified
+//     against two views of state. The verification is strong, but the claim it verifies is
+//     ours, not the provider's, so it ranks weakest.
 //
 // An unranked value sorts as the weakest possible, so adding a reason and forgetting to
 // rank it can only understate a dismissal, never overstate one.
 func reasonStrength(r NormalizedReason) int {
 	switch r {
 	case ReasonEmptyCollection:
-		return 3
+		return 5
+	case ReasonSensitivityOnly:
+		return 4
 	case ReasonComputedAttribute:
-		return 2
+		return 3
 	case ReasonUndeclaredCollection:
+		return 2
+	case ReasonAssignmentBackReference:
 		return 1
 	default:
 		return 0
@@ -109,11 +131,14 @@ type verdict struct {
 //     may dismiss, so it stays drift.
 //   - There must be at least one differing leaf. Otherwise a change carrying no
 //     before/after at all would be dismissed vacuously — silence dressed as proof.
+//     The ONE exception needs positive evidence in place of a leaf: equal, number-free
+//     values whose sensitivity masks differ (sensitivityOnly, marks.go). Equal values
+//     with equal masks remain drift.
 //
 // A resource is dismissed only when EVERY differing leaf is representational. One real
 // delta anywhere and the whole resource stays drift with its original Kind; resources
 // are never partially forgiven.
-func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex) verdict {
+func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex, st *stateIndex) verdict {
 	act := rc.Change.Actions
 	asDrift := verdict{Drift: true, Kind: classify(act)}
 
@@ -127,6 +152,12 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex) ve
 	}
 	leaves := diffLeaves(before, after, rc.Change.BeforeSensitive, rc.Change.AfterSensitive)
 	if len(leaves) == 0 {
+		// No VALUE differs, yet OpenTofu reported a change. Dismissible only on positive
+		// evidence of what did change — the sensitivity marks — never merely because
+		// nothing visible did (that would be the vacuous dismissal this guard exists for).
+		if paths, ok := sensitivityOnly(before, after, rc.Change.BeforeSensitive, rc.Change.AfterSensitive); ok {
+			return verdict{Reason: ReasonSensitivityOnly, Attributes: paths}
+		}
 		return asDrift
 	}
 
@@ -146,6 +177,7 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex) ve
 		configKnown: configKnown,
 		attrSchema:  attrSchema,
 		schemaKnown: schemas != nil && typeFound,
+		backRefs:    backReferenceRoots(rc, before, after, st),
 	}
 
 	// Every differing leaf path, computed BEFORE the dismissal loop so the drift branch can
@@ -244,6 +276,13 @@ func (d leafDelta) normalizing(ev evidence) (NormalizedReason, bool) {
 	beforeNull := !d.beforeSet || d.before == nil
 	afterNull := !d.afterSet || d.after == nil
 
+	// The back-reference tier is tried FIRST because it is the weakest justification, and a
+	// leaf that could be dismissed more than one way must carry the weaker one. Its roots are
+	// verified per resource by backReferenceRoots, so this is a lookup, not a judgement.
+	if _, ok := ev.backRefs[d.root]; ok && !d.sensitive {
+		return ReasonAssignmentBackReference, true
+	}
+
 	// Tier 1, both directions. tags {"a":"b"} -> {} is tags REMOVED out-of-band and must
 	// stay drift, so only the null side may be empty-or-absent — never both sides
 	// flattened to ∅ before comparing, which is how detection of sweep-handle removal
@@ -317,6 +356,10 @@ type evidence struct {
 	// schemaKnown is true when a provider-schema document was supplied AND it covered
 	// this resource's provider and type.
 	schemaKnown bool
+	// backRefs is the set of top-level attributes whose whole delta backReferenceRoots
+	// verified as an assignment back-reference. Nil — the tier does not fire — without a
+	// prior_state, or for any resource that tier does not recognise.
+	backRefs map[string]struct{}
 }
 
 // isCollection reports whether v is a list or a map. Scalars are never collections.
