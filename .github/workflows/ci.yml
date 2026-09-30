@@ -1789,7 +1789,8 @@ jobs:
       # was already broken on dev: the sole entry cited #2717, closed 2026-08-29 (#3524).
       #
       # The guard now has THREE modes, not two, after the maintainer's ruling on #3591:
-      # test/e2e/addon_exclusions.go must be OPEN; a CLIGap row in test/e2e/t2_cli_demo.go must be
+      # test/e2e/addon_exclusions.go must be OPEN unless the entry is `Permanent: true` (the ruling on
+      # #3524: then it names the ruling and need only be FILED); a CLIGap row in test/e2e/t2_cli_demo.go must be
       # OPEN too (our own debt has to be able to close); a CloudManual row there need only be FILED
       # (a cloud ceiling does not lift because its issue did — all four are legitimately closed).
       #
