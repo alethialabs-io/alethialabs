@@ -47,7 +47,7 @@ const (
 // child. The single call site builds BOTH from the same params, so the two backends
 // converge on identical work. Payload is the JSON of a per-kind struct owned by the
 // runner (agent) package — this package keeps it opaque so it stays dependency-light.
-// Payload carries NO secrets (git/state tokens cross via the child's allowlisted env).
+// Payload carries NO secrets: they cross on Spec.Secrets, into this job's child env only.
 type Stage struct {
 	Kind    StageKind       `json:"kind"`
 	Payload json.RawMessage `json:"payload"`
@@ -81,7 +81,32 @@ type Spec struct {
 	// local chart and needs no network). Backends that can't enforce it must fail closed
 	// rather than silently allow egress.
 	NoEgress bool
+	// Secrets is THIS job's secret material, keyed by the env var the re-exec'd stage child
+	// reads it back from (the Env* constants below). It is the only channel by which a
+	// per-job secret crosses the isolation boundary: the container backend injects each
+	// allowlisted key into this job's child env (by name on the argv, value on the runtime
+	// CLI's own cmd.Env — #2041) and drops any other key. It is never written to the
+	// runner's process env, which is shared by every job the process runs and readable on
+	// /proc. Passthrough ignores it: its in-process closure already holds the Go value.
+	Secrets map[string]string
 }
+
+// The env keys a per-job secret crosses the container boundary on (Spec.Secrets keys). The
+// runner (agent) package renders its stageSecrets into these and the child reads them back.
+// Adding one means adding it to stageSecretEnvKeys in container.go too, or it is dropped.
+const (
+	// EnvStateToken is the per-job tofu-state token. The child reads it back as the http
+	// backend's password; its own provisioner re-publishes it to tofu under the same name.
+	EnvStateToken = "TF_HTTP_PASSWORD"
+	// EnvGitToken is the BYO repo git token.
+	EnvGitToken = "ALETHIA_STAGE_GIT_TOKEN"
+	// EnvGitTokens is the JSON map repo URL → git token for charts on another provider.
+	EnvGitTokens = "ALETHIA_STAGE_GIT_TOKENS"
+	// EnvAddonSecrets is the JSON map add-on id → secret field key → plaintext (#640).
+	EnvAddonSecrets = "ALETHIA_STAGE_ADDON_SECRETS"
+	// EnvTalosConfig is a hetzner-talos Fabric's admin talosconfig (#1389).
+	EnvTalosConfig = "ALETHIA_STAGE_TALOS_CONFIG"
+)
 
 // Sandbox runs one untrusted Job within an isolation context. An implementation MUST
 // NOT broaden the caller's blast radius relative to running the Job directly (the
