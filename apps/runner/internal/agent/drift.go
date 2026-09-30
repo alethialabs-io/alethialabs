@@ -79,7 +79,8 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 		sec := stageSecrets{GitToken: gitToken, StateToken: stateBackend.Token}
 		if rerr := w.sandbox.Run(ctx, sandbox.Spec{
 			Kind: "drift", JobID: job.ID, Provider: provider, WorkDir: workDir, Stage: stage,
-			Stdout: stdout, Stderr: stderr,
+			Secrets: sec.specSecrets(),
+			Stdout:  stdout, Stderr: stderr,
 			Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
 		}, func(ctx context.Context) error {
 			return runDriftStage(ctx, payload, sec, workDir, stdout, stderr)

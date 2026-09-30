@@ -808,7 +808,8 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	// runDeployStage in-process; the container backend re-execs it in a per-job container.
 	if err := w.sandbox.Run(ctx, sandbox.Spec{
 		Kind: "deploy", JobID: job.ID, Provider: provider, WorkDir: workDir, Stage: stage,
-		Stdout: stdout, Stderr: stderr,
+		Secrets: sec.specSecrets(),
+		Stdout:  stdout, Stderr: stderr,
 		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
 	}, func(ctx context.Context) error {
 		return runDeployStage(ctx, payload, sec, workDir, stdout, stderr)
@@ -1099,7 +1100,8 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	// Run the untrusted plan through the isolation seam (Passthrough in-process / container re-exec).
 	if err := w.sandbox.Run(ctx, sandbox.Spec{
 		Kind: "plan", JobID: job.ID, Provider: provider, WorkDir: workDir, Stage: stage,
-		Stdout: stdout, Stderr: stderr,
+		Secrets: sec.specSecrets(),
+		Stdout:  stdout, Stderr: stderr,
 		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
 	}, func(ctx context.Context) error {
 		return runDeployStage(ctx, payload, sec, workDir, stdout, stderr)
@@ -1215,7 +1217,8 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, 
 	// deploy/plan — Passthrough runs it in-process; the container backend re-execs it.
 	if err := w.sandbox.Run(ctx, sandbox.Spec{
 		Kind: "destroy", JobID: job.ID, Provider: provider, WorkDir: workDir, Stage: stage,
-		Stdout: stdout, Stderr: stderr,
+		Secrets: sec.specSecrets(),
+		Stdout:  stdout, Stderr: stderr,
 		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
 	}, func(ctx context.Context) error {
 		return runDestroyStage(ctx, payload, sec, workDir, stdout, stderr)
