@@ -2,13 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, desc, eq, gte, ilike, inArray, lt, lte, or, type SQL } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { getPdp } from "@/lib/authz";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
-import { likeTerm } from "@/lib/db/like";
 import { authzActivityLog, user } from "@/lib/db/schema";
+import {
+	type ActivityFacets,
+	activitySelect,
+	queryActivityPage,
+} from "@/lib/queries/activity";
 
 export interface ActivityRow {
 	id: string;
@@ -30,6 +34,9 @@ export interface ActivityPage {
 	rows: ActivityRow[];
 	/** The `id` to pass as `cursor` for the next page, or null when this is the last page. */
 	nextCursor: number | null;
+	/** The User / Project / Events facet counts over the scope's UNFILTERED log. Present on the
+	 *  first page only (null when `cursor` was set): a later page walks the same universe. */
+	facets: ActivityFacets | null;
 }
 
 /** Filters + cursor for {@link getActivityLog}; all fields optional (omitted = no filter). */
@@ -38,6 +45,9 @@ export interface ActivityQuery {
 	cursor?: number | null;
 	/** Page size (rows returned); defaults to {@link PAGE_SIZE}. */
 	limit?: number;
+	/** SCOPE, not a filter: a project's own Activity page pins the feed to this project id. The
+	 *  facet counts see it; they never see any of the filters below. */
+	projectId?: string;
 	/** ISO timestamps bounding `ts` (inclusive). */
 	from?: string;
 	to?: string;
@@ -47,7 +57,7 @@ export interface ActivityQuery {
 	resourceTypes?: string[];
 	/** Restrict to allow (`true`) or deny (`false`); omit/null for both. */
 	decision?: boolean | null;
-	/** Restrict to these resource ids (the Project filter, resolved to project ids). */
+	/** Restrict to these resource ids (the Project facet's selected project ids). */
 	resourceIds?: string[];
 	/** Case-insensitive match over actor name/email, action, and resource type. */
 	search?: string;
@@ -57,28 +67,11 @@ export interface ActivityQuery {
 const PAGE_SIZE = 50;
 const EXPORT_LIMIT = 10_000;
 
-/** The "select" shape shared by the viewer + export, joined to the acting user. */
-function activitySelect() {
-	return {
-		id: authzActivityLog.id,
-		actorId: authzActivityLog.actor_id,
-		actorName: user.name,
-		actorEmail: user.email,
-		actorImage: user.image,
-		actorUsername: user.username,
-		action: authzActivityLog.action,
-		resourceType: authzActivityLog.resource_type,
-		resourceId: authzActivityLog.resource_id,
-		decision: authzActivityLog.decision,
-		reason: authzActivityLog.reason,
-		ts: authzActivityLog.ts,
-	};
-}
-
 /**
  * A filtered, cursor-paginated page of the active org's Activity log — every recorded action +
- * denial — newest first (by insertion id). Community-real (the PDP writes it). Scoped by
- * `org_id`; all filtering happens here so paging stays correct across pages.
+ * denial — newest first (by insertion id), with the filter bar's facet counts on the first page.
+ * Community-real (the PDP writes it). Scoped by `org_id`; all filtering happens in
+ * `queryActivityPage` (lib/queries/activity.ts) so paging stays correct across pages.
  *
  * Gated on `activity:view_activity`, the same permission `app/api/cli/activity/route.ts`
  * enforces (#3932) — before this, any org member read the whole log here while the CLI refused
@@ -87,53 +80,7 @@ function activitySelect() {
  */
 export async function getActivityLog(query: ActivityQuery = {}): Promise<ActivityPage> {
 	const actor = await authorize("view_activity", { type: "activity" });
-	const limit = query.limit ?? PAGE_SIZE;
-
-	const conditions: (SQL | undefined)[] = [
-		eq(authzActivityLog.org_id, actor.orgId),
-		query.cursor != null ? lt(authzActivityLog.id, query.cursor) : undefined,
-		query.from ? gte(authzActivityLog.ts, new Date(query.from)) : undefined,
-		query.to ? lte(authzActivityLog.ts, new Date(query.to)) : undefined,
-		query.actorIds?.length
-			? inArray(authzActivityLog.actor_id, query.actorIds)
-			: undefined,
-		query.resourceTypes?.length
-			? inArray(authzActivityLog.resource_type, query.resourceTypes)
-			: undefined,
-		query.resourceIds?.length
-			? inArray(authzActivityLog.resource_id, query.resourceIds)
-			: undefined,
-		query.decision != null ? eq(authzActivityLog.decision, query.decision) : undefined,
-	];
-	if (query.search?.trim()) {
-		const like = likeTerm(query.search.trim());
-		conditions.push(
-			or(
-				ilike(user.name, like),
-				ilike(user.email, like),
-				ilike(authzActivityLog.action, like),
-				ilike(authzActivityLog.resource_type, like),
-			),
-		);
-	}
-
-	// Fetch one extra row to detect whether a further page exists.
-	const rows = await getServiceDb()
-		.select(activitySelect())
-		.from(authzActivityLog)
-		.leftJoin(user, eq(authzActivityLog.actor_id, user.id))
-		.where(and(...conditions))
-		.orderBy(desc(authzActivityLog.id))
-		.limit(limit + 1);
-
-	const hasMore = rows.length > limit;
-	const page = hasMore ? rows.slice(0, limit) : rows;
-	const nextCursor = hasMore ? page[page.length - 1].id : null;
-
-	return {
-		rows: page.map((r) => ({ ...r, id: String(r.id), ts: r.ts.toISOString() })),
-		nextCursor,
-	};
+	return queryActivityPage(actor.orgId, query, PAGE_SIZE);
 }
 
 /** What the caller may do with the Activity log: read it, and export it. */

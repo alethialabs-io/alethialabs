@@ -76,9 +76,9 @@ export function activityRange(
 
 /**
  * The stable, normalized query the current filters describe — this object IS the TanStack key,
- * so equal filters hit the cache. `pinnedProjectId` forces the project scope (the project-scoped
- * feed); otherwise the Project facet's selection becomes `resourceIds`, keeping scoping
- * server-side. The debounced search must be passed in, not read from `filters`.
+ * so equal filters hit the cache. `pinnedProjectId` forces the project scope (`projectId`, the
+ * project-scoped feed); otherwise the Project facet's selection becomes `resourceIds`, keeping
+ * scoping server-side. The debounced search must be passed in, not read from `filters`.
  */
 export function activityQueryFrom({
 	filters,
@@ -93,12 +93,13 @@ export function activityQueryFrom({
 	pinnedProjectId?: string;
 }): ActivityQuery {
 	const { resourceTypes, decision } = splitEventTokens(filters.eventTokens);
-	const resourceIds = pinnedProjectId
-		? [pinnedProjectId]
-		: filters.projectIds.length
-			? filters.projectIds
-			: undefined;
+	// The pinned project is SCOPE (`projectId`), which the server's facet counts see; the Project
+	// facet's selection is a FILTER (`resourceIds`), which they must not. Sending the pin as a
+	// `resourceIds` filter would leave the server unable to tell the two apart.
+	const resourceIds =
+		!pinnedProjectId && filters.projectIds.length ? filters.projectIds : undefined;
 	return normalizeActivityQuery({
+		projectId: pinnedProjectId,
 		from: range.from.toISOString(),
 		to: range.to.toISOString(),
 		actorIds: filters.actorIds,
