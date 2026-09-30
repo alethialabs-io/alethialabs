@@ -336,11 +336,10 @@ export const EXTERNAL_DNS_PROVIDERS: Record<ExternalDnsProvider, ExternalDnsProv
  * `toValues` emitted no serviceAccount block at all — the very hole #3469 closes. Requiring the
  * identity makes the collision the NORMAL path, which is why it is fixed in the same change.
  *
- * ⚠️ FOR #3470, which plans to make the add-on assume the role the platform template already
- * creates: that role's trust is bound to `external-dns-sa` above. It has to gain
- * `external-dns:addon-external-dns-sa` (and the GKE/Azure equivalents — all three clouds, one pass)
- * rather than have the add-on borrow the rail's ServiceAccount, which cannot work for the reason
- * just given.
+ * #3523 (for #3470) made each cloud's platform template trust THIS name as well — aws irsa.tf's
+ * `external-dns:addon-external-dns`, the GKE member and the Azure federated subject — rather than have
+ * the add-on borrow the rail's ServiceAccount, which cannot work for the reason just given. A
+ * customer's own identity must trust the same name.
  */
 export const EXTERNAL_DNS_ADDON_SA = "addon-external-dns";
 
@@ -2114,7 +2113,17 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				default: "cloudflare",
 				options: EXTERNAL_DNS_PROVIDER_IDS.map((id) => ({ value: id, label: EXTERNAL_DNS_PROVIDERS[id].label })),
 			},
-			{ key: "domainFilter", label: "Domain filter (optional)", type: "string", default: "" },
+			{
+				key: "domainFilter",
+				label: "Domain filter (optional)",
+				type: "string",
+				default: "",
+				help:
+					"The DNS zone ExternalDNS manages, for example example.com. You bring the zone: it must already " +
+					"exist in the DNS provider selected above, and the API token or workload identity must be " +
+					"allowed to write records in it. ExternalDNS does not create zones. Leave empty to manage " +
+					"every zone that identity can see.",
+			},
 			{
 				key: "apiToken",
 				label: "Provider API token",
@@ -2129,9 +2138,10 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				default: "",
 				help:
 					"REQUIRED for AWS, Google and Azure — the identity external-dns assumes: an IAM role ARN (AWS), " +
-					`a service-account email (Google) or a managed-identity client id (Azure). Bind it to the ` +
-					`add-on's ServiceAccount, "${EXTERNAL_DNS_ADDON_SA}" in the "external-dns" namespace. Not needed ` +
-					"for the token providers, which take an API token above instead.",
+					`a service-account email (Google) or a managed-identity client id (Azure). It must be allowed to ` +
+					`write records in your DNS zone, and it must trust the add-on's ServiceAccount, ` +
+					`"${EXTERNAL_DNS_ADDON_SA}" in the "external-dns" namespace. Not needed for the token ` +
+					"providers, which take an API token above instead.",
 			},
 			// #3589. Azure's three identifiers, derived from the provider table so the form, the
 			// refusal and the file it ends up in are one list. They are identifiers, not credentials
