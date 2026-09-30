@@ -4,10 +4,14 @@
 package e2e
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // The shape run 36706460832 left behind for the staging loadgenerator, with the init container
@@ -98,36 +102,46 @@ func TestRenderInitContainerLogs(t *testing.T) {
 	}
 }
 
-// guardrailPoliciesJSON is the guardrail bundle as the API server returns it, built from the file
-// the runner applies (infra/templates/argocd/preview-guardrails/networkpolicy.yaml) — the render test
-// below asserts the three policies it names, so a renamed or reshaped bundle fails here.
-const guardrailPoliciesJSON = `{"items": [
-  {"metadata": {"name": "preview-default-deny"}, "spec": {"podSelector": {}, "policyTypes": ["Ingress", "Egress"]}},
-  {"metadata": {"name": "preview-allow-dns"}, "spec": {"podSelector": {}, "policyTypes": ["Egress"],
-    "egress": [{"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}, "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
-                "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]}]}},
-  {"metadata": {"name": "preview-allow-intra-namespace"}, "spec": {"podSelector": {}, "policyTypes": ["Ingress", "Egress"],
-    "ingress": [{"from": [{"podSelector": {}}]}], "egress": [{"to": [{"podSelector": {}}]}]}}
-]}`
-
-func TestRenderNetworkPoliciesGuardrailBundle(t *testing.T) {
-	// The fixture must name the policies the bundle actually ships, or it is testing a story.
-	src, err := os.ReadFile("../../infra/templates/argocd/preview-guardrails/networkpolicy.yaml")
+// guardrailPoliciesJSON returns the guardrail bundle as the API server lists it, converted from the
+// file the runner applies (infra/templates/argocd/preview-guardrails/networkpolicy.yaml) rather than
+// hand-copied: a hand-written copy went stale the moment #845's node-local DNS rule was added.
+func guardrailPoliciesJSON(t *testing.T) []byte {
+	t.Helper()
+	f, err := os.Open("../../infra/templates/argocd/preview-guardrails/networkpolicy.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"preview-default-deny", "preview-allow-dns", "preview-allow-intra-namespace"} {
-		if !strings.Contains(string(src), "name: "+name) {
-			t.Fatalf("the guardrail bundle no longer ships %q — update the fixture", name)
+	defer f.Close()
+	dec := yaml.NewDecoder(f)
+	var items []map[string]any
+	for {
+		var doc map[string]any
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			break
 		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		items = append(items, doc)
 	}
-	got := renderNetworkPolicies("boutique-staging", []byte(guardrailPoliciesJSON), nil)
+	out, err := json.Marshal(map[string]any{"items": items})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func TestRenderNetworkPoliciesGuardrailBundle(t *testing.T) {
+	got := renderNetworkPolicies("boutique-staging", guardrailPoliciesJSON(t), nil)
 	for _, want := range []string{
 		"NetworkPolicies in boutique-staging",
 		"preview-default-deny: pods[{}] types=Ingress,Egress",
 		"ingress: DENY all",
 		"egress: DENY all",
 		"egress to ns[kubernetes.io/metadata.name=kube-system] pods[k8s-app=kube-dns] on 53/UDP,53/TCP",
+		// #845 gcp leg: the node-local DNS cache's link-local addresses, DNS ports only.
+		"egress to ipBlock 169.254.20.10/32 | ipBlock 169.254.25.10/32 on 53/UDP,53/TCP",
 		"ingress from same-ns pods[{}] on any port",
 		"egress to same-ns pods[{}] on any port",
 	} {
