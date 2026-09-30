@@ -294,6 +294,17 @@ var CLIDemoSteps = []DemoStep{
 			"different purpose: component-add says what to build, and this says where the workloads come from",
 	},
 	{
+		ID:    "dns-cert",
+		Title: "Bring a delegated DNS zone and ask for a managed certificate",
+		Argv:  []string{"project", "component", "add"},
+		Reach: CLIDriven,
+		Why: "the `dns` singleton, authored with `--kind dns --set enabled=true --set zone_id=<zone> " +
+			"--set domain_name=<name> --set managed_certificate=true`. buildConfigSnapshot emits it as " +
+			"dns.zone_id (so the template brings the zone rather than creating one) and dns.managed_certificate " +
+			"(which the aws template reads as acm_certificate_enable). A step of its own because it is the " +
+			"CLI's half of the certificate path; delegating the zone is the other half, and that is dns-delegation",
+	},
+	{
 		ID:    "manifest-init",
 		Title: "Write the project down as a file",
 		Argv:  []string{"init"},

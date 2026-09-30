@@ -97,6 +97,11 @@ func TestCLIDemoBeatsApplyBeforeTheStepsThatReadIt(t *testing.T) {
 		{"manifest-plan", "chart-attach"},
 		{"apps-repo", "plan"},
 		{"chart-attach", "plan"},
+		// #5087: the certificate ask is authored after the manifest round trip (which asserts 0
+		// components) and before the PLAN and DEPLOY snapshot the project.
+		{"manifest-plan", "dns-cert"},
+		{"project-env", "dns-cert"},
+		{"dns-cert", "plan"},
 		{"plan", "apply"},
 		{"apply", "jobs-logs"},
 		{"apply", "cluster-get"},
