@@ -225,9 +225,10 @@ func waitVClusterAppHealthy(t *testing.T, ctx context.Context, kc, vcName string
 		}
 		if time.Now().After(deadline) {
 			// The failure branch is the one that has to NAME the cause (#845, run 36634781502 printed
-			// only health/sync). Bounded: two 5s reads.
+			// only health/sync). The vcluster's synced pods live in its HOST namespace, which is
+			// where the scheduling half looks. Bounded: at most five 5s reads.
 			t.Fatalf("vcluster app never reached Healthy+Synced within %s: %v%s", timeout, lastErr,
-				dumpArgoAppDiagnosis(ctx, kc, lastApp, vcName))
+				dumpArgoAppDiagnosis(ctx, kc, lastApp, vcName, vcHostNamespacePrefix+vcName))
 		}
 		select {
 		case <-ctx.Done():
