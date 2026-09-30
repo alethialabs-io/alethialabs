@@ -26,6 +26,11 @@ output "e2e_gcp_external_dns_sa_email" {
   value       = google_service_account.e2e_external_dns.email
 }
 
+output "e2e_gcp_keyless_app_db_sa_email" {
+  description = "Standing app->Cloud SQL identity the keyless-db rider adopts via cloud_sql_app_service_account_email. Set it as the repo variable E2E_KEYLESS_DB_GCP_APP_SA; unset, a gcp keyless run is refused before spend."
+  value       = google_service_account.e2e_app_db.email
+}
+
 # ── E2E assertion broker trust (#4226) ────────────────────────────────────────
 output "e2e_broker_gcp_wif_audience" {
   description = "The STS `audience` a broker-assertion exchange must name — the broker provider's full resource name — or null while e2e_broker_issuer_url is unset. Distinct from the JWT `aud` (alethia-gcp-wif), which is what allowed_audiences pins."
