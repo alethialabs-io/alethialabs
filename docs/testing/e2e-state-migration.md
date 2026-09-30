@@ -261,25 +261,22 @@ gcloud storage ls "gs://$(cd bootstrap && tofu output -raw state_bucket)/**"
 #   expect EXACTLY gcp-e2e/default.tfstate and gcp-e2e-bootstrap/default.tfstate
 #   (usage logs go to the separate `-logs` sink, so they do not appear here)
 
-tofu plan -var-file=<(printf 'e2e_broker_issuer_url = null\n')     # in infra/gcp-e2e — see below
+tofu plan                          # in infra/gcp-e2e — must be "No changes"
 ```
 
-**Why the plan needs that `-var-file`.** The committed `terraform.tfvars` sets
-`e2e_broker_issuer_url = "https://e2e-issuer.alethialabs.io"` (#4226), and that broker trust has
-not been applied. A bare `tofu plan` on current `dev` therefore proposes **3 to add** — the broker
-WIF pool, its provider and the SA binding (`e2e-broker.tf`) — and that is correct, not a failed
-migration. The migration question is "did the state come across", so ask it with the broker set
-back to its default `null`; the later `-var-file` wins over `terraform.tfvars`. Applying the broker
-is a separate step (`docs/testing/e2e-federation-apply-runbook.md`), taken only once
-`https://e2e-issuer.alethialabs.io` actually serves — **do not** apply with this override either:
-that would record the broker as absent.
+**A bare plan, with no override.** The committed `terraform.tfvars` sets
+`e2e_broker_issuer_url = "https://e2e-issuer.alethialabs.io"` (#4226), and that broker trust is now
+**applied** — the broker WIF pool, its provider and the SA binding (`e2e-broker.tf`, 3 resources)
+are live and in state, which is what the gcp cli-demo cell proves through. So the committed inputs
+describe the live project exactly and the plan must match it with nothing added or removed.
 
-> **Not `-var e2e_broker_issuer_url=null`.** For a `string`-typed variable `-var` passes the literal
-> four-character string `"null"`, which fails the variable's validation (measured). `null` only
-> reaches the variable as HCL, which is what the `-var-file` gives it. zsh and bash both support the
-> `<(…)` form; any file containing that one line works the same.
+> **Do not pass `e2e_broker_issuer_url = null` any more.** This page used to verify with
+> `tofu plan -var-file=<(printf 'e2e_broker_issuer_url = null\n')`, written while the broker was
+> committed but unapplied. Against the applied broker that override plans **3 to destroy** — the
+> pool, the provider and the binding the nightly authenticates through — which reads exactly like a
+> migration that lost state, and applying it would cut the broker trust.
 
-With that override, the plan must be **"No changes"** with **no `Warning:` block at all** — see the
+The plan must be **"No changes"** with **no `Warning:` block at all** — see the
 note at the top of
 this page; the old `budget_alerts_are_deliverable` warning is gone and its return is a signal, not
 an expectation. Anything else — especially a proposed *create* of the WIF pool, the SA or the
@@ -369,13 +366,13 @@ az storage blob list --auth-mode login \
 
 test -f backend_override.tf && echo "OVERRIDE STILL PRESENT — you are still on local state"
 
-tofu plan -var-file=<(printf 'e2e_broker_issuer_url = null\n')     # in infra/azure-e2e — must be "No changes"
+tofu plan                          # in infra/azure-e2e — must be "No changes"
 ```
 
-The `-var-file` is there for the same reason as GCP's: the committed `terraform.tfvars` sets
-`e2e_broker_issuer_url`, so a bare plan on current `dev` proposes **1 to add** — the broker
-federated credential (`e2e-broker.tf`) — until that trust is applied. That add is expected and is
-not evidence about the migration; do not apply with the override.
+A bare plan, for the same reason as GCP's: the broker federated credential (`e2e-broker.tf`) is
+applied, so the committed `terraform.tfvars` matches the live subscription. Do **not** pass
+`e2e_broker_issuer_url = null` — against the applied broker it plans **1 to destroy**, the
+credential the nightly's broker path authenticates with.
 
 A proposed *create* of `azuread_application` would mean a new client id, which would invalidate the
 `E2E_AZURE_CLIENT_ID` repo variable and break the nightly. Treat it as a stop.
