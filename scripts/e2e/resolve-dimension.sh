@@ -344,6 +344,33 @@ dimension_label() { # <token>
 	esac
 }
 
+# red_label is the word a nightly RED issue TITLE carries: dimension_label's, EXCEPT when the fabric
+# demo (#845) rode the run, where it is `fabric-demo`.
+#
+# WHY (#5153). The fabric demo is not a dimension — it is a scenario that rides one, switched by the
+# `fabric_demo` input or vars.E2E_FABRIC_DEMO — so dimension_label never saw it and run 36648775773,
+# a floor night that went red ONLY in the fabric gate after every floor assertion passed, was filed
+# as "gcp RED (floor)". The title is the dedup key AND scripts/programme-rollup.mjs reads the label
+# to decide which grid cell a red CONTESTS, so that title turned a proven gcp/floor cell contested
+# over a failure the floor never had. `fabric-demo` is a label programme-rollup knows and maps to NO
+# cell (SCENARIO_RED_LABELS there): it dedups apart from a real floor red and contests nothing.
+#
+# The cost, stated: a fabric night that died in the BASE provision also files as `fabric-demo`, so
+# that floor failure contests no cell. The body names the base dimension, and a floor that fails on
+# its own still fails the next plain night under its own title.
+#
+# The switch is read the way the harness reads it (t2Truthy: 1/true/yes/on, any case), NOT as the
+# workflow's `!= ''` cap test — E2E_FABRIC_DEMO=0 runs no fabric, so it must not title a red as one.
+FABRIC_RED_LABEL="fabric-demo"
+red_label() { # <token> <fabric-switch value>
+	local l
+	l="$(dimension_label "${1:-}")" || return $?
+	case "$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')" in
+	1 | true | yes | on) echo "$FABRIC_RED_LABEL" ;;
+	*) echo "$l" ;;
+	esac
+}
+
 run_self_test() {
 	local fails=0
 	_a() { if [ "$1" = "$2" ]; then echo "ok   - $3"; else
@@ -448,6 +475,16 @@ run_self_test() {
 	_a "yes" "$(case "$_err" in *"unknown dimension 'no-such-dimension'"*) echo yes ;; *) echo no ;; esac)" \
 		"...and the refusal names the token it was given"
 	unset _err
+
+	# red_label (#5153): a fabric night titles as fabric-demo, whatever the base dimension; the switch
+	# is read like the harness reads it, so a falsy value leaves the dimension's own label.
+	_a "fabric-demo" "$(red_label floor 1)" "a fabric-demo floor red is titled fabric-demo, not floor (#5153)"
+	_a "fabric-demo" "$(red_label floor TRUE)" "the fabric switch is read case-insensitively, like t2Truthy"
+	_a "fabric-demo" "$(red_label gitops on)" "fabric riding another dimension is still titled fabric-demo"
+	_a "floor" "$(red_label floor '')" "no fabric switch leaves the dimension label"
+	_a "floor" "$(red_label floor 0)" "E2E_FABRIC_DEMO=0 runs no fabric, so it titles as the dimension"
+	_a "full-bar" "$(red_label full '')" "red_label keeps dimension_label's renames"
+	_a "2" "$(red_label no-such-dimension 1 >/dev/null 2>&1; echo $?)" "an unknown token is still refused under fabric"
 
 	# ── The fidelity table (#2356). These are the assertions that were missing, and their absence is
 	# why a documented definition and an asserted one could diverge for weeks. ──
