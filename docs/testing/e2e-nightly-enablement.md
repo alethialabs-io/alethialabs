@@ -199,6 +199,15 @@ leg records the lane as not wired and runs without the scenario; with only one s
 provisioning. `_REMOTE_KEY` and `_EXPECT_SHA256` are shared by every leg, so running aws and gcp
 together needs the same secret name and the same canary value in both account-B stacks.
 
+**Azure leg (#1268).** From `infra/azure-secrets-e2e`, which needs a **second subscription in the
+same tenant** and also creates the standing external-secrets identity in the cluster's subscription.
+Its README has the `gh variable set` lines. Three are `_AZURE` siblings, because the flat names are
+the aws leg's: `E2E_SECRETS_XACCT_ACCOUNT_AZURE`, `E2E_SECRETS_XACCT_REMOTE_KEY_AZURE` and
+`E2E_SECRETS_XACCT_EXPECT_SHA256_AZURE`. Three are azure-only: `E2E_SECRETS_XACCT_VAULT_URL`,
+`E2E_SECRETS_XACCT_ESO_IDENTITY_NAME` and `E2E_SECRETS_XACCT_ESO_IDENTITY_RG`. The harness makes the
+azure cluster adopt that identity. With none of the azure-only three set, the leg records the lane
+as not wired; with some but not all, it fails before provisioning.
+
 The region is **account B's**, where the canary lives — it need not match the cluster's, and is
 required explicitly rather than defaulted so a mismatch cannot surface as a puzzling
 `ResourceNotFound` at sync time.

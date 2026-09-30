@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Apply ONCE, by hand, as an identity that can
+# create resources in BOTH subscriptions (same tenant):
+#
+#   tofu init -backend-config=backend.hcl
+#   TF_VAR_canary_value="$(openssl rand -hex 24)" tofu apply
+#
+# Then set the repo variables from `tofu output` (README.md). Do NOT put canary_value in this file.
+
+# Subscription B — owns the Key Vault and the canary. Must differ from the cluster's.
+target_subscription_id = "00000000-0000-0000-0000-00000000000b"
+# Subscription A — where the e2e cluster runs (the one infra/azure-e2e manages).
+cluster_subscription_id = "00000000-0000-0000-0000-00000000000a"
+
+# location = "germanywestcentral"
+# secret_name = "alethia-e2e-xacct-canary"
