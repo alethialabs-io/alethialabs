@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -265,6 +266,17 @@ func (c *RunnerAPIClient) StreamWake(ctx context.Context, onEvent func(WakeEvent
 	return scanner.Err()
 }
 
+// ErrJobNotOwned is what UpdateJobStatus returns when the console REFUSES the post because this
+// runner no longer owns the job — the console answers 409 for exactly that (update_job_status
+// raises SQLSTATE AL409). It happens when stale-job recovery requeued the job out from under a
+// runner that was still working it (#5162). It is not a transient error and retrying cannot fix
+// it: the job belongs to whoever claims it next, so the caller must stop the job's remaining side
+// effects rather than carry on unowned.
+var ErrJobNotOwned = errors.New("the console refused the status post: this runner no longer owns the job")
+
+// UpdateJobStatus posts a status transition (and optional execution_metadata merge) for a job.
+// A 409 is returned as ErrJobNotOwned (wrapped) so callers can tell a lost claim from a transient
+// failure; every other non-200 is a plain error.
 func (c *RunnerAPIClient) UpdateJobStatus(jobID, status, errorMessage string, executionMetadata map[string]any) error {
 	payload := map[string]any{
 		"status": status,
@@ -293,6 +305,9 @@ func (c *RunnerAPIClient) UpdateJobStatus(jobID, status, errorMessage string, ex
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusConflict {
+		return fmt.Errorf("update status to %s: %w", status, ErrJobNotOwned)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("update status returned status %d", resp.StatusCode)
 	}
