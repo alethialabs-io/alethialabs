@@ -1,0 +1,17 @@
+# Copy to backend.hcl and fill in from `tofu output` in infra/azure-e2e/bootstrap:
+#
+#   tofu init -backend-config=backend.hcl
+#
+# The same account and container as infra/azure-e2e (subscription A), under this stack's own key.
+# `use_azuread_auth` is REQUIRED: the bootstrap disables shared keys, so the applying identity needs
+# `Storage Blob Data Contributor` on the account (the bootstrap's state_writer_principal_ids).
+# See docs/testing/e2e-state-migration.md for how that account came to exist.
+
+resource_group_name  = "alethia-tfstate"
+storage_account_name = "alethiatfstate"
+container_name       = "tfstate"
+key                  = "azure-secrets-e2e.tfstate"
+use_azuread_auth     = true
+
+# The state account lives in subscription A. Name it if your az CLI defaults to another one.
+# subscription_id = "00000000-0000-0000-0000-000000000000"
