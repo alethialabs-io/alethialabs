@@ -1,0 +1,17 @@
+hetzner: ✅ apply(25 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (5/5 asserted)→destroyed(1)
+dimension: floor
+cluster:   alethia-nl-36714474498-1 (nbg1)
+run:       nightly-36714474498-1 @ 9ac0b57
+receipt:   signed=true sha256=e11b5a74a5ef
+teardown:  destroyed=true (1 resources)
+duration:  1265s
+soak:      soak: skipped
+day2-access: ✅ day2-access: endpoint surfaced=true · kube reachable=true authorized=true (can-i * / *) · nodes ready=4 · argocd-url: n/a (no ingress on this cloud yet — access via port-forward)
+day2offer: n/a (day-2 offer postures off or not reached)
+fabric-demo: ✅ fabric-demo on alethia-nl-36714474498-1: prod: prod(production,dedicated=true,stage_label=36714474498-1) · placements dev-1→boutique-dev-1(examples/online-boutique/overlays/dev-1,res=35,converged=true) staging→boutique-staging(examples/online-boutique/overlays/staging,res=35,converged=true) · vcluster: boutique-staging(examples/online-boutique/overlays/staging,res=35,deregistered=true) · argocd-preserved=true · receipt(fabric)=e11b5a74a5ef… · drift: in_sync=true drifted=0
+acm-cert: n/a (#1773 ACM certificate gate off or not reached)
+byo-iac:   ✅ byo-iac on hetzner: iac/drift/hetzner@a0eaa1c55c05… https://github.com/alethialabs-io/alethia-examples · gate-blocks-bad=true · pinned-clone-logged=true · receipt=ab56c15d642f… · state-on-proxy=true(1 res) · no-cluster-output=true · ctx=alethia-nl/36714474498-1 · drift baseline-in-sync=true → induced(alethia-byo-e2e36714)=1[hcloud_placement_group] → healed-in-sync=true · destroy=SUCCESS state-cleared=true
+xacct:     n/a (#1268 cross-account secrets off or not reached)
+keyless-db: n/a (#1511 keyless DB auth off or not reached)
+xacct-registry: n/a (#1047 cross-account registry off or not reached)
+argocd:    5 of 5 expected Applications Healthy+Synced

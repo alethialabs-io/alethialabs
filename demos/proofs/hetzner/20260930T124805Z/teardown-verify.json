@@ -1,0 +1,15 @@
+{
+  "schema": "alethia.e2e.teardown-verify/1",
+  "provider": "hetzner",
+  "run_tag": "nightly-36714474498-1",
+  "scope": "run 36714474498-1",
+  "verdict": "CLEAN",
+  "reason": "the cloud was re-listed after the sweep and listed nothing for this run",
+  "exit_code": 0,
+  "unverifiable": [],
+  "unattributable": [
+    "imager-upload-helpers"
+  ],
+  "unverifiable_detail": [],
+  "measured_at": "2026-09-30T12:48:43Z"
+}
