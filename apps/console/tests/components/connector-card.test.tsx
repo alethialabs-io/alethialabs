@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Component test for ConnectorCard: a connected connector renders its logo in
-// full color (no grayscale filter) and offers "Manage"; a not-connected one is
-// grayscale and offers "Connect".
+// full color (no grayscale filter) and offers "Manage"; a not-connected one offers
+// "Connect", and its logo stays unmodified when it is a third-party mark (#3907) and
+// turns grayscale only for a cloud mark.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -54,7 +55,9 @@ describe("ConnectorCard", () => {
 		expect(screen.getByRole("button", { name: /manage/i })).toBeInTheDocument();
 	});
 
-	it("renders a not-connected logo in grayscale and offers Connect", () => {
+	it("renders a not-connected THIRD-PARTY mark unmodified and offers Connect (#3907)", () => {
+		// The owners of every `/icons/` connector mark forbid changing its colour, so the
+		// disconnected state no longer desaturates it — docs/legal/DESIGN_SYSTEM_AUDIT.md.
 		render(
 			<ConnectorCard
 				integration={connector({ connected: false })}
@@ -64,8 +67,26 @@ describe("ConnectorCard", () => {
 			/>,
 		);
 		const logo = screen.getByAltText("Datadog");
-		expect(logo.className).toContain("grayscale");
+		expect(logo.className).not.toContain("grayscale");
 		expect(screen.getByRole("button", { name: /connect/i })).toBeInTheDocument();
+	});
+
+	it("still renders a not-connected CLOUD mark in grayscale — the hyperscaler question is separate", () => {
+		render(
+			<ConnectorCard
+				integration={connector({
+					category: "cloud",
+					slug: "aws",
+					name: "AWS",
+					icon_url: "/aws/favicon_64x64.png",
+					connected: false,
+				})}
+				canManage
+				onConnect={() => {}}
+				onManage={() => {}}
+			/>,
+		);
+		expect(screen.getByAltText("AWS").className).toContain("grayscale");
 	});
 
 	it("shows Verification failed + a Re-verify action that calls onReverify", async () => {

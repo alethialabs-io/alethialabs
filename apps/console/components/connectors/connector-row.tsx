@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
-import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { ConnectorIcon, isThirdPartyMark } from "@/components/connectors/connector-icon";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { connectorState } from "@/components/connectors/connectors-query";
 import { Button } from "@repo/ui/button";
@@ -72,17 +72,14 @@ export function ConnectorRow({
 				<div className="flex items-center gap-3">
 					<div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/40 p-1.5">
 						{isGit ? (
-							<GitProviderIcon
-								provider={integration.slug}
-								size={20}
-								mono={!isConnected}
-							/>
+							<GitProviderIcon provider={integration.slug} size={20} mono={false} />
 						) : (
 							<ConnectorIcon
 								src={integration.icon_url}
 								name={integration.name}
 								size={22}
-								mono={!isConnected}
+								mono={!isConnected && !isThirdPartyMark(integration.icon_url)}
+								canLink
 							/>
 						)}
 					</div>
