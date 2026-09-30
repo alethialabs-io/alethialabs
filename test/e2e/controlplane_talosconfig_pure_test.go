@@ -50,6 +50,16 @@ func TestGateTalosconfigJob(t *testing.T) {
 		{"unclaimed job", &talosJobRow{jobType: "DEPLOY", status: "QUEUED", snapshot: dedicated}, true, http.StatusForbidden, ""},
 		{"another runner's job", &talosJobRow{runnerID: "r-2", jobType: "DEPLOY", status: "PROCESSING", snapshot: dedicated}, true, http.StatusForbidden, ""},
 		{"not a deploy", &talosJobRow{runnerID: runner, jobType: "DESTROY", status: "PROCESSING", snapshot: dedicated}, true, http.StatusForbidden, ""},
+		// #845 run 36646962419: a placement's teardown mints from the Fabric's credential as its deploy did.
+		{"vcluster destroy reads its Fabric", &talosJobRow{runnerID: runner, jobType: "DESTROY", status: "PROCESSING", snapshot: []byte(`{"provider":"hetzner","placement_mode":"vcluster","cluster":{"cluster_name":"alethia-nl-1"}}`)}, false, 0, "alethia-nl-1"},
+		{"namespace destroy reads its Fabric", &talosJobRow{runnerID: runner, jobType: "DESTROY", status: "CLAIMED", snapshot: placement}, false, 0, "alethia-nl-1"},
+		{"placement destroy may not write", &talosJobRow{runnerID: runner, jobType: "DESTROY", status: "PROCESSING", snapshot: placement}, true, http.StatusForbidden, ""},
+		{"dedicated destroy may not read", &talosJobRow{runnerID: runner, jobType: "DESTROY", status: "PROCESSING", snapshot: dedicated}, false, http.StatusForbidden, ""},
+		{"explicit dedicated destroy may not read", &talosJobRow{runnerID: runner, jobType: "DESTROY", status: "PROCESSING", snapshot: []byte(`{"provider":"hetzner","placement_mode":"dedicated","cluster":{"cluster_name":"alethia-nl-1"}}`)}, false, http.StatusForbidden, ""},
+		{"finished destroy may not read", &talosJobRow{runnerID: runner, jobType: "DESTROY", status: "SUCCESS", snapshot: placement}, false, http.StatusForbidden, ""},
+		{"another runner's destroy", &talosJobRow{runnerID: "r-2", jobType: "DESTROY", status: "PROCESSING", snapshot: placement}, false, http.StatusForbidden, ""},
+		{"non-hetzner destroy", &talosJobRow{runnerID: runner, jobType: "DESTROY", status: "PROCESSING", snapshot: []byte(`{"provider":"aws","placement_mode":"vcluster","cluster":{"cluster_name":"x"}}`)}, false, http.StatusForbidden, ""},
+		{"drift job may not read", &talosJobRow{runnerID: runner, jobType: "DETECT_DRIFT", status: "PROCESSING", snapshot: placement}, false, http.StatusForbidden, ""},
 		{"finished job", &talosJobRow{runnerID: runner, jobType: "DEPLOY", status: "SUCCESS", snapshot: dedicated}, false, http.StatusForbidden, ""},
 		{"not hetzner", executing([]byte(`{"provider":"aws"}`)), true, http.StatusForbidden, ""},
 		{"unreadable snapshot", executing([]byte(`not json`)), true, http.StatusConflict, ""},
@@ -139,6 +149,9 @@ func TestControlPlane_TalosconfigRoundTrip(t *testing.T) {
 				snapshot: []byte(`{"provider":"hetzner","placement_mode":"namespace","cluster":{"cluster_name":"fab-a"}}`)},
 			"other": {runnerID: "r-1", jobType: "DEPLOY", status: "PROCESSING",
 				snapshot: []byte(`{"provider":"hetzner","placement_mode":"vcluster","cluster":{"cluster_name":"fab-b"}}`)},
+			// The vcluster placement's teardown on fab-a (#845, run 36646962419).
+			"vc-destroy": {runnerID: "r-1", jobType: "DESTROY", status: "PROCESSING",
+				snapshot: []byte(`{"provider":"hetzner","placement_mode":"vcluster","cluster":{"cluster_name":"fab-a"}}`)},
 		},
 		clusters: map[string]string{"base": "fab-a"},
 	}
@@ -193,6 +206,15 @@ func TestControlPlane_TalosconfigRoundTrip(t *testing.T) {
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != http.StatusOK || got.Talosconfig == nil || *got.Talosconfig != talos {
 		t.Fatalf("placement GET = %d %q, want the written talosconfig", rec.Code, rec.Body.String())
+	}
+	// A placement's DESTROY reads the same Fabric credential, and may never write it.
+	rec = do(http.MethodGet, "vc-destroy", "tok", "")
+	got.Talosconfig = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != http.StatusOK || got.Talosconfig == nil || *got.Talosconfig != talos {
+		t.Fatalf("placement DESTROY GET = %d %q, want the written talosconfig", rec.Code, rec.Body.String())
+	}
+	if rec := do(http.MethodPut, "vc-destroy", "tok", string(putBody)); rec.Code != http.StatusForbidden {
+		t.Errorf("placement DESTROY PUT = %d, want 403", rec.Code)
 	}
 	if rec := do(http.MethodGet, "other", "tok", ""); strings.TrimSpace(rec.Body.String()) != `{"talosconfig":null}` {
 		t.Errorf("a placement on another Fabric read %q, want null", rec.Body.String())

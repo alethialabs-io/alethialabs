@@ -24,8 +24,9 @@ import (
 // ever run end-to-end.
 //
 // FIDELITY BOUNDARY (deliberate), as for the add-on secrets:
-//   - The gate mirrors the console's: a runner that owns an executing hetzner DEPLOY job, and only the
-//     Fabric-owning DEDICATED job may write. The job's provider comes from its config_snapshot, because
+//   - The gate mirrors the console's: a runner that owns an executing hetzner DEPLOY job — or the
+//     DESTROY of a namespace/vcluster placement, which may only read — and only the Fabric-owning
+//     DEDICATED deploy may write. The job's provider comes from its config_snapshot, because
 //     the harness seeds jobs with no cloud identity (the console reads it from cloud_identities).
 //   - The console resolves a job's Fabric through project_environments.fabric_id. Harness jobs carry no
 //     environment, so a placement resolves its Fabric by the cluster name it targets
@@ -79,7 +80,9 @@ func gateTalosconfigJob(row *talosJobRow, runnerID string, write bool) talosGate
 	if row.runnerID == "" || row.runnerID != runnerID {
 		return talosGateResult{code: http.StatusForbidden, message: "Runner does not own this job"}
 	}
-	if row.jobType != "DEPLOY" {
+	// A DEPLOY reads or writes; a DESTROY may only read, and only as a placement (checked below once the
+	// snapshot is decoded) — its teardown mints from the credential exactly as its deploy did.
+	if row.jobType != "DEPLOY" && (row.jobType != "DESTROY" || write) {
 		return talosGateResult{code: http.StatusForbidden, message: "Job kind has no talosconfig"}
 	}
 	if row.status != "CLAIMED" && row.status != "PROCESSING" {
@@ -98,6 +101,12 @@ func gateTalosconfigJob(row *talosJobRow, runnerID string, write bool) talosGate
 			return talosGateResult{code: http.StatusForbidden, message: "Only the Fabric-owning dedicated deploy may write the talosconfig"}
 		}
 		return talosGateResult{}
+	}
+	// A placement DESTROY deregisters what its deploy put on the shared Fabric, so it needs the Fabric's
+	// credential; a dedicated DESTROY runs tofu against its own state and never does (#845, run
+	// 36646962419 — the vcluster deregister 404'd here, then failed for want of a minter).
+	if row.jobType == "DESTROY" && dedicated {
+		return talosGateResult{code: http.StatusForbidden, message: "Job kind has no talosconfig"}
 	}
 	cluster := strings.TrimSpace(snap.Cluster.ClusterName)
 	if cluster == "" {
