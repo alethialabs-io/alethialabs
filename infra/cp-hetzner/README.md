@@ -23,12 +23,57 @@ tofu plan && tofu apply
 
 ## Inbound email — Cloudflare Email Routing (free)
 
-> **Terraform does not manage this today, deliberately (#3291).** `var.manage_email_routing`
-> defaults to `false`, nothing supplies it, and none of the 11 resources below is in this stack's
-> state — the live routing was bootstrapped out-of-band. Everything in this section describes what
-> the code *would* manage once adopted (#4374). Read `manage_email_routing`'s description in
-> `variables.tf` before importing anything: importing into state without setting the input in the
-> same change makes the next unattended `main` apply plan a **destroy** of live inbound mail.
+> **Terraform does not manage this until the maintainer adopts it (#3291, #4374).**
+> `var.manage_email_routing` defaults to `false` and none of the 11 resources below is in this
+> stack's state — the live routing was bootstrapped out-of-band. The adoption is wired
+> (`email-routing-imports.tf` + optional loads in `infra-cp-hetzner.yml`) but does nothing until
+> the four secret keys below exist. Read `manage_email_routing`'s description in `variables.tf`
+> first: once adopted, removing the keys plans a **destroy** of live inbound mail.
+
+### Adopting the live routing (#4374)
+
+Nine of the 11 resources are imported; the settings and catch-all singletons have no importer in
+provider 4.x and are adopted by a create that is idempotent against the live objects
+(`email-routing-imports.tf` says why). So the adoption plan reads
+**`9 to import, 2 to add, 0 to change, 0 to destroy`**.
+
+1. **List the IDs** (token with Email Routing read on the account and zone):
+
+   ```sh
+   # destination address — take the `id` of the entry whose `email` is the forward inbox
+   curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+     "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/email/routing/addresses" \
+     | jq '.result[] | {id, email, verified}'
+   # the 8 forward rules — key each `id` by the local-part of its matcher value
+   curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+     "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/email/routing/rules?per_page=50" \
+     | jq '[.result[] | select(.matchers[0].type == "literal")
+            | {key: (.matchers[0].value | split("@")[0]), value: .id}] | from_entries'
+   # for comparison only (not imported): zone settings and the catch-all
+   curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+     "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/email/routing" | jq .result
+   curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+     "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/email/routing/rules/catch_all" | jq .result
+   ```
+
+   Check the live objects match `email-routing.tf`: rule names `forward-<local-part>`, exactly the 8
+   local-parts in `local.adopted_addresses`, catch-all `drop-unmatched` with action `drop`.
+
+2. **Add four keys to the `alethia/prod/env` secret** (eu-central-1): `MANAGE_EMAIL_ROUTING` =
+   `"true"`, `EMAIL_FORWARD_TO` = the live destination `email` exactly (it forces replacement),
+   `EMAIL_ROUTING_ADDRESS_ID` = the address `id`, and `EMAIL_ROUTING_RULE_IDS` = the JSON object
+   from the second call (a JSON object or a string holding one both work).
+
+3. **Plan locally** with the same values (`TF_VAR_manage_email_routing=true`,
+   `TF_VAR_email_forward_to=…`, `TF_VAR_email_routing_address_id=…`,
+   `TF_VAR_email_routing_rule_ids='{"support":"…",…}'`, plus the five usual inputs) and
+   `tofu init -backend-config=backend.hcl && tofu plan`. It must read
+   `9 to import, 2 to add, 0 to change, 0 to destroy` for the email-routing addresses (other
+   resources in this stack must show no change). Anything to change or destroy means the
+   declaration disagrees with the live routing — fix the declaration, not the live routing.
+
+4. The next `main` apply of this stack (a push touching `infra/cp-hetzner/**`) performs the
+   adoption. The keys stay in the secret from then on.
 
 `email-routing.tf` receives at the apex addresses the product prints (`support@`,
 `sales@`, `legal@`, `security@`, `feedback@`, `dmarc@`, `borislav@`) and **forwards them
