@@ -1941,6 +1941,11 @@ jobs:
           #    grant one — cloudsql.client/instanceUser are project-scoped). infra/gcp-e2e outputs it as
           #    e2e_gcp_keyless_app_db_sa_email. Unset ⇒ a gcp keyless run is refused before spend.
           ALETHIA_E2E_KEYLESS_DB_GCP_APP_SA: ${{ vars.E2E_KEYLESS_DB_GCP_APP_SA }}
+          #    The keyless scenario brings its OWN apps repo per cloud, <prefix>-<provider>, and the
+          #    harness RESETS it (force-pushes a README-only orphan commit) before spend. Unset ⇒ the
+          #    default alethialabs-io/alethia-e2e-keyless-apps-{aws,gcp,azure}. E2E_GIT_TOKEN must be
+          #    able to PUSH to those three. The reset refuses any repo not named *keyless*-<provider>.
+          ALETHIA_E2E_KEYLESS_APPS_REPO_PREFIX: ${{ vars.E2E_KEYLESS_APPS_REPO_PREFIX }}
           #    The per-cloud siblings the comment above TELLS a maintainer to use. They were missing,
           #    and this was worse than an unwired scenario: ENGINE_VERSION and INSTANCE_CLASS have no
           #    defaults and are REQUIRED, so a maintainer who followed the documentation and set

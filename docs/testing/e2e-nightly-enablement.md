@@ -119,7 +119,7 @@ These are not per-cloud gates, but legs depend on them:
 
 | name | kind | purpose |
 | --- | --- | --- |
-| `E2E_GIT_TOKEN` | secret | the git token the provisioned ArgoCD uses to read the apps repo |
+| `E2E_GIT_TOKEN` | secret | the git token the provisioned ArgoCD uses to read the apps repo. The keyless-DB rider also needs it to **push** to its three `alethia-e2e-keyless-apps-*` repos (see below) |
 | `INFRACOST_API_KEY` | secret | cost estimation during the run |
 | `E2E_AWS_COST_CEILING_USD` / `_FULL_USD` | vars | abort thresholds — floor vs full-bar dimension |
 | `E2E_ARGO_APPS_REPO`, `E2E_ARGO_BYO_CHART_*` | vars | the A0.6 BYO-IaC + services proof |
@@ -250,10 +250,20 @@ the credential it never had would have expired.
 
 ### What it needs first
 
-It requires the **A0.6 apps repo** (`E2E_ARGO_APPS_REPO` plus the `E2E_GIT_TOKEN` secret). Both the
-workload and its bootstrap Job reach the cluster only through GitOps, so without a repo there is
-nothing to assert against. The scenario refuses at configuration time rather than polling for objects
-nobody pushed.
+It brings its **own apps repo per cloud**: `alethialabs-io/alethia-e2e-keyless-apps-aws`, `-gcp` and
+`-azure`, all private. Set `E2E_KEYLESS_APPS_REPO_PREFIX` to use a different prefix. It cannot use the
+A0.6 apps repo. The product renders keyless workloads only into a repo whose root has no YAML, and
+A0.6 needs a root manifest. Before any spend, the harness resets the cloud's repo: it force-pushes a
+README-only commit over the default branch. It then checks from a fresh clone that the product will
+write into the repo. The reset refuses any repo whose name does not contain `keyless` and end in
+`-<cloud>`, and refuses any repo configured as the A0.6 apps repo.
+
+So the `E2E_GIT_TOKEN` secret must be able to **push** (`Contents: write`) to all three repos, and no
+branch rule may block a force-push to their default branch. A token that can only read fails in the
+first seconds, not after the cluster is bought.
+
+On **gcp** it also needs `E2E_KEYLESS_DB_GCP_APP_SA`: the `e2e_gcp_keyless_app_db_sa_email` output of
+`infra/gcp-e2e`. The template adopts that account because it cannot grant one itself.
 
 ### Set the repo variables
 
