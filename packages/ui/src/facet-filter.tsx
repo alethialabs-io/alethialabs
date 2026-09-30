@@ -28,6 +28,12 @@ export interface FacetOption {
   label: string;
   /** Optional secondary text shown muted after the label (e.g. an email). */
   hint?: string;
+  /**
+   * How many rows this option covers in the UNFILTERED universe (the filter standard's facet
+   * count). Rendered as the option's trailing figure, after `hint` — so an option can carry both
+   * an email and a count, which a count passed as `hint` could not.
+   */
+  count?: number;
 }
 
 interface FacetFilterProps {
@@ -115,6 +121,11 @@ export function FacetFilter({
                     {o.hint && (
                       <CountFigure className="ml-auto truncate">
                         {o.hint}
+                      </CountFigure>
+                    )}
+                    {o.count !== undefined && (
+                      <CountFigure className={cn("shrink-0", !o.hint && "ml-auto")}>
+                        {String(o.count)}
                       </CountFigure>
                     )}
                   </CommandItem>

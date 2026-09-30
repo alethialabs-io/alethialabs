@@ -68,6 +68,7 @@ const { getServiceDb } = vi.hoisted(() => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb }));
 
 import { queryAccessGrantsPage } from "@/lib/queries/access-grants";
+import { queryActivityPage } from "@/lib/queries/activity";
 import {
 	queryAlertChannelsPage,
 	queryAlertDeliveriesPage,
@@ -117,6 +118,16 @@ const DRIVEN: Record<string, Driver> = {
 		module: "@/lib/queries/access-grants",
 		filtered: () => queryAccessGrantsPage(ORG, { search: `${NEEDLE}-grant` }),
 		unfiltered: () => queryAccessGrantsPage(ORG),
+	},
+	queryActivityPage: {
+		module: "@/lib/queries/activity",
+		filtered: () =>
+			queryActivityPage(ORG, {
+				search: `${NEEDLE}-activity`,
+				actorIds: [`${NEEDLE}-actor`],
+				resourceIds: [`${NEEDLE}-project`],
+			}),
+		unfiltered: () => queryActivityPage(ORG),
 	},
 	queryAlertChannelsPage: {
 		module: "@/lib/queries/alerts-lists",
