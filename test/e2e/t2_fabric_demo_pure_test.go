@@ -10,10 +10,42 @@
 package e2e
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestFabricDemoDriftedLinesNamesAttributes pins that the fabric drift gate prints the attribute
+// PATHS the analyzer emitted, per resource. The input is the posture run 36667774857 actually
+// persisted (trimmed to three of its seven resources): the gate printed `address (modified)` for
+// each and dropped the attributes, so the failure could not be diagnosed from the gate's message.
+func TestFabricDemoDriftedLinesNamesAttributes(t *testing.T) {
+	var p byoIacPosture
+	if err := json.Unmarshal([]byte(`{"in_sync":false,"drifted":3,"details":[
+	  {"address":"hcloud_firewall.this","type":"hcloud_firewall","kind":"modified","attributes":["apply_to"]},
+	  {"address":"hcloud_primary_ip.control_plane_ipv4[0]","type":"hcloud_primary_ip","kind":"modified","attributes":["assignee_id","assignee_type"]},
+	  {"address":"talos_machine_secrets.this","type":"talos_machine_secrets","kind":"modified"}]}`), &p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := fabricDemoDriftedLines(p)
+	for _, want := range []string{
+		"hcloud_firewall.this (modified) attrs=apply_to",
+		"hcloud_primary_ip.control_plane_ipv4[0] (modified) attrs=assignee_id,assignee_type",
+		// No attributes is a statement by the analyzer, and must read as one.
+		"talos_machine_secrets.this (modified) attrs=<none reported>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("fabricDemoDriftedLines must carry %q, got:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "\n"); n != 2 {
+		t.Errorf("want one line per resource (2 separators), got %d:\n%s", n, got)
+	}
+	if got := fabricDemoDriftedLines(byoIacPosture{}); got != "" {
+		t.Errorf("an empty posture renders %q, want empty", got)
+	}
+}
 
 func TestFabricDemoSlug(t *testing.T) {
 	cases := []struct {

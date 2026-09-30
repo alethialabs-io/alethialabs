@@ -915,7 +915,8 @@ func TestWeakestReasonIsReported(t *testing.T) {
 // unranked reason sorts as the weakest possible, so a new reason added without a rank can
 // only ever understate a dismissal. This fails the day someone adds one and forgets.
 func TestReasonStrengthCoversEveryReason(t *testing.T) {
-	for _, r := range []NormalizedReason{ReasonEmptyCollection, ReasonUndeclaredCollection, ReasonComputedAttribute} {
+	for _, r := range []NormalizedReason{ReasonEmptyCollection, ReasonUndeclaredCollection, ReasonComputedAttribute,
+		ReasonSensitivityOnly, ReasonAssignmentBackReference} {
 		if reasonStrength(r) == 0 {
 			t.Errorf("reason %q has no strength rank — it would sort below every real one", r)
 		}
@@ -951,6 +952,7 @@ func TestSchemasNeverIncreaseDrift(t *testing.T) {
 		"drifted golden": loadPlan(t, "drifted.json"),
 		"in sync golden": loadPlan(t, "in_sync.json"),
 		"bucket residue": planWithConfig(nil, bucketTimestampDrift()),
+		"hetzner fabric": loadPlan(t, "hetzner_fabric_refresh.json"),
 	}
 	for name, plan := range plans {
 		t.Run(name, func(t *testing.T) {

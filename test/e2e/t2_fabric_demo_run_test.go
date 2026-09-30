@@ -421,15 +421,10 @@ func fabricDemoDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p
 		return fmt.Errorf("read drift metadata: %w", err)
 	}
 	// details is decoded so a failure NAMES the resources rather than printing two integers.
+	// The same decode type the BYO-IaC leg uses, so the attribute paths the analyzer emits are
+	// decoded rather than dropped (fabricDemoDriftedLines).
 	var meta struct {
-		DriftPosture *struct {
-			InSync  bool `json:"in_sync"`
-			Drifted int  `json:"drifted"`
-			Details []struct {
-				Address string `json:"address"`
-				Kind    string `json:"kind"`
-			} `json:"details"`
-		} `json:"drift_posture"`
+		DriftPosture *byoIacPosture `json:"drift_posture"`
 	}
 	if err := json.Unmarshal(metaRaw, &meta); err != nil {
 		return fmt.Errorf("decode drift metadata: %w\nraw: %s", err, metaRaw)
@@ -441,12 +436,8 @@ func fabricDemoDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p
 	s.DriftInSync = meta.DriftPosture.InSync
 	s.DriftDrifted = meta.DriftPosture.Drifted
 	if !meta.DriftPosture.InSync || meta.DriftPosture.Drifted != 0 {
-		drifted := make([]string, 0, len(meta.DriftPosture.Details))
-		for _, d := range meta.DriftPosture.Details {
-			drifted = append(drifted, d.Address+" ("+d.Kind+")")
-		}
 		return fmt.Errorf("the Fabric is not in-sync after the placements: in_sync=%t drifted=%d — a namespace placement runs no tofu and must not move infrastructure\ndrifted: %s",
-			meta.DriftPosture.InSync, meta.DriftPosture.Drifted, strings.Join(drifted, "\n         "))
+			meta.DriftPosture.InSync, meta.DriftPosture.Drifted, fabricDemoDriftedLines(*meta.DriftPosture))
 	}
 	return nil
 }
