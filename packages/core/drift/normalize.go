@@ -40,7 +40,8 @@ const (
 	// of an assignment ANOTHER managed resource in the same state declares and still holds
 	// (a primary IP or firewall reporting the server that attached it; an IAM role, security
 	// group, route table, EIP or default NACL reporting the attachment resources that populate
-	// it). See backref.go and awsbackref.go.
+	// it; a GKE cluster reporting the node pools attached to it). See backref.go, awsbackref.go
+	// and gcpbackref.go.
 	ReasonAssignmentBackReference NormalizedReason = "assignment_back_reference"
 	// ReasonInapplicableField — a field the cloud API ignores for this element moved from null to
 	// its zero value: icmp_type/icmp_code on a network ACL rule whose protocol is not ICMP. No

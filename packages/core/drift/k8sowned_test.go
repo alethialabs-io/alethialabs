@@ -543,10 +543,10 @@ func TestClusterEvidenceNeverIncreasesDrift(t *testing.T) {
 	ev := permissive.evidence(t)
 	for name, file := range map[string]string{
 		"azure fixture": "azure_refresh_noise.json", "drifted golden": "drifted.json", "in sync golden": "in_sync.json",
-		"hetzner fabric": "hetzner_fabric_refresh.json", "aws fabric": awsFixture,
+		"hetzner fabric": "hetzner_fabric_refresh.json", "aws fabric": awsFixture, "gcp fabric": gcpFixture,
 	} {
 		t.Run(name, func(t *testing.T) {
-			for _, schemas := range []*tfjson.ProviderSchemas{nil, loadSchemas(t, awsSchemas), loadSchemas(t, hetznerSchemas)} {
+			for _, schemas := range []*tfjson.ProviderSchemas{nil, loadSchemas(t, awsSchemas), loadSchemas(t, hetznerSchemas), loadSchemas(t, gcpSchemas)} {
 				base := AnalyzeWithSchemas(loadPlan(t, file), schemas)
 				got := AnalyzeWithEvidence(loadPlan(t, file), schemas, ev)
 				if got.Drifted > base.Drifted || got.Drifted+got.Normalized != base.Drifted+base.Normalized {

@@ -960,6 +960,7 @@ func TestSchemasNeverIncreaseDrift(t *testing.T) {
 		"bucket residue": planWithConfig(nil, bucketTimestampDrift()),
 		"hetzner fabric": loadPlan(t, "hetzner_fabric_refresh.json"),
 		"aws fabric":     loadPlan(t, "aws_fabric_refresh.json"),
+		"gcp fabric":     loadPlan(t, gcpFixture),
 	}
 	for name, plan := range plans {
 		t.Run(name, func(t *testing.T) {
@@ -977,9 +978,9 @@ func TestSchemasNeverIncreaseDrift(t *testing.T) {
 					}
 				}
 			}
-			// And the real, captured provider schemas the hetzner and aws fixtures were produced
+			// And the real, captured provider schemas the hetzner, aws and gcp fixtures were produced
 			// under, which carry the sensitive and nested shapes the permissive one does not.
-			for _, doc := range []string{hetznerSchemas, awsSchemas} {
+			for _, doc := range []string{hetznerSchemas, awsSchemas, gcpSchemas} {
 				got := AnalyzeWithSchemas(plan, loadSchemas(t, doc))
 				if got.Drifted > base.Drifted || got.Drifted+got.Normalized != base.Drifted+base.Normalized {
 					t.Fatalf("%s: drifted %d -> %d, examined %d -> %d", doc, base.Drifted, got.Drifted,
