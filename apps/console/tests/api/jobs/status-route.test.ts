@@ -42,12 +42,12 @@ vi.mock("@/lib/analytics/server", () => ({
 // without a real DB insert (the mockDb stub has no `insert`). Best-effort callers are `.catch()`ed.
 const recordDriftPosture = vi.fn().mockResolvedValue(undefined);
 const recordFabricDriftPosture = vi.fn().mockResolvedValue(undefined);
-vi.mock("@/app/server/actions/drift", () => ({
+vi.mock("@/lib/drift/posture", () => ({
 	recordDriftPosture: (...a: unknown[]) => recordDriftPosture(...a),
 	recordFabricDriftPosture: (...a: unknown[]) => recordFabricDriftPosture(...a),
 }));
 const maybeAutoHeal = vi.fn().mockResolvedValue(undefined);
-vi.mock("@/app/server/actions/reconcile", () => ({
+vi.mock("@/lib/reconcile/auto-heal", () => ({
 	maybeAutoHeal: (...a: unknown[]) => maybeAutoHeal(...a),
 }));
 

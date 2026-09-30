@@ -7,7 +7,7 @@
 // `settings` is null when the caller is in community (personal) mode — orgId === userId.
 
 import { NextResponse } from "next/server";
-import { orgSettingsForOrg } from "@/app/server/actions/org-settings";
+import { orgSettingsForOrg } from "@/lib/org/settings";
 import { authorizeCli } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
 import { cliOrgSettingsResponse } from "@/lib/validations/cli-contract";

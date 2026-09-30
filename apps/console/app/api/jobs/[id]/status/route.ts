@@ -7,8 +7,8 @@ import {
 	finalizeDeployment,
 	setIacSourceStatus,
 } from "@/lib/jobs/finalize-deployment";
-import { finalizeChartScan } from "@/app/server/actions/byo-charts";
-import { finalizeIacScan } from "@/app/server/actions/byo-iac";
+import { finalizeChartScan } from "@/lib/addons/chart-scan-finalize";
+import { finalizeIacScan } from "@/lib/addons/iac-scan-finalize";
 import {
 	enqueueBuildAfterProvision,
 	enqueueDeployAfterBuild,
@@ -17,15 +17,15 @@ import {
 import {
 	recordDriftPosture,
 	recordFabricDriftPosture,
-} from "@/app/server/actions/drift";
-import { recordEnvironmentCost } from "@/app/server/actions/cost";
+} from "@/lib/drift/posture";
+import { recordEnvironmentCost } from "@/lib/cost/record-environment-cost";
 import {
 	advancePromotionOnPlan,
 	failPromotionForJob,
 	finalizePromotionOnDeploy,
 } from "@/lib/promotions/lifecycle";
 import { recordProbeResult } from "@/lib/probes/persistence";
-import { maybeAutoHeal } from "@/app/server/actions/reconcile";
+import { maybeAutoHeal } from "@/lib/reconcile/auto-heal";
 import {
 	recordAddonHealth,
 	recordSecurityPosture,
