@@ -117,9 +117,13 @@ func (c Container) Run(ctx context.Context, spec Spec, _ Job) error {
 		return fmt.Errorf("container sandbox: write stage.json: %w", err)
 	}
 
-	childEnv := buildChildEnv(os.Environ(), spec.WorkDir)
+	childEnv := buildChildEnv(os.Environ(), spec.WorkDir, spec.Secrets)
 	if err := assertNoSecrets(childEnv); err != nil {
 		return fmt.Errorf("container sandbox: %w", err)
+	}
+	if dropped := droppedSecretKeys(spec.Secrets); len(dropped) > 0 && spec.Warn != nil {
+		// Names only — a dropped value is still a secret.
+		spec.Warn(fmt.Sprintf("dropped per-job secret key(s) outside the stage allowlist: %s", strings.Join(dropped, ", ")))
 	}
 
 	args := c.buildArgs(spec, childEnv)
@@ -129,9 +133,9 @@ func (c Container) Run(ctx context.Context, spec Spec, _ Job) error {
 	cmd.Stderr = spec.Stderr
 	// The secret-valued keys cross by name on the argv (`--env KEY`); their values ride
 	// here, on the runtime CLI's own environment, for the runtime to inherit and forward —
-	// off the world-readable process table entirely (#2041). os.Environ already holds them
-	// (buildChildEnv read them from it), but appending is explicit about the data flow.
-	cmd.Env = append(os.Environ(), secretEnvPairs(childEnv)...)
+	// off the world-readable process table entirely (#2041). This cmd.Env belongs to THIS
+	// job's runtime CLI process alone, so a concurrent job's secrets are never in it.
+	cmd.Env = runtimeEnv(os.Environ(), childEnv)
 	// New process group so a ctx cancel signals the runtime CLI + its container-monitor
 	// child as a group.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -338,6 +342,46 @@ func secretEnvPairs(childEnv []string) []string {
 	return out
 }
 
+// stageSecretEnvKeys is the allowlist of Spec.Secrets keys that may cross into the child —
+// exactly the per-job secrets the re-exec'd stage reads back (agent.stageSecretsFromEnv).
+// Every one is also in secretValueEnvKeys, so its value only ever travels on cmd.Env, never
+// the argv (a test pins the subset). Any other Spec.Secrets key is dropped.
+var stageSecretEnvKeys = map[string]bool{
+	EnvStateToken:   true,
+	EnvGitToken:     true,
+	EnvGitTokens:    true,
+	EnvAddonSecrets: true,
+	EnvTalosConfig:  true,
+}
+
+// droppedSecretKeys returns, sorted, the Spec.Secrets keys outside stageSecretEnvKeys —
+// the ones buildChildEnv refuses to carry. Run names them in a warning (never the values).
+func droppedSecretKeys(secrets map[string]string) []string {
+	var out []string
+	for k := range secrets {
+		if !stageSecretEnvKeys[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// runtimeEnv is the runtime CLI's own environment: the runner's env with every stage-secret
+// key removed (the runner's env is never a source of per-job secrets — a stale value there
+// would otherwise reach every job), plus THIS job's secret-valued pairs for `--env KEY`
+// inheritance. exec keeps the last of duplicate keys, but removing them is explicit.
+func runtimeEnv(parentEnv, childEnv []string) []string {
+	out := make([]string, 0, len(parentEnv)+len(stageSecretEnvKeys))
+	for _, kv := range parentEnv {
+		if i := strings.IndexByte(kv, '='); i > 0 && stageSecretEnvKeys[kv[:i]] {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, secretEnvPairs(childEnv)...)
+}
+
 // credAllowKeys is the exact set of NON-ALETHIA env vars allowed into the untrusted
 // child: the cloud-auth vars the activators set (file paths + non-secret ids) plus the
 // token-cloud provider tokens (secrets, but required by the tofu provider) and a minimal
@@ -381,9 +425,11 @@ var credFilePathKeys = []string{
 
 // buildChildEnv projects the parent env down to the allowlist and injects the explicit
 // stage env: the exec-stage trigger, the workdir, a writable HOME under the workdir, and
-// the per-job secrets (git/state tokens) as ALETHIA_STAGE_* (the only ALETHIA_ vars that
-// may cross). It reads the secret sources from the parent env keys the runner sets.
-func buildChildEnv(parentEnv []string, workDir string) []string {
+// THIS job's secrets (Spec.Secrets, filtered to stageSecretEnvKeys). The per-job secrets
+// come ONLY from `secrets` — never from parentEnv, which is the runner's process-wide env:
+// nothing sets them there, and anything that did would hand one job's secret to every
+// other job the process runs (#5151).
+func buildChildEnv(parentEnv []string, workDir string, secrets map[string]string) []string {
 	get := func(key string) (string, bool) {
 		p := key + "="
 		for _, kv := range parentEnv {
@@ -400,12 +446,10 @@ func buildChildEnv(parentEnv []string, workDir string) []string {
 			out = append(out, k+"="+v)
 		}
 	}
-	// State proxy auth (Step 2): scoped per-job, safe to cross.
+	// State proxy username (Step 2): not a secret. The password is the per-job state token
+	// and crosses with the other per-job secrets below.
 	if v, ok := get("TF_HTTP_USERNAME"); ok {
 		out = append(out, "TF_HTTP_USERNAME="+v)
-	}
-	if v, ok := get("TF_HTTP_PASSWORD"); ok {
-		out = append(out, "TF_HTTP_PASSWORD="+v)
 	}
 
 	home := filepath.Join(workDir, "home")
@@ -414,25 +458,13 @@ func buildChildEnv(parentEnv []string, workDir string) []string {
 		"ALETHIA_STAGE_WORKDIR="+workDir,
 		"HOME="+home,
 	)
-	// Per-job secrets the runner staged for the child (git token for BYO repo cred; the
-	// child sources them from these ALETHIA_STAGE_* keys).
-	if v, ok := get("ALETHIA_STAGE_GIT_TOKEN"); ok {
-		out = append(out, "ALETHIA_STAGE_GIT_TOKEN="+v)
-	}
-	// Per-repo BYO chart tokens (JSON map repo→token) when a chart lives on a different provider
-	// than the apps-destination repo. Same ALETHIA_STAGE_* allowlist as the single git token.
-	if v, ok := get("ALETHIA_STAGE_GIT_TOKENS"); ok {
-		out = append(out, "ALETHIA_STAGE_GIT_TOKENS="+v)
-	}
-	// Add-on secret-knob values (W4.5 #640; JSON map addonID→key→plaintext) the child seeds
-	// as per-add-on k8s Secrets pre-sync. Same ALETHIA_STAGE_* rail — never the payload.
-	if v, ok := get("ALETHIA_STAGE_ADDON_SECRETS"); ok {
-		out = append(out, "ALETHIA_STAGE_ADDON_SECRETS="+v)
-	}
-	// hetzner-talos Fabric admin talosconfig (#1389) the child mints a placement kubeconfig from via the
-	// Talos machine API. Same ALETHIA_STAGE_* rail — never the persisted payload.
-	if v, ok := get("ALETHIA_STAGE_TALOS_CONFIG"); ok {
-		out = append(out, "ALETHIA_STAGE_TALOS_CONFIG="+v)
+	// Per-job secrets: the state token, BYO git token(s), add-on secret plaintext (#640) and
+	// the hetzner-talos admin talosconfig (#1389). Only the allowlisted keys cross; an empty
+	// value is omitted (the child reads an absent key as empty).
+	for k, v := range secrets {
+		if stageSecretEnvKeys[k] && v != "" {
+			out = append(out, k+"="+v)
+		}
 	}
 	sort.Strings(out)
 	return out

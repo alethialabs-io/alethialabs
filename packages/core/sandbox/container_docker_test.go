@@ -46,7 +46,7 @@ func dockerGate(t *testing.T) {
 func runCanary(t *testing.T, spec Spec, canary string) string {
 	t.Helper()
 	c := Container{Runtime: "docker", Image: "alpine:3.20", Operator: "self"}
-	childEnv := buildChildEnv(os.Environ(), spec.WorkDir)
+	childEnv := buildChildEnv(os.Environ(), spec.WorkDir, spec.Secrets)
 	if err := assertNoSecrets(childEnv); err != nil {
 		t.Fatalf("guard rejected the child env before exec: %v", err)
 	}
@@ -54,7 +54,9 @@ func runCanary(t *testing.T, spec Spec, canary string) string {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Env = runtimeEnv(os.Environ(), childEnv) // as Run does: secret values ride cmd.Env, never argv
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker run failed: %v\nargs: docker %s\noutput:\n%s", err, strings.Join(args, " "), out)
 	}
@@ -77,9 +79,12 @@ func TestSandboxEscape_ParentSecretsAndProc1Isolation(t *testing.T) {
 	t.Setenv("ALETHIA_RECEIPT_SIGNING_KEY", "PARENT-SIGNING-KEY")
 	t.Setenv("AWS_CONFIG_FILE", filepath.Join(credDir, "config"))
 	t.Setenv("AWS_PROFILE", "alethia-customer")
-	t.Setenv("TF_HTTP_PASSWORD", "state-token-xyz")
+	t.Setenv("TF_HTTP_PASSWORD", "STALE-RUNNER-ENV-TOKEN") // the runner env is never a secret source
 
-	spec := Spec{Kind: "canary", JobID: "canary-1", WorkDir: t.TempDir(), Stage: &Stage{Kind: StageDeploy, Payload: []byte("{}")}}
+	spec := Spec{
+		Kind: "canary", JobID: "canary-1", WorkDir: t.TempDir(), Stage: &Stage{Kind: StageDeploy, Payload: []byte("{}")},
+		Secrets: map[string]string{EnvStateToken: "state-token-xyz", EnvTalosConfig: "TALOS-CANARY"},
+	}
 
 	canary := `
 printf 'TOKEN=%s\n' "${ALETHIA_RUNNER_TOKEN:-ABSENT}"
@@ -87,6 +92,7 @@ printf 'STORAGE=%s\n' "${ALETHIA_STORAGE_SECRET_ACCESS_KEY:-ABSENT}"
 printf 'SIGNING=%s\n' "${ALETHIA_RECEIPT_SIGNING_KEY:-ABSENT}"
 printf 'AWSCFG=%s\n' "${AWS_CONFIG_FILE:-ABSENT}"
 printf 'STATE=%s\n' "${TF_HTTP_PASSWORD:-ABSENT}"
+printf 'TALOS=%s\n' "${ALETHIA_STAGE_TALOS_CONFIG:-ABSENT}"
 printf 'PROC1_HITS=%s\n' "$(tr '\0' '\n' < /proc/1/environ | grep -c 'PARENT-SECRET' || true)"
 printf 'MOUNT=%s\n' "$(cat '` + filepath.Join(credDir, "config") + `' 2>/dev/null || echo MISSING)"
 `
@@ -97,7 +103,8 @@ printf 'MOUNT=%s\n' "$(cat '` + filepath.Join(credDir, "config") + `' 2>/dev/nul
 	assertLine(t, out, "STORAGE=ABSENT")                           // storage key stripped
 	assertLine(t, out, "SIGNING=ABSENT")                           // signing key stripped
 	assertLine(t, out, "AWSCFG="+filepath.Join(credDir, "config")) // allowlisted cred present
-	assertLine(t, out, "STATE=state-token-xyz")                    // scoped state token present
+	assertLine(t, out, "STATE=state-token-xyz")                    // this job's state token, from Spec.Secrets
+	assertLine(t, out, "TALOS=TALOS-CANARY")                       // a per-job stage secret, from Spec.Secrets
 	assertLine(t, out, "PROC1_HITS=0")                             // separate PID ns → parent secret not reachable via /proc
 	assertLine(t, out, "MOUNT=CANARY-CRED-FILE")                   // RO cred-dir mount resolved
 }

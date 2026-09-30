@@ -106,7 +106,9 @@ type stageDriftPayload struct {
 }
 
 // stageSecrets are per-job secrets sourced by the caller: the parent fills them from its
-// scope (Passthrough); the child fills them from its allowlisted env (container).
+// scope and hands the Go value to the in-process closure (Passthrough) AND renders them onto
+// sandbox.Spec.Secrets (specSecrets); the container child fills them from its env
+// (stageSecretsFromEnv), which the backend built from that Spec field for this job only.
 type stageSecrets struct {
 	GitToken   string
 	StateToken string
@@ -126,21 +128,51 @@ type stageSecrets struct {
 	TalosConfig string
 }
 
+// specSecrets renders the secrets onto sandbox.Spec.Secrets — the per-job channel the container
+// backend injects into THIS job's child env (#5151). It is the exact inverse of
+// stageSecretsFromEnv, which the child reads them back with. The runner never publishes them to
+// its own process env: that env is shared by every job the process runs and readable on /proc.
+// Empty fields are omitted; a map that fails to encode is omitted rather than sent half-formed.
+func (s stageSecrets) specSecrets() map[string]string {
+	out := map[string]string{}
+	put := func(key, v string) {
+		if v != "" {
+			out[key] = v
+		}
+	}
+	put(sandbox.EnvStateToken, s.StateToken)
+	put(sandbox.EnvGitToken, s.GitToken)
+	put(sandbox.EnvTalosConfig, s.TalosConfig)
+	if len(s.GitTokens) > 0 {
+		if b, err := json.Marshal(s.GitTokens); err == nil {
+			out[sandbox.EnvGitTokens] = string(b)
+		}
+	}
+	if len(s.AddonSecrets) > 0 {
+		if b, err := json.Marshal(s.AddonSecrets); err == nil {
+			out[sandbox.EnvAddonSecrets] = string(b)
+		}
+	}
+	return out
+}
+
+// stageSecretsFromEnv is the child's half of the channel: it reads back the secrets the parent
+// put on sandbox.Spec.Secrets, which the container backend delivered as this child's env.
 func stageSecretsFromEnv() stageSecrets {
 	gitTokens := map[string]string{}
-	if raw := os.Getenv("ALETHIA_STAGE_GIT_TOKENS"); raw != "" {
+	if raw := os.Getenv(sandbox.EnvGitTokens); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &gitTokens)
 	}
 	addonSecrets := map[string]map[string]string{}
-	if raw := os.Getenv("ALETHIA_STAGE_ADDON_SECRETS"); raw != "" {
+	if raw := os.Getenv(sandbox.EnvAddonSecrets); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &addonSecrets)
 	}
 	return stageSecrets{
-		GitToken:     os.Getenv("ALETHIA_STAGE_GIT_TOKEN"),
-		StateToken:   os.Getenv("TF_HTTP_PASSWORD"),
+		GitToken:     os.Getenv(sandbox.EnvGitToken),
+		StateToken:   os.Getenv(sandbox.EnvStateToken),
 		GitTokens:    gitTokens,
 		AddonSecrets: addonSecrets,
-		TalosConfig:  os.Getenv("ALETHIA_STAGE_TALOS_CONFIG"),
+		TalosConfig:  os.Getenv(sandbox.EnvTalosConfig),
 	}
 }
 
