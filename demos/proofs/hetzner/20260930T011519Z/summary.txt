@@ -1,0 +1,36 @@
+Starting deployment for project: alethia-nl (provider: hetzner)
+Verification gate: verdict=warn (pass=1 fail=0 warn=1 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key eb6b2d3007b4181b, plan sha256 75cf0a97242d…)
+Starting deployment for project: alethia-nl (provider: hetzner)
+Verification gate: verdict=warn (pass=1 fail=0 warn=1 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key eb6b2d3007b4181b, plan sha256 9b92e49cd890…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 22 added, 0 changed, 0 destroyed.
+Waiting for the cluster to become reachable (timeout 8m 0s)...
+Cluster API server is reachable.
+1/3 nodes Ready.
+ArgoCD installed.
+ArgoCD ready (no ingress on this cloud yet — access via port-forward; retrieve the admin password on-demand from argocd-initial-admin-secret).
+Deployment completed successfully.
+Starting deployment for project: alethia-nl (provider: hetzner)
+Starting deployment for project: alethia-nl (provider: hetzner)
+Verification gate: verdict=pass (pass=2 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key eb6b2d3007b4181b, plan sha256 dc3437bec8c0…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+Deployment completed successfully.
+Probe: cluster unreachable (kubeconfig unavailable): no kubeconfig in Talos outputs
+Cluster is UNREACHABLE: cluster unreachable: kubeconfig unavailable
+Starting deployment for project: alethia-nl (provider: hetzner)
+Verification gate: verdict=pass (pass=2 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key eb6b2d3007b4181b, plan sha256 56c62f500b0b…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
+Deployment completed successfully.
+   Skipping load-balancer release: the cluster is not reachable (no kubeconfig in Talos outputs).
+Destroy complete! Resources: 1 destroyed.
+   Skipping load-balancer release: the cluster is not reachable (no kubeconfig in Talos outputs).
+Destroy complete! Resources: 0 destroyed.
