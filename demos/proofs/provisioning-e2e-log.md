@@ -14,6 +14,10 @@ audit trail; git history is the timeline. Parity board:
   ArgoCD Application managing at least one real resource) · `byo-iac` (the seven-job custody chain:
   a customer **OpenTofu** root module refused when unsafe, applied through the state proxy, drifted,
   healed, destroyed, state cleared) · `day2` (the A0.3 soak: liveness, drift posture, PVC) ·
+  `cli-demo` (a floor-shaped cluster provisioned through the real `alethia` binary) · `templates`
+  (#4113, **hetzner only**: the three public starter templates, each converging at its own commit
+  through the documented path, on one cluster; each template's proof is also filed under
+  `demos/proofs/templates/<template>/<stamp>/`) ·
   `full` (every dimension in one apply **except** those declared in `FULL_EXCLUDES`).
 
   **`gitops` was called `byo`, and the rename is a correction.** The old name, plus a programme

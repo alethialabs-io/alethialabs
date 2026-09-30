@@ -43,10 +43,10 @@
 #   OUT_DIR       (default `$RUNNER_TEMP` or a temp dir) where the rendered artifacts land.
 #   MATRIX_RESULT the `needs.provision.result` aggregate.
 #   RUN_URL       link used in the issue bodies.
-#   E2E_DIMENSION one of `floor` `maxconfig` `addons` `gitops` `byo-iac` `day2` `full` (plus the
-#                 legacy `byo`, an alias of `gitops`) — which dimension this run
-#                 proved, from resolve-dimension.sh (all six are dispatchable; only `floor` is
-#                 scheduled). Absent ⇒ `floor`, matching that script's fail-safe default.
+#   E2E_DIMENSION one of resolve-dimension.sh's DIMENSIONS (`--dimensions` prints them; plus the
+#                 legacy `byo`, an alias of `gitops`) — which dimension this run proved. Every
+#                 one is dispatchable; only `floor` is scheduled. Absent ⇒ `floor`, matching that
+#                 script's fail-safe default.
 #
 # Writes into OUT_DIR:
 #   summary.md              the step-summary block (table + coverage)
