@@ -199,8 +199,22 @@ func getSSHAuthMethod() (transport.AuthMethod, error) {
 // Clone clones a repository or opens an existing one. ctx bounds every network operation (clone /
 // fetch / pull) so a hung remote is interrupted by a job cancel or timeout instead of blocking
 // forever (#987).
+//
+// branch is a ref: empty or `HEAD` (the default branch), a branch, a tag or a full commit SHA — see
+// cloneRef, which resolves it on every fresh clone. The reuse path (an existing clone of the same
+// remote with force=false) still checks a non-empty ref out as a BRANCH only; every caller that
+// passes a user-supplied ref (chart scan, IaC scan, repo analysis) passes force=true and so never
+// reaches it.
 func (g *GIT) Clone(ctx context.Context, branch string, force bool) error {
 	fmt.Printf("Cloning %s into %s...\n", g.RepoURL, g.LocalPath)
+	// `HEAD` names the remote's default branch, exactly as an empty ref does. It is NOT a branch
+	// called "HEAD": handing it to NewBranchReferenceName asks the remote for refs/heads/HEAD,
+	// which no repository has (cli-demo grid 36652642517: `couldn't find remote ref
+	// "refs/heads/HEAD"`, so every CHART_SCAN of a chart attached at HEAD failed).
+	branch = strings.TrimSpace(branch)
+	if branch == string(plumbing.HEAD) {
+		branch = ""
+	}
 
 	if _, err := os.Stat(g.LocalPath); err == nil && !force && g.isCorrectRepo() {
 		// Repository already exists and is correct, open it
@@ -252,27 +266,99 @@ func (g *GIT) Clone(ctx context.Context, branch string, force bool) error {
 			fmt.Printf("Warning: Could not get auth method: %v. Attempting public clone.\n", err)
 		}
 
-		cloneOptions := &gogit.CloneOptions{
-			URL:           g.RepoURL,
-			ReferenceName: plumbing.NewBranchReferenceName(branch),
-			SingleBranch:  true,
-			Depth:         1,
-			Progress:      os.Stdout,
-			Auth:          auth,
-		}
-
-		if branch == "" {
-			cloneOptions.ReferenceName = ""
-			cloneOptions.SingleBranch = false
-		}
-
-		repo, err := gogit.PlainCloneContext(ctx, g.LocalPath, false, cloneOptions)
+		repo, err := g.cloneRef(ctx, branch, auth)
 		if err != nil {
-			return mapCloneError(g.RepoURL, err)
+			return err
 		}
 		g.Repo = repo
 	}
 	return nil
+}
+
+// cloneRef performs a FRESH clone of ref into g.LocalPath and returns the opened repository.
+//
+// The ref fields a user types (`alethia chart attach --ref`, `alethia iac attach --ref`) are
+// documented as "the branch, tag or commit"; this is where each of those becomes a clone:
+//
+//   - empty (Clone has already folded `HEAD` into empty) → the remote's default branch, shallow;
+//   - a fully-qualified `refs/heads/…` or `refs/tags/…` → exactly that reference, shallow;
+//   - a full 40-hex commit SHA → a full clone, then a fail-closed detached checkout of that
+//     commit (go-git cannot shallow-fetch an arbitrary object id, so history is needed to find it);
+//   - anything else → a branch of that name, and only when the remote has no such branch, a tag.
+//
+// A name that is neither a branch nor a tag FAILS; it never falls back to the default branch,
+// because a scan that silently reads different bytes from the ones the user named reports on the
+// wrong code. Every attempt starts from an empty directory, and ctx bounds every network call.
+func (g *GIT) cloneRef(ctx context.Context, ref string, auth transport.AuthMethod) (*gogit.Repository, error) {
+	clone := func(opts *gogit.CloneOptions) (*gogit.Repository, error) {
+		_ = os.RemoveAll(g.LocalPath)
+		if err := os.MkdirAll(g.LocalPath, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create clone directory '%s': %w", g.LocalPath, err)
+		}
+		opts.URL = g.RepoURL
+		opts.Progress = os.Stdout
+		opts.Auth = auth
+		return gogit.PlainCloneContext(ctx, g.LocalPath, false, opts)
+	}
+	shallow := func(name plumbing.ReferenceName) (*gogit.Repository, error) {
+		return clone(&gogit.CloneOptions{ReferenceName: name, SingleBranch: true, Depth: 1})
+	}
+
+	switch {
+	case ref == "":
+		repo, err := clone(&gogit.CloneOptions{Depth: 1})
+		if err != nil {
+			return nil, mapCloneError(g.RepoURL, err)
+		}
+		return repo, nil
+
+	case strings.HasPrefix(ref, "refs/heads/"), strings.HasPrefix(ref, "refs/tags/"):
+		repo, err := shallow(plumbing.ReferenceName(ref))
+		if err != nil {
+			return nil, mapCloneError(g.RepoURL, err)
+		}
+		return repo, nil
+
+	case isFullCommitSHA(ref):
+		repo, err := clone(&gogit.CloneOptions{})
+		if err != nil {
+			return nil, mapCloneError(g.RepoURL, err)
+		}
+		g.Repo = repo
+		if err := g.Checkout(ref); err != nil {
+			return nil, err
+		}
+		return repo, nil
+	}
+
+	repo, err := shallow(plumbing.NewBranchReferenceName(ref))
+	if err == nil {
+		return repo, nil
+	}
+	if !errors.Is(err, gogit.NoMatchingRefSpecError{}) {
+		return nil, mapCloneError(g.RepoURL, err)
+	}
+	repo, tagErr := shallow(plumbing.NewTagReferenceName(ref))
+	if tagErr == nil {
+		return repo, nil
+	}
+	if errors.Is(tagErr, gogit.NoMatchingRefSpecError{}) {
+		return nil, fmt.Errorf("failed to clone repository '%s': ref %q is neither a branch nor a tag on the remote (a commit must be given as its full 40-character SHA)", g.RepoURL, ref)
+	}
+	return nil, mapCloneError(g.RepoURL, tagErr)
+}
+
+// isFullCommitSHA reports whether ref is a full 40-character hex SHA-1 object id.
+func isFullCommitSHA(ref string) bool {
+	if len(ref) != 40 {
+		return false
+	}
+	for _, c := range ref {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // mapCloneError normalizes go-git clone/transport errors to the package's sentinel
