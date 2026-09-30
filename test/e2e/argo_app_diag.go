@@ -200,18 +200,22 @@ func renderArgoAppDiagnosis(appName string, appJSON []byte, appErr error, cluste
 // also renders the scheduling half (argo_app_sched_diag.go): the not-Ready Pods in podNS, and per
 // node the allocatable CPU against what is already requested — and, only when a Pod there is stuck
 // in init, the network half (argo_app_net_diag.go): the stuck init containers' last log lines, the
-// namespace's NetworkPolicies and what the DNS allow admits. BOUNDED: every read is 5s, at most five
+// namespace's NetworkPolicies and what the DNS allow admits. BOUNDED: every read is 5s except the
+// cluster-wide pod list, which gets 20s (run 36716444473 printed "pods unreadable: signal: killed" for
+// every GKE node — a 5s cap is too short for `get pods -A` on a busy cluster); at most five reads
 // without a stuck init and at most thirteen with one (up to 3 logs + 5 network reads), because this
 // runs on a failing path inside the T2 context after the wait budget is spent, and a cancelled ctx would kill the process before t.Cleanup tears the cluster down.
 func dumpArgoAppDiagnosis(ctx context.Context, kubeconfigPath, appName, clusterName, podNS string) string {
 	const perRead = 5 * time.Second
-	read := func(args ...string) ([]byte, error) {
-		cctx, cancel := context.WithTimeout(ctx, perRead)
+	const allPodsRead = 20 * time.Second
+	readWithin := func(d time.Duration, args ...string) ([]byte, error) {
+		cctx, cancel := context.WithTimeout(ctx, d)
 		defer cancel()
 		full := append([]string{"--kubeconfig", kubeconfigPath}, args...)
 		// Output(), not CombinedOutput(): kubectl warnings on stderr must not poison the value read.
 		return exec.CommandContext(cctx, "kubectl", full...).Output()
 	}
+	read := func(args ...string) ([]byte, error) { return readWithin(perRead, args...) }
 
 	var appJSON []byte
 	var appErr error
@@ -242,7 +246,10 @@ func dumpArgoAppDiagnosis(ctx context.Context, kubeconfigPath, appName, clusterN
 	var allPods []byte
 	var allPodsErr error
 	if nodesErr == nil {
-		allPods, allPodsErr = read("get", "pods", "-A", "-o", "json")
+		// Terminal pods are skipped by the scheduling renderer anyway, so the API server need not
+		// serialise them; the field selector only trims the payload, it changes no answer.
+		allPods, allPodsErr = readWithin(allPodsRead, "get", "pods", "-A",
+			"--field-selector=status.phase!=Succeeded,status.phase!=Failed", "-o", "json")
 	}
 	out += renderSchedulingDiagnosis(podNS, pods, podsErr, nodes, nodesErr, allPods, allPodsErr)
 

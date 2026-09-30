@@ -17,8 +17,24 @@ spec:
     - Ingress
     - Egress
 ---
-# allow-dns: egress to the cluster DNS service (kube-dns) on 53/UDP+TCP so workloads can resolve
-# names. Scoped to the kube-system namespace's kube-dns pods, not blanket egress.
+# allow-dns: egress on 53/UDP+TCP to the cluster's DNS and to NOTHING else, so workloads can resolve
+# names. Two peers, because where a DNS packet is evaluated depends on whether the node runs a local
+# DNS cache:
+#   1. kube-system pods k8s-app=kube-dns — the plain path: the pod queries the kube-dns ClusterIP,
+#      kube-proxy / the CNI translates it to a kube-dns pod, and the policy sees that pod.
+#   2. the node-local DNS cache's link-local /32s — with NodeLocal DNSCache the query never reaches
+#      a kube-dns pod: a hostNetwork cache on the node answers it, so the pod selector above admits
+#      nothing and every lookup is dropped (#845 gcp leg, run 36716444473: the loadgenerator's
+#      `wget http://frontend:80` got no answer at all). 169.254.20.10 is the address GKE's and the
+#      upstream Kubernetes nodelocaldns addon listen on (the one pods use under GKE + Cloud DNS);
+#      169.254.25.10 is Kubespray's default, the most common installer for a self-managed cluster
+#      a customer brings. Both are single link-local addresses owned by the node, on port 53 only —
+#      169.254.169.254 (cloud metadata) is deliberately NOT in range.
+# GKE with kube-dns (not Cloud DNS) keeps pods pointed at the kube-dns ClusterIP and the cache binds
+# THAT address on the node, so the evaluated destination is the ClusterIP itself — a per-cluster
+# value no static file can name. The runner adds it as a separate policy
+# (alethia-allow-node-local-dns, packages/core/provisioner/deploy_namespace.go) after applying this
+# bundle.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -37,6 +53,16 @@ spec:
           podSelector:
             matchLabels:
               k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 169.254.20.10/32
+        - ipBlock:
+            cidr: 169.254.25.10/32
       ports:
         - protocol: UDP
           port: 53
