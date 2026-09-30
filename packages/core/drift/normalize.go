@@ -10,6 +10,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/tfaddr"
 	tfjson "github.com/hashicorp/terraform-json"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // NormalizedReason names why a refresh delta was dismissed as representational
@@ -49,10 +50,13 @@ const (
 //   - empty_collection (5) needs no external evidence at all. It is a cardinality
 //     identity — null and [] both denote ∅ — so it is true by construction.
 //   - sensitivity_only (4) is also an identity — every value on both sides is equal — but
-//     it rests on one fact about OpenTofu rather than none: that a resource whose values
+//     it rests on facts about OpenTofu rather than none: that a resource whose values
 //     are equal and whose types are equal (both sides are decoded against the same schema)
 //     can only differ in its marks. That is how OpenTofu's drift comparison is written
-//     (cty RawEquals compares marks), not a property of the data itself.
+//     (cty RawEquals compares marks), not a property of the data itself. Its schema-mark
+//     form (schemaMarksOnly) also reads the provider schema, as computed_attribute does;
+//     the ranking never has to choose between them, because a sensitivity_only verdict is
+//     only ever reached with zero differing leaves and so is never combined with another.
 //   - computed_attribute (3) rests on ONE fact read from the provider's own published
 //     schema: the attribute has no config path into it. Firm, but it is a fact about a
 //     document we fetched, and a wrong or stale schema would weaken it.
@@ -132,13 +136,14 @@ type verdict struct {
 //   - There must be at least one differing leaf. Otherwise a change carrying no
 //     before/after at all would be dismissed vacuously — silence dressed as proof.
 //     The ONE exception needs positive evidence in place of a leaf: equal, number-free
-//     values whose sensitivity masks differ (sensitivityOnly, marks.go). Equal values
-//     with equal masks remain drift.
+//     values whose sensitivity masks differ (sensitivityOnly, marks.go), or whose equal
+//     masks the PROVIDER SCHEMA explains (schemaMarksOnly, marks.go). Equal values with
+//     equal masks and no such schema evidence remain drift.
 //
 // A resource is dismissed only when EVERY differing leaf is representational. One real
 // delta anywhere and the whole resource stays drift with its original Kind; resources
 // are never partially forgiven.
-func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex, st *stateIndex) verdict {
+func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex, traits traitIndex, st *stateIndex) verdict {
 	act := rc.Change.Actions
 	asDrift := verdict{Drift: true, Kind: classify(act)}
 
@@ -153,9 +158,14 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex, st
 	leaves := diffLeaves(before, after, rc.Change.BeforeSensitive, rc.Change.AfterSensitive)
 	if len(leaves) == 0 {
 		// No VALUE differs, yet OpenTofu reported a change. Dismissible only on positive
-		// evidence of what did change — the sensitivity marks — never merely because
-		// nothing visible did (that would be the vacuous dismissal this guard exists for).
+		// evidence of what did change — the sensitivity marks, either printed differently or
+		// explained by the provider schema — never merely because nothing visible did (that
+		// would be the vacuous dismissal this guard exists for).
 		if paths, ok := sensitivityOnly(before, after, rc.Change.BeforeSensitive, rc.Change.AfterSensitive); ok {
+			return verdict{Reason: ReasonSensitivityOnly, Attributes: paths}
+		}
+		tr, trKnown := traits[schemaKey{provider: rc.ProviderName, resourceType: rc.Type}]
+		if paths, ok := schemaMarksOnly(before, after, rc.Change.BeforeSensitive, rc.Change.AfterSensitive, tr, trKnown); ok {
 			return verdict{Reason: ReasonSensitivityOnly, Attributes: paths}
 		}
 		return asDrift
@@ -494,18 +504,38 @@ func maskChildKey(mask any, key string) any {
 	return nil
 }
 
-// maskMarks reports whether a sensitivity mask marks this position. A nested mask means
-// something beneath is sensitive, which is treated as marking the whole position —
-// conservative by design, since the cost of over-marking is a retained drift entry and
-// the cost of under-marking is a dismissed secret.
+// maskMarks reports whether a sensitivity mask marks this position or ANY position beneath
+// it. A `true` anywhere inside marks the whole position — conservative by design, since the
+// cost of over-marking is a retained drift entry and the cost of under-marking is a
+// dismissed secret.
+//
+// What it must NOT read as a mark is the mask's STRUCTURE. OpenTofu's plan JSON
+// (jsonstate.SensitiveAsBoolWithPathValueMarks) keeps one slot per element of every list and
+// set, rendering an unmarked primitive element as `false` and an unmarked object element as
+// `{}`: a firewall with four apply_to blocks has the mask `"apply_to": [{}, {}, {}, {}]` and
+// not a single sensitive value in it. Until #845's run 36706419571 this function counted any
+// non-empty container as a mark, so every non-empty list attribute on every provider read as
+// sensitive and was undismissable by every tier that respects sensitivity — which is why the
+// hetzner firewall's apply_to back-reference never fired against real plan JSON, while the
+// hand-written fixture (mask `{}`) passed. Only `true` is a mark.
 func maskMarks(mask any) bool {
 	switch v := mask.(type) {
 	case bool:
 		return v
 	case map[string]any:
-		return len(v) > 0
+		for _, e := range v {
+			if maskMarks(e) {
+				return true
+			}
+		}
+		return false
 	case []any:
-		return len(v) > 0
+		for _, e := range v {
+			if maskMarks(e) {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -593,4 +623,83 @@ func indexSchemas(doc *tfjson.ProviderSchemas) schemaIndex {
 		return nil
 	}
 	return out
+}
+
+// schemaTraits are the two whole-schema facts the schema-mark branch of the sensitivity
+// tier needs (marks.go, schemaMarksOnly), found anywhere in a resource type's schema: in a
+// top-level attribute, a nested attribute type, or a nested block, at any depth.
+type schemaTraits struct {
+	// sensitive: the schema declares at least one Sensitive attribute, so OpenTofu's
+	// schema.ValueMarks can put a mark on this type's values.
+	sensitive bool
+	// dynamic: some attribute is typed with DynamicPseudoType (`any`). Its values carry
+	// their own type, and two different types can encode to the same JSON, so equal JSON
+	// no longer proves equal values.
+	dynamic bool
+}
+
+// traitIndex maps a resource schema to its traits.
+type traitIndex map[schemaKey]schemaTraits
+
+// indexSchemaTraits computes schemaTraits for every resource type in a
+// `providers schema -json` document. Returns nil for no document, which the schema-mark
+// branch treats as no evidence: it never fires.
+func indexSchemaTraits(doc *tfjson.ProviderSchemas) traitIndex {
+	if doc == nil || len(doc.Schemas) == 0 {
+		return nil
+	}
+	out := traitIndex{}
+	for provider, ps := range doc.Schemas {
+		if ps == nil {
+			continue
+		}
+		for typ, sch := range ps.ResourceSchemas {
+			if sch == nil || sch.Block == nil {
+				continue
+			}
+			out[schemaKey{provider: provider, resourceType: typ}] = blockTraits(sch.Block)
+		}
+	}
+	return out
+}
+
+// blockTraits folds the traits of every attribute and nested block in b.
+func blockTraits(b *tfjson.SchemaBlock) schemaTraits {
+	var t schemaTraits
+	if b == nil {
+		return t
+	}
+	for _, a := range b.Attributes {
+		t = t.or(attrTraits(a))
+	}
+	for _, nb := range b.NestedBlocks {
+		if nb != nil {
+			t = t.or(blockTraits(nb.Block))
+		}
+	}
+	return t
+}
+
+// attrTraits reports one attribute's traits, descending a nested attribute type. An
+// attribute the document describes with neither a type nor a nested type is read as
+// dynamic, so a shape this does not recognise can only keep a resource as drift.
+func attrTraits(a *tfjson.SchemaAttribute) schemaTraits {
+	if a == nil {
+		return schemaTraits{}
+	}
+	t := schemaTraits{sensitive: a.Sensitive}
+	switch {
+	case a.AttributeNestedType != nil:
+		for _, na := range a.AttributeNestedType.Attributes {
+			t = t.or(attrTraits(na))
+		}
+	case a.AttributeType == cty.NilType, a.AttributeType.HasDynamicTypes():
+		t.dynamic = true
+	}
+	return t
+}
+
+// or is the union of two trait sets.
+func (t schemaTraits) or(u schemaTraits) schemaTraits {
+	return schemaTraits{sensitive: t.sensitive || u.sensitive, dynamic: t.dynamic || u.dynamic}
 }

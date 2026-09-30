@@ -12,24 +12,73 @@
             "name": "this",
             "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
             "schema_version": 0,
-            "sensitive_values": {},
+            "sensitive_values": {
+              "apply_to": [
+                {},
+                {},
+                {},
+                {}
+              ],
+              "labels": {},
+              "rule": [
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false,
+                    false
+                  ]
+                },
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false,
+                    false
+                  ]
+                },
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false,
+                    false
+                  ]
+                },
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false
+                  ]
+                },
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false
+                  ]
+                },
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false
+                  ]
+                }
+              ]
+            },
             "type": "hcloud_firewall",
             "values": {
               "apply_to": [
                 {
-                  "label_selector": "",
+                  "label_selector": null,
                   "server": 168043102
                 },
                 {
-                  "label_selector": "",
+                  "label_selector": null,
                   "server": 168043103
                 },
                 {
-                  "label_selector": "",
+                  "label_selector": null,
                   "server": 168043104
                 },
                 {
-                  "label_selector": "",
+                  "label_selector": null,
                   "server": 168043105
                 }
               ],
@@ -97,7 +146,7 @@
                   "description": "Intra-cluster ICMP (private network)",
                   "destination_ips": [],
                   "direction": "in",
-                  "port": "",
+                  "port": null,
                   "protocol": "icmp",
                   "source_ips": [
                     "10.0.0.0/16"
@@ -113,7 +162,9 @@
             "name": "control_plane_ipv4",
             "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
             "schema_version": 0,
-            "sensitive_values": {},
+            "sensitive_values": {
+              "labels": {}
+            },
             "type": "hcloud_primary_ip",
             "values": {
               "assignee_id": 168043102,
@@ -140,7 +191,20 @@
             "name": "control_planes",
             "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
             "schema_version": 0,
-            "sensitive_values": {},
+            "sensitive_values": {
+              "firewall_ids": [
+                false
+              ],
+              "labels": {},
+              "network": [
+                {
+                  "alias_ips": []
+                }
+              ],
+              "public_net": [
+                {}
+              ]
+            },
             "type": "hcloud_server",
             "values": {
               "firewall_ids": [
@@ -181,7 +245,9 @@
             "name": "worker_ipv4",
             "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
             "schema_version": 0,
-            "sensitive_values": {},
+            "sensitive_values": {
+              "labels": {}
+            },
             "type": "hcloud_primary_ip",
             "values": {
               "assignee_id": 168043103,
@@ -208,7 +274,20 @@
             "name": "workers",
             "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
             "schema_version": 0,
-            "sensitive_values": {},
+            "sensitive_values": {
+              "firewall_ids": [
+                false
+              ],
+              "labels": {},
+              "network": [
+                {
+                  "alias_ips": []
+                }
+              ],
+              "public_net": [
+                {}
+              ]
+            },
             "type": "hcloud_server",
             "values": {
               "firewall_ids": [
@@ -249,7 +328,9 @@
             "name": "worker_ipv4",
             "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
             "schema_version": 0,
-            "sensitive_values": {},
+            "sensitive_values": {
+              "labels": {}
+            },
             "type": "hcloud_primary_ip",
             "values": {
               "assignee_id": 168043104,
@@ -276,7 +357,20 @@
             "name": "workers",
             "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
             "schema_version": 0,
-            "sensitive_values": {},
+            "sensitive_values": {
+              "firewall_ids": [
+                false
+              ],
+              "labels": {},
+              "network": [
+                {
+                  "alias_ips": []
+                }
+              ],
+              "public_net": [
+                {}
+              ]
+            },
             "type": "hcloud_server",
             "values": {
               "firewall_ids": [
@@ -317,7 +411,9 @@
             "name": "worker_ipv4",
             "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
             "schema_version": 0,
-            "sensitive_values": {},
+            "sensitive_values": {
+              "labels": {}
+            },
             "type": "hcloud_primary_ip",
             "values": {
               "assignee_id": 168043105,
@@ -344,7 +440,20 @@
             "name": "workers",
             "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
             "schema_version": 0,
-            "sensitive_values": {},
+            "sensitive_values": {
+              "firewall_ids": [
+                false
+              ],
+              "labels": {},
+              "network": [
+                {
+                  "alias_ips": []
+                }
+              ],
+              "public_net": [
+                {}
+              ]
+            },
             "type": "hcloud_server",
             "values": {
               "firewall_ids": [
@@ -515,19 +624,19 @@
         "after": {
           "apply_to": [
             {
-              "label_selector": "",
+              "label_selector": null,
               "server": 168043102
             },
             {
-              "label_selector": "",
+              "label_selector": null,
               "server": 168043103
             },
             {
-              "label_selector": "",
+              "label_selector": null,
               "server": 168043104
             },
             {
-              "label_selector": "",
+              "label_selector": null,
               "server": 168043105
             }
           ],
@@ -595,7 +704,7 @@
               "description": "Intra-cluster ICMP (private network)",
               "destination_ips": [],
               "direction": "in",
-              "port": "",
+              "port": null,
               "protocol": "icmp",
               "source_ips": [
                 "10.0.0.0/16"
@@ -603,7 +712,56 @@
             }
           ]
         },
-        "after_sensitive": {},
+        "after_sensitive": {
+          "apply_to": [
+            {},
+            {},
+            {},
+            {}
+          ],
+          "labels": {},
+          "rule": [
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            }
+          ]
+        },
         "before": {
           "apply_to": [],
           "id": "11706771",
@@ -670,7 +828,7 @@
               "description": "Intra-cluster ICMP (private network)",
               "destination_ips": [],
               "direction": "in",
-              "port": "",
+              "port": null,
               "protocol": "icmp",
               "source_ips": [
                 "10.0.0.0/16"
@@ -678,7 +836,51 @@
             }
           ]
         },
-        "before_sensitive": {}
+        "before_sensitive": {
+          "apply_to": [],
+          "labels": {},
+          "rule": [
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            }
+          ]
+        }
       },
       "mode": "managed",
       "name": "this",
@@ -708,7 +910,9 @@
           "name": "alethia-nl-36667774857-1-cp-1-ipv4",
           "type": "ipv4"
         },
-        "after_sensitive": {},
+        "after_sensitive": {
+          "labels": {}
+        },
         "before": {
           "assignee_id": 0,
           "assignee_type": "unassigned",
@@ -726,7 +930,9 @@
           "name": "alethia-nl-36667774857-1-cp-1-ipv4",
           "type": "ipv4"
         },
-        "before_sensitive": {}
+        "before_sensitive": {
+          "labels": {}
+        }
       },
       "index": 0,
       "mode": "managed",
@@ -757,7 +963,9 @@
           "name": "alethia-nl-36667774857-1-worker-1-ipv4",
           "type": "ipv4"
         },
-        "after_sensitive": {},
+        "after_sensitive": {
+          "labels": {}
+        },
         "before": {
           "assignee_id": 0,
           "assignee_type": "unassigned",
@@ -775,7 +983,9 @@
           "name": "alethia-nl-36667774857-1-worker-1-ipv4",
           "type": "ipv4"
         },
-        "before_sensitive": {}
+        "before_sensitive": {
+          "labels": {}
+        }
       },
       "index": 0,
       "mode": "managed",
@@ -806,7 +1016,9 @@
           "name": "alethia-nl-36667774857-1-worker-2-ipv4",
           "type": "ipv4"
         },
-        "after_sensitive": {},
+        "after_sensitive": {
+          "labels": {}
+        },
         "before": {
           "assignee_id": 0,
           "assignee_type": "unassigned",
@@ -824,7 +1036,9 @@
           "name": "alethia-nl-36667774857-1-worker-2-ipv4",
           "type": "ipv4"
         },
-        "before_sensitive": {}
+        "before_sensitive": {
+          "labels": {}
+        }
       },
       "index": 1,
       "mode": "managed",
@@ -855,7 +1069,9 @@
           "name": "alethia-nl-36667774857-1-worker-3-ipv4",
           "type": "ipv4"
         },
-        "after_sensitive": {},
+        "after_sensitive": {
+          "labels": {}
+        },
         "before": {
           "assignee_id": 0,
           "assignee_type": "unassigned",
@@ -873,7 +1089,9 @@
           "name": "alethia-nl-36667774857-1-worker-3-ipv4",
           "type": "ipv4"
         },
-        "before_sensitive": {}
+        "before_sensitive": {
+          "labels": {}
+        }
       },
       "index": 2,
       "mode": "managed",
@@ -1011,8 +1229,39 @@
           "talos_version": "v1.11.0"
         },
         "before_sensitive": {
-          "client_configuration": {},
-          "machine_secrets": {}
+          "client_configuration": {
+            "client_key": true
+          },
+          "machine_secrets": {
+            "certs": {
+              "etcd": {
+                "key": true
+              },
+              "k8s": {
+                "key": true
+              },
+              "k8s_aggregator": {
+                "key": true
+              },
+              "k8s_serviceaccount": {
+                "key": true
+              },
+              "os": {
+                "key": true
+              }
+            },
+            "cluster": {
+              "secret": true
+            },
+            "secrets": {
+              "aescbc_encryption_secret": true,
+              "bootstrap_token": true,
+              "secretbox_encryption_secret": true
+            },
+            "trustdinfo": {
+              "token": true
+            }
+          }
         }
       },
       "mode": "managed",
@@ -1078,7 +1327,9 @@
             "client_key": true
           },
           "kubeconfig_raw": true,
-          "kubernetes_client_configuration": {}
+          "kubernetes_client_configuration": {
+            "client_key": true
+          }
         }
       },
       "mode": "managed",
