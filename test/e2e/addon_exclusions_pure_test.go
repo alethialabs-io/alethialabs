@@ -57,6 +57,13 @@ func TestAddOnExclusionsAreLegible(t *testing.T) {
 				t.Errorf("Why is %d chars; it must say what a CUSTOMER would have to supply, in "+
 					"enough detail to re-decide the exclusion without re-deriving it", len(e.Why))
 			}
+			// A Permanent entry's Issue is the RULING that made it permanent, and it is allowed to
+			// be closed — so the Why must cite it, or a reader of the run log sees a closed issue
+			// with nothing saying the closure was the decision rather than an oversight.
+			if e.Permanent && !strings.Contains(e.Why, e.Issue) {
+				t.Errorf("entry is Permanent but its Why does not cite its ruling %s — a permanent "+
+					"exclusion must say, in the text the run log prints, which decision made it so", e.Issue)
+			}
 			if !exclusionIssueRe.MatchString(e.Issue) {
 				t.Errorf("Issue = %q, want a tracking issue like #2717 — an exclusion with no issue "+
 					"becomes permanent by default", e.Issue)
@@ -328,15 +335,18 @@ func TestExclusionCloudsAreRealFixtureClouds(t *testing.T) {
 // Healthy is fail-open for this add-on. #3428 took the first and asserted a green that means
 // "running, writing nothing": the add-on had no serviceAccount block at all with `workloadIdentity`
 // empty, the node role carries only AmazonSSMManagedInstanceCore, and the sole Route53 grant is an
-// IRSA role trusted for a service-account name the add-on does not use. (#3469 has since made the
-// identity REQUIRED, so the fixture annotates `addon-external-dns-sa` with a stand-in ARN naming no
-// role — the reading is unchanged: no Route53 grant, still inert.) The PLATFORM RAIL
-// Application — `external-dns`, asserted in the same run — IS wired that way, and that is what was
-// actually observed working.
+// IRSA role trusted for a service-account name the add-on did not use. (#3523 has since given the
+// add-on its own ServiceAccount, `addon-external-dns`, which the role now trusts, and the runner
+// substitutes that role — but the fixture's domainFilter is `addon-e2e.invalid` and the role's grant
+// covers only the platform's zone, so the reading is unchanged: running, writing nothing.) The
+// PLATFORM RAIL Application — `external-dns`, asserted in the same run — IS wired that way, and that
+// is what was actually observed working.
 //
-// So aws now WITHHOLDS it and the ratchet ABSTAINS there rather than firing. gcp and azure fail
-// inside the provider constructor and read Degraded; alibaba still carries provider=cloudflare.
-// hetzner is the one cloud that genuinely asserts it.
+// So aws now WITHHOLDS it and the ratchet ABSTAINS there rather than firing. gcp and azure read
+// Degraded when last measured (before #3523, with no identity) and are unmeasured since; alibaba
+// still carries provider=cloudflare. hetzner is the one cloud that genuinely asserts it. On the four
+// withholding clouds the exclusion is PERMANENT by the maintainer's ruling on #3524: the add-on needs
+// a zone and an identity only a customer can bring.
 //
 // A test that only varied the add-on would pass against a global list and prove nothing.
 func TestExternalDnsExclusionIsPerCloud(t *testing.T) {
@@ -367,9 +377,9 @@ func TestExternalDnsExclusionIsPerCloud(t *testing.T) {
 		t.Run(cloud+" still withholds it", func(t *testing.T) {
 			_, withheld := PartitionExcludedAddOns(cloud, expected)
 			if !contains(withheld, app) {
-				t.Errorf("%s is asserted on %s, where nothing fills the identity the controller "+
-					"needs — asserting it there bets a real run on a convergence that is either "+
-					"unmeasured (gcp/azure/alibaba) or measured INERT (aws)", app, cloud)
+				t.Errorf("%s is asserted on %s, where the fixture has no customer zone for it to "+
+					"write into — the maintainer ruled on #3524 that this stays withheld there "+
+					"permanently rather than proven with a stand-in", app, cloud)
 			}
 		})
 	}
@@ -391,8 +401,9 @@ func TestExternalDnsExclusionIsPerCloud(t *testing.T) {
 		}
 	})
 
-	// The ratchet must still fire on the clouds whose Healthy would be REAL evidence, or the
-	// exclusion could never come off for them.
+	// The ratchet must still fire on the clouds where Healthy has not been MEASURED to be
+	// fail-open. Permanent does not switch it off: if gcp or azure reads Healthy, that red is a
+	// measurement to record (in HealthFailsOpenOn, with its run id), not a reason to delete the row.
 	for _, cloud := range []string{"gcp", "azure", "alibaba"} {
 		t.Run(cloud+" still reports it stale if it converges", func(t *testing.T) {
 			_, withheld := PartitionExcludedAddOns(cloud, expected)

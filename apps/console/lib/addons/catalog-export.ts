@@ -117,7 +117,7 @@ function cloudKnobs(addonId: string, cloud: CloudProvider): Record<string, unkno
  * exists to pin the SHAPE the emitter produces — that azure's spec carries a mounted `azure.json`
  * built from these knobs — and it proves nothing about the add-on working. The real values are a
  * customer's own tenant, subscription and resource group; external-dns therefore stays on the
- * withheld list in `test/e2e/addon_exclusions.go`.
+ * withheld list in `test/e2e/addon_exclusions.go`, permanently by the maintainer's ruling on #3524.
  *
  * The GUIDs are the all-zero placeholder the worked example in `examples/addons/external-dns/`
  * ships, so a reader who has seen one recognises the other as a stand-in rather than as something to
@@ -142,13 +142,12 @@ const EXTERNAL_DNS_FIXTURE_AZURE_CONFIG = {
  * `provider: cloudflare` on every cloud, which is the exact #2717 class (c) defect the per-cloud
  * split was created to end.
  *
- * WHAT IT PROVES AND WHAT IT DOES NOT. It proves the SHAPE: that each cloud's fixture names its own
- * DNS provider and carries that cloud's `saAnnotation`, emitted by the catalog rather than restated
- * here. It proves NOTHING about the add-on working — the identity does not exist in any account, and
- * external-dns therefore stays on the withheld list in `test/e2e/addon_exclusions.go`, which says so
- * in its own words. Supplying a REAL identity is a customer action, and doing it for the e2e (plus
- * asserting something stronger than Healthy, which is too weak a predicate for this add-on on any
- * workload-identity cloud) is #3470.
+ * ⚠️ NO LONGER WHAT THE FIXTURE STORES. Since #3523 `cloudKnobs` puts `INFRA_IDENTITY_PLACEHOLDER` in
+ * `workloadIdentity`, and the runner swaps in the platform's own external-dns identity at deploy
+ * time. This table survives only as the per-provider "does it need an identity?" sweep in
+ * `catalog-export.test.ts`. It proves the SHAPE a stand-in would take and NOTHING about the add-on
+ * working; external-dns stays withheld in `test/e2e/addon_exclusions.go` permanently (the ruling on
+ * #3524), because the zone it would write into is the customer's to bring.
  *
  * Each value is in its cloud's real syntax — an ARN, a service-account email, a GUID — because a
  * value the cloud would reject as MALFORMED tests a different failure than a value it simply cannot
