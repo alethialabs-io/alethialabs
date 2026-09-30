@@ -5,10 +5,13 @@ package drift
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tfjson "github.com/hashicorp/terraform-json"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // testdata/hetzner_fabric_refresh.json is the refresh-only plan of a freshly provisioned hetzner
@@ -19,13 +22,47 @@ import (
 // nodes, appears in the plain floor soak of 2026-08-25 (demos/proofs/hetzner/20260825T192100Z,
 // drift_baseline) — no placement ran there, so it is not placement-caused.
 //
-// What is COMPOSED, and why: the run's log never printed plan JSON, so the talos sensitivity masks
-// are reconstructed from the mechanism (sensitivityOnly's doc) and the provider's published schema
-// (siderolabs/talos 0.11.0: the nested `client_key`/`key`/`secret`/`token` attributes are the
-// sensitive ones). Values on those two resources are placeholders and identical on both sides —
-// which IS the captured fact: OpenTofu printed "(N unchanged attributes hidden)" and no attribute.
+// The SENSITIVITY MASKS are not captured — the runner never prints plan JSON — but they are no
+// longer guessed either. The first version of this file reconstructed them from an assumed
+// mechanism (talos masks that DIFFER, firewall masks of `{}`), and run 36706419571 refuted both:
+// the runner reported the firewall and both talos resources as drift. They are now COMPUTED with
+// OpenTofu v1.9.0's own algorithm — jsonplan prints each side as
+// SensitiveAsBoolWithPathValueMarks(value, marks ∪ schema.ValueMarks(value)) — from the provider
+// schemas in testdata/hetzner_provider_schemas.json, which is `tofu providers schema -json` for
+// hetznercloud/hcloud 1.67.0 and siderolabs/talos 0.11.0 (the run's lock), trimmed to the five
+// types used here. Two value details also come from run 36706419571's teardown render: an
+// apply_to element's label_selector and the ICMP rule's port are null, not "".
+//
+// The check that this is now the real shape: against this fixture, the analyzer as merged in
+// #5167 reports EXACTLY run 36706419571's posture — drifted=3 (hcloud_firewall.this attrs
+// [apply_to]; talos_cluster_kubeconfig.this and talos_machine_secrets.this with no attribute),
+// normalized=4 (the primary IPs).
 
-const hetznerFixture = "hetzner_fabric_refresh.json"
+const (
+	hetznerFixture = "hetzner_fabric_refresh.json"
+	hetznerSchemas = "hetzner_provider_schemas.json"
+)
+
+// loadSchemas reads a `providers schema -json` document from testdata.
+func loadSchemas(t *testing.T, name string) *tfjson.ProviderSchemas {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	var doc tfjson.ProviderSchemas
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("unmarshal %s: %v", name, err)
+	}
+	return &doc
+}
+
+// withHetznerSchemas analyzes plan the way the runner does once the schema-free pass drifted.
+func withHetznerSchemas(t *testing.T) func(*tfjson.Plan) *Posture {
+	t.Helper()
+	doc := loadSchemas(t, hetznerSchemas)
+	return func(p *tfjson.Plan) *Posture { return AnalyzeWithSchemas(p, doc) }
+}
 
 // driftEntry returns the fixture's resource_drift entry at addr, failing the test if absent.
 func driftEntry(t *testing.T, plan *tfjson.Plan, addr string) *tfjson.ResourceChange {
@@ -72,8 +109,54 @@ const (
 
 // TestHetznerFabricRefreshIsInSync is the #845 failure, stated as the fixed verdict: a freshly
 // provisioned hetzner Fabric reads IN SYNC, with all seven resources recorded as dismissed and
-// every dismissal naming its attributes and its reason.
+// every dismissal naming its attributes and its reason. The runner fetches provider schemas
+// whenever the schema-free pass drifted (packages/core/provisioner/drift.go), so this is the
+// verdict a customer's Fabric gets.
 func TestHetznerFabricRefreshIsInSync(t *testing.T) {
+	p := withHetznerSchemas(t)(loadPlan(t, hetznerFixture))
+	if !p.InSync || p.Drifted != 0 {
+		t.Fatalf("want in sync, got in_sync=%t drifted=%d details=%+v", p.InSync, p.Drifted, p.Details)
+	}
+	if p.Normalized != 7 {
+		t.Fatalf("Normalized = %d, want 7 (%+v)", p.Normalized, p.NormalizedDetails)
+	}
+	want := map[string]struct {
+		reason NormalizedReason
+		attrs  string
+	}{
+		firewall:                           {ReasonAssignmentBackReference, "apply_to"},
+		cpIP:                               {ReasonAssignmentBackReference, "assignee_id,assignee_type"},
+		"hcloud_primary_ip.worker_ipv4[0]": {ReasonAssignmentBackReference, "assignee_id,assignee_type"},
+		"hcloud_primary_ip.worker_ipv4[1]": {ReasonAssignmentBackReference, "assignee_id,assignee_type"},
+		"hcloud_primary_ip.worker_ipv4[2]": {ReasonAssignmentBackReference, "assignee_id,assignee_type"},
+		secrets: {ReasonSensitivityOnly, "client_configuration.client_key," +
+			"machine_secrets.certs.etcd.key,machine_secrets.certs.k8s.key," +
+			"machine_secrets.certs.k8s_aggregator.key,machine_secrets.certs.k8s_serviceaccount.key," +
+			"machine_secrets.certs.os.key,machine_secrets.cluster.secret," +
+			"machine_secrets.secrets.aescbc_encryption_secret,machine_secrets.secrets.bootstrap_token," +
+			"machine_secrets.secrets.secretbox_encryption_secret,machine_secrets.trustdinfo.token"},
+		kubecfg: {ReasonSensitivityOnly, "client_configuration.client_key,kubeconfig_raw,kubernetes_client_configuration.client_key"},
+	}
+	for _, n := range p.NormalizedDetails {
+		w, ok := want[n.Address]
+		if !ok {
+			t.Errorf("unexpected dismissal %s", n.Address)
+			continue
+		}
+		if n.Reason != w.reason {
+			t.Errorf("%s: Reason = %q, want %q", n.Address, n.Reason, w.reason)
+		}
+		if got := strings.Join(n.Attributes, ","); got != w.attrs {
+			t.Errorf("%s: Attributes = %s, want exactly %s", n.Address, got, w.attrs)
+		}
+	}
+}
+
+// TestHetznerWithoutSchemasKeepsOnlyTheTalosResources pins the fail-closed half: the schema-mark
+// branch needs the provider schema, so the runner's schema-free first pass still reports the two
+// talos resources — and ONLY them, since the hcloud back-references need no schema. That first
+// pass drifting is what makes the runner fetch the schemas at all.
+func TestHetznerWithoutSchemasKeepsOnlyTheTalosResources(t *testing.T) {
 	for name, analyze := range map[string]func(*tfjson.Plan) *Posture{
 		"Analyze":                 Analyze,
 		"AnalyzeWithSchemas(nil)": func(p *tfjson.Plan) *Posture { return AnalyzeWithSchemas(p, nil) },
@@ -83,49 +166,12 @@ func TestHetznerFabricRefreshIsInSync(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := analyze(loadPlan(t, hetznerFixture))
-			if !p.InSync || p.Drifted != 0 {
-				t.Fatalf("want in sync, got in_sync=%t drifted=%d details=%+v", p.InSync, p.Drifted, p.Details)
+			if p.Drifted != 2 || p.Normalized != 5 {
+				t.Fatalf("drifted=%d normalized=%d, want 2 and 5: %+v", p.Drifted, p.Normalized, p.Details)
 			}
-			if p.Normalized != 7 {
-				t.Fatalf("Normalized = %d, want 7 (%+v)", p.Normalized, p.NormalizedDetails)
-			}
-			want := map[string]struct {
-				reason NormalizedReason
-				attrs  string
-			}{
-				firewall:                           {ReasonAssignmentBackReference, "apply_to"},
-				cpIP:                               {ReasonAssignmentBackReference, "assignee_id,assignee_type"},
-				"hcloud_primary_ip.worker_ipv4[0]": {ReasonAssignmentBackReference, "assignee_id,assignee_type"},
-				"hcloud_primary_ip.worker_ipv4[1]": {ReasonAssignmentBackReference, "assignee_id,assignee_type"},
-				"hcloud_primary_ip.worker_ipv4[2]": {ReasonAssignmentBackReference, "assignee_id,assignee_type"},
-				secrets: {ReasonSensitivityOnly, "machine_secrets.certs.etcd.key,machine_secrets.certs.k8s.key," +
-					"machine_secrets.certs.k8s_aggregator.key,machine_secrets.certs.k8s_serviceaccount.key," +
-					"machine_secrets.certs.os.key,machine_secrets.cluster.secret," +
-					"machine_secrets.secrets.aescbc_encryption_secret,machine_secrets.secrets.bootstrap_token," +
-					"machine_secrets.secrets.secretbox_encryption_secret,machine_secrets.trustdinfo.token," +
-					"client_configuration.client_key"},
-				kubecfg: {ReasonSensitivityOnly, "kubernetes_client_configuration.client_key"},
-			}
-			for _, n := range p.NormalizedDetails {
-				w, ok := want[n.Address]
-				if !ok {
-					t.Errorf("unexpected dismissal %s", n.Address)
-					continue
-				}
-				if n.Reason != w.reason {
-					t.Errorf("%s: Reason = %q, want %q", n.Address, n.Reason, w.reason)
-				}
-				gotAttrs := map[string]bool{}
-				for _, a := range n.Attributes {
-					gotAttrs[a] = true
-				}
-				for _, a := range strings.Split(w.attrs, ",") {
-					if !gotAttrs[a] {
-						t.Errorf("%s: Attributes = %v, missing %q", n.Address, n.Attributes, a)
-					}
-				}
-				if len(n.Attributes) != len(strings.Split(w.attrs, ",")) {
-					t.Errorf("%s: Attributes = %v, want exactly %s", n.Address, n.Attributes, w.attrs)
+			for _, d := range p.Details {
+				if d.Address != secrets && d.Address != kubecfg {
+					t.Errorf("unexpected drift %s", d.Address)
 				}
 			}
 		})
@@ -136,7 +182,11 @@ func TestHetznerFabricRefreshIsInSync(t *testing.T) {
 // paths, never values — the talos fixture's placeholder secrets and the primary IPs' addresses
 // must not appear anywhere in the marshalled posture.
 func TestHetznerDismissalsCarryNoValues(t *testing.T) {
-	b, err := json.Marshal(Analyze(loadPlan(t, hetznerFixture)))
+	p := withHetznerSchemas(t)(loadPlan(t, hetznerFixture))
+	if p.Normalized != 7 {
+		t.Fatalf("Normalized = %d, want 7 — a value check over fewer dismissals proves less", p.Normalized)
+	}
+	b, err := json.Marshal(p)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -269,6 +319,11 @@ func TestTableJ_FirewallBackReferenceNarrowings(t *testing.T) {
 		"a firewall rule changed alongside": func(t *testing.T, plan *tfjson.Plan) {
 			driftEntry(t, plan, firewall).Change.After.(map[string]any)["rule"] = []any{}
 		},
+		"the plan marks a value inside apply_to sensitive": func(t *testing.T, plan *tfjson.Plan) {
+			driftEntry(t, plan, firewall).Change.AfterSensitive.(map[string]any)["apply_to"] = []any{
+				map[string]any{}, map[string]any{"server": true}, map[string]any{}, map[string]any{},
+			}
+		},
 	}
 	t.Run("control: the fixture firewall is dismissed", func(t *testing.T) {
 		assertDrift(t, Analyze(onlyDrift(t, loadPlan(t, hetznerFixture), firewall)), false, ReasonAssignmentBackReference)
@@ -285,15 +340,21 @@ func TestTableJ_FirewallBackReferenceNarrowings(t *testing.T) {
 // ── Table K — the sensitivity-only tier ──────────────────────────────────────────────────────
 
 func TestTableK_SensitivityOnlyNarrowings(t *testing.T) {
-	t.Run("control: the fixture kubeconfig is dismissed", func(t *testing.T) {
-		assertDrift(t, Analyze(onlyDrift(t, loadPlan(t, hetznerFixture), kubecfg)), false, ReasonSensitivityOnly)
-	})
+	analyze := withHetznerSchemas(t)
+	// Both talos resources are the control: each MUST be dismissed with the captured schemas, or
+	// every row below passes for the wrong reason.
+	for _, addr := range []string{kubecfg, secrets} {
+		t.Run("control: the fixture "+addr+" is dismissed", func(t *testing.T) {
+			assertDrift(t, analyze(onlyDrift(t, loadPlan(t, hetznerFixture), addr)), false, ReasonSensitivityOnly)
+		})
+	}
 	cases := map[string]func(t *testing.T, rc *tfjson.ResourceChange){
-		"equal values AND equal masks — unexplained, stays drift": func(_ *testing.T, rc *tfjson.ResourceChange) {
-			rc.Change.AfterSensitive = rc.Change.BeforeSensitive
-		},
-		"no masks at all": func(_ *testing.T, rc *tfjson.ResourceChange) {
+		"no masks at all — nothing the schema marked is on this value": func(_ *testing.T, rc *tfjson.ResourceChange) {
 			rc.Change.BeforeSensitive, rc.Change.AfterSensitive = nil, nil
+		},
+		"masks of structure only — no path marked": func(_ *testing.T, rc *tfjson.ResourceChange) {
+			rc.Change.BeforeSensitive = map[string]any{"client_configuration": map[string]any{}}
+			rc.Change.AfterSensitive = map[string]any{"client_configuration": map[string]any{}}
 		},
 		"a NUMBER anywhere — equal JSON no longer proves equal values": func(_ *testing.T, rc *tfjson.ResourceChange) {
 			rc.Change.Before.(map[string]any)["port"] = 6443.0
@@ -307,17 +368,58 @@ func TestTableK_SensitivityOnlyNarrowings(t *testing.T) {
 			after["kubeconfig_raw"] = "apiVersion: v1\n# rotated\n"
 			rc.Change.After = after
 		},
+		"a non-sensitive VALUE changed — the endpoint moved": func(_ *testing.T, rc *tfjson.ResourceChange) {
+			after := map[string]any{}
+			for k, v := range rc.Change.Before.(map[string]any) {
+				after[k] = v
+			}
+			after["endpoint"] = "198.51.100.7"
+			rc.Change.After = after
+		},
 		"a non-update action": func(_ *testing.T, rc *tfjson.ResourceChange) {
 			rc.Change.Actions = tfjson.Actions{tfjson.ActionDelete}
+		},
+		"a different provider (a fork publishing the same type)": func(_ *testing.T, rc *tfjson.ResourceChange) {
+			rc.ProviderName = "registry.opentofu.org/somefork/talos"
 		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			plan := onlyDrift(t, loadPlan(t, hetznerFixture), kubecfg)
 			mutate(t, plan.ResourceDrift[0])
-			assertDrift(t, Analyze(plan), true, "")
+			assertDrift(t, analyze(plan), true, "")
 		})
 	}
+	// The schema is the evidence, so each way it can fail to explain the report keeps the drift.
+	schemaCases := map[string]func(*tfjson.Schema){
+		"the schema declares NOTHING sensitive — equal masks mean equal marks": func(s *tfjson.Schema) {
+			clearSensitive(s.Block)
+		},
+		"the schema has a DYNAMIC attribute — equal JSON no longer proves equal values": func(s *tfjson.Schema) {
+			s.Block.Attributes["extra"] = &tfjson.SchemaAttribute{AttributeType: cty.DynamicPseudoType, Optional: true}
+		},
+		"a dynamic attribute NESTED inside an object": func(s *tfjson.Schema) {
+			s.Block.Attributes["client_configuration"].AttributeNestedType.Attributes["extra"] = &tfjson.SchemaAttribute{AttributeType: cty.List(cty.DynamicPseudoType)}
+		},
+		"a dynamic attribute inside a nested BLOCK": func(s *tfjson.Schema) {
+			s.Block.NestedBlocks = map[string]*tfjson.SchemaBlockType{"b": {Block: &tfjson.SchemaBlock{
+				Attributes: map[string]*tfjson.SchemaAttribute{"x": {AttributeType: cty.DynamicPseudoType}},
+			}}}
+		},
+		"an attribute with neither a type nor a nested type": func(s *tfjson.Schema) {
+			s.Block.Attributes["extra"] = &tfjson.SchemaAttribute{Optional: true}
+		},
+	}
+	for name, mutate := range schemaCases {
+		t.Run(name, func(t *testing.T) {
+			doc := loadSchemas(t, hetznerSchemas)
+			mutate(doc.Schemas["registry.opentofu.org/siderolabs/talos"].ResourceSchemas["talos_cluster_kubeconfig"])
+			assertDrift(t, AnalyzeWithSchemas(onlyDrift(t, loadPlan(t, hetznerFixture), kubecfg), doc), true, "")
+		})
+	}
+	t.Run("the SAME fixture without schemas stays drift", func(t *testing.T) {
+		assertDrift(t, Analyze(onlyDrift(t, loadPlan(t, hetznerFixture), kubecfg)), true, "")
+	})
 	t.Run("empty objects with differing masks stay drift", func(t *testing.T) {
 		rc := updateDrift("a.a", "a", map[string]any{}, map[string]any{})
 		rc.Change.AfterSensitive = map[string]any{"x": true}
@@ -517,5 +619,75 @@ func TestContainsNumberInsideAList(t *testing.T) {
 	}
 	if containsNumber(map[string]any{"l": []any{"s", true, nil}}) {
 		t.Fatal("a list of strings, bools and nulls read as holding a number")
+	}
+}
+
+// clearSensitive removes every Sensitive flag from a schema block, at every depth.
+func clearSensitive(b *tfjson.SchemaBlock) {
+	var attr func(a *tfjson.SchemaAttribute)
+	attr = func(a *tfjson.SchemaAttribute) {
+		a.Sensitive = false
+		if a.AttributeNestedType != nil {
+			for _, na := range a.AttributeNestedType.Attributes {
+				attr(na)
+			}
+		}
+	}
+	for _, a := range b.Attributes {
+		attr(a)
+	}
+	for _, nb := range b.NestedBlocks {
+		clearSensitive(nb.Block)
+	}
+}
+
+// TestSchemaTraitsSkipJunk covers the fail-closed edges of the trait index that no real schema
+// document reaches: an absent document, a nil provider, a nil resource schema or block, a nil
+// nested block and a nil attribute.
+func TestSchemaTraitsSkipJunk(t *testing.T) {
+	if indexSchemaTraits(nil) != nil || indexSchemaTraits(&tfjson.ProviderSchemas{}) != nil {
+		t.Fatal("no document must mean no traits")
+	}
+	doc := &tfjson.ProviderSchemas{Schemas: map[string]*tfjson.ProviderSchema{
+		"nil": nil,
+		"p": {ResourceSchemas: map[string]*tfjson.Schema{
+			"nil": nil, "noblock": {},
+			"t": {Block: &tfjson.SchemaBlock{
+				Attributes:   map[string]*tfjson.SchemaAttribute{"a": nil, "s": {AttributeType: cty.String, Sensitive: true}},
+				NestedBlocks: map[string]*tfjson.SchemaBlockType{"nil": nil, "nilblock": {}},
+			}},
+		}},
+	}}
+	idx := indexSchemaTraits(doc)
+	if len(idx) != 1 {
+		t.Fatalf("traits = %+v, want only p/t", idx)
+	}
+	if got := idx[schemaKey{provider: "p", resourceType: "t"}]; !got.sensitive || got.dynamic {
+		t.Fatalf("p/t traits = %+v, want sensitive and not dynamic", got)
+	}
+}
+
+// TestSchemaMarksOnlyNeedsIdenticalMarkedPaths reaches the mask comparison directly: through
+// Analyze, masks that differ are sensitivityOnly's and are dismissed there first, so only a
+// direct call can show this branch refuses them itself rather than relying on that order.
+func TestSchemaMarksOnlyNeedsIdenticalMarkedPaths(t *testing.T) {
+	v := map[string]any{"s": "v", "t": "w"}
+	tr := schemaTraits{sensitive: true}
+	if got, ok := schemaMarksOnly(v, v, map[string]any{"s": true}, map[string]any{"s": true}, tr, true); !ok || strings.Join(got, ",") != "s" {
+		t.Fatalf("control: got (%v, %t), want ([s], true)", got, ok)
+	}
+	for name, masks := range map[string][2]any{
+		"same size, different paths": {map[string]any{"s": true}, map[string]any{"t": true}},
+		"a path gained":              {map[string]any{"s": true}, map[string]any{"s": true, "t": true}},
+		"a path lost":                {map[string]any{"s": true, "t": true}, map[string]any{"s": true}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got, ok := schemaMarksOnly(v, v, masks[0], masks[1], tr, true); ok {
+				t.Fatalf("got (%v, true), want a refusal", got)
+			}
+		})
+	}
+	if _, ok := schemaMarksOnly(map[string]any{}, map[string]any{}, true, true, tr, true); ok {
+		t.Fatal("empty objects were dismissed")
 	}
 }

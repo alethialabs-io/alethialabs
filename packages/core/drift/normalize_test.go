@@ -493,6 +493,12 @@ func TestSensitivityMaskShapes(t *testing.T) {
 		{"explicit false does not mark", nil, map[string]any{"conf": false}, false, ReasonUndeclaredCollection},
 		{"empty map mask does not mark", nil, map[string]any{"conf": map[string]any{}}, false, ReasonUndeclaredCollection},
 		{"empty list mask does not mark", nil, map[string]any{"conf": []any{}}, false, ReasonUndeclaredCollection},
+		// OpenTofu's plan JSON keeps a slot per list/set element even when nothing is marked
+		// (jsonstate.SensitiveAsBoolWithPathValueMarks). Structure is not a mark: #845 run
+		// 36706419571's firewall apply_to read as sensitive on exactly this shape.
+		{"a list of unmarked primitive slots does not mark", nil, map[string]any{"conf": []any{false, false}}, false, ReasonUndeclaredCollection},
+		{"a list of unmarked object slots does not mark", nil, map[string]any{"conf": []any{map[string]any{}, map[string]any{"x": []any{false}}}}, false, ReasonUndeclaredCollection},
+		{"a true deep inside a list slot marks", nil, map[string]any{"conf": []any{map[string]any{}, map[string]any{"x": []any{false, true}}}}, true, ""},
 		{"mask for another attribute is irrelevant", nil, map[string]any{"other": true}, false, ReasonUndeclaredCollection},
 		{"mask that is not an object is ignored", nil, "not-a-mask", false, ReasonUndeclaredCollection},
 	}
@@ -969,6 +975,13 @@ func TestSchemasNeverIncreaseDrift(t *testing.T) {
 							provider, typ, got.Drifted+got.Normalized, base.Drifted+base.Normalized)
 					}
 				}
+			}
+			// And the real, captured provider schemas the hetzner fixture was produced under,
+			// which carry the sensitive and nested shapes the permissive one does not.
+			got := AnalyzeWithSchemas(plan, loadSchemas(t, hetznerSchemas))
+			if got.Drifted > base.Drifted || got.Drifted+got.Normalized != base.Drifted+base.Normalized {
+				t.Fatalf("hetzner schemas: drifted %d -> %d, examined %d -> %d", base.Drifted, got.Drifted,
+					base.Drifted+base.Normalized, got.Drifted+got.Normalized)
 			}
 		})
 	}
