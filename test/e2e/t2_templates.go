@@ -43,7 +43,9 @@
 // point); and, for every Application sourced from a template repository, a sync REVISION equal to
 // that template's commit, resolved with `git ls-remote <repo> HEAD` before any spend. The OCI charts
 // the AI template's `addons/` pulls (KServe, Kueue) are pinned by the template commit to a chart
-// version, so their revision must equal the version that commit pins.
+// version; that pin is read from the template at the resolved commit and resolved to its manifest
+// digest, also before any spend, and the synced revision must be the pinned tag or that digest —
+// ArgoCD 3.x reports the digest for a native OCI source (t2_templates_oci.go says where).
 package e2e
 
 import (
@@ -276,7 +278,8 @@ const (
 	// templateSourceGit: synced from a template repository; revision must be that template's commit.
 	templateSourceGit = "git"
 	// templateSourceOCI: an upstream chart the template's `addons/` pins; revision must be the
-	// version that commit pins (read from the Application's own spec, which the template wrote).
+	// version that commit pins, or its manifest digest — both read from the TEMPLATE and the
+	// REGISTRY before any spend (resolveTemplateChartPins), never from the Application.
 	templateSourceOCI = "oci"
 	// templateSourcePlatform: rendered by Alethia because of the template (cert-manager, via the
 	// webhook-CA marker); health only — its revision is the platform's, not the template's.
@@ -290,6 +293,8 @@ type templateAppExpect struct {
 	Source       string
 	Repo         string
 	MinResources int
+	// PinFile is, for an OCI Application, the file in Repo that pins its chart.
+	PinFile string
 	// Why says, in the summary, where this Application comes from — a reader of the proof must not
 	// have to reconstruct the tutorial to know why it was asserted.
 	Why string
@@ -302,11 +307,11 @@ func templatesPhaseAExpect() []templateAppExpect {
 			Why: "the root Application syncing the template's kustomization.yaml (the ai-platform namespace + template-info)"},
 		{Template: "ai", Application: "addons", Source: templateSourceGit, Repo: starterAIRepo, MinResources: 1,
 			Why: "the app-of-apps over addons/, which creates kserve-crd, kserve and kueue"},
-		{Template: "ai", Application: "kserve-crd", Source: templateSourceOCI, MinResources: 1,
+		{Template: "ai", Application: "kserve-crd", Source: templateSourceOCI, Repo: starterAIRepo, PinFile: "addons/kserve-crd.yaml", MinResources: 1,
 			Why: "addons/kserve-crd.yaml — KServe's CRDs, sync wave -1"},
-		{Template: "ai", Application: "kserve", Source: templateSourceOCI, MinResources: 1,
+		{Template: "ai", Application: "kserve", Source: templateSourceOCI, Repo: starterAIRepo, PinFile: "addons/kserve.yaml", MinResources: 1,
 			Why: "addons/kserve.yaml — the KServe controller in RawDeployment mode; needs cert-manager"},
-		{Template: "ai", Application: "kueue", Source: templateSourceOCI, MinResources: 1,
+		{Template: "ai", Application: "kueue", Source: templateSourceOCI, Repo: starterAIRepo, PinFile: "addons/kueue.yaml", MinResources: 1,
 			Why: "addons/kueue.yaml — Kueue"},
 		{Template: "ai", Application: "cert-manager", Source: templateSourcePlatform, MinResources: 1,
 			Why: "installed issuer-free by the platform BECAUSE the AI Workloads template marks KServe as a webhook-CA consumer (#4990) — KServe does not start without it"},
@@ -404,13 +409,16 @@ type templateAppResult struct {
 	Chart            string `json:"chart,omitempty"`
 	Revision         string `json:"sync_revision"`
 	ExpectedRevision string `json:"expected_revision"`
-	Sync             string `json:"sync"`
-	Health           string `json:"health"`
-	Resources        int    `json:"resources"`
-	MinResources     int    `json:"min_resources"`
-	OK               bool   `json:"ok"`
-	Why              string `json:"why,omitempty"`
-	Provenance       string `json:"provenance"`
+	// ExpectedDigest is, for an OCI chart, the manifest digest its pinned tag resolved to before the
+	// run — what ArgoCD 3.x reports as the synced revision of a native OCI source.
+	ExpectedDigest string `json:"expected_digest,omitempty"`
+	Sync           string `json:"sync"`
+	Health         string `json:"health"`
+	Resources      int    `json:"resources"`
+	MinResources   int    `json:"min_resources"`
+	OK             bool   `json:"ok"`
+	Why            string `json:"why,omitempty"`
+	Provenance     string `json:"provenance"`
 }
 
 // sameRepo compares two git URLs the way ArgoCD normalises them (case, a trailing `.git` or `/`).
@@ -427,8 +435,9 @@ func sameRepo(a, b string) bool {
 // result row whether or not it passed — the summary records the losers too. The error lists every
 // failing row; nil means all passed.
 //
-// commits maps a template REPO to the commit its HEAD resolved to before the run spent anything.
-func evaluateTemplateApps(expect []templateAppExpect, observed map[string]templateAppObserved, commits map[string]string) ([]templateAppResult, error) {
+// commits maps a template REPO to the commit its HEAD resolved to before the run spent anything;
+// charts maps an OCI Application to the chart pin resolved from that commit, also before any spend.
+func evaluateTemplateApps(expect []templateAppExpect, observed map[string]templateAppObserved, commits map[string]string, charts map[string]ociChartPin) ([]templateAppResult, error) {
 	if len(expect) == 0 {
 		return nil, errors.New("refusing a VACUOUS templates assertion: no Application is expected")
 	}
@@ -471,17 +480,9 @@ func evaluateTemplateApps(expect []templateAppExpect, observed map[string]templa
 					why = append(why, fmt.Sprintf("synced revision %q is not the template's HEAD %q", o.Revision, want))
 				}
 			case templateSourceOCI:
-				// The template commit pins the chart version; the Application's own targetRevision is
-				// what that commit wrote, so the synced revision must be exactly it.
-				r.ExpectedRevision = o.TargetRevision
-				switch {
-				case !strings.HasPrefix(o.RepoURL, "oci://"):
-					why = append(why, fmt.Sprintf("source %q is not the OCI chart the template pins", o.RepoURL))
-				case o.TargetRevision == "":
-					why = append(why, "carries no pinned targetRevision — the template pins every chart")
-				case o.Revision != o.TargetRevision:
-					why = append(why, fmt.Sprintf("synced revision %q is not the pinned chart version %q", o.Revision, o.TargetRevision))
-				}
+				pin, have := charts[e.Application]
+				r.ExpectedRevision, r.ExpectedDigest = pin.Tag, pin.Digest
+				why = append(why, judgeOCIRevision(o, pin, have)...)
 			case templateSourcePlatform:
 				r.ExpectedRevision = "(platform — not a template revision)"
 			default:
