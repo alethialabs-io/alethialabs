@@ -77,7 +77,25 @@ type AddOnExclusion struct {
 	// must be OPEN: a CLOSED issue defeats the whole point of the field, and that is not
 	// hypothetical — external-dns cited #2734 for two days after #2777 closed it by fixing the very
 	// gap the Why described.
+	//
+	// The one exception is a Permanent entry (below), whose Issue names the RULING that made it
+	// permanent and need only be FILED. scripts/check-exclusion-issues.mjs enforces both halves.
 	Issue string
+	// Permanent records that the maintainer RULED this exclusion a standing classification rather
+	// than a debt: the add-on needs something only a customer can bring, and the e2e will not
+	// invent it. external-dns is the case (#3524, 2026-09-30) — it needs a DNS zone the customer
+	// owns and an identity allowed to write it.
+	//
+	// What it changes is ONLY the Issue contract: a permanent entry's tracker need only be FILED,
+	// because an OPEN tracker for a decision nobody intends to revisit is a tracker that is either
+	// kept open as a fiction or closed and then fails the guard — reopening an issue to satisfy a
+	// guard would be the guard editing reality to match itself. It is the same split the ruling on
+	// #3591 made between t2_cli_demo.go's CLIGap (OPEN) and CloudManual (FILED) rows.
+	//
+	// What it deliberately does NOT change: the entry is still per cloud, still INSTALLED and
+	// OBSERVED, and the staleness ratchet still fires on it (subject to HealthFailsOpenOn). A
+	// permanent exclusion whose add-on starts genuinely working must still come off the list.
+	Permanent bool
 	// Clouds narrows the exclusion to the clouds it is actually TRUE on. Empty means every cloud.
 	//
 	// This exists because the fixture went per-cloud in #3048 and the truth went with it. Before
@@ -194,101 +212,99 @@ var addOnExclusions = map[string]AddOnExclusion{
 	// converges because the SDK finds the node role. Both cannot be true of a role that has no DNS
 	// permission.
 	//
-	// Healthy on aws is FAIL-OPEN, and that is the whole finding. external-dns 1.15.0 fatals on a
+	// Healthy on aws was FAIL-OPEN, and that was the whole finding. external-dns 1.15.0 fatals on a
 	// provider CONSTRUCTION error; a per-record Route53 AccessDenied is not one. On EKS the AWS SDK
-	// default chain always yields SOME credential through IMDS, so the provider constructs, the pod
-	// stays Ready, and ArgoCD reports Healthy while every record write is refused. gcp (403, #2811)
-	// and azure (config-file, #2868) fail INSIDE the constructor, so they CrashLoop and read
-	// Degraded. The clouds differ in WHERE the failure lands, not in whether the identity is one
-	// the cloud can resolve — it is not, on any of them.
+	// default chain always yields SOME credential through IMDS, so the provider constructed, the pod
+	// stayed Ready, and ArgoCD reported Healthy while every record write was refused. gcp (403,
+	// #2811) and azure (config-file, #2868) failed INSIDE the constructor, so they CrashLooped and
+	// read Degraded. ⚠️ Those two gcp/azure readings were taken BEFORE #3523, with no identity at all;
+	// see "WHAT THE FIXTURE CARRIES NOW" below for why they are unmeasured since.
 	//
-	// The IAM chain, read on origin/dev rather than inferred:
+	// The IAM chain as it was at the time of the measurement:
 	//   · the node role's default policies are {AmazonSSMManagedInstanceCore} and nothing else
 	//     (modules/eks/variables.tf:141-147); the ONLY Route53 grant in the module is the IRSA role
-	//     (modules/eks/irsa.tf:127-139), trusted for `external-dns:external-dns-sa` and
-	//     `cert-manager:cert-manager`.
-	//   · AT THE TIME OF THE MEASUREMENT, `workloadIdentity` was empty and `toValues` emitted no
-	//     serviceAccount block at all, so the add-on ran under the chart-default SA — a name that
-	//     trust policy does not list. #3469 changed the first half and not the second: the fixture
-	//     now annotates its own ServiceAccount, `addon-external-dns-sa`, with a stand-in ARN that
-	//     names no role. The trust policy lists neither that SA nor that role, so the add-on still
-	//     cannot reach a Route53 grant even in principle, and the aws reading below stands.
-	//     (`addon-external-dns-sa`, NOT `external-dns-sa`: the platform rail owns that name in this
-	//     namespace, and one ServiceAccount under two ArgoCD Applications would have the add-on
-	//     rewriting the identity of the controller that serves the environment's DNS.)
+	//     (modules/eks/irsa.tf:127-146).
+	//   · `workloadIdentity` was empty and `toValues` emitted no serviceAccount block at all, so the
+	//     add-on ran under the chart-default SA, which that role's trust policy did not list.
 	//
 	// AND THE TRAP THAT PRODUCED THE WRONG READING: there are TWO external-dns deployments in an
 	// addons run, and both are asserted from the same list. The PLATFORM RAIL Application is named
 	// `external-dns` and DOES set `serviceAccount.name: external-dns-sa` with the IRSA annotation
 	// (infra/templates/argocd/external-dns.yaml:55-59), so on aws it is genuinely wired. The
-	// marketplace add-on is `addon-external-dns`, and it is not. Both went Healthy; #3428 read the
-	// rail's success onto the add-on. `infra/templates/argocd/external-dns.yaml` had already
-	// recorded the true meaning, from aws/gitops run 33095437088: "it is running fine, it simply
-	// has no zone to write into."
+	// marketplace add-on is `addon-external-dns`, and at the time it was not. Both went Healthy;
+	// #3428 read the rail's success onto the add-on. `infra/templates/argocd/external-dns.yaml` had
+	// already recorded the true meaning, from aws/gitops run 33095437088: "it is running fine, it
+	// simply has no zone to write into."
 	//
-	// This entry shrinks only when the product turns out to WORK. Inert is not working, so the
-	// honest move is back onto the list. Making the add-on actually assume the role the template
-	// already creates — and asserting something stronger than Healthy, which is too weak a
-	// predicate for this add-on on ANY workload-identity cloud — was tracked in #3470, which CLOSED
-	// as completed on 2026-08-31 (#3523 gave the add-on its own ServiceAccount and identity, #3554
-	// made a missing one fail closed). The product half, which is what a customer hits, is #3469 and
-	// is also closed: a workload-identity provider with no identity is refused at configure time
-	// rather than installed inert.
+	// WHAT THE FIXTURE CARRIES NOW (read on origin/dev, not inferred). #3470 closed completed on
+	// 2026-08-31: #3523 gave the add-on its own ServiceAccount, `addon-external-dns`
+	// (EXTERNAL_DNS_ADDON_SA in apps/console/lib/addons/catalog.ts — NOT the rail's `external-dns-sa`,
+	// because one ServiceAccount under two ArgoCD Applications would have the add-on rewriting the
+	// identity of the controller that serves the environment's DNS), and all three clouds' templates
+	// now trust that name (aws irsa.tf:145, gcp workload-identity.tf:119, azure
+	// workload-identity.tf:63). #3469 made the identity REQUIRED, and #3554 made a missing one fail
+	// closed. The generated fixture stores INFRA_IDENTITY_PLACEHOLDER in `workloadIdentity`, and the
+	// runner replaces it with the PLATFORM's own external-dns identity before the Applications
+	// render (argocd.ResolveAddOnCloudIdentity, called from provisioner/deploy.go), or drops the
+	// ServiceAccount block where the template provisioned none. So on aws/gcp/azure the add-on DOES
+	// assume a real identity in an e2e run. What it does not have is a ZONE: the fixture's
+	// `domainFilter` is `addon-e2e.invalid` — a reserved TLD that can never be delegated — and the
+	// platform identity's DNS grant is scoped to the PLATFORM's own zone (aws irsa.tf:150-165, gcp
+	// workload-identity.tf:48) or resource group (azure workload-identity.tf:66-71), which the rail
+	// writes into. On azure the mounted azure.json names an all-zero tenant and subscription too.
 	//
-	// SO WHAT KEEPS THE ENTRY. Not "no knob" any more — that reason is dead. The fixture carries a
-	// STAND-IN identity that exists in no account (see the Why below), and supplying a real one is a
-	// customer action. What remains is a paid run per cloud, which is #3524.
+	// SO WHAT KEEPS THE ENTRY — PERMANENTLY, by the maintainer's ruling on #3524 (2026-09-30).
+	// external-dns does useful work only against a DNS zone the customer owns, through an identity
+	// (or a provider API token) the customer grants write access on that zone. Both are the
+	// customer's to bring, and a fixture that invented them would stop representing what a customer
+	// actually gets — the same reason this file refuses to seed velero with a bucket. So the add-on is
+	// not going to be proven converging-and-working by a stand-in, and the exclusion is a recorded
+	// classification, not a debt waiting on a paid run. The in-product help for the knobs
+	// (catalog.ts) says what a customer has to supply, per provider.
 	//
-	// ⚠️ THE NOTE #3470 WAS CLOSED ON, kept because the constraint it records still binds anyone
-	// touching this. It cannot be done by pointing the add-on at the platform role as it stands. That
-	// role's trust is bound to `external-dns:external-dns-sa` (aws irsa.tf:139, and the GKE member /
-	// Azure federated subject are bound to the same name), which is the RAIL's ServiceAccount; the
-	// add-on now runs as `addon-external-dns-sa` precisely so it cannot take that object over. The
-	// binding has to gain the add-on's name — on all three clouds in one pass — or the add-on needs
-	// a role of its own.
+	// WHAT THE RATCHET STILL DOES, and what a red from it would mean. The entry keeps its Clouds and
+	// the add-on stays INSTALLED and OBSERVED. aws abstains (HealthFailsOpenOn below). gcp, azure and
+	// alibaba still red the run if the add-on reads Healthy+Synced — but gcp and azure have not had a
+	// paid `addons` run since #3523 put a real identity behind the annotation, so whether they still
+	// read Degraded is UNMEASURED. If one reads Healthy, that is NOT evidence the add-on works: with
+	// no customer zone it has nothing to write, exactly as on aws. The correct response is to add
+	// that cloud to HealthFailsOpenOn with the run id that measured it — NOT to delete the row, which
+	// is the #3428 mistake made a second time.
 	"external-dns": {
 		Kind: NeedsUserConfig,
-		Why: "the fixture cannot supply a credential that EXISTS, on any of these clouds. " +
-			"#3048 repointed it at each cloud's NATIVE provider (aws→aws, gcp→google, azure→azure) " +
-			"so the old reason — `provider=cloudflare` everywhere — is dead, and #2777 added the " +
-			"`workloadIdentity` knob the old reason said the schema lacked. " +
-			"#3469 then made that knob REQUIRED on a provider that authenticates by annotation, " +
-			"because an empty one installs an add-on that is Healthy-and-inert on aws — so the " +
-			"fixture no longer leaves it empty (it could not: the config would be refused). It " +
-			"carries a STAND-IN identity instead — `EXTERNAL_DNS_FIXTURE_IDENTITY` in " +
-			"apps/console/lib/addons/catalog-export.ts — an ARN / GSA email / client id in the " +
-			"right syntax that exists in NO account. That buys the annotation SHAPE and nothing " +
-			"else: the controller still cannot write a record, because supplying a REAL identity " +
-			"(or a provider API token, which `secretValues` has no ref for either) is a CUSTOMER " +
-			"action. alibaba is a fourth case with the same cause in a different shape: " +
-			"EXTERNAL_DNS_NATIVE_PROVIDER has no entry for it, so its fixture still carries " +
-			"provider=cloudflare with no token. gcp/azure/alibaba remain UNVERIFIED since #3048, " +
-			"and aws is verified INERT rather than unverified — see the retraction above, which " +
-			"is why Healthy must not be asserted for it. Making the add-on assume a real identity, " +
-			"and asserting something stronger than Healthy, was #3470 — closed completed on " +
-			"2026-08-31 by #3523/#3554. What is left is a paid run per cloud, which is #3524.",
-		// #3524, NOT #2717. #2717 is the run that MEASURED the 11-of-22 surface and it closed on
-		// 2026-08-29; this field's contract is that it names something OPEN, because an exclusion
-		// whose tracker is closed has nothing left to make it come off the list. #3524 is the ledger
-		// entry for taking this exclusion out, and it stays open until a paid `addons` run is green
-		// on the cloud whose row is being removed.
-		//
-		// The prose above the field said exactly this for six days while the value disagreed with it,
-		// which is why scripts/check-exclusion-issues.mjs now asks GitHub rather than only asking the
-		// regex: addon_exclusions_pure_test.go checks the SHAPE `^#\d+$`, and shape is not state.
-		Issue:  "#3524",
-		Clouds: []string{"aws", "gcp", "azure", "alibaba"},
-		// aws ONLY. gcp and azure fail inside the provider constructor and read Degraded, so their
-		// Healthy would be real evidence and the ratchet must keep firing there.
+		Why: "external-dns needs a DNS zone the CUSTOMER owns and an identity (or provider API " +
+			"token) the customer allows to write it — supplying either is a CUSTOMER action, and " +
+			"the maintainer ruled on #3524 (2026-09-30) that this exclusion is PERMANENT rather than " +
+			"proven with a stand-in. What the fixture carries today: each cloud's NATIVE provider " +
+			"(#3048: aws→aws, gcp→google, azure→azure), and on those three the runner substitutes " +
+			"the PLATFORM's own external-dns identity for the fixture's INFRA_IDENTITY_PLACEHOLDER " +
+			"(argocd.ResolveAddOnCloudIdentity; the templates trust the add-on's ServiceAccount " +
+			"`addon-external-dns` since #3523). But its domainFilter is `addon-e2e.invalid`, a " +
+			"reserved name no zone can have, and the platform identity's DNS grant covers only the " +
+			"platform's own zone (resource group on azure) — so there is nowhere for the add-on to " +
+			"write. On azure the mounted azure.json also names an all-zero tenant and subscription. alibaba has no native " +
+			"provider in the catalog (EXTERNAL_DNS_NATIVE_PROVIDER maps it to null), so its " +
+			"fixture carries provider=cloudflare with no token. hetzner converges (webhook, run " +
+			"33124236998) and is asserted.",
+		// #3524 is the RULING, and it is closed — deliberately. This entry is `Permanent`, so its
+		// Issue need only be FILED: scripts/check-exclusion-issues.mjs holds a non-permanent entry to
+		// the OPEN rule and only reports the state of a permanent one, the same split the ruling on
+		// #3591 made for t2_cli_demo.go's CloudManual rows. See the Permanent field for why.
+		Issue:     "#3524",
+		Permanent: true,
+		Clouds:    []string{"aws", "gcp", "azure", "alibaba"},
+		// aws ONLY, because aws is the only cloud where Healthy has been MEASURED as not-evidence.
+		// gcp and azure were measured Degraded before #3523 and are unmeasured since — see "WHAT THE
+		// RATCHET STILL DOES" above before reacting to a red there.
 		HealthFailsOpenOn: map[string]string{
 			"aws": "external-dns 1.15.0 fatals on a provider CONSTRUCTION error, not on a " +
-				"per-record write refusal. On EKS the AWS SDK default chain always yields a " +
-				"credential through IMDS, so the provider constructs and the pod stays Ready while " +
-				"every Route53 write is denied — Healthy here means \"running, writing nothing\", " +
-				"which infra/templates/argocd/external-dns.yaml already recorded from aws/gitops " +
-				"run 33095437088. The stronger predicate this owes — that the ServiceAccount " +
-				"carries the IRSA annotation — was #3470, closed completed on 2026-08-31; the " +
-				"remaining step is the paid aws `addons` run tracked by #3524.",
+				"per-record write refusal or on finding no zone to manage. On EKS the provider always " +
+				"constructs — through the IRSA role the runner now substitutes, and before #3523 " +
+				"through the node role via IMDS — so the pod stays Ready while it writes nothing: " +
+				"Healthy here means \"running, writing nothing\", which infra/templates/argocd/" +
+				"external-dns.yaml already recorded from aws/gitops run 33095437088. The fixture has no " +
+				"customer zone to write into (domainFilter addon-e2e.invalid), and by the ruling on " +
+				"#3524 it never will, so no aws `addons` run can turn this Healthy into evidence.",
 		},
 	},
 }
