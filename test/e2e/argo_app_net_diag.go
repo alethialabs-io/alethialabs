@@ -33,9 +33,10 @@ import (
 //   - the NetworkPolicies in the namespace — name, policy types, and every peer selector
 //     (renderNetworkPolicies). Selectors are labels, never values;
 //   - what the guardrail's DNS allow actually admits on THIS cluster: the kube-system pods labelled
-//     k8s-app=kube-dns, the kube-dns Service's selector, and whether a node-local DNS cache is
-//     running, which resolves on a link-local node address that no podSelector can match
-//     (renderDNSPeer);
+//     k8s-app=kube-dns, the kube-dns Service's selector and ClusterIP, and whether a node-local DNS
+//     cache is running, which answers on the node (a link-local address, or the kube-dns ClusterIP
+//     itself) where no podSelector can match — the bundle's link-local /32s and the runner's
+//     ClusterIP allow cover it since #845 (renderDNSPeer);
 //   - whether the policy agents themselves are Ready (renderPolicyEngine) — a Calico Felix that has not
 //     synced a new Pod's IP enforces a stale "same namespace" set and drops what the policy allows.
 //
@@ -261,11 +262,12 @@ func countPods(raw []byte) (int, int, error) {
 	return len(pods), ready, nil
 }
 
-// renderDNSPeer says what the guardrail bundle's DNS allow (egress to kube-system pods labelled
-// k8s-app=kube-dns, 53/UDP+TCP) admits on THIS cluster: how many such pods exist and are Ready, the
-// kube-dns Service's own selector and ClusterIP, and whether a node-local DNS cache is running — in
-// which case pods resolve on a node-local address that the allow cannot select, and every lookup
-// from a default-deny namespace is dropped.
+// renderDNSPeer says what the guardrail bundle's DNS allow's kube-dns pod peer (egress to kube-system
+// pods labelled k8s-app=kube-dns, 53/UDP+TCP) admits on THIS cluster: how many such pods exist and
+// are Ready, the kube-dns Service's own selector and ClusterIP, and whether a node-local DNS cache is
+// running — in which case pods resolve on the node, which that pod peer cannot select, and the
+// namespace resolves only through the ipBlock allows (the bundle's link-local /32s and the runner's
+// alethia-allow-node-local-dns on the ClusterIP), which renderNetworkPolicies lists above.
 func renderDNSPeer(kubeDNSPods []byte, kubeDNSPodsErr error, kubeDNSSvc []byte, kubeDNSSvcErr error, nodeLocal []byte, nodeLocalErr error) string {
 	var b strings.Builder
 	b.WriteString("    cluster DNS — what the guardrail's DNS allow (kube-system pods k8s-app=kube-dns, 53/UDP+TCP) admits here:\n")
@@ -299,7 +301,7 @@ func renderDNSPeer(kubeDNSPods []byte, kubeDNSPodsErr error, kubeDNSSvc []byte, 
 	case total == 0:
 		b.WriteString("      node-local DNS cache (pods k8s-app=node-local-dns, any ns): none\n")
 	default:
-		fmt.Fprintf(&b, "      node-local DNS cache (pods k8s-app=node-local-dns, any ns): %d (%d Ready) — pods resolve on the node, which the kube-dns podSelector does NOT admit\n", total, ready)
+		fmt.Fprintf(&b, "      node-local DNS cache (pods k8s-app=node-local-dns, any ns): %d (%d Ready) — pods resolve on the node, which the kube-dns podSelector does NOT admit; only an ipBlock allow for the cache address or the ClusterIP above does\n", total, ready)
 	}
 	return b.String()
 }

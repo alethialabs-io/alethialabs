@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -512,6 +513,10 @@ func runNamespaceDeploy(ctx context.Context, params DeployParams) (_ *PlanResult
 		result.GitopsStatus = gitopsFailed(argocd.GitopsStepApply, err)
 		return &result, fmt.Errorf("failed to apply namespace guardrail bundle into %q: %w", ns, err)
 	}
+	if err := applyNodeLocalDNSAllow(ns, stdout, stderr); err != nil {
+		result.GitopsStatus = gitopsFailed(argocd.GitopsStepApply, err)
+		return &result, fmt.Errorf("failed to apply the cluster-DNS ClusterIP allow into %q: %w", ns, err)
+	}
 
 	// #957: provision the tenant's OWN least-priv cloud identity and bind the namespace's default
 	// ServiceAccount to it, so a pod in this namespace assumes ONLY its namespace identity, never the
@@ -592,6 +597,89 @@ func applyNamespaceGuardrailBundle(ns string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "Applying namespace guardrail bundle into %q...\n", ns)
 	return executeCommand(fmt.Sprintf("kubectl apply -n %s -f %s", ns, bundleDir), ".", nil, stdout, stderr)
+}
+
+// nodeLocalDNSPolicyName names the per-cluster DNS allow the runner renders beside the static bundle.
+const nodeLocalDNSPolicyName = "alethia-allow-node-local-dns"
+
+// readKubeDNSClusterIPCmd reads ONLY the kube-dns Service's ClusterIP. --ignore-not-found makes a
+// cluster without a kube-dns Service print nothing and exit 0, so an absent Service and a failed read
+// stay two different answers.
+const readKubeDNSClusterIPCmd = "kubectl get service kube-dns -n kube-system --ignore-not-found -o 'jsonpath={.spec.clusterIP}'"
+
+// applyNodeLocalDNSAllow adds, beside the static guardrail bundle, an egress allow on 53/UDP+TCP to the
+// kube-dns Service's ClusterIP as a single-address ipBlock.
+//
+// Why a per-cluster rule: on GKE with NodeLocal DNSCache and kube-dns (not Cloud DNS), pods keep
+// resolv.conf pointed at the kube-dns ClusterIP and a hostNetwork node-local-dns cache binds THAT
+// address on every node, with NOTRACK rules that skip kube-proxy's DNAT. So the packet the policy
+// engine (Calico, there) evaluates is addressed to the ClusterIP, not to a kube-dns pod, and the
+// bundle's kube-dns podSelector admits nothing — every lookup is dropped (#845 gcp leg, run
+// 36716444473). GKE's own NodeLocal DNSCache guide prescribes exactly this rule: an ipBlock of the
+// kube-dns ClusterIP/32 on 53. The ClusterIP differs per cluster, so no static file can carry it.
+//
+// On a cluster WITHOUT a node-local cache this rule is inert: the Service address is translated to a
+// kube-dns pod before policy evaluation, and that pod is already admitted by the bundle. It widens
+// nothing either way: one address, port 53 only.
+//
+// A cluster with no kube-dns Service (or a headless one) gets no rule — nothing to admit, and the
+// bundle's own peers still apply. A failed READ is an error, not an absence: a namespace that
+// silently cannot resolve names is exactly the failure this exists to remove.
+func applyNodeLocalDNSAllow(ns string, stdout, stderr io.Writer) error {
+	if !isDNS1123Label(ns) {
+		return fmt.Errorf("namespace %q is not a valid DNS-1123 label", ns)
+	}
+	out, err := executeCommandWithOutput(readKubeDNSClusterIPCmd, ".", nil)
+	if err != nil {
+		return fmt.Errorf("read the kube-dns Service ClusterIP: %w", err)
+	}
+	manifest, ok, err := renderNodeLocalDNSAllow(ns, out)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		fmt.Fprintf(stdout, "No kube-dns Service ClusterIP on this cluster — %s not needed; the bundle's DNS peers apply.\n", nodeLocalDNSPolicyName)
+		return nil
+	}
+	return kubectlApplyManifest(manifest, "cluster-DNS ClusterIP allow ("+nodeLocalDNSPolicyName+")", stdout, stderr)
+}
+
+// renderNodeLocalDNSAllow renders the ClusterIP DNS allow for ns from the raw kubectl read. ok=false
+// means there is no ClusterIP to admit (no Service, or a headless one). The address is parsed, never
+// interpolated raw, so the manifest carries a canonical single-address CIDR or nothing.
+func renderNodeLocalDNSAllow(ns, rawClusterIP string) (manifest string, ok bool, err error) {
+	raw := strings.TrimSpace(rawClusterIP)
+	if raw == "" || raw == "None" {
+		return "", false, nil
+	}
+	addr, perr := netip.ParseAddr(raw)
+	if perr != nil {
+		return "", false, fmt.Errorf("kube-dns Service ClusterIP %q is not an IP address: %w", raw, perr)
+	}
+	addr = addr.Unmap()
+	cidr := netip.PrefixFrom(addr, addr.BitLen()).String()
+	manifest = fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    alethia.io/guardrail: "true"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: %s
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+`, nodeLocalDNSPolicyName, ns, cidr)
+	return manifest, true, nil
 }
 
 // bindNamespaceIdentity annotates the namespace's default ServiceAccount with the per-namespace IRSA role
