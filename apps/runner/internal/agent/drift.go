@@ -106,6 +106,12 @@ func (w *Runner) executeDriftDetection(ctx context.Context, job *Job, provider s
 		StateBackend:  stateBackend,
 		Stdout:        stdout,
 		Stderr:        stderr,
+		// Maintainer ruling 2026-09-30: an AWS Load Balancer Controller security-group rule that
+		// traces to a TargetGroupBinding existing in the cluster is kubernetes_owned, not drift.
+		// Only the cluster can say whether the binding exists, so the aws drift job reads it (with
+		// the same creds and kubeconfig path InspectCluster uses below). Nil for other providers.
+		// Never for BYO IaC above: a customer module has no Alethia-managed cluster surface.
+		ClusterEvidence: provisioner.ClusterEvidenceReader(vc, provider, stdout),
 	})
 	if err != nil {
 		return err

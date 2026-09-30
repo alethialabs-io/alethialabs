@@ -40,12 +40,19 @@ const (
 	// of an assignment ANOTHER managed resource in the same state declares and still holds
 	// (a primary IP or firewall reporting the server that attached it; an IAM role, security
 	// group, route table, EIP or default NACL reporting the attachment resources that populate
-	// it). See backref.go and awsbackref.go.
+	// it; a GKE cluster reporting the node pools attached to it). See backref.go, awsbackref.go
+	// and gcpbackref.go.
 	ReasonAssignmentBackReference NormalizedReason = "assignment_back_reference"
 	// ReasonInapplicableField — a field the cloud API ignores for this element moved from null to
 	// its zero value: icmp_type/icmp_code on a network ACL rule whose protocol is not ICMP. No
 	// traffic decision can differ. See awsInapplicableRoots (awsbackref.go).
 	ReasonInapplicableField NormalizedReason = "inapplicable_field"
+	// ReasonKubernetesOwned — the delta is a security-group rule a Kubernetes controller owns: the
+	// AWS Load Balancer Controller's rule for a TargetGroupBinding that exists in the cluster at scan
+	// time. Unlike every other reason this is NOT "the infrastructure matches intent": it diverged
+	// from the configuration, and the divergence is owned by the cluster rather than out of band
+	// (maintainer ruling 2026-09-30). Only reachable with cluster evidence. See k8sowned.go.
+	ReasonKubernetesOwned NormalizedReason = "kubernetes_owned"
 )
 
 // reasonStrength ranks how firm each dismissal is, so examine can report the WEAKEST
@@ -53,9 +60,9 @@ const (
 //
 // The ordering is an argument, not a preference:
 //
-//   - empty_collection (6) needs no external evidence at all. It is a cardinality
+//   - empty_collection (7) needs no external evidence at all. It is a cardinality
 //     identity — null and [] both denote ∅ — so it is true by construction.
-//   - sensitivity_only (5) is also an identity — every value on both sides is equal — but
+//   - sensitivity_only (6) is also an identity — every value on both sides is equal — but
 //     it rests on facts about OpenTofu rather than none: that a resource whose values
 //     are equal and whose types are equal (both sides are decoded against the same schema)
 //     can only differ in its marks. That is how OpenTofu's drift comparison is written
@@ -63,42 +70,51 @@ const (
 //     form (schemaMarksOnly) also reads the provider schema, as computed_attribute does;
 //     the ranking never has to choose between them, because a sensitivity_only verdict is
 //     only ever reached with zero differing leaves and so is never combined with another.
-//   - computed_attribute (4) rests on ONE fact read from the provider's own published
+//   - computed_attribute (5) rests on ONE fact read from the provider's own published
 //     schema: the attribute has no config path into it. Firm, but it is a fact about a
 //     document we fetched, and a wrong or stale schema would weaken it.
-//   - undeclared_collection (3) rests on the absence of a config expression PLUS an
+//   - undeclared_collection (4) rests on the absence of a config expression PLUS an
 //     inference about how the provider's Read behaved at create time. Two links, the
 //     second unverifiable from the plan.
-//   - assignment_back_reference (2) rests on a HAND-WRITTEN claim about a provider's API
+//   - assignment_back_reference (3) rests on a HAND-WRITTEN claim about a provider's API
 //     (that it reports an assignment made from the owner or an attachment resource back on
 //     the target), verified against two views of state. The verification is strong, but the
 //     claim it verifies is ours, not the provider's.
-//   - inapplicable_field (1) rests on a HAND-WRITTEN claim about the cloud API's semantics
+//   - inapplicable_field (2) rests on a HAND-WRITTEN claim about the cloud API's semantics
 //     (that ICMP type/code mean nothing on a non-ICMP rule) and on nothing the state can
-//     verify, so it ranks weakest.
+//     verify.
+//   - kubernetes_owned (1) is not a claim that nothing diverged at all: the rule IS a change to
+//     a managed resource, and what excuses it is evidence from OUTSIDE the plan (the cluster,
+//     read at scan time) plus a hand-written model of a controller's behaviour. It ranks weakest
+//     for that, and so that a resource dismissed partly on it is always LABELLED with it — the
+//     ruling that made it a reason requires it to stay visible as what it is.
 //
 // An unranked value sorts as the weakest possible, so adding a reason and forgetting to
 // rank it can only understate a dismissal, never overstate one.
 func reasonStrength(r NormalizedReason) int {
 	switch r {
 	case ReasonEmptyCollection:
-		return 6
+		return 7
 	case ReasonSensitivityOnly:
-		return 5
+		return 6
 	case ReasonComputedAttribute:
-		return 4
+		return 5
 	case ReasonUndeclaredCollection:
-		return 3
+		return 4
 	case ReasonAssignmentBackReference:
-		return 2
+		return 3
 	case ReasonInapplicableField:
+		return 2
+	case ReasonKubernetesOwned:
 		return 1
 	default:
 		return 0
 	}
 }
 
-// NormalizedResource is one resource whose EVERY refresh delta was representational.
+// NormalizedResource is one resource whose EVERY refresh delta was representational — or, under
+// ReasonKubernetesOwned alone, whose only non-representational delta is owned by a controller in the
+// cluster. That one reason records a real change, kept visible rather than counted as drift.
 //
 // It carries attribute PATHS and never attribute VALUES. Plan JSON attribute values
 // are plaintext secrets — DB passwords, kubeconfigs, cloud tokens (see
@@ -154,7 +170,7 @@ type verdict struct {
 // A resource is dismissed only when EVERY differing leaf is representational. One real
 // delta anywhere and the whole resource stays drift with its original Kind; resources
 // are never partially forgiven.
-func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex, traits traitIndex, st *stateIndex) verdict {
+func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex, traits traitIndex, st *stateIndex, cluster *ClusterEvidence) verdict {
 	act := rc.Change.Actions
 	asDrift := verdict{Drift: true, Kind: classify(act)}
 
@@ -200,6 +216,7 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex, tr
 		schemaKnown:  schemas != nil && typeFound,
 		backRefs:     backReferenceRoots(rc, before, after, st),
 		inapplicable: awsInapplicableRoots(rc, before, after),
+		k8sOwned:     awsKubernetesOwnedRoots(rc, before, after, st, cluster),
 	}
 
 	// Every differing leaf path, computed BEFORE the dismissal loop so the drift branch can
@@ -298,10 +315,13 @@ func (d leafDelta) normalizing(ev evidence) (NormalizedReason, bool) {
 	beforeNull := !d.beforeSet || d.before == nil
 	afterNull := !d.afterSet || d.after == nil
 
-	// The inapplicable-field and back-reference tiers are tried FIRST, weakest first, because a
-	// leaf that could be dismissed more than one way must carry the weaker one. Their roots are
-	// verified per resource (awsInapplicableRoots, backReferenceRoots), so these are lookups,
-	// not judgements.
+	// The kubernetes-owned, inapplicable-field and back-reference tiers are tried FIRST, weakest
+	// first, because a leaf that could be dismissed more than one way must carry the weaker one.
+	// Their roots are verified per resource (awsKubernetesOwnedRoots, awsInapplicableRoots,
+	// backReferenceRoots), so these are lookups, not judgements.
+	if _, ok := ev.k8sOwned[d.root]; ok && !d.sensitive {
+		return ReasonKubernetesOwned, true
+	}
 	if _, ok := ev.inapplicable[d.root]; ok && !d.sensitive {
 		return ReasonInapplicableField, true
 	}
@@ -390,6 +410,10 @@ type evidence struct {
 	// verified as a null -> 0 move of a field the API ignores for that element. Nil for any
 	// resource that tier does not recognise.
 	inapplicable map[string]struct{}
+	// k8sOwned is the set of top-level attributes whose whole delta awsKubernetesOwnedRoots
+	// verified as rules a live TargetGroupBinding accounts for (plus rules state declares). Nil
+	// without cluster evidence, or for any resource that tier does not recognise.
+	k8sOwned map[string]struct{}
 }
 
 // isCollection reports whether v is a list or a map. Scalars are never collections.

@@ -57,13 +57,7 @@ func InspectCluster(
 		fmt.Fprintf(stderr, "Cluster inspection skipped: %v\n", err)
 		return nil, nil, nil
 	}
-	merged := map[string]interface{}{}
-	for k, v := range outputs {
-		merged[k] = v
-	}
-	if _, ok := merged[clusterNameOutputKey(providerSlug)]; !ok {
-		merged[clusterNameOutputKey(providerSlug)] = vc.Cluster.ClusterName
-	}
+	merged := clusterOutputs(vc, providerSlug, outputs)
 	if err := provider.ConfigureKubeconfig(ctx, vc, merged, stdout); err != nil {
 		fmt.Fprintf(stderr, "Cluster inspection skipped (kubeconfig): %v\n", err)
 		return nil, nil, nil

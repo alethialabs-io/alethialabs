@@ -1,0 +1,5324 @@
+{
+ "format_version": "1.0",
+ "provider_schemas": {
+  "registry.opentofu.org/hashicorp/google": {
+   "provider": {
+    "block": {},
+    "version": 0
+   },
+   "resource_schemas": {
+    "google_compute_firewall": {
+     "block": {
+      "attributes": {
+       "creation_timestamp": {
+        "computed": true,
+        "type": "string"
+       },
+       "description": {
+        "optional": true,
+        "type": "string"
+       },
+       "destination_ranges": {
+        "computed": true,
+        "optional": true,
+        "type": [
+         "set",
+         "string"
+        ]
+       },
+       "direction": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "disabled": {
+        "optional": true,
+        "type": "bool"
+       },
+       "enable_logging": {
+        "computed": true,
+        "deprecated": true,
+        "optional": true,
+        "type": "bool"
+       },
+       "id": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "name": {
+        "required": true,
+        "type": "string"
+       },
+       "network": {
+        "required": true,
+        "type": "string"
+       },
+       "priority": {
+        "optional": true,
+        "type": "number"
+       },
+       "project": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "self_link": {
+        "computed": true,
+        "type": "string"
+       },
+       "source_ranges": {
+        "optional": true,
+        "type": [
+         "set",
+         "string"
+        ]
+       },
+       "source_service_accounts": {
+        "optional": true,
+        "type": [
+         "set",
+         "string"
+        ]
+       },
+       "source_tags": {
+        "optional": true,
+        "type": [
+         "set",
+         "string"
+        ]
+       },
+       "target_service_accounts": {
+        "optional": true,
+        "type": [
+         "set",
+         "string"
+        ]
+       },
+       "target_tags": {
+        "optional": true,
+        "type": [
+         "set",
+         "string"
+        ]
+       }
+      },
+      "block_types": {
+       "allow": {
+        "block": {
+         "attributes": {
+          "ports": {
+           "optional": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          },
+          "protocol": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "nesting_mode": "set"
+       },
+       "deny": {
+        "block": {
+         "attributes": {
+          "ports": {
+           "optional": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          },
+          "protocol": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "nesting_mode": "set"
+       },
+       "log_config": {
+        "block": {
+         "attributes": {
+          "metadata": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "params": {
+        "block": {
+         "attributes": {
+          "resource_manager_tags": {
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "timeouts": {
+        "block": {
+         "attributes": {
+          "create": {
+           "optional": true,
+           "type": "string"
+          },
+          "delete": {
+           "optional": true,
+           "type": "string"
+          },
+          "update": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "nesting_mode": "single"
+       }
+      }
+     },
+     "version": 1
+    },
+    "google_compute_global_address": {
+     "block": {
+      "attributes": {
+       "address": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "address_type": {
+        "optional": true,
+        "type": "string"
+       },
+       "creation_timestamp": {
+        "computed": true,
+        "type": "string"
+       },
+       "description": {
+        "optional": true,
+        "type": "string"
+       },
+       "effective_labels": {
+        "computed": true,
+        "type": [
+         "map",
+         "string"
+        ]
+       },
+       "id": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "ip_version": {
+        "optional": true,
+        "type": "string"
+       },
+       "label_fingerprint": {
+        "computed": true,
+        "type": "string"
+       },
+       "labels": {
+        "optional": true,
+        "type": [
+         "map",
+         "string"
+        ]
+       },
+       "name": {
+        "required": true,
+        "type": "string"
+       },
+       "network": {
+        "optional": true,
+        "type": "string"
+       },
+       "prefix_length": {
+        "computed": true,
+        "optional": true,
+        "type": "number"
+       },
+       "project": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "purpose": {
+        "optional": true,
+        "type": "string"
+       },
+       "self_link": {
+        "computed": true,
+        "type": "string"
+       },
+       "terraform_labels": {
+        "computed": true,
+        "type": [
+         "map",
+         "string"
+        ]
+       }
+      },
+      "block_types": {
+       "timeouts": {
+        "block": {
+         "attributes": {
+          "create": {
+           "optional": true,
+           "type": "string"
+          },
+          "delete": {
+           "optional": true,
+           "type": "string"
+          },
+          "update": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "nesting_mode": "single"
+       }
+      }
+     },
+     "version": 0
+    },
+    "google_compute_router": {
+     "block": {
+      "attributes": {
+       "creation_timestamp": {
+        "computed": true,
+        "type": "string"
+       },
+       "description": {
+        "optional": true,
+        "type": "string"
+       },
+       "encrypted_interconnect_router": {
+        "optional": true,
+        "type": "bool"
+       },
+       "id": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "name": {
+        "required": true,
+        "type": "string"
+       },
+       "network": {
+        "required": true,
+        "type": "string"
+       },
+       "project": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "region": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "self_link": {
+        "computed": true,
+        "type": "string"
+       }
+      },
+      "block_types": {
+       "bgp": {
+        "block": {
+         "attributes": {
+          "advertise_mode": {
+           "optional": true,
+           "type": "string"
+          },
+          "advertised_groups": {
+           "optional": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          },
+          "asn": {
+           "required": true,
+           "type": "number"
+          },
+          "identifier_range": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "keepalive_interval": {
+           "optional": true,
+           "type": "number"
+          }
+         },
+         "block_types": {
+          "advertised_ip_ranges": {
+           "block": {
+            "attributes": {
+             "description": {
+              "optional": true,
+              "type": "string"
+             },
+             "range": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "md5_authentication_keys": {
+        "block": {
+         "attributes": {
+          "key": {
+           "required": true,
+           "type": "string"
+          },
+          "name": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "timeouts": {
+        "block": {
+         "attributes": {
+          "create": {
+           "optional": true,
+           "type": "string"
+          },
+          "delete": {
+           "optional": true,
+           "type": "string"
+          },
+          "update": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "nesting_mode": "single"
+       }
+      }
+     },
+     "version": 0
+    },
+    "google_compute_subnetwork": {
+     "block": {
+      "attributes": {
+       "creation_timestamp": {
+        "computed": true,
+        "type": "string"
+       },
+       "description": {
+        "optional": true,
+        "type": "string"
+       },
+       "enable_flow_logs": {
+        "computed": true,
+        "deprecated": true,
+        "optional": true,
+        "type": "bool"
+       },
+       "external_ipv6_prefix": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "fingerprint": {
+        "computed": true,
+        "deprecated": true,
+        "type": "string"
+       },
+       "gateway_address": {
+        "computed": true,
+        "type": "string"
+       },
+       "id": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "internal_ipv6_prefix": {
+        "computed": true,
+        "type": "string"
+       },
+       "ip_cidr_range": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "ip_collection": {
+        "optional": true,
+        "type": "string"
+       },
+       "ipv6_access_type": {
+        "optional": true,
+        "type": "string"
+       },
+       "ipv6_cidr_range": {
+        "computed": true,
+        "type": "string"
+       },
+       "ipv6_gce_endpoint": {
+        "computed": true,
+        "type": "string"
+       },
+       "name": {
+        "required": true,
+        "type": "string"
+       },
+       "network": {
+        "required": true,
+        "type": "string"
+       },
+       "private_ip_google_access": {
+        "computed": true,
+        "optional": true,
+        "type": "bool"
+       },
+       "private_ipv6_google_access": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "project": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "purpose": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "region": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "reserved_internal_range": {
+        "optional": true,
+        "type": "string"
+       },
+       "role": {
+        "optional": true,
+        "type": "string"
+       },
+       "self_link": {
+        "computed": true,
+        "type": "string"
+       },
+       "send_secondary_ip_range_if_empty": {
+        "optional": true,
+        "type": "bool"
+       },
+       "stack_type": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "state": {
+        "computed": true,
+        "type": "string"
+       },
+       "subnetwork_id": {
+        "computed": true,
+        "type": "number"
+       }
+      },
+      "block_types": {
+       "log_config": {
+        "block": {
+         "attributes": {
+          "aggregation_interval": {
+           "optional": true,
+           "type": "string"
+          },
+          "filter_expr": {
+           "optional": true,
+           "type": "string"
+          },
+          "flow_sampling": {
+           "optional": true,
+           "type": "number"
+          },
+          "metadata": {
+           "optional": true,
+           "type": "string"
+          },
+          "metadata_fields": {
+           "optional": true,
+           "type": [
+            "set",
+            "string"
+           ]
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "params": {
+        "block": {
+         "attributes": {
+          "resource_manager_tags": {
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "secondary_ip_range": {
+        "block": {
+         "attributes": {
+          "ip_cidr_range": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "range_name": {
+           "required": true,
+           "type": "string"
+          },
+          "reserved_internal_range": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "nesting_mode": "list"
+       },
+       "timeouts": {
+        "block": {
+         "attributes": {
+          "create": {
+           "optional": true,
+           "type": "string"
+          },
+          "delete": {
+           "optional": true,
+           "type": "string"
+          },
+          "update": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "nesting_mode": "single"
+       }
+      }
+     },
+     "version": 0
+    },
+    "google_container_cluster": {
+     "block": {
+      "attributes": {
+       "allow_net_admin": {
+        "optional": true,
+        "type": "bool"
+       },
+       "cluster_ipv4_cidr": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "datapath_provider": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "default_max_pods_per_node": {
+        "computed": true,
+        "optional": true,
+        "type": "number"
+       },
+       "deletion_protection": {
+        "optional": true,
+        "type": "bool"
+       },
+       "description": {
+        "optional": true,
+        "type": "string"
+       },
+       "disable_l4_lb_firewall_reconciliation": {
+        "optional": true,
+        "type": "bool"
+       },
+       "effective_labels": {
+        "computed": true,
+        "type": [
+         "map",
+         "string"
+        ]
+       },
+       "enable_autopilot": {
+        "optional": true,
+        "type": "bool"
+       },
+       "enable_cilium_clusterwide_network_policy": {
+        "optional": true,
+        "type": "bool"
+       },
+       "enable_fqdn_network_policy": {
+        "optional": true,
+        "type": "bool"
+       },
+       "enable_intranode_visibility": {
+        "computed": true,
+        "optional": true,
+        "type": "bool"
+       },
+       "enable_kubernetes_alpha": {
+        "optional": true,
+        "type": "bool"
+       },
+       "enable_l4_ilb_subsetting": {
+        "optional": true,
+        "type": "bool"
+       },
+       "enable_legacy_abac": {
+        "optional": true,
+        "type": "bool"
+       },
+       "enable_multi_networking": {
+        "optional": true,
+        "type": "bool"
+       },
+       "enable_shielded_nodes": {
+        "optional": true,
+        "type": "bool"
+       },
+       "enable_tpu": {
+        "optional": true,
+        "type": "bool"
+       },
+       "endpoint": {
+        "computed": true,
+        "type": "string"
+       },
+       "id": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "in_transit_encryption_config": {
+        "optional": true,
+        "type": "string"
+       },
+       "initial_node_count": {
+        "optional": true,
+        "type": "number"
+       },
+       "label_fingerprint": {
+        "computed": true,
+        "type": "string"
+       },
+       "location": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "logging_service": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "master_version": {
+        "computed": true,
+        "type": "string"
+       },
+       "min_master_version": {
+        "optional": true,
+        "type": "string"
+       },
+       "monitoring_service": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "name": {
+        "required": true,
+        "type": "string"
+       },
+       "network": {
+        "optional": true,
+        "type": "string"
+       },
+       "networking_mode": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "node_locations": {
+        "computed": true,
+        "optional": true,
+        "type": [
+         "set",
+         "string"
+        ]
+       },
+       "node_version": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "operation": {
+        "computed": true,
+        "type": "string"
+       },
+       "private_ipv6_google_access": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "project": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "remove_default_node_pool": {
+        "optional": true,
+        "type": "bool"
+       },
+       "resource_labels": {
+        "optional": true,
+        "type": [
+         "map",
+         "string"
+        ]
+       },
+       "self_link": {
+        "computed": true,
+        "type": "string"
+       },
+       "services_ipv4_cidr": {
+        "computed": true,
+        "type": "string"
+       },
+       "subnetwork": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "terraform_labels": {
+        "computed": true,
+        "type": [
+         "map",
+         "string"
+        ]
+       },
+       "tpu_ipv4_cidr_block": {
+        "computed": true,
+        "type": "string"
+       }
+      },
+      "block_types": {
+       "addons_config": {
+        "block": {
+         "block_types": {
+          "cloudrun_config": {
+           "block": {
+            "attributes": {
+             "disabled": {
+              "required": true,
+              "type": "bool"
+             },
+             "load_balancer_type": {
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "config_connector_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "dns_cache_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "gce_persistent_disk_csi_driver_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "gcp_filestore_csi_driver_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "gcs_fuse_csi_driver_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "gke_backup_agent_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "horizontal_pod_autoscaling": {
+           "block": {
+            "attributes": {
+             "disabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "http_load_balancing": {
+           "block": {
+            "attributes": {
+             "disabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "lustre_csi_driver_config": {
+           "block": {
+            "attributes": {
+             "enable_legacy_lustre_port": {
+              "optional": true,
+              "type": "bool"
+             },
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "network_policy_config": {
+           "block": {
+            "attributes": {
+             "disabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "parallelstore_csi_driver_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "ray_operator_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            },
+            "block_types": {
+             "ray_cluster_logging_config": {
+              "block": {
+               "attributes": {
+                "enabled": {
+                 "required": true,
+                 "type": "bool"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "ray_cluster_monitoring_config": {
+              "block": {
+               "attributes": {
+                "enabled": {
+                 "required": true,
+                 "type": "bool"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 3,
+           "nesting_mode": "list"
+          },
+          "stateful_ha_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "anonymous_authentication_config": {
+        "block": {
+         "attributes": {
+          "mode": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "authenticator_groups_config": {
+        "block": {
+         "attributes": {
+          "security_group": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "binary_authorization": {
+        "block": {
+         "attributes": {
+          "enabled": {
+           "deprecated": true,
+           "optional": true,
+           "type": "bool"
+          },
+          "evaluation_mode": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "cluster_autoscaling": {
+        "block": {
+         "attributes": {
+          "auto_provisioning_locations": {
+           "computed": true,
+           "optional": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          },
+          "autoscaling_profile": {
+           "optional": true,
+           "type": "string"
+          },
+          "enabled": {
+           "computed": true,
+           "optional": true,
+           "type": "bool"
+          }
+         },
+         "block_types": {
+          "auto_provisioning_defaults": {
+           "block": {
+            "attributes": {
+             "boot_disk_kms_key": {
+              "optional": true,
+              "type": "string"
+             },
+             "disk_size": {
+              "optional": true,
+              "type": "number"
+             },
+             "disk_type": {
+              "optional": true,
+              "type": "string"
+             },
+             "image_type": {
+              "optional": true,
+              "type": "string"
+             },
+             "min_cpu_platform": {
+              "optional": true,
+              "type": "string"
+             },
+             "oauth_scopes": {
+              "computed": true,
+              "optional": true,
+              "type": [
+               "list",
+               "string"
+              ]
+             },
+             "service_account": {
+              "optional": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "management": {
+              "block": {
+               "attributes": {
+                "auto_repair": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "bool"
+                },
+                "auto_upgrade": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "bool"
+                },
+                "upgrade_options": {
+                 "computed": true,
+                 "type": [
+                  "list",
+                  [
+                   "object",
+                   {
+                    "auto_upgrade_start_time": "string",
+                    "description": "string"
+                   }
+                  ]
+                 ]
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "shielded_instance_config": {
+              "block": {
+               "attributes": {
+                "enable_integrity_monitoring": {
+                 "optional": true,
+                 "type": "bool"
+                },
+                "enable_secure_boot": {
+                 "optional": true,
+                 "type": "bool"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "upgrade_settings": {
+              "block": {
+               "attributes": {
+                "max_surge": {
+                 "optional": true,
+                 "type": "number"
+                },
+                "max_unavailable": {
+                 "optional": true,
+                 "type": "number"
+                },
+                "strategy": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "string"
+                }
+               },
+               "block_types": {
+                "blue_green_settings": {
+                 "block": {
+                  "attributes": {
+                   "node_pool_soak_duration": {
+                    "computed": true,
+                    "optional": true,
+                    "type": "string"
+                   }
+                  },
+                  "block_types": {
+                   "standard_rollout_policy": {
+                    "block": {
+                     "attributes": {
+                      "batch_node_count": {
+                       "computed": true,
+                       "optional": true,
+                       "type": "number"
+                      },
+                      "batch_percentage": {
+                       "computed": true,
+                       "optional": true,
+                       "type": "number"
+                      },
+                      "batch_soak_duration": {
+                       "optional": true,
+                       "type": "string"
+                      }
+                     }
+                    },
+                    "max_items": 1,
+                    "nesting_mode": "list"
+                   }
+                  }
+                 },
+                 "max_items": 1,
+                 "nesting_mode": "list"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "resource_limits": {
+           "block": {
+            "attributes": {
+             "maximum": {
+              "required": true,
+              "type": "number"
+             },
+             "minimum": {
+              "optional": true,
+              "type": "number"
+             },
+             "resource_type": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "confidential_nodes": {
+        "block": {
+         "attributes": {
+          "confidential_instance_type": {
+           "optional": true,
+           "type": "string"
+          },
+          "enabled": {
+           "required": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "control_plane_endpoints_config": {
+        "block": {
+         "block_types": {
+          "dns_endpoint_config": {
+           "block": {
+            "attributes": {
+             "allow_external_traffic": {
+              "optional": true,
+              "type": "bool"
+             },
+             "endpoint": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "ip_endpoints_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "optional": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "cost_management_config": {
+        "block": {
+         "attributes": {
+          "enabled": {
+           "required": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "database_encryption": {
+        "block": {
+         "attributes": {
+          "key_name": {
+           "optional": true,
+           "type": "string"
+          },
+          "state": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "default_snat_status": {
+        "block": {
+         "attributes": {
+          "disabled": {
+           "required": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "dns_config": {
+        "block": {
+         "attributes": {
+          "additive_vpc_scope_dns_domain": {
+           "optional": true,
+           "type": "string"
+          },
+          "cluster_dns": {
+           "optional": true,
+           "type": "string"
+          },
+          "cluster_dns_domain": {
+           "optional": true,
+           "type": "string"
+          },
+          "cluster_dns_scope": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "enable_k8s_beta_apis": {
+        "block": {
+         "attributes": {
+          "enabled_apis": {
+           "required": true,
+           "type": [
+            "set",
+            "string"
+           ]
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "enterprise_config": {
+        "block": {
+         "attributes": {
+          "cluster_tier": {
+           "computed": true,
+           "type": "string"
+          },
+          "desired_tier": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "fleet": {
+        "block": {
+         "attributes": {
+          "membership": {
+           "computed": true,
+           "type": "string"
+          },
+          "membership_id": {
+           "computed": true,
+           "type": "string"
+          },
+          "membership_location": {
+           "computed": true,
+           "type": "string"
+          },
+          "pre_registered": {
+           "computed": true,
+           "type": "bool"
+          },
+          "project": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "gateway_api_config": {
+        "block": {
+         "attributes": {
+          "channel": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "gke_auto_upgrade_config": {
+        "block": {
+         "attributes": {
+          "patch_mode": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "identity_service_config": {
+        "block": {
+         "attributes": {
+          "enabled": {
+           "optional": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "ip_allocation_policy": {
+        "block": {
+         "attributes": {
+          "cluster_ipv4_cidr_block": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "cluster_secondary_range_name": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "services_ipv4_cidr_block": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "services_secondary_range_name": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "stack_type": {
+           "optional": true,
+           "type": "string"
+          }
+         },
+         "block_types": {
+          "additional_ip_ranges_config": {
+           "block": {
+            "attributes": {
+             "pod_ipv4_range_names": {
+              "optional": true,
+              "type": [
+               "list",
+               "string"
+              ]
+             },
+             "subnetwork": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "nesting_mode": "list"
+          },
+          "additional_pod_ranges_config": {
+           "block": {
+            "attributes": {
+             "pod_range_names": {
+              "required": true,
+              "type": [
+               "set",
+               "string"
+              ]
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "pod_cidr_overprovision_config": {
+           "block": {
+            "attributes": {
+             "disabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "logging_config": {
+        "block": {
+         "attributes": {
+          "enable_components": {
+           "required": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "maintenance_policy": {
+        "block": {
+         "block_types": {
+          "daily_maintenance_window": {
+           "block": {
+            "attributes": {
+             "duration": {
+              "computed": true,
+              "type": "string"
+             },
+             "start_time": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "maintenance_exclusion": {
+           "block": {
+            "attributes": {
+             "end_time": {
+              "required": true,
+              "type": "string"
+             },
+             "exclusion_name": {
+              "required": true,
+              "type": "string"
+             },
+             "start_time": {
+              "required": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "exclusion_options": {
+              "block": {
+               "attributes": {
+                "scope": {
+                 "required": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 20,
+           "nesting_mode": "set"
+          },
+          "recurring_window": {
+           "block": {
+            "attributes": {
+             "end_time": {
+              "required": true,
+              "type": "string"
+             },
+             "recurrence": {
+              "required": true,
+              "type": "string"
+             },
+             "start_time": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "master_auth": {
+        "block": {
+         "attributes": {
+          "client_certificate": {
+           "computed": true,
+           "type": "string"
+          },
+          "client_key": {
+           "computed": true,
+           "sensitive": true,
+           "type": "string"
+          },
+          "cluster_ca_certificate": {
+           "computed": true,
+           "type": "string"
+          }
+         },
+         "block_types": {
+          "client_certificate_config": {
+           "block": {
+            "attributes": {
+             "issue_client_certificate": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "min_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "master_authorized_networks_config": {
+        "block": {
+         "attributes": {
+          "gcp_public_cidrs_access_enabled": {
+           "computed": true,
+           "optional": true,
+           "type": "bool"
+          },
+          "private_endpoint_enforcement_enabled": {
+           "computed": true,
+           "optional": true,
+           "type": "bool"
+          }
+         },
+         "block_types": {
+          "cidr_blocks": {
+           "block": {
+            "attributes": {
+             "cidr_block": {
+              "required": true,
+              "type": "string"
+             },
+             "display_name": {
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "nesting_mode": "set"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "mesh_certificates": {
+        "block": {
+         "attributes": {
+          "enable_certificates": {
+           "required": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "monitoring_config": {
+        "block": {
+         "attributes": {
+          "enable_components": {
+           "computed": true,
+           "optional": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          }
+         },
+         "block_types": {
+          "advanced_datapath_observability_config": {
+           "block": {
+            "attributes": {
+             "enable_metrics": {
+              "required": true,
+              "type": "bool"
+             },
+             "enable_relay": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "managed_prometheus": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            },
+            "block_types": {
+             "auto_monitoring_config": {
+              "block": {
+               "attributes": {
+                "scope": {
+                 "required": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "network_performance_config": {
+        "block": {
+         "attributes": {
+          "total_egress_bandwidth_tier": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "network_policy": {
+        "block": {
+         "attributes": {
+          "enabled": {
+           "required": true,
+           "type": "bool"
+          },
+          "provider": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "node_config": {
+        "block": {
+         "attributes": {
+          "boot_disk_kms_key": {
+           "optional": true,
+           "type": "string"
+          },
+          "disk_size_gb": {
+           "computed": true,
+           "optional": true,
+           "type": "number"
+          },
+          "disk_type": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "effective_taints": {
+           "computed": true,
+           "type": [
+            "list",
+            [
+             "object",
+             {
+              "effect": "string",
+              "key": "string",
+              "value": "string"
+             }
+            ]
+           ]
+          },
+          "enable_confidential_storage": {
+           "optional": true,
+           "type": "bool"
+          },
+          "flex_start": {
+           "optional": true,
+           "type": "bool"
+          },
+          "image_type": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "labels": {
+           "computed": true,
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          },
+          "local_ssd_count": {
+           "computed": true,
+           "optional": true,
+           "type": "number"
+          },
+          "local_ssd_encryption_mode": {
+           "optional": true,
+           "type": "string"
+          },
+          "logging_variant": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "machine_type": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "max_run_duration": {
+           "optional": true,
+           "type": "string"
+          },
+          "metadata": {
+           "computed": true,
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          },
+          "min_cpu_platform": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "node_group": {
+           "optional": true,
+           "type": "string"
+          },
+          "oauth_scopes": {
+           "computed": true,
+           "optional": true,
+           "type": [
+            "set",
+            "string"
+           ]
+          },
+          "preemptible": {
+           "optional": true,
+           "type": "bool"
+          },
+          "resource_labels": {
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          },
+          "resource_manager_tags": {
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          },
+          "service_account": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "spot": {
+           "optional": true,
+           "type": "bool"
+          },
+          "storage_pools": {
+           "optional": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          },
+          "tags": {
+           "optional": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          }
+         },
+         "block_types": {
+          "advanced_machine_features": {
+           "block": {
+            "attributes": {
+             "enable_nested_virtualization": {
+              "optional": true,
+              "type": "bool"
+             },
+             "performance_monitoring_unit": {
+              "optional": true,
+              "type": "string"
+             },
+             "threads_per_core": {
+              "required": true,
+              "type": "number"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "boot_disk": {
+           "block": {
+            "attributes": {
+             "disk_type": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "provisioned_iops": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "provisioned_throughput": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "size_gb": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "confidential_nodes": {
+           "block": {
+            "attributes": {
+             "confidential_instance_type": {
+              "optional": true,
+              "type": "string"
+             },
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "containerd_config": {
+           "block": {
+            "block_types": {
+             "private_registry_access_config": {
+              "block": {
+               "attributes": {
+                "enabled": {
+                 "required": true,
+                 "type": "bool"
+                }
+               },
+               "block_types": {
+                "certificate_authority_domain_config": {
+                 "block": {
+                  "attributes": {
+                   "fqdns": {
+                    "required": true,
+                    "type": [
+                     "list",
+                     "string"
+                    ]
+                   }
+                  },
+                  "block_types": {
+                   "gcp_secret_manager_certificate_config": {
+                    "block": {
+                     "attributes": {
+                      "secret_uri": {
+                       "required": true,
+                       "type": "string"
+                      }
+                     }
+                    },
+                    "max_items": 1,
+                    "min_items": 1,
+                    "nesting_mode": "list"
+                   }
+                  }
+                 },
+                 "nesting_mode": "list"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "ephemeral_storage_local_ssd_config": {
+           "block": {
+            "attributes": {
+             "data_cache_count": {
+              "optional": true,
+              "type": "number"
+             },
+             "local_ssd_count": {
+              "required": true,
+              "type": "number"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "fast_socket": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "gcfs_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "guest_accelerator": {
+           "block": {
+            "attributes": {
+             "count": {
+              "required": true,
+              "type": "number"
+             },
+             "gpu_partition_size": {
+              "optional": true,
+              "type": "string"
+             },
+             "type": {
+              "required": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "gpu_driver_installation_config": {
+              "block": {
+               "attributes": {
+                "gpu_driver_version": {
+                 "required": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "gpu_sharing_config": {
+              "block": {
+               "attributes": {
+                "gpu_sharing_strategy": {
+                 "required": true,
+                 "type": "string"
+                },
+                "max_shared_clients_per_gpu": {
+                 "required": true,
+                 "type": "number"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "nesting_mode": "list"
+          },
+          "gvnic": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "host_maintenance_policy": {
+           "block": {
+            "attributes": {
+             "maintenance_interval": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "kubelet_config": {
+           "block": {
+            "attributes": {
+             "allowed_unsafe_sysctls": {
+              "optional": true,
+              "type": [
+               "list",
+               "string"
+              ]
+             },
+             "container_log_max_files": {
+              "optional": true,
+              "type": "number"
+             },
+             "container_log_max_size": {
+              "optional": true,
+              "type": "string"
+             },
+             "cpu_cfs_quota": {
+              "optional": true,
+              "type": "bool"
+             },
+             "cpu_cfs_quota_period": {
+              "optional": true,
+              "type": "string"
+             },
+             "cpu_manager_policy": {
+              "optional": true,
+              "type": "string"
+             },
+             "eviction_max_pod_grace_period_seconds": {
+              "optional": true,
+              "type": "number"
+             },
+             "image_gc_high_threshold_percent": {
+              "optional": true,
+              "type": "number"
+             },
+             "image_gc_low_threshold_percent": {
+              "optional": true,
+              "type": "number"
+             },
+             "image_maximum_gc_age": {
+              "optional": true,
+              "type": "string"
+             },
+             "image_minimum_gc_age": {
+              "optional": true,
+              "type": "string"
+             },
+             "insecure_kubelet_readonly_port_enabled": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "max_parallel_image_pulls": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "pod_pids_limit": {
+              "optional": true,
+              "type": "number"
+             },
+             "single_process_oom_kill": {
+              "optional": true,
+              "type": "bool"
+             }
+            },
+            "block_types": {
+             "eviction_minimum_reclaim": {
+              "block": {
+               "attributes": {
+                "imagefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "imagefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "memory_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "pid_available": {
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "eviction_soft": {
+              "block": {
+               "attributes": {
+                "imagefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "imagefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "memory_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "pid_available": {
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "eviction_soft_grace_period": {
+              "block": {
+               "attributes": {
+                "imagefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "imagefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "memory_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "pid_available": {
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "linux_node_config": {
+           "block": {
+            "attributes": {
+             "cgroup_mode": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "sysctls": {
+              "optional": true,
+              "type": [
+               "map",
+               "string"
+              ]
+             },
+             "transparent_hugepage_defrag": {
+              "optional": true,
+              "type": "string"
+             },
+             "transparent_hugepage_enabled": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "hugepages_config": {
+              "block": {
+               "attributes": {
+                "hugepage_size_1g": {
+                 "optional": true,
+                 "type": "number"
+                },
+                "hugepage_size_2m": {
+                 "optional": true,
+                 "type": "number"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "local_nvme_ssd_block_config": {
+           "block": {
+            "attributes": {
+             "local_ssd_count": {
+              "required": true,
+              "type": "number"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "reservation_affinity": {
+           "block": {
+            "attributes": {
+             "consume_reservation_type": {
+              "required": true,
+              "type": "string"
+             },
+             "key": {
+              "optional": true,
+              "type": "string"
+             },
+             "values": {
+              "optional": true,
+              "type": [
+               "set",
+               "string"
+              ]
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "secondary_boot_disks": {
+           "block": {
+            "attributes": {
+             "disk_image": {
+              "required": true,
+              "type": "string"
+             },
+             "mode": {
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 127,
+           "nesting_mode": "list"
+          },
+          "shielded_instance_config": {
+           "block": {
+            "attributes": {
+             "enable_integrity_monitoring": {
+              "optional": true,
+              "type": "bool"
+             },
+             "enable_secure_boot": {
+              "optional": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "sole_tenant_config": {
+           "block": {
+            "attributes": {
+             "min_node_cpus": {
+              "optional": true,
+              "type": "number"
+             }
+            },
+            "block_types": {
+             "node_affinity": {
+              "block": {
+               "attributes": {
+                "key": {
+                 "required": true,
+                 "type": "string"
+                },
+                "operator": {
+                 "required": true,
+                 "type": "string"
+                },
+                "values": {
+                 "required": true,
+                 "type": [
+                  "list",
+                  "string"
+                 ]
+                }
+               }
+              },
+              "min_items": 1,
+              "nesting_mode": "set"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "taint": {
+           "block": {
+            "attributes": {
+             "effect": {
+              "required": true,
+              "type": "string"
+             },
+             "key": {
+              "required": true,
+              "type": "string"
+             },
+             "value": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "nesting_mode": "list"
+          },
+          "windows_node_config": {
+           "block": {
+            "attributes": {
+             "osversion": {
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "workload_metadata_config": {
+           "block": {
+            "attributes": {
+             "mode": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "node_pool": {
+        "block": {
+         "attributes": {
+          "initial_node_count": {
+           "computed": true,
+           "optional": true,
+           "type": "number"
+          },
+          "instance_group_urls": {
+           "computed": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          },
+          "managed_instance_group_urls": {
+           "computed": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          },
+          "max_pods_per_node": {
+           "computed": true,
+           "optional": true,
+           "type": "number"
+          },
+          "name": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "name_prefix": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "node_count": {
+           "computed": true,
+           "optional": true,
+           "type": "number"
+          },
+          "node_locations": {
+           "computed": true,
+           "optional": true,
+           "type": [
+            "set",
+            "string"
+           ]
+          },
+          "version": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          }
+         },
+         "block_types": {
+          "autoscaling": {
+           "block": {
+            "attributes": {
+             "location_policy": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "max_node_count": {
+              "optional": true,
+              "type": "number"
+             },
+             "min_node_count": {
+              "optional": true,
+              "type": "number"
+             },
+             "total_max_node_count": {
+              "optional": true,
+              "type": "number"
+             },
+             "total_min_node_count": {
+              "optional": true,
+              "type": "number"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "management": {
+           "block": {
+            "attributes": {
+             "auto_repair": {
+              "optional": true,
+              "type": "bool"
+             },
+             "auto_upgrade": {
+              "optional": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "network_config": {
+           "block": {
+            "attributes": {
+             "create_pod_range": {
+              "optional": true,
+              "type": "bool"
+             },
+             "enable_private_nodes": {
+              "computed": true,
+              "optional": true,
+              "type": "bool"
+             },
+             "pod_ipv4_cidr_block": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "pod_range": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "subnetwork": {
+              "computed": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "additional_node_network_configs": {
+              "block": {
+               "attributes": {
+                "network": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "subnetwork": {
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "nesting_mode": "list"
+             },
+             "additional_pod_network_configs": {
+              "block": {
+               "attributes": {
+                "max_pods_per_node": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "number"
+                },
+                "secondary_pod_range": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "subnetwork": {
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "nesting_mode": "list"
+             },
+             "network_performance_config": {
+              "block": {
+               "attributes": {
+                "total_egress_bandwidth_tier": {
+                 "required": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "pod_cidr_overprovision_config": {
+              "block": {
+               "attributes": {
+                "disabled": {
+                 "required": true,
+                 "type": "bool"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "node_config": {
+           "block": {
+            "attributes": {
+             "boot_disk_kms_key": {
+              "optional": true,
+              "type": "string"
+             },
+             "disk_size_gb": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "disk_type": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "effective_taints": {
+              "computed": true,
+              "type": [
+               "list",
+               [
+                "object",
+                {
+                 "effect": "string",
+                 "key": "string",
+                 "value": "string"
+                }
+               ]
+              ]
+             },
+             "enable_confidential_storage": {
+              "optional": true,
+              "type": "bool"
+             },
+             "flex_start": {
+              "optional": true,
+              "type": "bool"
+             },
+             "image_type": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "labels": {
+              "computed": true,
+              "optional": true,
+              "type": [
+               "map",
+               "string"
+              ]
+             },
+             "local_ssd_count": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "local_ssd_encryption_mode": {
+              "optional": true,
+              "type": "string"
+             },
+             "logging_variant": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "machine_type": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "max_run_duration": {
+              "optional": true,
+              "type": "string"
+             },
+             "metadata": {
+              "computed": true,
+              "optional": true,
+              "type": [
+               "map",
+               "string"
+              ]
+             },
+             "min_cpu_platform": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "node_group": {
+              "optional": true,
+              "type": "string"
+             },
+             "oauth_scopes": {
+              "computed": true,
+              "optional": true,
+              "type": [
+               "set",
+               "string"
+              ]
+             },
+             "preemptible": {
+              "optional": true,
+              "type": "bool"
+             },
+             "resource_labels": {
+              "optional": true,
+              "type": [
+               "map",
+               "string"
+              ]
+             },
+             "resource_manager_tags": {
+              "optional": true,
+              "type": [
+               "map",
+               "string"
+              ]
+             },
+             "service_account": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "spot": {
+              "optional": true,
+              "type": "bool"
+             },
+             "storage_pools": {
+              "optional": true,
+              "type": [
+               "list",
+               "string"
+              ]
+             },
+             "tags": {
+              "optional": true,
+              "type": [
+               "list",
+               "string"
+              ]
+             }
+            },
+            "block_types": {
+             "advanced_machine_features": {
+              "block": {
+               "attributes": {
+                "enable_nested_virtualization": {
+                 "optional": true,
+                 "type": "bool"
+                },
+                "performance_monitoring_unit": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "threads_per_core": {
+                 "required": true,
+                 "type": "number"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "boot_disk": {
+              "block": {
+               "attributes": {
+                "disk_type": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "string"
+                },
+                "provisioned_iops": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "number"
+                },
+                "provisioned_throughput": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "number"
+                },
+                "size_gb": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "number"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "confidential_nodes": {
+              "block": {
+               "attributes": {
+                "confidential_instance_type": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "enabled": {
+                 "required": true,
+                 "type": "bool"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "containerd_config": {
+              "block": {
+               "block_types": {
+                "private_registry_access_config": {
+                 "block": {
+                  "attributes": {
+                   "enabled": {
+                    "required": true,
+                    "type": "bool"
+                   }
+                  },
+                  "block_types": {
+                   "certificate_authority_domain_config": {
+                    "block": {
+                     "attributes": {
+                      "fqdns": {
+                       "required": true,
+                       "type": [
+                        "list",
+                        "string"
+                       ]
+                      }
+                     },
+                     "block_types": {
+                      "gcp_secret_manager_certificate_config": {
+                       "block": {
+                        "attributes": {
+                         "secret_uri": {
+                          "required": true,
+                          "type": "string"
+                         }
+                        }
+                       },
+                       "max_items": 1,
+                       "min_items": 1,
+                       "nesting_mode": "list"
+                      }
+                     }
+                    },
+                    "nesting_mode": "list"
+                   }
+                  }
+                 },
+                 "max_items": 1,
+                 "nesting_mode": "list"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "ephemeral_storage_local_ssd_config": {
+              "block": {
+               "attributes": {
+                "data_cache_count": {
+                 "optional": true,
+                 "type": "number"
+                },
+                "local_ssd_count": {
+                 "required": true,
+                 "type": "number"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "fast_socket": {
+              "block": {
+               "attributes": {
+                "enabled": {
+                 "required": true,
+                 "type": "bool"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "gcfs_config": {
+              "block": {
+               "attributes": {
+                "enabled": {
+                 "required": true,
+                 "type": "bool"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "guest_accelerator": {
+              "block": {
+               "attributes": {
+                "count": {
+                 "required": true,
+                 "type": "number"
+                },
+                "gpu_partition_size": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "type": {
+                 "required": true,
+                 "type": "string"
+                }
+               },
+               "block_types": {
+                "gpu_driver_installation_config": {
+                 "block": {
+                  "attributes": {
+                   "gpu_driver_version": {
+                    "required": true,
+                    "type": "string"
+                   }
+                  }
+                 },
+                 "max_items": 1,
+                 "nesting_mode": "list"
+                },
+                "gpu_sharing_config": {
+                 "block": {
+                  "attributes": {
+                   "gpu_sharing_strategy": {
+                    "required": true,
+                    "type": "string"
+                   },
+                   "max_shared_clients_per_gpu": {
+                    "required": true,
+                    "type": "number"
+                   }
+                  }
+                 },
+                 "max_items": 1,
+                 "nesting_mode": "list"
+                }
+               }
+              },
+              "nesting_mode": "list"
+             },
+             "gvnic": {
+              "block": {
+               "attributes": {
+                "enabled": {
+                 "required": true,
+                 "type": "bool"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "host_maintenance_policy": {
+              "block": {
+               "attributes": {
+                "maintenance_interval": {
+                 "required": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "kubelet_config": {
+              "block": {
+               "attributes": {
+                "allowed_unsafe_sysctls": {
+                 "optional": true,
+                 "type": [
+                  "list",
+                  "string"
+                 ]
+                },
+                "container_log_max_files": {
+                 "optional": true,
+                 "type": "number"
+                },
+                "container_log_max_size": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "cpu_cfs_quota": {
+                 "optional": true,
+                 "type": "bool"
+                },
+                "cpu_cfs_quota_period": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "cpu_manager_policy": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "eviction_max_pod_grace_period_seconds": {
+                 "optional": true,
+                 "type": "number"
+                },
+                "image_gc_high_threshold_percent": {
+                 "optional": true,
+                 "type": "number"
+                },
+                "image_gc_low_threshold_percent": {
+                 "optional": true,
+                 "type": "number"
+                },
+                "image_maximum_gc_age": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "image_minimum_gc_age": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "insecure_kubelet_readonly_port_enabled": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "string"
+                },
+                "max_parallel_image_pulls": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "number"
+                },
+                "pod_pids_limit": {
+                 "optional": true,
+                 "type": "number"
+                },
+                "single_process_oom_kill": {
+                 "optional": true,
+                 "type": "bool"
+                }
+               },
+               "block_types": {
+                "eviction_minimum_reclaim": {
+                 "block": {
+                  "attributes": {
+                   "imagefs_available": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "imagefs_inodes_free": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "memory_available": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "nodefs_available": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "nodefs_inodes_free": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "pid_available": {
+                    "optional": true,
+                    "type": "string"
+                   }
+                  }
+                 },
+                 "max_items": 1,
+                 "nesting_mode": "list"
+                },
+                "eviction_soft": {
+                 "block": {
+                  "attributes": {
+                   "imagefs_available": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "imagefs_inodes_free": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "memory_available": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "nodefs_available": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "nodefs_inodes_free": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "pid_available": {
+                    "optional": true,
+                    "type": "string"
+                   }
+                  }
+                 },
+                 "max_items": 1,
+                 "nesting_mode": "list"
+                },
+                "eviction_soft_grace_period": {
+                 "block": {
+                  "attributes": {
+                   "imagefs_available": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "imagefs_inodes_free": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "memory_available": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "nodefs_available": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "nodefs_inodes_free": {
+                    "optional": true,
+                    "type": "string"
+                   },
+                   "pid_available": {
+                    "optional": true,
+                    "type": "string"
+                   }
+                  }
+                 },
+                 "max_items": 1,
+                 "nesting_mode": "list"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "linux_node_config": {
+              "block": {
+               "attributes": {
+                "cgroup_mode": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "string"
+                },
+                "sysctls": {
+                 "optional": true,
+                 "type": [
+                  "map",
+                  "string"
+                 ]
+                },
+                "transparent_hugepage_defrag": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "transparent_hugepage_enabled": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "string"
+                }
+               },
+               "block_types": {
+                "hugepages_config": {
+                 "block": {
+                  "attributes": {
+                   "hugepage_size_1g": {
+                    "optional": true,
+                    "type": "number"
+                   },
+                   "hugepage_size_2m": {
+                    "optional": true,
+                    "type": "number"
+                   }
+                  }
+                 },
+                 "max_items": 1,
+                 "nesting_mode": "list"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "local_nvme_ssd_block_config": {
+              "block": {
+               "attributes": {
+                "local_ssd_count": {
+                 "required": true,
+                 "type": "number"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "reservation_affinity": {
+              "block": {
+               "attributes": {
+                "consume_reservation_type": {
+                 "required": true,
+                 "type": "string"
+                },
+                "key": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "values": {
+                 "optional": true,
+                 "type": [
+                  "set",
+                  "string"
+                 ]
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "secondary_boot_disks": {
+              "block": {
+               "attributes": {
+                "disk_image": {
+                 "required": true,
+                 "type": "string"
+                },
+                "mode": {
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 127,
+              "nesting_mode": "list"
+             },
+             "shielded_instance_config": {
+              "block": {
+               "attributes": {
+                "enable_integrity_monitoring": {
+                 "optional": true,
+                 "type": "bool"
+                },
+                "enable_secure_boot": {
+                 "optional": true,
+                 "type": "bool"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "sole_tenant_config": {
+              "block": {
+               "attributes": {
+                "min_node_cpus": {
+                 "optional": true,
+                 "type": "number"
+                }
+               },
+               "block_types": {
+                "node_affinity": {
+                 "block": {
+                  "attributes": {
+                   "key": {
+                    "required": true,
+                    "type": "string"
+                   },
+                   "operator": {
+                    "required": true,
+                    "type": "string"
+                   },
+                   "values": {
+                    "required": true,
+                    "type": [
+                     "list",
+                     "string"
+                    ]
+                   }
+                  }
+                 },
+                 "min_items": 1,
+                 "nesting_mode": "set"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "taint": {
+              "block": {
+               "attributes": {
+                "effect": {
+                 "required": true,
+                 "type": "string"
+                },
+                "key": {
+                 "required": true,
+                 "type": "string"
+                },
+                "value": {
+                 "required": true,
+                 "type": "string"
+                }
+               }
+              },
+              "nesting_mode": "list"
+             },
+             "windows_node_config": {
+              "block": {
+               "attributes": {
+                "osversion": {
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "workload_metadata_config": {
+              "block": {
+               "attributes": {
+                "mode": {
+                 "required": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "placement_policy": {
+           "block": {
+            "attributes": {
+             "policy_name": {
+              "optional": true,
+              "type": "string"
+             },
+             "tpu_topology": {
+              "optional": true,
+              "type": "string"
+             },
+             "type": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "queued_provisioning": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "upgrade_settings": {
+           "block": {
+            "attributes": {
+             "max_surge": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "max_unavailable": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "strategy": {
+              "optional": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "blue_green_settings": {
+              "block": {
+               "attributes": {
+                "node_pool_soak_duration": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "string"
+                }
+               },
+               "block_types": {
+                "standard_rollout_policy": {
+                 "block": {
+                  "attributes": {
+                   "batch_node_count": {
+                    "computed": true,
+                    "optional": true,
+                    "type": "number"
+                   },
+                   "batch_percentage": {
+                    "computed": true,
+                    "optional": true,
+                    "type": "number"
+                   },
+                   "batch_soak_duration": {
+                    "computed": true,
+                    "optional": true,
+                    "type": "string"
+                   }
+                  }
+                 },
+                 "max_items": 1,
+                 "min_items": 1,
+                 "nesting_mode": "list"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "nesting_mode": "list"
+       },
+       "node_pool_auto_config": {
+        "block": {
+         "attributes": {
+          "resource_manager_tags": {
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          }
+         },
+         "block_types": {
+          "linux_node_config": {
+           "block": {
+            "attributes": {
+             "cgroup_mode": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "network_tags": {
+           "block": {
+            "attributes": {
+             "tags": {
+              "optional": true,
+              "type": [
+               "list",
+               "string"
+              ]
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "node_kubelet_config": {
+           "block": {
+            "attributes": {
+             "insecure_kubelet_readonly_port_enabled": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "node_pool_defaults": {
+        "block": {
+         "block_types": {
+          "node_config_defaults": {
+           "block": {
+            "attributes": {
+             "insecure_kubelet_readonly_port_enabled": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "logging_variant": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "containerd_config": {
+              "block": {
+               "block_types": {
+                "private_registry_access_config": {
+                 "block": {
+                  "attributes": {
+                   "enabled": {
+                    "required": true,
+                    "type": "bool"
+                   }
+                  },
+                  "block_types": {
+                   "certificate_authority_domain_config": {
+                    "block": {
+                     "attributes": {
+                      "fqdns": {
+                       "required": true,
+                       "type": [
+                        "list",
+                        "string"
+                       ]
+                      }
+                     },
+                     "block_types": {
+                      "gcp_secret_manager_certificate_config": {
+                       "block": {
+                        "attributes": {
+                         "secret_uri": {
+                          "required": true,
+                          "type": "string"
+                         }
+                        }
+                       },
+                       "max_items": 1,
+                       "min_items": 1,
+                       "nesting_mode": "list"
+                      }
+                     }
+                    },
+                    "nesting_mode": "list"
+                   }
+                  }
+                 },
+                 "max_items": 1,
+                 "nesting_mode": "list"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "gcfs_config": {
+              "block": {
+               "attributes": {
+                "enabled": {
+                 "required": true,
+                 "type": "bool"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "notification_config": {
+        "block": {
+         "block_types": {
+          "pubsub": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             },
+             "topic": {
+              "optional": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "filter": {
+              "block": {
+               "attributes": {
+                "event_type": {
+                 "required": true,
+                 "type": [
+                  "list",
+                  "string"
+                 ]
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "min_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "pod_autoscaling": {
+        "block": {
+         "attributes": {
+          "hpa_profile": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "private_cluster_config": {
+        "block": {
+         "attributes": {
+          "enable_private_endpoint": {
+           "optional": true,
+           "type": "bool"
+          },
+          "enable_private_nodes": {
+           "optional": true,
+           "type": "bool"
+          },
+          "master_ipv4_cidr_block": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "peering_name": {
+           "computed": true,
+           "type": "string"
+          },
+          "private_endpoint": {
+           "computed": true,
+           "type": "string"
+          },
+          "private_endpoint_subnetwork": {
+           "optional": true,
+           "type": "string"
+          },
+          "public_endpoint": {
+           "computed": true,
+           "type": "string"
+          }
+         },
+         "block_types": {
+          "master_global_access_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "rbac_binding_config": {
+        "block": {
+         "attributes": {
+          "enable_insecure_binding_system_authenticated": {
+           "optional": true,
+           "type": "bool"
+          },
+          "enable_insecure_binding_system_unauthenticated": {
+           "optional": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "release_channel": {
+        "block": {
+         "attributes": {
+          "channel": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "resource_usage_export_config": {
+        "block": {
+         "attributes": {
+          "enable_network_egress_metering": {
+           "optional": true,
+           "type": "bool"
+          },
+          "enable_resource_consumption_metering": {
+           "optional": true,
+           "type": "bool"
+          }
+         },
+         "block_types": {
+          "bigquery_destination": {
+           "block": {
+            "attributes": {
+             "dataset_id": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "min_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "secret_manager_config": {
+        "block": {
+         "attributes": {
+          "enabled": {
+           "required": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "security_posture_config": {
+        "block": {
+         "attributes": {
+          "mode": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "vulnerability_mode": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "service_external_ips_config": {
+        "block": {
+         "attributes": {
+          "enabled": {
+           "required": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "timeouts": {
+        "block": {
+         "attributes": {
+          "create": {
+           "optional": true,
+           "type": "string"
+          },
+          "delete": {
+           "optional": true,
+           "type": "string"
+          },
+          "read": {
+           "optional": true,
+           "type": "string"
+          },
+          "update": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "nesting_mode": "single"
+       },
+       "user_managed_keys_config": {
+        "block": {
+         "attributes": {
+          "aggregation_ca": {
+           "optional": true,
+           "type": "string"
+          },
+          "cluster_ca": {
+           "optional": true,
+           "type": "string"
+          },
+          "control_plane_disk_encryption_key": {
+           "optional": true,
+           "type": "string"
+          },
+          "etcd_api_ca": {
+           "optional": true,
+           "type": "string"
+          },
+          "etcd_peer_ca": {
+           "optional": true,
+           "type": "string"
+          },
+          "gkeops_etcd_backup_encryption_key": {
+           "optional": true,
+           "type": "string"
+          },
+          "service_account_signing_keys": {
+           "optional": true,
+           "type": [
+            "set",
+            "string"
+           ]
+          },
+          "service_account_verification_keys": {
+           "optional": true,
+           "type": [
+            "set",
+            "string"
+           ]
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "vertical_pod_autoscaling": {
+        "block": {
+         "attributes": {
+          "enabled": {
+           "required": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "workload_identity_config": {
+        "block": {
+         "attributes": {
+          "workload_pool": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       }
+      }
+     },
+     "version": 2
+    },
+    "google_container_node_pool": {
+     "block": {
+      "attributes": {
+       "cluster": {
+        "required": true,
+        "type": "string"
+       },
+       "id": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "initial_node_count": {
+        "computed": true,
+        "optional": true,
+        "type": "number"
+       },
+       "instance_group_urls": {
+        "computed": true,
+        "type": [
+         "list",
+         "string"
+        ]
+       },
+       "location": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "managed_instance_group_urls": {
+        "computed": true,
+        "type": [
+         "list",
+         "string"
+        ]
+       },
+       "max_pods_per_node": {
+        "computed": true,
+        "optional": true,
+        "type": "number"
+       },
+       "name": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "name_prefix": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "node_count": {
+        "computed": true,
+        "optional": true,
+        "type": "number"
+       },
+       "node_locations": {
+        "computed": true,
+        "optional": true,
+        "type": [
+         "set",
+         "string"
+        ]
+       },
+       "operation": {
+        "computed": true,
+        "type": "string"
+       },
+       "project": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "version": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       }
+      },
+      "block_types": {
+       "autoscaling": {
+        "block": {
+         "attributes": {
+          "location_policy": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "max_node_count": {
+           "optional": true,
+           "type": "number"
+          },
+          "min_node_count": {
+           "optional": true,
+           "type": "number"
+          },
+          "total_max_node_count": {
+           "optional": true,
+           "type": "number"
+          },
+          "total_min_node_count": {
+           "optional": true,
+           "type": "number"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "management": {
+        "block": {
+         "attributes": {
+          "auto_repair": {
+           "optional": true,
+           "type": "bool"
+          },
+          "auto_upgrade": {
+           "optional": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "network_config": {
+        "block": {
+         "attributes": {
+          "create_pod_range": {
+           "optional": true,
+           "type": "bool"
+          },
+          "enable_private_nodes": {
+           "computed": true,
+           "optional": true,
+           "type": "bool"
+          },
+          "pod_ipv4_cidr_block": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "pod_range": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "subnetwork": {
+           "computed": true,
+           "type": "string"
+          }
+         },
+         "block_types": {
+          "additional_node_network_configs": {
+           "block": {
+            "attributes": {
+             "network": {
+              "optional": true,
+              "type": "string"
+             },
+             "subnetwork": {
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "nesting_mode": "list"
+          },
+          "additional_pod_network_configs": {
+           "block": {
+            "attributes": {
+             "max_pods_per_node": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "secondary_pod_range": {
+              "optional": true,
+              "type": "string"
+             },
+             "subnetwork": {
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "nesting_mode": "list"
+          },
+          "network_performance_config": {
+           "block": {
+            "attributes": {
+             "total_egress_bandwidth_tier": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "pod_cidr_overprovision_config": {
+           "block": {
+            "attributes": {
+             "disabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "node_config": {
+        "block": {
+         "attributes": {
+          "boot_disk_kms_key": {
+           "optional": true,
+           "type": "string"
+          },
+          "disk_size_gb": {
+           "computed": true,
+           "optional": true,
+           "type": "number"
+          },
+          "disk_type": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "effective_taints": {
+           "computed": true,
+           "type": [
+            "list",
+            [
+             "object",
+             {
+              "effect": "string",
+              "key": "string",
+              "value": "string"
+             }
+            ]
+           ]
+          },
+          "enable_confidential_storage": {
+           "optional": true,
+           "type": "bool"
+          },
+          "flex_start": {
+           "optional": true,
+           "type": "bool"
+          },
+          "image_type": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "labels": {
+           "computed": true,
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          },
+          "local_ssd_count": {
+           "computed": true,
+           "optional": true,
+           "type": "number"
+          },
+          "local_ssd_encryption_mode": {
+           "optional": true,
+           "type": "string"
+          },
+          "logging_variant": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "machine_type": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "max_run_duration": {
+           "optional": true,
+           "type": "string"
+          },
+          "metadata": {
+           "computed": true,
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          },
+          "min_cpu_platform": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "node_group": {
+           "optional": true,
+           "type": "string"
+          },
+          "oauth_scopes": {
+           "computed": true,
+           "optional": true,
+           "type": [
+            "set",
+            "string"
+           ]
+          },
+          "preemptible": {
+           "optional": true,
+           "type": "bool"
+          },
+          "resource_labels": {
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          },
+          "resource_manager_tags": {
+           "optional": true,
+           "type": [
+            "map",
+            "string"
+           ]
+          },
+          "service_account": {
+           "computed": true,
+           "optional": true,
+           "type": "string"
+          },
+          "spot": {
+           "optional": true,
+           "type": "bool"
+          },
+          "storage_pools": {
+           "optional": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          },
+          "tags": {
+           "optional": true,
+           "type": [
+            "list",
+            "string"
+           ]
+          }
+         },
+         "block_types": {
+          "advanced_machine_features": {
+           "block": {
+            "attributes": {
+             "enable_nested_virtualization": {
+              "optional": true,
+              "type": "bool"
+             },
+             "performance_monitoring_unit": {
+              "optional": true,
+              "type": "string"
+             },
+             "threads_per_core": {
+              "required": true,
+              "type": "number"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "boot_disk": {
+           "block": {
+            "attributes": {
+             "disk_type": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "provisioned_iops": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "provisioned_throughput": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "size_gb": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "confidential_nodes": {
+           "block": {
+            "attributes": {
+             "confidential_instance_type": {
+              "optional": true,
+              "type": "string"
+             },
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "containerd_config": {
+           "block": {
+            "block_types": {
+             "private_registry_access_config": {
+              "block": {
+               "attributes": {
+                "enabled": {
+                 "required": true,
+                 "type": "bool"
+                }
+               },
+               "block_types": {
+                "certificate_authority_domain_config": {
+                 "block": {
+                  "attributes": {
+                   "fqdns": {
+                    "required": true,
+                    "type": [
+                     "list",
+                     "string"
+                    ]
+                   }
+                  },
+                  "block_types": {
+                   "gcp_secret_manager_certificate_config": {
+                    "block": {
+                     "attributes": {
+                      "secret_uri": {
+                       "required": true,
+                       "type": "string"
+                      }
+                     }
+                    },
+                    "max_items": 1,
+                    "min_items": 1,
+                    "nesting_mode": "list"
+                   }
+                  }
+                 },
+                 "nesting_mode": "list"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "ephemeral_storage_local_ssd_config": {
+           "block": {
+            "attributes": {
+             "data_cache_count": {
+              "optional": true,
+              "type": "number"
+             },
+             "local_ssd_count": {
+              "required": true,
+              "type": "number"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "fast_socket": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "gcfs_config": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "guest_accelerator": {
+           "block": {
+            "attributes": {
+             "count": {
+              "required": true,
+              "type": "number"
+             },
+             "gpu_partition_size": {
+              "optional": true,
+              "type": "string"
+             },
+             "type": {
+              "required": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "gpu_driver_installation_config": {
+              "block": {
+               "attributes": {
+                "gpu_driver_version": {
+                 "required": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "gpu_sharing_config": {
+              "block": {
+               "attributes": {
+                "gpu_sharing_strategy": {
+                 "required": true,
+                 "type": "string"
+                },
+                "max_shared_clients_per_gpu": {
+                 "required": true,
+                 "type": "number"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "nesting_mode": "list"
+          },
+          "gvnic": {
+           "block": {
+            "attributes": {
+             "enabled": {
+              "required": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "host_maintenance_policy": {
+           "block": {
+            "attributes": {
+             "maintenance_interval": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "kubelet_config": {
+           "block": {
+            "attributes": {
+             "allowed_unsafe_sysctls": {
+              "optional": true,
+              "type": [
+               "list",
+               "string"
+              ]
+             },
+             "container_log_max_files": {
+              "optional": true,
+              "type": "number"
+             },
+             "container_log_max_size": {
+              "optional": true,
+              "type": "string"
+             },
+             "cpu_cfs_quota": {
+              "optional": true,
+              "type": "bool"
+             },
+             "cpu_cfs_quota_period": {
+              "optional": true,
+              "type": "string"
+             },
+             "cpu_manager_policy": {
+              "optional": true,
+              "type": "string"
+             },
+             "eviction_max_pod_grace_period_seconds": {
+              "optional": true,
+              "type": "number"
+             },
+             "image_gc_high_threshold_percent": {
+              "optional": true,
+              "type": "number"
+             },
+             "image_gc_low_threshold_percent": {
+              "optional": true,
+              "type": "number"
+             },
+             "image_maximum_gc_age": {
+              "optional": true,
+              "type": "string"
+             },
+             "image_minimum_gc_age": {
+              "optional": true,
+              "type": "string"
+             },
+             "insecure_kubelet_readonly_port_enabled": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "max_parallel_image_pulls": {
+              "computed": true,
+              "optional": true,
+              "type": "number"
+             },
+             "pod_pids_limit": {
+              "optional": true,
+              "type": "number"
+             },
+             "single_process_oom_kill": {
+              "optional": true,
+              "type": "bool"
+             }
+            },
+            "block_types": {
+             "eviction_minimum_reclaim": {
+              "block": {
+               "attributes": {
+                "imagefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "imagefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "memory_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "pid_available": {
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "eviction_soft": {
+              "block": {
+               "attributes": {
+                "imagefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "imagefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "memory_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "pid_available": {
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             },
+             "eviction_soft_grace_period": {
+              "block": {
+               "attributes": {
+                "imagefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "imagefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "memory_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_available": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "nodefs_inodes_free": {
+                 "optional": true,
+                 "type": "string"
+                },
+                "pid_available": {
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "linux_node_config": {
+           "block": {
+            "attributes": {
+             "cgroup_mode": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             },
+             "sysctls": {
+              "optional": true,
+              "type": [
+               "map",
+               "string"
+              ]
+             },
+             "transparent_hugepage_defrag": {
+              "optional": true,
+              "type": "string"
+             },
+             "transparent_hugepage_enabled": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "hugepages_config": {
+              "block": {
+               "attributes": {
+                "hugepage_size_1g": {
+                 "optional": true,
+                 "type": "number"
+                },
+                "hugepage_size_2m": {
+                 "optional": true,
+                 "type": "number"
+                }
+               }
+              },
+              "max_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "local_nvme_ssd_block_config": {
+           "block": {
+            "attributes": {
+             "local_ssd_count": {
+              "required": true,
+              "type": "number"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "reservation_affinity": {
+           "block": {
+            "attributes": {
+             "consume_reservation_type": {
+              "required": true,
+              "type": "string"
+             },
+             "key": {
+              "optional": true,
+              "type": "string"
+             },
+             "values": {
+              "optional": true,
+              "type": [
+               "set",
+               "string"
+              ]
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "secondary_boot_disks": {
+           "block": {
+            "attributes": {
+             "disk_image": {
+              "required": true,
+              "type": "string"
+             },
+             "mode": {
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 127,
+           "nesting_mode": "list"
+          },
+          "shielded_instance_config": {
+           "block": {
+            "attributes": {
+             "enable_integrity_monitoring": {
+              "optional": true,
+              "type": "bool"
+             },
+             "enable_secure_boot": {
+              "optional": true,
+              "type": "bool"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "sole_tenant_config": {
+           "block": {
+            "attributes": {
+             "min_node_cpus": {
+              "optional": true,
+              "type": "number"
+             }
+            },
+            "block_types": {
+             "node_affinity": {
+              "block": {
+               "attributes": {
+                "key": {
+                 "required": true,
+                 "type": "string"
+                },
+                "operator": {
+                 "required": true,
+                 "type": "string"
+                },
+                "values": {
+                 "required": true,
+                 "type": [
+                  "list",
+                  "string"
+                 ]
+                }
+               }
+              },
+              "min_items": 1,
+              "nesting_mode": "set"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "taint": {
+           "block": {
+            "attributes": {
+             "effect": {
+              "required": true,
+              "type": "string"
+             },
+             "key": {
+              "required": true,
+              "type": "string"
+             },
+             "value": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "nesting_mode": "list"
+          },
+          "windows_node_config": {
+           "block": {
+            "attributes": {
+             "osversion": {
+              "optional": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          },
+          "workload_metadata_config": {
+           "block": {
+            "attributes": {
+             "mode": {
+              "required": true,
+              "type": "string"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "placement_policy": {
+        "block": {
+         "attributes": {
+          "policy_name": {
+           "optional": true,
+           "type": "string"
+          },
+          "tpu_topology": {
+           "optional": true,
+           "type": "string"
+          },
+          "type": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "queued_provisioning": {
+        "block": {
+         "attributes": {
+          "enabled": {
+           "required": true,
+           "type": "bool"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       },
+       "timeouts": {
+        "block": {
+         "attributes": {
+          "create": {
+           "optional": true,
+           "type": "string"
+          },
+          "delete": {
+           "optional": true,
+           "type": "string"
+          },
+          "update": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "nesting_mode": "single"
+       },
+       "upgrade_settings": {
+        "block": {
+         "attributes": {
+          "max_surge": {
+           "computed": true,
+           "optional": true,
+           "type": "number"
+          },
+          "max_unavailable": {
+           "computed": true,
+           "optional": true,
+           "type": "number"
+          },
+          "strategy": {
+           "optional": true,
+           "type": "string"
+          }
+         },
+         "block_types": {
+          "blue_green_settings": {
+           "block": {
+            "attributes": {
+             "node_pool_soak_duration": {
+              "computed": true,
+              "optional": true,
+              "type": "string"
+             }
+            },
+            "block_types": {
+             "standard_rollout_policy": {
+              "block": {
+               "attributes": {
+                "batch_node_count": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "number"
+                },
+                "batch_percentage": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "number"
+                },
+                "batch_soak_duration": {
+                 "computed": true,
+                 "optional": true,
+                 "type": "string"
+                }
+               }
+              },
+              "max_items": 1,
+              "min_items": 1,
+              "nesting_mode": "list"
+             }
+            }
+           },
+           "max_items": 1,
+           "nesting_mode": "list"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       }
+      }
+     },
+     "version": 1
+    },
+    "google_kms_crypto_key": {
+     "block": {
+      "attributes": {
+       "crypto_key_backend": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "destroy_scheduled_duration": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "effective_labels": {
+        "computed": true,
+        "type": [
+         "map",
+         "string"
+        ]
+       },
+       "id": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "import_only": {
+        "computed": true,
+        "optional": true,
+        "type": "bool"
+       },
+       "key_ring": {
+        "required": true,
+        "type": "string"
+       },
+       "labels": {
+        "optional": true,
+        "type": [
+         "map",
+         "string"
+        ]
+       },
+       "name": {
+        "required": true,
+        "type": "string"
+       },
+       "primary": {
+        "computed": true,
+        "type": [
+         "list",
+         [
+          "object",
+          {
+           "name": "string",
+           "state": "string"
+          }
+         ]
+        ]
+       },
+       "purpose": {
+        "optional": true,
+        "type": "string"
+       },
+       "rotation_period": {
+        "optional": true,
+        "type": "string"
+       },
+       "skip_initial_version_creation": {
+        "optional": true,
+        "type": "bool"
+       },
+       "terraform_labels": {
+        "computed": true,
+        "type": [
+         "map",
+         "string"
+        ]
+       }
+      },
+      "block_types": {
+       "timeouts": {
+        "block": {
+         "attributes": {
+          "create": {
+           "optional": true,
+           "type": "string"
+          },
+          "delete": {
+           "optional": true,
+           "type": "string"
+          },
+          "update": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "nesting_mode": "single"
+       },
+       "version_template": {
+        "block": {
+         "attributes": {
+          "algorithm": {
+           "required": true,
+           "type": "string"
+          },
+          "protection_level": {
+           "optional": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       }
+      }
+     },
+     "version": 1
+    },
+    "google_service_account_iam_member": {
+     "block": {
+      "attributes": {
+       "etag": {
+        "computed": true,
+        "type": "string"
+       },
+       "id": {
+        "computed": true,
+        "optional": true,
+        "type": "string"
+       },
+       "member": {
+        "required": true,
+        "type": "string"
+       },
+       "role": {
+        "required": true,
+        "type": "string"
+       },
+       "service_account_id": {
+        "required": true,
+        "type": "string"
+       }
+      },
+      "block_types": {
+       "condition": {
+        "block": {
+         "attributes": {
+          "description": {
+           "optional": true,
+           "type": "string"
+          },
+          "expression": {
+           "required": true,
+           "type": "string"
+          },
+          "title": {
+           "required": true,
+           "type": "string"
+          }
+         }
+        },
+        "max_items": 1,
+        "nesting_mode": "list"
+       }
+      }
+     },
+     "version": 0
+    }
+   }
+  }
+ }
+}
