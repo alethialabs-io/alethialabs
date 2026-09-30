@@ -307,6 +307,8 @@ func buildByoIacSnapshot(project, env, provider, region string, src byoIacSource
 		"region":            region,
 		"provider":          provider,
 		"iac_source":        src.snapshotFragment(),
+		// The run's second sweep handle (#5096) — e2e_run_tag.go.
+		"classification": e2eRunClassification(env),
 	}
 }
 

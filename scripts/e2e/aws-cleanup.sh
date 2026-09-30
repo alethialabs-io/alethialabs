@@ -93,6 +93,10 @@ set -euo pipefail
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"
+# The sweep-handle KEY (project-id or e2e-run) and how a discovered resource is attributed to one
+# (#5096). Read its header before touching any preflight discovery below.
+# shellcheck source-path=SCRIPTDIR source=lib/scope-key.sh
+. "${E2E_LIB_DIR}/scope-key.sh"
 probe_reset
 
 ENV="${ALETHIA_E2E_ENV:-}"
@@ -153,7 +157,8 @@ fi
 # ── Guard 1: a specific ENV is REQUIRED. No ENV ⇒ no filter ⇒ hard refuse. ──
 if [ -z "$ENV" ]; then
 	echo "✗ REFUSING TO RUN: ALETHIA_E2E_ENV is unset." >&2
-	echo "  This script only ever deletes resources tagged alethia:project-id=e2e-<ENV> — never" >&2
+	echo "  This script only ever deletes resources tagged alethia:project-id=e2e-<ENV> (or, with" >&2
+	echo "  ALETHIA_E2E_SCOPE_KEY=e2e-run, alethia:e2e-run=e2e-<ENV>) — never" >&2
 	echo "  account-wide. Set ALETHIA_E2E_ENV to the unique per-run value (<run_id>-<attempt>)." >&2
 	exit 2
 fi
@@ -185,6 +190,11 @@ for bin in aws jq; do
 	fi
 done
 
+# ── The KEY half of the scope (#5096). `project-id` unless ALETHIA_E2E_SCOPE_KEY says `e2e-run`
+#    (the cli-demo dimension, whose stack's project-id is a UUID); anything else is refused. The
+#    VALUE half is unchanged: `e2e-<ENV>` under either key. See scripts/e2e/lib/scope-key.sh. ──
+SCOPE_KEY="$(e2e_scope_key)" || exit 2
+TAG_KEY="alethia:${SCOPE_KEY}"
 PROJECT_ID_TAG="e2e-${ENV}"
 CLUSTER="" # discovered below (eks-<regionShort>-<env>-<project>); may be found via ENV-embed fallback
 
@@ -193,10 +203,10 @@ export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION" AWS_PAGER=""
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
 if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
 	if [ "$VERIFY_ONLY" = "1" ]; then
-		echo "→ aws POST-TEARDOWN VERIFICATION in ${REGION}, scope alethia:project-id=${PROJECT_ID_TAG}"
+		echo "→ aws POST-TEARDOWN VERIFICATION in ${REGION}, scope ${TAG_KEY}=${PROJECT_ID_TAG}"
 		echo "  (VERIFY_ONLY=1 — re-listing the cloud, sweeping nothing, deleting nothing)"
 	else
-		echo "→ aws belt-and-suspenders cleanup in ${REGION}, scope alethia:project-id=${PROJECT_ID_TAG}"
+		echo "→ aws belt-and-suspenders cleanup in ${REGION}, scope ${TAG_KEY}=${PROJECT_ID_TAG}"
 		[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 	fi
 fi
@@ -219,7 +229,7 @@ tagged_arns() {
 	assert_scope
 	local svc="${1:-}"
 	local args=(resourcegroupstaggingapi get-resources
-		--tag-filters "Key=alethia:project-id,Values=${PROJECT_ID_TAG}"
+		--tag-filters "Key=${TAG_KEY},Values=${PROJECT_ID_TAG}"
 		--query 'ResourceTagMappingList[].ResourceARN' --output text)
 	[ -n "$svc" ] && args+=(--resource-type-filters "$svc")
 	# THE SINGLE MOST LOAD-BEARING PROBE IN THIS FILE. Twelve of the alive_* checks below start
@@ -1034,7 +1044,7 @@ by_tag_instances() {
 }
 alive_instances() {
 	{
-		by_tag_instances "alethia:project-id" "$PROJECT_ID_TAG"
+		by_tag_instances "$TAG_KEY" "$PROJECT_ID_TAG"
 		[ -n "$CLUSTER" ] && by_tag_instances "kubernetes.io/cluster/${CLUSTER}" "owned,shared"
 	} | grep -v '^$' | sort -u || true
 }
@@ -1045,14 +1055,14 @@ by_tag_volumes() {
 }
 alive_volumes() {
 	{
-		by_tag_volumes "alethia:project-id" "$PROJECT_ID_TAG"
+		by_tag_volumes "$TAG_KEY" "$PROJECT_ID_TAG"
 		[ -n "$CLUSTER" ] && by_tag_volumes "kubernetes.io/cluster/${CLUSTER}" "owned,shared"
 	} | grep -v '^$' | sort -u || true
 }
 alive_nats() {
 	# shellcheck disable=SC2016 # backtick is JMESPath
 	probe_run nat-gateway aws ec2 describe-nat-gateways \
-		--filter "Name=tag:alethia:project-id,Values=${PROJECT_ID_TAG}" \
+		--filter "Name=tag:${TAG_KEY},Values=${PROJECT_ID_TAG}" \
 		--query 'NatGateways[?State!=`deleted`].NatGatewayId' --output text | tr '\t' '\n' | grep -v '^$' || true
 }
 # BOTH services. verify_swept's whole job is to refuse a green exit over something that bills, and
@@ -1183,7 +1193,7 @@ alive_kms_keys() {
 #    the VPC, and the VPC is reported in its own right, so listing them would be noise that trains
 #    people to ignore the output. ──
 net_by_tag() {
-	probe_run "network(${1#describe-})" aws ec2 "$1" --filters "Name=tag:alethia:project-id,Values=${PROJECT_ID_TAG}" \
+	probe_run "network(${1#describe-})" aws ec2 "$1" --filters "Name=tag:${TAG_KEY},Values=${PROJECT_ID_TAG}" \
 		--query "$2" --output text | tr '\t' '\n' | grep -v '^$' || true
 }
 alive_network() {
@@ -1365,12 +1375,16 @@ finalize_verification() {
 	return 0
 }
 
-# ── sweep_env <env> — the full scope-locked sweep + verify for ONE run's ENV. Sets the
-#    ENV/PROJECT_ID_TAG/CLUSTER globals the sweep functions read, then runs them in the same strict
-#    dependency order as the normal path. Returns verify_swept's status (0 clean / 1 leak); DRY_RUN
-#    lists only and returns 0. Used by PREFLIGHT to sweep each discovered prior-run orphan. ──
+# ── sweep_env <env> <key> — the full scope-locked sweep + verify for ONE run's (ENV, key) pair.
+#    Sets the ENV/SCOPE_KEY/TAG_KEY/PROJECT_ID_TAG/CLUSTER globals the sweep functions read, then
+#    runs them in the same strict dependency order as the normal path. The key is re-validated
+#    through the same allowlist as the top of the file (#5096), so a discovery bug cannot hand a
+#    delete an unknown key. Returns verify_swept's status (0 clean / 1 leak); DRY_RUN lists only and
+#    returns 0. Used by PREFLIGHT to sweep each discovered prior-run orphan. ──
 sweep_env() {
 	ENV="$1"
+	SCOPE_KEY="$(ALETHIA_E2E_SCOPE_KEY="${2:-}" e2e_scope_key)" || return 1
+	TAG_KEY="alethia:${SCOPE_KEY}"
 	PROJECT_ID_TAG="e2e-${ENV}"
 	CLUSTER=""
 	assert_scope
@@ -1447,8 +1461,15 @@ classify_arn() {
 	esac
 }
 
-# ── classify_orphan_envs — every OTHER e2e run's ENV that still has project-id-tagged resources in
-#    this region, each with the worst class among its resources. Emits `<env>\t<class>` lines.
+# ── classify_orphan_envs — every OTHER e2e run's (ENV, key) pair that still has tagged resources in
+#    this region, each with the worst class among its resources. Emits `<env>\t<key>\t<class>`.
+#
+#    TWO HANDLES (#5096). A stack the CLI created carries its project's UUID as project-id, so the
+#    project-id scan alone never saw it. Both keys are scanned, and each resource is attributed to
+#    exactly ONE pair by e2e_scope_attribute (lib/scope-key.sh): its project-id when that is itself an
+#    `e2e-` handle — every seeded stack, including every one standing from before the e2e-run tag —
+#    otherwise its `alethia:e2e-run`. Both tags are read off every row, whichever key listed it, so
+#    the decision is per RESOURCE: a seeded stack found by both scans is swept once, by project-id.
 #
 #    Discovery reads LIVE RESOURCES (get-resources), not the tag-value index. `get-tag-values`
 #    returns every value the key has EVER carried in a region and keeps returning it after the last
@@ -1468,33 +1489,46 @@ classify_orphan_envs() {
 	# region holds no orphans", and it is what let the reaper publish a clean BILLING account it had
 	# never looked at. probe_run retries, keeps the call's REAL status, and records UNVERIFIABLE
 	# when it never answered — which probe_report_discovery then reports at the preflight's exits.
-	rows="$(probe_run orphan-scan aws resourcegroupstaggingapi get-resources --region "$REGION" \
-		--tag-filters "Key=alethia:project-id" \
-		--query 'ResourceTagMappingList[].[ResourceARN,Tags[?Key==`alethia:project-id`].Value|[0]]' \
-		--output text || true)"
-	printf '%s\n' "$rows" | while IFS=$'\t' read -r arn v; do
-		[ -n "$arn" ] && [ -n "$v" ] || continue
-		case "$v" in e2e-*) ;; *) continue ;; esac # e2e-prefixed values only — never prod project-ids
-		oenv="${v#e2e-}"
+	local k pair okey
+	rows="$(
+		for k in $E2E_SCOPE_KEYS; do
+			# `|`-joined, not tab-separated: a resource with no e2e-run tag has an EMPTY middle
+			# field, and `read` collapses consecutive tabs (IFS whitespace), shifting the ARN's
+			# neighbours one column left. `None` is the text output's rendering of a missing tag.
+			probe_run orphan-scan aws resourcegroupstaggingapi get-resources --region "$REGION" \
+				--tag-filters "Key=alethia:${k}" \
+				--query 'ResourceTagMappingList[].join(`"|"`, [ResourceARN, Tags[?Key==`alethia:project-id`].Value|[0] || `""`, Tags[?Key==`alethia:e2e-run`].Value|[0] || `""`])' \
+				--output text || true
+		done
+	)"
+	printf '%s\n' "$rows" | tr '\t' '\n' | sort -u | while IFS='|' read -r arn v run; do
+		[ -n "$arn" ] || continue
+		[ "$v" = "None" ] && v=""
+		[ "$run" = "None" ] && run=""
+		pair="$(e2e_scope_attribute "$v" "$run")"
+		[ -n "$pair" ] || continue # neither handle — never a prod project-id, never a customer tag
+		oenv="${pair%%$'\t'*}"
+		okey="${pair#*$'\t'}"
 		[ "$oenv" = "$SELF_ENV" ] && continue # skip THIS run (its own teardown handles it)
 		printf '%s' "$oenv" | grep -Eq '^[a-z0-9][a-z0-9._-]{4,62}$' || continue
 		case "$oenv" in
 		prod | prod-* | production | production-* | staging | staging-* | main | alethia | alethia-* | data) continue ;;
 		esac
 		cls="$(classify_arn "$arn")"
-		printf '%s\t%s\n' "$oenv" "$cls"
+		printf '%s\t%s\t%s\n' "$oenv" "$okey" "$cls"
 	done | sort -u | awk -F'\t' '
-		# Worst class wins per env: BILLING > TERMINATING > FREE.
-		{ rank = ($2 == "BILLING") ? 3 : ($2 == "TERMINATING") ? 2 : 1
-		  if (rank > best[$1]) { best[$1] = rank; cls[$1] = $2 } }
+		# Worst class wins per (env, key): BILLING > TERMINATING > FREE.
+		{ id = $1 "\t" $2
+		  rank = ($3 == "BILLING") ? 3 : ($3 == "TERMINATING") ? 2 : 1
+		  if (rank > best[id]) { best[id] = rank; cls[id] = $3 } }
 		END { for (e in cls) printf "%s\t%s\n", e, cls[e] }
 	' | sort
 }
 
-# ── list_orphan_envs — the envs the preflight must actually SWEEP: those holding at least one
-#    BILLING resource. Empty output ⇒ nothing is costing money. ──
+# ── list_orphan_envs — the (env, key) pairs the preflight must actually SWEEP, as `<env>\t<key>`:
+#    those holding at least one BILLING resource. Empty output ⇒ nothing is costing money. ──
 list_orphan_envs() {
-	classify_orphan_envs | awk -F'\t' '$2 == "BILLING" { print $1 }'
+	classify_orphan_envs | awk -F'\t' '$3 == "BILLING" { print $1 "\t" $2 }'
 }
 
 # ── PREFLIGHT: sweep prior-run e2e orphans (NOT this run), best-effort + loud. ──
@@ -1503,11 +1537,11 @@ if [ "$PREFLIGHT" = "1" ]; then
 	echo "→ aws STALE PREFLIGHT in ${REGION}: sweeping prior-run e2e orphans (excludes this run ${SELF_ENV})"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 	classified="$(classify_orphan_envs || true)"
-	orphans="$(printf '%s\n' "$classified" | awk -F'\t' '$2 == "BILLING" { print $1 }')"
+	orphans="$(printf '%s\n' "$classified" | awk -F'\t' '$3 == "BILLING" { print $1 "\t" $2 }')"
 
 	# Named, and explicitly NOT a leak. Silence here would be its own defect: these envs DO have
 	# leftovers, and a reader who sees nothing cannot tell "checked, benign" from "never looked".
-	benign="$(printf '%s\n' "$classified" | awk -F'\t' 'NF && $2 != "BILLING" { printf "%s (%s) ", $1, $2 }')"
+	benign="$(printf '%s\n' "$classified" | awk -F'\t' 'NF && $3 != "BILLING" { printf "%s[%s] (%s) ", $1, $2, $3 }')"
 	if [ -n "$benign" ]; then
 		echo "::notice::preflight: prior-run leftovers that cost nothing — ${benign}"
 		echo "  TERMINATING = a KMS key already scheduled for deletion. AWS enforces a 7-30 day"
@@ -1533,8 +1567,7 @@ if [ "$PREFLIGHT" = "1" ]; then
 		echo "✓ preflight: no BILLING prior-run e2e orphans in ${REGION} — nothing to sweep"
 		exit 0
 	fi
-	# shellcheck disable=SC2086
-	echo "  orphan run ENVs found: $(printf '%s ' $orphans)"
+	echo "  orphan run ENVs found: $(printf '%s\n' "$orphans" | awk -F'\t' 'NF { printf "%s[%s] ", $1, $2 }')"
 	echo "  budget: ${PREFLIGHT_BUDGET_SECONDS}s wall-clock, at most ${PREFLIGHT_MAX_ENVS} orphan(s) this run"
 	residual=0
 	attempted=0
@@ -1545,21 +1578,21 @@ if [ "$PREFLIGHT" = "1" ]; then
 	# honest. It used to fire for KMS keys mid-deletion and free IAM litter, 28 of them, on every
 	# single nightly (#2485).
 	skipped=""
-	while IFS= read -r oenv; do
+	while IFS=$'\t' read -r oenv okey; do
 		[ -n "$oenv" ] || continue
 		if [ "$attempted" -ge "$PREFLIGHT_MAX_ENVS" ]; then
-			skipped="${skipped}${oenv} (cap) "
+			skipped="${skipped}${oenv}[${okey}] (cap) "
 			continue
 		fi
 		now=$(date +%s)
 		if [ "$now" -ge "$deadline" ]; then
-			skipped="${skipped}${oenv} (budget) "
+			skipped="${skipped}${oenv}[${okey}] (budget) "
 			continue
 		fi
 		attempted=$((attempted + 1))
-		echo "── preflight sweep: prior run ${oenv} (${attempted}/${PREFLIGHT_MAX_ENVS}, $((deadline - now))s budget left) ──"
-		if ! sweep_env "$oenv"; then
-			echo "::warning::preflight could not fully sweep prior-run orphan ${oenv} (still billing) — the always() teardown / next preflight will retry. NOT failing this provisioning run."
+		echo "── preflight sweep: prior run ${oenv} by alethia:${okey} (${attempted}/${PREFLIGHT_MAX_ENVS}, $((deadline - now))s budget left) ──"
+		if ! sweep_env "$oenv" "$okey"; then
+			echo "::warning::preflight could not fully sweep prior-run orphan ${oenv} (alethia:${okey}, still billing) — the always() teardown / next preflight will retry. NOT failing this provisioning run."
 			residual=1
 		fi
 	done <<<"$orphans"
@@ -1568,7 +1601,7 @@ if [ "$PREFLIGHT" = "1" ]; then
 		# orphan every night is how 29558347776-1 survived long enough to eat a job cap. This is
 		# the signal that a human has to sweep it by hand; it still does not fail the step.
 		echo "::error::preflight left orphan(s) UNSWEPT and BILLING — bounds reached before they were reached: ${skipped}"
-		echo "::error::sweep by hand, scope-locked: ALETHIA_E2E_ENV=<env> ALETHIA_E2E_REGION=${REGION} ./scripts/e2e/aws-cleanup.sh"
+		echo "::error::sweep by hand, scope-locked: ALETHIA_E2E_ENV=<env> ALETHIA_E2E_SCOPE_KEY=<key> ALETHIA_E2E_REGION=${REGION} ./scripts/e2e/aws-cleanup.sh"
 		residual=1
 	fi
 	if [ "$residual" = "1" ]; then
@@ -2264,6 +2297,64 @@ if [ "$SELF_TEST" = "1" ]; then
 		"An error occurred (ThrottlingException): Rate exceeded" yes
 	st_aws_restore
 
+	# ── #5096: THE PREFLIGHT SEES A CLI-CREATED STACK, AND STILL SEES EVERY OLD ONE. ─────────────
+	#
+	# The stub answers the tag scan by the KEY it was asked to filter on, and only when the query
+	# projects BOTH handles — so dropping the e2e-run scan, or the e2e-run column, empties the CLI
+	# stack's row and reds the first assertion below. Rows are the text output's real shape: one
+	# `|`-joined string per resource, tab-separated, `None` for a missing tag.
+	#
+	#   vpc-cli   the cli-demo stack: project-id is the project's UUID     → found by e2e-run
+	#   vpc-new   a seeded stack after this change: carries both handles  → swept ONCE, by project-id
+	#   vpc-old   a seeded stack from before it: project-id only          → still found (compat)
+	#   vpc-cust  a customer resource with neither handle                 → never an orphan
+	#   vpc-self  THIS run's own stack under the new handle               → excluded
+	aws() {
+		local q tf=""
+		q="$(st_query "$@")"
+		while [ "$#" -gt 0 ]; do
+			[ "$1" = "--tag-filters" ] && tf="${2:-}"
+			shift
+		done
+		case "$q" in *alethia:project-id*alethia:e2e-run*) ;; *) return 0 ;; esac
+		case "$tf" in
+		Key=alethia:project-id)
+			printf '%s\t%s\t%s\t%s\n' \
+				"arn:aws:ec2:us-east-1:0:vpc/vpc-cli|3e9d7e82-6bfc-4faa-9006-7c1e27d72249|e2e-36135826614-1" \
+				"arn:aws:ec2:us-east-1:0:vpc/vpc-new|e2e-36135826614-2|e2e-36135826614-2" \
+				"arn:aws:ec2:us-east-1:0:vpc/vpc-old|e2e-31459117502-1|None" \
+				"arn:aws:ec2:us-east-1:0:vpc/vpc-cust|3e9d7e82-0000-4faa-9006-7c1e27d72249|None"
+			;;
+		Key=alethia:e2e-run)
+			printf '%s\t%s\t%s\n' \
+				"arn:aws:ec2:us-east-1:0:vpc/vpc-cli|3e9d7e82-6bfc-4faa-9006-7c1e27d72249|e2e-36135826614-1" \
+				"arn:aws:ec2:us-east-1:0:vpc/vpc-new|e2e-36135826614-2|e2e-36135826614-2" \
+				"arn:aws:ec2:us-east-1:0:vpc/vpc-self|3e9d7e82-1111-4faa-9006-7c1e27d72249|e2e-${ENV}"
+			;;
+		esac
+		return 0
+	}
+	probe_reset
+	st_orphans="$(list_orphan_envs 2>/dev/null | tr '\t\n' ': ' | sed 's/ $//')"
+	st_aws_restore
+	st_want="31459117502-1:project-id 36135826614-1:e2e-run 36135826614-2:project-id"
+	if [ "$st_orphans" = "$st_want" ]; then
+		echo "  ✓ preflight discovery: a CLI stack by e2e-run, seeded stacks by project-id (old and new), once each"
+	else
+		echo "  ✗ preflight discovery — want [${st_want}], got [${st_orphans}]" >&2
+		st_fails=$((st_fails + 1))
+	fi
+	# sweep_env re-validates the key it is handed, so a discovery bug cannot pass a delete an
+	# unknown key. It must refuse BEFORE any cloud call.
+	st_rc=0
+	( sweep_env 36135826614-1 cluster >/dev/null 2>&1 ) || st_rc=$?
+	if [ "$st_rc" -ne 0 ]; then
+		echo "  ✓ sweep_env refuses an unknown scope key"
+	else
+		echo "  ✗ sweep_env accepted the scope key 'cluster'" >&2
+		st_fails=$((st_fails + 1))
+	fi
+
 	if [ "$st_fails" -ne 0 ]; then
 		echo "✗ aws-cleanup.sh self-test: ${st_fails} failure(s)" >&2
 		exit 1
@@ -2295,7 +2386,7 @@ if [ "$VERIFY_ONLY" != "1" ]; then
 fi
 
 if [ "$DRY_RUN" = "1" ]; then
-	echo "✓ aws DRY RUN complete for alethia:project-id=${PROJECT_ID_TAG} (nothing deleted, nothing verified)"
+	echo "✓ aws DRY RUN complete for ${TAG_KEY}=${PROJECT_ID_TAG} (nothing deleted, nothing verified)"
 	exit 0
 fi
 
