@@ -10,8 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/alerts/emit", () => ({ emitAlertEventSafe: vi.fn() }));
+vi.mock("@/lib/db/env-status", () => ({ transitionEnv: vi.fn().mockResolvedValue(undefined) }));
 
-import { startStaleJobRecovery } from "@/lib/jobs/recovery";
+import { recoverStaleJobs, startStaleJobRecovery } from "@/lib/jobs/recovery";
+import { transitionEnv } from "@/lib/db/env-status";
 import { getServiceDb } from "@/lib/db";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 
@@ -78,5 +80,26 @@ describe("startStaleJobRecovery — tick body", () => {
 			"system.runner.offline",
 			expect.objectContaining({ resource_type: "runner", resource_id: "r1", severity: "warning" }),
 		);
+	});
+});
+
+describe("recoverStaleJobs — terminal rows (#5162)", () => {
+	it("fails each terminal job's env and names WHICH rule fired in the alert", async () => {
+		const execute = vi.fn().mockResolvedValueOnce([
+			{ job_id: "j-apply", job_type: "DEPLOY", environment_id: "e1", org_id: "o1", project_id: "p1", reason: "apply_started" },
+			{ job_id: "j-cap", job_type: "PLAN", environment_id: null, org_id: "o1", project_id: null, reason: "max_attempts" },
+		]);
+		await recoverStaleJobs({ execute } as never);
+
+		expect(transitionEnv).toHaveBeenCalledTimes(1); // only the row with an environment
+		expect(transitionEnv).toHaveBeenCalledWith(expect.anything(), "e1", "deployFailed", "j-apply", {
+			orgId: "o1",
+			projectId: "p1",
+		});
+		const summaries = vi.mocked(emitAlertEventSafe).mock.calls.map((c) => [c[2]?.job_id, c[2]?.summary]);
+		expect(summaries).toEqual([
+			["j-apply", expect.stringMatching(/not retried/)],
+			["j-cap", expect.stringMatching(/max attempts/)],
+		]);
 	});
 });
