@@ -153,7 +153,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | id | family | instrument | PASS | FAIL | N/A | NOT MEASURED | score | N/A reasons |
 |---|---|---|---:|---:|---:|---:|---:|---|
 | **S1** | S | `check-route-states` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **S2** | S | `check-route-states` | 33 | 3 | 4 | 0 | 0.92 | `redirect-only` 4 |
+| **S2** | S | `check-route-states` | 35 | 1 | 4 | 0 | 0.97 | `redirect-only` 4 |
 | **S3** | S | `check-route-states` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
 | **S4** | S | `check-route-states` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
 | **T1** | T | `check-route-states` | 36 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
@@ -213,14 +213,13 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 
 | route | surface | S | T | H | F | R | overall |
 |---|---:|---|---|---|---|---|---|
-| `/[org]/~/new` | 377 | 3/4 · 0.75 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **0.96** · 0 withheld of 38 |
-| `/[org]/[project]/environments` | 244 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **0.96** · 1 withheld of 38 |
 | `/[org]/~/jobs/[id]` | 233 | 3/4 · 0.75 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **0.96** · 1 withheld of 38 |
 | `/[org]/~/evidence` | 236 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 · 1 withheld | 8/8 · 1.00 | **0.97** · 1 withheld of 38 |
 | `/[org]` | 294 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/[project]` · | 2 | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/architecture` | 413 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/clusters` | 228 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
+| `/[org]/[project]/environments` | 244 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/jobs` | 276 | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/settings` · | 2 | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/[project]/settings/access` | 292 | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
@@ -232,6 +231,7 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]/~/clusters` | 227 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/connectors` | 288 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/~/jobs` | 275 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
+| `/[org]/~/new` | 377 | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/runners` | 313 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 · 1 withheld | 8/8 · 1.00 | **1.00** · 1 withheld of 38 |
 | `/[org]/~/settings` · | 2 | all N/A | 2/2 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | **1.00** · 0 withheld of 38 |
 | `/[org]/~/settings/access` | 291 | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | **1.00** · 0 withheld of 38 |
