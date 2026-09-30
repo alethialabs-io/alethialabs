@@ -31,6 +31,9 @@
 #                           through the state proxy, drifted by an out-of-band mutation, healed,
 #                           destroyed, state cleared. One verdict, no partial credit. This is the
 #                           proof the `byo` column used to claim and never delivered.
+#               templates — + ALETHIA_E2E_TEMPLATES=1 (#4113, HETZNER ONLY): the three public starter
+#                           templates, each through the path the docs tell a user to follow, on one
+#                           cluster — starter-ai + both BYO charts, then a redeploy at starter-apps.
 #               full      — every dimension above in one real apply (the FULLY-TESTED bar), EXCEPT
 #                           those declared in FULL_EXCLUDES with a reason.
 #
@@ -77,6 +80,13 @@ case "$cloud" in aws|gcp|azure|alibaba|hetzner) ;; *) echo "unknown cloud $cloud
 . "$(dirname "${BASH_SOURCE[0]}")/resolve-dimension.sh"
 
 case " $DIMENSIONS " in *" $dimension "*) ;; *) echo "unknown dimension $dimension (want one of: $DIMENSIONS)" >&2; exit 2 ;; esac
+# A dimension restricted to some clouds (`templates`: hetzner only) is refused on any other before
+# a cloud is touched — the resolver's list, not a second copy.
+allowed_clouds="$(dimension_providers "$dimension")"
+if [ -n "$allowed_clouds" ] && ! printf ' %s ' "$allowed_clouds" | grep -q " $cloud "; then
+  echo "dimension $dimension runs only on: $allowed_clouds (not $cloud)" >&2
+  exit 2
+fi
 
 # ── append one ledger row after the sentinel (idempotent shape; awk fallback to >>) ────────────
 append_ledger() {

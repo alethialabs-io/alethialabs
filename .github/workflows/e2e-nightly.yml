@@ -85,7 +85,7 @@ on:
         type: string
         default: ""
       dimension:
-        description: "Which DIMENSION to prove. Blank keeps the old floor/full_bar behaviour. The middle values were previously reachable ONLY from a laptop — a boolean cannot express them — so a cell whose cause had been fixed could sit stale with no way to re-drive it from CI. `gitops` is the A0.6 apps-repo + BYO Helm chart proof (renamed from `byo`, which still works); `byo-iac` is the separate seven-job customer-OpenTofu custody chain. Costs scale with the dimension, not with this input: addons and maxconfig are heavy, gitops/byo-iac/day2 are near-floor."
+        description: "Which DIMENSION to prove. Blank keeps the old floor/full_bar behaviour. The middle values were previously reachable ONLY from a laptop — a boolean cannot express them — so a cell whose cause had been fixed could sit stale with no way to re-drive it from CI. `gitops` is the A0.6 apps-repo + BYO Helm chart proof (renamed from `byo`, which still works); `byo-iac` is the separate seven-job customer-OpenTofu custody chain. `templates` (#4113, HETZNER ONLY — refused on any other provider before anything is built) deploys the three public starter templates on one cluster. Costs scale with the dimension, not with this input: addons and maxconfig are heavy, gitops/byo-iac/day2 are near-floor."
         type: choice
         options:
           - ""
@@ -97,6 +97,7 @@ on:
           - byo
           - day2
           - cli-demo
+          - templates
           - full
         default: ""
       cli_demo_grid:
@@ -171,6 +172,7 @@ jobs:
           RIDER_KEYLESS_DB: ${{ github.event.inputs.keyless_db }}
           RIDER_SECRETS_XACCT: ${{ github.event.inputs.secrets_xacct }}
           RIDER_XACCT_REGISTRY: ${{ github.event.inputs.xacct_registry }}
+          DISPATCH_PROVIDER: ${{ github.event.inputs.provider }}
         run: |
           dim="$(bash scripts/e2e/resolve-dimension.sh)"
           heavy="$(bash scripts/e2e/resolve-dimension.sh --heavy "$dim")"
@@ -188,6 +190,16 @@ jobs:
             [ "${RIDER_XACCT_REGISTRY:-false}" = "true" ] && asked="$asked xacct_registry"
             if [ -n "$asked" ]; then
               echo "::error::dimension=cli-demo cannot carry${asked}: the CLI-created DEPLOY has no snapshot for the rider to layer onto, so the proof would fail on a bought cluster. Dispatch the rider on floor or gitops — refusing before anything is built or bought."
+              exit 1
+            fi
+          fi
+          # A dimension may be restricted to some clouds (`templates` is hetzner-only, #4113). The
+          # list is the resolver's, never retyped here. Refused HERE, before the runner image is
+          # built or any cloud is touched; the T2 harness refuses it a second time before spend.
+          allowed="$(bash scripts/e2e/resolve-dimension.sh --providers "$dim")"
+          if [ -n "$allowed" ]; then
+            if [ "${CLI_DEMO_GRID:-false}" = "true" ] || [ -z "${DISPATCH_PROVIDER:-}" ] || ! printf ' %s ' "$allowed" | grep -q " ${DISPATCH_PROVIDER} "; then
+              echo "::error::dimension=$dim runs only on: $allowed (dispatched provider: '${DISPATCH_PROVIDER:-<none>}') — refusing before anything is built or bought."
               exit 1
             fi
           fi
@@ -764,6 +776,8 @@ jobs:
               echo "::notice::GITOPS dimension — floor shape plus the A0.6 apps-repo + BYO Helm chart proof, REQUIRED on this dimension (it reds rather than skipping when the apps-repo env is unset). This is NOT the BYO-IaC custody chain; that is the byo-iac dimension." ;;
             cli-demo)
               echo "::notice::CLI-DEMO dimension — a FLOOR-shaped cluster provisioned through the real \`alethia\` binary rather than a seeded job row (MVP predicate 4). No max-config, no add-on sweep, no day-2 soak: what is under test is the ACTOR, not the surface area. Needs a built console and a seeded service token, so it is dispatch-only by construction." ;;
+            templates)
+              echo "::notice::TEMPLATES dimension (#4113, hetzner only) — ONE cluster (test/e2e/fixtures/cluster_json.templates.hetzner.json), two deploys: alethia-starter-ai as the apps repo plus alethia-starter-chart and alethia-starter-ai/chart as bring-your-own charts, then a redeploy of the same environment at alethia-starter-apps. Every Application the starter-templates page promises is asserted Healthy+Synced at the template's HEAD commit. The A0.6 repo variables are superseded on this dimension, and NO git token is served: the templates are public and cloned anonymously, exactly as a user's copy of a public template would be." ;;
             byo-iac)
               echo "::notice::BYO-IaC dimension — floor shape plus the seven-job custody chain: a customer OpenTofu module refused when unsafe, applied through the state proxy, drifted, healed, destroyed, state cleared. No partial credit." ;;
             *)
@@ -879,7 +893,19 @@ jobs:
           # FULL-BAR: swap the floor shape for the provider's heavy profile. The fixture PATH is the
           # one the FT-5 guard names in its own failure message, so guard and workflow cannot disagree
           # about which file is used. The floor NUMBERS are the guard's, not this file's.
-          if [ "${E2E_HEAVY_SHAPE:-false}" = "true" ]; then
+          if [ "${E2E_DIMENSION:-}" = "templates" ]; then
+            # #4113: the starter templates carry their OWN shape — the AI stack's chart alone
+            # requests ~2 vCPU / 4.5 GiB, which the floor's single cpx22 cannot hold beside the
+            # platform, KServe and Kueue. The sizing argument lives beside the numbers, in
+            # test/e2e/t2_templates.go (templatesShapeWhy); the fixture is checked against it offline.
+            TPL="test/e2e/fixtures/cluster_json.templates.${PROVIDER}.json"
+            if [ ! -f "$TPL" ]; then
+              echo "::error::templates requested for '$PROVIDER' but $TPL does not exist — the templates dimension is hetzner-only (scripts/e2e/resolve-dimension.sh --providers templates)."
+              exit 1
+            fi
+            SHAPE="$(jq -c . "$TPL")"
+            echo "::notice::T2 TEMPLATES shape for $PROVIDER (from $TPL): $SHAPE"
+          elif [ "${E2E_HEAVY_SHAPE:-false}" = "true" ]; then
             HEAVY="test/e2e/fixtures/cluster_json.heavy.${PROVIDER}.json"
             if [ ! -f "$HEAVY" ]; then
               # Documented exclusion, not a silent gap (cloud-parity rule): a cloud without a heavy
@@ -1662,7 +1688,11 @@ jobs:
           ALETHIA_E2E_ARGO_BYO_CHART_PATH: ${{ vars.E2E_ARGO_BYO_CHART_PATH }}
           ALETHIA_E2E_ARGO_BYO_CHART_REVISION: ${{ vars.E2E_ARGO_BYO_CHART_REVISION }}
           ALETHIA_E2E_ARGO_BYO_CHART_NAMESPACE: ${{ vars.E2E_ARGO_BYO_CHART_NAMESPACE }}
-          ALETHIA_E2E_GIT_TOKEN: ${{ secrets.E2E_GIT_TOKEN }}
+          # NOT served on the `templates` dimension (#4113). The three starter templates are PUBLIC
+          # and a user's copy of one is cloned anonymously; serving a token there would prove the
+          # credentialed path instead — and would hand a WRITE-capable credential to a run whose
+          # apps repo is a public template this organisation publishes.
+          ALETHIA_E2E_GIT_TOKEN: ${{ env.E2E_DIMENSION != 'templates' && secrets.E2E_GIT_TOKEN || '' }}
           # ── Per-cloud A0.6 repo overrides (P2-D, #1066). GCP + Azure often can't reuse the aws
           #    apps-repo / BYO chart: the manifests differ per cloud AND, per #687, the service-binding
           #    resolves against THAT cloud's tofu outputs. The T2 harness (t2ArgoEnvForProvider) prefers
@@ -1793,6 +1823,13 @@ jobs:
           ALETHIA_E2E_BYO_IAC_BLOCKED_PATH: ${{ vars.E2E_BYO_IAC_BLOCKED_PATH }}
           ALETHIA_E2E_BYO_IAC_TIMEOUT: ${{ vars.E2E_BYO_IAC_TIMEOUT }}
           ALETHIA_E2E_BYO_IAC_SUMMARY: ${{ runner.temp }}/byo-iac-summary.json
+          # ── STARTER TEMPLATES (#4113). Switched on by the `templates` dimension's fidelity
+          #    (ALETHIA_E2E_TEMPLATES=1 via $GITHUB_ENV — deliberately NOT declared here, a step-level
+          #    key would shadow it). The summary is written AT ASSERT TIME, after each phase, because
+          #    the cluster is destroyed before the capture runs (#2688): per Application the sync
+          #    revision (= the template's commit), sync/health and managed-resource count, and for the
+          #    AI template the hourly price of every server the run provisioned. ──
+          ALETHIA_E2E_TEMPLATES_SUMMARY: ${{ runner.temp }}/templates-summary.json
           # ── CROSS-ACCOUNT KEYLESS CLOUD-SM READ (#1268). Layers ON TOP of the base T2 proof: the
           #    base DEPLOY carries a *-xacct connector row AND a secret-kind binding, so the runner
           #    renders secretstore-<cloud>-xacct and the ExternalSecret that reads through it; the
@@ -2349,6 +2386,9 @@ jobs:
           # step set; folded into the bundle + step summary (absent ⇒ unchanged). It carries only
           # names, booleans, counts and a PUBLIC commit + plan digest.
           ALETHIA_E2E_BYO_IAC_SUMMARY: ${{ runner.temp }}/byo-iac-summary.json
+          # Starter-template verdicts (#4113), written by the T2 test at the SAME path the t2 step
+          # set; folded into the bundle as templates-summary.json (absent ⇒ unchanged).
+          ALETHIA_E2E_TEMPLATES_SUMMARY: ${{ runner.temp }}/templates-summary.json
           # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
           # the capture script reads (the unique cluster name for the summary). The region needs
           # no mapping: ALETHIA_E2E_REGION is itself exported, and re-declaring it would shadow it.
