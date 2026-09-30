@@ -107,6 +107,30 @@ type CLIDemoRun struct {
 	// repos and the spine's A0.6 assertions address the same Application and Secret names on both.
 	// ResolveCLIDemoRun sets it and refuses the run when the inputs are not wired.
 	GitOps t2ArgoRepos
+	// CertZone is the delegated zone and run-scoped domain the `dns-cert` beat authors, or nil when
+	// this run does not prove the certificate (#1773, ALETHIA_E2E_ACM_CERT off or not on this cloud).
+	// Set by cliDemoCertZoneFrom from the SAME acmCertConfig the seeded path's applyToSnapshot
+	// writes, so the two paths ask for the same zone and the same name.
+	CertZone *CLIDemoCertZone
+}
+
+// CLIDemoCertZone is what the `dns-cert` beat puts into the run's environment.
+type CLIDemoCertZone struct {
+	// ZoneID is the PRE-DELEGATED hosted zone. Bringing it is what makes cloud_dns_enabled false, so
+	// the validation record lands in a zone the public internet can resolve.
+	ZoneID string
+	// DomainName is the run-scoped name the certificate covers (acmCertDomain).
+	DomainName string
+}
+
+// cliDemoCertZoneFrom returns the zone the `dns-cert` beat authors, or nil when the certificate
+// scenario is not on for this run. `on` is acmCertConfig.decide()'s verdict, passed in rather than
+// recomputed so the beat and runT2AcmCert cannot disagree about whether the run asked.
+func cliDemoCertZoneFrom(c acmCertConfig, on bool) *CLIDemoCertZone {
+	if !on {
+		return nil
+	}
+	return &CLIDemoCertZone{ZoneID: c.zoneID, DomainName: c.domainName}
 }
 
 // CLIDemoPhase says WHERE in the provisioning spine a beat can run. It exists because the demo's
@@ -183,6 +207,11 @@ type CLIDemoBeat struct {
 	// backstop (lib/reconcile/converge.ts). A person on a real console never waits: the status
 	// route settles it in the same request.
 	AwaitEnvSettled bool
+	// Skip, when set and returning a non-empty sentence, withholds the beat on THIS run and logs the
+	// sentence. It is for a beat whose input is itself optional — `dns-cert` exists only on a run that
+	// proves the certificate. It never withholds a beat from the pre-spend checks: those build every
+	// beat's argv regardless, so the invocation is proven to parse on runs that do not perform it.
+	Skip func(r *CLIDemoRun) string
 }
 
 // cliDemoNotDriven records, per step id, WHY the provisioning run does not perform it. Every entry
@@ -391,6 +420,38 @@ var CLIDemoBeats = []CLIDemoBeat{
 		Why: "a `source='byo'` project_addons row, which resolveByoChartInstall renders as the same " +
 			"managed git-source add-on the seeded path appends. The attach also queues a CHART_SCAN, " +
 			"which the runner claims once it starts. The deploy does not wait for its verdict.",
+	},
+	// ── THE CERTIFICATE (#1773, #5087). On the seeded path acmCertConfig.applyToSnapshot writes the
+	//    brought zone and the certificate ask straight into the job row. Here the console builds the
+	//    snapshot from what the CLI authored, so without this beat the deploy asks for no certificate
+	//    and runT2AcmCert asserts one nothing requested. Run 36639509726 is the record: the aws leg
+	//    passed every beat, the deploy carried `route53_zone_id = ""` and no aws_acm_certificate, and
+	//    the verdict blamed a delegation that `dig NS` shows is in place.
+	//
+	//    After manifest-plan for the same reason as the two repo beats (it asserts 0 components), and
+	//    before the enqueue phase, because the DEPLOY snapshots what exists when it is enqueued. ──
+	{
+		StepID: "dns-cert",
+		Phase:  CLIDemoAuthoring,
+		Args:   cliDemoDNSCertArgs,
+		Skip: func(r *CLIDemoRun) string {
+			if r.CertZone != nil {
+				return ""
+			}
+			return "this run does not prove the ACM certificate (ALETHIA_E2E_ACM_CERT is off, or this cloud " +
+				"has no certificate lane), so there is no delegated zone to bring"
+		},
+		ReadBack: func(r *CLIDemoRun) []string {
+			return []string{
+				"project", "component", "list", "--project", r.ProjectID, "--env", r.EnvName,
+				"--kind", "dns", "--output", "json", "--no-input",
+			}
+		},
+		After: assertDNSCertWired,
+		Why: "the same two halves the seeded path writes: zone_id brings the delegated zone, and " +
+			"managed_certificate is the ask (the aws template reads it as acm_certificate_enable). " +
+			"`provider` is left unset, as on the seeded path, so the zone is the cloud's native DNS — " +
+			"acm-certificate.tf builds only when dns_provider is native.",
 	},
 	{
 		StepID: "staged",
@@ -661,6 +722,112 @@ func assertByoChartAttached(r *CLIDemoRun, out string) error {
 	return fmt.Errorf("`chart attach %s` succeeded, but environment %q lists no chart with that id "+
 		"(listed: %v). The server keeps an id that is already a slug unchanged, so a different id means "+
 		"the attach went somewhere else:\n%s", byoAddonID, r.EnvName, ids, out)
+}
+
+// cliDemoDNSCertArgs builds the `dns-cert` beat: the run's environment gets a `dns` singleton that
+// brings the delegated zone and asks for the managed certificate.
+//
+// It builds a full argv even when the run carries no zone, with empty values. The pre-spend flag
+// check runs every beat's argv through the real parser on every run, and building it here means a
+// cheap hetzner dispatch still proves the aws invocation parses. DriveCLIDemoPhase never performs it
+// without a zone, because the beat's Skip withholds it first.
+func cliDemoDNSCertArgs(r *CLIDemoRun) []string {
+	var zoneID, domain string
+	if r.CertZone != nil {
+		zoneID, domain = r.CertZone.ZoneID, r.CertZone.DomainName
+	}
+	return []string{
+		"project", "component", "add", "--project", r.ProjectID, "--kind", "dns", "--env", r.EnvName,
+		"--set", "enabled=true",
+		"--set", "zone_id=" + zoneID,
+		"--set", "domain_name=" + domain,
+		"--set", "managed_certificate=true",
+		"--no-input",
+	}
+}
+
+// assertDNSCertWired is the `dns-cert` beat's read-back: the run's environment holds a `dns`
+// component that is enabled, brings EXACTLY the zone and domain the beat set, and asks for the
+// certificate.
+//
+// Every field is compared, because each one alone changes what the deploy builds: a lost zone_id
+// makes the template create its own zone (which proves nothing about delegation), a lost
+// managed_certificate builds no certificate, and a rewritten domain requests a certificate for a
+// name the run did not scope.
+func assertDNSCertWired(r *CLIDemoRun, out string) error {
+	if r.CertZone == nil {
+		return fmt.Errorf("the run carries no delegated zone, so there was nothing to wire; the beat's Skip should have withheld it")
+	}
+	start := strings.Index(out, "[")
+	end := strings.LastIndex(out, "]")
+	if start == -1 || end <= start {
+		return fmt.Errorf("`project component list --output json` produced no JSON array:\n%s", out)
+	}
+	var comps []struct {
+		Kind   string         `json:"kind"`
+		Config map[string]any `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &comps); err != nil {
+		return fmt.Errorf("parsing the component list: %w\n%s", err, out)
+	}
+	for _, c := range comps {
+		if c.Kind != "dns" {
+			continue
+		}
+		var diffs []string
+		if got, _ := c.Config["enabled"].(bool); !got {
+			diffs = append(diffs, fmt.Sprintf("enabled=%v (want true)", c.Config["enabled"]))
+		}
+		if got, _ := c.Config["zone_id"].(string); got != r.CertZone.ZoneID {
+			diffs = append(diffs, fmt.Sprintf("zone_id=%q (want %q)", got, r.CertZone.ZoneID))
+		}
+		if got, _ := c.Config["domain_name"].(string); got != r.CertZone.DomainName {
+			diffs = append(diffs, fmt.Sprintf("domain_name=%q (want %q)", got, r.CertZone.DomainName))
+		}
+		if got, _ := c.Config["managed_certificate"].(bool); !got {
+			diffs = append(diffs, fmt.Sprintf("managed_certificate=%v (want true)", c.Config["managed_certificate"]))
+		}
+		if len(diffs) > 0 {
+			return fmt.Errorf("environment %q stores its dns component with %s. The deploy builds the "+
+				"certificate from the stored values, so runT2AcmCert would assert a certificate the beat did "+
+				"not ask for", r.EnvName, strings.Join(diffs, ", "))
+		}
+		return nil
+	}
+	return fmt.Errorf("`project component add --kind dns` succeeded, but environment %q lists no dns "+
+		"component. The deploy would ask for no certificate:\n%s", r.EnvName, out)
+}
+
+// cliDemoBeatsFor returns the beats DriveCLIDemoPhase performs for one phase of this run, in table
+// order, and the sentence logged for each beat withheld by its Skip.
+//
+// Split from the driver so the withholding is testable without a binary: a beat that is silently
+// dropped and a beat that is withheld with a reason must never look the same.
+func cliDemoBeatsFor(run *CLIDemoRun, phase CLIDemoPhase) (beats []CLIDemoBeat, skipped []string) {
+	for _, b := range CLIDemoBeats {
+		if b.Phase != phase {
+			continue
+		}
+		if b.Skip != nil {
+			if why := b.Skip(run); why != "" {
+				skipped = append(skipped, fmt.Sprintf("%s: %s", b.StepID, why))
+				continue
+			}
+		}
+		beats = append(beats, b)
+	}
+	return beats, skipped
+}
+
+// cliDemoPerformedBeatCount is how many beats this run performs across every phase, which is what
+// the spine's closing log may claim. len(CLIDemoBeats) would count a withheld beat as performed.
+func cliDemoPerformedBeatCount(run *CLIDemoRun) int {
+	n := 0
+	for _, phase := range []CLIDemoPhase{CLIDemoAuthoring, CLIDemoEnqueue, CLIDemoConverged, CLIDemoTeardown} {
+		beats, _ := cliDemoBeatsFor(run, phase)
+		n += len(beats)
+	}
+	return n
 }
 
 // cliDemoConnectorFlags is the NON-INTERACTIVE invocation of `connector <cloud>`, per cloud.
