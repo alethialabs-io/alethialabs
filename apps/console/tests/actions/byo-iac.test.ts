@@ -4,7 +4,8 @@
 // Mocked-boundary tests for the bring-your-own IaC (E3) actions: stub the authz guard, the env
 // resolver, the scaler, and a table-aware thenable drizzle chain (withActorScope + getServiceDb).
 // Covers the flag gate, v1 attach uniqueness, the deployed-template-state rejection, the IAC_SCAN
-// queue shape, and finalizeIacScan's commit pinning (done pins, failed/not-ok clears).
+// queue shape, and finalizeIacScan's commit pinning (done pins, failed/not-ok clears) — which now
+// lives in lib/addons/iac-scan-finalize.ts (#5219) and shares this file's db stub.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,11 +17,12 @@ vi.mock("@/app/server/actions/resolve", () => ({ resolveActiveEnvironmentId: vi.
 import {
 	attachIacSource,
 	detachIacSource,
-	finalizeIacScan,
 	getIacSource,
 	scanIacSource,
 } from "@/app/server/actions/byo-iac";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
+// The write-back moved to lib/ (#5219: it was a public Server Action); it shares this file's db stub.
+import { finalizeIacScan } from "@/lib/addons/iac-scan-finalize";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import { jobs, projectEnvironments, projectIacSources } from "@/lib/db/schema";
@@ -428,6 +430,14 @@ describe("finalizeIacScan", () => {
 			scan_status: "failed",
 			commit_sha: null,
 		});
+	});
+
+	it("writes nothing when the snapshot lost the row identity", async () => {
+		const { setSpy } = setupDb({
+			select: new Map([[jobs, [scanJob({ config_snapshot: { project_id: "p1" } })]]]),
+		});
+		await finalizeIacScan("job-1");
+		expect(setSpy).not.toHaveBeenCalled();
 	});
 
 	it("ignores non-IAC_SCAN jobs", async () => {

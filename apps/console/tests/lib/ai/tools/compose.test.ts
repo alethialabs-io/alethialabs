@@ -9,10 +9,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/app/server/actions/pricing", () => ({ getRegionPrices: vi.fn() }));
+vi.mock("@/lib/pricing/region-prices", () => ({ getRegionPrices: vi.fn() }));
 
 import { catalogTools, composeTools } from "@/lib/ai/tools/compose";
-import { getRegionPrices, type RegionPrices } from "@/app/server/actions/pricing";
+import { getRegionPrices, type RegionPrices } from "@/lib/pricing/region-prices";
 import { ADDABLE_KINDS } from "@/components/design-project/canvas/graph/node-registry";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
 

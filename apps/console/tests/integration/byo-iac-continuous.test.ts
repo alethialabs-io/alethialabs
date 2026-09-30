@@ -26,7 +26,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { beforeAll, afterAll, beforeEach, expect, it, vi } from "vitest";
 import { finalizeDeployment } from "@/lib/jobs/finalize-deployment";
-import { maybeAutoHeal } from "@/app/server/actions/reconcile";
+import { maybeAutoHeal } from "@/lib/reconcile/auto-heal";
 import { getServiceDb } from "@/lib/db";
 import {
 	jobs,

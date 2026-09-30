@@ -14,7 +14,6 @@ import { and, desc, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { environmentCost, projects } from "@/lib/db/schema";
-import { parseCostBreakdown } from "@/lib/plan/parse-cost";
 import type { CostResourceLine } from "@/types/jsonb.types";
 
 /** The latest priced picture of an environment. */
@@ -24,42 +23,6 @@ export interface EnvironmentCost {
 	resources: CostResourceLine[];
 	capturedAt: string;
 	planJobId: string | null;
-}
-
-/**
- * Persist a PLAN's Infracost breakdown as this environment's cost. Called by the job-status route
- * (service role) when a PLAN succeeds — the same seam `recordDriftPosture` uses for drift.
- *
- * Append-only: one row per (environment, plan). Keeping the history is what makes a cost DELTA
- * possible at all, which is what the promotion gate needs.
- */
-export async function recordEnvironmentCost(input: {
-	projectId: string;
-	environmentId: string;
-	planJobId: string;
-	costBreakdown: Record<string, unknown>;
-}): Promise<{ totalMonthly: number | null }> {
-	const summary = parseCostBreakdown(input.costBreakdown);
-
-	// Infracost prices resources by Terraform address — the SAME key the drift map uses — so a cost
-	// line can be attributed back to the card that designed it.
-	const resources: CostResourceLine[] = summary.resources.map((r) => ({
-		address: r.name,
-		resourceType: r.resourceType,
-		monthlyCost: r.monthlyCost ?? 0,
-	}));
-
-	const db = getServiceDb();
-	await db.insert(environmentCost).values({
-		project_id: input.projectId,
-		environment_id: input.environmentId,
-		plan_job_id: input.planJobId,
-		total_monthly: summary.totalMonthlyCost,
-		currency: "USD",
-		resources,
-	});
-
-	return { totalMonthly: summary.totalMonthlyCost };
 }
 
 /**
@@ -111,3 +74,7 @@ export async function getLatestEnvironmentCost(
 // lib/cost/previous-environment-cost.ts: it is service-role and unauthorized, so as an export of
 // this `"use server"` file it was a public Server Action — and importing it from here dragged
 // lib/auth into the runner-callback promotion lifecycle.
+//
+// Likewise the WRITE (recordEnvironmentCost) lives in lib/cost/record-environment-cost.ts: it is the
+// job-status route's service-role seam, and as an export here anyone could append a fabricated cost
+// row to any environment — which is exactly the number the promotion cost gate compares against.
