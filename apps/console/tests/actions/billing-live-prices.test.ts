@@ -31,8 +31,10 @@ vi.mock("@/lib/billing/ai-quota", () => ({
 	purchasedBalance: vi.fn(),
 	aiCreditsSeries: vi.fn(),
 }));
-vi.mock("@/lib/billing/pricing", async (importOriginal) => ({
-	...(await importOriginal<typeof import("@/lib/billing/pricing")>()),
+// A FULL mock, not an importOriginal() spread. Measured with the partial form: run beside
+// tests/lib/billing/ai-pricing.test.ts, the merged coverage of lib/billing/pricing.ts fell from 29
+// statements to 0, and the full suite's lib/billing floor went red.
+vi.mock("@/lib/billing/pricing", () => ({
 	getAllPlanPrices: vi.fn(),
 	getAllAiPrices: vi.fn(),
 }));
