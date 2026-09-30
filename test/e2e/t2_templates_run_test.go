@@ -20,6 +20,7 @@ import (
 // templatesParams is what runT2Templates needs from the base T2 run.
 type templatesParams struct {
 	commits     map[string]string
+	charts      map[string]ociChartPin
 	phaseAJobID string
 	phaseA      map[string]any
 	graph       *a05Graph
@@ -44,7 +45,7 @@ func runT2Templates(t *testing.T, ctx context.Context, cp *ControlPlane, kc stri
 	write()
 
 	// ── PHASE A: starter-ai (apps repo + BYO chart) and starter-chart (BYO chart). ──
-	resultsA, errA := pollTemplateApps(ctx, kc, templatesPhaseAExpect(), p.commits, templatesPhaseAApps)
+	resultsA, errA := pollTemplateApps(ctx, kc, templatesPhaseAExpect(), p.commits, p.charts, templatesPhaseAApps)
 	s.record(resultsA, errA, time.Now())
 	if ai := s.template("ai"); ai != nil {
 		// The bill of what the AI template needed, read while the servers exist. Recorded, never a
@@ -114,7 +115,7 @@ func runT2Templates(t *testing.T, ctx context.Context, cp *ControlPlane, kc stri
 			t.Fatalf("#4113 phase B: %s", why)
 		}
 	}
-	resultsB, errB := pollTemplateApps(ctx, kc, templatesPhaseBExpect(), p.commits, templatesPhaseBConverge)
+	resultsB, errB := pollTemplateApps(ctx, kc, templatesPhaseBExpect(), p.commits, p.charts, templatesPhaseBConverge)
 	s.record(resultsB, errB, time.Now())
 	write()
 	if errB != nil {
@@ -126,7 +127,7 @@ func runT2Templates(t *testing.T, ctx context.Context, cp *ControlPlane, kc stri
 // pollTemplateApps polls the argocd namespace until every expected Application passes
 // evaluateTemplateApps or the window closes, and returns the LAST observation's rows either way —
 // a failing run records what it saw, not nothing.
-func pollTemplateApps(ctx context.Context, kc string, expect []templateAppExpect, commits map[string]string, window time.Duration) ([]templateAppResult, error) {
+func pollTemplateApps(ctx context.Context, kc string, expect []templateAppExpect, commits map[string]string, charts map[string]ociChartPin, window time.Duration) ([]templateAppResult, error) {
 	deadline := time.Now().Add(window)
 	var results []templateAppResult
 	var lastErr error
@@ -139,7 +140,7 @@ func pollTemplateApps(ctx context.Context, kc string, expect []templateAppExpect
 			lastErr = fmt.Errorf("parse ArgoCD Applications: %w", perr)
 		} else {
 			lastRaw = raw
-			results, lastErr = evaluateTemplateApps(expect, observed, commits)
+			results, lastErr = evaluateTemplateApps(expect, observed, commits, charts)
 			if lastErr == nil {
 				return results, nil
 			}

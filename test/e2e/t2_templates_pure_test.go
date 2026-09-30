@@ -22,6 +22,19 @@ const (
 	shaAI    = "d5b9bed058b6fdf7e03bede73ac0e03738b2a697"
 )
 
+// testCharts is the OCI pin map the harness resolves before any spend — the tags starter-ai pins,
+// with the digests their registries served for them when this was written.
+func testCharts() map[string]ociChartPin {
+	return map[string]ociChartPin{
+		"kserve-crd": {File: "addons/kserve-crd.yaml", RepoURL: "oci://ghcr.io/kserve/charts/kserve-crd", Tag: "v0.15.2",
+			Digest: "sha256:d78ee8127353921f443a2c644335b8d45cacd1234fff81eb6a62c8eb73d55933"},
+		"kserve": {File: "addons/kserve.yaml", RepoURL: "oci://ghcr.io/kserve/charts/kserve", Tag: "v0.15.2",
+			Digest: "sha256:3f4e61bb603dd70c51fd6f352eb9bb1f40b06a2b29c138acccb8896d09b94fdd"},
+		"kueue": {File: "addons/kueue.yaml", RepoURL: "oci://registry.k8s.io/kueue/charts/kueue", Tag: "0.19.5",
+			Digest: "sha256:570cdfce9f9928a8cf36ea814278e2e56651d2e7f2dac3363ebf3e0cda303bc2"},
+	}
+}
+
 // testCommits is the resolved-HEAD map the harness builds before any spend.
 func testCommits() map[string]string {
 	return map[string]string{starterAppsRepo: shaApps, starterChartRepo: shaChart, starterAIRepo: shaAI}
@@ -185,15 +198,17 @@ func greenPhaseA() map[string]templateAppObserved {
 	git := func(repo, sha string, n int) templateAppObserved {
 		return templateAppObserved{Health: "Healthy", Sync: "Synced", Revision: sha, RepoURL: repo, TargetRevision: "HEAD", Resources: n}
 	}
-	oci := func(repo, chart, ver string) templateAppObserved {
-		return templateAppObserved{Health: "Healthy", Sync: "Synced", Revision: ver, RepoURL: repo, Chart: chart, TargetRevision: ver, Resources: 4}
+	// ArgoCD 3.x reports a native OCI source's synced revision as the manifest DIGEST.
+	oci := func(app string) templateAppObserved {
+		pin := testCharts()[app]
+		return templateAppObserved{Health: "Healthy", Sync: "Synced", Revision: pin.Digest, RepoURL: pin.RepoURL, TargetRevision: pin.Tag, Resources: 4}
 	}
 	return map[string]templateAppObserved{
 		"apps":                git(starterAIRepo, shaAI, 2),
 		"addons":              git(starterAIRepo, shaAI, 3),
-		"kserve-crd":          oci("oci://ghcr.io/kserve/charts", "kserve-crd", "v0.15.2"),
-		"kserve":              oci("oci://ghcr.io/kserve/charts", "kserve", "v0.15.2"),
-		"kueue":               oci("oci://registry.k8s.io/kueue/charts", "kueue", "0.19.5"),
+		"kserve-crd":          oci("kserve-crd"),
+		"kserve":              oci("kserve"),
+		"kueue":               oci("kueue"),
 		"cert-manager":        {Health: "Healthy", Sync: "Synced", Revision: "v1.18.2", RepoURL: "https://charts.jetstack.io", Resources: 40},
 		"addon-starter-ai":    git(starterAIRepo+".git", shaAI, 12),
 		"addon-starter-chart": git(starterChartRepo, shaChart, 3),
@@ -205,7 +220,7 @@ func TestTemplatesPhaseAGreen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	results, err := evaluateTemplateApps(templatesPhaseAExpect(), observed, testCommits())
+	results, err := evaluateTemplateApps(templatesPhaseAExpect(), observed, testCommits(), testCharts())
 	if err != nil {
 		t.Fatalf("a converged phase A failed: %v", err)
 	}
@@ -251,7 +266,7 @@ func TestTemplatesPhaseARefusals(t *testing.T) {
 				c.mutate(&o)
 				obs[c.app] = o
 			}
-			results, err := evaluateTemplateApps(templatesPhaseAExpect(), obs, testCommits())
+			results, err := evaluateTemplateApps(templatesPhaseAExpect(), obs, testCommits(), testCharts())
 			if err == nil || !strings.Contains(err.Error(), c.app) || !strings.Contains(err.Error(), c.mustSay) {
 				t.Fatalf("want a refusal naming %q and %q, got %v", c.app, c.mustSay, err)
 			}
@@ -263,10 +278,10 @@ func TestTemplatesPhaseARefusals(t *testing.T) {
 		})
 	}
 	// No resolved commit is not a pass.
-	if _, err := evaluateTemplateApps(templatesPhaseAExpect(), greenPhaseA(), map[string]string{}); err == nil {
+	if _, err := evaluateTemplateApps(templatesPhaseAExpect(), greenPhaseA(), map[string]string{}, testCharts()); err == nil {
 		t.Error("with no resolved commit the revision check passed anyway")
 	}
-	if _, err := evaluateTemplateApps(nil, greenPhaseA(), testCommits()); err == nil {
+	if _, err := evaluateTemplateApps(nil, greenPhaseA(), testCommits(), testCharts()); err == nil {
 		t.Error("an empty expected set passed")
 	}
 }
@@ -276,11 +291,11 @@ func TestTemplatesPhaseBAllowsAnEmptyAddonsButNothingElse(t *testing.T) {
 		return templateAppObserved{Health: "Healthy", Sync: "Synced", Revision: shaApps, RepoURL: starterAppsRepo, TargetRevision: "HEAD", Resources: n}
 	}
 	obs := map[string]templateAppObserved{"apps": g(3), "apps-dev": g(3), "apps-staging": g(3), "addons": g(0)}
-	if _, err := evaluateTemplateApps(templatesPhaseBExpect(), obs, testCommits()); err != nil {
+	if _, err := evaluateTemplateApps(templatesPhaseBExpect(), obs, testCommits(), testCharts()); err != nil {
 		t.Fatalf("a converged phase B failed: %v", err)
 	}
 	obs["apps-dev"] = g(0)
-	if _, err := evaluateTemplateApps(templatesPhaseBExpect(), obs, testCommits()); err == nil || !strings.Contains(err.Error(), "apps-dev") {
+	if _, err := evaluateTemplateApps(templatesPhaseBExpect(), obs, testCommits(), testCharts()); err == nil || !strings.Contains(err.Error(), "apps-dev") {
 		t.Errorf("an empty overlay passed: %v", err)
 	}
 	// Still pointing at starter-ai: the re-point never happened.
@@ -288,7 +303,7 @@ func TestTemplatesPhaseBAllowsAnEmptyAddonsButNothingElse(t *testing.T) {
 	stale := g(2)
 	stale.RepoURL, stale.Revision = starterAIRepo, shaAI
 	obs["apps"] = stale
-	if _, err := evaluateTemplateApps(templatesPhaseBExpect(), obs, testCommits()); err == nil {
+	if _, err := evaluateTemplateApps(templatesPhaseBExpect(), obs, testCommits(), testCharts()); err == nil {
 		t.Error("a root still syncing starter-ai passed phase B")
 	}
 }
@@ -358,7 +373,7 @@ func TestTemplatesSummaryLifecycle(t *testing.T) {
 		}
 	}
 	obs := greenPhaseA()
-	resA, err := evaluateTemplateApps(templatesPhaseAExpect(), obs, testCommits())
+	resA, err := evaluateTemplateApps(templatesPhaseAExpect(), obs, testCommits(), testCharts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +390,7 @@ func TestTemplatesSummaryLifecycle(t *testing.T) {
 	}
 	// A failed chart row fails only the chart.
 	obs["addon-starter-chart"] = templateAppObserved{Health: "Degraded", Sync: "Synced", Revision: shaChart, RepoURL: starterChartRepo, Resources: 3}
-	res2, err2 := evaluateTemplateApps(templatesPhaseAExpect(), obs, testCommits())
+	res2, err2 := evaluateTemplateApps(templatesPhaseAExpect(), obs, testCommits(), testCharts())
 	s2 := newTemplatesSummary("hetzner", "c", testCommits())
 	s2.record(res2, err2, now)
 	if s2.template("chart").Verdict != templateFail || s2.template("ai").Verdict != templatePass {
