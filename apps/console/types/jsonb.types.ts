@@ -919,7 +919,8 @@ export type DriftNormalizedReason =
 	| "undeclared_collection"
 	| "computed_attribute"
 	| "sensitivity_only"
-	| "assignment_back_reference";
+	| "assignment_back_reference"
+	| "inapplicable_field";
 
 // One resource whose every refresh delta was representational — a difference in how the
 // provider encodes a value, not a difference in the infrastructure.
