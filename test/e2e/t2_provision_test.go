@@ -146,6 +146,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Fatalf("#4113 starter templates: %v", tmplErr)
 	}
 	var tmplCommits map[string]string
+	var tmplCharts map[string]ociChartPin
 	var reposEnabled bool
 	var reposErr error
 	if tmplOn {
@@ -157,6 +158,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		}
 		t.Logf("#4113: starter templates ENABLED — apps %s, chart %s, ai %s (HEAD, resolved anonymously); the A0.6 repo inputs are SUPERSEDED on this dimension",
 			tmplCommits[starterAppsRepo], tmplCommits[starterChartRepo], tmplCommits[starterAIRepo])
+		// The OCI charts the AI template pins, read from the template at that commit and resolved to
+		// manifest digests against their registries — ArgoCD 3.x reports the digest as the synced
+		// revision, and the expectation must not come from the cluster it judges.
+		pctx, pcancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		tmplCharts, tmplErr = resolveTemplateChartPins(pctx, fetchTemplateFileRaw, registryDigestResolver{}, templatesPhaseAExpect(), tmplCommits)
+		pcancel()
+		if tmplErr != nil {
+			t.Fatalf("#4113 starter templates: resolve the AI template's OCI chart pins before any spend: %v", tmplErr)
+		}
+		for app, pin := range tmplCharts {
+			t.Logf("#4113: %s pins %s:%s → %s (%s)", app, pin.RepoURL, pin.Tag, pin.Digest, pin.File)
+		}
 	} else {
 		reposEnabled, reposErr = repos.decide()
 	}
@@ -878,6 +891,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if tmplOn {
 		runT2Templates(t, ctx, cp, kc, templatesParams{
 			commits:     tmplCommits,
+			charts:      tmplCharts,
 			phaseAJobID: jobID,
 			phaseA:      full,
 			graph:       a05.jobGraph(),
