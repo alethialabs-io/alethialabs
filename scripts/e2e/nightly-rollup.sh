@@ -741,6 +741,11 @@ derive() {
 	# `e2e nightly: aws RED ()` — a title that dedups every unknown dimension onto ONE issue, which
 	# is the collision the refusal exists to prevent, wearing a different name (#4084).
 	dim_label="$(dimension_label "$dim")" || return $?
+	# The TITLE's label (red_label, #5153): `fabric-demo` when the fabric demo rode this run, so a
+	# fabric-gate red neither dedups onto nor contests the base dimension's cell. E2E_FABRIC_DEMO is
+	# the same value the T2 step hands the harness as ALETHIA_E2E_FABRIC_DEMO.
+	local red_lbl
+	red_lbl="$(red_label "$dim" "${E2E_FABRIC_DEMO:-}")" || return $?
 
 	# The coverage issue deliberately gets NO dimension suffix. It reports which clouds are unwired,
 	# which is a property of the repo's gate variables and identical on both crons; suffixing it would
@@ -785,7 +790,7 @@ derive() {
 		if [ "$cloud" = "matrix" ] && [ "$matrix_red" = "unattributed" ]; then
 			# Distinct TITLE, because it is a distinct claim and the title is the dedup key. Filing
 			# this one under the "no per-leg proof" title would re-open #2512's lie under a new number.
-			title="e2e nightly: matrix RED (${dim_label} · every leg PASSED)"
+			title="e2e nightly: matrix RED (${red_lbl} · every leg PASSED)"
 			printf '%s\n' "$title" >"$out/issue-red-${cloud}.title"
 			{
 				printf '%s\n\n' "The T2 real-cloud **${dim_label}** nightly matrix went **RED**, but every leg that ran left a proof bundle and every one of them says **PASS** (\`outcome: success\`):${passes}."
@@ -797,7 +802,7 @@ derive() {
 			continue
 		fi
 		if [ "$cloud" = "matrix" ] && [ -n "$matrix_red" ]; then
-			title="e2e nightly: matrix RED (${dim_label} · no per-leg proof)"
+			title="e2e nightly: matrix RED (${red_lbl} · no per-leg proof)"
 			printf '%s\n' "$title" >"$out/issue-red-${cloud}.title"
 			{
 				printf '%s\n\n' "The T2 real-cloud **${dim_label}** nightly matrix went **RED** without producing a per-leg proof bundle for any cloud, so no single cloud can be named."
@@ -816,7 +821,7 @@ derive() {
 		# this cloud's cell in the programme grid: the maintainer's ruling is that a ceiling is
 		# still a FAIL, so a red job must not leave a cell reading "proven" (#2512).
 		if in_list "$post_capture" "$cloud"; then
-			title="e2e nightly: ${cloud} RED (${dim_label} · after proof capture)"
+			title="e2e nightly: ${cloud} RED (${red_lbl} · after proof capture)"
 			printf '%s\n' "$title" >"$out/issue-red-${cloud}.title"
 			{
 				printf '%s\n\n' "The T2 real-cloud nightly went **RED** for \`${cloud}\` on the **${dim_label}** dimension **after** the proof capture."
@@ -828,11 +833,14 @@ derive() {
 			} >"$out/issue-red-${cloud}.md"
 			continue
 		fi
-		title="e2e nightly: ${cloud} RED (${dim_label})"
+		title="e2e nightly: ${cloud} RED (${red_lbl})"
 		printf '%s\n' "$title" >"$out/issue-red-${cloud}.title"
 		{
 			printf '%s\n\n' "The T2 real-cloud nightly went **RED** for \`${cloud}\` on the **${dim_label}** dimension."
 			printf '%s\n\n' "Run: ${RUN_URL:-}"
+			if [ "$red_lbl" = "$FABRIC_RED_LABEL" ]; then
+				printf '%s\n\n' "**The fabric demo (#845) rode this run**, so it is titled \`(${FABRIC_RED_LABEL})\` rather than \`(${dim_label})\` (#5153): a red here may be the fabric placement gate alone, with every **${dim_label}** assertion passing. Check the \`fabric-demo\` line of the bundle's VERDICT.txt and the test log before reading it as a ${dim_label} failure. This title contests no programme cell."
+			fi
 			case "$dim" in
 			full) printf '%s\n\n' "The full bar runs on a \`workflow_dispatch\` with \`full_bar: true\` (no cron schedules it — the weekly one was removed as unpriced on four of five clouds, #2385) with \`ALETHIA_E2E_MAX_CONFIG=1\` + \`ALETHIA_E2E_ALL_ADDONS=1\` — it provisions the whole 11-kind surface, so it fails at stages the floor never reaches. Do NOT read it as the floor re-running." ;;
 			*) printf '%s\n\n' "The floor is the nightly \`17 3 * * *\` smoke — base provision + ArgoCD Healthy+Synced. It never provisions the max-config surface, so a full-bar failure is a separate issue with a separate title." ;;
@@ -1342,6 +1350,23 @@ run_self_test() {
 	_a "e2e nightly: aws RED (cli-demo)" "$t_cli" "a cli-demo red is titled (cli-demo), not (floor) (#4086)"
 	_a "differ" "$([ "$t_cli" != "$t_floor" ] && echo differ || echo COLLIDE)" \
 		"a cli-demo red cannot dedup onto the floor's issue"
+
+	# …and the fabric demo (#5153), which is a SCENARIO riding a dimension, not a dimension: run
+	# 36648775773 went red only in the fabric gate after every floor assertion passed, and was filed
+	# "gcp RED (floor)", contesting a proven floor cell.
+	local t_fab
+	c="$tmp/dim-fabric"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
+	write_jobs "$c/jobs.json" aws
+	E2E_FABRIC_DEMO=1 _derive "$c" >/dev/null
+	t_fab="$(cat "$c/out/issue-red-aws.title")"
+	_a "e2e nightly: aws RED (fabric-demo)" "$t_fab" "a fabric-demo floor red is titled (fabric-demo), not (floor) (#5153)"
+	_a "differ" "$([ "$t_fab" != "$t_floor" ] && echo differ || echo COLLIDE)" \
+		"a fabric-demo red cannot dedup onto the floor's issue"
+	_a "yes" "$(grep -q 'fabric demo (#845) rode this run' "$c/out/issue-red-aws.md" && echo yes || echo no)" \
+		"the fabric-demo red's body names the base dimension and the fabric gate"
+	_a "floor" "$(. "$c/out/state.env"; echo "$DIMENSION_LABEL")" \
+		"the DIMENSION label is unchanged — only the issue title moves"
 
 	# …and a dimension nobody has heard of must STOP the filer, not render `RED ()`. That title is a
 	# dedup key too, so every unknown dimension would collide onto one issue — the same failure in a

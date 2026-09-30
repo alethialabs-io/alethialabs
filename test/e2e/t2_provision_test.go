@@ -201,8 +201,8 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	}
 	switch {
 	case keylessOn:
-		t.Logf("#1511: keyless DB auth ENABLED — %s × %s, holding a session open for %s to prove the token mints per connection",
-			provider, keyless.engine, keyless.dwell)
+		t.Logf("#1511: keyless DB auth ENABLED — %s × %s (version %q, class %q%s), holding a session open for %s to prove the token mints per connection",
+			provider, keyless.engine, keyless.engineVersion, keyless.instanceClass, keylessDefaultedNote(keyless.defaulted), keyless.dwell)
 	case keylessBlocked != "":
 		t.Logf("#1511: keyless DB auth BLOCKED on %s × %s — %s", provider, keyless.engine, keylessBlocked)
 	default:
@@ -226,6 +226,20 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Logf("#1047: cross-account keyless registry EXCLUDED on %s — %s", provider, registryBlocked)
 	default:
 		t.Logf("#1047: cross-account keyless registry SKIPPED — set %s (+ its target vars) to enable.", envXacctRegistry)
+	}
+
+	// The three riders against the cli-demo dimension, before any spend: each layers onto the seeded
+	// DEPLOY snapshot, which a CLI-created DEPLOY never has (cliDemoRiderDecision).
+	riderNotes, riderErr := cliDemoRiderDecision(cliDemo != nil, map[string]bool{
+		"#1511 keyless DB":             keylessOn,
+		"#1268 cross-account secrets":  xacctOn,
+		"#1047 cross-account registry": registryOn,
+	})
+	for _, n := range riderNotes {
+		t.Log(n)
+	}
+	if riderErr != nil {
+		t.Fatal(riderErr)
 	}
 
 	root := t2RepoRoot(t)

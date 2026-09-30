@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 )
 
@@ -100,12 +101,14 @@ func TestKeylessDecide_ExcludedCloudSkipsWithTheReason(t *testing.T) {
 	}
 }
 
-// TestKeylessDecide_MissingConfigFailsBeforeSpend: a partial configuration is a LOUD error naming
-// every missing key, raised before anything provisions. The alternative — discovering a missing
-// instance class when `tofu apply` rejects it — costs minutes and money per leg.
+// TestKeylessDecide_MissingConfigFailsBeforeSpend: a partial MySQL configuration is a LOUD error
+// naming every missing key, raised before anything provisions. The alternative — discovering a
+// missing instance class when `tofu apply` rejects it — costs minutes and money per leg. MySQL has no
+// per-cloud default (keylessPostgresDefaults is Postgres-only), so the refusal is still reachable.
 func TestKeylessDecide_MissingConfigFailsBeforeSpend(t *testing.T) {
 	for _, missing := range []string{envKeylessDBVersion, envKeylessDBClass} {
 		env := fullyConfigured()
+		env[envKeylessDBEngine] = keylessEngineMySQL
 		env[missing] = ""
 		keylessTestEnv(t, env)
 		_, _, err := keylessDBFromEnv("aws").decide()
@@ -115,6 +118,53 @@ func TestKeylessDecide_MissingConfigFailsBeforeSpend(t *testing.T) {
 		if !strings.Contains(err.Error(), missing) {
 			t.Errorf("the error must name %s, got %v", missing, err)
 		}
+	}
+}
+
+// TestKeylessDecide_PostgresDefaultsPerCloud: the `keyless_db: postgres` dispatch input runs with no
+// version or class variable at all — that is what lets the proof ride a floor night — and each managed
+// cloud gets a value in ITS OWN grammar. The per-cloud values are asserted by source, not restated:
+// gcp/azure must be max-config's shape, aws the provisioner's own Aurora default on the template's
+// serverless class (the floor's cost ceiling would price max-config's provisioned r6g.large).
+func TestKeylessDecide_PostgresDefaultsPerCloud(t *testing.T) {
+	for _, provider := range []string{"aws", "gcp", "azure"} {
+		t.Run(provider, func(t *testing.T) {
+			env := fullyConfigured()
+			env[envKeylessDBVersion] = ""
+			env[envKeylessDBClass] = ""
+			keylessTestEnv(t, env)
+			c := keylessDBFromEnv(provider)
+			run, blocked, err := c.decide()
+			if err != nil || !run || blocked != "" {
+				t.Fatalf("postgres with no version/class vars must run on %s, got run=%v blocked=%q err=%v", provider, run, blocked, err)
+			}
+			if !c.defaulted {
+				t.Error("a defaulted shape must be flagged so the run log names it")
+			}
+			wantV, wantC := maxConfigPostgresShape(provider)
+			if provider == "aws" {
+				wantV, wantC = cloud.DefaultAuroraPostgresVersion, "db.serverless"
+			}
+			if c.engineVersion != wantV || c.instanceClass != wantC {
+				t.Errorf("%s default = (%q, %q), want (%q, %q)", provider, c.engineVersion, c.instanceClass, wantV, wantC)
+			}
+		})
+	}
+}
+
+// TestKeylessDecide_VariablesBeatThePostgresDefault: a variable a maintainer set is never overridden
+// by the default, and a per-cloud sibling still wins over the base name.
+func TestKeylessDecide_VariablesBeatThePostgresDefault(t *testing.T) {
+	env := fullyConfigured()
+	env[envKeylessDBClass] = ""
+	env[envKeylessDBVersion+"_GCP"] = "17"
+	keylessTestEnv(t, env)
+	c := keylessDBFromEnv("gcp")
+	if c.engineVersion != "17" {
+		t.Errorf("the per-cloud version variable must win, got %q", c.engineVersion)
+	}
+	if _, wantC := maxConfigPostgresShape("gcp"); c.instanceClass != wantC {
+		t.Errorf("only the UNSET field defaults: class = %q, want %q", c.instanceClass, wantC)
 	}
 }
 
@@ -579,5 +629,16 @@ func TestHCLResourceTopLevelAttrs_ValuesAndNesting(t *testing.T) {
 	}
 	if got := attrs["z"]; len(got) != 1 {
 		t.Errorf("z = %v — a brace inside an interpolated string must not end the block early", got)
+	}
+}
+
+// TestKeylessDefaultedNote: the run log says when the bought shape came from the default rather than
+// a variable, and says nothing extra when a variable chose it.
+func TestKeylessDefaultedNote(t *testing.T) {
+	if got := keylessDefaultedNote(true); !strings.Contains(got, "no variable set it") {
+		t.Errorf("a defaulted shape must be named as such, got %q", got)
+	}
+	if got := keylessDefaultedNote(false); got != "" {
+		t.Errorf("a variable-chosen shape needs no note, got %q", got)
 	}
 }
