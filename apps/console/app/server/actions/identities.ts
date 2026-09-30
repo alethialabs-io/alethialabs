@@ -23,8 +23,13 @@ function isGitProvider(p: string): p is PublicGitProvider {
 	return isEnumMember(p, GIT_PROVIDERS);
 }
 
-/** Git providers the current user has linked (from Better Auth accounts). */
+/**
+ * Git providers the current user has linked (from Better Auth accounts). Resolves the session
+ * first: listUserAccounts would refuse an anonymous caller too, but only by THROWING into the catch
+ * below — a refusal that read as "nothing linked" and that no check could see (#5219).
+ */
 export async function getLinkedProviders(): Promise<PublicGitProvider[]> {
+	if (!(await getOwner())) return [];
 	try {
 		const accounts = await auth.api.listUserAccounts({ headers: await headers() });
 		const set = new Set<PublicGitProvider>();

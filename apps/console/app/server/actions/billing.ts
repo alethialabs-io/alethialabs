@@ -76,6 +76,7 @@ import {
 	queryRunningJobs,
 	type ResourceCounts,
 } from "@/lib/queries/usage-counts";
+import { requireOwner } from "@/lib/auth/owner";
 import { authorize, authorizeInOrg, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import type {
@@ -240,15 +241,21 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 }
 
 /** Live prices for every plan (Stripe-authoritative, catalog fallback) — the buy-flow's
- *  single fetch, consumed client-side via useLivePlanPrice. Any caller. */
+ *  single fetch, consumed client-side via useLivePlanPrice. Any SIGNED-IN caller: the prices are
+ *  public, but each call is three Stripe price reads (react `cache` is per-request only), so an
+ *  anonymous caller could spend the account's Stripe rate limit that checkout depends on (#5219).
+ *  Every consumer renders inside the app, and the hook falls back to the catalog on a refusal. */
 export async function getLivePlanPrices(): Promise<LivePlanPriceMap> {
+	await requireOwner();
 	return getAllPlanPrices();
 }
 
 /** Live prices for every standalone AI tier (Stripe-authoritative, catalog fallback) —
  *  consumed client-side via useLiveAiPrice. Degrades to the placeholder catalog prices when
- *  the AI Stripe prices aren't configured (pre-cutover). Any caller. */
+ *  the AI Stripe prices aren't configured (pre-cutover). Any signed-in caller. */
 export async function getLiveAiPrices(): Promise<LiveAiPriceMap> {
+	// Signed-in only, for the same Stripe-rate-limit reason as getLivePlanPrices.
+	await requireOwner();
 	return getAllAiPrices();
 }
 

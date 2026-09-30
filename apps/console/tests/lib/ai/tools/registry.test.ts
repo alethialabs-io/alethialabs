@@ -23,7 +23,7 @@ vi.mock("@/app/server/actions/cloud-resources");
 vi.mock("@/app/server/actions/clusters");
 vi.mock("@/app/server/actions/connectors");
 vi.mock("@/app/server/actions/jobs");
-vi.mock("@/app/server/actions/pricing");
+vi.mock("@/lib/pricing/region-prices");
 vi.mock("@/app/server/actions/projects");
 vi.mock("@/app/server/actions/runners");
 vi.mock("@/app/server/actions/scanner");

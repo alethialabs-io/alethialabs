@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { RegionPrices } from "@/app/server/actions/pricing";
+import type { RegionPrices } from "@/lib/pricing/region-prices";
 
 const HOURS_PER_MONTH = 730;
 

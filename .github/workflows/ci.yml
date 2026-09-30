@@ -1259,9 +1259,12 @@ jobs:
       - name: Guard — revalidatePath targets resolve to real routes
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -C apps/console run check:revalidate-paths
-      - name: Guard — no unauthorized "use server" action files
+      - name: Guard — every "use server" export establishes its caller
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -C apps/console run check:action-boundary
+      - name: ...and that guard is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node apps/console/scripts/check-action-boundary.mjs --self-test
       - name: Marketing routes ⇄ reservation ⇄ Caddy in sync
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -C apps/console run check:marketing-routes
