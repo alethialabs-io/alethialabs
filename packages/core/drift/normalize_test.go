@@ -922,7 +922,7 @@ func TestWeakestReasonIsReported(t *testing.T) {
 // only ever understate a dismissal. This fails the day someone adds one and forgets.
 func TestReasonStrengthCoversEveryReason(t *testing.T) {
 	for _, r := range []NormalizedReason{ReasonEmptyCollection, ReasonUndeclaredCollection, ReasonComputedAttribute,
-		ReasonSensitivityOnly, ReasonAssignmentBackReference} {
+		ReasonSensitivityOnly, ReasonAssignmentBackReference, ReasonInapplicableField} {
 		if reasonStrength(r) == 0 {
 			t.Errorf("reason %q has no strength rank — it would sort below every real one", r)
 		}
@@ -959,6 +959,7 @@ func TestSchemasNeverIncreaseDrift(t *testing.T) {
 		"in sync golden": loadPlan(t, "in_sync.json"),
 		"bucket residue": planWithConfig(nil, bucketTimestampDrift()),
 		"hetzner fabric": loadPlan(t, "hetzner_fabric_refresh.json"),
+		"aws fabric":     loadPlan(t, "aws_fabric_refresh.json"),
 	}
 	for name, plan := range plans {
 		t.Run(name, func(t *testing.T) {
@@ -976,12 +977,14 @@ func TestSchemasNeverIncreaseDrift(t *testing.T) {
 					}
 				}
 			}
-			// And the real, captured provider schemas the hetzner fixture was produced under,
-			// which carry the sensitive and nested shapes the permissive one does not.
-			got := AnalyzeWithSchemas(plan, loadSchemas(t, hetznerSchemas))
-			if got.Drifted > base.Drifted || got.Drifted+got.Normalized != base.Drifted+base.Normalized {
-				t.Fatalf("hetzner schemas: drifted %d -> %d, examined %d -> %d", base.Drifted, got.Drifted,
-					base.Drifted+base.Normalized, got.Drifted+got.Normalized)
+			// And the real, captured provider schemas the hetzner and aws fixtures were produced
+			// under, which carry the sensitive and nested shapes the permissive one does not.
+			for _, doc := range []string{hetznerSchemas, awsSchemas} {
+				got := AnalyzeWithSchemas(plan, loadSchemas(t, doc))
+				if got.Drifted > base.Drifted || got.Drifted+got.Normalized != base.Drifted+base.Normalized {
+					t.Fatalf("%s: drifted %d -> %d, examined %d -> %d", doc, base.Drifted, got.Drifted,
+						base.Drifted+base.Normalized, got.Drifted+got.Normalized)
+				}
 			}
 		})
 	}
