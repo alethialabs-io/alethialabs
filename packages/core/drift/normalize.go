@@ -38,8 +38,14 @@ const (
 	ReasonSensitivityOnly NormalizedReason = "sensitivity_only"
 	// ReasonAssignmentBackReference — the delta on this resource is exactly the reverse edge
 	// of an assignment ANOTHER managed resource in the same state declares and still holds
-	// (a primary IP or firewall reporting the server that attached it). See backref.go.
+	// (a primary IP or firewall reporting the server that attached it; an IAM role, security
+	// group, route table, EIP or default NACL reporting the attachment resources that populate
+	// it). See backref.go and awsbackref.go.
 	ReasonAssignmentBackReference NormalizedReason = "assignment_back_reference"
+	// ReasonInapplicableField — a field the cloud API ignores for this element moved from null to
+	// its zero value: icmp_type/icmp_code on a network ACL rule whose protocol is not ICMP. No
+	// traffic decision can differ. See awsInapplicableRoots (awsbackref.go).
+	ReasonInapplicableField NormalizedReason = "inapplicable_field"
 )
 
 // reasonStrength ranks how firm each dismissal is, so examine can report the WEAKEST
@@ -47,9 +53,9 @@ const (
 //
 // The ordering is an argument, not a preference:
 //
-//   - empty_collection (5) needs no external evidence at all. It is a cardinality
+//   - empty_collection (6) needs no external evidence at all. It is a cardinality
 //     identity — null and [] both denote ∅ — so it is true by construction.
-//   - sensitivity_only (4) is also an identity — every value on both sides is equal — but
+//   - sensitivity_only (5) is also an identity — every value on both sides is equal — but
 //     it rests on facts about OpenTofu rather than none: that a resource whose values
 //     are equal and whose types are equal (both sides are decoded against the same schema)
 //     can only differ in its marks. That is how OpenTofu's drift comparison is written
@@ -57,30 +63,35 @@ const (
 //     form (schemaMarksOnly) also reads the provider schema, as computed_attribute does;
 //     the ranking never has to choose between them, because a sensitivity_only verdict is
 //     only ever reached with zero differing leaves and so is never combined with another.
-//   - computed_attribute (3) rests on ONE fact read from the provider's own published
+//   - computed_attribute (4) rests on ONE fact read from the provider's own published
 //     schema: the attribute has no config path into it. Firm, but it is a fact about a
 //     document we fetched, and a wrong or stale schema would weaken it.
-//   - undeclared_collection (2) rests on the absence of a config expression PLUS an
+//   - undeclared_collection (3) rests on the absence of a config expression PLUS an
 //     inference about how the provider's Read behaved at create time. Two links, the
 //     second unverifiable from the plan.
-//   - assignment_back_reference (1) rests on a HAND-WRITTEN claim about one provider's API
-//     (that it reports an assignment made from the server back on the target), verified
-//     against two views of state. The verification is strong, but the claim it verifies is
-//     ours, not the provider's, so it ranks weakest.
+//   - assignment_back_reference (2) rests on a HAND-WRITTEN claim about a provider's API
+//     (that it reports an assignment made from the owner or an attachment resource back on
+//     the target), verified against two views of state. The verification is strong, but the
+//     claim it verifies is ours, not the provider's.
+//   - inapplicable_field (1) rests on a HAND-WRITTEN claim about the cloud API's semantics
+//     (that ICMP type/code mean nothing on a non-ICMP rule) and on nothing the state can
+//     verify, so it ranks weakest.
 //
 // An unranked value sorts as the weakest possible, so adding a reason and forgetting to
 // rank it can only understate a dismissal, never overstate one.
 func reasonStrength(r NormalizedReason) int {
 	switch r {
 	case ReasonEmptyCollection:
-		return 5
+		return 6
 	case ReasonSensitivityOnly:
-		return 4
+		return 5
 	case ReasonComputedAttribute:
-		return 3
+		return 4
 	case ReasonUndeclaredCollection:
-		return 2
+		return 3
 	case ReasonAssignmentBackReference:
+		return 2
+	case ReasonInapplicableField:
 		return 1
 	default:
 		return 0
@@ -183,11 +194,12 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex, tr
 	// the verdicts it reached before — which is what keeps the azure fixture pinned.
 	attrSchema, typeFound := schemas[schemaKey{provider: rc.ProviderName, resourceType: rc.Type}]
 	ev := evidence{
-		declared:    declared,
-		configKnown: configKnown,
-		attrSchema:  attrSchema,
-		schemaKnown: schemas != nil && typeFound,
-		backRefs:    backReferenceRoots(rc, before, after, st),
+		declared:     declared,
+		configKnown:  configKnown,
+		attrSchema:   attrSchema,
+		schemaKnown:  schemas != nil && typeFound,
+		backRefs:     backReferenceRoots(rc, before, after, st),
+		inapplicable: awsInapplicableRoots(rc, before, after),
 	}
 
 	// Every differing leaf path, computed BEFORE the dismissal loop so the drift branch can
@@ -286,9 +298,13 @@ func (d leafDelta) normalizing(ev evidence) (NormalizedReason, bool) {
 	beforeNull := !d.beforeSet || d.before == nil
 	afterNull := !d.afterSet || d.after == nil
 
-	// The back-reference tier is tried FIRST because it is the weakest justification, and a
-	// leaf that could be dismissed more than one way must carry the weaker one. Its roots are
-	// verified per resource by backReferenceRoots, so this is a lookup, not a judgement.
+	// The inapplicable-field and back-reference tiers are tried FIRST, weakest first, because a
+	// leaf that could be dismissed more than one way must carry the weaker one. Their roots are
+	// verified per resource (awsInapplicableRoots, backReferenceRoots), so these are lookups,
+	// not judgements.
+	if _, ok := ev.inapplicable[d.root]; ok && !d.sensitive {
+		return ReasonInapplicableField, true
+	}
 	if _, ok := ev.backRefs[d.root]; ok && !d.sensitive {
 		return ReasonAssignmentBackReference, true
 	}
@@ -370,6 +386,10 @@ type evidence struct {
 	// verified as an assignment back-reference. Nil — the tier does not fire — without a
 	// prior_state, or for any resource that tier does not recognise.
 	backRefs map[string]struct{}
+	// inapplicable is the set of top-level attributes whose whole delta awsInapplicableRoots
+	// verified as a null -> 0 move of a field the API ignores for that element. Nil for any
+	// resource that tier does not recognise.
+	inapplicable map[string]struct{}
 }
 
 // isCollection reports whether v is a list or a map. Scalars are never collections.

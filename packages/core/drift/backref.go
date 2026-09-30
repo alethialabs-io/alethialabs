@@ -57,13 +57,21 @@ import (
 // Fail-closed like every other tier: no prior_state in the plan, an owner absent from either view,
 // an id that is not a plain integer, a provider that is not hetznercloud/hcloud, or any value shape
 // this does not recognise — and the rule does not fire, so the delta stays drift.
+//
+// The same tier has a second provider, hashicorp/aws, whose shapes are different enough to live in
+// their own file (awsbackref.go): there the reverse edge is written by a separate ATTACHMENT resource
+// (a policy attachment, a security-group rule, a route, a NAT gateway) rather than by a server.
 
 // stateObject is one resource instance as a state view holds it.
 type stateObject struct {
 	mode     tfjson.ResourceMode
 	typ      string
 	provider string
-	values   map[string]any
+	// module is the module instance address the resource lives in ("" for the root module,
+	// "module.eks[0].module.eks" for a nested one). The aws tier (awsbackref.go) only accepts
+	// a sibling from the SAME module instance as the resource it vouches for.
+	module string
+	values map[string]any
 }
 
 // stateIndex holds the two views of state a back-reference must agree with.
@@ -94,7 +102,7 @@ func indexState(plan *tfjson.Plan) *stateIndex {
 			if r == nil || r.Address == "" {
 				continue
 			}
-			obj := stateObject{mode: r.Mode, typ: r.Type, provider: r.ProviderName, values: r.AttributeValues}
+			obj := stateObject{mode: r.Mode, typ: r.Type, provider: r.ProviderName, module: m.Address, values: r.AttributeValues}
 			idx.refreshed[r.Address] = obj
 			idx.recorded[r.Address] = obj
 		}
@@ -116,7 +124,7 @@ func indexState(plan *tfjson.Plan) *stateIndex {
 			continue
 		}
 		idx.recorded[rc.Address] = stateObject{
-			mode: tfjson.ManagedResourceMode, typ: rc.Type, provider: rc.ProviderName, values: before,
+			mode: tfjson.ManagedResourceMode, typ: rc.Type, provider: rc.ProviderName, module: rc.ModuleAddress, values: before,
 		}
 	}
 	return idx
@@ -129,15 +137,20 @@ const hcloudProviderSuffix = "/hetznercloud/hcloud"
 // assignment back-reference, or nil. Only the attributes returned here may be dismissed on
 // this tier, and only when examine finds every other differing leaf dismissible too.
 func backReferenceRoots(rc *tfjson.ResourceChange, before, after map[string]any, st *stateIndex) map[string]struct{} {
-	if st == nil || !strings.HasSuffix(rc.ProviderName, hcloudProviderSuffix) {
+	if st == nil {
 		return nil
 	}
 	var roots []string
-	switch rc.Type {
-	case "hcloud_primary_ip":
-		roots = hcloudPrimaryIPAssignment(rc.ProviderName, before, after, st)
-	case "hcloud_firewall":
-		roots = hcloudFirewallApplyTo(rc.ProviderName, before, after, st)
+	switch {
+	case strings.HasSuffix(rc.ProviderName, hcloudProviderSuffix):
+		switch rc.Type {
+		case "hcloud_primary_ip":
+			roots = hcloudPrimaryIPAssignment(rc.ProviderName, before, after, st)
+		case "hcloud_firewall":
+			roots = hcloudFirewallApplyTo(rc.ProviderName, before, after, st)
+		}
+	case strings.HasSuffix(rc.ProviderName, awsProviderSuffix):
+		roots = awsBackReferenceRoots(rc, before, after, st)
 	}
 	if len(roots) == 0 {
 		return nil
