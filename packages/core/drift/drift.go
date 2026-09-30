@@ -149,6 +149,7 @@ func AnalyzeWithSchemas(plan *tfjson.Plan, schemas *tfjson.ProviderSchemas) *Pos
 	}
 	cfg := indexConfig(plan)
 	schemaIdx := indexSchemas(schemas)
+	stateIdx := indexState(plan)
 	for _, rc := range plan.ResourceDrift {
 		if rc == nil || rc.Change == nil {
 			continue
@@ -160,7 +161,7 @@ func AnalyzeWithSchemas(plan *tfjson.Plan, schemas *tfjson.ProviderSchemas) *Pos
 		if rc.Change.Actions.NoOp() {
 			continue
 		}
-		v := examine(rc, cfg, schemaIdx)
+		v := examine(rc, cfg, schemaIdx, stateIdx)
 		if !v.Drift {
 			p.NormalizedDetails = append(p.NormalizedDetails, NormalizedResource{
 				Address:    rc.Address,
