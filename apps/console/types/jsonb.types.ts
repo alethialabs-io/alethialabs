@@ -912,7 +912,9 @@ export interface SecurityReport {
 export type DriftNormalizedReason =
 	| "empty_collection"
 	| "undeclared_collection"
-	| "computed_attribute";
+	| "computed_attribute"
+	| "sensitivity_only"
+	| "assignment_back_reference";
 
 // One resource whose every refresh delta was representational — a difference in how the
 // provider encodes a value, not a difference in the infrastructure.
