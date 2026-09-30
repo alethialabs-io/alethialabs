@@ -359,3 +359,31 @@ describe("PUT /api/jobs/[id]/status — #841 split drift", () => {
 		expect(maybeAutoHeal).toHaveBeenCalledWith("proj-1", "env-1");
 	});
 });
+
+describe("PUT /api/jobs/[id]/status — a lost claim answers 409 (#5162)", () => {
+	/** Makes the update_job_status RPC throw the way drizzle does: a wrapper whose `cause` is the
+	 *  postgres.js error carrying the SQLSTATE. */
+	function rpcThrows(code: string) {
+		const driverError = Object.assign(
+			new Error("Job not found or not owned by this runner"),
+			{ code },
+		);
+		const db = {
+			execute: () =>
+				Promise.reject(new Error("Failed query: select update_job_status(...)", { cause: driverError })),
+		};
+		vi.mocked(getServiceDb).mockReturnValue(db as never);
+	}
+
+	it("answers 409 when the RPC refuses the post for ownership (SQLSTATE AL409)", async () => {
+		rpcThrows("AL409");
+		const res = await put("job-1", { status: "PROCESSING", execution_metadata: { cluster_name: "c" } });
+		expect(res.status).toBe(409);
+		expect(emitAlertEventSafe).not.toHaveBeenCalled();
+	});
+
+	it("keeps any OTHER database failure a 500 (a transient error the runner may retry)", async () => {
+		rpcThrows("57P01");
+		expect((await put("job-1", { status: "SUCCESS" })).status).toBe(500);
+	});
+});

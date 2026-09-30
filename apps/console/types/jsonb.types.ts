@@ -812,6 +812,11 @@ export interface ExecutionMetadata {
 	// reconcile). The status route raises a `system.project.orphan_risk` alert on this.
 	orphan_risk?: boolean;
 	orphan_risk_reason?: string;
+	// DEPLOY jobs (#5162): ISO timestamp the runner posts the moment its stage reaches `tofu apply`.
+	// recover_stale_jobs never requeues a job carrying it — a retry would apply a second time — and
+	// fails it for reconciliation instead, stamping recovery_refused_requeue_at and orphan_risk.
+	apply_started_at?: string;
+	recovery_refused_requeue_at?: string;
 	// DEPLOY + DETECT_DRIFT jobs (#574): GitOps wiring outcome + apps-Application health
 	// snapshot. On a wiring hard-fail the runner posts a PARTIAL result carrying which step
 	// died; absent on pre-#574 jobs. Mirrors the Go `argocd.GitopsStatus`.

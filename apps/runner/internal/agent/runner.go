@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -350,6 +351,17 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 	fmt.Fprintln(stdoutLogger, "▸ Job claimed — preparing workspace…")
 
 	if err := w.api.UpdateJobStatus(job.ID, "PROCESSING", "", nil); err != nil {
+		// A REFUSED claim is not a transient failure: the console already gave this job to someone
+		// else (stale-job recovery requeued it), so running it here would be a second, unowned run
+		// (#5162). Stop before any credential or stage work. Any other error keeps the old
+		// behaviour — the job still runs and the failure is reported below.
+		if errors.Is(err, ErrJobNotOwned) {
+			jlog.Error("refusing to run a job this runner no longer owns", "err", err.Error())
+			captureError(err, map[string]string{
+				"op": "update_status", "runner_id": w.config.RunnerID, "job_id": job.ID, "trace_id": traceID,
+			})
+			return err
+		}
 		jlog.Error("failed to update job status to PROCESSING", "err", err.Error())
 		fmt.Fprintf(sysLogger, "Failed to update job status to PROCESSING: %v\n", err)
 		captureError(err, map[string]string{
@@ -368,7 +380,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			if finding.Refuse {
 				jlog.Error("refusing job at claim time: operator cannot use this cloud identity",
 					"operator", w.config.Operator, "provider", claim.CloudIdentity.Provider)
-				_ = w.api.UpdateJobStatus(job.ID, "FAILED", finding.Message, nil)
+				_ = w.postTerminal(jlog, job.ID, "FAILED", finding.Message, nil) // logged inside; this path already returns its error
 				return fmt.Errorf("operator %q cannot use the %s cloud identity this job was claimed with",
 					w.config.Operator, claim.CloudIdentity.Provider)
 			}
@@ -387,7 +399,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				if err != nil {
 					errMsg := fmt.Sprintf("Failed to activate AWS federation: %v", err)
 					fmt.Fprintln(stderrLogger, errMsg)
-					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+					_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 					return err
 				}
 				defer cleanup()
@@ -399,7 +411,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 					// SDK's own message names EC2 IMDS, which is its last source, not the cause.
 					errMsg := ambientCredentialFailure("Failed to assume role", "aws", w.config.Operator, err)
 					fmt.Fprintln(stderrLogger, errMsg)
-					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+					_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 					return err
 				}
 				defer ClearAssumedCredentials()
@@ -412,7 +424,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				if !isOidcWifJSON(claim.CloudIdentity.WifConfig) {
 					errMsg := "This GCP connection uses the retired AWS-hub setup. Reconnect it (Connectors → GCP) to migrate to direct-OIDC."
 					fmt.Fprintln(stderrLogger, errMsg)
-					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+					_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 					return fmt.Errorf("%s", errMsg)
 				}
 				fmt.Fprintf(stdoutLogger, "Activating keyless GCP OIDC for project %s (SA: %s)...\n", claim.CloudIdentity.ProjectID, claim.CloudIdentity.ServiceAccountEmail)
@@ -420,7 +432,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 				if err != nil {
 					errMsg := fmt.Sprintf("Failed to activate GCP OIDC: %v", err)
 					fmt.Fprintln(stderrLogger, errMsg)
-					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+					_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 					return err
 				}
 				defer cleanup()
@@ -431,7 +443,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 					// #3348, the GCP half: ADC exhaustion reads the same way as the AWS IMDS 404.
 					errMsg := ambientCredentialFailure("Failed to activate GCP WIF", "gcp", w.config.Operator, err)
 					fmt.Fprintln(stderrLogger, errMsg)
-					_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+					_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 					return err
 				}
 				defer cleanup()
@@ -442,7 +454,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate Azure federated identity: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
-				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 				return err
 			}
 			defer cleanup()
@@ -452,7 +464,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate %s token: %v", claim.CloudIdentity.Provider, err)
 				fmt.Fprintln(stderrLogger, errMsg)
-				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 				return err
 			}
 			defer cleanup()
@@ -471,7 +483,7 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			if err != nil {
 				errMsg := fmt.Sprintf("Failed to activate Alibaba OIDC: %v", err)
 				fmt.Fprintln(stderrLogger, errMsg)
-				_ = w.api.UpdateJobStatus(job.ID, "FAILED", errMsg, nil)
+				_ = w.postTerminal(jlog, job.ID, "FAILED", errMsg, nil) // logged inside; this path already returns its error
 				return err
 			}
 			defer cleanup()
@@ -538,7 +550,20 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			}
 			fmt.Fprintln(stdoutLogger, "▸ Job cancelled — teardown complete.")
 			stderrLogger.Close()
-			_ = w.api.UpdateJobStatus(job.ID, "CANCELLED", "Cancelled by user", meta)
+			_ = w.postTerminal(jlog, job.ID, "CANCELLED", "Cancelled by user", meta) // logged inside; this path already returns its error
+			return execErr
+		}
+		// Ownership was lost mid-run (#5162): the console refused one of this job's posts because
+		// recovery handed the job to someone else. There is nothing to report TO — a terminal post
+		// would be refused the same way — and the job must not be read as completed here. Say so
+		// loudly on the runner's own log and stop.
+		if errors.Is(execErr, ErrJobNotOwned) {
+			jlog.Error("job stopped: this runner lost ownership of it mid-run; no terminal status posted",
+				"job_type", job.JobType, "err", execErr.Error())
+			captureError(execErr, map[string]string{
+				"op": "ownership_lost", "job_type": job.JobType, "job_id": job.ID,
+				"trace_id": traceID, "runner_id": w.config.RunnerID,
+			})
 			return execErr
 		}
 		jlog.Error("job execution failed", "job_type", job.JobType, "err", execErr.Error())
@@ -559,8 +584,9 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 		// reconcile. reap() runs only after executeJob returns (claimLoop), and UpdateJobStatus
 		// posts context-free, so the flag survives a drain here. NOTE: a HARD kill (SIGKILL / panic)
 		// mid-apply never reaches this code, so it can't be flagged here — the server-side stale-job
-		// reconciler is the backstop for that (it settles the env to FAILED; it can't see the
-		// runner-local phase marker, so it's an orphan-blind backstop).
+		// reconciler (recover_stale_jobs) is the backstop for that. It cannot read the runner-local
+		// phase marker, but since #5162 it reads the `apply_started_at` that watchApplyStart posts
+		// from it: a job carrying that is failed with orphan_risk set, never requeued.
 		var failMeta map[string]any
 		if w.cancels.orphanRisk(job.ID) {
 			failMeta = map[string]any{
@@ -590,13 +616,38 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 			fmt.Fprintf(stderrLogger, "ORPHAN RISK (%s) — %s\n", f.Evidence, f.Reason)
 		}
 		stderrLogger.Close()
-		_ = w.api.UpdateJobStatus(job.ID, "FAILED", execErr.Error(), failMeta)
+		_ = w.postTerminal(jlog, job.ID, "FAILED", execErr.Error(), failMeta) // logged inside; this path already returns its error
 		return execErr
 	}
 
-	_ = w.api.UpdateJobStatus(job.ID, "SUCCESS", "", nil)
+	// The SUCCESS post is what makes the job complete. When it is refused, the job is NOT complete
+	// from anyone's point of view but this process's, so it must not be logged or returned as one
+	// (#5162: "job completed successfully" was logged over a refused post, and the same job id was
+	// claimed again 2 ms later).
+	if err := w.postTerminal(jlog, job.ID, "SUCCESS", "", nil); err != nil {
+		return fmt.Errorf("the job ran but its SUCCESS was not recorded: %w", err)
+	}
 	jlog.Info("job completed successfully")
 	return nil
+}
+
+// postTerminal posts a job's terminal status and, when the console refuses or cannot be reached,
+// logs it on the runner's own operational log and to Sentry instead of discarding it. It returns
+// the error so a caller whose outcome depends on the post (SUCCESS) can act on it; the failure
+// paths, which are already returning an error, may ignore it. A refusal because ownership was lost
+// (ErrJobNotOwned) is named as such — it is the #5162 signature, not a network blip.
+func (w *Runner) postTerminal(jlog *slog.Logger, jobID, status, errMsg string, metadata map[string]any) error {
+	err := w.api.UpdateJobStatus(jobID, status, errMsg, metadata)
+	if err == nil {
+		return nil
+	}
+	msg := "failed to post terminal job status"
+	if errors.Is(err, ErrJobNotOwned) {
+		msg = "terminal job status REFUSED: this runner no longer owns the job"
+	}
+	jlog.Error(msg, "status", status, "err", err.Error())
+	captureError(err, map[string]string{"op": "update_status_terminal", "status": status, "job_id": jobID, "runner_id": w.config.RunnerID})
+	return err
 }
 
 func resolveProjectTemplatesDir() string {
@@ -804,16 +855,35 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 
 	sec := stageSecrets{GitToken: gitToken, GitTokens: gitTokens, StateToken: stateBackend.Token, AddonSecrets: addonSecrets, TalosConfig: talosConfig}
 
+	// Tell the console the moment the apply starts (#5162), so stale-job recovery never requeues
+	// — and so never re-applies — a DEPLOY that may already have changed the customer's cloud. The
+	// watcher also stops the stage if the console refuses that post because the job was already
+	// requeued out from under this runner: the next claim runs it, and two applies of one
+	// environment must not race. stageCtx is what the watcher cancels.
+	stageCtx, stopStage := context.WithCancel(ctx)
+	defer stopStage()
+	watch := w.watchApplyStart(stageCtx, stopStage, job.ID, workDir, stderr)
+
 	// Run the untrusted provisioning work through the isolation seam. Passthrough runs
 	// runDeployStage in-process; the container backend re-execs it in a per-job container.
-	if err := w.sandbox.Run(ctx, sandbox.Spec{
+	runErr := w.sandbox.Run(stageCtx, sandbox.Spec{
 		Kind: "deploy", JobID: job.ID, Provider: provider, WorkDir: workDir, Stage: stage,
 		Secrets: sec.specSecrets(),
 		Stdout:  stdout, Stderr: stderr,
 		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
 	}, func(ctx context.Context) error {
 		return runDeployStage(ctx, payload, sec, workDir, stdout, stderr)
-	}); err != nil {
+	})
+	// Stop the watcher and learn whether it lost ownership BEFORE reading the outcome: a stage the
+	// watcher cancelled surfaces as a plain ctx error, and must be reported as the ownership loss
+	// it is rather than as a timeout.
+	stopStage()
+	lost := watch.wait()
+	if lost != nil {
+		fmt.Fprintf(stderr, "Apply stopped: this runner no longer owns the job (%v). It was requeued; whoever claims it next runs it. Cloud resources the interrupted apply started may need reconciling.\n", lost)
+		return fmt.Errorf("deploy stopped at apply start: %w", lost)
+	}
+	if err := runErr; err != nil {
 		// On a mid-flight interruption, decide whether the killed work had reached the apply
 		// (state-mutating) phase. RunDeployV2 writes "apply" to workDir/phase just before
 		// `tofu apply`; if we were torn down at or after that point, orphaned cloud resources
@@ -829,12 +899,21 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		// (carrying gitops_status: which step died + a sanitized message — issue #574).
 		// Post it so the console can show WHY GitOps isn't wired, not just a failed job.
 		// The PROCESSING post only jsonb-merges metadata; the caller's FAILED transition
-		// is untouched. Read BEFORE the deferred RemoveAll(workDir).
-		w.postDeployMetadata(job.ID, workDir, stderr)
+		// is untouched. Read BEFORE the deferred RemoveAll(workDir). A refusal because ownership
+		// was lost outranks the stage error: it is why nothing else will be recorded (#5162).
+		if postErr := w.postDeployMetadata(job.ID, workDir, stderr); errors.Is(postErr, ErrJobNotOwned) {
+			return fmt.Errorf("%w (stage error: %v)", postErr, err)
+		}
 		return err
 	}
 
-	w.postDeployMetadata(job.ID, workDir, stderr)
+	// The metadata carries the SIGNED EVIDENCE RECEIPT for the plan that was just applied. It is
+	// the only record of what changed the customer's cloud, so a post that did not land fails the
+	// deploy rather than reporting SUCCESS without it (#5162: the receipt of a 116-resource apply
+	// was discarded here and a later re-run's receipt stored in its place).
+	if err := w.postDeployMetadata(job.ID, workDir, stderr); err != nil {
+		return fmt.Errorf("the apply finished but its execution metadata (evidence receipt) was not recorded: %w", err)
+	}
 	// hetzner-talos (#1389): after a successful DEDICATED apply, persist the Fabric's admin talosconfig
 	// (from the Talos-emitted output) so future namespace/vcluster placements onto this Fabric can mint
 	// kube access. Only on a dedicated apply — placements run no tofu and emit no talosconfig. The
@@ -932,15 +1011,17 @@ func talosOutputString(outputs map[string]interface{}, key string) string {
 
 // postDeployMetadata reads the sandbox's result.json (which exists on success AND on a
 // mid-deploy failure — writeStageResult marshals any non-nil partial result), assembles
-// the execution_metadata blob, scrubs it, and posts it to the console. Best-effort: a
-// missing/unreadable result just logs a warning.
-func (w *Runner) postDeployMetadata(jobID, workDir string, stderr *JobLogger) {
+// the execution_metadata blob, scrubs it, and posts it to the console. A missing/unreadable
+// result just logs a warning and returns nil (there is nothing to lose). A post that does not
+// land is retried on transient failure (see postMetadataWithRetry) and otherwise RETURNED — it
+// carries the signed evidence receipt, and discarding it is how #5162 lost one.
+func (w *Runner) postDeployMetadata(jobID, workDir string, stderr *JobLogger) error {
 	result, err := readPlanResult(workDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "Warning: could not read stage result: %v\n", err)
 	}
 	if result == nil {
-		return
+		return nil
 	}
 	metadata := buildDeployMetadata(result)
 	// Defense-in-depth over the WHOLE assembled blob: even if buildDeployMetadata regresses
@@ -951,9 +1032,34 @@ func (w *Runner) postDeployMetadata(jobID, workDir string, stderr *JobLogger) {
 	if dropped := scrubMetadataTree(metadata); len(dropped) > 0 {
 		fmt.Fprintf(stderr, "Warning: dropped %d secret-bearing metadata key(s) before posting: %v\n", len(dropped), dropped)
 	}
-	if len(metadata) > 0 {
-		_ = w.api.UpdateJobStatus(jobID, "PROCESSING", "", metadata)
+	if len(metadata) == 0 {
+		return nil
 	}
+	if err := w.postMetadataWithRetry(jobID, metadata); err != nil {
+		fmt.Fprintf(stderr, "ERROR: this deploy's execution metadata (including its evidence receipt) was NOT recorded: %v\n", err)
+		return err
+	}
+	return nil
+}
+
+// metadataPostRetryDelays are the waits between attempts to post a deploy's execution metadata.
+// A var so tests can shorten it. Bounded on purpose: the job's own 2h context is not consulted, so
+// the total wait must stay small.
+var metadataPostRetryDelays = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second}
+
+// postMetadataWithRetry posts a PROCESSING execution_metadata merge, retrying a transient failure
+// (network, 5xx) a bounded number of times. A refusal because this runner no longer owns the job
+// (ErrJobNotOwned) is returned at once — retrying a lost claim cannot succeed.
+func (w *Runner) postMetadataWithRetry(jobID string, metadata map[string]any) error {
+	err := w.api.UpdateJobStatus(jobID, "PROCESSING", "", metadata)
+	for _, d := range metadataPostRetryDelays {
+		if err == nil || errors.Is(err, ErrJobNotOwned) {
+			return err
+		}
+		time.Sleep(d)
+		err = w.api.UpdateJobStatus(jobID, "PROCESSING", "", metadata)
+	}
+	return err
 }
 
 // buildDeployMetadata assembles the execution_metadata the runner persists to the console
@@ -1093,9 +1199,16 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	}
 	sec := stageSecrets{GitToken: planGitToken, StateToken: stateBackend.Token}
 
-	_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+	// A progress marker: a transient failure costs only the progress line, but a refusal means the
+	// job was requeued out from under this runner and the plan must not run unowned (#5162).
+	if err := w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
 		"phase": "tofu_plan", "progress": "Running OpenTofu plan...",
-	})
+	}); err != nil {
+		if errors.Is(err, ErrJobNotOwned) {
+			return err
+		}
+		fmt.Fprintf(stderr, "Warning: failed to post plan progress: %v\n", err)
+	}
 
 	// Run the untrusted plan through the isolation seam (Passthrough in-process / container re-exec).
 	if err := w.sandbox.Run(ctx, sandbox.Spec{
@@ -1156,7 +1269,11 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 		}
 	}
 
-	_ = w.api.UpdateJobStatus(job.ID, "PROCESSING", "", metadata)
+	// The plan result IS the plan job's output (the DEPLOY that follows reads it), so a post that
+	// did not land fails the job instead of reporting a SUCCESS with nothing recorded.
+	if err := w.postMetadataWithRetry(job.ID, metadata); err != nil {
+		return fmt.Errorf("the plan finished but its result was not recorded: %w", err)
+	}
 
 	return nil
 }
@@ -1484,6 +1601,64 @@ func resolveAmbientAccountID(provider string) string {
 // the writer (stage.go → DeployParams.PhaseFile) and reader agree.
 func deployPhaseFile(workDir string) string {
 	return filepath.Join(workDir, "phase")
+}
+
+// applyPhasePollInterval is how often watchApplyStart reads the phase marker. A var so tests can
+// shorten it. It bounds how far into `tofu apply` the console learns the apply started, and how far
+// an unowned apply gets before it is stopped.
+var applyPhasePollInterval = time.Second
+
+// applyStartWatch is a running watchApplyStart. wait blocks until the watcher has exited and returns
+// the ownership refusal it hit (wrapping ErrJobNotOwned), or nil.
+type applyStartWatch struct {
+	done chan struct{}
+	lost error
+}
+
+// wait blocks until the watcher exits and reports whether it lost ownership of the job.
+func (a *applyStartWatch) wait() error {
+	<-a.done
+	return a.lost
+}
+
+// watchApplyStart polls the deploy's phase marker and, the first time it reads "apply" (or
+// "applied", when the apply was quicker than one poll), posts `apply_started_at` into the job's
+// execution_metadata. That key is the console's ONLY evidence that the apply started:
+// recover_stale_jobs refuses to requeue a job carrying it and fails it for reconciliation instead,
+// because a requeue would run the apply a second time (#5162). A transient post failure is retried on
+// the next tick. A REFUSAL (ErrJobNotOwned) means the job was requeued before the apply began and
+// will be run by whoever claims it next, so the watcher records it and calls stop, which cancels the
+// stage: letting this apply continue unowned would race that one. The watcher exits when ctx ends.
+func (w *Runner) watchApplyStart(ctx context.Context, stop context.CancelFunc, jobID, workDir string, stderr *JobLogger) *applyStartWatch {
+	a := &applyStartWatch{done: make(chan struct{})}
+	go func() {
+		defer close(a.done)
+		t := time.NewTicker(applyPhasePollInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			if phase := readDeployPhase(workDir); phase != "apply" && phase != "applied" {
+				continue
+			}
+			err := w.api.UpdateJobStatus(jobID, "PROCESSING", "", map[string]any{
+				"apply_started_at": time.Now().UTC().Format(time.RFC3339),
+			})
+			if err == nil {
+				return
+			}
+			if errors.Is(err, ErrJobNotOwned) {
+				a.lost = err
+				stop()
+				return
+			}
+			fmt.Fprintf(stderr, "Warning: could not record that the apply started (will retry): %v\n", err)
+		}
+	}()
+	return a
 }
 
 // shouldMarkOrphanRisk decides whether a mid-flight deploy interruption may have left orphaned
