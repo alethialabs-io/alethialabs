@@ -73,6 +73,10 @@ set -euo pipefail
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"
+# The sweep-handle KEY (project-id or e2e-run) and how a discovered resource is attributed to one
+# (#5096). Read its header before touching any preflight discovery below.
+# shellcheck source-path=SCRIPTDIR source=lib/scope-key.sh
+. "${E2E_LIB_DIR}/scope-key.sh"
 probe_reset
 
 # ── `--self-test` exercises the three-state probe contract against a stubbed `az` and exits. It
@@ -131,7 +135,8 @@ PREFLIGHT_MAX_ENVS="${PREFLIGHT_MAX_ENVS:-2}"                # orphans attempted
 # ── Guard 1: a specific ENV is REQUIRED. No ENV ⇒ no filter ⇒ hard refuse. ──
 if [ -z "$ENV" ]; then
 	echo "✗ REFUSING TO RUN: ALETHIA_E2E_ENV is unset." >&2
-	echo "  This script only ever deletes resource groups tagged alethia:project-id=e2e-<ENV> or whose" >&2
+	echo "  This script only ever deletes resource groups tagged alethia:project-id=e2e-<ENV> (or" >&2
+	echo "  alethia:e2e-run=e2e-<ENV> with ALETHIA_E2E_SCOPE_KEY=e2e-run) or whose" >&2
 	echo "  name embeds -<ENV> — never subscription-wide. Set ALETHIA_E2E_ENV to the unique per-run" >&2
 	echo "  value (<run_id>-<attempt>)." >&2
 	exit 2
@@ -165,7 +170,11 @@ if [ "$SELF_TEST" != "1" ] && ! command -v az >/dev/null 2>&1; then
 	exit 2
 fi
 
-TAG_KEY="alethia:project-id"
+# ── The KEY half of the scope (#5096). `alethia:project-id` unless ALETHIA_E2E_SCOPE_KEY says
+#    `e2e-run` (the cli-demo dimension, whose stack's project-id is a UUID); anything else is refused.
+#    The VALUE half is unchanged: `e2e-<ENV>` under either key. See scripts/e2e/lib/scope-key.sh. ──
+SCOPE_KEY="$(e2e_scope_key)" || exit 2
+TAG_KEY="alethia:${SCOPE_KEY}"
 PROJECT_ID_TAG="e2e-${ENV}"
 
 export AZURE_CORE_ONLY_SHOW_ERRORS="${AZURE_CORE_ONLY_SHOW_ERRORS:-true}"
@@ -412,13 +421,18 @@ verify_swept() {
 	return 0
 }
 
-# ── sweep_env <env> — the full scope-locked sweep + verify for ONE run's ENV. Sets the
-#    ENV/PROJECT_ID_TAG globals the discovery/verify functions read, then runs them in dependency
+# ── sweep_env <env> [key] — the full scope-locked sweep + verify for ONE run's (ENV, key) pair.
+#    With no key it keeps the key already in force (the in-run path); PREFLIGHT always passes one,
+#    re-validated through the same allowlist as the top of the file (#5096), so a discovery bug
+#    cannot hand a delete an unknown key. Sets the ENV/SCOPE_KEY/TAG_KEY/PROJECT_ID_TAG globals the
+#    discovery/verify functions read, then runs them in dependency
 #    order: delete the MAIN RGs (this cascades AKS → its node RG + the DB/redis/etc), wait, then sweep
 #    any ORPHAN node RG a mid-destroy kill left parent-less, wait, verify. Returns verify_swept's
 #    status (0 clean / 1 leak); DRY_RUN lists only and returns 0. Used by PREFLIGHT per orphan too. ──
 sweep_env() {
 	ENV="$1"
+	SCOPE_KEY="$(ALETHIA_E2E_SCOPE_KEY="${2:-$SCOPE_KEY}" e2e_scope_key)" || return 1
+	TAG_KEY="alethia:${SCOPE_KEY}"
 	PROJECT_ID_TAG="e2e-${ENV}"
 	assert_scope
 
@@ -487,24 +501,35 @@ finalize_verification() {
 	return 0
 }
 
-# ── list_orphan_envs — every OTHER e2e run's ENV that still has a project-id-tagged resource group in
-#    this subscription (prior-run orphans). Reads the `alethia:project-id` tag value off every RG,
-#    keeps only `e2e-`-prefixed values, strips the prefix, EXCLUDES this run (SELF_ENV), and
-#    re-validates each against the SAME specificity + prod/shared denylist guards as the top-of-file
-#    ENV guards — so a preflight can never widen past a genuine prior nightly. Empty ⇒ nothing to sweep. ──
+# ── list_orphan_envs — every OTHER e2e run's (ENV, key) pair that still has a tagged resource group
+#    in this subscription (prior-run orphans), as `<env>\t<key>` lines. Reads BOTH handle tags off
+#    every RG carrying either, attributes each RG to exactly one pair (e2e_scope_attribute,
+#    lib/scope-key.sh), EXCLUDES this run (SELF_ENV), and re-validates each against the SAME
+#    specificity + prod/shared denylist guards as the top-of-file ENV guards — so a preflight can
+#    never widen past a genuine prior nightly. Empty ⇒ nothing to sweep.
+#
+#    TWO HANDLES (#5096). A stack the CLI created carries its project's UUID as
+#    `alethia:project-id`, so reading that tag alone never saw it. Every e2e stack now also carries
+#    `alethia:e2e-run=e2e-<ENV>`. An RG whose project-id is itself an `e2e-` handle is attributed to
+#    it — every seeded stack, including every one standing from before the new tag — and only
+#    otherwise to its e2e-run tag, so a seeded stack is swept once, not twice. ──
 list_orphan_envs() {
-	local vals v oenv
-	vals="$(az_list orphan-scan group list --query "[?tags.\"${TAG_KEY}\"].tags.\"${TAG_KEY}\"" -o tsv | grep -v '^$' || true)"
-	while IFS= read -r v; do
-		[ -n "$v" ] || continue
-		case "$v" in e2e-*) ;; *) continue ;; esac # e2e-prefixed values only — never a prod project-id
-		oenv="${v#e2e-}"
+	local vals pid run pair oenv
+	# One `|`-joined string per RG: an EMPTY field for a missing tag, which `read` would collapse if
+	# it were tab-separated.
+	vals="$(az_list orphan-scan group list \
+		--query "[?tags.\"alethia:project-id\" || tags.\"alethia:e2e-run\"].join('|', [tags.\"alethia:project-id\" || '', tags.\"alethia:e2e-run\" || ''])" \
+		-o tsv | tr '\t' '\n' | grep -v '^$' || true)"
+	while IFS='|' read -r pid run; do
+		pair="$(e2e_scope_attribute "$pid" "$run")"
+		[ -n "$pair" ] || continue # neither handle — never a prod project-id, never a customer tag
+		oenv="${pair%%$'\t'*}"
 		[ "$oenv" = "$SELF_ENV" ] && continue # skip THIS run (its own teardown handles it)
 		printf '%s' "$oenv" | grep -Eq '^[a-z0-9][a-z0-9._-]{4,62}$' || continue
 		case "$oenv" in
 		prod | prod-* | production | production-* | staging | staging-* | main | alethia | alethia-* | data) continue ;;
 		esac
-		printf '%s\n' "$oenv"
+		printf '%s\n' "$pair"
 	done <<<"$vals" | sort -u
 }
 
@@ -531,8 +556,7 @@ if [ "$PREFLIGHT" = "1" ]; then
 		echo "✓ preflight: no prior-run e2e orphans in this subscription — nothing to sweep"
 		exit 0
 	fi
-	# shellcheck disable=SC2086
-	echo "  orphan run ENVs found: $(printf '%s ' $orphans)"
+	echo "  orphan run ENVs found: $(printf '%s\n' "$orphans" | awk -F'\t' 'NF { printf "%s[%s] ", $1, $2 }')"
 	echo "  budget: ${PREFLIGHT_BUDGET_SECONDS}s wall-clock, at most ${PREFLIGHT_MAX_ENVS} orphan(s) this run"
 	residual=0
 	attempted=0
@@ -540,21 +564,21 @@ if [ "$PREFLIGHT" = "1" ]; then
 	# Anything the bounds stop us from reaching is NAMED, not silently dropped — an unswept orphan
 	# is BILLING, so "we ran out of budget" has to be as visible as "we tried and failed".
 	skipped=""
-	while IFS= read -r oenv; do
+	while IFS=$'\t' read -r oenv okey; do
 		[ -n "$oenv" ] || continue
 		if [ "$attempted" -ge "$PREFLIGHT_MAX_ENVS" ]; then
-			skipped="${skipped}${oenv} (cap) "
+			skipped="${skipped}${oenv}[${okey}] (cap) "
 			continue
 		fi
 		now=$(date +%s)
 		if [ "$now" -ge "$deadline" ]; then
-			skipped="${skipped}${oenv} (budget) "
+			skipped="${skipped}${oenv}[${okey}] (budget) "
 			continue
 		fi
 		attempted=$((attempted + 1))
-		echo "── preflight sweep: prior run ${oenv} (${attempted}/${PREFLIGHT_MAX_ENVS}, $((deadline - now))s budget left) ──"
-		if ! sweep_env "$oenv"; then
-			echo "::warning::preflight could not fully sweep prior-run orphan ${oenv} (still billing) — the always() teardown / next preflight will retry. NOT failing this provisioning run."
+		echo "── preflight sweep: prior run ${oenv} by alethia:${okey} (${attempted}/${PREFLIGHT_MAX_ENVS}, $((deadline - now))s budget left) ──"
+		if ! sweep_env "$oenv" "$okey"; then
+			echo "::warning::preflight could not fully sweep prior-run orphan ${oenv} (alethia:${okey}, still billing) — the always() teardown / next preflight will retry. NOT failing this provisioning run."
 			residual=1
 		fi
 	done <<<"$orphans"
@@ -563,7 +587,7 @@ if [ "$PREFLIGHT" = "1" ]; then
 		# orphan every night is how an orphan survives long enough to eat a job cap. This is the
 		# signal that a human has to sweep it by hand; it still does not fail the step.
 		echo "::error::preflight left orphan(s) UNSWEPT and BILLING — bounds reached before they were reached: ${skipped}"
-		echo "::error::sweep by hand, scope-locked: ALETHIA_E2E_ENV=<env> ALETHIA_E2E_REGION=${REGION} ./scripts/e2e/azure-cleanup.sh"
+		echo "::error::sweep by hand, scope-locked: ALETHIA_E2E_ENV=<env> ALETHIA_E2E_SCOPE_KEY=<key> ALETHIA_E2E_REGION=${REGION} ./scripts/e2e/azure-cleanup.sh"
 		residual=1
 	fi
 	if [ "$residual" = "1" ]; then
@@ -671,6 +695,50 @@ if [ "$SELF_TEST" = "1" ]; then
 		;;
 	esac
 	unset -f az
+
+	# ── #5096: THE PREFLIGHT SEES A CLI-CREATED STACK, AND STILL SEES EVERY OLD ONE. ─────────────
+	#
+	# The stub answers only a `--query` that reads BOTH handle tags — so dropping the e2e-run half
+	# empties the CLI stack's row and reds the assertion. Rows are what `-o tsv` prints for a list of
+	# strings: one `|`-joined string per RG, an EMPTY field for a missing tag.
+	#
+	#   rg-cli    the cli-demo stack: project-id is the project's UUID   → found by e2e-run
+	#   rg-new    a seeded stack after this change: both handles        → swept ONCE, by project-id
+	#   rg-old    a seeded stack from before it: project-id only        → still found (compat)
+	#   rg-cust   a customer RG with an org-defined e2e-run of its own  → never an orphan
+	#   rg-self   THIS run's own stack under the new handle             → excluded
+	az() {
+		local a q=""
+		for a in "$@"; do
+			case "$a" in *'tags."alethia:project-id"'*) q="$a" ;; esac
+		done
+		case "$q" in *'tags."alethia:e2e-run"'*) ;; *) return 0 ;; esac
+		printf '%s\n' \
+			"3e9d7e82-6bfc-4faa-9006-7c1e27d72249|e2e-36135826614-1" \
+			"e2e-36135826614-2|e2e-36135826614-2" \
+			"e2e-31459117502-1|" \
+			"3e9d7e82-0000-4faa-9006-7c1e27d72249|e2e-sandbox" \
+			"3e9d7e82-1111-4faa-9006-7c1e27d72249|e2e-${ENV}"
+		return 0
+	}
+	probe_reset
+	st_orphans="$(list_orphan_envs 2>/dev/null | tr '\t\n' ': ' | sed 's/ $//')"
+	unset -f az
+	st_want="31459117502-1:project-id 36135826614-1:e2e-run 36135826614-2:project-id"
+	if [ "$st_orphans" = "$st_want" ]; then
+		echo "  ✓ preflight discovery: a CLI stack by e2e-run, seeded stacks by project-id (old and new), once each"
+	else
+		echo "  ✗ preflight discovery — want [${st_want}], got [${st_orphans}]" >&2
+		st_fails=$((st_fails + 1))
+	fi
+	st_rc=0
+	( sweep_env 36135826614-1 cluster >/dev/null 2>&1 ) || st_rc=$?
+	if [ "$st_rc" -ne 0 ]; then
+		echo "  ✓ sweep_env refuses an unknown scope key"
+	else
+		echo "  ✗ sweep_env accepted the scope key 'cluster'" >&2
+		st_fails=$((st_fails + 1))
+	fi
 
 	if [ "$st_fails" -ne 0 ]; then
 		echo "✗ azure-cleanup.sh self-test: ${st_fails} failure(s)" >&2

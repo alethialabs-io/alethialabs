@@ -1508,7 +1508,13 @@ jobs:
           # branch scopes to `j.org_id = v_runner_org_id` (#392), so the harness registers its runner
           # in the token's org; reading both from one file is what makes them impossible to set
           # independently. Nothing is printed — a credential on stdout reaches the job log.
-          pnpm -F console exec tsx scripts/seed-cli-demo-token.mts --out "${RUNNER_TEMP}/cli-demo-creds.json"
+          #
+          # --e2e-run defines this run's `e2e-run` classification value in the org (#5096). The demo's
+          # `classify` beat assigns it to the project through the real CLI, and it is the ONLY handle
+          # a CLI-created stack carries that the sweepers and the orphan reaper select on — its
+          # project-id is the project's UUID. E2E_ENV is `<run_id>-<attempt>` (the naming step above).
+          pnpm -F console exec tsx scripts/seed-cli-demo-token.mts --out "${RUNNER_TEMP}/cli-demo-creds.json" \
+            --e2e-run "e2e-${E2E_ENV}"
           echo "ALETHIA_E2E_CLI_DEMO_CREDS=${RUNNER_TEMP}/cli-demo-creds.json" >> "$GITHUB_ENV"
 
       # ── ONE THROWAWAY RECEIPT KEY FOR THE RUNNER AND THE CONSOLE (#5098). `verify receipt` trusts

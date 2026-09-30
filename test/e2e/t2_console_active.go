@@ -236,6 +236,9 @@ var a05DynamicSnapshotKeys = map[string]bool{
 	"region":            true,
 	"environment_stage": true,
 	"environment_id":    true,
+	// The run's `e2e-run` classification (#5096). A project's classification is a per-project input
+	// like its name — the fixture's canonical project is unclassified — so it is dynamic, not shape.
+	"classification": true,
 }
 
 // a05NormalizeSnapshot JSON round-trips a snapshot so every value is a plain JSON type
@@ -389,6 +392,7 @@ func a05RealSnapshotFromFixture(fixture map[string]any, project, env, provider, 
 	snap["environment_stage"] = env
 	snap["provider"] = provider
 	snap["region"] = region
+	snap["classification"] = e2eRunClassification(env)
 	if envID != "" {
 		snap["environment_id"] = envID
 	}

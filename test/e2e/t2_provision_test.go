@@ -1132,6 +1132,9 @@ func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) string {
 // region so their ProviderTfvars resolve identically — the drift's refresh-only plan
 // reconciles the deploy's exact recorded state. The seed add-ons are included for fidelity
 // (they are post-apply Helm, inert to a refresh-only plan).
+//
+// `classification` carries the run's `e2e-run` handle (#5096) — the second sweep handle every e2e
+// stack now carries, whoever authored it (e2e_run_tag.go).
 func t2BaseSnapshot(project, env, provider, region string) map[string]any {
 	return map[string]any{
 		"id":                "e2e-" + env,
@@ -1140,6 +1143,7 @@ func t2BaseSnapshot(project, env, provider, region string) map[string]any {
 		"region":            region,
 		"provider":          provider,
 		"addons":            seedAddOns(),
+		"classification":    e2eRunClassification(env),
 	}
 }
 
@@ -1195,6 +1199,9 @@ func teardownT2Cluster(ctx context.Context, cpURL, jobID, project, env, provider
 		// identically — else GCP's project_id (and AWS account-scoped ARNs) are empty and the
 		// teardown fails. Empty for account-less providers, matching the deploy.
 		CloudAccountID: t2AmbientAccountID(provider),
+		// The same classification the deploy's snapshot carried (t2BaseSnapshot), so the destroy's
+		// tfvars are the deploy's tfvars.
+		Classification: e2eRunClassification(env),
 	}
 	backend := &cloud.HTTPBackendConfig{ConsoleURL: cpURL, JobID: jobID, Token: "e2e-teardown"}
 	return provisioner.RunDestroy(ctx, provisioner.DestroyParams{
