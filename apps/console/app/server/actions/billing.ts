@@ -76,7 +76,6 @@ import {
 	queryRunningJobs,
 	type ResourceCounts,
 } from "@/lib/queries/usage-counts";
-import { requireOwner } from "@/lib/auth/owner";
 import { authorize, authorizeInOrg, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import type {
@@ -246,7 +245,7 @@ export async function getBillingSummary(): Promise<BillingSummary> {
  *  anonymous caller could spend the account's Stripe rate limit that checkout depends on (#5219).
  *  Every consumer renders inside the app, and the hook falls back to the catalog on a refusal. */
 export async function getLivePlanPrices(): Promise<LivePlanPriceMap> {
-	await requireOwner();
+	await currentActor();
 	return getAllPlanPrices();
 }
 
@@ -255,7 +254,7 @@ export async function getLivePlanPrices(): Promise<LivePlanPriceMap> {
  *  the AI Stripe prices aren't configured (pre-cutover). Any signed-in caller. */
 export async function getLiveAiPrices(): Promise<LiveAiPriceMap> {
 	// Signed-in only, for the same Stripe-rate-limit reason as getLivePlanPrices.
-	await requireOwner();
+	await currentActor();
 	return getAllAiPrices();
 }
 

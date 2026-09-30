@@ -9,7 +9,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveAiPriceMap, LivePlanPrice, LivePlanPriceMap } from "@/lib/billing/pricing";
 
-vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/authz/guard", () => ({
 	currentActor: vi.fn(),
 	authorize: vi.fn(),
@@ -39,7 +38,7 @@ vi.mock("@/lib/billing/pricing", async (importOriginal) => ({
 }));
 
 import { getLiveAiPrices, getLivePlanPrices } from "@/app/server/actions/billing";
-import { requireOwner } from "@/lib/auth/owner";
+import { currentActor } from "@/lib/authz/guard";
 import { getAllAiPrices, getAllPlanPrices } from "@/lib/billing/pricing";
 
 /** A live price with no known amounts — the shape is all these tests pass through. */
@@ -57,13 +56,13 @@ beforeEach(() => {
 
 describe("getLivePlanPrices", () => {
 	it("refuses an anonymous caller without asking Stripe", async () => {
-		vi.mocked(requireOwner).mockRejectedValue(new Error("Unauthorized"));
+		vi.mocked(currentActor).mockRejectedValue(new Error("Unauthorized"));
 		await expect(getLivePlanPrices()).rejects.toThrow("Unauthorized");
 		expect(getAllPlanPrices).not.toHaveBeenCalled();
 	});
 
 	it("returns the price map to a signed-in caller", async () => {
-		vi.mocked(requireOwner).mockResolvedValue("user-1");
+		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "user-1" });
 		vi.mocked(getAllPlanPrices).mockResolvedValue(PLAN_PRICES);
 		await expect(getLivePlanPrices()).resolves.toBe(PLAN_PRICES);
 	});
@@ -71,7 +70,7 @@ describe("getLivePlanPrices", () => {
 
 describe("getLiveAiPrices", () => {
 	it("refuses an anonymous caller without asking Stripe", async () => {
-		vi.mocked(requireOwner).mockRejectedValue(new Error("Unauthorized"));
+		vi.mocked(currentActor).mockRejectedValue(new Error("Unauthorized"));
 		await expect(getLiveAiPrices()).rejects.toThrow("Unauthorized");
 		expect(getAllAiPrices).not.toHaveBeenCalled();
 	});
@@ -82,7 +81,7 @@ describe("getLiveAiPrices", () => {
 			ai_plus: price("$20 / mo"),
 			ai_max: price("$100 / mo"),
 		};
-		vi.mocked(requireOwner).mockResolvedValue("user-1");
+		vi.mocked(currentActor).mockResolvedValue({ userId: "user-1", orgId: "user-1" });
 		vi.mocked(getAllAiPrices).mockResolvedValue(aiPrices);
 		await expect(getLiveAiPrices()).resolves.toBe(aiPrices);
 	});
