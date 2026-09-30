@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
@@ -151,11 +152,25 @@ func TestFabricDemoNodeShapeGuard(t *testing.T) {
 // cluster shape` step hard-errors when fixtures/cluster_json.demo.<cloud>.json is absent, and this
 // asserts the ones that DO exist actually clear the floor. Named in that step's error message, so a
 // maintainer adding a cloud is told which test covers them.
+//
+// ONE cloud is expected to be REFUSED, and says so here rather than being skipped: azure. Its e2e
+// subscription's 10 regional vCPU quota admits no shape whose SCHEDULABLE capacity clears the floor
+// (TestFabricDemoAzureHasNoInQuotaShape proves it over the whole catalog), so its shipped profile
+// must be refused — and the refusal must name the quota, because "size up the profile" is advice that
+// walks straight into the quota wall.
 func TestDemoProfilesSatisfyTheFabricDemoGuard(t *testing.T) {
+	refusedByQuota := map[string]bool{"azure": true}
 	for _, cloud := range maxConfigClouds() {
 		t.Run(cloud, func(t *testing.T) {
 			enableFabricDemo(t)
 			snap := map[string]any{"cluster": loadDemoProfile(t, cloud)}
+			if refusedByQuota[cloud] {
+				fatal, msg := t2RequireFabricDemoNodeShape(cloud, snap, demoTierCount)
+				if !fatal || !strings.Contains(msg, "regional vCPU quota") || !strings.Contains(msg, "#5075") {
+					t.Fatalf("the %s demo profile must be REFUSED with a message naming the quota: fatal=%v msg=%q", cloud, fatal, msg)
+				}
+				return
+			}
 			if fatal, msg := t2RequireFabricDemoNodeShape(cloud, snap, demoTierCount); msg != "" {
 				t.Fatalf("the shipped %s demo profile must satisfy the guard, but it did not: fatal=%v msg=%q", cloud, fatal, msg)
 			}
