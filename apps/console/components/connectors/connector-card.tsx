@@ -4,7 +4,7 @@
 
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
-import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { ConnectorIcon, isThirdPartyMark } from "@/components/connectors/connector-icon";
 import { connectorState } from "@/components/connectors/connectors-query";
 import { Button } from "@repo/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
@@ -175,17 +175,14 @@ export function ConnectorCard({
 			<div className="flex items-start gap-3">
 				<div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/40 p-1.5">
 					{isGit ? (
-						<GitProviderIcon
-							provider={integration.slug}
-							size={22}
-							mono={!isConnected}
-						/>
+						<GitProviderIcon provider={integration.slug} size={22} mono={false} />
 					) : (
 						<ConnectorIcon
 							src={integration.icon_url}
 							name={integration.name}
 							size={24}
-							mono={!isConnected}
+							mono={!isConnected && !isThirdPartyMark(integration.icon_url)}
+							canLink={!isPick}
 						/>
 					)}
 				</div>
