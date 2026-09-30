@@ -123,24 +123,50 @@ type podDiagView struct {
 			Reason  string `json:"reason"`
 			Message string `json:"message"`
 		} `json:"conditions"`
-		ContainerStatuses []struct {
-			Name         string `json:"name"`
-			Ready        bool   `json:"ready"`
-			RestartCount int    `json:"restartCount"`
-			State        struct {
-				Waiting *struct {
-					Reason  string `json:"reason"`
-					Message string `json:"message"`
-				} `json:"waiting"`
-			} `json:"state"`
-			LastState struct {
-				Terminated *struct {
-					Reason   string `json:"reason"`
-					ExitCode int    `json:"exitCode"`
-				} `json:"terminated"`
-			} `json:"lastState"`
-		} `json:"containerStatuses"`
+		ContainerStatuses     []containerStatusView `json:"containerStatuses"`
+		InitContainerStatuses []containerStatusView `json:"initContainerStatuses"`
 	} `json:"status"`
+}
+
+// containerStatusView is the subset of a (init) container status the dump reads: which state it is
+// in, why, how often it restarted and how its last run ended. No image, no command, no env.
+type containerStatusView struct {
+	Name         string `json:"name"`
+	Ready        bool   `json:"ready"`
+	RestartCount int    `json:"restartCount"`
+	State        struct {
+		Waiting *struct {
+			Reason  string `json:"reason"`
+			Message string `json:"message"`
+		} `json:"waiting"`
+		Running *struct {
+			StartedAt string `json:"startedAt"`
+		} `json:"running"`
+		Terminated *struct {
+			Reason   string `json:"reason"`
+			ExitCode int    `json:"exitCode"`
+		} `json:"terminated"`
+	} `json:"state"`
+	LastState struct {
+		Terminated *struct {
+			Reason   string `json:"reason"`
+			ExitCode int    `json:"exitCode"`
+		} `json:"terminated"`
+	} `json:"lastState"`
+}
+
+// initDone reports whether an init container has run to completion (terminated with exit 0).
+func (c containerStatusView) initDone() bool {
+	return c.State.Terminated != nil && c.State.Terminated.ExitCode == 0
+}
+
+// stuckInit names one init container that has not completed on a not-Ready Pod — the container
+// whose log is the only place the reason is written (the main container just says PodInitializing).
+type stuckInit struct {
+	Pod, Container string
+	// Previous is true when the container has restarted and is not running now, so the log worth
+	// reading is the LAST run's (`kubectl logs --previous`), not the empty current one.
+	Previous bool
 }
 
 // terminal reports whether the Pod has finished and so holds no node resources.
@@ -189,31 +215,82 @@ func parseNotReadyPods(podsJSON []byte) ([]string, int, error) {
 		if st, reason, msg := p.condition("PodScheduled"); st != "" && st != "True" {
 			line += fmt.Sprintf(" — NOT SCHEDULED (%s): %s", orNone(reason), capDiag(msg))
 		}
+		// Init containers FIRST, and only the ones that have not completed: a Pod stuck in init shows
+		// its main container as "waiting PodInitializing", which names the symptom and not the step.
+		// Run 36706460832 printed exactly that and nothing else for the staging loadgenerator.
+		for _, cs := range p.Status.InitContainerStatuses {
+			if cs.initDone() {
+				continue
+			}
+			line += "; init container " + cs.Name + " " + describeContainerState(cs)
+		}
 		for _, cs := range p.Status.ContainerStatuses {
 			if cs.Ready {
 				continue
 			}
-			part := fmt.Sprintf("; container %s", cs.Name)
-			if w := cs.State.Waiting; w != nil {
-				part += " waiting " + orNone(w.Reason)
-				if m := strings.TrimSpace(w.Message); m != "" {
-					part += ": " + capDiag(m)
-				}
-			} else {
-				part += " not ready"
-			}
-			if cs.RestartCount > 0 {
-				part += fmt.Sprintf(" (restarts=%d", cs.RestartCount)
-				if t := cs.LastState.Terminated; t != nil {
-					part += fmt.Sprintf(", last exit %s/%d", orNone(t.Reason), t.ExitCode)
-				}
-				part += ")"
-			}
-			line += part
+			line += "; container " + cs.Name + " " + describeContainerState(cs)
 		}
 		out = append(out, line)
 	}
 	return out, len(pods), nil
+}
+
+// describeContainerState renders one container's current state, restarts and last exit.
+func describeContainerState(cs containerStatusView) string {
+	var part string
+	switch {
+	case cs.State.Waiting != nil:
+		part = "waiting " + orNone(cs.State.Waiting.Reason)
+		if m := strings.TrimSpace(cs.State.Waiting.Message); m != "" {
+			part += ": " + capDiag(m)
+		}
+	case cs.State.Running != nil:
+		part = "running"
+	case cs.State.Terminated != nil:
+		part = fmt.Sprintf("terminated %s/%d", orNone(cs.State.Terminated.Reason), cs.State.Terminated.ExitCode)
+	default:
+		part = "not ready"
+	}
+	if cs.RestartCount > 0 {
+		part += fmt.Sprintf(" (restarts=%d", cs.RestartCount)
+		if t := cs.LastState.Terminated; t != nil {
+			part += fmt.Sprintf(", last exit %s/%d", orNone(t.Reason), t.ExitCode)
+		}
+		part += ")"
+	}
+	return part
+}
+
+// stuckInitContainers lists, for every non-terminal not-Ready Pod, each init container that has not
+// completed — the containers whose logs dumpArgoAppDiagnosis reads. Capped at max.
+func stuckInitContainers(podsJSON []byte, max int) []stuckInit {
+	pods, err := decodePodList(podsJSON)
+	if err != nil {
+		return nil
+	}
+	var out []stuckInit
+	for _, p := range pods {
+		if p.terminal() {
+			continue
+		}
+		if ready, _, _ := p.condition("Ready"); ready == "True" {
+			continue
+		}
+		for _, cs := range p.Status.InitContainerStatuses {
+			if cs.initDone() {
+				continue
+			}
+			if len(out) == max {
+				return out
+			}
+			out = append(out, stuckInit{
+				Pod:       p.Metadata.Name,
+				Container: cs.Name,
+				Previous:  cs.RestartCount > 0 && cs.State.Running == nil,
+			})
+		}
+	}
+	return out
 }
 
 // parseCPUMilli parses a Kubernetes CPU quantity ("250m", "2", "0.5") into millicores. Only the two
@@ -236,8 +313,8 @@ func parseCPUMilli(q string) (int64, error) {
 
 // parseNodeCPUPressure renders, per node, instance type, capacity and allocatable CPU, allocatable
 // memory, and the CPU REQUESTED by every non-terminal Pod bound to it (containers only — init
-// containers are not running once the Pod is, and a Pending init container is already named by
-// parseNotReadyPods). allPodsJSON is `kubectl get pods -A -o json`; when allPodsErr is set (or the
+// containers are not running once the Pod is; a not-completed init container is named, with its
+// state, by parseNotReadyPods — before #845's gcp leg it was not, and this sentence claimed it was). allPodsJSON is `kubectl get pods -A -o json`; when allPodsErr is set (or the
 // list does not decode) every node says its requested CPU is UNKNOWN rather than zero.
 func parseNodeCPUPressure(nodesJSON, allPodsJSON []byte, allPodsErr error) ([]string, error) {
 	var nodes struct {

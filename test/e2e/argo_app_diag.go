@@ -198,9 +198,11 @@ func renderArgoAppDiagnosis(appName string, appJSON []byte, appErr error, cluste
 // dumpArgoAppDiagnosis reads one Application (and, when clusterName is set, ONLY the `server` field
 // of the ArgoCD cluster Secret of that name) and renders the failure account. When podNS is set it
 // also renders the scheduling half (argo_app_sched_diag.go): the not-Ready Pods in podNS, and per
-// node the allocatable CPU against what is already requested. BOUNDED: at most five reads at 5s
-// each, because this runs on a failing path inside the T2 context after the wait budget is spent,
-// and a cancelled ctx would kill the process before t.Cleanup tears the cluster down.
+// node the allocatable CPU against what is already requested — and, only when a Pod there is stuck
+// in init, the network half (argo_app_net_diag.go): the stuck init containers' last log lines, the
+// namespace's NetworkPolicies and what the DNS allow admits. BOUNDED: every read is 5s, at most five
+// without a stuck init and at most thirteen with one (up to 3 logs + 5 network reads), because this
+// runs on a failing path inside the T2 context after the wait budget is spent, and a cancelled ctx would kill the process before t.Cleanup tears the cluster down.
 func dumpArgoAppDiagnosis(ctx context.Context, kubeconfigPath, appName, clusterName, podNS string) string {
 	const perRead = 5 * time.Second
 	read := func(args ...string) ([]byte, error) {
@@ -242,5 +244,34 @@ func dumpArgoAppDiagnosis(ctx context.Context, kubeconfigPath, appName, clusterN
 	if nodesErr == nil {
 		allPods, allPodsErr = read("get", "pods", "-A", "-o", "json")
 	}
-	return out + renderSchedulingDiagnosis(podNS, pods, podsErr, nodes, nodesErr, allPods, allPodsErr)
+	out += renderSchedulingDiagnosis(podNS, pods, podsErr, nodes, nodesErr, allPods, allPodsErr)
+
+	// The network half (argo_app_net_diag.go). Only when a Pod is stuck in init: that is the shape
+	// whose cause lives in a log and a policy rather than in the scheduler, and it keeps a plain
+	// scheduling failure's dump as short as it was.
+	if podsErr != nil {
+		return out
+	}
+	stuck := stuckInitContainers(pods, maxInitLogContainers)
+	if len(stuck) == 0 {
+		return out
+	}
+	var logs []initLogRead
+	for _, si := range stuck {
+		args := []string{"logs", "-n", podNS, si.Pod, "-c", si.Container, fmt.Sprintf("--tail=%d", initLogTailLines)}
+		if si.Previous {
+			args = append(args, "--previous")
+		}
+		l, err := read(args...)
+		logs = append(logs, initLogRead{stuckInit: si, Log: l, Err: err})
+	}
+	out += renderInitContainerLogs(logs)
+	nps, npsErr := read("get", "networkpolicies.networking.k8s.io", "-n", podNS, "-o", "json")
+	out += renderNetworkPolicies(podNS, nps, npsErr)
+	dnsPods, dnsPodsErr := read("get", "pods", "-n", "kube-system", "-l", "k8s-app=kube-dns", "-o", "json")
+	dnsSvc, dnsSvcErr := read("get", "service", "-n", "kube-system", "kube-dns", "-o", "json")
+	nodeLocal, nodeLocalErr := read("get", "pods", "-A", "-l", "k8s-app=node-local-dns", "-o", "json")
+	out += renderDNSPeer(dnsPods, dnsPodsErr, dnsSvc, dnsSvcErr, nodeLocal, nodeLocalErr)
+	agents, agentsErr := read("get", "pods", "-A", "-l", policyEngineSelector, "-o", "json")
+	return out + renderPolicyEngine(agents, agentsErr)
 }

@@ -381,7 +381,8 @@ func waitNamespaceAppConverged(ctx context.Context, kc, ns string, timeout time.
 		if time.Now().After(deadline) {
 			// Name the cause, not just the symptom: routing, sync policy, operationState and
 			// conditions of the matched Application, its not-Healthy resources, the not-Ready pods in
-			// the tier's namespace and per-node CPU pressure (bounded — at most four 5s reads).
+			// the tier's namespace and per-node CPU pressure, and — when a Pod is stuck in init — its init
+			// log, the namespace's NetworkPolicies and the DNS peer they admit (bounded — every read 5s).
 			return lastState, fmt.Errorf("the placement into %q did not converge within %s: %v%s", ns, timeout, last,
 				dumpArgoAppDiagnosis(ctx, kc, lastState.Metadata.Name, "", ns))
 		}
