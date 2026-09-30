@@ -172,6 +172,7 @@ func renderArgoAppDiagnosis(appName string, appJSON []byte, appErr error, cluste
 		fmt.Fprintf(&b, "    could not decode the Application (%v)\n", err)
 	} else {
 		b.WriteString(renderArgoAppSpecView(v))
+		b.WriteString(renderArgoUnhealthyResources(appJSON))
 		f, ferr := parseArgoAppFailure(appJSON)
 		if ferr == nil {
 			f.Message = capDiag(f.Message)
@@ -195,10 +196,12 @@ func renderArgoAppDiagnosis(appName string, appJSON []byte, appErr error, cluste
 }
 
 // dumpArgoAppDiagnosis reads one Application (and, when clusterName is set, ONLY the `server` field
-// of the ArgoCD cluster Secret of that name) and renders the failure account. BOUNDED: two small
-// reads at 5s each, because this runs on a failing path inside the T2 context after the wait budget
-// is spent, and a cancelled ctx would kill the process before t.Cleanup tears the cluster down.
-func dumpArgoAppDiagnosis(ctx context.Context, kubeconfigPath, appName, clusterName string) string {
+// of the ArgoCD cluster Secret of that name) and renders the failure account. When podNS is set it
+// also renders the scheduling half (argo_app_sched_diag.go): the not-Ready Pods in podNS, and per
+// node the allocatable CPU against what is already requested. BOUNDED: at most five reads at 5s
+// each, because this runs on a failing path inside the T2 context after the wait budget is spent,
+// and a cancelled ctx would kill the process before t.Cleanup tears the cluster down.
+func dumpArgoAppDiagnosis(ctx context.Context, kubeconfigPath, appName, clusterName, podNS string) string {
 	const perRead = 5 * time.Second
 	read := func(args ...string) ([]byte, error) {
 		cctx, cancel := context.WithTimeout(ctx, perRead)
@@ -228,5 +231,16 @@ func dumpArgoAppDiagnosis(ctx context.Context, kubeconfigPath, appName, clusterN
 			server, clusterErr = decodeClusterSecretServer(string(out))
 		}
 	}
-	return renderArgoAppDiagnosis(appName, appJSON, appErr, clusterName, server, clusterErr)
+	out := renderArgoAppDiagnosis(appName, appJSON, appErr, clusterName, server, clusterErr)
+	if strings.TrimSpace(podNS) == "" {
+		return out
+	}
+	pods, podsErr := read("get", "pods", "-n", podNS, "-o", "json")
+	nodes, nodesErr := read("get", "nodes", "-o", "json")
+	var allPods []byte
+	var allPodsErr error
+	if nodesErr == nil {
+		allPods, allPodsErr = read("get", "pods", "-A", "-o", "json")
+	}
+	return out + renderSchedulingDiagnosis(podNS, pods, podsErr, nodes, nodesErr, allPods, allPodsErr)
 }
