@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 )
 
@@ -104,6 +105,9 @@ type keylessDBConfig struct {
 	summaryPath   string
 	dwell         time.Duration
 	enabled       bool
+	// defaulted reports that the version or class came from keylessPostgresDefaults rather than a
+	// variable, so the run log says which shape was bought and why.
+	defaulted bool
 }
 
 // keylessDBEnabled reports whether the opt-in scenario was requested. Off by default: the base T2
@@ -149,12 +153,59 @@ func keylessDBFromEnv(provider string) keylessDBConfig {
 		summaryPath:   t2Env(envKeylessDBSummary, ""),
 		dwell:         keylessDefaultDwell,
 	}
+	// POSTGRES ONLY: an unset version or class takes the per-cloud default rather than refusing. This
+	// is what lets a dispatch (`keyless_db: postgres`) run with no variable wired at all — the rider
+	// exists so the proof can ride a floor night, and a rider that also needs two per-cloud vars
+	// set first is a variable by another name. MySQL keeps the refusal: nothing in this package has
+	// run a MySQL database on any cloud, so there is no proven shape to default to.
+	if engine == keylessEnginePostgres {
+		if v, cls, ok := keylessPostgresDefaults(provider); ok {
+			if c.engineVersion == "" {
+				c.engineVersion, c.defaulted = v, true
+			}
+			if c.instanceClass == "" {
+				c.instanceClass, c.defaulted = cls, true
+			}
+		}
+	}
 	if d := t2Env(envKeylessDBDwell, ""); d != "" {
 		if parsed, err := time.ParseDuration(d); err == nil {
 			c.dwell = parsed
 		}
 	}
 	return c
+}
+
+// keylessPostgresDefaults is the Postgres version and instance class a keyless run takes on a live
+// managed cloud when no variable names one. It is NOT a second per-cloud table:
+//   - gcp and azure reuse maxConfigPostgresShape, the shape the max-config `database` kind
+//     provisions on those clouds (db-f1-micro / B_Standard_B1ms);
+//   - aws deliberately does NOT reuse max-config's db.r6g.large. That is a provisioned instance billed
+//     around the clock, and on a floor night the pre-apply cost ceiling (vars.E2E_AWS_COST_CEILING_USD,
+//     default $300/month) prices it on top of the cluster it rides. `db.serverless` is the aws
+//     template's OWN default for rds_instance_type (infra/templates/project/aws/variables.tf), scaled
+//     by the provisioner's default 0.5–4 ACU, and the version is the provisioner's own
+//     DefaultAuroraPostgresVersion — so an aws keyless run buys what an unconfigured project buys.
+//
+// alibaba and hetzner return !ok: their keyless cells are excluded by the product table, so decide()
+// never reaches a version check there.
+func keylessPostgresDefaults(provider string) (version, class string, ok bool) {
+	switch provider {
+	case "aws":
+		return cloud.DefaultAuroraPostgresVersion, "db.serverless", true
+	case "gcp", "azure":
+		v, cls := maxConfigPostgresShape(provider)
+		return v, cls, true
+	}
+	return "", "", false
+}
+
+// keylessDefaultedNote is the log suffix naming where a defaulted version/class came from.
+func keylessDefaultedNote(defaulted bool) string {
+	if defaulted {
+		return ", per-cloud postgres default — no variable set it"
+	}
+	return ""
 }
 
 // keylessWorkloadNamespace is the namespace the keyless workload MUST land in. It is a constant
@@ -216,9 +267,10 @@ func (c keylessDBConfig) decide() (bool, string, error) {
 			missing = append(missing, key)
 		}
 	}
-	// Required for BOTH engines, with no default. A default would have to be a per-cloud × per-engine
-	// table living here — a second copy of knowledge maxconfig.go already carries, and one that fails
-	// at `tofu apply` (minutes and money in) rather than at configuration time.
+	// Required, and for MySQL there is no default: a MySQL default would have to be a per-cloud table
+	// living here with nothing that has ever applied it, and a wrong one fails at `tofu apply`
+	// (minutes and money in) rather than at configuration time. Postgres reaches this check already
+	// filled by keylessPostgresDefaults, which reuses shapes the templates already provision.
 	need(envKeylessDBVersion, c.engineVersion)
 	need(envKeylessDBClass, c.instanceClass)
 	// The GitOps repo, without which nothing renders into the cluster.

@@ -254,22 +254,33 @@ All **variables**, not secrets — an engine name, a version and an instance cla
 |---|---|
 | `E2E_KEYLESS_DB` | `1` to enable |
 | `E2E_KEYLESS_DB_ENGINE` | `postgres` (default) or `mysql` |
-| `E2E_KEYLESS_DB_ENGINE_VERSION` | **required** — per cloud × engine |
-| `E2E_KEYLESS_DB_INSTANCE_CLASS` | **required** — per cloud × engine |
+| `E2E_KEYLESS_DB_ENGINE_VERSION` | per cloud × engine — **required for mysql**, defaulted for postgres |
+| `E2E_KEYLESS_DB_INSTANCE_CLASS` | per cloud × engine — **required for mysql**, defaulted for postgres |
+
+**For one run, use the dispatch input instead of the variable.** `keyless_db: postgres` (or `mysql`)
+on a `workflow_dispatch` does what `E2E_KEYLESS_DB=1` plus the engine variables do, for that run
+only. A repository variable reaches every later run, the scheduled nightly included; an input dies
+with the run. The `secrets_xacct` and `xacct_registry` inputs do the same for #1268 and #1047. All
+three are refused on `dimension: cli-demo`, because the CLI creates that run's deploy and the scenario
+has no seeded snapshot to add to.
 
 Optional: `E2E_KEYLESS_DB_NAME` / `_SERVICE` / `_IMAGE` / `_CLIENT_IMAGE` / `_NAMESPACE`. The
 defaults are fine.
 
-The version and class have **no defaults on purpose**. A value valid on RDS is rejected by Cloud SQL
-and by Flexible Server, and again by the same cloud's other engine, so a default would be a per-cloud
-table that fails at `tofu apply` — minutes and money into a run — instead of in the first seconds.
+For **MySQL** the version and class have **no defaults on purpose**. A value valid on RDS is rejected
+by Cloud SQL and by Flexible Server, and again by the same cloud's other engine, so a default would be
+a per-cloud table that fails at `tofu apply` — minutes and money into a run — instead of in the first
+seconds. For **Postgres** an unset value takes `keylessPostgresDefaults` (`test/e2e/t2_keyless_db.go`):
+the max-config shape on gcp and azure, and on aws the provisioner's Aurora default version on the
+template's own `db.serverless` class. The aws default is not max-config's `db.r6g.large`, because the
+floor run's $300 cost ceiling would price that provisioned instance on top of the cluster.
 Use the per-cloud siblings (`E2E_KEYLESS_DB_ENGINE_VERSION_GCP`, and so on) for a leg that differs.
 The suffixed forms exist for `_ENGINE`, `_ENGINE_VERSION`, `_INSTANCE_CLASS`, `_IMAGE` and
 `_CLIENT_IMAGE`, on `_GCP` and `_AZURE`. Set one that the workflow does not forward and it silently
 has no effect, because the harness composes the name at run time — `TestPerCloudSiblingsReachTheNightly`
 is what keeps this list and the workflow in agreement.
 
-Starting points, matching what max-config already provisions for Postgres:
+Starting points for a variable, matching what max-config already provisions for Postgres (the defaults above use the gcp and azure rows as they are):
 
 | cloud | postgres |
 |---|---|
