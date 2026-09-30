@@ -47,4 +47,11 @@ describe("normalizeActivityQuery", () => {
 		});
 		expect("cursor" in q).toBe(false);
 	});
+
+	it("keeps the pinned project scope in the key, apart from the Project filter", () => {
+		// `projectId` is scope the server's facet counts see; `resourceIds` is a filter they must
+		// not. Collapsing one into the other would make the server unable to tell them apart.
+		const q = normalizeActivityQuery({ projectId: "p-1", resourceIds: [] });
+		expect(q).toEqual({ projectId: "p-1" });
+	});
 });
