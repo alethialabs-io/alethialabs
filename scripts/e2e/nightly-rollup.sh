@@ -745,7 +745,9 @@ derive() {
 	# fabric-gate red neither dedups onto nor contests the base dimension's cell. E2E_FABRIC_DEMO is
 	# the same value the T2 step hands the harness as ALETHIA_E2E_FABRIC_DEMO.
 	local red_lbl
-	red_lbl="$(red_label "$dim" "${E2E_FABRIC_DEMO:-}")" || return $?
+	# The three riders ride the same way (E2E_KEYLESS_DB / E2E_SECRETS_XACCT / E2E_XACCT_REGISTRY, each
+	# the value the T2 step hands the harness): a rider-only failure contests no dimension cell.
+	red_lbl="$(red_label "$dim" "${E2E_FABRIC_DEMO:-}" "${E2E_KEYLESS_DB:-}" "${E2E_SECRETS_XACCT:-}" "${E2E_XACCT_REGISTRY:-}")" || return $?
 
 	# The coverage issue deliberately gets NO dimension suffix. It reports which clouds are unwired,
 	# which is a property of the repo's gate variables and identical on both crons; suffixing it would
@@ -840,6 +842,8 @@ derive() {
 			printf '%s\n\n' "Run: ${RUN_URL:-}"
 			if [ "$red_lbl" = "$FABRIC_RED_LABEL" ]; then
 				printf '%s\n\n' "**The fabric demo (#845) rode this run**, so it is titled \`(${FABRIC_RED_LABEL})\` rather than \`(${dim_label})\` (#5153): a red here may be the fabric placement gate alone, with every **${dim_label}** assertion passing. Check the \`fabric-demo\` line of the bundle's VERDICT.txt and the test log before reading it as a ${dim_label} failure. This title contests no programme cell."
+			elif [ "$red_lbl" != "$dim_label" ]; then
+				printf '%s\n\n' "**A scenario rider rode this run** (\`${red_lbl}\`: keyless_db, secrets_xacct and/or xacct_registry, or several scenarios at once), so it is titled \`(${red_lbl})\` rather than \`(${dim_label})\`: a red here may be the rider's layer alone, with every **${dim_label}** assertion passing. Read the test log for the rider's own lines before reading it as a ${dim_label} failure. This title contests no programme cell."
 			fi
 			case "$dim" in
 			full) printf '%s\n\n' "The full bar runs on a \`workflow_dispatch\` with \`full_bar: true\` (no cron schedules it — the weekly one was removed as unpriced on four of five clouds, #2385) with \`ALETHIA_E2E_MAX_CONFIG=1\` + \`ALETHIA_E2E_ALL_ADDONS=1\` — it provisions the whole 11-kind surface, so it fails at stages the floor never reaches. Do NOT read it as the floor re-running." ;;
@@ -1367,6 +1371,22 @@ run_self_test() {
 		"the fabric-demo red's body names the base dimension and the fabric gate"
 	_a "floor" "$(. "$c/out/state.env"; echo "$DIMENSION_LABEL")" \
 		"the DIMENSION label is unchanged — only the issue title moves"
+
+	# …and the riders, the same way: #5201/#5204/#5205 were floor nights red only in the keyless layer.
+	local t_kl
+	c="$tmp/dim-keyless"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
+	write_jobs "$c/jobs.json" aws
+	E2E_KEYLESS_DB=1 _derive "$c" >/dev/null
+	t_kl="$(cat "$c/out/issue-red-aws.title")"
+	_a "e2e nightly: aws RED (keyless-db)" "$t_kl" "a keyless-db floor red is titled (keyless-db), not (floor)"
+	_a "yes" "$(grep -q 'A scenario rider rode this run' "$c/out/issue-red-aws.md" && echo yes || echo no)" \
+		"the rider red's body names the rider and the base dimension"
+	c="$tmp/dim-riders"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
+	write_jobs "$c/jobs.json" aws
+	E2E_SECRETS_XACCT=1 E2E_XACCT_REGISTRY=1 _derive "$c" >/dev/null
+	_a "e2e nightly: aws RED (riders)" "$(cat "$c/out/issue-red-aws.title")" "two riders on one red title as (riders)"
 
 	# …and a dimension nobody has heard of must STOP the filer, not render `RED ()`. That title is a
 	# dedup key too, so every unknown dimension would collide onto one issue — the same failure in a

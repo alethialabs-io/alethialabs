@@ -151,6 +151,40 @@ resource "google_project_iam_member" "e2e_external_dns_zone_list" {
 # alethiaE2eDnsZoneIam above. Neither is new — recorded here because a reader asking "how does an
 # adopted account get its per-run grants?" should not have to reconstruct it.
 
+# The standing app→Cloud SQL identity the keyless-db rider adopts (#1450/#1513). Mirrors the customer
+# connector's alethia-appdb (infra/connector/gcp/main.tf, google_service_account.alethia_app_db): the
+# e2e must prove the SHAPE a customer gets. cloudsql.client and cloudsql.instanceUser are PROJECT-scoped
+# only — a Cloud SQL instance carries no IAM policy — and the provisioner holds no projects.setIamPolicy,
+# so the project template cannot grant a per-run identity; it ADOPTS this one via
+# cloud_sql_app_service_account_email (infra/templates/project/gcp/app-db-identity.tf). Without it the
+# gcp keyless run bought a cluster and a database and then failed the binding closed with "no
+# cloud_sql_app_gsa_email output" (run 36711784359).
+#
+# The per-run pieces stay per-run and need nothing new: the Workload Identity binding onto this account
+# is a GSA-scoped setIamPolicy (roles/iam.serviceAccountAdmin, above) and the CLOUD_IAM_SERVICE_ACCOUNT
+# database user is roles/cloudsql.admin. Set the output as the repo variable E2E_KEYLESS_DB_GCP_APP_SA.
+#
+# TRADE-OFF, the connector's own: one account per project is a database user on every instance in
+# it. This project holds nothing but ephemeral e2e instances, each torn down with its run.
+resource "google_service_account" "e2e_app_db" {
+  project      = var.project_id
+  account_id   = "alethia-e2e-appdb"
+  display_name = "Alethia e2e app -> Cloud SQL (keyless)"
+  description  = "Standing identity the keyless-db e2e app impersonates via Workload Identity to log in to Cloud SQL with an IAM token. Holds ONLY cloudsql.client + cloudsql.instanceUser. Mirrors the customer connector's alethia-appdb."
+}
+
+# Least-privilege, exactly the connector's pair: connect through the Auth Proxy, and log in as an IAM
+# user. Neither carries setIamPolicy. Keyed on static role strings, so for_each is known at plan.
+resource "google_project_iam_member" "e2e_app_db" {
+  for_each = toset([
+    "roles/cloudsql.client",
+    "roles/cloudsql.instanceUser",
+  ])
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.e2e_app_db.email}"
+}
+
 resource "google_project_iam_custom_role" "e2e_project_reader" {
   role_id     = "alethiaE2eProjectReader"
   project     = var.project_id

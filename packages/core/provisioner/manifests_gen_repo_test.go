@@ -156,6 +156,11 @@ func TestHasManifestsEdgeCases(t *testing.T) {
 			if got := hasManifests(dir); got != tc.want {
 				t.Errorf("hasManifests(%v) = %v, want %v", tc.files, got, tc.want)
 			}
+			// The exported form the e2e keyless preflight asks must give the SAME answer — it exists
+			// so that caller asks the product's predicate instead of keeping a copy of it.
+			if got := AppsRepoHasManifests(dir); got != tc.want {
+				t.Errorf("AppsRepoHasManifests(%v) = %v, want %v", tc.files, got, tc.want)
+			}
 		})
 	}
 
