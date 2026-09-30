@@ -795,17 +795,11 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	if err != nil {
 		return err
 	}
-	// hetzner-talos placement (#1389): fetch the Fabric's PERSISTED admin talosconfig (decrypted
-	// server-side, delivered over the authenticated job channel like the addon secrets) so the stage can
-	// mint a fresh short-lived kubeconfig from it via the Talos machine API. Only for a namespace/vcluster
-	// placement on hetzner — a dedicated apply produces its own `kubeconfig` output and needs no mint.
-	talosConfig := ""
-	if provider == "hetzner" && isTalosPlacementMode(vc.PlacementMode) {
-		fetched, fetchErr := fetchPlacementTalosconfig(w.api, job.ID)
-		if fetchErr != nil {
-			return fetchErr
-		}
-		talosConfig = fetched
+	// hetzner-talos placement (#1389): fetch the Fabric's PERSISTED admin talosconfig so the stage can
+	// mint a fresh short-lived kubeconfig from it. See placementTalosconfig.
+	talosConfig, err := placementTalosconfig(w.api, job.ID, provider, vc.PlacementMode)
+	if err != nil {
+		return err
 	}
 
 	sec := stageSecrets{GitToken: gitToken, GitTokens: gitTokens, StateToken: stateBackend.Token, AddonSecrets: addonSecrets, TalosConfig: talosConfig}
@@ -856,6 +850,19 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 // dedicated apply (empty or "dedicated") that provisions the Fabric and emits its own kubeconfig.
 func isTalosPlacementMode(pm types.PlacementMode) bool {
 	return pm == types.PlacementModeNamespace || pm == types.PlacementModeVcluster
+}
+
+// placementTalosconfig returns the Fabric's persisted admin talosconfig when the job is a hetzner
+// namespace/vcluster placement — its DEPLOY or its DESTROY — and "" for every other job. The value is
+// fetched server-decrypted over the authenticated job channel (like the add-on secrets) and reaches the
+// stage only through stageSecrets, from which the stage builds TalosKubeconfig; a dedicated apply emits
+// its own `kubeconfig` output and a dedicated destroy runs tofu, so neither needs it. A placement whose
+// fetch fails is refused here, before any stage runs.
+func placementTalosconfig(api JobAPI, jobID, provider string, pm types.PlacementMode) (string, error) {
+	if provider != "hetzner" || !isTalosPlacementMode(pm) {
+		return "", nil
+	}
+	return fetchPlacementTalosconfig(api, jobID)
 }
 
 // fetchPlacementTalosconfig fetches the Fabric's persisted admin talosconfig for a hetzner
@@ -1195,7 +1202,14 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, 
 	if err != nil {
 		return err
 	}
-	sec := stageSecrets{StateToken: stateBackend.Token}
+	// A hetzner namespace/vcluster TEARDOWN reaches its Fabric exactly as the deploy did: through a
+	// kubeconfig minted from the persisted talosconfig. Without it runDestroyStage builds a nil
+	// TalosKubeconfig and the deregister fails in mintClusterOutputs (#845, run 36646962419).
+	talosConfig, err := placementTalosconfig(w.api, job.ID, provider, vc.PlacementMode)
+	if err != nil {
+		return err
+	}
+	sec := stageSecrets{StateToken: stateBackend.Token, TalosConfig: talosConfig}
 
 	// Run the (untrusted-class, for BYO) teardown through the isolation seam, like
 	// deploy/plan — Passthrough runs it in-process; the container backend re-execs it.
