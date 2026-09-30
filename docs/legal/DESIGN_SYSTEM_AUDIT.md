@@ -96,7 +96,8 @@ Linux Foundation policy quoted above, and the grayscale rendering applies to all
 nine. Second, whether reusing an already-committed hyperscaler favicon for the
 cross-account rows is acceptable is the decision held above. The published terms
 for those nine marks were gathered on 8 September 2026 and are recorded in the
-next section; the decision on them remains open.
+next section; the maintainer ruled on them on 30 September 2026 — see "Rulings,
+30 September 2026" at the end of that section.
 
 ## The nine shipping connector marks — terms as published
 
@@ -391,6 +392,88 @@ without separate permission, and that grant is conditioned on the logo being
 unmodified and used to identify and hyperlink to the project page. Whether the
 console's use meets those conditions is a determination, not a finding, and is
 left here for the maintainer.
+
+### Rulings, 30 September 2026
+
+The maintainer ruled on the nine marks on 30 September 2026 and accepted the
+recommendations put to them. This section records each ruling, the reason for
+it, and what changed in the tree. It closes the open item recorded under
+"Connector marks record" for these nine. The hyperscaler question recorded there
+is separate and was **not** decided here.
+
+The rulings share one principle: **a third-party mark is rendered as its owner
+supplies it, or it is not rendered.** Every owner above forbids changing a
+logo's colour, in terms or by a general bar on altering the mark. So the
+disconnected state's desaturation, which was the only colour change the console
+made, is withdrawn for every third-party mark rather than argued mark by mark.
+
+| Mark | Ruling | Reason |
+|---|---|---|
+| `prometheus` | **The asset is deleted.** `packages/assets/static/icons/prometheus/prometheus-32x32.png` is removed. | No catalog row and no source file referenced it (correction 2 above). It was served as a public file that nothing rendered. The Linux Foundation policy requires written permission for website use, and no use existed that needed a decision, so the file is withdrawn rather than cleared. |
+| `vault` | **Rendered unmodified (`mono={false}`), and always as a link to the project.** Where the icon sits inside another control and cannot be a link, the monogram renders instead of the mark. | This is the one owner grant that covers website use without asking first, and it is conditioned: the *current* logo, *unmodified*, "used only to identify and hyperlink to main page of the specific HashiCorp project website". The link target is `https://developer.hashicorp.com/vault`, where `https://www.vaultproject.io/` redirects (HTTP 308, checked 30 September 2026). A pick tile (`role="button"`) and a select option are controls themselves, so an anchor cannot be nested in them. There the mark could not meet the "hyperlink" condition, and the monogram is used instead. |
+| `github` | **GitHub's own mono file replaces the colour PNG.** No filter is applied to it. | GitHub permits the Invertocat "only … in white, black, or in few cases grey or green", and separately forbids "changing the color". Desaturating a supplied colour PNG in CSS is a change of colour, and shipping GitHub's own black and white files is not. The previous `github-16x16.png` / `github-32x32.png` were deleted. The source for the new files is below. |
+| `bitbucket` | Rendered unmodified: `mono={false}` at every call site. | Atlassian: "without any modification (aside from re-sizing)". |
+| `cloudflare` | Rendered unmodified: `mono={false}` at every call site. | Cloudflare's colour clause ("different colors") is written for its web badges. Rendering the mark as supplied avoids the question. |
+| `datadog` | Rendered unmodified: `mono={false}` at every call site. | "Don't modify color of logo." |
+| `dockerhub` | Rendered unmodified: `mono={false}` at every call site. | Docker's brand page names four permitted colours, and grey is not among them. |
+| `gitlab` | Rendered unmodified: `mono={false}` at every call site. | GitLab's policy forbids altering the Trademarks. |
+| `grafana` | Rendered unmodified: `mono={false}` at every call site. | "Do not alter the Grafana Labs Marks, including … changing any color or proportions." |
+
+**What "at every call site" means in the tree.** A third-party connector mark
+is recognised by where it is served: `/icons/<slug>/…`, from
+`packages/assets/static/icons/`. `isThirdPartyMark()` in
+`apps/console/components/connectors/connector-icon.tsx` asks exactly that, and
+the cloud marks (`/<cloud>/favicon_*.png`) are deliberately outside it.
+
+The call sites that render these marks now pass `mono={false}` for them,
+whatever the connection state:
+
+- `connector-card.tsx`, `connector-row.tsx` and `connector-detail-sheet.tsx`:
+  `mono={!isConnected && !isThirdPartyMark(…)}` for `ConnectorIcon`, and
+  `mono={false}` for `GitProviderIcon`;
+- the connect-sheet header in `cloud-connect/use-cloud-connect.tsx`;
+- the canvas inspector's `connector-select.tsx`;
+- the git marks in `repository-selector.tsx` and `settings/preview/preview-settings.tsx`;
+- the sign-in tiles in `auth/auth-form.tsx`.
+
+The last three render `gitlab` and `bitbucket` through `ProviderIcon`. With
+`mono` on, `ProviderIcon` flattened them to a `brightness-0` silhouette, which
+is also a change of colour.
+
+Where a connector mark is still desaturated, it is a CLOUD mark
+(`/aws/favicon_64x64.png` and its siblings). That is the open hyperscaler
+question, left as it was.
+
+**Source of the GitHub files.** `https://github.com/logos` redirects (HTTP 301)
+to <https://brand.github.com/foundations/logo>. On 30 September 2026 that page
+offered one download, <https://brand.github.com/GitHub_Logos.zip> (499,228
+bytes, SHA-256
+`e2a67d6cc51d990a52c46c1cf6bcab688db4830982174bca50e0be7a5c2f3194`). Two files
+from its `PNG/` folder are committed **byte for byte, unmodified and
+un-resized**, under their published names:
+
+| Committed as | From `GitHub_Logos.zip` | Size | SHA-256 |
+|---|---|---|---|
+| `packages/assets/static/icons/github/GitHub_Invertocat_Black.png` | `GitHub Logos/PNG/GitHub_Invertocat_Black.png` | 294 × 288 | `2a2f5cbcc74c7fa83c40127dd8b0e42c23f1157131aebe28492aa1ac27bbdc6d` |
+| `packages/assets/static/icons/github/GitHub_Invertocat_White.png` | `GitHub Logos/PNG/GitHub_Invertocat_White.png` | 294 × 288 | `0d4c235fef9efec54174a7c005fc0fe0ce2d63d35c21898ab5148587111397a9` |
+
+The five catalog rows that named `github-32x32.png` now name the black file.
+`ConnectorIcon` renders the white file in the dark theme (`DARK_VARIANTS`),
+because GitHub supplies a white mark and permits white. Inverting the black one
+in CSS would be exactly the recolouring this ruling withdraws.
+
+**Not decided here, recorded so it is not mistaken for decided:**
+
+- `ProviderIcon`'s own GitHub mark on the sign-in screen, the git connector rows
+  and the marketing site is an inline SVG path drawn in `currentColor`. It is
+  not GitHub's supplied file. It renders in the page's foreground, which is
+  black or white and within GitHub's permitted list. Whether it should also be
+  replaced by the supplied file was not part of this ruling.
+- The Google "G" on the sign-in screen is drawn in `currentColor` rather than
+  in Google's four colours. Google is not one of the nine.
+- The marketing site's `Prov` primitive (`packages/brand/src/site/primitives.tsx`)
+  applies `grayscale` to the `aws`, `gcp` and `azure` marks. That is outside the
+  console, and those marks are the open hyperscaler question.
 
 ## Release and change controls
 
