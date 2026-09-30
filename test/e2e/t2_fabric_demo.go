@@ -664,6 +664,33 @@ func fabricDemoSummaryVerdict(s FabricDemoSummary) string {
 		icon, s.Fabric, prod, tiers, vc, s.ArgoNotReinstalled, s.ReceiptScope, shortPlanSHA(s.FabricPlanSHA), drift)
 }
 
+// fabricDemoDriftedLines renders each drifted resource of a posture as `address (kind)
+// attrs=a,b`, one per line, joined for the gate's failure message.
+//
+// The gate used to print `address (kind)` only. Run 36667774857 failed on seven resources and
+// named none of the attributes behind them, although the analyzer had them — the job log carried
+// `"attributes":["assignee_id","assignee_type"]` and the gate threw it away, so diagnosing the
+// failure meant grepping the runner's raw posture line. Same fix, same format as the BYO-IaC leg's
+// byoIacPosture.detail; `attrs=<none reported>` says the ANALYZER named nothing (a drift verdict
+// reached before any leaf was computed), which is itself a diagnosis, not a missing field.
+func fabricDemoDriftedLines(p byoIacPosture) string {
+	lines := make([]string, 0, len(p.Details))
+	for _, d := range p.Details {
+		s := d.Address
+		if s == "" {
+			s = d.Type
+		}
+		s += " (" + d.Kind + ")"
+		if len(d.Attributes) > 0 {
+			s += " attrs=" + strings.Join(d.Attributes, ",")
+		} else {
+			s += " attrs=<none reported>"
+		}
+		lines = append(lines, s)
+	}
+	return strings.Join(lines, "\n         ")
+}
+
 // shortPlanSHA renders a plan digest for the one-line verdict without dumping 64 hex chars.
 func shortPlanSHA(sha string) string {
 	if len(sha) <= 12 {
