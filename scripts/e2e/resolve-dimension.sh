@@ -211,6 +211,12 @@ fidelity_env() { # <dimension>
 		# (#3266) correctly skipped for this dimension.
 		echo "ALETHIA_E2E_SOAK=off"
 		echo "ALETHIA_E2E_CLI_DEMO_PROVISION=1"
+		# The in-run sweepers scope by `alethia:e2e-run=e2e-<ENV>` for this dimension, NOT by
+		# project-id (#5096). The console builds this stack's config from a project the CLI created,
+		# so its project-id is the project's UUID and a project-id sweep would find nothing and
+		# report the account clean. The CLI assigns the `e2e-run` classification before the PLAN,
+		# which is what puts that handle on every resource. See scripts/e2e/lib/scope-key.sh.
+		echo "ALETHIA_E2E_SCOPE_KEY=e2e-run"
 		;;
 	gitops | byo)
 		# NAMED `gitops`, NOT `byo`, AND THE RENAME IS THE POINT.

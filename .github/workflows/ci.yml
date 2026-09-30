@@ -1900,6 +1900,14 @@ jobs:
       - name: Sweeper probe contract (an API that did not answer is not an empty account)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/lib/sweep-probe.sh --self-test
+      # Which tag KEY a sweeper scopes by, and which of the two handles a discovered resource belongs
+      # to (#5096). A CLI-created stack's project-id is its UUID, so it is found only by its
+      # `e2e-run` classification; a seeded stack — including every one from before that tag — by
+      # project-id. The rule is shared by four sweepers, so it is asserted once here as well as
+      # end to end in each of their self-tests. Hermetic — no CLI is called at all.
+      - name: Sweeper scope key (a CLI-created stack is found by e2e-run, an old one by project-id)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/e2e/lib/scope-key.sh --self-test
       - name: Orphan reaper result contract is secret-free and fail-closed (#2465)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/e2e/reaper-result.mjs --self-test

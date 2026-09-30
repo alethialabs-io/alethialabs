@@ -64,6 +64,10 @@ set -euo pipefail
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"
+# The sweep-handle KEY (project-id or e2e-run) and how a discovered resource is attributed to one
+# (#5096). Read its header before touching any preflight discovery below.
+# shellcheck source-path=SCRIPTDIR source=lib/scope-key.sh
+. "${E2E_LIB_DIR}/scope-key.sh"
 probe_reset
 
 SELF_TEST=0
@@ -883,15 +887,25 @@ EOF
 # list_orphan_clusters — every OTHER run's `cluster` label value that still has e2e-labelled
 # resources. Same validation and prod/shared denylist as the top-of-file guard, re-applied per
 # candidate so discovery can never widen past a genuine prior nightly.
+#
+# TWO HANDLES, EITHER ONE (#5096). A stack the CLI created (the cli-demo dimension) carries its
+# project's UUID as `alethia_project-id`, so the handle above cannot see it. Every e2e stack now also
+# carries the `alethia_e2e-run=e2e-<run_id>-<attempt>` classification label, and a resource is an
+# e2e resource when EITHER handle says so — e2e_scope_attribute (lib/scope-key.sh) owns that
+# decision, including the stricter shape it holds `e2e-run` to because an org can define that
+# dimension itself. The OLD handle stays, so nothing standing today goes dark. The sweep key does not
+# change on this cloud: whichever handle found it, the child sweep is `cluster=<name>`.
 list_orphan_clusters() {
-	local kind rows
+	local kind rows pid run
 	{
 		for kind in server volume network firewall primary-ip image; do
 			hcloud "$kind" list -o json 2>/dev/null |
-				jq -r '.[]? | select((.labels["alethia_project-id"] // "") | startswith("e2e-"))
-				               | .labels.cluster // empty' 2>/dev/null || true
+				jq -r '.[]? | select(.labels.cluster // "" | length > 0)
+				               | [(.labels["alethia_project-id"] // ""), (.labels["alethia_e2e-run"] // ""), .labels.cluster]
+				               | join("|")' 2>/dev/null || true
 		done
-	} | while IFS= read -r rows; do
+	} | while IFS="|" read -r pid run rows; do
+		[ -n "$(e2e_scope_attribute "$pid" "$run")" ] || continue # neither handle: not a nightly resource
 		[ -n "$rows" ] || continue
 		[ "$rows" = "$CLUSTER_NAME" ] && continue # never this run — its own teardown owns it
 		printf '%s' "$rows" | grep -Eq '^[a-z0-9][a-z0-9._-]{4,62}$' || continue
@@ -1650,6 +1664,51 @@ if [ "$SELF_TEST" = "1" ]; then
 	ST_LIST=""
 	ST_LIST_RC=0
 	probe_reset
+
+	# ── #5096: PREFLIGHT DISCOVERY SEES A CLI-CREATED STACK. ────────────────────────────────────────
+	#
+	# The cli-demo stack's `alethia_project-id` is its project's UUID, so the old discovery — which
+	# selected on that label alone — returned nothing for it. Each case is one resource row the stub
+	# lists, and the assertion is the exact set of cluster names discovery hands to the sweep. Both
+	# directions: the new handle must FIND the CLI stack, the old one must still find a seeded stack
+	# that predates the new label, and neither may admit a resource carrying no e2e handle.
+	#
+	# Its OWN stub, redefined here: the cases above redefine `hcloud` inside their functions, and a
+	# bash function defined inside another is global — so whichever ran last would answer this.
+	hcloud() {
+		case "$1 ${2:-}" in
+		"server list") printf '%s\n' "$ST_SERVERS" ;;
+		*" list") printf '[]\n' ;;
+		*) : ;;
+		esac
+	}
+	st_discovery_case() { # <name> <servers json> <want clusters, space-separated>
+		ST_SERVERS="$2"
+		local got
+		got="$(list_orphan_clusters 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+		if [ "$got" = "$3" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — want [$3], got [$got]" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_discovery_case "a CLI-created stack (UUID project-id) is found by its e2e-run label" \
+		'[{"labels":{"alethia_project-id":"3e9d7e82-6bfc-4faa-9006-7c1e27d72249","alethia_e2e-run":"e2e-36135826614-1","cluster":"alethia-nl-36135826614-1"}}]' \
+		"alethia-nl-36135826614-1"
+	st_discovery_case "a seeded stack from before the e2e-run label is still found (backward compatible)" \
+		'[{"labels":{"alethia_project-id":"e2e-31459117502-1","cluster":"alethia-nl-31459117502-1"}}]' \
+		"alethia-nl-31459117502-1"
+	st_discovery_case "a resource carrying neither handle is never an orphan" \
+		'[{"labels":{"alethia_project-id":"3e9d7e82-6bfc-4faa-9006-7c1e27d72249","cluster":"alethia-nl-prod-web"}}]' \
+		""
+	st_discovery_case "an org's own e2e-run value that is not a CI run shape is never an orphan" \
+		'[{"labels":{"alethia_project-id":"3e9d7e82-6bfc-4faa-9006-7c1e27d72249","alethia_e2e-run":"e2e-staging","cluster":"alethia-nl-custom"}}]' \
+		""
+	st_discovery_case "this run's own cluster is excluded under the new handle too" \
+		'[{"labels":{"alethia_project-id":"3e9d7e82-6bfc-4faa-9006-7c1e27d72249","alethia_e2e-run":"e2e-1-1","cluster":"selftest-cluster"}}]' \
+		""
+	ST_SERVERS=""
 
 	unset -f hcloud
 

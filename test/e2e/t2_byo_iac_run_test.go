@@ -592,6 +592,7 @@ func byoIacDestroyInProcess(ctx context.Context, p byoIacParams, src byoIacSourc
 		EnvironmentStage: types.EnvironmentStage(p.env),
 		Region:           p.region,
 		CloudAccountID:   t2AmbientAccountID(p.provider),
+		Classification:   e2eRunClassification(p.env),
 		IacSource: &types.ProjectIacSourceConfig{
 			RepoURL:   src.RepoURL,
 			Ref:       src.Ref,
