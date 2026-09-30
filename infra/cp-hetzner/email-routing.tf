@@ -30,6 +30,13 @@ locals {
     "dmarc",    # automated DMARC aggregate reports (rua=mailto:dmarc@)
     "borislav", # founder personal
   ]
+
+  # The local-parts that were LIVE in Cloudflare before this stack owned them (#4374), and so must
+  # be imported rather than created. Frozen on purpose: an address added to inbound_addresses later
+  # does not exist yet and is simply created, so it must NOT be listed here.
+  adopted_addresses = [
+    "support", "sales", "legal", "privacy", "security", "feedback", "dmarc", "borislav",
+  ]
 }
 
 # Turn on Email Routing for the zone. Enabling runs Cloudflare's wizard, which adds
@@ -50,6 +57,15 @@ resource "cloudflare_email_routing_address" "dest" {
 
   account_id = var.cloudflare_account_id
   email      = var.email_forward_to
+
+  lifecycle {
+    # Fail the PLAN, not the apply, when the input is flipped without what adoption needs. Without
+    # the ID the address is not imported (email-routing-imports.tf) and would be created again.
+    precondition {
+      condition     = var.email_routing_address_id != "" && var.email_forward_to != ""
+      error_message = "manage_email_routing = true needs email_routing_address_id (the live destination address's id) and email_forward_to — see #4374 and the README's adoption steps."
+    }
+  }
 }
 
 # One forward rule per apex address → the destination inbox.
@@ -72,6 +88,16 @@ resource "cloudflare_email_routing_rule" "inbound" {
   }
 
   depends_on = [cloudflare_email_routing_settings.zone]
+
+  lifecycle {
+    # An adopted address with no rule id is not imported, and would be CREATED as a second forward
+    # rule next to the live one. Fail the plan instead. Addresses added after adoption are not in
+    # local.adopted_addresses and are created normally.
+    precondition {
+      condition     = !contains(local.adopted_addresses, each.key) || contains(keys(var.email_routing_rule_ids), each.key)
+      error_message = "manage_email_routing = true but email_routing_rule_ids has no id for this adopted address; supply every live rule id (#4374) so it is imported, not created a second time."
+    }
+  }
 }
 
 # Everything else addressed to the apex is dropped (bounced) rather than forwarded,
