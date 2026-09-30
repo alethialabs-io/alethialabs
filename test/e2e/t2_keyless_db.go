@@ -19,6 +19,7 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,7 +29,9 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	"github.com/alethialabs-io/alethialabs/packages/core/git"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
+	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 )
 
 // Scenario env. Every per-cloud value also honours the "<base>_<PROVIDER>" override idiom
@@ -47,6 +50,28 @@ const (
 	envKeylessDBDwell     = "ALETHIA_E2E_KEYLESS_DB_DWELL"          // token-rotation dwell
 	envKeylessDBSummary   = "ALETHIA_E2E_KEYLESS_DB_SUMMARY"        // where to write the proof summary
 )
+
+// envKeylessDBGCPAppSA names the STANDING Google service account the GCP cell's app impersonates to log
+// in to Cloud SQL. The gcp project template does not create one — roles/cloudsql.client and
+// roles/cloudsql.instanceUser are project-scoped only, and the provisioner deliberately holds no
+// projects.setIamPolicy — so it ADOPTS one through keylessGCPAppSAKey (infra/templates/project/gcp/
+// app-db-identity.tf). The customer's comes from the connector bootstrap (`alethia-appdb`); the e2e's
+// from infra/gcp-e2e (output `e2e_gcp_keyless_app_db_sa_email`).
+//
+// Without it the template wires nothing, emits no cloud_sql_app_gsa_email, and the product fails the
+// binding closed after the cluster is bought — which is exactly what run 36711784359 did. So a gcp
+// keyless run with it unset is refused in decide(), before any spend.
+//
+// GCP-only by construction, so it is written flat rather than through the <BASE>_<PROVIDER>
+// convention — the same choice envGCPExternalDNSServiceAccount makes, for the same reason.
+const envKeylessDBGCPAppSA = "ALETHIA_E2E_KEYLESS_DB_GCP_APP_SA"
+
+// keylessGCPAppSAKey is the gcp project template variable the adopted account reaches tofu through.
+// It travels the DATABASE's provider_config passthrough (mergeProviderConfig in
+// packages/core/cloud/gcp_provider.go), which is where the account belongs: it is the database's app
+// login. TestKeylessGCPAppSAKeyIsATemplateVariable pins that the template declares it and validates it
+// with the same pattern gcpSAEmail checks here.
+const keylessGCPAppSAKey = "cloud_sql_app_service_account_email"
 
 // Engine families, matching types.ProjectDatabaseConfig.EngineFamily. Literals rather than an import:
 // manifests keeps its own copies unexported. They are not free-floating — every one is fed to
@@ -103,8 +128,10 @@ type keylessDBConfig struct {
 	clientImage   string
 	namespace     string
 	summaryPath   string
-	dwell         time.Duration
-	enabled       bool
+	// gcpAppSA is the standing app→Cloud SQL account the gcp cell adopts (envKeylessDBGCPAppSA).
+	gcpAppSA string
+	dwell    time.Duration
+	enabled  bool
 	// defaulted reports that the version or class came from keylessPostgresDefaults rather than a
 	// variable, so the run log says which shape was bought and why.
 	defaulted bool
@@ -151,6 +178,7 @@ func keylessDBFromEnv(provider string) keylessDBConfig {
 		clientImage:   t2ArgoEnvForProvider(envKeylessDBClient, provider, defaultClientImage(engine)),
 		namespace:     t2Env(envKeylessDBNamespace, keylessWorkloadNamespace),
 		summaryPath:   t2Env(envKeylessDBSummary, ""),
+		gcpAppSA:      t2Env(envKeylessDBGCPAppSA, ""),
 		dwell:         keylessDefaultDwell,
 	}
 	// POSTGRES ONLY: an unset version or class takes the per-cloud default rather than refusing. This
@@ -276,10 +304,20 @@ func (c keylessDBConfig) decide() (bool, string, error) {
 	// The GitOps repo, without which nothing renders into the cluster.
 	need(envArgoAppsRepo, t2ArgoEnvForProvider(envArgoAppsRepo, c.provider, ""))
 	need(envArgoGitToken, os.Getenv(envArgoGitToken))
+	// GCP only: the adopted app identity. See envKeylessDBGCPAppSA.
+	if c.provider == "gcp" {
+		need(envKeylessDBGCPAppSA, c.gcpAppSA)
+	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		return false, "", fmt.Errorf("%s is enabled for %s × %s but these are unset: %s",
 			envKeylessDB, c.provider, c.engine, strings.Join(missing, ", "))
+	}
+	// The template validates the same pattern (TestKeylessGCPAppSAKeyIsATemplateVariable), but only at
+	// PLAN — minutes and a VPC in. A bare account id is the mistake worth catching here.
+	if c.provider == "gcp" && !gcpSAEmail.MatchString(c.gcpAppSA) {
+		return false, "", fmt.Errorf("%s must be a full service-account email (name@project.iam.gserviceaccount.com), got %q",
+			envKeylessDBGCPAppSA, c.gcpAppSA)
 	}
 	if c.namespace != keylessWorkloadNamespace {
 		return false, "", fmt.Errorf("%s must be %q — the per-cloud templates pin the workload-identity subject to that namespace, so a pod elsewhere cannot federate an identity (got %q)",
@@ -324,6 +362,20 @@ func (c keylessDBConfig) applyToSnapshot(snap map[string]any) error {
 	db["instance_class"] = c.instanceClass
 	db["port"] = keylessEnginePort(c.engine)
 	db["iam_auth"] = true
+	// GCP: adopt the standing app identity through the database's provider_config. A max-config run's
+	// overlaid entry may already carry a provider_config, so this MERGES — and refuses a different
+	// account already there rather than silently replacing the one another layer chose.
+	if c.provider == "gcp" && c.gcpAppSA != "" {
+		pc, _ := db["provider_config"].(map[string]any)
+		if pc == nil {
+			pc = map[string]any{}
+		}
+		if prev, ok := pc[keylessGCPAppSAKey].(string); ok && prev != "" && prev != c.gcpAppSA {
+			return fmt.Errorf("databases[0].provider_config.%s is already %q; the keyless layer would set %q", keylessGCPAppSAKey, prev, c.gcpAppSA)
+		}
+		pc[keylessGCPAppSAKey] = c.gcpAppSA
+		db["provider_config"] = pc
+	}
 	if len(dbs) == 0 {
 		dbs = []any{db}
 	} else {
@@ -358,6 +410,44 @@ func (c keylessDBConfig) applyToSnapshot(snap map[string]any) error {
 	}
 	snap["services"] = append(services, svc)
 	return nil
+}
+
+// ── the apps repo must be one the product will WRITE to ────────────────────────────────────────
+
+// keylessAppsRepoRefusal reports why a checked-out apps repo at dir cannot carry this scenario, or nil.
+//
+// The product renders the keyless workload, its proxy sidecar, its bootstrap Job AND the decision
+// record only into an apps repo it considers its own. A repo whose ROOT already holds YAML is treated
+// as bring-your-own (provisioner.AppsRepoHasManifests — asked, not copied): generation leaves it
+// untouched and drops every keyless decision, so the deploy SUCCEEDS with nothing rendered and the
+// scenario later fails "no keyless decision … the render never CONSIDERED the binding" — on a bought
+// cluster. That is what happened on BOTH gcp (36711784359) and azure (36711798677): the shared e2e
+// apps repo carries a root configmap.yaml for the A0.6 proof, and each log reads "Apps repo already
+// contains manifests — leaving it untouched (bring-your-own)" right after the binding decision. So a
+// repo in that state is refused before spend.
+func keylessAppsRepoRefusal(dir, repoURL string) error {
+	if !provisioner.AppsRepoHasManifests(dir) {
+		return nil
+	}
+	return fmt.Errorf("the apps repo %s already holds YAML at its root, so the product treats it as "+
+		"bring-your-own and renders NOTHING into it — no keyless workload, sidecar, bootstrap Job or "+
+		"decision record. Point %s (or its _<CLOUD> sibling) at a repo whose root holds no *.yaml/*.yml "+
+		"for a keyless run", repoURL, envArgoAppsRepo)
+}
+
+// keylessAppsRepoPreflight clones the apps repo and applies keylessAppsRepoRefusal. Network half; the
+// decision is the pure function above. The token authenticates the clone only and is never logged
+// (git.GIT prints the URL, not the credential).
+func keylessAppsRepoPreflight(ctx context.Context, repoURL, token string) error {
+	dir, err := os.MkdirTemp("", "keyless-apps-preflight-*")
+	if err != nil {
+		return fmt.Errorf("apps-repo preflight: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	if err := git.NewGITWithToken(repoURL, dir, false, token).Clone(ctx, "", false); err != nil {
+		return fmt.Errorf("apps-repo preflight: clone %s: %w", repoURL, err)
+	}
+	return keylessAppsRepoRefusal(dir, repoURL)
 }
 
 // snapshotDBName reports the database name the binding targets after applyToSnapshot — the overlaid

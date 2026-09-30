@@ -159,6 +159,9 @@ jobs:
     outputs:
       dimension: ${{ steps.d.outputs.dimension }}
       heavy: ${{ steps.d.outputs.heavy }}
+      # Whether the runner-image job builds. `heavy` OR a rider whose render needs selfimage.Ref() —
+      # see the note on that job.
+      runner_image: ${{ steps.d.outputs.runner_image }}
     steps:
       - uses: actions/checkout@v7
       - id: d
@@ -172,6 +175,8 @@ jobs:
           RIDER_KEYLESS_DB: ${{ github.event.inputs.keyless_db }}
           RIDER_SECRETS_XACCT: ${{ github.event.inputs.secrets_xacct }}
           RIDER_XACCT_REGISTRY: ${{ github.event.inputs.xacct_registry }}
+          VAR_KEYLESS_DB: ${{ vars.E2E_KEYLESS_DB }}
+          VAR_XACCT_REGISTRY: ${{ vars.E2E_XACCT_REGISTRY }}
           DISPATCH_PROVIDER: ${{ github.event.inputs.provider }}
         run: |
           dim="$(bash scripts/e2e/resolve-dimension.sh)"
@@ -211,11 +216,26 @@ jobs:
             echo "::error::cli_demo_grid requires dimension=cli-demo (resolved: $dim) — refusing before anything is built or bought."
             exit 1
           fi
+          # The runner image is ALSO needed by two riders, whatever the dimension: keyless_db renders
+          # the db-authproxy sidecar (aws, azure) and the db-bootstrap Job (every cloud) from
+          # selfimage.Ref(), and xacct_registry its registry-token refresher. Without it each
+          # binding fails closed ("no runner image for the Azure db-authproxy sidecar", run
+          # 36711798677). Read the way the T2 step hands them to the harness: a dispatch ask, else
+          # the variable judged by t2Truthy; cli-demo withholds both, so it never needs the build.
+          truthy() { case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in 1 | true | yes | on) return 0 ;; esac; return 1; }
+          runner_image="$heavy"
+          if [ "$dim" != "cli-demo" ]; then
+            if [ -n "${RIDER_KEYLESS_DB:-}" ] || truthy "${VAR_KEYLESS_DB:-}" \
+              || [ "${RIDER_XACCT_REGISTRY:-false}" = "true" ] || truthy "${VAR_XACCT_REGISTRY:-}"; then
+              runner_image=true
+            fi
+          fi
           {
             echo "dimension=$dim"
             echo "heavy=$heavy"
+            echo "runner_image=$runner_image"
           } >> "$GITHUB_OUTPUT"
-          echo "::notice::dimension=$dim heavy=$heavy"
+          echo "::notice::dimension=$dim heavy=$heavy runner_image=$runner_image"
 
   # ── The image the in-cluster bootstrap Jobs run, built FROM THE COMMIT UNDER TEST. ──
   #
@@ -241,10 +261,11 @@ jobs:
   runner-image:
     name: Publish the runner image the bootstrap Jobs run
     needs: resolve
-    # Only a dimension that installs Vault needs it. `heavy` is true for exactly maxconfig, addons
+    # A dimension that installs Vault needs it. `heavy` is true for exactly maxconfig, addons
     # and full — derived by resolve-dimension.sh from the FIDELITY, so it cannot drift from the
-    # set of dimensions that switch ALL_ADDONS/MAX_CONFIG on.
-    if: ${{ needs.resolve.outputs.heavy == 'true' }}
+    # set of dimensions that switch ALL_ADDONS/MAX_CONFIG on. The keyless_db and xacct_registry
+    # riders need it on ANY dimension; `runner_image` is `heavy` widened by exactly those two.
+    if: ${{ needs.resolve.outputs.runner_image == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1916,6 +1937,10 @@ jobs:
           ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE }}
           ALETHIA_E2E_KEYLESS_DB_NAMESPACE: ${{ vars.E2E_KEYLESS_DB_NAMESPACE }}
           ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
+          #    GCP only: the STANDING app→Cloud SQL account the gcp template ADOPTS (it cannot create or
+          #    grant one — cloudsql.client/instanceUser are project-scoped). infra/gcp-e2e outputs it as
+          #    e2e_gcp_keyless_app_db_sa_email. Unset ⇒ a gcp keyless run is refused before spend.
+          ALETHIA_E2E_KEYLESS_DB_GCP_APP_SA: ${{ vars.E2E_KEYLESS_DB_GCP_APP_SA }}
           #    The per-cloud siblings the comment above TELLS a maintainer to use. They were missing,
           #    and this was worse than an unwired scenario: ENGINE_VERSION and INSTANCE_CLASS have no
           #    defaults and are REQUIRED, so a maintainer who followed the documentation and set
@@ -2129,11 +2154,10 @@ jobs:
           #    A DIGEST, from the runner-image job, built from THIS commit. Not a released tag: the
           #    e2e must not prove a binary built from a different commit than the one under test.
           #
-          #    EMPTY on a non-heavy dimension, because the job is skipped there — and empty is the
-          #    correct answer, not a broken one. `Ref()` returns "", both renderers fail closed and
-          #    say so, and no dimension below `maxconfig`/`addons`/`full` installs a Vault to
-          #    bootstrap. So this degrades to exactly today's behaviour rather than to a Job that
-          #    cannot succeed.
+          #    EMPTY on a non-heavy dimension with no keyless_db/xacct_registry rider, because the job
+          #    is skipped there — and empty is the correct answer, not a broken one. `Ref()` returns
+          #    "", the renderers fail closed and say so, and nothing on such a run renders a Job or
+          #    sidecar from it.
           ALETHIA_RUNNER_IMAGE: ${{ needs.runner-image.outputs.image }}
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
@@ -2891,6 +2915,12 @@ jobs:
           # demo rode the run, red_label titles a red `(fabric-demo)` instead of the base dimension,
           # so a fabric-gate failure neither dedups onto nor contests that dimension's cell (#5153).
           E2E_FABRIC_DEMO: ${{ inputs.fabric_demo && '1' || vars.E2E_FABRIC_DEMO }}
+          # The three RIDERS, each the value the T2 step hands the harness (red_label drops them on
+          # cli-demo, as the T2 step does): a rider-only red is titled `(keyless-db)`, `(xacct-secrets)`,
+          # `(xacct-registry)` or `(riders)` and contests no floor cell (#5201/#5204/#5205).
+          E2E_KEYLESS_DB: ${{ inputs.keyless_db != '' && '1' || vars.E2E_KEYLESS_DB }}
+          E2E_SECRETS_XACCT: ${{ inputs.secrets_xacct && '1' || vars.E2E_SECRETS_XACCT }}
+          E2E_XACCT_REGISTRY: ${{ inputs.xacct_registry && '1' || vars.E2E_XACCT_REGISTRY }}
         run: |
           set -euo pipefail
           # The dimension is part of every red issue TITLE, which is the dedup key: keyed on the cloud

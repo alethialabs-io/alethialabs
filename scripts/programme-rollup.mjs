@@ -501,8 +501,13 @@ export const COMPOSITE_RED_DIMENSION = "full-bar";
  * gate, with every floor assertion passing, and was titled "(floor)" — which contested a proven
  * gcp/floor cell over a failure the floor never had. Known-with-no-cells is the honest answer: the
  * label is recognised (so it is not reported as vocabulary drift) and it moves no cell.
+ *
+ * The three RIDER labels and `riders` join it for the same reason: `keyless-db`, `xacct-secrets` and
+ * `xacct-registry` are what `red_label()` titles a red with when that rider rode the run, and
+ * `riders` when two or more scenarios did. The first keyless-db dispatch filed three floor-only-in-
+ * name reds (#5201/#5204/#5205) that contested aws, gcp and azure floor cells the floor never failed.
  */
-export const SCENARIO_RED_LABELS = ["fabric-demo"];
+export const SCENARIO_RED_LABELS = ["fabric-demo", "keyless-db", "xacct-secrets", "xacct-registry", "riders"];
 
 /**
  * Which grid columns a nightly RED's dimension label refers to.
@@ -3724,6 +3729,22 @@ function runSelfTest() {
 			fabricLabel !== "" && SCENARIO_RED_LABELS.includes(fabricLabel) && fabricResolved.known && fabricResolved.dimensions.length === 0,
 			`FABRIC_RED_LABEL=${JSON.stringify(fabricLabel)} resolved ${JSON.stringify(fabricResolved)}`,
 		);
+		// The riders and the several-scenarios label, parsed from the resolver the same way: a rename
+		// there that this list did not follow would contest a floor cell over a keyless failure again.
+		for (const name of ["KEYLESS_DB", "SECRETS_XACCT", "XACCT_REGISTRY", "RIDERS"]) {
+			const label = new RegExp(`^${name}_RED_LABEL="([^"]+)"`, "m").exec(resolver)?.[1] ?? "";
+			const resolved = redDimensions(label, ids, comp);
+			ok(
+				`red_label's ${name} label is a known SCENARIO label that contests no grid cell`,
+				label !== "" && SCENARIO_RED_LABELS.includes(label) && resolved.known && resolved.dimensions.length === 0,
+				`${name}_RED_LABEL=${JSON.stringify(label)} resolved ${JSON.stringify(resolved)}`,
+			);
+			ok(
+				`...and parseNightlyRed reads the ${name} label out of a red's title`,
+				parseNightlyRed({ title: `e2e nightly: aws RED (${label})`, number: 1, createdAt: "2026-09-30" })?.dimension === label,
+				JSON.stringify(parseNightlyRed({ title: `e2e nightly: aws RED (${label})`, number: 1, createdAt: "2026-09-30" })),
+			);
+		}
 		ok(
 			"...and parseNightlyRed reads it out of a fabric red's title",
 			parseNightlyRed({ title: "e2e nightly: gcp RED (fabric-demo)", number: 1, createdAt: "2026-09-30" })?.dimension === fabricLabel,

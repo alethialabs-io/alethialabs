@@ -227,6 +227,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	case keylessOn:
 		t.Logf("#1511: keyless DB auth ENABLED — %s × %s (version %q, class %q%s), holding a session open for %s to prove the token mints per connection",
 			provider, keyless.engine, keyless.engineVersion, keyless.instanceClass, keylessDefaultedNote(keyless.defaulted), keyless.dwell)
+		// Before spend: an apps repo the product treats as bring-your-own renders nothing keyless,
+		// and the run would only find out after buying a cluster (gcp 36711784359, azure 36711798677).
+		pfCtx, pfCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		pfErr := keylessAppsRepoPreflight(pfCtx, t2ArgoEnvForProvider(envArgoAppsRepo, provider, ""), os.Getenv(envArgoGitToken))
+		pfCancel()
+		if pfErr != nil {
+			t.Fatalf("#1511 keyless DB auth: %v", pfErr)
+		}
 	case keylessBlocked != "":
 		t.Logf("#1511: keyless DB auth BLOCKED on %s × %s — %s", provider, keyless.engine, keylessBlocked)
 	default:

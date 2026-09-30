@@ -36,6 +36,130 @@ func fullyConfigured() map[string]string {
 		envKeylessDBClass:   "db.r6g.large",
 		envArgoAppsRepo:     "https://github.com/acme/apps",
 		envArgoGitToken:     "ghp_notreal",
+		// Read on gcp only; harmless on the other clouds, so every test starts from a runnable gcp.
+		envKeylessDBGCPAppSA: "alethia-e2e-appdb@proj.iam.gserviceaccount.com",
+	}
+}
+
+// TestKeylessDecide_GCPRequiresTheAdoptedAppAccount: run 36711784359 bought a GKE cluster and a Cloud
+// SQL instance, then failed the binding closed with "no cloud_sql_app_gsa_email output" — because the
+// template only wires keyless around an ADOPTED account, and nothing set one. Unset or malformed is
+// now a refusal before spend, and ONLY on gcp: no other cloud reads the variable.
+func TestKeylessDecide_GCPRequiresTheAdoptedAppAccount(t *testing.T) {
+	env := fullyConfigured()
+	env[envKeylessDBGCPAppSA] = ""
+	keylessTestEnv(t, env)
+	if _, _, err := keylessDBFromEnv("gcp").decide(); err == nil || !strings.Contains(err.Error(), envKeylessDBGCPAppSA) {
+		t.Fatalf("gcp with no adopted app account must be refused naming %s, got %v", envKeylessDBGCPAppSA, err)
+	}
+	for _, p := range []string{"aws", "azure"} {
+		if run, _, err := keylessDBFromEnv(p).decide(); err != nil || !run {
+			t.Errorf("%s must not require the gcp-only account, got run=%v err=%v", p, run, err)
+		}
+	}
+
+	env[envKeylessDBGCPAppSA] = "alethia-e2e-appdb"
+	keylessTestEnv(t, env)
+	if _, _, err := keylessDBFromEnv("gcp").decide(); err == nil || !strings.Contains(err.Error(), "full service-account email") {
+		t.Fatalf("a bare account id must be refused before spend, got %v", err)
+	}
+
+	env[envKeylessDBGCPAppSA] = "alethia-e2e-appdb@proj.iam.gserviceaccount.com"
+	keylessTestEnv(t, env)
+	if run, _, err := keylessDBFromEnv("gcp").decide(); err != nil || !run {
+		t.Fatalf("a well-formed adopted account must run, got run=%v err=%v", run, err)
+	}
+}
+
+// TestApplyToSnapshot_GCPAdoptsTheAppAccount: the account reaches tofu through the DATABASE's
+// provider_config, merged into what an overlaid max-config entry already carries; another cloud's
+// snapshot gets no such key; and a different account already present is refused, not overwritten.
+func TestApplyToSnapshot_GCPAdoptsTheAppAccount(t *testing.T) {
+	keylessTestEnv(t, fullyConfigured())
+	c := keylessDBFromEnv("gcp")
+	snap := map[string]any{"databases": []any{map[string]any{
+		"name": "maindb", "provider_config": map[string]any{"cloud_sql_tier_override": "x"},
+	}}}
+	if err := c.applyToSnapshot(snap); err != nil {
+		t.Fatalf("applyToSnapshot: %v", err)
+	}
+	db := snap["databases"].([]any)[0].(map[string]any)
+	pc, _ := db["provider_config"].(map[string]any)
+	if pc[keylessGCPAppSAKey] != c.gcpAppSA || pc["cloud_sql_tier_override"] != "x" {
+		t.Fatalf("provider_config = %v, want %s merged in beside the existing key", pc, keylessGCPAppSAKey)
+	}
+
+	aws := map[string]any{}
+	if err := keylessDBFromEnv("aws").applyToSnapshot(aws); err != nil {
+		t.Fatalf("aws applyToSnapshot: %v", err)
+	}
+	if _, has := aws["databases"].([]any)[0].(map[string]any)["provider_config"]; has {
+		t.Error("the gcp adoption key must not reach another cloud's snapshot")
+	}
+
+	conflict := map[string]any{"databases": []any{map[string]any{
+		"name": "maindb", "provider_config": map[string]any{keylessGCPAppSAKey: "someone-else@p.iam.gserviceaccount.com"},
+	}}}
+	if err := c.applyToSnapshot(conflict); err == nil {
+		t.Fatal("a different adopted account already on the entry must be refused, not replaced")
+	}
+}
+
+// TestKeylessGCPAppSAKeyIsATemplateVariable: the key the harness writes is one the gcp template
+// DECLARES, and the template validates it with the same pattern decide() checks before spend. A
+// renamed variable would otherwise be an undeclared tfvar the run discovers at plan.
+func TestKeylessGCPAppSAKeyIsATemplateVariable(t *testing.T) {
+	path := filepath.Join(e2ePackageDir(t), "..", "..", "infra", "templates", "project", "gcp", "variables.tf")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	tf := string(raw)
+	decl := `variable "` + keylessGCPAppSAKey + `" {`
+	start := strings.Index(tf, decl)
+	if start < 0 {
+		t.Fatalf("%s declares no %s", path, decl)
+	}
+	block := tf[start+len(decl):]
+	if next := strings.Index(block, "\nvariable \""); next >= 0 {
+		block = block[:next]
+	}
+	m := regexp.MustCompile(`can\(regex\("((?:[^"\\]|\\.)*)"`).FindStringSubmatch(block)
+	if m == nil {
+		t.Fatalf("no can(regex(\"…\")) validation in the %s block", keylessGCPAppSAKey)
+	}
+	if tmpl := strings.ReplaceAll(m[1], `\\`, `\`); tmpl != gcpSAEmail.String() {
+		t.Fatalf("gcpSAEmail = %q but the template validates %s with %q", gcpSAEmail.String(), keylessGCPAppSAKey, tmpl)
+	}
+}
+
+// TestKeylessAppsRepoRefusal: a repo whose ROOT holds YAML is bring-your-own to the product, which then
+// renders nothing keyless — the shared e2e apps repo's root configmap.yaml did exactly that to gcp and
+// azure. YAML only below the root, or none, is a repo the product writes into.
+func TestKeylessAppsRepoRefusal(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "configmap.yaml"), []byte("kind: ConfigMap\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := keylessAppsRepoRefusal(root, "https://github.com/acme/apps"); err == nil || !strings.Contains(err.Error(), "bring-your-own") {
+		t.Fatalf("a root YAML must be refused as bring-your-own, got %v", err)
+	}
+
+	nested := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(nested, "charts"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "charts", "values.yaml"), []byte("a: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "README.md"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := keylessAppsRepoRefusal(nested, "https://github.com/acme/apps"); err != nil {
+		t.Fatalf("YAML only below the root is a repo the product writes into, got %v", err)
+	}
+	if err := keylessAppsRepoRefusal(t.TempDir(), "https://github.com/acme/apps"); err != nil {
+		t.Fatalf("an empty repo must pass, got %v", err)
 	}
 }
 
