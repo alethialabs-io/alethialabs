@@ -10,7 +10,7 @@ import type {
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
-import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { ConnectorIcon, isThirdPartyMark } from "@/components/connectors/connector-icon";
 import {
 	connectorState,
 	type ConnectorHealth,
@@ -146,13 +146,14 @@ export function ConnectorDetailSheet({
 	};
 
 	const logo = isGit ? (
-		<GitProviderIcon provider={integration.slug} size={20} mono={!isConnected} />
+		<GitProviderIcon provider={integration.slug} size={20} mono={false} />
 	) : (
 		<ConnectorIcon
 			src={integration.icon_url}
 			name={integration.name}
 			size={22}
-			mono={!isConnected}
+			mono={!isConnected && !isThirdPartyMark(integration.icon_url)}
+			canLink
 		/>
 	);
 
