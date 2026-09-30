@@ -16,6 +16,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/drift"
 	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	tfjson "github.com/hashicorp/terraform-json"
 )
 
 // DriftParams configures a refresh-only drift-detection run.
@@ -32,6 +33,11 @@ type DriftParams struct {
 	// GitAccessToken authorizes the BYO IaC clone (only used when ProjectConfig
 	// carries an IacSource; falls back to ProjectConfig.GitAccessToken when empty).
 	GitAccessToken string
+	// ClusterEvidence, when set, reads what the environment's cluster says about the cloud
+	// changes its controllers own (ClusterEvidenceReader), so an AWS Load Balancer Controller
+	// rule for a live TargetGroupBinding is reported as kubernetes_owned rather than drift.
+	// Consulted only while the posture still drifts; nil (BYO IaC, non-aws) changes nothing.
+	ClusterEvidence ClusterEvidenceFunc
 }
 
 // RunDriftDetection reconciles an environment's recorded state with the live cloud
@@ -166,25 +172,35 @@ func RunDriftDetection(ctx context.Context, params DriftParams) (*drift.Posture,
 	// Best-effort, exactly like the outputs read below: a failure must NOT fail the drift
 	// check. Without a schema the schema-aware tier fails closed and never fires, so the
 	// posture stays the one already computed above.
+	var schemas *tfjson.ProviderSchemas
 	if !posture.InSync {
-		schemas, schemaErr := tf.ProvidersSchema(ctx)
+		fetched, schemaErr := tf.ProvidersSchema(ctx)
 		if schemaErr != nil {
 			fmt.Fprintf(stderr, "Warning: could not read provider schemas; computed-attribute normalization is off for this run: %v\n", schemaErr)
 		} else {
+			schemas = fetched
 			posture = drift.AnalyzeWithSchemas(planJSON, schemas)
 		}
 	}
 
-	if b, mErr := json.Marshal(posture); mErr == nil {
-		fmt.Fprintf(stdout, "Drift posture: %s\n", string(b))
-	}
-
 	// Best-effort: the workspace is initialized against real state, so outputs are
 	// free here. A failure must not fail the drift job — inspection just degrades.
+	// Read BEFORE the cluster evidence below, whose kubeconfig acquisition needs them.
 	outputs, outErr := tf.Output(ctx)
 	if outErr != nil {
 		fmt.Fprintf(stderr, "Warning: could not read tofu outputs for cluster inspection: %v\n", outErr)
 		outputs = nil
+	}
+
+	// Cluster evidence (maintainer ruling 2026-09-30): a security-group rule the AWS Load
+	// Balancer Controller opened for a TargetGroupBinding that exists is kubernetes_owned, not
+	// drift. Only the cluster can say whether that binding exists, so it is read here, bounded,
+	// and only while something still drifts. Best-effort and fail-closed: no reader, no access or
+	// a read error leaves the posture above untouched.
+	posture = applyClusterEvidence(ctx, posture, planJSON, schemas, outputs, params.ClusterEvidence, stdout, stderr)
+
+	if b, mErr := json.Marshal(posture); mErr == nil {
+		fmt.Fprintf(stdout, "Drift posture: %s\n", string(b))
 	}
 	return posture, outputs, nil
 }

@@ -912,15 +912,21 @@ export interface SecurityReport {
 	scanned: boolean;
 }
 
-// Why a refresh delta was dismissed as representational rather than counted as drift.
+// Why a refresh delta was dismissed rather than counted as drift.
 // Mirrors the Go `drift.NormalizedReason` (packages/core/drift/normalize.go).
+//
+// Every value but one says the delta is representational. `kubernetes_owned` does not: the
+// resource DID change outside OpenTofu, and a controller in the cluster owns that change (an AWS
+// Load Balancer Controller security-group rule for a TargetGroupBinding that exists at scan
+// time). A surface that renders reasons must not present it as "no change".
 export type DriftNormalizedReason =
 	| "empty_collection"
 	| "undeclared_collection"
 	| "computed_attribute"
 	| "sensitivity_only"
 	| "assignment_back_reference"
-	| "inapplicable_field";
+	| "inapplicable_field"
+	| "kubernetes_owned";
 
 // One resource whose every refresh delta was representational — a difference in how the
 // provider encodes a value, not a difference in the infrastructure.
