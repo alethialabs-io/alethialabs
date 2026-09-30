@@ -58,9 +58,11 @@ import (
 // an id that is not a plain integer, a provider that is not hetznercloud/hcloud, or any value shape
 // this does not recognise — and the rule does not fire, so the delta stays drift.
 //
-// The same tier has a second provider, hashicorp/aws, whose shapes are different enough to live in
-// their own file (awsbackref.go): there the reverse edge is written by a separate ATTACHMENT resource
-// (a policy attachment, a security-group rule, a route, a NAT gateway) rather than by a server.
+// The same tier has two more providers, whose shapes are different enough to live in their own
+// files: hashicorp/aws (awsbackref.go), where the reverse edge is written by a separate ATTACHMENT
+// resource (a policy attachment, a security-group rule, a route, a NAT gateway) rather than by a
+// server; and hashicorp/google (gcpbackref.go), where a GKE cluster reports the node pools separate
+// google_container_node_pool resources attached to it.
 
 // stateObject is one resource instance as a state view holds it.
 type stateObject struct {
@@ -151,6 +153,8 @@ func backReferenceRoots(rc *tfjson.ResourceChange, before, after map[string]any,
 		}
 	case strings.HasSuffix(rc.ProviderName, awsProviderSuffix):
 		roots = awsBackReferenceRoots(rc, before, after, st)
+	case strings.HasSuffix(rc.ProviderName, googleProviderSuffix):
+		roots = gcpBackReferenceRoots(rc, before, after, st)
 	}
 	if len(roots) == 0 {
 		return nil

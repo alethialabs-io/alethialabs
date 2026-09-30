@@ -136,7 +136,9 @@ func after(t *testing.T, plan *tfjson.Plan, addr string) map[string]any {
 // That is the AWS Load Balancer Controller opening the nodes to its shared backend security group
 // for a LoadBalancer Service (Online Boutique's frontend-external, placed by the fabric demo). It
 // is a real change to a managed security group, made outside OpenTofu, and nothing in state can
-// prove it benign — so it is reported.
+// prove it benign — so, WITHOUT cluster evidence, it is reported. With the cluster's
+// TargetGroupBinding in hand it is kubernetes_owned instead: see
+// TestAWSFabricRefreshIsInSyncWithTheBindingEvidence (k8sowned_test.go).
 func TestAWSFabricRefreshKeepsOnlyThePlacementsLoadBalancerRule(t *testing.T) {
 	p := withAWSSchemas(t)(loadPlan(t, awsFixture))
 	if p.Drifted != 1 || p.Details[0].Address != sgNode {

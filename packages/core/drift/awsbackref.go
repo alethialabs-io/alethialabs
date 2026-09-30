@@ -74,6 +74,10 @@ import (
 // ingress_rule/egress_rule are NOT recognised as rule sources: nothing measured uses them, and their
 // field mapping onto an inline rule (null ports for protocol -1, one CIDR per rule) is unverified — so
 // a security group they populate stays drift until a run shows the real shape.
+//
+// A rule a Kubernetes controller opens (the AWS Load Balancer Controller's, for a LoadBalancer
+// Service) is declared by nothing in state, so this tier never dismisses it. Whether it is drift or
+// kubernetes-owned is a question only the cluster can answer — see k8sowned.go.
 
 // awsProviderSuffix identifies the AWS provider under either registry host.
 const awsProviderSuffix = "/hashicorp/aws"
