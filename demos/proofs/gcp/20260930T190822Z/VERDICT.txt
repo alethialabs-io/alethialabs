@@ -1,0 +1,18 @@
+gcp: ✅ apply(25 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (4/4 asserted)→destroyed(1)
+dimension: floor
+cluster:   alethia-nl-36758753092-1 (europe-west3-b)
+run:       nightly-36758753092-1 @ 2f1a403
+receipt:   signed=true sha256=200697f99cda
+teardown:  destroyed=true (1 resources)
+duration:  2389s
+soak:      soak: skipped
+day2-access: ✅ day2-access: endpoint surfaced=true · kube reachable=true authorized=true (can-i * / *) · nodes ready=3 · argocd-url: n/a (no ingress on this cloud yet — access via port-forward)
+day2offer: n/a (day-2 offer postures off or not reached)
+fabric-demo: ✅ fabric-demo on gke-ew3-36758753092-1-alethia-nl: prod: prod(production,dedicated=true,stage_label=36758753092-1) · placements dev-1→boutique-dev-1(examples/online-boutique/overlays/dev-1,res=35,converged=true) staging→boutique-staging(examples/online-boutique/overlays/staging,res=35,converged=true) · vcluster: boutique-staging(examples/online-boutique/overlays/staging,res=35,deregistered=true) · argocd-preserved=true · receipt(fabric)=200697f99cda… · drift: in_sync=true drifted=0
+acm-cert: n/a (#1773 ACM certificate gate off or not reached)
+byo-iac:   ✅ byo-iac on gcp: iac/drift/gcp@a0eaa1c55c05… https://github.com/alethialabs-io/alethia-examples · gate-blocks-bad=true · pinned-clone-logged=true · receipt=321e72a993b3… · state-on-proxy=true(1 res) · no-cluster-output=true · ctx=alethia-nl/36758753092-1 · drift baseline-in-sync=true → induced(alethia-byo-iac-e2e36758)=1[google_storage_bucket] → healed-in-sync=true · destroy=SUCCESS state-cleared=true
+templates: n/a (#4113 starter templates off or not reached)
+xacct:     n/a (#1268 cross-account secrets off or not reached)
+keyless-db: n/a (#1511 keyless DB auth off or not reached)
+xacct-registry: n/a (#1047 cross-account registry off or not reached)
+argocd:    4 of 4 expected Applications Healthy+Synced
