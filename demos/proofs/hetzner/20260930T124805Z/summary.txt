@@ -1,0 +1,35 @@
+Starting deployment for project: alethia-nl (provider: hetzner)
+Verification gate: verdict=warn (pass=1 fail=0 warn=1 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 6c364b86692535fd, plan sha256 e11b5a74a5ef…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 25 added, 0 changed, 0 destroyed.
+Waiting for the cluster to become reachable (timeout 8m 0s)...
+Cluster API server is reachable.
+3/4 nodes Ready.
+ArgoCD installed.
+ArgoCD ready (no ingress on this cloud yet — access via port-forward; retrieve the admin password on-demand from argocd-initial-admin-secret).
+Deployment completed successfully.
+Waiting for the cluster to become reachable (timeout 8m 0s)...
+Cluster API server is reachable.
+Waiting for the cluster to become reachable (timeout 8m 0s)...
+Cluster API server is reachable.
+Waiting for the cluster to become reachable (timeout 8m 0s)...
+Cluster API server is reachable.
+Starting deployment for project: alethia-nl (provider: hetzner)
+Starting deployment for project: alethia-nl (provider: hetzner)
+Verification gate: verdict=pass (pass=2 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 6c364b86692535fd, plan sha256 ab56c15d642f…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+Deployment completed successfully.
+Starting deployment for project: alethia-nl (provider: hetzner)
+Verification gate: verdict=pass (pass=2 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 6c364b86692535fd, plan sha256 e656268a7137…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
+Deployment completed successfully.
+   Skipping load-balancer release: the cluster is not reachable (no kubeconfig in Talos outputs).
+Destroy complete! Resources: 1 destroyed.
