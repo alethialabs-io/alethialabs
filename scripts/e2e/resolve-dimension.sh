@@ -407,13 +407,39 @@ dimension_label() { # <token>
 #
 # The switch is read the way the harness reads it (t2Truthy: 1/true/yes/on, any case), NOT as the
 # workflow's `!= ''` cap test — E2E_FABRIC_DEMO=0 runs no fabric, so it must not title a red as one.
+#
+# THE THREE RIDERS TAKE THE SAME TREATMENT (keyless_db / secrets_xacct / xacct_registry). Each layers a
+# scenario onto the DEPLOY snapshot of whatever dimension it rides, exactly like the fabric demo, and
+# the first real keyless-db dispatch proved the cost of leaving them out: runs 36711770548,
+# 36711784359 and 36711798677 were floor-dimension runs that failed ONLY in the keyless layer and
+# were filed "aws/gcp/azure RED (floor)" (#5201/#5204/#5205), contesting three floor cells. One rider
+# titles as its own label; two or more (fabric included) as `riders`, because no single label names
+# the failure and a combined one would multiply the vocabulary programme-rollup must know.
+#
+# Each switch is passed as the value the T2 step hands the harness, read the harness's way
+# (t2Truthy). On cli-demo the T2 step WITHHOLDS the three rider variables (the CLI-created DEPLOY has
+# no snapshot to layer onto) and the resolve job refuses an explicit ask, so a cli-demo red cannot
+# have been a rider's failure and keeps its own label. The fabric switch is not withheld there, and
+# its handling is unchanged.
 FABRIC_RED_LABEL="fabric-demo"
-red_label() { # <token> <fabric-switch value>
-	local l
+KEYLESS_DB_RED_LABEL="keyless-db"
+SECRETS_XACCT_RED_LABEL="xacct-secrets"
+XACCT_REGISTRY_RED_LABEL="xacct-registry"
+RIDERS_RED_LABEL="riders"
+_truthy() { case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in 1 | true | yes | on) return 0 ;; esac; return 1; }
+red_label() { # <token> <fabric> [<keyless_db> <secrets_xacct> <xacct_registry>] — each the harness's value
+	local l n=0 one=""
 	l="$(dimension_label "${1:-}")" || return $?
-	case "$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')" in
-	1 | true | yes | on) echo "$FABRIC_RED_LABEL" ;;
-	*) echo "$l" ;;
+	if _truthy "${2:-}"; then n=$((n + 1)) && one="$FABRIC_RED_LABEL"; fi
+	if [ "${1:-}" != "cli-demo" ]; then
+		if _truthy "${3:-}"; then n=$((n + 1)) && one="$KEYLESS_DB_RED_LABEL"; fi
+		if _truthy "${4:-}"; then n=$((n + 1)) && one="$SECRETS_XACCT_RED_LABEL"; fi
+		if _truthy "${5:-}"; then n=$((n + 1)) && one="$XACCT_REGISTRY_RED_LABEL"; fi
+	fi
+	case "$n" in
+	0) echo "$l" ;;
+	1) echo "$one" ;;
+	*) echo "$RIDERS_RED_LABEL" ;;
 	esac
 }
 
@@ -531,6 +557,17 @@ run_self_test() {
 	_a "floor" "$(red_label floor 0)" "E2E_FABRIC_DEMO=0 runs no fabric, so it titles as the dimension"
 	_a "full-bar" "$(red_label full '')" "red_label keeps dimension_label's renames"
 	_a "2" "$(red_label no-such-dimension 1 >/dev/null 2>&1; echo $?)" "an unknown token is still refused under fabric"
+	# The riders (keyless_db / secrets_xacct / xacct_registry) — #5201/#5204/#5205 were floor reds that
+	# failed only in the keyless layer. Each rider alone is its own label; two or more are `riders`.
+	_a "keyless-db" "$(red_label floor '' 1)" "a keyless-db floor red is titled keyless-db, not floor"
+	_a "xacct-secrets" "$(red_label floor '' '' true)" "a secrets_xacct floor red is titled xacct-secrets"
+	_a "xacct-registry" "$(red_label gitops '' '' '' ON)" "an xacct_registry red is titled xacct-registry, any case"
+	_a "riders" "$(red_label floor '' 1 1)" "two riders on one run title as riders"
+	_a "riders" "$(red_label floor 1 '' '' 1)" "fabric plus a rider titles as riders"
+	_a "floor" "$(red_label floor '' 0 false no)" "falsy rider switches leave the dimension label, like t2Truthy"
+	_a "cli-demo" "$(red_label cli-demo '' 1 1 1)" "cli-demo withholds the riders, so it keeps its own label"
+	_a "fabric-demo" "$(red_label floor 1 '' '' '')" "fabric alone is still fabric-demo with the rider args present"
+	_a "2" "$(red_label no-such-dimension '' 1 >/dev/null 2>&1; echo $?)" "an unknown token is still refused under a rider"
 
 	# ── The fidelity table (#2356). These are the assertions that were missing, and their absence is
 	# why a documented definition and an asserted one could diverge for weeks. ──

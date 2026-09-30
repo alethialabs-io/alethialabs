@@ -17,6 +17,10 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
+	gogit "github.com/go-git/go-git/v5"
+	gogitconfig "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 // keylessTestEnv sets the scenario env for one test and restores it after.
@@ -36,6 +40,130 @@ func fullyConfigured() map[string]string {
 		envKeylessDBClass:   "db.r6g.large",
 		envArgoAppsRepo:     "https://github.com/acme/apps",
 		envArgoGitToken:     "ghp_notreal",
+		// Read on gcp only; harmless on the other clouds, so every test starts from a runnable gcp.
+		envKeylessDBGCPAppSA: "alethia-e2e-appdb@proj.iam.gserviceaccount.com",
+	}
+}
+
+// TestKeylessDecide_GCPRequiresTheAdoptedAppAccount: run 36711784359 bought a GKE cluster and a Cloud
+// SQL instance, then failed the binding closed with "no cloud_sql_app_gsa_email output" — because the
+// template only wires keyless around an ADOPTED account, and nothing set one. Unset or malformed is
+// now a refusal before spend, and ONLY on gcp: no other cloud reads the variable.
+func TestKeylessDecide_GCPRequiresTheAdoptedAppAccount(t *testing.T) {
+	env := fullyConfigured()
+	env[envKeylessDBGCPAppSA] = ""
+	keylessTestEnv(t, env)
+	if _, _, err := keylessDBFromEnv("gcp").decide(); err == nil || !strings.Contains(err.Error(), envKeylessDBGCPAppSA) {
+		t.Fatalf("gcp with no adopted app account must be refused naming %s, got %v", envKeylessDBGCPAppSA, err)
+	}
+	for _, p := range []string{"aws", "azure"} {
+		if run, _, err := keylessDBFromEnv(p).decide(); err != nil || !run {
+			t.Errorf("%s must not require the gcp-only account, got run=%v err=%v", p, run, err)
+		}
+	}
+
+	env[envKeylessDBGCPAppSA] = "alethia-e2e-appdb"
+	keylessTestEnv(t, env)
+	if _, _, err := keylessDBFromEnv("gcp").decide(); err == nil || !strings.Contains(err.Error(), "full service-account email") {
+		t.Fatalf("a bare account id must be refused before spend, got %v", err)
+	}
+
+	env[envKeylessDBGCPAppSA] = "alethia-e2e-appdb@proj.iam.gserviceaccount.com"
+	keylessTestEnv(t, env)
+	if run, _, err := keylessDBFromEnv("gcp").decide(); err != nil || !run {
+		t.Fatalf("a well-formed adopted account must run, got run=%v err=%v", run, err)
+	}
+}
+
+// TestApplyToSnapshot_GCPAdoptsTheAppAccount: the account reaches tofu through the DATABASE's
+// provider_config, merged into what an overlaid max-config entry already carries; another cloud's
+// snapshot gets no such key; and a different account already present is refused, not overwritten.
+func TestApplyToSnapshot_GCPAdoptsTheAppAccount(t *testing.T) {
+	keylessTestEnv(t, fullyConfigured())
+	c := keylessDBFromEnv("gcp")
+	snap := map[string]any{"databases": []any{map[string]any{
+		"name": "maindb", "provider_config": map[string]any{"cloud_sql_tier_override": "x"},
+	}}}
+	if err := c.applyToSnapshot(snap); err != nil {
+		t.Fatalf("applyToSnapshot: %v", err)
+	}
+	db := snap["databases"].([]any)[0].(map[string]any)
+	pc, _ := db["provider_config"].(map[string]any)
+	if pc[keylessGCPAppSAKey] != c.gcpAppSA || pc["cloud_sql_tier_override"] != "x" {
+		t.Fatalf("provider_config = %v, want %s merged in beside the existing key", pc, keylessGCPAppSAKey)
+	}
+
+	aws := map[string]any{}
+	if err := keylessDBFromEnv("aws").applyToSnapshot(aws); err != nil {
+		t.Fatalf("aws applyToSnapshot: %v", err)
+	}
+	if _, has := aws["databases"].([]any)[0].(map[string]any)["provider_config"]; has {
+		t.Error("the gcp adoption key must not reach another cloud's snapshot")
+	}
+
+	conflict := map[string]any{"databases": []any{map[string]any{
+		"name": "maindb", "provider_config": map[string]any{keylessGCPAppSAKey: "someone-else@p.iam.gserviceaccount.com"},
+	}}}
+	if err := c.applyToSnapshot(conflict); err == nil {
+		t.Fatal("a different adopted account already on the entry must be refused, not replaced")
+	}
+}
+
+// TestKeylessGCPAppSAKeyIsATemplateVariable: the key the harness writes is one the gcp template
+// DECLARES, and the template validates it with the same pattern decide() checks before spend. A
+// renamed variable would otherwise be an undeclared tfvar the run discovers at plan.
+func TestKeylessGCPAppSAKeyIsATemplateVariable(t *testing.T) {
+	path := filepath.Join(e2ePackageDir(t), "..", "..", "infra", "templates", "project", "gcp", "variables.tf")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	tf := string(raw)
+	decl := `variable "` + keylessGCPAppSAKey + `" {`
+	start := strings.Index(tf, decl)
+	if start < 0 {
+		t.Fatalf("%s declares no %s", path, decl)
+	}
+	block := tf[start+len(decl):]
+	if next := strings.Index(block, "\nvariable \""); next >= 0 {
+		block = block[:next]
+	}
+	m := regexp.MustCompile(`can\(regex\("((?:[^"\\]|\\.)*)"`).FindStringSubmatch(block)
+	if m == nil {
+		t.Fatalf("no can(regex(\"…\")) validation in the %s block", keylessGCPAppSAKey)
+	}
+	if tmpl := strings.ReplaceAll(m[1], `\\`, `\`); tmpl != gcpSAEmail.String() {
+		t.Fatalf("gcpSAEmail = %q but the template validates %s with %q", gcpSAEmail.String(), keylessGCPAppSAKey, tmpl)
+	}
+}
+
+// TestKeylessAppsRepoRefusal: a repo whose ROOT holds YAML is bring-your-own to the product, which then
+// renders nothing keyless — the shared e2e apps repo's root configmap.yaml did exactly that to gcp and
+// azure. YAML only below the root, or none, is a repo the product writes into.
+func TestKeylessAppsRepoRefusal(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "configmap.yaml"), []byte("kind: ConfigMap\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := keylessAppsRepoRefusal(root, "https://github.com/acme/apps"); err == nil || !strings.Contains(err.Error(), "bring-your-own") {
+		t.Fatalf("a root YAML must be refused as bring-your-own, got %v", err)
+	}
+
+	nested := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(nested, "charts"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "charts", "values.yaml"), []byte("a: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "README.md"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := keylessAppsRepoRefusal(nested, "https://github.com/acme/apps"); err != nil {
+		t.Fatalf("YAML only below the root is a repo the product writes into, got %v", err)
+	}
+	if err := keylessAppsRepoRefusal(t.TempDir(), "https://github.com/acme/apps"); err != nil {
+		t.Fatalf("an empty repo must pass, got %v", err)
 	}
 }
 
@@ -168,22 +296,24 @@ func TestKeylessDecide_VariablesBeatThePostgresDefault(t *testing.T) {
 	}
 }
 
-// TestKeylessDecide_RequiresTheAppsRepo is the precondition nobody would guess. The workload AND its
-// bootstrap Job reach the cluster only through the GitOps apps repo — generateAppManifests returns
-// before rendering anything when none is wired. Without this check the scenario would poll for
-// objects nobody ever pushed and time out looking exactly like a keyless failure.
-func TestKeylessDecide_RequiresTheAppsRepo(t *testing.T) {
-	for _, missing := range []string{envArgoAppsRepo, envArgoGitToken} {
-		env := fullyConfigured()
-		env[missing] = ""
-		keylessTestEnv(t, env)
-		_, _, err := keylessDBFromEnv("aws").decide()
-		if err == nil {
-			t.Fatalf("unset %s must fail the scenario — nothing would render into the cluster", missing)
-		}
-		if !strings.Contains(err.Error(), missing) {
-			t.Errorf("the error must name %s, got %v", missing, err)
-		}
+// TestKeylessDecide_RequiresTheGitToken is the precondition nobody would guess. The workload AND its
+// bootstrap Job reach the cluster only through the scenario's own apps repo, which the product clones
+// and pushes — and the harness resets — with the control plane's git token. The A0.6 apps repo is NOT
+// required any more: keyless brings its own (keylessAppsRepoFor).
+func TestKeylessDecide_RequiresTheGitToken(t *testing.T) {
+	env := fullyConfigured()
+	env[envArgoGitToken] = ""
+	keylessTestEnv(t, env)
+	_, _, err := keylessDBFromEnv("aws").decide()
+	if err == nil || !strings.Contains(err.Error(), envArgoGitToken) {
+		t.Fatalf("unset %s must fail the scenario naming it, got %v", envArgoGitToken, err)
+	}
+
+	env = fullyConfigured()
+	env[envArgoAppsRepo] = ""
+	keylessTestEnv(t, env)
+	if run, _, err := keylessDBFromEnv("aws").decide(); err != nil || !run {
+		t.Fatalf("the A0.6 apps repo must not be required — keyless brings its own; got run=%v err=%v", run, err)
 	}
 }
 
@@ -640,5 +770,150 @@ func TestKeylessDefaultedNote(t *testing.T) {
 	}
 	if got := keylessDefaultedNote(false); got != "" {
 		t.Errorf("a variable-chosen shape needs no note, got %q", got)
+	}
+}
+
+// TestKeylessAppsRepoFor: one repo per cloud under a fixed name pattern, so parallel clouds never share
+// (and so never reset each other's live manifests); the single prefix override moves all three.
+func TestKeylessAppsRepoFor(t *testing.T) {
+	t.Setenv(envKeylessAppsRepoPrefix, "")
+	for _, p := range []string{"aws", "gcp", "azure"} {
+		if got, want := keylessAppsRepoFor(p), keylessAppsRepoPrefixDefault+"-"+p; got != want {
+			t.Errorf("keylessAppsRepoFor(%s) = %q, want %q", p, got, want)
+		}
+	}
+	if keylessAppsRepoFor("aws") == keylessAppsRepoFor("gcp") {
+		t.Fatal("two clouds must never share a keyless apps repo")
+	}
+	t.Setenv(envKeylessAppsRepoPrefix, "https://github.com/fork/my-keyless-apps/")
+	if got := keylessAppsRepoFor("GCP"); got != "https://github.com/fork/my-keyless-apps-gcp" {
+		t.Errorf("prefix override = %q", got)
+	}
+}
+
+// TestKeylessAppsRepoSafeToReset: the reset force-pushes, so it must refuse the shared A0.6 repo by
+// NAME and by CONFIGURATION, and refuse a repo whose name does not say it is keyless's, per cloud.
+func TestKeylessAppsRepoSafeToReset(t *testing.T) {
+	t.Setenv(envArgoAppsRepo, "")
+	t.Setenv(envArgoAppsRepo+"_GCP", "")
+	for _, tc := range []struct {
+		url, provider string
+		ok            bool
+	}{
+		{keylessAppsRepoPrefixDefault + "-aws", "aws", true},
+		{keylessAppsRepoPrefixDefault + "-aws.git", "aws", true},
+		{"https://github.com/alethialabs-io/alethia-e2e-apps", "aws", false},     // the A0.6 repo, by name
+		{keylessAppsRepoPrefixDefault + "-gcp", "aws", false},                    // another cloud's repo
+		{"https://github.com/alethialabs-io/alethia-e2e-apps-aws", "aws", false}, // not keyless's
+	} {
+		if err := keylessAppsRepoSafeToReset(tc.url, tc.provider); (err == nil) != tc.ok {
+			t.Errorf("keylessAppsRepoSafeToReset(%q, %s) = %v, want ok=%v", tc.url, tc.provider, err, tc.ok)
+		}
+	}
+	// By configuration: even a keyless-looking name is refused if the run's A0.6 repo IS that repo.
+	t.Setenv(envArgoAppsRepo+"_GCP", keylessAppsRepoPrefixDefault+"-gcp.git")
+	if err := keylessAppsRepoSafeToReset(keylessAppsRepoPrefixDefault+"-gcp", "gcp"); err == nil {
+		t.Fatal("a repo configured as the A0.6 apps repo must never be reset")
+	}
+}
+
+// TestKeylessDecide_RefusesAnUnsafeAppsRepoPrefix: a prefix override that would point the reset at a
+// non-keyless repo is refused at configuration time, before anything is cloned or pushed.
+func TestKeylessDecide_RefusesAnUnsafeAppsRepoPrefix(t *testing.T) {
+	env := fullyConfigured()
+	env[envKeylessAppsRepoPrefix] = "https://github.com/alethialabs-io/alethia-e2e-apps"
+	keylessTestEnv(t, env)
+	if _, _, err := keylessDBFromEnv("aws").decide(); err == nil || !strings.Contains(err.Error(), "refusing to reset") {
+		t.Fatalf("an unsafe prefix must be refused before spend, got %v", err)
+	}
+}
+
+// TestApplyToSnapshot_TakesTheAppsDestination: the keyless layer owns the apps-destination slot when it
+// rides — replacing an A0.6 repo written before it, keeping every other `repositories` key.
+func TestApplyToSnapshot_TakesTheAppsDestination(t *testing.T) {
+	keylessTestEnv(t, fullyConfigured())
+	c := keylessDBFromEnv("azure")
+	snap := map[string]any{"repositories": map[string]any{"apps_destination_repo": "https://github.com/acme/apps", "other": "kept"}}
+	if err := c.applyToSnapshot(snap); err != nil {
+		t.Fatal(err)
+	}
+	repos := snap["repositories"].(map[string]any)
+	if repos["apps_destination_repo"] != c.appsRepo || repos["other"] != "kept" {
+		t.Fatalf("repositories = %v, want apps_destination_repo=%s and other kept", repos, c.appsRepo)
+	}
+	fresh := map[string]any{}
+	if err := c.applyToSnapshot(fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh["repositories"].(map[string]any)["apps_destination_repo"] != c.appsRepo {
+		t.Fatal("with no A0.6 layer the keyless layer must still wire its apps repo")
+	}
+}
+
+// TestKeylessAppsRepoReset_AgainstALocalRemote drives the real reset against a file:// remote named
+// like the real one: a repo seeded the way the shared A0.6 repo is (a root ConfigMap, the state that
+// broke gcp and azure) ends README-only on its DEFAULT branch — which is deliberately not `main` here,
+// so a reset that assumed the branch name would leave the YAML the product then sees — and the fresh
+// clone passes the product's own bring-your-own predicate.
+func TestKeylessAppsRepoReset_AgainstALocalRemote(t *testing.T) {
+	t.Setenv(envArgoAppsRepo, "")
+	t.Setenv(envArgoAppsRepo+"_AWS", "")
+	base := t.TempDir()
+	remoteDir := filepath.Join(base, "alethia-e2e-keyless-apps-aws.git")
+	trunk := plumbing.NewBranchReferenceName("trunk")
+	if _, err := gogit.PlainInitWithOptions(remoteDir, &gogit.PlainInitOptions{Bare: true, InitOptions: gogit.InitOptions{DefaultBranch: trunk}}); err != nil {
+		t.Fatal(err)
+	}
+	remoteURL := "file://" + remoteDir
+
+	// Seed it with a root manifest, as the A0.6 repo is.
+	seed := t.TempDir()
+	r, err := gogit.PlainInitWithOptions(seed, &gogit.PlainInitOptions{InitOptions: gogit.InitOptions{DefaultBranch: trunk}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "configmap.yaml"), []byte("kind: ConfigMap\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wt, _ := r.Worktree()
+	if _, err := wt.Add("configmap.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	sig := &object.Signature{Name: "t", Email: "t@example.com", When: time.Now()}
+	if _, err := wt.Commit("seed", &gogit.CommitOptions{Author: sig, Committer: sig}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateRemote(&gogitconfig.RemoteConfig{Name: "origin", URLs: []string{remoteURL}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Push(&gogit.PushOptions{RemoteName: "origin"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := keylessAppsRepoReset(t.Context(), remoteURL, "aws", "tok"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	after := t.TempDir()
+	if _, err := gogit.PlainClone(after, false, &gogit.CloneOptions{URL: remoteURL}); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(after)
+	var names []string
+	for _, e := range entries {
+		if e.Name() != ".git" {
+			names = append(names, e.Name())
+		}
+	}
+	if len(names) != 1 || names[0] != "README.md" {
+		t.Fatalf("after the reset the default branch holds %v, want only README.md", names)
+	}
+	if err := keylessAppsRepoRefusal(after, remoteURL); err != nil {
+		t.Fatalf("a reset repo must pass the product's predicate: %v", err)
+	}
+
+	// And it never runs against a repo it must not touch — refused before any network call.
+	if err := keylessAppsRepoReset(t.Context(), "file://"+filepath.Join(base, "alethia-e2e-apps.git"), "aws", "tok"); err == nil {
+		t.Fatal("the reset must refuse a non-keyless repo")
 	}
 }

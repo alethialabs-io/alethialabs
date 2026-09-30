@@ -19,16 +19,28 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	"github.com/alethialabs-io/alethialabs/packages/core/git"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
+	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
+	gogit "github.com/go-git/go-git/v5"
+	gogitconfig "github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 )
 
 // Scenario env. Every per-cloud value also honours the "<base>_<PROVIDER>" override idiom
@@ -47,6 +59,50 @@ const (
 	envKeylessDBDwell     = "ALETHIA_E2E_KEYLESS_DB_DWELL"          // token-rotation dwell
 	envKeylessDBSummary   = "ALETHIA_E2E_KEYLESS_DB_SUMMARY"        // where to write the proof summary
 )
+
+// envKeylessDBGCPAppSA names the STANDING Google service account the GCP cell's app impersonates to log
+// in to Cloud SQL. The gcp project template does not create one — roles/cloudsql.client and
+// roles/cloudsql.instanceUser are project-scoped only, and the provisioner deliberately holds no
+// projects.setIamPolicy — so it ADOPTS one through keylessGCPAppSAKey (infra/templates/project/gcp/
+// app-db-identity.tf). The customer's comes from the connector bootstrap (`alethia-appdb`); the e2e's
+// from infra/gcp-e2e (output `e2e_gcp_keyless_app_db_sa_email`).
+//
+// Without it the template wires nothing, emits no cloud_sql_app_gsa_email, and the product fails the
+// binding closed after the cluster is bought — which is exactly what run 36711784359 did. So a gcp
+// keyless run with it unset is refused in decide(), before any spend.
+//
+// GCP-only by construction, so it is written flat rather than through the <BASE>_<PROVIDER>
+// convention — the same choice envGCPExternalDNSServiceAccount makes, for the same reason.
+const envKeylessDBGCPAppSA = "ALETHIA_E2E_KEYLESS_DB_GCP_APP_SA"
+
+// The keyless scenario's OWN apps-destination repo, one per cloud: "<prefix>-<provider>".
+//
+// It cannot share the A0.6 apps repo. The product renders the keyless workload, its proxy sidecar,
+// its bootstrap Job and the decision record only into a repo whose ROOT holds no YAML — anything else
+// is bring-your-own and gets nothing — while A0.6 NEEDS a root manifest so its `apps` Application is
+// not vacuously Healthy. Runs 36711784359 (gcp) and 36711798677 (azure) died on exactly that. And once
+// the product has pushed into a repo it is no longer empty, so the repo is RESET before every run
+// (keylessAppsRepoReset). One repo per cloud so the three clouds can run in parallel without one leg's
+// reset erasing another's live manifests.
+//
+// The prefix is a single optional override, not a per-cloud variable: the name pattern is the contract.
+const (
+	envKeylessAppsRepoPrefix     = "ALETHIA_E2E_KEYLESS_APPS_REPO_PREFIX"
+	keylessAppsRepoPrefixDefault = "https://github.com/alethialabs-io/alethia-e2e-keyless-apps"
+)
+
+// keylessAppsRepoFor is the dedicated keyless apps repo for one cloud.
+func keylessAppsRepoFor(provider string) string {
+	prefix := strings.TrimSuffix(t2Env(envKeylessAppsRepoPrefix, keylessAppsRepoPrefixDefault), "/")
+	return prefix + "-" + strings.ToLower(strings.TrimSpace(provider))
+}
+
+// keylessGCPAppSAKey is the gcp project template variable the adopted account reaches tofu through.
+// It travels the DATABASE's provider_config passthrough (mergeProviderConfig in
+// packages/core/cloud/gcp_provider.go), which is where the account belongs: it is the database's app
+// login. TestKeylessGCPAppSAKeyIsATemplateVariable pins that the template declares it and validates it
+// with the same pattern gcpSAEmail checks here.
+const keylessGCPAppSAKey = "cloud_sql_app_service_account_email"
 
 // Engine families, matching types.ProjectDatabaseConfig.EngineFamily. Literals rather than an import:
 // manifests keeps its own copies unexported. They are not free-floating — every one is fed to
@@ -103,8 +159,12 @@ type keylessDBConfig struct {
 	clientImage   string
 	namespace     string
 	summaryPath   string
-	dwell         time.Duration
-	enabled       bool
+	// gcpAppSA is the standing app→Cloud SQL account the gcp cell adopts (envKeylessDBGCPAppSA).
+	gcpAppSA string
+	// appsRepo is this cloud's dedicated, harness-reset apps-destination repo (keylessAppsRepoFor).
+	appsRepo string
+	dwell    time.Duration
+	enabled  bool
 	// defaulted reports that the version or class came from keylessPostgresDefaults rather than a
 	// variable, so the run log says which shape was bought and why.
 	defaulted bool
@@ -151,6 +211,8 @@ func keylessDBFromEnv(provider string) keylessDBConfig {
 		clientImage:   t2ArgoEnvForProvider(envKeylessDBClient, provider, defaultClientImage(engine)),
 		namespace:     t2Env(envKeylessDBNamespace, keylessWorkloadNamespace),
 		summaryPath:   t2Env(envKeylessDBSummary, ""),
+		gcpAppSA:      t2Env(envKeylessDBGCPAppSA, ""),
+		appsRepo:      keylessAppsRepoFor(provider),
 		dwell:         keylessDefaultDwell,
 	}
 	// POSTGRES ONLY: an unset version or class takes the per-cloud default rather than refusing. This
@@ -246,11 +308,12 @@ func (c keylessDBConfig) keylessProxyContainer() string {
 //   - requested on a BLOCKED cell      → (false, nil) + the cell's own reason (the run half logs it)
 //   - requested but partly configured  → ERROR naming every missing key, BEFORE any cloud spend
 //
-// The apps-repo requirement is the non-obvious one, and it is a HARD error rather than a skip. Both
-// the workload and its bootstrap Job reach the cluster only through the GitOps apps repo —
-// generateAppManifests returns before rendering anything when no repo is wired. Without it this
-// scenario would poll for a Deployment and a Job that nobody ever pushed, and time out looking
-// exactly like a keyless failure.
+// The git token is the non-obvious requirement, and it is a HARD error rather than a skip. Both the
+// workload and its bootstrap Job reach the cluster only through the GitOps apps repo, which this
+// scenario brings itself (keylessAppsRepoFor) — but the product clones and pushes it with the
+// control plane's git token, and the harness resets it with the same one. Without it this scenario
+// would poll for a Deployment and a Job that nobody ever pushed, and time out looking exactly like a
+// keyless failure.
 func (c keylessDBConfig) decide() (bool, string, error) {
 	if !c.enabled {
 		return false, "", nil
@@ -273,13 +336,25 @@ func (c keylessDBConfig) decide() (bool, string, error) {
 	// filled by keylessPostgresDefaults, which reuses shapes the templates already provision.
 	need(envKeylessDBVersion, c.engineVersion)
 	need(envKeylessDBClass, c.instanceClass)
-	// The GitOps repo, without which nothing renders into the cluster.
-	need(envArgoAppsRepo, t2ArgoEnvForProvider(envArgoAppsRepo, c.provider, ""))
+	// The token the product pushes the dedicated apps repo with (and the harness resets it with).
 	need(envArgoGitToken, os.Getenv(envArgoGitToken))
+	// GCP only: the adopted app identity. See envKeylessDBGCPAppSA.
+	if c.provider == "gcp" {
+		need(envKeylessDBGCPAppSA, c.gcpAppSA)
+	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		return false, "", fmt.Errorf("%s is enabled for %s × %s but these are unset: %s",
 			envKeylessDB, c.provider, c.engine, strings.Join(missing, ", "))
+	}
+	// The template validates the same pattern (TestKeylessGCPAppSAKeyIsATemplateVariable), but only at
+	// PLAN — minutes and a VPC in. A bare account id is the mistake worth catching here.
+	if err := keylessAppsRepoSafeToReset(c.appsRepo, c.provider); err != nil {
+		return false, "", err
+	}
+	if c.provider == "gcp" && !gcpSAEmail.MatchString(c.gcpAppSA) {
+		return false, "", fmt.Errorf("%s must be a full service-account email (name@project.iam.gserviceaccount.com), got %q",
+			envKeylessDBGCPAppSA, c.gcpAppSA)
 	}
 	if c.namespace != keylessWorkloadNamespace {
 		return false, "", fmt.Errorf("%s must be %q — the per-cloud templates pin the workload-identity subject to that namespace, so a pod elsewhere cannot federate an identity (got %q)",
@@ -324,6 +399,20 @@ func (c keylessDBConfig) applyToSnapshot(snap map[string]any) error {
 	db["instance_class"] = c.instanceClass
 	db["port"] = keylessEnginePort(c.engine)
 	db["iam_auth"] = true
+	// GCP: adopt the standing app identity through the database's provider_config. A max-config run's
+	// overlaid entry may already carry a provider_config, so this MERGES — and refuses a different
+	// account already there rather than silently replacing the one another layer chose.
+	if c.provider == "gcp" && c.gcpAppSA != "" {
+		pc, _ := db["provider_config"].(map[string]any)
+		if pc == nil {
+			pc = map[string]any{}
+		}
+		if prev, ok := pc[keylessGCPAppSAKey].(string); ok && prev != "" && prev != c.gcpAppSA {
+			return fmt.Errorf("databases[0].provider_config.%s is already %q; the keyless layer would set %q", keylessGCPAppSAKey, prev, c.gcpAppSA)
+		}
+		pc[keylessGCPAppSAKey] = c.gcpAppSA
+		db["provider_config"] = pc
+	}
 	if len(dbs) == 0 {
 		dbs = []any{db}
 	} else {
@@ -357,7 +446,148 @@ func (c keylessDBConfig) applyToSnapshot(snap map[string]any) error {
 		return err
 	}
 	snap["services"] = append(services, svc)
+
+	// The apps-destination slot is the keyless scenario's when it rides: the product renders keyless
+	// only into a repo it considers its own (see keylessAppsRepoFor). It REPLACES an A0.6 repo the
+	// layer above may have written — A0.6's own assertions (the `apps` Application exists, is
+	// credentialed, and manages ≥1 resource) still hold against this repo, because the product fills
+	// it with the probe workload — and keeps any other key of `repositories`.
+	repos, _ := snap["repositories"].(map[string]any)
+	if repos == nil {
+		repos = map[string]any{}
+	}
+	repos["apps_destination_repo"] = c.appsRepo
+	snap["repositories"] = repos
 	return nil
+}
+
+// ── the dedicated apps repo: reset before spend, then proven writable-into ───────────────────────
+
+// keylessAppsRepoRefusal reports why a checked-out apps repo at dir cannot carry this scenario, or nil.
+//
+// The product renders the keyless workload, its proxy sidecar, its bootstrap Job AND the decision
+// record only into an apps repo it considers its own. A repo whose ROOT already holds YAML is treated
+// as bring-your-own (provisioner.AppsRepoHasManifests — asked, not copied): generation leaves it
+// untouched and drops every keyless decision, so the deploy SUCCEEDS with nothing rendered and the
+// scenario later fails "no keyless decision … the render never CONSIDERED the binding" — on a bought
+// cluster. That is what happened on gcp (36711784359) and azure (36711798677) against the shared A0.6
+// repo. It is asked again AFTER the reset, so a reset that silently did not land is caught here.
+func keylessAppsRepoRefusal(dir, repoURL string) error {
+	if !provisioner.AppsRepoHasManifests(dir) {
+		return nil
+	}
+	return fmt.Errorf("the apps repo %s still holds YAML at its root after the reset, so the product would "+
+		"treat it as bring-your-own and render NOTHING into it — no keyless workload, sidecar, bootstrap "+
+		"Job or decision record. Check that the reset pushed to the repo's DEFAULT branch", repoURL)
+}
+
+// keylessAppsRepoSafeToReset refuses a repo URL the reset must never touch. The reset FORCE-PUSHES an
+// orphan commit over the default branch, so it is destructive by design, and the one thing it must
+// never be pointed at is a repo that carries anything else — above all the shared A0.6 apps repo
+// (alethia-e2e-apps), whose root ConfigMap is what makes that proof non-vacuous.
+//
+// Two structural requirements rather than a list of forbidden names: the repo name must say
+// `keyless` and end in `-<provider>`, and it must differ from every A0.6 apps repo this run is
+// configured with (base or per-cloud). An overridden prefix that forgets either is refused.
+func keylessAppsRepoSafeToReset(repoURL, provider string) error {
+	name := path.Base(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(repoURL), "/"), ".git"))
+	if !strings.Contains(name, "keyless") || !strings.HasSuffix(name, "-"+strings.ToLower(provider)) {
+		return fmt.Errorf("refusing to reset %q as the keyless apps repo: its name must contain \"keyless\" and end in \"-%s\" (%s sets the prefix) — the reset force-pushes over the default branch",
+			repoURL, strings.ToLower(provider), envKeylessAppsRepoPrefix)
+	}
+	norm := func(u string) string {
+		return strings.ToLower(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(u), "/"), ".git"))
+	}
+	for _, a06 := range []string{t2Env(envArgoAppsRepo, ""), t2ArgoEnvForProvider(envArgoAppsRepo, provider, "")} {
+		if a06 != "" && norm(a06) == norm(repoURL) {
+			return fmt.Errorf("refusing to reset %q: it is the A0.6 apps repo (%s), which the keyless reset must never touch", repoURL, envArgoAppsRepo)
+		}
+	}
+	return nil
+}
+
+// keylessAppsRepoREADME is the only file the reset leaves. Names the repo's purpose so nobody commits
+// to it by hand expecting the content to survive.
+const keylessAppsRepoREADME = `# keyless-DB e2e apps repo (harness-owned)
+
+This repository is the apps-destination repo for the keyless-DB e2e scenario on ONE cloud
+(test/e2e/t2_keyless_db.go in alethialabs-io/alethialabs). The harness FORCE-PUSHES an orphan commit
+holding only this file over the default branch before every run, and the product then pushes the
+rendered manifests. Anything committed here by hand is erased on the next run.
+`
+
+// keylessAppsRepoReset empties the dedicated apps repo before spend: it force-pushes an orphan commit
+// holding only a README over the repo's DEFAULT branch (read from the remote's HEAD; `main` for a repo
+// with no commits yet), authenticating exactly as the product's own git client does (BasicAuth
+// x-access-token + the job's git token). Then it clones the default branch fresh and asks the
+// product's bring-your-own predicate, so a reset that did not land fails HERE, in seconds.
+//
+// A token that can read but not push fails here too — which is the point of doing it before spend:
+// the product would otherwise discover it at its own push, after the cluster is bought. The token is
+// never logged; errors carry the URL only.
+func keylessAppsRepoReset(ctx context.Context, repoURL, provider, token string) error {
+	if err := keylessAppsRepoSafeToReset(repoURL, provider); err != nil {
+		return err
+	}
+	auth := &githttp.BasicAuth{Username: "x-access-token", Password: token}
+
+	branch := plumbing.NewBranchReferenceName("main")
+	remote := gogit.NewRemote(nil, &gogitconfig.RemoteConfig{Name: "origin", URLs: []string{repoURL}})
+	refs, err := remote.ListContext(ctx, &gogit.ListOptions{Auth: auth})
+	switch {
+	case errors.Is(err, transport.ErrEmptyRemoteRepository):
+		// A repo created with no commits: `main` becomes its default on first push.
+	case err != nil:
+		return fmt.Errorf("keyless apps-repo reset: list %s (does the repo exist, and can the git token read it?): %w", repoURL, err)
+	default:
+		for _, r := range refs {
+			if r.Name() == plumbing.HEAD && r.Type() == plumbing.SymbolicReference {
+				branch = r.Target()
+			}
+		}
+	}
+
+	dir, err := os.MkdirTemp("", "keyless-apps-reset-*")
+	if err != nil {
+		return fmt.Errorf("keyless apps-repo reset: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	repo, err := gogit.PlainInitWithOptions(dir, &gogit.PlainInitOptions{InitOptions: gogit.InitOptions{DefaultBranch: branch}})
+	if err != nil {
+		return fmt.Errorf("keyless apps-repo reset: init: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(keylessAppsRepoREADME), 0o600); err != nil {
+		return fmt.Errorf("keyless apps-repo reset: %w", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("keyless apps-repo reset: %w", err)
+	}
+	if _, err := wt.Add("README.md"); err != nil {
+		return fmt.Errorf("keyless apps-repo reset: %w", err)
+	}
+	sig := &object.Signature{Name: "alethia-e2e", Email: "e2e@alethialabs.io", When: time.Now()}
+	if _, err := wt.Commit("reset: empty keyless apps repo before a keyless-db e2e run", &gogit.CommitOptions{Author: sig, Committer: sig}); err != nil {
+		return fmt.Errorf("keyless apps-repo reset: commit: %w", err)
+	}
+	if _, err := repo.CreateRemote(&gogitconfig.RemoteConfig{Name: "origin", URLs: []string{repoURL}}); err != nil {
+		return fmt.Errorf("keyless apps-repo reset: %w", err)
+	}
+	spec := gogitconfig.RefSpec(fmt.Sprintf("+%s:%s", branch, branch))
+	if err := repo.PushContext(ctx, &gogit.PushOptions{RemoteName: "origin", Auth: auth, RefSpecs: []gogitconfig.RefSpec{spec}, Force: true}); err != nil && !errors.Is(err, gogit.NoErrAlreadyUpToDate) {
+		return fmt.Errorf("keyless apps-repo reset: force-push %s to %s (the git token needs Contents: write on this repo, and no rule may block a force-push to its default branch): %w", branch.Short(), repoURL, err)
+	}
+
+	// Re-ask from a FRESH clone of the default branch — the same clone the product will make.
+	check, err := os.MkdirTemp("", "keyless-apps-check-*")
+	if err != nil {
+		return fmt.Errorf("keyless apps-repo preflight: %w", err)
+	}
+	defer os.RemoveAll(check)
+	if err := git.NewGITWithToken(repoURL, check, false, token).Clone(ctx, "", false); err != nil {
+		return fmt.Errorf("keyless apps-repo preflight: clone %s: %w", repoURL, err)
+	}
+	return keylessAppsRepoRefusal(check, repoURL)
 }
 
 // snapshotDBName reports the database name the binding targets after applyToSnapshot — the overlaid
