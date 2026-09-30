@@ -382,3 +382,140 @@ func TestPlainIDShapes(t *testing.T) {
 		}
 	}
 }
+
+// ── Table L — the fail-closed edges of the back-reference tier, called directly ─────────────
+//
+// Tables J and K drive the tier through Analyze from the captured fixture. These rows reach the
+// shapes that fixture cannot express (an ipv6 IP, a nested module, a malformed apply_to) against
+// a hand-built state index, so every refusal branch is exercised, and the one positive row that
+// is not in the fixture (ipv6) proves the family switch is not a blanket refusal.
+
+const hcloudProv = "registry.opentofu.org/hetznercloud/hcloud"
+
+// srv is a managed hcloud_server state object with the given attribute values.
+func srv(values map[string]any) stateObject {
+	return stateObject{mode: tfjson.ManagedResourceMode, typ: "hcloud_server", provider: hcloudProv, values: values}
+}
+
+// sameViews is a state index whose recorded and refreshed views both hold objs.
+func sameViews(objs map[string]stateObject) *stateIndex {
+	st := &stateIndex{refreshed: map[string]stateObject{}, recorded: map[string]stateObject{}}
+	for a, o := range objs {
+		st.refreshed[a] = o
+		st.recorded[a] = o
+	}
+	return st
+}
+
+func TestIndexStateWalksModulesAndSkipsJunk(t *testing.T) {
+	child := &tfjson.StateResource{Address: "module.m.hcloud_server.s", Mode: tfjson.ManagedResourceMode, Type: "hcloud_server", ProviderName: hcloudProv, AttributeValues: map[string]any{"id": "7"}}
+	plan := &tfjson.Plan{
+		PriorState: &tfjson.State{Values: &tfjson.StateValues{RootModule: &tfjson.StateModule{
+			Resources:    []*tfjson.StateResource{nil, {Address: ""}},
+			ChildModules: []*tfjson.StateModule{nil, {Resources: []*tfjson.StateResource{child}}},
+		}}},
+		ResourceDrift: []*tfjson.ResourceChange{
+			nil,
+			{Address: "data.x.y", Mode: tfjson.DataResourceMode, Change: &tfjson.Change{Before: map[string]any{}}},
+			{Address: child.Address, Mode: tfjson.ManagedResourceMode},
+		},
+	}
+	st := indexState(plan)
+	if st == nil {
+		t.Fatal("indexState = nil for a plan with prior_state")
+	}
+	if len(st.refreshed) != 1 || st.refreshed[child.Address].values["id"] != "7" {
+		t.Fatalf("refreshed = %+v, want only the child-module server", st.refreshed)
+	}
+	if _, ok := st.recorded[child.Address]; !ok {
+		t.Fatalf("a drift entry with no Change must not replace the recorded view: %+v", st.recorded)
+	}
+	if _, ok := st.recorded["data.x.y"]; ok {
+		t.Fatal("a data-source drift entry entered the recorded view")
+	}
+}
+
+func TestTableL_PrimaryIPEdges(t *testing.T) {
+	st := sameViews(map[string]stateObject{
+		"hcloud_server.a": srv(map[string]any{"id": 11.0, "public_net": []any{"not-a-map", map[string]any{"ipv6": 5.0}}}),
+	})
+	ip := func(family string) (map[string]any, map[string]any) {
+		return map[string]any{"id": 5.0, "type": family, "assignee_id": 0.0, "assignee_type": "unassigned"},
+			map[string]any{"id": 5.0, "type": family, "assignee_id": 11.0, "assignee_type": "server"}
+	}
+	t.Run("control: an ipv6 IP held by a managed server is a back-reference", func(t *testing.T) {
+		b, a := ip("ipv6")
+		if got := hcloudPrimaryIPAssignment(hcloudProv, b, a, st); len(got) != 2 {
+			t.Fatalf("got %v, want [assignee_id assignee_type]", got)
+		}
+	})
+	for name, mutate := range map[string]func(b, a map[string]any){
+		"an unknown IP family":                       func(b, a map[string]any) { b["type"], a["type"] = "ipv9", "ipv9" },
+		"recorded assignee_type is a load balancer":  func(b, _ map[string]any) { b["assignee_type"] = "load_balancer" },
+		"the after assignee_id is not a plain id":    func(_, a map[string]any) { a["assignee_id"] = "eleven" },
+		"the edge is ipv4 but the server holds ipv6": func(b, a map[string]any) { b["type"], a["type"] = "ipv4", "ipv4" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			b, a := ip("ipv6")
+			mutate(b, a)
+			if got := hcloudPrimaryIPAssignment(hcloudProv, b, a, st); got != nil {
+				t.Fatalf("got %v, want nil", got)
+			}
+		})
+	}
+}
+
+func TestTableL_FirewallEdges(t *testing.T) {
+	st := sameViews(map[string]stateObject{
+		"hcloud_server.a": srv(map[string]any{"id": 11.0, "firewall_ids": []any{3.0}}),
+		"hcloud_server.b": srv(map[string]any{"id": 12.0, "firewall_ids": []any{3.0}}),
+	})
+	entry := func(id float64) map[string]any { return map[string]any{"server": id, "label_selector": ""} }
+	t.Run("control: a recorded entry survives and one managed server is gained", func(t *testing.T) {
+		b := map[string]any{"id": 3.0, "apply_to": []any{entry(11)}}
+		a := map[string]any{"id": 3.0, "apply_to": []any{entry(11), entry(12)}}
+		if got := hcloudFirewallApplyTo(hcloudProv, b, a, st); len(got) != 1 || got[0] != "apply_to" {
+			t.Fatalf("got %v, want [apply_to]", got)
+		}
+	})
+	for name, ba := range map[string][2]map[string]any{
+		"the firewall id changed": {
+			{"id": 3.0, "apply_to": []any{}}, {"id": 4.0, "apply_to": []any{entry(11)}},
+		},
+		"the recorded apply_to is not a list": {
+			{"id": 3.0, "apply_to": "x"}, {"id": 3.0, "apply_to": []any{entry(11)}},
+		},
+		"a gained element is not an object": {
+			{"id": 3.0, "apply_to": []any{}}, {"id": 3.0, "apply_to": []any{"x"}},
+		},
+		"nothing was gained — an unexplained report": {
+			{"id": 3.0, "apply_to": []any{entry(11)}}, {"id": 3.0, "apply_to": []any{entry(11)}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := hcloudFirewallApplyTo(hcloudProv, ba[0], ba[1], st); got != nil {
+				t.Fatalf("got %v, want nil", got)
+			}
+		})
+	}
+}
+
+func TestManagedServerHoldsRefusesARenumberedRecord(t *testing.T) {
+	always := func(map[string]any) bool { return true }
+	st := &stateIndex{
+		refreshed: map[string]stateObject{"hcloud_server.a": srv(map[string]any{"id": 11.0})},
+		recorded:  map[string]stateObject{"hcloud_server.a": srv(map[string]any{"id": 99.0})},
+	}
+	if st.managedServerHolds(hcloudProv, "11", always) {
+		t.Fatal("a server whose recorded id differs from its live id vouched for a back-reference")
+	}
+}
+
+func TestContainsNumberInsideAList(t *testing.T) {
+	if !containsNumber(map[string]any{"l": []any{"s", 1.0}}) {
+		t.Fatal("a number inside a list was not seen")
+	}
+	if containsNumber(map[string]any{"l": []any{"s", true, nil}}) {
+		t.Fatal("a list of strings, bools and nulls read as holding a number")
+	}
+}
