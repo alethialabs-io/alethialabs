@@ -124,6 +124,47 @@ func TestCloneRefusesAnAbsentCommitSHA(t *testing.T) {
 	}
 }
 
+// TestCloneReportsAnUnreachableRemoteOnEveryRefPath asserts each ref kind's clone path surfaces a
+// remote that does not exist as an error naming the repository — the explicit-ref and SHA paths
+// have their own clone calls, so one error test on the default path does not cover them.
+func TestCloneReportsAnUnreachableRemoteOnEveryRefPath(t *testing.T) {
+	missing := "file://" + filepath.Join(t.TempDir(), "no-such-repo.git")
+	for _, ref := range []string{
+		"refs/heads/main",
+		"refs/tags/v1",
+		"0123456789abcdef0123456789abcdef01234567",
+	} {
+		t.Run(ref, func(t *testing.T) {
+			g := &GIT{RepoURL: missing, LocalPath: filepath.Join(t.TempDir(), "clone")}
+			err := g.Clone(context.Background(), ref, true)
+			if err == nil {
+				t.Fatalf("Clone(%q) of a missing remote succeeded", ref)
+			}
+			if !strings.Contains(err.Error(), "no-such-repo.git") {
+				t.Fatalf("Clone(%q) error does not name the repository: %v", ref, err)
+			}
+		})
+	}
+}
+
+// TestCloneRefusesAnUncreatableCloneDirectory asserts a LocalPath that cannot be created (its
+// parent is a regular file) fails with that cause instead of cloning somewhere else.
+func TestCloneRefusesAnUncreatableCloneDirectory(t *testing.T) {
+	fx := makeBareRefFixture(t)
+	parent := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(parent, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g := &GIT{RepoURL: fx.url, LocalPath: filepath.Join(parent, "clone")}
+	err := g.Clone(context.Background(), "refs/tags/v1", true)
+	if err == nil {
+		t.Fatal("Clone into a path under a regular file succeeded")
+	}
+	if !strings.Contains(err.Error(), "failed to create clone directory") {
+		t.Fatalf("error does not name the directory failure: %v", err)
+	}
+}
+
 // TestIsFullCommitSHA pins the SHA shape test that routes a ref to the full-clone path.
 func TestIsFullCommitSHA(t *testing.T) {
 	for ref, want := range map[string]bool{
