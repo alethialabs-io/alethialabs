@@ -200,10 +200,13 @@ func renderArgoAppDiagnosis(appName string, appJSON []byte, appErr error, cluste
 // also renders the scheduling half (argo_app_sched_diag.go): the not-Ready Pods in podNS, and per
 // node the allocatable CPU against what is already requested — and, only when a Pod there is stuck
 // in init, the network half (argo_app_net_diag.go): the stuck init containers' last log lines, the
-// namespace's NetworkPolicies and what the DNS allow admits. BOUNDED: every read is 5s except the
-// cluster-wide pod list, which gets 20s (run 36716444473 printed "pods unreadable: signal: killed" for
-// every GKE node — a 5s cap is too short for `get pods -A` on a busy cluster); at most five reads
-// without a stuck init and at most thirteen with one (up to 3 logs + 5 network reads), because this
+// namespace's NetworkPolicies and what the DNS allow admits; and, only when a main container is
+// crash-looping or has restarted, the crash-loop half (argo_app_crash_diag.go): its last exit's
+// meaning, run length, probe timing and limits, its PREVIOUS run's log and the Pod's events. BOUNDED:
+// every read is 5s except the cluster-wide pod list, which gets 20s (run 36716444473 printed "pods
+// unreadable: signal: killed" for every GKE node — a 5s cap is too short for `get pods -A` on a busy
+// cluster); at most five reads without either, plus up to six for crash loops (3 containers ×
+// previous log + events) and up to eight for a stuck init (3 logs + 5 network reads), because this
 // runs on a failing path inside the T2 context after the wait budget is spent, and a cancelled ctx would kill the process before t.Cleanup tears the cluster down.
 func dumpArgoAppDiagnosis(ctx context.Context, kubeconfigPath, appName, clusterName, podNS string) string {
 	const perRead = 5 * time.Second
@@ -258,6 +261,25 @@ func dumpArgoAppDiagnosis(ctx context.Context, kubeconfigPath, appName, clusterN
 	// scheduling failure's dump as short as it was.
 	if podsErr != nil {
 		return out
+	}
+	// The crash-loop half (argo_app_crash_diag.go). Only when a main container is crash-looping or
+	// has restarted: its cause is in the dead run's log and the kubelet's events, which the Pod object
+	// does not carry. At most maxCrashContainers × 2 reads.
+	if crashing := crashLoopingContainers(pods, maxCrashContainers); len(crashing) > 0 {
+		var reads []crashRead
+		for _, c := range crashing {
+			r := crashRead{crashLoopContainer: c}
+			if c.Restarts > 0 {
+				r.Log, r.LogErr = read("logs", "-n", podNS, c.Pod, "-c", c.Container, "--previous",
+					fmt.Sprintf("--tail=%d", crashLogTailLines))
+			} else {
+				r.LogErr = fmt.Errorf("it has not restarted, so there is no previous run to read")
+			}
+			r.Events, r.EventsErr = read("get", "events", "-n", podNS,
+				"--field-selector=involvedObject.kind=Pod,involvedObject.name="+c.Pod, "-o", "json")
+			reads = append(reads, r)
+		}
+		out += renderCrashLoopDiagnosis(reads)
 	}
 	stuck := stuckInitContainers(pods, maxInitLogContainers)
 	if len(stuck) == 0 {
