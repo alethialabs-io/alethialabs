@@ -1,0 +1,302 @@
+---
+title: Start from a template
+description: Copy two of Alethia's public starter templates, deploy one as the ArgoCD apps repository of a Hetzner cluster and the other as a bring-your-own Helm chart, and watch both sync.
+---
+
+# Start from a template
+
+In this tutorial you copy two of Alethia's public starter templates and put both on **one Kubernetes
+cluster** on Hetzner Cloud:
+
+- [alethia-starter-apps](https://github.com/alethialabs-io/alethia-starter-apps) becomes the
+  cluster's **ArgoCD apps repository**. ArgoCD syncs a small application from it into three
+  namespaces.
+- [alethia-starter-chart](https://github.com/alethialabs-io/alethia-starter-chart) becomes a
+  **bring-your-own Helm chart**. Alethia installs it as an add-on, in a namespace of its own.
+
+The result is the setup that the starter templates' deploy test proved on Hetzner, with both
+Applications synced at the template's own commit. You build it from the terminal, with one file and
+a few commands.
+
+Plan for about 30 minutes. Most of that is waiting for the cluster.
+
+<Callout type="warn">
+  This tutorial creates **real infrastructure that costs money** while it runs. The last step tears
+  it down. You are not finished until you run it.
+</Callout>
+
+## What you will build
+
+<Mermaid chart={`
+flowchart TB
+  C["One Hetzner cluster<br/>1 control plane + 2 cpx32 workers"]
+  C --> A["ArgoCD apps repository<br/>your copy of alethia-starter-apps"]
+  C --> B["Bring-your-own chart<br/>your copy of alethia-starter-chart"]
+  A --> A1["apps · namespace starter"]
+  A --> A2["apps-dev · namespace starter-dev"]
+  A --> A3["apps-staging · namespace starter-staging"]
+  A --> A4["addons · nothing yet"]
+  B --> B1["addon-starter-chart · namespace starter-chart"]
+`} />
+
+The two templates run under two different trust levels. The apps repository can create any kind of
+resource on its cluster. A bring-your-own chart can create only namespaced resources in its own
+namespace, and no RBAC. For the full comparison, see [Starter Templates](/guides/design-project/starter-templates).
+
+## Before you start
+
+You need:
+
+- The `alethia` CLI, [installed](/get-started/install-the-cli) and signed in with `alethia login`.
+- A Hetzner Cloud account.
+- A GitHub account, to hold your copies of the two templates.
+- A runner to execute the jobs. Check with:
+
+  ```bash
+  alethia runner list
+  ```
+
+  If no runner is online, [register one you run yourself](/guides/runners/self-operated).
+
+## Step 1 — Copy the two templates
+
+A template is a starting point, not a dependency. You make your own copy, and Alethia deploys your
+copy. Nothing in either template reports back to Alethia.
+
+1. Open [alethia-starter-apps](https://github.com/alethialabs-io/alethia-starter-apps) on GitHub.
+2. Select **Use this template**, then **Create a new repository**.
+3. Name it `my-starter-apps`, and set it to **Public**.
+4. Do the same for [alethia-starter-chart](https://github.com/alethialabs-io/alethia-starter-chart),
+   and name the copy `my-starter-chart`.
+
+Use **public** copies for this tutorial. ArgoCD clones a public repository anonymously, so you do not
+have to connect GitHub to Alethia first. That is also how the tested run cloned them. To use a
+private copy, first connect GitHub as a [Git provider](/guides/connectors/git-providers).
+
+In the rest of this tutorial, replace `my-github-account` with your GitHub user or organization name.
+
+## Step 2 — Connect Hetzner
+
+In the Hetzner Cloud Console, create a **new project** for this tutorial. In that project, go to
+**Security → API tokens** and generate a token with **Read & Write** access.
+
+Then connect it. The command asks for the token and hides what you type:
+
+```bash
+alethia connector hetzner
+```
+
+A Hetzner token can do anything inside its project, so the project is the only boundary you get.
+That is why you use a new, empty one. See [Connect Hetzner](/guides/connectors/hetzner).
+
+Now find the name of the account you connected:
+
+```bash
+alethia connector list
+```
+
+Note the value in the **Account** column. You use it in the next step.
+
+## Step 3 — Describe the project in one file
+
+Create a file named `alethia.yaml`. Replace `my-account` with the value from the **Account** column,
+and `my-github-account` with your GitHub name.
+
+```yaml title="alethia.yaml"
+project: starter
+cloud:
+  account: my-account
+  region: nbg1
+environments:
+  - name: dev
+    stage: development
+    placement: dedicated
+    components:
+      cluster:
+        instance_types: [cpx32]
+        node_min_size: 2
+        node_desired_size: 2
+        node_max_size: 2
+      repositories:
+        apps_destination_repo: https://github.com/my-github-account/my-starter-apps
+```
+
+Three things in this file matter:
+
+- **`placement: dedicated` gives the environment its own cluster.** The overlay discovery in
+  Step 5 runs only on a dedicated cluster. The template also creates its own `Namespace` objects,
+  which a namespace placement refuses.
+- **`apps_destination_repo` is your copy of alethia-starter-apps.** It is the repository ArgoCD syncs.
+- **There is no `apps_path`.** With no overlay path, ArgoCD syncs the repository root, and it also
+  turns each directory under `overlays/` into an Application of its own. If you set a path, that
+  discovery stops. See [Repositories](/guides/design-project/repositories).
+
+The cluster is the size the templates are tested on: one control-plane server and two `cpx32`
+workers, with 4 vCPU and 8 GB each. In the test run, Hetzner priced the three servers at €0.0569 an
+hour each, which is about €0.17 an hour in total. That figure covers the servers only, not the
+public IP addresses the cluster also uses.
+
+## Step 4 — Preview and deploy
+
+Preview what the file creates:
+
+```bash
+alethia plan
+```
+
+This lists the project, its environment and its components. It changes nothing and starts no job.
+
+Now deploy:
+
+```bash
+alethia apply
+```
+
+The CLI shows the same plan and asks you to confirm. Then it creates the network and the cluster,
+installs ArgoCD and the platform add-ons, and connects ArgoCD to your apps repository. To watch the
+job from a second terminal:
+
+```bash
+alethia jobs logs --latest --follow
+```
+
+When the deploy is done, the CLI prints `starter is up.`
+
+## Step 5 — Check that the apps repository synced
+
+```bash
+alethia cluster get starter
+```
+
+The **GitOps** row counts the ArgoCD Applications on the cluster, and how many are synced and
+healthy. Every Application should be both.
+
+Four of those Applications come from your copy of alethia-starter-apps:
+
+| Application | Synced from | Namespace | What it runs |
+|---|---|---|---|
+| `apps` | the repository root | `starter` | one `hello` Deployment and its Service |
+| `apps-dev` | `overlays/dev` | `starter-dev` | the same, with 1 replica |
+| `apps-staging` | `overlays/staging` | `starter-staging` | the same, with 2 replicas |
+| `addons` | `addons/` | none | nothing yet. It is still Synced and Healthy |
+
+You did not declare `apps-dev` or `apps-staging` anywhere. ArgoCD found the two directories under
+`overlays/` and made one Application for each. To get a third, add `overlays/prod` to your copy and
+push it. No Alethia deploy is needed.
+
+<Callout type="info">
+  Every Application from the apps repository syncs automatically, prunes, and self-heals. A commit
+  to the default branch of your copy deploys on its own, so **write access to that branch is deploy
+  access to the cluster.**
+</Callout>
+
+## Step 6 — Attach the chart template
+
+Attach your copy of alethia-starter-chart to the `dev` environment as a bring-your-own chart:
+
+```bash
+alethia chart attach starter-chart --project starter --env dev --repo https://github.com/my-github-account/my-starter-chart --chart-path chart --ref HEAD --namespace starter-chart
+```
+
+Each flag maps to one field of the chart:
+
+| Flag | Value | Why |
+|---|---|---|
+| `starter-chart` | the chart's ID | Its ArgoCD Application is named `addon-starter-chart` |
+| `--chart-path` | `chart` | The directory in the repository that holds `Chart.yaml` |
+| `--ref` | `HEAD` | The default branch. Use a tag if you want each release to be explicit |
+| `--namespace` | `starter-chart` | Alethia creates this namespace, and the chart may create resources only in it |
+
+Attaching a chart also queues a **safety scan**. The runner renders the chart in an isolated sandbox
+and checks what it would create. Follow the scan with:
+
+```bash
+alethia jobs logs --latest --follow
+```
+
+<Callout type="info">
+  Bring-your-own charts are an opt-in feature of each Alethia instance. If `alethia chart attach`
+  says they are not enabled, ask the operator of your instance.
+</Callout>
+
+## Step 7 — Deploy again
+
+The chart is attached, but nothing has installed it yet. Run the same command as before:
+
+```bash
+alethia apply
+```
+
+The file has not changed, so the plan shows no new resources. The deploy still runs, and this time
+it renders the chart's ArgoCD Application. It reuses the cluster from Step 4 and creates no new
+server.
+
+## Step 8 — Check that the chart synced
+
+List the charts attached to the environment:
+
+```bash
+alethia chart list --project starter --env dev
+```
+
+The **Scan** column shows the result of the safety scan. Then look at the cluster again:
+
+```bash
+alethia cluster get starter
+```
+
+The **GitOps** row now counts one more Application, `addon-starter-chart`, and it is synced and
+healthy. It manages three resources in the `starter-chart` namespace: a Deployment, a Service and a
+ConfigMap. None of them is cluster-scoped and none of them is RBAC, which is the contract every
+bring-your-own chart must meet.
+
+A bring-your-own chart syncs differently from the apps repository:
+
+- **Prune is off.** A resource you delete from the chart keeps running until you delete it yourself.
+- **Self-heal is off.** A change made by hand stays, and the Application reports `OutOfSync`. That
+  is information, not an error.
+
+Before you change your chart, run the template's own contract check against it. Run it from a
+clone of your copy, with `helm` installed:
+
+```bash
+hack/check-byo-contract.sh chart
+```
+
+It fails if the chart renders a kind that a bring-your-own chart cannot create.
+
+## Step 9 — Tear it down
+
+```bash
+alethia project destroy --project starter --env dev --yes --wait
+```
+
+This removes the cluster, its network and everything ArgoCD installed on it. Your two GitHub
+repositories stay. They are yours.
+
+Then make sure nothing is left. The Hetzner Cloud Console has the final answer. Servers, load
+balancers and volumes bill by the hour, and they are the resources that most often survive a failed
+teardown.
+
+```bash
+hcloud server list
+hcloud load-balancer list
+hcloud volume list
+hcloud network list
+```
+
+## What you did
+
+You:
+
+- Copied two templates, and deployed your copies rather than the originals.
+- Connected one as the ArgoCD apps repository of a dedicated cluster, and saw overlay discovery
+  turn two directories into two Applications.
+- Attached the other as a bring-your-own chart, which runs in its own namespace under a
+  default-deny project.
+- Did it all from a terminal, so you can also do it from CI.
+
+The third template, [alethia-starter-ai](https://github.com/alethialabs-io/alethia-starter-ai), uses
+both trust levels at once. Read [Starter Templates](/guides/design-project/starter-templates) to see
+where it puts each component and why. For the model behind the apps repository, read
+[GitOps & ArgoCD](/concepts/gitops-argocd).
