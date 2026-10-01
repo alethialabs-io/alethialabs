@@ -16,6 +16,7 @@ import {
   starterCopyUrl,
   templateOption,
 } from "@/components/create-project/templates";
+import { webhookCaConsumersForTemplate } from "@/lib/addons/webhook-ca-consumers";
 import { DEFAULT_INSTANCE_TYPE, type CloudProviderSlug } from "@/lib/cloud-providers";
 
 const IDS: TemplateId[] = ["standard", "ai", "custom"];
@@ -38,6 +39,14 @@ describe("TEMPLATE_OPTIONS", () => {
       expect(starter.url).toBe(`https://github.com/alethialabs-io/${starter.name}`);
       expect(starterCopyUrl(starter)).toBe(`${starter.url}/generate`);
     }
+  });
+
+  it("does not send an AI Workloads user to set up a domain for cert-manager (#4990)", () => {
+    // The template marks the project as a KServe consumer, and that marker alone makes the platform
+    // install cert-manager issuer-free on every cloud. The copy once predated the marker and told
+    // the user to turn on a domain and a managed certificate first — work the product does for them.
+    expect(webhookCaConsumersForTemplate("ai")).toEqual(["kserve"]);
+    expect(templateOption("ai").nextStep).not.toMatch(/domain and|Managed TLS|Set that first/);
   });
 
   it("promises no GPU anywhere — alethia-starter-ai is CPU-only (#4112)", () => {
