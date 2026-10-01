@@ -88,7 +88,7 @@ func probeClient() *http.Client {
 // the same unauthenticated request `git clone` opens with: GET <repo>/info/refs?service=git-upload-pack,
 // the git smart-HTTP ref-advertisement handshake. A public repo answers 200; a private one answers
 // 401/403 (GitHub and GitLab both reject the anonymous ref advertisement for private repos). ArgoCD
-// clones a public apps repo anonymously — proven on kind against the public enterprise-demo — so when
+// clones a public apps repo anonymously — proven on kind against the public alethia-examples — so when
 // this returns true the deploy needs no git token at all.
 //
 // Fail-closed by construction: only https URLs are probed (ssh/git/http → false); redirects may not
