@@ -113,6 +113,8 @@ interface ControlEntry {
 	control?: { role?: string; name?: string };
 	confirm?: string;
 	confirm_action?: string;
+	/** The dialog's way out when it is not named Cancel/No/Keep — pressed exactly as Cancel is. */
+	cancel_action?: string;
 	dialog_title?: string;
 	/** For `confirm: undo`: the key chord that takes the action back (`Meta+Z`). */
 	undo?: { shortcut?: string };
@@ -1179,7 +1181,13 @@ for (const entry of CONTROLS) {
 				}
 			}
 			// The ONLY button this file ever presses inside a dialog.
-			const cancel = dialog.getByRole("button", { name: /^(cancel|no|keep|nevermind|never mind)\b/i }).first();
+			const cancel = dialog
+				.getByRole("button", {
+					name: entry.cancel_action
+						? new RegExp(`^${escapeRe(entry.cancel_action)}$`, "i")
+						: /^(cancel|no|keep|nevermind|never mind)\b/i,
+				})
+				.first();
 			await expect(cancel, `${entry.id}: a confirmation with no way out is worse than none`).toBeVisible();
 			// Pinned BEFORE the click: `dialog` is a lazy `.first()` over every dialog on the page,
 			// re-resolved on each poll, so after Cancel it can bind to a DIFFERENT dialog.

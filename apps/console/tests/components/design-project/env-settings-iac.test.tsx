@@ -16,6 +16,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { DestroyEnvironmentControl } from "@/components/design-project/canvas/cards/destroy-tree-view";
 import { EnvSettingsCard } from "@/components/design-project/canvas/cards/env-settings-card";
 import { NODE_REGISTRY } from "@/components/design-project/canvas/graph/node-registry";
 import type { CanvasNode } from "@/components/design-project/canvas/graph/types";
@@ -60,7 +61,7 @@ function node(kind: "project" | "cluster" | "network"): CanvasNode {
 }
 
 /** Renders the Environment settings card over a project/cluster/network board under `iac`. */
-function renderCard(iac: IacEnvironment | null, onDestroyEnvironment?: () => void) {
+function renderCard(iac: IacEnvironment | null, destroyEnvironment?: DestroyEnvironmentControl) {
 	useCanvasStore.setState({
 		nodes: [node("project"), node("cluster"), node("network")],
 		identities: [],
@@ -70,7 +71,7 @@ function renderCard(iac: IacEnvironment | null, onDestroyEnvironment?: () => voi
 	});
 	return render(
 		<EnvironmentStatusProvider value={{ ...EMPTY_ENVIRONMENT_STATUS, iac }}>
-			<EnvSettingsCard onDestroyEnvironment={onDestroyEnvironment} />
+			<EnvSettingsCard destroyEnvironment={destroyEnvironment} />
 		</EnvironmentStatusProvider>,
 	);
 }
@@ -103,15 +104,15 @@ describe("environment settings under a BYO-IaC source", () => {
 // inspector, and the project node is never rendered on the board, so the control was unreachable.
 describe("destroying the environment from its settings card", () => {
 	it("offers Destroy in edit mode, and the confirmation is what destroys — not the button", () => {
-		const onDestroy = vi.fn();
-		renderCard(null, onDestroy);
+		const onDestroy = vi.fn(async () => {});
+		renderCard(null, { projectName: "shop", loadTree: async () => [], destroy: onDestroy });
 		fireEvent.click(screen.getByRole("button", { name: "Destroy" }));
 		expect(screen.getByText("Destroy this environment?")).toBeInTheDocument();
 		expect(onDestroy).not.toHaveBeenCalled();
 	});
 
 	it("is not gated on a BYO-IaC source — a governed environment can still be torn down", () => {
-		renderCard(GOVERNED, vi.fn());
+		renderCard(GOVERNED, { projectName: "shop", loadTree: async () => [], destroy: vi.fn(async () => {}) });
 		expect(screen.getByRole("button", { name: "Destroy" })).toBeInTheDocument();
 	});
 
