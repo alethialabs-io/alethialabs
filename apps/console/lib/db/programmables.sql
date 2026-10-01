@@ -102,10 +102,13 @@ RETURNS integer LANGUAGE sql IMMUTABLE AS $$
 $$;
 
 -- Interactive job types jump ahead of batch ones, within the plan band (gap = 10).
+-- MINT_KUBECONFIG (#5281) is as interactive as a PLAN: a person is polling for it, inside a 10-minute
+-- window after which the request expires unclaimed, and it runs no tofu.
 CREATE OR REPLACE FUNCTION public.jobtype_priority_bump(jt public.provision_job_type)
 RETURNS smallint LANGUAGE sql IMMUTABLE AS $$
   SELECT (CASE jt
     WHEN 'PLAN' THEN 3
+    WHEN 'MINT_KUBECONFIG' THEN 3
     WHEN 'DEPLOY_RUNNER' THEN 2
     WHEN 'UPDATE_RUNNER' THEN 2
     WHEN 'DESTROY_RUNNER' THEN 2
