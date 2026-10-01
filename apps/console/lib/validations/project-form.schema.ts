@@ -85,6 +85,19 @@ export const clusterNodeSizingBounds = {
 	node_desired_size: z.number().int().min(1).max(100).nullable().optional(),
 };
 
+/**
+ * The cloud-indifferent node size, `{ vcpu, memory_gb }` (#5267). The bounds are the canvas
+ * inspector's (config-schema.ts, "vCPU per node" 1–96 and "Memory per node" 1–768 GB), so the CLI
+ * `--set node_size=…` accepts exactly what the canvas does. Strict, because the object is stored
+ * verbatim in a jsonb column and carried onto the config snapshot — a stray key would ride along.
+ */
+export const nodeSizeSchema: z.ZodType<NodeSize> = z
+	.object({
+		vcpu: z.number().min(1).max(96),
+		memory_gb: z.number().min(1).max(768),
+	})
+	.strict();
+
 // cluster_admins is no longer a project_cluster column (contract phase — it persists to the
 // cluster_admins child table), so it's a form-only field extended onto the insert shape.
 const clusterInsert = createInsertSchema(projectCluster, {

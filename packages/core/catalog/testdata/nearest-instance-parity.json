@@ -1,0 +1,4412 @@
+[
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "t3.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "",
+		"want": "t3.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "",
+		"want": "r5.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "",
+		"want": "r5.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "",
+		"want": "r5.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "t3.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "",
+		"want": "t3.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "",
+		"want": "r5.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "",
+		"want": "r5.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "",
+		"want": "r5.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "t3.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "",
+		"want": "t3.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "",
+		"want": "c5.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "t3.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "",
+		"want": "c5.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "",
+		"want": "c5.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "",
+		"want": "c5.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "t3.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "",
+		"want": "c5.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "",
+		"want": "c5.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "t3.medium"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "",
+		"want": "c5.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "t3.large"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "",
+		"want": "c5.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "",
+		"want": "t3.xlarge"
+	},
+	{
+		"provider": "aws",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "g4dn.xlarge"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "n1-standard-1"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "",
+		"want": "n1-standard-1"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "n1-standard-1"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "",
+		"want": "n1-standard-1"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "",
+		"want": "n2-highmem-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "",
+		"want": "n2-highmem-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "n1-standard-1"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "",
+		"want": "n1-standard-1"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "",
+		"want": "n2-highmem-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "",
+		"want": "n2-highmem-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "",
+		"want": "e2-medium"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "",
+		"want": "e2-standard-2"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "e2-standard-4"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "gcp",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "a2-highgpu-1g"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "Standard_D4s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "",
+		"want": "Standard_E2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "Standard_D4s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "",
+		"want": "Standard_E2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "Standard_D4s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "",
+		"want": "Standard_D4s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "Standard_D4s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "",
+		"want": "Standard_D4s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "Standard_D4s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "",
+		"want": "Standard_D4s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "",
+		"want": "Standard_F2s_v2"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "",
+		"want": "Standard_D2s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "Standard_D4s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "",
+		"want": "Standard_D4s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "",
+		"want": "Standard_D8s_v5"
+	},
+	{
+		"provider": "azure",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "Standard_NC4as_T4_v3"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "cax11"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "cax21"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "",
+		"want": "cax31"
+	},
+	{
+		"provider": "hetzner",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "cax31"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "",
+		"want": "ecs.r6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "ecs.r6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 1,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "",
+		"want": "ecs.r6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "ecs.r6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 2,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 3,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 4,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 8,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 1,
+		"family": "gpu",
+		"want": "ecs.c6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 4,
+		"family": "gpu",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 6,
+		"family": "gpu",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "general",
+		"want": "ecs.g6.large"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 8,
+		"family": "gpu",
+		"want": "ecs.c6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "general",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 16,
+		"family": "gpu",
+		"want": "ecs.g6.xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 32,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "general",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "",
+		"want": "ecs.g6.2xlarge"
+	},
+	{
+		"provider": "alibaba",
+		"vcpu": 12,
+		"memory_gb": 85,
+		"family": "gpu",
+		"want": "ecs.g6.2xlarge"
+	}
+]

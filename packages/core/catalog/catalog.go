@@ -197,6 +197,24 @@ func (c *Catalog) DefaultK8sVersion(provider string) (string, bool) {
 	return "", false
 }
 
+// InstanceOwners returns the providers whose compute inventory lists the machine type `value`,
+// in catalog order. Empty means the catalog has never heard of it — which is NOT the same as
+// "invalid": the inventory is a short curated list, and real projects pin types outside it
+// (the live capability sync offers every type the account can launch). Callers use a non-empty
+// answer that excludes their own provider as proof the SKU belongs to a different cloud.
+func (c *Catalog) InstanceOwners(value string) []string {
+	var owners []string
+	for _, p := range c.Providers {
+		for _, in := range c.Compute[p.Slug].Instances {
+			if in.Value == value {
+				owners = append(owners, p.Slug)
+				break
+			}
+		}
+	}
+	return owners
+}
+
 // NearestInstance picks the provider machine type closest to the requested
 // capability. It prefers the requested family (general/compute/memory/gpu) when that
 // family has any members, then minimizes capability distance (memory weighted with

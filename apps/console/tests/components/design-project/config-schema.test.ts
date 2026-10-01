@@ -373,7 +373,28 @@ describe("field get/set escape hatches", () => {
 			?.sections.flatMap((s) => s.fields)
 			.find((f) => f.key === "instance_types");
 		expect(field?.get?.({ instance_types: ["m5.large"] })).toBe("m5.large");
-		expect(field?.set?.("m5.xlarge", {})).toEqual({ instance_types: ["m5.xlarge"] });
+		// One writer (#5267): pinning a type clears node_size in the SAME patch. toStrictEqual,
+		// because toEqual would also pass on a patch that never named node_size at all.
+		expect(
+			field?.set?.("m5.xlarge", { node_size: { vcpu: 4, memory_gb: 16 } }),
+		).toStrictEqual({ instance_types: ["m5.xlarge"], node_size: undefined });
+	});
+
+	it("clears the pinned instance type when the portable size is set, from either control", () => {
+		const fields = getKindConfig("cluster")?.sections.flatMap((s) => s.fields) ?? [];
+		const vcpu = fields.find((f) => f.key === "node_size_vcpu");
+		const memory = fields.find((f) => f.key === "node_size_memory");
+		const pinned = { instance_types: ["t3.large"] };
+		expect(vcpu?.set?.(4, pinned)).toStrictEqual({
+			node_size: { vcpu: 4, memory_gb: 8 },
+			instance_types: [],
+		});
+		expect(memory?.set?.(32, pinned)).toStrictEqual({
+			node_size: { vcpu: 2, memory_gb: 32 },
+			instance_types: [],
+		});
+		// Emptying the size is not choosing a machine type: it clears only the size.
+		expect(vcpu?.set?.(null, pinned)).toStrictEqual({ node_size: undefined });
 	});
 
 	it("normalizes the bucket name to S3-safe characters via the transform", () => {

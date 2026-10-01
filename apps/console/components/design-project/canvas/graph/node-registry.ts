@@ -36,6 +36,7 @@ import {
 	cacheEngines,
 	dbEngines,
 } from "@/lib/cloud-providers/generated/catalog";
+import { describeNodeShape } from "@/lib/cloud-providers/node-sizing";
 import { effectiveCapacityMode } from "@/lib/cloud-providers/nosql-capacity";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import { helmRegistryUrl } from "@/lib/connectors/helm-registry-hosts";
@@ -286,13 +287,11 @@ export const NODE_REGISTRY: NodeRegistry = {
 		icon: Server,
 		card: {
 			handles: { source: true, target: true },
-			facts: ({ config }) => {
-				// node_size is the cloud-indifferent capability; instance_types is the legacy
-				// concrete SKU the resolver falls back to. Show whichever the design actually set.
-				const size = config.node_size;
-				const shape = size
-					? `${size.vcpu} vCPU / ${size.memory_gb} GB`
-					: (config.instance_types?.[0] ?? "");
+			facts: ({ config, provider }) => {
+				// What the deploy will BUY, resolved with Go's precedence (a pinned type wins, else
+				// node_size resolves on this cloud): "4 vCPU / 16 GB → e2-standard-4". It used to
+				// prefer node_size, so a legacy row holding both showed a size the cluster never got.
+				const shape = describeNodeShape(provider, config);
 				return [
 					{ label: "K8s", value: config.cluster_version ?? "" },
 					{

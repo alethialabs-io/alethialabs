@@ -188,9 +188,11 @@ export const projectCluster = pgTable(
 		// values for a chosen provider).
 		cluster_version: text(),
 		// Cloud-indifferent node capability ({vcpu, memory_gb}); the Go resolver maps it to
-		// the nearest per-provider instance type at provision time.
+		// the nearest per-provider instance type at provision time — but ONLY when instance_types
+		// is empty (packages/core/cloud/resolve.go). Writers keep the two exclusive: setting one
+		// clears the other (lib/cloud-providers/node-sizing.ts, #5267).
 		node_size: jsonb().$type<NodeSize>(),
-		// Legacy concrete provider SKUs; the resolver falls back to these when node_size is unset.
+		// Concrete provider SKUs. A non-empty list WINS over node_size at provision time.
 		instance_types: text().array(),
 		node_min_size: integer().default(2),
 		node_max_size: integer().default(5),

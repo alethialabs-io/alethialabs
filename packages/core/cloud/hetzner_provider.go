@@ -93,6 +93,9 @@ func (p *hetznerProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
+	if err := validateInstanceTypes("hetzner", config); err != nil {
+		return err
+	}
 	return validateNetworkCIDR(config, "network_cidr", hetznerMaxNetworkPrefix)
 }
 
@@ -121,7 +124,7 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// amd64 default (cpx22 = 2 vCPU / 4 GB). cax11 (ARM) is capacity-unreliable and
 	// cpx11 is retired, so an amd64 shared-vCPU type is the reliably-provisionable default.
 	workerType := "cpx22"
-	if inst := ResolveInstanceTypes("hetzner", config.Cluster); len(inst) > 0 {
+	if inst := resolveNodeTypes("hetzner", config.Cluster.InstanceTypes, config.Cluster.NodeSize); len(inst) > 0 {
 		workerType = inst[0]
 	}
 
