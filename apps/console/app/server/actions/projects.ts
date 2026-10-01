@@ -1662,6 +1662,12 @@ async function buildConfigSnapshot(
 				cluster_name: cluster?.cluster_name ?? null,
 				cluster_endpoint: cluster?.cluster_endpoint ?? null,
 				instance_types: cluster?.instance_types ?? [],
+				// The cloud-indifferent size (#5267). Go resolves it to the nearest catalog SKU when
+				// instance_types is empty (packages/core/cloud/resolve.go), and nothing carried it here
+				// — the canvas edited it, the card showed it, and the deploy ignored it. Emitted ONLY
+				// when set, like network.subnet_ids: Go reads a pointer, so an absent key means unset
+				// and the byte-locked snapshot fixtures stay green.
+				...(cluster?.node_size ? { node_size: cluster.node_size } : {}),
 				node_min_size: cluster?.node_min_size ?? 2,
 				node_max_size: cluster?.node_max_size ?? 5,
 				node_desired_size: cluster?.node_desired_size ?? 2,
@@ -2726,6 +2732,9 @@ export async function getProjectAsFormData(
 						source.components.cluster.cluster_version ??
 						DEFAULT_K8S_VERSION[provider],
 					instance_types: source.components.cluster.instance_types ?? [],
+					// Carried, or a canvas save — delete-then-insert — wipes the size it never loaded
+					// (#5267).
+					node_size: source.components.cluster.node_size ?? undefined,
 					node_min_size: source.components.cluster.node_min_size ?? 2,
 					node_max_size: source.components.cluster.node_max_size ?? 5,
 					node_desired_size: source.components.cluster.node_desired_size ?? 2,

@@ -51,12 +51,12 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 |---|:---:|:---:|:---:|:---:|:---:|
 | `cluster_name` | · | · | · | · | · |
 | `cluster_version` | 🟡 | 🟡 | 🟡 | 🟡 | — |
-| `instance_types` | · | · | · | · | · |
+| `instance_types` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | `node_desired_size` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | `node_disk_size_gb` | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `node_max_size` | 🟡 | 🟡 | 🟡 | 🟡 | — |
 | `node_min_size` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| `node_size` | · | · | · | · | · |
+| `node_size` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 
 ### `container_registries`
 
@@ -181,7 +181,7 @@ Their canvas gate is a predicate this guard cannot evaluate, so which clouds OFF
 
 No cloud turns these into a tfvars key, so the cross-cloud rule has nothing to say about them: they are carried by another mechanism (a Kubernetes manifest, an ArgoCD Application, a connector) or by nothing at all. Listed rather than dropped, because a field that quietly leaves the measured set is how a guard reports success on less than it did yesterday.
 
-`caches.node_type` · `cluster.cluster_name` · `cluster.instance_types` · `cluster.node_size` · `container_registries.provider` · `databases.engine_version` · `dns.provider` · `helm_registries.provider` · `nosql_tables.table_type` · `observability.enabled` · `observability.provider` · `repositories.apps_destination_repo` · `repositories.apps_path` · `secrets.provider` · `services.build` · `services.env` · `services.ports` · `services.probe` · `services.replicas` · `services.source` · `services.type`
+`caches.node_type` · `cluster.cluster_name` · `container_registries.provider` · `databases.engine_version` · `dns.provider` · `helm_registries.provider` · `nosql_tables.table_type` · `observability.enabled` · `observability.provider` · `repositories.apps_destination_repo` · `repositories.apps_path` · `secrets.provider` · `services.build` · `services.env` · `services.ports` · `services.probe` · `services.replicas` · `services.source` · `services.type`
 
 ## Carried in-cluster
 
@@ -246,4 +246,4 @@ Decisions, not silence: this cloud will not honor the setting, and here is what 
 
 ---
 
-Measured this run: 392 schema columns examined, 73 of them user-settable, 163 cloud verdicts. Regenerate with `pnpm -C apps/console run gen:config-carriage`. CI runs the guard on every PR.
+Measured this run: 392 schema columns examined, 73 of them user-settable, 173 cloud verdicts. Regenerate with `pnpm -C apps/console run gen:config-carriage`. CI runs the guard on every PR.

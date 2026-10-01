@@ -65,6 +65,9 @@ func (p *awsProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
+	if err := validateInstanceTypes("aws", config); err != nil {
+		return err
+	}
 	if err := validateNodeDiskSize(config, "eks_disk_size", awsNodeDiskFloorGB); err != nil {
 		return err
 	}
@@ -359,7 +362,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		mergeProviderConfig(tfvars, r.ProviderConfig, awsRootReserved...)
 	}
 
-	if inst := ResolveInstanceTypes("aws", config.Cluster); len(inst) > 0 {
+	if inst := resolveNodeTypes("aws", config.Cluster.InstanceTypes, config.Cluster.NodeSize); len(inst) > 0 {
 		tfvars["eks_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {

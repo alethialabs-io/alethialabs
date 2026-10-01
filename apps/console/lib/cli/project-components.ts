@@ -33,6 +33,7 @@ import {
 	DEFAULT_INSTANCE_TYPE,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers/generated/catalog";
+import { applySizingOneWriter } from "@/lib/cloud-providers/node-sizing";
 import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { getServiceDb } from "@/lib/db";
 import { asRecord } from "@/lib/records";
@@ -56,7 +57,10 @@ import {
 	projectTopics,
 } from "@/lib/db/schema";
 import { appsPathSchema } from "@/lib/validations/apps-path";
-import { clusterNodeSizingBounds } from "@/lib/validations/project-form.schema";
+import {
+	clusterNodeSizingBounds,
+	nodeSizeSchema,
+} from "@/lib/validations/project-form.schema";
 
 /** A component as it appears on the CLI wire — uniform across every kind. `config` is the
  * kind-specific column set as an open object (mirrors componentWire). */
@@ -142,15 +146,21 @@ const KINDS: Record<string, KindDef> = {
 		// apply because it has no provider in hand. 1..2000 matches the canvas max; the per-cloud
 		// floor (Azure 30, and so on) is enforced by validateNodeDiskSize in
 		// packages/core/cloud/validate.go, which every provider's ValidateConfig calls.
+		//
+		// node_size is the cloud-indifferent size (#5267). It takes a JSON object —
+		// `--set 'node_size={"vcpu":4,"memory_gb":16}'` — and is subject to the one-writer rule with
+		// instance_types: validateComponentFields clears whichever the write did not set.
 		fields: createInsertSchema(projectCluster, {
 			...clusterNodeSizingBounds,
 			node_disk_size_gb: z.number().int().min(1).max(2000).nullable().optional(),
+			node_size: nodeSizeSchema.nullable().optional(),
 		})
 			.pick({
 				cloud_identity_id: true,
 				region: true,
 				cluster_version: true,
 				instance_types: true,
+				node_size: true,
 				node_min_size: true,
 				node_max_size: true,
 				node_desired_size: true,
@@ -549,7 +559,10 @@ export function validateComponentFields(
 		const path = first?.path.join(".") || "fields";
 		return { ok: false, error: `Invalid value for ${path}: ${first?.message ?? "invalid"}` };
 	}
-	return { ok: true, values: asRecord(parsed.data) };
+	const values = asRecord(parsed.data);
+	// The one-writer rule (#5267): setting node_size clears instance_types and vice versa, IN THIS
+	// write — so a size set over the default-stamped instance type is not silently shadowed by it.
+	return def.table === projectCluster ? applySizingOneWriter(values) : { ok: true, values };
 }
 
 /** The tenancy and filter identity of one component collection. */
@@ -886,7 +899,15 @@ export async function insertProjectComponent(
 	// because `component add` upserts and an existing row the caller is amending must keep exactly
 	// what it has — a NULL there is a deployed cluster's current shape, and back-filling it would
 	// re-shape (replace the node pool of) a running cluster on its next apply.
-	if (def.table === projectCluster && hasNoInstanceTypes(insertValues.instance_types)) {
+	//
+	// Only when the write names NEITHER sizing field: a write that set node_size arrives here with
+	// `instance_types: []` (the one-writer rule cleared it), and stamping a default over that would
+	// shadow the size the caller just chose.
+	if (
+		def.table === projectCluster &&
+		hasNoInstanceTypes(insertValues.instance_types) &&
+		insertValues.node_size == null
+	) {
 		const provider = await clusterProvider(db, projectId, insertValues.cloud_identity_id);
 		// Unknown provider (no linked identity yet, or a cloud with no catalog): leave it NULL and
 		// let the template default apply, exactly as before. Guessing a cloud would stamp another
