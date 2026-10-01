@@ -483,3 +483,126 @@ func TestHcloudServerCostsRefusesUnscopedReads(t *testing.T) {
 		t.Errorf("no token: got %v, %v", c, err)
 	}
 }
+
+// phaseBAddonsRefusedJSON is phase B as hetzner/templates run 36901344033 left it: every other
+// Application converged, and `addons` Healthy + OutOfSync at the new commit, still holding the three
+// child Applications starter-ai's addons/ created. Its status carries the cause — a last operation
+// that Succeeded at the OLD commit, a SyncError condition, and three resources marked for pruning —
+// and the shape is ArgoCD's own (.status.operationState / .conditions / .resources[].requiresPruning),
+// checked field by field against the `addons` Application CAPTURED on the kind + pinned argo-cd rig
+// that reproduced #5210 (actions run 36908058283, phaseB-apps.json): the condition message below is
+// that capture's, with the commits swapped for this file's test SHAs.
+func phaseBAddonsRefusedJSON(t *testing.T) []byte {
+	t.Helper()
+	green := func(name string) map[string]any {
+		return map[string]any{
+			"metadata": map[string]any{"name": name},
+			"spec":     map[string]any{"source": map[string]any{"repoURL": starterAppsRepo, "targetRevision": "HEAD"}},
+			"status": map[string]any{
+				"health":         map[string]any{"status": "Healthy"},
+				"sync":           map[string]any{"status": "Synced", "revision": shaApps},
+				"operationState": map[string]any{"phase": "Succeeded", "message": "successfully synced (all tasks run)", "syncResult": map[string]any{"revision": shaApps}},
+				"resources":      []any{map[string]any{"kind": "Namespace", "name": "starter", "status": "Synced"}},
+			},
+		}
+	}
+	child := func(name string) map[string]any {
+		return map[string]any{"group": "argoproj.io", "kind": "Application", "namespace": "argocd", "name": name, "status": "OutOfSync", "requiresPruning": true}
+	}
+	addons := map[string]any{
+		"metadata": map[string]any{"name": "addons"},
+		"spec":     map[string]any{"source": map[string]any{"repoURL": starterAppsRepo, "targetRevision": "HEAD"}},
+		"status": map[string]any{
+			"health": map[string]any{"status": "Healthy"},
+			"sync":   map[string]any{"status": "OutOfSync", "revision": shaApps},
+			"operationState": map[string]any{
+				"phase": "Succeeded", "message": "successfully synced (all tasks run)",
+				"operation":  map[string]any{"sync": map[string]any{"revision": shaAI}},
+				"syncResult": map[string]any{"revision": shaAI},
+			},
+			"conditions": []any{map[string]any{"type": "SyncError", "message": "Skipping sync attempt to [" + shaApps + "]: auto-sync will wipe out all resources"}},
+			"resources":  []any{child("kueue"), child("kserve-crd"), child("kserve")},
+		},
+	}
+	raw, err := json.Marshal(map[string]any{"items": []any{green("apps"), green("apps-dev"), green("apps-staging"), addons}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// #5210: a not-converged Application must carry its CAUSE into the summary — the last operation,
+// the conditions and the resources that are not Synced — and the error the run fails with must
+// print it too. The first phase-B red recorded `sync=OutOfSync` and nothing else, which three
+// different causes fit equally.
+func TestTemplatesSummaryRecordsTheCauseOfANotConvergedApplication(t *testing.T) {
+	observed, err := parseTemplateApps(phaseBAddonsRefusedJSON(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, evalErr := evaluateTemplateApps(templatesPhaseBExpect(), observed, testCommits(), testCharts())
+	if evalErr == nil {
+		t.Fatal("a refused prune passed phase B")
+	}
+	for _, want := range []string{"auto-sync will wipe out all resources", "Succeeded at " + shaAI, "argoproj.io/Application argocd/kueue OutOfSync (requires pruning)"} {
+		if !strings.Contains(evalErr.Error(), want) {
+			t.Errorf("the run's error does not carry %q:\n%v", want, evalErr)
+		}
+	}
+
+	s := newTemplatesSummary(templatesProvider, "c", testCommits())
+	s.record(results, evalErr, time.Unix(0, 0))
+	path := filepath.Join(t.TempDir(), "templates-summary.json")
+	if err := writeTemplatesSummary(path, s); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back TemplatesSummary
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	var addons, apps *templateAppResult
+	for i, r := range back.template("apps").Applications {
+		switch r.Application {
+		case "addons":
+			addons = &back.template("apps").Applications[i]
+		case "apps":
+			apps = &back.template("apps").Applications[i]
+		}
+	}
+	if addons == nil || apps == nil {
+		t.Fatalf("summary lost a row: %s", raw)
+	}
+	if addons.OK || addons.OperationPhase != "Succeeded" || addons.OperationRevision != shaAI || addons.OperationMessage == "" {
+		t.Errorf("addons: the last operation was not recorded (phase=%q rev=%q msg=%q)", addons.OperationPhase, addons.OperationRevision, addons.OperationMessage)
+	}
+	if len(addons.Conditions) != 1 || !strings.HasPrefix(addons.Conditions[0], "SyncError: ") || !strings.Contains(addons.Conditions[0], "wipe out all resources") {
+		t.Errorf("addons: conditions = %q", addons.Conditions)
+	}
+	wantRes := []string{
+		"argoproj.io/Application argocd/kserve OutOfSync (requires pruning)",
+		"argoproj.io/Application argocd/kserve-crd OutOfSync (requires pruning)",
+		"argoproj.io/Application argocd/kueue OutOfSync (requires pruning)",
+	}
+	if strings.Join(addons.NotSyncedResources, "|") != strings.Join(wantRes, "|") {
+		t.Errorf("addons: not_synced_resources = %q, want %q", addons.NotSyncedResources, wantRes)
+	}
+	// A passing row stays as it was: the cause fields are for the losers.
+	if apps.OperationPhase != "" || apps.Conditions != nil || apps.NotSyncedResources != nil {
+		t.Errorf("a passing row carries cause fields: %+v", *apps)
+	}
+
+	// An Application with NO operation must say so, not leave a blank that reads as "fine".
+	obs := observed["addons"]
+	obs.OperationPhase, obs.OperationMessage, obs.OperationRevision = "", "", ""
+	observed["addons"] = obs
+	results, _ = evaluateTemplateApps(templatesPhaseBExpect(), observed, testCommits(), testCharts())
+	for _, r := range results {
+		if r.Application == "addons" && r.OperationPhase != noOperation {
+			t.Errorf("addons with no operation recorded operation_phase=%q, want %q", r.OperationPhase, noOperation)
+		}
+	}
+}
