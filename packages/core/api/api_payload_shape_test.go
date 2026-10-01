@@ -618,3 +618,48 @@ func minimalProjectJSON() map[string]any {
 		"updated_at":             "2026-01-01T00:00:00.000Z",
 	}
 }
+
+// TestQueueJobFull_CascadeSendsTheFlagAndReturnsEveryJob pins #5249's wire: `cascade: true` is sent
+// only when asked, and every job a cascade queued comes back in destroy order next to the owner's.
+func TestQueueJobFull_CascadeSendsTheFlagAndReturnsEveryJob(t *testing.T) {
+	var got capture
+	client := newCapturingClient(t, &got, `{"job":{"id":"j-owner"},"cascade_jobs":[`+
+		`{"job_id":"j-ns","environment_id":"e-ns","name":"dev-1"},`+
+		`{"job_id":"j-owner","environment_id":"e-prod","name":"prod"}]}`)
+
+	resp, err := client.QueueJobFull(QueueJobParams{JobType: "DESTROY", ConfigurationID: "p-1", Cascade: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.body["cascade"] != true {
+		t.Errorf("cascade must be sent as true, got %v", got.body["cascade"])
+	}
+	if resp.Job == nil || resp.Job.ID != "j-owner" || len(resp.CascadeJobs) != 2 || resp.CascadeJobs[0].Name != "dev-1" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+
+	got = capture{} // the recorder decodes into the map it already holds; start the second call clean
+	if _, err := client.QueueJobFull(QueueJobParams{JobType: "DESTROY", ConfigurationID: "p-1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, present := got.body["cascade"]; present {
+		t.Errorf("a plain destroy must not send cascade, got %v", got.body["cascade"])
+	}
+}
+
+// TestGetDestroyTree_AddressesTheEnvAndDecodesTheTree pins the read --cascade confirms against.
+func TestGetDestroyTree_AddressesTheEnvAndDecodesTheTree(t *testing.T) {
+	var got capture
+	client := newCapturingClient(t, &got, `{"tree":[{"environment_id":"e1","name":"prod","placement_mode":"dedicated",`+
+		`"status":"ACTIVE","owns_fabric":true,"waiting_on":[{"name":"dev-1","status":"FAILED"}]}]}`)
+	tree, err := client.GetDestroyTree("boutique", "e1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.path != "/api/cli/projects/boutique/destroy-tree" || got.query != "env=e1" {
+		t.Errorf("unexpected request: %s?%s", got.path, got.query)
+	}
+	if len(tree) != 1 || !tree[0].OwnsFabric || tree[0].WaitingOn[0].Status != "FAILED" {
+		t.Fatalf("unexpected tree: %+v", tree)
+	}
+}
