@@ -27,7 +27,7 @@ const RESOLVER_FAMILY = "general";
 /** Bytes in one GiB — the catalog's `memory_gb` is binary gigabytes, and formatBytes steps by 1024. */
 const BYTES_PER_GB = 1024 ** 3;
 
-/** The two sizing columns of a cluster, as any layer holds them (form, row, snapshot). */
+/** The two sizing columns of a cluster, in the shape every layer holds them (form, row, snapshot). */
 export interface ClusterSizing {
 	instance_types?: string[] | null;
 	node_size?: NodeSize | null;
