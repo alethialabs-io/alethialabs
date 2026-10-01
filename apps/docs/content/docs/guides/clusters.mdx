@@ -16,7 +16,7 @@ Each cluster displays:
 | **Project Name** | The project's name + a **derived** status badge (Active / Reconciling / Degraded / Provisioning) — rolled up from the cluster and every data service, never hardcoded to "Active" |
 | **Provider** | Provider icon with region, environment, and Kubernetes version (e.g., `K8s 1.32`) |
 | **Cluster Endpoint** | API server URL (copy button) |
-| **kubeconfig Command** | Configure kubectl (copy button) — shown for **AWS** clusters; GCP/Azure users run their own CLI (see below) |
+| **kubeconfig Command** | The command that writes a kubeconfig with your own cloud CLI (copy button), or a note saying why a cloud has none — the same answer `alethia cluster get` prints (see below) |
 | **ArgoCD URL** | External link to the ArgoCD dashboard, plus a command to retrieve the admin password |
 | **Components** | Control plane, databases, caches, and DNS — each with its endpoint (copy buttons) and its own derived status |
 
@@ -25,7 +25,7 @@ Each cluster displays:
 You get a kubeconfig with **your own cloud CLI**, under your own cloud login. Alethia does not issue
 a kubeconfig or any credential.
 
-`alethia cluster get` prints the exact command for a cluster in its **Kubeconfig** row, built from
+The cluster card and `alethia cluster get` (its **Kubeconfig** row) both show the exact command for a cluster, built from
 the values the cluster's last successful deploy recorded — see
 [Accessing a cluster with kubectl](/reference/cli/clusters#accessing-a-cluster-with-kubectl). The
 command per cloud:
