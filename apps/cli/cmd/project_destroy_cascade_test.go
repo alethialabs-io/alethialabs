@@ -209,3 +209,67 @@ func TestDestroyQueueError_OnlyARefusalGetsTheHint(t *testing.T) {
 		t.Errorf("a job-in-flight conflict is not a tenant refusal: %q", got)
 	}
 }
+
+// fakeTree answers GetDestroyTree with a fixed tree or error.
+type fakeTree struct {
+	tree []api.DestroyTreeNode
+	err  error
+}
+
+func (f fakeTree) GetDestroyTree(string, string) ([]api.DestroyTreeNode, error) {
+	return f.tree, f.err
+}
+
+// TestDestroyTreeSummary_RefusesToConfirmAgainstNothing pins the two ways the tree can fail to
+// arrive. Either way --cascade must stop BEFORE the confirmation: an operator cannot be asked to
+// approve a list they were never shown.
+func TestDestroyTreeSummary_RefusesToConfirmAgainstNothing(t *testing.T) {
+	if _, err := destroyTreeSummary(fakeTree{err: errBoom}, "p1", "e1"); !errors.Is(err, errBoom) {
+		t.Errorf("a failed tree read must surface, got %v", err)
+	}
+	if _, err := destroyTreeSummary(fakeTree{}, "p1", "e1"); err == nil {
+		t.Error("an empty tree must be refused, not rendered as nothing to destroy")
+	}
+}
+
+// TestProjDestroy_CascadeTreeFailureQueuesNothing is the same through the command.
+func TestProjDestroy_CascadeTreeFailureQueuesNothing(t *testing.T) {
+	s := &projServer{envs: projSampleEnvs(), failOn: []string{"/destroy-tree"}}
+	h := projEnv(t, s)
+	if !h.run("project", "destroy", "--project-id", "p1", "--runner-id", "r1", "--cascade", "--yes") {
+		t.Error("a cascade whose tree cannot be read must exit")
+	}
+	if _, ok := s.lastPost(); ok {
+		t.Error("a cascade whose tree could not be read queued something")
+	}
+}
+
+// TestQueuedDestroyJobs_Shapes pins the three response shapes.
+func TestQueuedDestroyJobs_Shapes(t *testing.T) {
+	if got := queuedDestroyJobs(&api.QueueJobResponse{}); got != nil {
+		t.Errorf("no job → nothing to wait for, got %+v", got)
+	}
+	got := queuedDestroyJobs(&api.QueueJobResponse{Job: &api.ProvisionJob{ID: "j1"}})
+	if len(got) != 1 || got[0].JobID != "j1" {
+		t.Errorf("a plain destroy waits on its one job, got %+v", got)
+	}
+	cascade := []api.CascadeJob{{JobID: "a"}, {JobID: "b"}}
+	if got := queuedDestroyJobs(&api.QueueJobResponse{Job: &api.ProvisionJob{ID: "b"}, CascadeJobs: cascade}); len(got) != 2 {
+		t.Errorf("a cascade waits on every job, got %+v", got)
+	}
+}
+
+// TestWaitForDestroyJobs_AnUnnamedJobIsNamedByID keeps the message readable when the server sent no
+// environment name.
+func TestWaitForDestroyJobs_AnUnnamedJobIsNamedByID(t *testing.T) {
+	prev := jobPollInterval
+	jobPollInterval = 0
+	t.Cleanup(func() { jobPollInterval = prev })
+	var err error
+	captureStreams(t, func() {
+		err = waitForDestroyJobs(fakeJobs{"a": "FAILED"}, "p1", []api.CascadeJob{{JobID: "a"}, {JobID: "b", Name: "prod"}})
+	})
+	if err == nil || !strings.Contains(err.Error(), "the destroy of job a did not succeed") {
+		t.Errorf("an unnamed job must be named by id, got %v", err)
+	}
+}
