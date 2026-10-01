@@ -34,8 +34,8 @@ export interface TemplateDefaultNode {
  *            (packages/core/cloud/hetzner_provider.go reads the catalog for an empty list)
  *   alibaba  infra/templates/project/alibaba/variables.tf  `ack_instance_types`
  *
- * The AWS template defaults its node group to SPOT (`eks_ng_capacity_type`); the estimate prices
- * on-demand, the upper bound, as it does for every other node. The AWS hourly figure is the
+ * The estimate prices on-demand, which is also the AWS template's capacity type since #5266
+ * (`eks_ng_capacity_type`, Spot an opt-in through `project_cluster.capacity_type`). The AWS hourly figure is the
  * on-demand t3.large rate the estimate's own fallback table carries; the non-AWS figures are the
  * catalog's monthly cost hints divided by 730 h (hetzner's is a euro figure taken at par).
  */

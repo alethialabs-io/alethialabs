@@ -107,9 +107,9 @@ func validateNodeSizing(config *types.ProjectConfig) error {
 // there would store a choice the deploy silently ignores. It is refused instead, naming the cloud.
 func validateCapacityType(config *types.ProjectConfig, provider string, supportsSpot bool) error {
 	switch config.Cluster.CapacityType {
-	case "", types.CapacityTypeOnDemand:
+	case "", types.NodeCapacityTypeOnDemand:
 		return nil
-	case types.CapacityTypeSpot:
+	case types.NodeCapacityTypeSpot:
 		if supportsSpot {
 			return nil
 		}

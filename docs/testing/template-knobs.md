@@ -18,7 +18,7 @@ provisioned.
 | Cloud | knobs | reachable | settable (offered) | declared-and-dead |
 |---|---:|---:|---:|---:|
 | alibaba | 63 | 45 | 11 | 1 |
-| aws | 159 | 122 | 52 | 0 |
+| aws | 159 | 122 | 51 | 0 |
 | azure | 87 | 61 | 22 | 1 |
 | gcp | 103 | 83 | 33 | 0 |
 | hetzner | 36 | 26 | 4 | 1 |
@@ -36,7 +36,7 @@ by no resource or module argument — the shape a raw variable count cannot tell
 |---|---:|---:|---:|---:|---:|
 | bucket | 0 / 2 | 3 / 16 | 0 / 7 | 4 / 11 | 0 / 9 |
 | cache | 0 / 6 | 5 / 18 | 1 / 4 | 3 / 11 | — |
-| cluster | 9 / 17 | 11 / 21 | 11 / 18 | 12 / 20 | 2 / 11 |
+| cluster | 9 / 17 | 10 / 21 | 11 / 18 | 12 / 20 | 2 / 11 |
 | database | 0 / 8 | 4 / 11 | 3 / 11 | 7 / 14 | — |
 | dns | 1 / 5 | 7 / 16 | 4 / 8 | 3 / 7 | 2 / 5 |
 | network | 1 / 6 | 1 / 4 | 0 / 5 | 2 / 7 | 0 / 6 |

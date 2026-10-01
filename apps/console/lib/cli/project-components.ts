@@ -161,6 +161,7 @@ const KINDS: Record<string, KindDef> = {
 				cluster_version: true,
 				instance_types: true,
 				node_size: true,
+				capacity_type: true,
 				node_min_size: true,
 				node_max_size: true,
 				node_desired_size: true,

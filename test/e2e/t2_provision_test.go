@@ -115,7 +115,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	t2RequireOrSkip(t, credsOK, credsMsg)
 
 	// Cost guard (BYOC F4): a run must not inherit the managed clouds' default node shapes (AWS
-	// was m5a.4xlarge×2 ≈ $0.30/run until #5266; t3.large×2 SPOT now), so a real run MUST pin a
+	// was m5a.4xlarge×2 ≈ $0.30/run until #5266; t3.large×2 ON_DEMAND now), so a real run MUST pin a
 	// cheapest-shape override via
 	// ALETHIA_E2E_CLUSTER_JSON. Missing it is a HARD FAIL under REQUIRE (the nightly always
 	// injects one — this catches a workflow typo), a warning locally. Hetzner is exempt

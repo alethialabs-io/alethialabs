@@ -494,6 +494,14 @@ A cluster is sized one of two ways. `node_size` is a size that works on any clou
 the closest machine type in the catalog for the cluster's cloud. `instance_types` pins a machine type.
 Setting one clears the other in the same write, and a single `add` that sets both fails.
 
+`capacity_type` chooses how the nodes are bought: `on_demand` (the default) or `spot`. Spot nodes cost
+less, but the cloud can take a node back at short notice. Only AWS accepts `spot` through this field;
+on other clouds a deploy refuses it.
+
+```bash
+alethia project component add --project boutique --kind cluster --set capacity_type=spot
+```
+
 Fields are **validated server-side** against the component's schema: an unknown or mistyped field
 fails with a clear `400`, naming the offending field and the allowed set. Singleton kinds ignore
 `--name` (they upsert the project's single row); multi kinds require it.

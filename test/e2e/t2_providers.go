@@ -514,7 +514,7 @@ func t2ValidateClusterName(provider, project, env, got string) error {
 
 // t2CostShapeRequired is the set of clouds whose TEMPLATE default node shape is expensive
 // (or unverified) enough that a real e2e run MUST pin a cheapest-shape override rather than
-// inherit it — e.g. AWS defaults to t3.large×2 SPOT if ALETHIA_E2E_CLUSTER_JSON is absent. (The
+// inherit it — e.g. AWS defaults to t3.large×2 ON_DEMAND if ALETHIA_E2E_CLUSTER_JSON is absent. (The
 // template defaults equal the catalog defaults since #5266; before that AWS was m5a.4xlarge×2. The
 // guard stays because a run still has to state the shape it pays for, not inherit one.) Hetzner is exempt: its default (cpx22 ×1) is a proven
 // cents/run shape (see the HZ-DEFAULTS work). The nightly always injects a per-provider shape;
@@ -538,7 +538,7 @@ func t2RequireCostShape(provider string) (fatal bool, msg string) {
 	if strings.TrimSpace(os.Getenv("ALETHIA_E2E_CLUSTER_JSON")) != "" {
 		return false, ""
 	}
-	msg = fmt.Sprintf("provider %q has an expensive template default node shape but ALETHIA_E2E_CLUSTER_JSON is unset — refusing to provision the default (e.g. AWS t3.large×2 SPOT). Pin a cheapest shape (small instance ×1, single NAT, min disk).", provider)
+	msg = fmt.Sprintf("provider %q has an expensive template default node shape but ALETHIA_E2E_CLUSTER_JSON is unset — refusing to provision the default (e.g. AWS t3.large×2). Pin a cheapest shape (small instance ×1, single NAT, min disk).", provider)
 	return t2RequireIsHard(), msg
 }
 

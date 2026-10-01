@@ -11,7 +11,7 @@ import (
 )
 
 // capacityConfig is a minimal valid config carrying one capacity type.
-func capacityConfig(capacity string) *types.ProjectConfig {
+func capacityConfig(capacity types.NodeCapacityType) *types.ProjectConfig {
 	return &types.ProjectConfig{
 		ProjectName: "cap",
 		Region:      "r",
@@ -26,9 +26,9 @@ func capacityConfig(capacity string) *types.ProjectConfig {
 // passthrough of the same variable cannot override the field — the key is reserved.
 func TestAWSCapacityTypeReachesTheNodeGroup(t *testing.T) {
 	p := &awsProvider{}
-	for capacity, want := range map[string]any{
-		types.CapacityTypeSpot:     "SPOT",
-		types.CapacityTypeOnDemand: "ON_DEMAND",
+	for capacity, want := range map[types.NodeCapacityType]any{
+		types.NodeCapacityTypeSpot:     "SPOT",
+		types.NodeCapacityTypeOnDemand: "ON_DEMAND",
 	} {
 		cfg := capacityConfig(capacity)
 		// A conflicting passthrough must lose to the typed field.
@@ -52,12 +52,12 @@ func TestCapacityTypeIsValidatedPerCloud(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, ok := range []string{"", types.CapacityTypeOnDemand} {
+		for _, ok := range []types.NodeCapacityType{"", types.NodeCapacityTypeOnDemand} {
 			if err := p.ValidateConfig(capacityConfig(ok)); err != nil && strings.Contains(err.Error(), "capacity_type") {
 				t.Errorf("%s refused capacity_type %q: %v", provider, ok, err)
 			}
 		}
-		err = p.ValidateConfig(capacityConfig(types.CapacityTypeSpot))
+		err = p.ValidateConfig(capacityConfig(types.NodeCapacityTypeSpot))
 		refusedSpot := err != nil && strings.Contains(err.Error(), "capacity_type")
 		if provider == "aws" && refusedSpot {
 			t.Errorf("aws refused spot: %v", err)

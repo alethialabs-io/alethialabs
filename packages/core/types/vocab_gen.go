@@ -287,7 +287,7 @@ type StatusGap struct {
 	Value string
 }
 
-// StatusVocabularyGaps is every such value, derived rather than declared: of the 74 pgEnums in the
+// StatusVocabularyGaps is every such value, derived rather than declared: of the 75 pgEnums in the
 // schema, an enum counts as status-bearing when at least one of ITS OWN values is a vocabulary
 // word. The rule needs no maintenance and cannot quietly stop covering an enum, and it is
 // deliberately a little over-inclusive — audit_action is here only because DESTROYED is both a

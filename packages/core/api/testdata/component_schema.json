@@ -1,5 +1,5 @@
 {
-  "version": "e3aaad3d52646d66559eb67c116e640a1a0be134c378f873b5b1c5af89b7e020",
+  "version": "6e19d8ef288750032f66e72f758a861021939085913c87f01df5f439f32cbc72",
   "kinds": [
     {
       "kind": "network",
@@ -69,6 +69,7 @@
         "cluster_version",
         "instance_types",
         "node_size",
+        "capacity_type",
         "node_min_size",
         "node_max_size",
         "node_desired_size",
@@ -128,6 +129,17 @@
                 },
                 "required": ["vcpu", "memory_gb"],
                 "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capacity_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["on_demand", "spot"]
               },
               {
                 "type": "null"

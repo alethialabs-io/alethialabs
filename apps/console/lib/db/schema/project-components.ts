@@ -67,6 +67,7 @@ import {
 	componentStatus,
 	gitCredentialMethod,
 	gitCredentialPurpose,
+	nodeCapacityType,
 	nosqlCapacityMode,
 	nosqlKeyType,
 	nosqlTableType,
@@ -197,6 +198,11 @@ export const projectCluster = pgTable(
 		node_min_size: integer().default(2),
 		node_max_size: integer().default(5),
 		node_desired_size: integer().default(2),
+		// The node pool's purchase option (#5266): `on_demand`, `spot`, or NULL = the template default
+		// (ON_DEMAND since #5266). Carried onto the snapshot only when set. Clusters provisioned while
+		// the aws default was SPOT were pinned to `spot` by migration 0156, so the default's change
+		// replaced none of their node groups.
+		capacity_type: nodeCapacityType(),
 		// Worker-node root disk size (GB). NULL → the per-cloud template default applies
 		// (EKS 50 / GKE 50 / AKS 100). Maps to eks_disk_size / gke_disk_size_gb / aks_disk_size_gb.
 		node_disk_size_gb: integer(),

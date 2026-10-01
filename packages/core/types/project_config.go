@@ -210,16 +210,10 @@ type ProjectClusterConfig struct {
 	// template default, ON_DEMAND since #5266). Only aws honours "spot" today — ValidateConfig
 	// refuses it on the other clouds rather than accepting a value that would change nothing.
 	// omitempty: absent when unset, so snapshots that never set it stay byte-identical.
-	CapacityType   string         `json:"capacity_type,omitempty"`
-	ClusterAdmins  []any          `json:"cluster_admins"`
-	ProviderConfig map[string]any `json:"provider_config"`
+	CapacityType   NodeCapacityType `json:"capacity_type,omitempty"`
+	ClusterAdmins  []any            `json:"cluster_admins"`
+	ProviderConfig map[string]any   `json:"provider_config"`
 }
-
-// Node capacity types — the values of project_cluster.capacity_type.
-const (
-	CapacityTypeOnDemand = "on_demand"
-	CapacityTypeSpot     = "spot"
-)
 
 type ProjectDNSConfig struct {
 	Placement

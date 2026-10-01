@@ -383,11 +383,8 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	// The node group's purchase option (#5266). Unset leaves the template default (ON_DEMAND);
 	// clusters provisioned while that default was SPOT carry an explicit "spot" (pinned by migration),
 	// so their node groups are not replaced by the default's change.
-	switch config.Cluster.CapacityType {
-	case types.CapacityTypeSpot:
-		tfvars["eks_ng_capacity_type"] = "SPOT"
-	case types.CapacityTypeOnDemand:
-		tfvars["eks_ng_capacity_type"] = "ON_DEMAND"
+	if capacity := awsCapacityType(config.Cluster.CapacityType); capacity != "" {
+		tfvars["eks_ng_capacity_type"] = capacity
 	}
 
 	// Generic passthrough: any provider_config key that names a template variable
@@ -993,3 +990,15 @@ func buildS3Buckets(buckets []types.ProjectStorageBucketConfig) []map[string]int
 }
 
 var _ CloudProvider = (*awsProvider)(nil)
+
+// awsCapacityType maps the cloud-indifferent node capacity type onto the EKS managed node group's
+// spelling. "" (unset, or a value ValidateConfig has already refused) leaves the template default.
+func awsCapacityType(capacity types.NodeCapacityType) string {
+	switch capacity {
+	case types.NodeCapacityTypeSpot:
+		return "SPOT"
+	case types.NodeCapacityTypeOnDemand:
+		return "ON_DEMAND"
+	}
+	return ""
+}
