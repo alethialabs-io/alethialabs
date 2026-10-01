@@ -26,6 +26,11 @@ const ORG_LEVEL: ReadonlySet<Resource> = new Set<Resource>([
 	// individually shared with specific members, so their permissions resolve org-wide —
 	// the check with a case id still asks "can this member view/reply support cases".
 	"support_case",
+	// Cluster credential tiers (#5280) are org-wide capabilities: a cluster has no FGA object of its
+	// own and is never individually shared, so `cluster:access_*` with a cluster id still asks "may
+	// this member mint a kubeconfig in this org". The mint route binds the id to the actor's org by
+	// resolving the project_cluster row with `org_id = actor.orgId` before it asks.
+	"cluster",
 ]);
 
 export interface FgaCheck {

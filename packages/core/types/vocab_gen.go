@@ -13,14 +13,14 @@
 // six pgEnums that shout on the wire missed every arm of the switch. The CLI now reads this file
 // and decides nothing.
 //
-// PROVENANCE IS EMITTED, and that is the point of the file rather than a decoration. 27 of the
-// 33 words are a drizzle enum value; 6 are in NO pgEnum and carry the declared origin
+// PROVENANCE IS EMITTED, and that is the point of the file rather than a decoration. 28 of the
+// 33 words are a drizzle enum value; 5 are in NO pgEnum and carry the declared origin
 // instead. The generator refuses to emit a word that can say neither, because a vocabulary with
 // no single owner drifts by OMISSION — a word nobody can account for looks exactly like one
 // everybody agreed on.
 //
-// WHAT IS STILL WRONG, counted rather than hidden: StatusVocabularyGaps below holds 24 values
-// across 9 status-bearing enums that this vocabulary has no word for. Every one of them resolves
+// WHAT IS STILL WRONG, counted rather than hidden: StatusVocabularyGaps below holds 25 values
+// across 10 status-bearing enums that this vocabulary has no word for. Every one of them resolves
 // to StatusTierIdle — "present but not doing anything" — on BOTH surfaces, which for an approved
 // promotion or a blocked one is wrong in the same way on both. Fixing that is a vocabulary
 // decision, not a rendering one, and it does not belong to the generator.
@@ -139,8 +139,8 @@ var StatusVocabulary = []StatusWord{
 	{Status: "approved", Tier: StatusTierActive, Provenance: StatusFromEnum,
 		Sources: []string{"approval_status.approved", "promotion_status.APPROVED"},
 		Note:    "promotion_status.APPROVED and approval_status.approved. Read as ACTIVE rather than pending: on an approval slot the word is terminal and positive — that person decided, and decided yes — and on a promotion it means the gates are satisfied. `pending` would be defensible for the promotion (it is a cleared waypoint, the deploy has not run) and is plainly wrong for the slot; one word gets one tier, so it takes the reading that is never wrong. It drew ○, the idle glyph, until #4117."},
-	{Status: "ready", Tier: StatusTierActive, Provenance: StatusFromWire,
-		Sources: []string{"the wire status of an add-on, an IaC source and a chart source (api.Addon, api.IacSource, api.ChartSource) — a text column, not a pgEnum, so nothing constrains it"},
+	{Status: "ready", Tier: StatusTierActive, Provenance: StatusFromEnum,
+		Sources: []string{"kubeconfig_mint_status.ready"},
 		Note:    ""},
 	{Status: "connected", Tier: StatusTierActive, Provenance: StatusFromEnum,
 		Sources: []string{"cloud_identity_status.connected"},
@@ -152,7 +152,7 @@ var StatusVocabulary = []StatusWord{
 		Sources: []string{"project_status.QUEUED", "provision_job_status.QUEUED"},
 		Note:    ""},
 	{Status: "pending", Tier: StatusTierPending, Provenance: StatusFromEnum,
-		Sources: []string{"alert_delivery_status.pending", "approval_status.pending", "cloud_identity_status.pending", "component_status.PENDING"},
+		Sources: []string{"alert_delivery_status.pending", "approval_status.pending", "cloud_identity_status.pending", "component_status.PENDING", "kubeconfig_mint_status.pending"},
 		Note:    "Go had no case for the literal word and defaulted it to ○. component_status.PENDING is the pending tier."},
 	{Status: "pending_plan", Tier: StatusTierPending, Provenance: StatusFromEnum,
 		Sources: []string{"promotion_status.PENDING_PLAN"},
@@ -200,7 +200,7 @@ var StatusVocabulary = []StatusWord{
 		Sources: []string{"billing_status.canceled"},
 		Note:    ""},
 	{Status: "failed", Tier: StatusTierFailed, Provenance: StatusFromEnum,
-		Sources: []string{"alert_delivery_status.failed", "cloud_identity_status.failed", "component_status.FAILED", "connector_health_status.failed", "project_status.FAILED", "promotion_status.FAILED", "provision_job_status.FAILED"},
+		Sources: []string{"alert_delivery_status.failed", "cloud_identity_status.failed", "component_status.FAILED", "connector_health_status.failed", "kubeconfig_mint_status.failed", "project_status.FAILED", "promotion_status.FAILED", "provision_job_status.FAILED"},
 		Note:    ""},
 	{Status: "error", Tier: StatusTierFailed, Provenance: StatusFromEnum,
 		Sources: []string{"stripe_webhook_event_status.error"},
@@ -287,7 +287,7 @@ type StatusGap struct {
 	Value string
 }
 
-// StatusVocabularyGaps is every such value, derived rather than declared: of the 71 pgEnums in the
+// StatusVocabularyGaps is every such value, derived rather than declared: of the 74 pgEnums in the
 // schema, an enum counts as status-bearing when at least one of ITS OWN values is a vocabulary
 // word. The rule needs no maintenance and cannot quietly stop covering an enum, and it is
 // deliberately a little over-inclusive — audit_action is here only because DESTROYED is both a
@@ -318,6 +318,7 @@ var StatusVocabularyGaps = []StatusGap{
 	{Enum: "commerce_order_state", Value: "refunded"},
 	{Enum: "connector_health_status", Value: "healthy"},
 	{Enum: "connector_status", Value: "coming_soon"},
+	{Enum: "kubeconfig_mint_status", Value: "expired"},
 	{Enum: "signing_key_status", Value: "pending_verification"},
 	{Enum: "signing_key_status", Value: "invalid"},
 	{Enum: "stripe_webhook_event_status", Value: "done"},

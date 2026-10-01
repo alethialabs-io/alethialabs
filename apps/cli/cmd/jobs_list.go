@@ -32,20 +32,21 @@ var (
 // test (TestJobTypeLabels_CoverAllJobTypes) asserts every job type has a label, so an
 // added one fails the build.
 var jobTypeLabels = map[string]string{
-	string(types.JobTypePlan):          "Plan",
-	string(types.JobTypeDeploy):        "Deploy",
-	string(types.JobTypeDestroy):       "Destroy",
-	string(types.JobTypeAnalyzeRepo):   "Analyze Repo",
-	string(types.JobTypeDetectDrift):   "Detect Drift",
-	string(types.JobTypeAudit):         "Audit",
-	string(types.JobTypeDeployRunner):  "Deploy Runner",
-	string(types.JobTypeUpdateRunner):  "Update Runner",
-	string(types.JobTypeDestroyRunner): "Destroy Runner",
-	string(types.JobTypeChartScan):     "Chart Scan",
-	string(types.JobTypeIacScan):       "IaC Scan",
-	string(types.JobTypeStateSurgery):  "State Surgery",
-	string(types.JobTypeProbeCluster):  "Probe Cluster",
-	string(types.JobTypeBuild):         "Build",
+	string(types.JobTypePlan):           "Plan",
+	string(types.JobTypeDeploy):         "Deploy",
+	string(types.JobTypeDestroy):        "Destroy",
+	string(types.JobTypeAnalyzeRepo):    "Analyze Repo",
+	string(types.JobTypeDetectDrift):    "Detect Drift",
+	string(types.JobTypeAudit):          "Audit",
+	string(types.JobTypeDeployRunner):   "Deploy Runner",
+	string(types.JobTypeUpdateRunner):   "Update Runner",
+	string(types.JobTypeDestroyRunner):  "Destroy Runner",
+	string(types.JobTypeChartScan):      "Chart Scan",
+	string(types.JobTypeIacScan):        "IaC Scan",
+	string(types.JobTypeStateSurgery):   "State Surgery",
+	string(types.JobTypeProbeCluster):   "Probe Cluster",
+	string(types.JobTypeBuild):          "Build",
+	string(types.JobTypeMintKubeconfig): "Mint Kubeconfig",
 }
 
 // jobsListEveryStatusLabel is how the picker spells "do not filter".

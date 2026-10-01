@@ -1154,6 +1154,53 @@ BEGIN
                 OR user_id = current_setting('app.current_owner', true)::uuid));
 END $$;
 
+-- Kubeconfig mint requests (#5280): a row holds a client's ephemeral PUBLIC key and, once the runner
+-- has posted, a SEALED (HPKE) credential only that client can open. Org-scoped AND actor-scoped:
+-- unlike `owner_all`'s OR, both must hold. A mint request is its requester's alone — a teammate in
+-- the same org has no reason to see it, and through the app role could otherwise DELETE a `ready`
+-- row (the read-once consume) out from under its owner. Community/personal: org_id == user id ==
+-- current_owner, so this is the same row set. NULL GUCs → deny. The runner's result post and the
+-- expiry sweep run on the service role (RLS-bypassing) and filter on id / job_id / org explicitly.
+DO $$
+BEGIN
+  ALTER TABLE public.kubeconfig_mint_requests ENABLE ROW LEVEL SECURITY;
+  DROP POLICY IF EXISTS owner_all ON public.kubeconfig_mint_requests;
+  CREATE POLICY owner_all ON public.kubeconfig_mint_requests FOR ALL
+    USING (org_id = current_setting('app.current_org', true)::uuid
+           AND actor_user_id = current_setting('app.current_owner', true)::uuid)
+    WITH CHECK (org_id = current_setting('app.current_org', true)::uuid
+           AND actor_user_id = current_setting('app.current_owner', true)::uuid);
+END $$;
+
+-- The mint request's org must BE its cluster's org (and its job's). RLS above checks org_id against
+-- the caller's GUC, but nothing there ties cluster_id to that org: a request route that resolved the
+-- cluster wrongly could insert a row in the caller's own org naming ANOTHER org's cluster, and the
+-- runner would mint a credential for it. That is a cross-tenant credential issue, so it is refused
+-- by the database, not left to every future caller's query. Fires on the service role too (a
+-- trigger is not RLS), which is the point: the runner's channel writes through it.
+CREATE OR REPLACE FUNCTION public.kubeconfig_mint_requests_bind_org()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.project_cluster c
+                  WHERE c.id = NEW.cluster_id AND c.org_id = NEW.org_id) THEN
+    RAISE EXCEPTION 'kubeconfig_mint_requests: cluster % is not in org %', NEW.cluster_id, NEW.org_id
+      USING ERRCODE = '42501';
+  END IF;
+  IF NEW.job_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.jobs j
+                  WHERE j.id = NEW.job_id AND j.org_id = NEW.org_id
+                    AND j.job_type = 'MINT_KUBECONFIG'::public.provision_job_type) THEN
+    RAISE EXCEPTION 'kubeconfig_mint_requests: job % is not a MINT_KUBECONFIG job in org %', NEW.job_id, NEW.org_id
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS kubeconfig_mint_requests_bind_org ON public.kubeconfig_mint_requests;
+CREATE TRIGGER kubeconfig_mint_requests_bind_org
+  BEFORE INSERT OR UPDATE OF org_id, cluster_id, job_id ON public.kubeconfig_mint_requests
+  FOR EACH ROW EXECUTE FUNCTION public.kubeconfig_mint_requests_bind_org();
+
 -- Credential tables (scope-aware): a `personal` row is visible only to its author
 -- (user_id = current_owner); an `org` row is visible to the whole org
 -- (org_id = current_org). This is the coarse blast wall — the fine-grained role

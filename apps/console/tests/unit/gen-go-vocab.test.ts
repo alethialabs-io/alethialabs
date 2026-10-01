@@ -414,7 +414,6 @@ describe("the whole pipeline, against the real vocabulary", () => {
 			"disabled",
 			"errored",
 			"idle",
-			"ready",
 			"running",
 			"skipped",
 		]);
