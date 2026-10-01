@@ -7,7 +7,7 @@ import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
 	title: "Connectors",
-	description: "Connect AWS, GCP, and Azure cloud accounts to Alethia.",
+	description: "Connect AWS, GCP, Azure, Alibaba Cloud, and Hetzner accounts to Alethia.",
 });
 
 export default async function ConnectorsRoute({
