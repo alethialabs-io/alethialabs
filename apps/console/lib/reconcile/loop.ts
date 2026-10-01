@@ -13,6 +13,7 @@
 
 import { getServiceDb } from "@/lib/db";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
+import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
@@ -45,6 +46,9 @@ const INTERVALS = {
 	// how long past that a stranded reservation keeps counting against the org, not whether it is
 	// found. Matched to the GCs rather than tightened: it reclaims ~$0.10 at a time.
 	"release-ai-holds": 15 * 60_000,
+	// 1m — a mint request's poll window is 10m, so an uncollected ciphertext outlives its window by
+	// at most about a minute (lib/kubeconfig-mint/sweep.ts).
+	"kubeconfig-mint-sweep": 60_000,
 } as const;
 
 declare global {
@@ -116,6 +120,11 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		// for a turn that was never recorded.
 		if (isDue("release-ai-holds", INTERVALS["release-ai-holds"], now)) {
 			await runTask("release-ai-holds", () => releaseStrandedAiHolds(db));
+		}
+		// Kubeconfig mint expiry (#5281): null the ciphertext of every mint past its poll window, cancel
+		// its job if no runner has claimed it, and delete rows one window after that.
+		if (isDue("kubeconfig-mint-sweep", INTERVALS["kubeconfig-mint-sweep"], now)) {
+			await runTask("kubeconfig-mint-sweep", () => sweepExpiredKubeconfigMints(db));
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already
