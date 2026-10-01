@@ -805,9 +805,9 @@ jobs:
               echo "::notice::green-floor dimension — provision + cluster_ready + ArgoCD Healthy+Synced (+ A0.6 repos when wired). NO day-2 soak: that is the day2/full dimension (#2356)." ;;
           esac
 
-      # ── Cheapest-shape override (BYOC F4). The managed-cloud templates default to LARGE nodes
-      #    (AWS m5a.4xlarge×2 SPOT ≈ $0.30/run); the harness cost guard HARD-FAILS a managed run
-      #    that inherits that default, so we pin a small node shape per provider here. Merged
+      # ── Cheapest-shape override (BYOC F4). The managed-cloud templates default to the catalog's
+      #    node (AWS t3.large×2 SPOT since #5266; m5a.4xlarge×2 before); the harness cost guard
+      #    HARD-FAILS a managed run that inherits a default, so we pin a small node shape per provider here. Merged
       #    into the snapshot `cluster` block (t2MergeClusterJSON): small instance ×1, min disk.
       #    Hetzner keeps its proven cents/run default (no override). Per-cloud SKUs/disk floors
       #    are validated in each cloud's wave.
