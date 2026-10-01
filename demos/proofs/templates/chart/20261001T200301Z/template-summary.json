@@ -1,0 +1,31 @@
+{
+  "issue": "#4113",
+  "provider": "hetzner",
+  "cluster": "alethia-nl-36916156426-1",
+  "run_bundle": "demos/proofs/hetzner/20261001T200301Z",
+  "run_verdict": "PASS",
+  "template": "chart",
+  "repo": "https://github.com/alethialabs-io/alethia-starter-chart",
+  "ref": "HEAD",
+  "commit": "8f68bec84928698a44673da9eee279ece13a7430",
+  "phase": "A — starter-ai apps repo + both BYO charts",
+  "path_followed": "Add-ons → Bring your own chart: Chart repository = the template, Chart path = chart, Ref = HEAD → Deploy",
+  "asserted_at": "2026-10-01T19:55:06Z",
+  "verdict": "PASS",
+  "applications": [
+    {
+      "application": "addon-starter-chart",
+      "template": "chart",
+      "source": "git",
+      "repo_url": "https://github.com/alethialabs-io/alethia-starter-chart",
+      "sync_revision": "8f68bec84928698a44673da9eee279ece13a7430",
+      "expected_revision": "8f68bec84928698a44673da9eee279ece13a7430",
+      "sync": "Synced",
+      "health": "Healthy",
+      "resources": 3,
+      "min_resources": 1,
+      "ok": true,
+      "provenance": "chart/ as a bring-your-own chart: a Deployment, a Service and a ConfigMap"
+    }
+  ]
+}

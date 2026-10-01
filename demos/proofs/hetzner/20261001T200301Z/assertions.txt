@@ -1,0 +1,17 @@
+    t2_provision_test.go:159: #4113: starter templates ENABLED — apps 7a946a2dddcd4474b4f1199fdc54966e322e7412, chart 8f68bec84928698a44673da9eee279ece13a7430, ai c8d4d13301f9d6ba94be8795359ef2b20c931e03 (HEAD, resolved anonymously); the A0.6 repo inputs are SUPERSEDED on this dimension
+    t2_provision_test.go:182: A0.6: ArgoCD-with-repos SKIPPED — no apps/BYO repo configured (set ALETHIA_E2E_ARGO_APPS_REPO + ALETHIA_E2E_ARGO_BYO_CHART_REPO + ALETHIA_E2E_GIT_TOKEN). Base T2 proof still runs.
+    t2_provision_test.go:200: #1268: cross-account keyless secrets SKIPPED — set ALETHIA_E2E_SECRETS_XACCT (+ its target vars) to enable.
+    t2_provision_test.go:221: #1773: ACM certificate NOT RUN on hetzner — hetzner: no managed-certificate resource in the template, and no certificate output for the product to consume.
+    t2_provision_test.go:256: #1511: keyless DB auth SKIPPED — set ALETHIA_E2E_KEYLESS_DB (+ its engine vars) to enable.
+    t2_provision_test.go:373: A0.5: seeded console graph (project=cfb5d26d-7373-4aa5-b98a-d8eb250b2715 env=cffb49aa-e252-40eb-8c71-6b8d7472ecd9) + loaded the hetzner fidelity fixture; enforce=false real_snapshot=false
+    t2_provision_test.go:462: A0.5: no divergence across the 2 key(s) this compares [addons provider] against the hetzner fixture — NOT a statement about the other 33 fixture key(s), which the seed does not carry; addons compared element-wise by id: 1 of 1 [reloader]
+    t2_provision_test.go:776: asserting ArgoCD Applications reach Healthy+Synced: [addon-reloader addon-starter-ai addon-starter-chart apps cert-manager external-secrets-operator metrics-server]
+    t2_provision_test.go:837: all 7 asserted ArgoCD Applications are Healthy+Synced (0 withheld)
+    t2_provision_test.go:894: A0.5: replayed real finalizeDeployment; shim: finalizeDeployment(3b56492a-efa6-4e45-bdbe-1cae9dae996b) completed
+    t2_provision_test.go:894: A0.5: env cffb49aa-e252-40eb-8c71-6b8d7472ecd9 is ACTIVE (real finalizeDeployment)
+    t2_provision_test.go:894: A0.5: persisted reloader health row: health="Healthy" status="ACTIVE"
+    t2_provision_test.go:894: A0.5: persisted Trivy security-posture row present (bonus)
+    t2_provision_test.go:943: A0.3 soak: SKIPPED (ALETHIA_E2E_SOAK unset) — base T2 proof unchanged
+--- PASS: TestT2RealCloudProvisioning (1117.84s)
+PASS
+ok  	github.com/alethialabs-io/alethialabs/test/e2e	1117.852s
