@@ -152,6 +152,7 @@ export function DesignProjectWorkbench({
 						cloudIdentities={cloudIdentities}
 						projectId={projectId}
 						environmentId={environmentId}
+						projectName={sourceProject?.formData.project.project_name}
 						dockInShell={dockInShell}
 						byoHelmEnabled={byoHelmEnabled}
 						byoDescribeEnabled={byoDescribeEnabled}

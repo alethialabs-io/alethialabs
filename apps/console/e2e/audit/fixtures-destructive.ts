@@ -1031,6 +1031,13 @@ export const UNSEEDABLE: ReadonlyMap<string, string> = new Map([
 			"`byo.iac.detach` as `confirmed`; that claim rests on no run this gate can perform.",
 	],
 	[
+		"fabric-owner-with-live-tenant",
+		"the spec reaches the canvas only on the audit project's DEFAULT environment — `materialize` fills `[project]` and " +
+			"nothing appends `?environment_id=` — and that environment is `env.destroy`'s subject, whose fixture `project` " +
+			"declares the no-tenant dialog. Placing a live tenant on its Fabric would turn `env.destroy`'s confirmation into " +
+			"the cascade one and fail that entry; a second, dedicated environment is unreachable by the route this spec drives.",
+	],
+	[
 		"backup-payment-method",
 		"a payment method is a STRIPE object attached to a Stripe customer. There is no table to write, and the `stripe` capability " +
 			"the `audit-interaction` leg promises is an API key, not a seeded card.",
