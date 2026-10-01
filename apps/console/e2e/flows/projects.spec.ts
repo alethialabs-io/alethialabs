@@ -543,23 +543,29 @@ test.describe("Projects — General settings", () => {
 			waitUntil: "domcontentloaded",
 		});
 		const nameInput = owner.page.getByRole("textbox", { name: "Project name" });
-		await expect(nameInput).toBeVisible({ timeout: 15_000 });
 		const newName = `e2e-renamed-${Date.now()}`;
 		const save = owner.page.getByRole("button", { name: /save changes/i });
-		// The page is reached on `domcontentloaded`, so the server-rendered input is visible — and
-		// fillable — before React hydrates. The name field is `register`ed (uncontrolled), and
-		// registration writes the form's default into the DOM node, so a pre-hydration fill is
-		// silently overwritten with the old name and Save never enables. The trace of the red run
-		// showed exactly that: the fill landed ~1s before the first client request. It failed once
-		// on dev too (qa run 36599021090, passed on retry). Re-fill until the HYDRATED form has seen
-		// the edit; the assertion — Save enables for a changed name — is unchanged.
-		await expect(async () => {
-			await nameInput.fill(newName);
-			await expect(save).toBeEnabled({ timeout: 1_000 });
-		}).toPass({ timeout: 15_000 });
+		// WAIT FOR THE OLD NAME before typing. That value means hydration is done; visible does not
+		// (#5202). The page is reached on `domcontentloaded`, so the server-rendered input is visible
+		// and fillable before React hydrates. The name field is `register`ed (uncontrolled):
+		// `register` passes no `value` prop, so the server HTML has an EMPTY input. On hydration,
+		// react-hook-form's ref callback writes the default (the old name) into the DOM node.
+		// `fill` is two steps, select-all and then insertText. When that write lands between them,
+		// the selection is gone and the caret is at the end, so the new name is APPENDED:
+		// `e2e-ren-…e2e-renamed-…`. The re-fill loop this replaces could not catch that. An appended
+		// name is still a changed name, so Save enabled and the loop exited on the wrong value.
+		// The old name can only come from the client, so seeing it means the ref has run.
+		await expect(nameInput).toHaveValue(project.name, { timeout: 15_000 });
+		await nameInput.fill(newName);
 		await expect(nameInput).toHaveValue(newName);
+		await expect(save).toBeEnabled();
 		await save.click();
 		await expect(owner.page.getByText(/project updated/i)).toBeVisible({ timeout: 15_000 });
+
+		// "Persists" means it survives a reload, so read it back from the server.
+		// `toHaveValue` is hydration-proof here for the same reason as above.
+		await owner.page.reload({ waitUntil: "domcontentloaded" });
+		await expect(nameInput).toHaveValue(newName, { timeout: 15_000 });
 	});
 });
 

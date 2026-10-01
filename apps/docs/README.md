@@ -50,6 +50,18 @@ error-level alerts** — a wrong product name (the `Alethia.Terminology` rule). 
 swaps and "avoid *will*/*we*" surface as non-blocking warnings; long-sentence nudges are
 suggestions (hidden by default — see them with `vale --minAlertLevel=suggestion content`).
 
+Links are checked too, by the same job:
+
+```bash
+pnpm -F docs check:links   # node only, no install needed: node scripts/check-links.mjs
+```
+
+It fails on an internal link to a page or `#anchor` that does not exist, a relative link
+(`./x` — write `/section/x`), a link starting `/docs/` (the basePath is added for you), and a
+page missing from its section's `meta.json`. Anchors are slugged as fumadocs does: an em dash
+in a heading leaves a **double** hyphen (`## Step 1 — Apply` → `#step-1--apply`). External URLs
+are not checked.
+
 ## Learn More
 
 To learn more about Next.js and Fumadocs, take a look at the following

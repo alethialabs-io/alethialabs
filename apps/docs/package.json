@@ -11,7 +11,8 @@
 		"check:source-emitted": "node scripts/check-source-emitted.mjs",
 		"postinstall": "fumadocs-mdx",
 		"lint": "eslint",
-		"lint:prose": "vale content"
+		"lint:prose": "vale content",
+		"check:links": "node scripts/check-links.mjs --self-test && node scripts/check-links.mjs"
 	},
 	"dependencies": {
 		"@repo/brand": "workspace:*",

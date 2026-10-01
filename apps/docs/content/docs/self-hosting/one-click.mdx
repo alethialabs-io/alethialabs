@@ -7,7 +7,7 @@ description: Launch the Alethia bundle on AWS or Azure with a single button — 
 
 The fastest way to stand up a control plane on a public cloud: a button that opens the cloud's own
 console with a prefilled template. Each template provisions **one x86 VM**, opens 22/80/443, and runs
-the [installer](./index) via cloud-init — the same bundle as everywhere else.
+the [installer](/self-hosting) via cloud-init — the same bundle as everywhere else.
 
 > **x86 only.** The published app-bundle images are `linux/amd64`, so both templates default to x86
 > instances (AWS `t3`, Azure `Dsv5`).
@@ -55,7 +55,7 @@ az deployment group create --resource-group alethia-cp \
 
 ## When to use what
 
-| | One-click | [Terraform](./terraform) | [Helm](./helm) |
+| | One-click | [Terraform](/self-hosting/terraform) | [Helm](/self-hosting/helm) |
 |---|---|---|---|
 | Best for | a quick managed VM, no tooling | repeatable IaC + CI (plan/apply) | existing Kubernetes |
 | State | the cloud's stack/deployment | your S3 state bucket | the cluster |

@@ -122,7 +122,7 @@ These are not per-cloud gates, but legs depend on them:
 | `E2E_GIT_TOKEN` | secret | the git token the provisioned ArgoCD uses to read the apps repo. The keyless-DB rider also needs it to **push** to its three `alethia-e2e-keyless-apps-*` repos (see below) |
 | `INFRACOST_API_KEY` | secret | cost estimation during the run |
 | `E2E_AWS_COST_CEILING_USD` / `_FULL_USD` | vars | abort thresholds — floor vs full-bar dimension |
-| `E2E_ARGO_APPS_REPO`, `E2E_ARGO_BYO_CHART_*` | vars | the A0.6 BYO-IaC + services proof |
+| `E2E_ARGO_APPS_REPO`, `E2E_ARGO_BYO_CHART_*` | vars | the A0.6 BYO-IaC + services proof. Which repository each var points at, and the line that binds it: [e2e-fixture-repos.md](./e2e-fixture-repos.md) |
 | `E2E_ARGO_APPS_REPO_GCP` / `_AZURE`, `E2E_ARGO_BYO_CHART_REPO` and `_REVISION` with those suffixes | vars | per-cloud repo overrides so that proof runs on gcp + azure too (#1136). Only these three bases take a suffix — `_PATH` and `_NAMESPACE` describe the chart repo's own layout, which does not vary by cloud |
 | `E2E_KEYLESS_DB_ENGINE` / `_ENGINE_VERSION` / `_INSTANCE_CLASS` / `_IMAGE` / `_CLIENT_IMAGE` with `_GCP` / `_AZURE` | vars | per-cloud keyless-DB overrides — see below |
 | `E2E_NAMESPACE_TENANT`, `E2E_SOAK` | vars | opt-in namespace-placement and soak scenarios |
@@ -339,6 +339,7 @@ target `provider` from `main`, then record the bundle. The proof grid derived in
 
 ## Related
 
+- `docs/testing/e2e-fixture-repos.md` — every Git repository outside this monorepo the nightly reads, its var and the line that binds it
 - `docs/testing/e2e-state-migration.md` — putting the four federation stacks on remote state
 - `docs/testing/runner-xcloud-parity.md` — per-cloud runner → cluster parity
 - `demos/proofs/` — committed proof bundles and the parity ledger
