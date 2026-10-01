@@ -7,7 +7,7 @@ which repository each scenario reads, what writes to it, and the exact line that
 Line numbers are as of the commit that added this page. They drift; the variable and constant names
 do not, so grep for those.
 
-## The private fixtures (CI-owned — do not edit by hand)
+## The private fixtures (CI-owned — only the harness writes to them)
 
 | Repository | Read by | Written by | Bound by | Default when the var is unset |
 |---|---|---|---|---|
