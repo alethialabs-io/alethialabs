@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
 import type { RegionPrices } from "@/lib/pricing/region-prices";
+import { TEMPLATE_DEFAULT_NODE } from "./template-default-node";
 
 const HOURS_PER_MONTH = 730;
 
@@ -43,10 +45,12 @@ export interface CostInput {
 	secretsCount: number;
 }
 
-/** Provider-specific labels (the math itself is provider-agnostic). */
+/** Provider-specific labels, plus the cloud — which decides what an EMPTY instance list buys. */
 export interface CostMeta {
 	clusterService: string;
 	secretsService: string;
+	/** The cluster's cloud. An empty `instanceTypes` is priced at THIS cloud's template default. */
+	provider: CloudProviderSlug;
 }
 
 /**
@@ -68,17 +72,22 @@ export function computeCostItems(
 	});
 
 	const { instanceTypes, nodeDesiredSize } = input;
+	// No instance type means the template's own default, not a cheap guess: on AWS that is an
+	// m5a.4xlarge, and pricing it as a t3.medium understated the estimate ~17× (#5251).
+	const templateDefault = TEMPLATE_DEFAULT_NODE[meta.provider];
 	const avgHr =
 		instanceTypes.length > 0
 			? instanceTypes.reduce(
 					(sum, t) => sum + (p?.ec2[t] ?? FALLBACK_EC2[t] ?? 0.0456),
 					0,
 				) / instanceTypes.length
-			: 0.0456;
+			: (p?.ec2[templateDefault.instanceType] ??
+				FALLBACK_EC2[templateDefault.instanceType] ??
+				templateDefault.fallbackHourly);
 	const nodeLabel =
 		instanceTypes.length > 0
 			? `${nodeDesiredSize}x ${instanceTypes[0]}${instanceTypes.length > 1 ? ` +${instanceTypes.length - 1}` : ""}`
-			: `${nodeDesiredSize} nodes`;
+			: `${nodeDesiredSize}x ${templateDefault.instanceType} (template default)`;
 	result.push({
 		label: `${meta.clusterService} Nodes`,
 		cost: avgHr * nodeDesiredSize * HOURS_PER_MONTH,

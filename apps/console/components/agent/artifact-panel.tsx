@@ -27,7 +27,8 @@ import { EmptyState } from "@repo/ui/empty";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
-import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
+import { getProvider } from "@/lib/cloud-providers";
+import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { type CostItem, computeCostItems } from "@/lib/cost/compute-cost-items";
 import { type CostSummary, parseCostBreakdown } from "@/lib/plan/parse-cost";
 import { type PlanSummary, parsePlanJSON } from "@/lib/plan/parse-plan";
@@ -55,11 +56,6 @@ interface PlanState {
 	receipt: SignedReceipt | null;
 	/** BUILD jobs only: execution_metadata.build_result (service → pushed digest). */
 	buildResult: Record<string, string> | null;
-}
-
-/** Narrow a free-form provider string to a known slug (no casts). */
-function toSlug(p: string): CloudProviderSlug {
-	return p === "gcp" || p === "azure" ? p : "aws";
 }
 
 /**
@@ -105,7 +101,10 @@ export function ArtifactPanel() {
 			if (cancelled) return;
 			const c = detail.components.cluster;
 			const n = detail.components.network;
-			const meta = getProvider(toSlug(detail.cloudProvider));
+			// All five clouds, not three: the slug now also decides what an EMPTY instance list is
+			// priced as (#5251), so folding hetzner/alibaba into "aws" would price them as m5a.4xlarge.
+			const slug = asCloudProviderSlug(detail.cloudProvider);
+			const meta = getProvider(slug);
 			setCost(
 				computeCostItems(
 					{
@@ -131,6 +130,7 @@ export function ArtifactPanel() {
 					{
 						clusterService: meta.clusterService,
 						secretsService: meta.secretsService,
+						provider: slug,
 					},
 				),
 			);

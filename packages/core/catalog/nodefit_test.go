@@ -171,6 +171,60 @@ func TestNoProviderDefaultsToAShapeThatCannotHostTheControlPlane(t *testing.T) {
 			t.Errorf("%s defaults to %q:\n  %s\n  pick %q instead", provider, cp.DefaultInstance, fit.Detail, fit.Suggestion)
 		}
 	}
+
+	// `compute.<p>.default_instance` is the half this package models, but it is NOT the half a user
+	// receives: the console stamps `live.defaultInstanceType` on every new cluster (#5251). A default
+	// moved in one half alone would keep this test green while the product shipped the other, so the
+	// shipped half is checked here too, and the two are required to agree.
+	var doc struct {
+		Live struct {
+			DefaultInstanceType map[string]string `json:"defaultInstanceType"`
+		} `json:"live"`
+	}
+	if err := json.Unmarshal(catalogJSON, &doc); err != nil {
+		t.Fatalf("catalog.json does not parse: %v", err)
+	}
+	if len(doc.Live.DefaultInstanceType) == 0 {
+		t.Fatal("catalog.json has no live.defaultInstanceType — this guard has lost its subject and must be repointed, not deleted")
+	}
+	for provider, shipped := range doc.Live.DefaultInstanceType {
+		cp, ok := c.Compute[provider]
+		if !ok {
+			t.Errorf("live.defaultInstanceType names %q, which has no compute section", provider)
+			continue
+		}
+		if shipped != cp.DefaultInstance {
+			t.Errorf("%s: the console ships %q but compute.default_instance says %q", provider, shipped, cp.DefaultInstance)
+		}
+		if fit := c.ControlPlaneNodeFit(provider, shipped); fit.Verdict == FitTooSmall {
+			t.Errorf("%s ships %q as its default:\n  %s\n  pick %q instead", provider, shipped, fit.Detail, fit.Suggestion)
+		}
+	}
+}
+
+// TestDefaultsAreTheProvenFloors pins the #5251 decision: each cloud's default node is the shape the
+// nightly e2e actually provisions (.github/workflows/e2e-nightly.yml), not a smaller one nobody ran.
+// aws was t3.medium (never run; nightly runs t3.large) and hetzner was cax11 (ARM, capacity-unreliable
+// per infra/templates/project/hetzner/variables.tf, and amd64-only images CrashLoop on it; nightly
+// runs cpx22). azure keeps Standard_D2s_v5 — the same 2 vCPU / 8 GiB as the proven D2s_v3, one
+// generation newer, and NOT itself proven. alibaba has no proven shape at all.
+func TestDefaultsAreTheProvenFloors(t *testing.T) {
+	want := map[string]string{
+		"aws":     "t3.large",
+		"gcp":     "e2-standard-2",
+		"azure":   "Standard_D2s_v5",
+		"hetzner": "cpx22",
+		"alibaba": "ecs.g6.large",
+	}
+	c := MustLoad()
+	if len(c.Compute) != len(want) {
+		t.Errorf("catalog has %d compute providers, this table pins %d — decide a default for the new one", len(c.Compute), len(want))
+	}
+	for provider, w := range want {
+		if got := c.Compute[provider].DefaultInstance; got != w {
+			t.Errorf("%s default_instance = %q, want %q", provider, got, w)
+		}
+	}
 }
 
 // TestCrossCloudConversionNeverLandsOnAShapeThatCannotHostTheControlPlane.
