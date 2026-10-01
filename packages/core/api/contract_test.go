@@ -119,10 +119,23 @@ func TestContract_JobsPage(t *testing.T) {
 }
 
 func TestContract_JobResponse(t *testing.T) {
-	var resp struct {
-		Job ProvisionJob `json:"job"`
-	}
+	var resp QueueJobResponse
 	strictDecode(t, "job_response.json", &resp)
+	assertNoExtraStructKeys(t, "job_response.json", resp)
+	if resp.Job == nil || len(resp.CascadeJobs) != 1 {
+		t.Fatalf("unexpected job response: %+v", resp)
+	}
+}
+
+func TestContract_DestroyTree(t *testing.T) {
+	var resp struct {
+		Tree []DestroyTreeNode `json:"tree"`
+	}
+	strictDecode(t, "destroy_tree.json", &resp)
+	assertNoExtraStructKeys(t, "destroy_tree.json", resp)
+	if len(resp.Tree) != 1 || len(resp.Tree[0].WaitingOn) != 1 {
+		t.Fatalf("unexpected destroy tree: %+v", resp)
+	}
 }
 
 func TestContract_InitIdentity(t *testing.T) {

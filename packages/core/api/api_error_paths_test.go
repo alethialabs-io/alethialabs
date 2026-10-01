@@ -51,6 +51,10 @@ func TestWrappers_SurfaceTheirOwnContextOnFailure(t *testing.T) {
 			_, err := c.QueueJobWithParams(QueueJobParams{JobType: "PLAN"})
 			return err
 		}},
+		{"GetDestroyTree", "failed to read the destroy tree", func(c *Client) error {
+			_, err := c.GetDestroyTree("p1", "e1")
+			return err
+		}},
 		{"GetJobs", "failed to get jobs", func(c *Client) error {
 			_, err := c.GetJobs("QUEUED", 10, 5)
 			return err
