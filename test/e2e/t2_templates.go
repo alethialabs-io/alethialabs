@@ -351,6 +351,23 @@ type templateAppObserved struct {
 	Chart          string
 	TargetRevision string
 	Resources      int
+	// The cause half (#5210). Health and sync say THAT an Application is not converged; these say
+	// WHY, in ArgoCD's own words. Phase B's first red read `addons: Healthy, OutOfSync, 3 resources`
+	// and nothing else, which fits a failed prune, a slow cascade deletion and a refused auto-sync
+	// equally — the run had the answer in `.status` and threw it away.
+	//
+	// OperationPhase/Message/Revision are the LAST sync operation. Its revision is carried because
+	// an operation that Succeeded at the PREVIOUS commit reads as healthy unless you can see it is
+	// stale — exactly the shape of an auto-sync that refused to start.
+	OperationPhase    string
+	OperationMessage  string
+	OperationRevision string
+	// Conditions are `.status.conditions` as `Type: message` (SyncError, ComparisonError, …).
+	Conditions []string
+	// NotSyncedResources names every managed resource whose own sync status is not Synced, as
+	// `group/Kind namespace/name Status`, with `(requires pruning)` when ArgoCD marks it for
+	// deletion. Sorted.
+	NotSyncedResources []string
 }
 
 // parseTemplateApps reads `kubectl get applications -n argocd -o json` into the fields the
@@ -378,7 +395,30 @@ func parseTemplateApps(raw []byte) (map[string]templateAppObserved, error) {
 					Status   string `json:"status"`
 					Revision string `json:"revision"`
 				} `json:"sync"`
-				Resources []json.RawMessage `json:"resources"`
+				OperationState *struct {
+					Phase      string `json:"phase"`
+					Message    string `json:"message"`
+					SyncResult *struct {
+						Revision string `json:"revision"`
+					} `json:"syncResult"`
+					Operation struct {
+						Sync *struct {
+							Revision string `json:"revision"`
+						} `json:"sync"`
+					} `json:"operation"`
+				} `json:"operationState"`
+				Conditions []struct {
+					Type    string `json:"type"`
+					Message string `json:"message"`
+				} `json:"conditions"`
+				Resources []struct {
+					Group           string `json:"group"`
+					Kind            string `json:"kind"`
+					Namespace       string `json:"namespace"`
+					Name            string `json:"name"`
+					Status          string `json:"status"`
+					RequiresPruning bool   `json:"requiresPruning"`
+				} `json:"resources"`
 			} `json:"status"`
 		} `json:"items"`
 	}
@@ -387,7 +427,7 @@ func parseTemplateApps(raw []byte) (map[string]templateAppObserved, error) {
 	}
 	out := make(map[string]templateAppObserved, len(list.Items))
 	for _, it := range list.Items {
-		out[it.Metadata.Name] = templateAppObserved{
+		o := templateAppObserved{
 			Health:         orUnknown(it.Status.Health.Status),
 			Sync:           orUnknown(it.Status.Sync.Status),
 			Revision:       it.Status.Sync.Revision,
@@ -396,8 +436,67 @@ func parseTemplateApps(raw []byte) (map[string]templateAppObserved, error) {
 			TargetRevision: it.Spec.Source.TargetRevision,
 			Resources:      len(it.Status.Resources),
 		}
+		if op := it.Status.OperationState; op != nil {
+			o.OperationPhase, o.OperationMessage = op.Phase, strings.TrimSpace(op.Message)
+			switch {
+			case op.SyncResult != nil && op.SyncResult.Revision != "":
+				o.OperationRevision = op.SyncResult.Revision
+			case op.Operation.Sync != nil:
+				o.OperationRevision = op.Operation.Sync.Revision
+			}
+		}
+		for _, c := range it.Status.Conditions {
+			o.Conditions = append(o.Conditions, c.Type+": "+strings.TrimSpace(c.Message))
+		}
+		for _, r := range it.Status.Resources {
+			if r.Status == "Synced" {
+				continue
+			}
+			label := r.Kind
+			if r.Group != "" {
+				label = r.Group + "/" + r.Kind
+			}
+			name := r.Name
+			if r.Namespace != "" {
+				name = r.Namespace + "/" + r.Name
+			}
+			entry := label + " " + name + " " + orUnknown(r.Status)
+			if r.RequiresPruning {
+				entry += " (requires pruning)"
+			}
+			o.NotSyncedResources = append(o.NotSyncedResources, entry)
+		}
+		sort.Strings(o.NotSyncedResources)
+		out[it.Metadata.Name] = o
 	}
 	return out, nil
+}
+
+// noOperation is what a not-OK row records when ArgoCD reports no sync operation at all, so an
+// absent operation reads as absent rather than as a blank that looks like nothing went wrong.
+const noOperation = "(none — ArgoCD reports no sync operation on this Application)"
+
+// cause is the one-line WHY of a not-converged Application, in ArgoCD's words: the last
+// operation (phase, revision, message), the conditions, and what is not Synced. Empty parts say so.
+func (r templateAppResult) cause() string {
+	op := r.OperationPhase
+	if op != noOperation {
+		if r.OperationRevision != "" {
+			op += " at " + r.OperationRevision
+		}
+		if r.OperationMessage != "" {
+			op += ": " + r.OperationMessage
+		}
+	}
+	conds := "(none)"
+	if len(r.Conditions) > 0 {
+		conds = strings.Join(r.Conditions, "; ")
+	}
+	res := "(none)"
+	if len(r.NotSyncedResources) > 0 {
+		res = strings.Join(r.NotSyncedResources, ", ")
+	}
+	return "operation=" + op + " | conditions=" + conds + " | not synced=" + res
 }
 
 // templateAppResult is one Application's recorded verdict — the unit of the summary.
@@ -419,6 +518,14 @@ type templateAppResult struct {
 	OK             bool   `json:"ok"`
 	Why            string `json:"why,omitempty"`
 	Provenance     string `json:"provenance"`
+	// The cause, recorded on every row that is NOT ok (see templateAppObserved): the last sync
+	// operation, the conditions and the resources that are not Synced. Omitted on a passing row,
+	// where it would be noise.
+	OperationPhase     string   `json:"operation_phase,omitempty"`
+	OperationMessage   string   `json:"operation_message,omitempty"`
+	OperationRevision  string   `json:"operation_revision,omitempty"`
+	Conditions         []string `json:"conditions,omitempty"`
+	NotSyncedResources []string `json:"not_synced_resources,omitempty"`
 }
 
 // sameRepo compares two git URLs the way ArgoCD normalises them (case, a trailing `.git` or `/`).
@@ -492,7 +599,16 @@ func evaluateTemplateApps(expect []templateAppExpect, observed map[string]templa
 		r.OK = len(why) == 0
 		if !r.OK {
 			r.Why = strings.Join(why, "; ")
-			bad = append(bad, fmt.Sprintf("  - %s (%s): %s", e.Application, e.Template, r.Why))
+			line := fmt.Sprintf("  - %s (%s): %s", e.Application, e.Template, r.Why)
+			if ok {
+				r.OperationPhase, r.OperationMessage, r.OperationRevision = o.OperationPhase, o.OperationMessage, o.OperationRevision
+				if r.OperationPhase == "" {
+					r.OperationPhase = noOperation
+				}
+				r.Conditions, r.NotSyncedResources = o.Conditions, o.NotSyncedResources
+				line += "\n      " + r.cause()
+			}
+			bad = append(bad, line)
 		}
 		results = append(results, r)
 	}
