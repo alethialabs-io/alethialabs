@@ -113,6 +113,8 @@ interface ControlEntry {
 	control?: { role?: string; name?: string };
 	confirm?: string;
 	confirm_action?: string;
+	/** The dialog's way out when it is not named Cancel/No/Keep — pressed exactly as Cancel is. */
+	cancel_action?: string;
 	dialog_title?: string;
 	/** For `confirm: undo`: the key chord that takes the action back (`Meta+Z`). */
 	undo?: { shortcut?: string };
@@ -1046,6 +1048,22 @@ let fixtureReport: FixtureSeedReport | null = null;
  * cannot see the page), and replacing the observation with a guess about the cause is the
  * mis-attribution this file's header calls the repo's most expensive recurring defect.
  */
+/**
+ * The id of ANOTHER registry entry driven by the very same trigger — same route, same reach chain,
+ * same control — or null when this entry's trigger is its own.
+ *
+ * Two entries share a trigger when one button opens different confirmations depending on the data
+ * behind it: `env.destroy` and `env.destroy.cascade` are one Destroy button, and which dialog it
+ * opens depends on whether a live environment is placed on the cluster (#5261). For such an entry
+ * a reachable trigger proves nothing about its fixture — the click opens the sibling's dialog — so
+ * an unseedable fixture must withhold it BEFORE the click rather than fail it on the wrong dialog.
+ */
+function sharedTriggerSibling(entry: ControlEntry): string | null {
+	const key = (e: ControlEntry) => JSON.stringify([e.route, e.reach ?? [], e.control ?? {}]);
+	const mine = key(entry);
+	return CONTROLS.find((other) => other.id !== entry.id && key(other) === mine)?.id ?? null;
+}
+
 function withholdWithFixture(entry: ControlEntry, observed: string): void {
 	const fixture = fixtureSeedFailureReason(entry, fixtureReport);
 	withhold(entry, fixture ? `${observed} — ${fixture}` : observed);
@@ -1119,6 +1137,15 @@ for (const entry of CONTROLS) {
 			return;
 		}
 
+		// A trigger shared with another entry opens whichever dialog the DATA selects, so reaching it
+		// says nothing about this entry's fixture. Unseedable means the click would open the
+		// sibling's confirmation — withheld with the fixture's reason, never failed on the wrong one.
+		const sibling = sharedTriggerSibling(entry);
+		if (sibling && entry.fixture && UNSEEDABLE.has(entry.fixture)) {
+			withholdWithFixture(entry, `its trigger is also \`${sibling}\`'s, and which dialog it opens depends on the row its fixture would write`);
+			return;
+		}
+
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 
 		const reachFailure = await walkReach(page, entry);
@@ -1179,7 +1206,13 @@ for (const entry of CONTROLS) {
 				}
 			}
 			// The ONLY button this file ever presses inside a dialog.
-			const cancel = dialog.getByRole("button", { name: /^(cancel|no|keep|nevermind|never mind)\b/i }).first();
+			const cancel = dialog
+				.getByRole("button", {
+					name: entry.cancel_action
+						? new RegExp(`^${escapeRe(entry.cancel_action)}$`, "i")
+						: /^(cancel|no|keep|nevermind|never mind)\b/i,
+				})
+				.first();
 			await expect(cancel, `${entry.id}: a confirmation with no way out is worse than none`).toBeVisible();
 			// Pinned BEFORE the click: `dialog` is a lazy `.first()` over every dialog on the page,
 			// re-resolved on each poll, so after Cancel it can bind to a DIFFERENT dialog.

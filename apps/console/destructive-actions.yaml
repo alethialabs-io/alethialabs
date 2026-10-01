@@ -50,6 +50,9 @@
 #                   presses it), presses Discard, requires the control back, and requires the org's
 #                   rows in `table` byte-identical before the click and after Discard. (#4939)
 #   confirm_action  the destructive button's label — the ONE control the spec never clicks
+#   cancel_action   OPTIONAL — the label of the dialog's way out, when it is not a "Cancel"/"No"/"Keep"
+#                   button (`env.destroy.cascade`'s is "Destroy children first"). The spec presses
+#                   it exactly as it presses Cancel; absent, the default matcher applies.
 #   dialog_title    what the dialog says, so a renamed dialog is a finding rather than a pass
 #   fixture         what the spec must seed for the control to render
 #   persona         owner | team | member
@@ -82,7 +85,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 48 controls — 48 confirmed
+#   census: 49 controls — 49 confirmed
 
 version: 1
 
@@ -188,6 +191,31 @@ controls:
     persona: owner
     status: confirmed
     prod-qa: open-cancel
+
+  # The SAME Destroy button, on an environment that owns a cluster other environments are placed on
+  # (#5261). Clicking it reads `getDestroyTree` first, so the dialog it opens is a different one: it
+  # lists every environment the cascade takes, tenants first and the owner last, and its two buttons
+  # are "Destroy children first" (the way out — it cancels and explains the order) and "Destroy all
+  # <n> environments" (`destroyProject` with `cascade: true`, disabled until the project name is
+  # typed). There is no button named Cancel, so `cancel_action` names the way out for the spec.
+  - id: env.destroy.cascade
+    route: /[org]/[project]/architecture
+    # The trigger is the danger zone's Destroy; the dialog itself is
+    # canvas/cards/destroy-environment-dialog.tsx.
+    surface: apps/console/components/design-project/canvas/cards/env-settings-card.tsx
+    mutation_surface: apps/console/components/design-project/canvas/design-project-canvas.tsx
+    mutation: destroyProject
+    reach: [{ menu: "More" }, { open: "Environment settings" }, { section: "Destroy environment" }]
+    control: { role: button, name: "Destroy" }
+    confirm: confirm-dialog
+    confirm_action: "Destroy all"
+    cancel_action: "Destroy children first"
+    dialog_title: "Destroy <n> environments?"
+    fixture: fabric-owner-with-live-tenant
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: needs a dedicated environment with a live namespace/vcluster environment placed on its cluster, which needs two deployed environments
 
   - id: canvas.discard-staged
     route: /[org]/[project]/architecture

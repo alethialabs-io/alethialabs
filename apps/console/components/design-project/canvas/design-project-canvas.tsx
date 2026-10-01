@@ -11,7 +11,12 @@ import { track } from "@/lib/analytics/track";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { createProject, destroyProject, provisionProject } from "@/app/server/actions/projects";
+import {
+	createProject,
+	destroyProject,
+	getDestroyTree,
+	provisionProject,
+} from "@/app/server/actions/projects";
 import {
 	applyStagedChanges,
 	discardStagedChanges,
@@ -77,6 +82,8 @@ interface DesignProjectCanvasProps {
 	 * Absent in the create flow (Deploy creates a new project instead). */
 	projectId?: string;
 	environmentId?: string;
+	/** Edit mode: the project's name — what a cascading destroy asks the user to type. */
+	projectName?: string;
 	/**
 	 * Inert. The workspace rail renders inside the canvas on every route now; the prop stays only
 	 * because the workbench and the Architecture page still pass it, and both are other lanes'
@@ -108,6 +115,7 @@ function CanvasInner({
 	onToggleForm,
 	projectId,
 	environmentId,
+	projectName,
 	byoHelmEnabled,
 	byoDescribeEnabled,
 	byoIacEnabled,
@@ -177,17 +185,46 @@ function CanvasInner({
 	// documented on the hook.
 	useCardDeepLink(searchParams, openCard);
 
-	/** Edit mode: tear down the active environment (queued from the project card's danger zone). */
-	const handleDestroyEnvironment = useCallback(async () => {
-		if (!projectId) return;
-		try {
-			const activeEnvId = await resolveActiveEnvironmentId(projectId, environmentId);
-			await destroyProject(projectId, activeEnvId);
-			toast.success("Destroy queued");
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : "Failed to destroy");
-		}
+	/**
+	 * Edit mode: read the active environment's destroy tree (#5261). The Environment settings card
+	 * reads it BEFORE it offers to destroy — a production build redacts the server's refusal text, so
+	 * the tenants it names are only ever seen by asking first.
+	 */
+	const loadDestroyTree = useCallback(async () => {
+		if (!projectId) return [];
+		const activeEnvId = await resolveActiveEnvironmentId(projectId, environmentId);
+		const { tree } = await getDestroyTree(projectId, activeEnvId);
+		return tree;
 	}, [projectId, environmentId]);
+
+	/** Edit mode: tear down the active environment — with `cascade`, every tenant on its cluster too. */
+	const handleDestroyEnvironment = useCallback(
+		async ({ cascade }: { cascade: boolean }) => {
+			if (!projectId) return;
+			try {
+				const activeEnvId = await resolveActiveEnvironmentId(projectId, environmentId);
+				const { jobs } = await destroyProject(projectId, activeEnvId, null, { cascade });
+				toast.success(
+					jobs.length > 1 ? `Destroy queued for ${jobs.length} environments` : "Destroy queued",
+				);
+			} catch (e) {
+				toast.error(e instanceof Error ? e.message : "Failed to destroy");
+			}
+		},
+		[projectId, environmentId],
+	);
+
+	const destroyEnvironment = useMemo(
+		() =>
+			projectId
+				? {
+						projectName: projectName ?? null,
+						loadTree: loadDestroyTree,
+						destroy: handleDestroyEnvironment,
+					}
+				: undefined,
+		[projectId, projectName, loadDestroyTree, handleDestroyEnvironment],
+	);
 
 	// BYO chart nodes are out-of-band: load them from getProjectByoCharts into the canvas on mount
 	// (and after attach/detach). Only in edit mode with the feature on.
@@ -589,7 +626,7 @@ function CanvasInner({
 			<SourceReposCard />
 
 			{/* Top-left: the job running now, else the last one — opens the Activity card. */}
-			{projectId && environmentId && <ActivityStatusLine />}
+			{projectId && environmentId && <ActivityStatusLine loadDestroyTree={loadDestroyTree} />}
 
 			{/* Top-right: cost · run a job · add a service. (Ask AI lives in the app shell.) */}
 			<div className="absolute right-3 top-3 z-10 flex items-center gap-2">
@@ -772,7 +809,7 @@ function CanvasInner({
 			<WorkspaceRail
 				projectId={projectId}
 				environmentId={environmentId ?? null}
-				onDestroyEnvironment={projectId ? handleDestroyEnvironment : undefined}
+				destroyEnvironment={destroyEnvironment}
 			/>
 		</div>,
 	);
