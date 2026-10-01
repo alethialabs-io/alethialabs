@@ -152,4 +152,6 @@ The GoReleaser config (`apps/cli/.goreleaser.yml`) produces:
 - Linux packages (`.deb` / `.rpm` / `.apk`) and Docker images (GHCR)
 - the Homebrew formula (`alethialabs-io/tap`) and Scoop manifest (`alethialabs-io/scoop-bucket`), updated automatically
 
-The `ALETHIA_WEB_ORIGIN` build variable is baked into the binary, pointing to the production Alethia URL.
+The binary's default control plane is `https://alethialabs.io`. It is a constant in the source, not a
+build variable. To use another control plane, run `alethia init` or set the `ALETHIA_WEB_ORIGIN`
+environment variable.
