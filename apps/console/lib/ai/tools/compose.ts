@@ -206,6 +206,7 @@ export function composeTools(ctx: CanvasContext | undefined) {
 					{
 						clusterService: meta.clusterService,
 						secretsService: meta.secretsService,
+						provider: ctx.provider,
 					},
 				);
 				return {

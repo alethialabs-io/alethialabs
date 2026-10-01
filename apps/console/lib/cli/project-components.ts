@@ -29,9 +29,16 @@ import {
 	type CursorScope,
 	type PageInfo,
 } from "@/lib/cli/paging";
+import {
+	DEFAULT_INSTANCE_TYPE,
+	type CloudProviderSlug,
+} from "@/lib/cloud-providers/generated/catalog";
+import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import { getServiceDb } from "@/lib/db";
 import { asRecord } from "@/lib/records";
 import {
+	cloudIdentities,
+	projects,
 	projectCaches,
 	projectCluster,
 	projectContainerRegistries,
@@ -784,6 +791,40 @@ function componentScope(
 	return and(scope, eq(cols.environment_id, environmentId)) ?? scope;
 }
 
+/** True when a cluster write names no instance type at all: the key absent, NULL, or `[]`. Each of
+ * those reaches the snapshot as `[]`, i.e. "use the template's default". */
+function hasNoInstanceTypes(value: unknown): boolean {
+	return value == null || (Array.isArray(value) && value.length === 0);
+}
+
+/** The provisioning cloud a new cluster row will run on: its own `cloud_identity_id` when the
+ * caller set one, else the project's (a NULL per-component identity inherits it). `null` when no
+ * identity is linked, the identity is gone, or its cloud has no catalog — the caller must then
+ * leave the row's instance types unset rather than guess. */
+async function clusterProvider(
+	db: ReturnType<typeof getServiceDb>,
+	projectId: string,
+	componentIdentityId: unknown,
+): Promise<CloudProviderSlug | null> {
+	let identityId = typeof componentIdentityId === "string" ? componentIdentityId : null;
+	if (!identityId) {
+		const [project] = await db
+			.select({ cloud_identity_id: projects.cloud_identity_id })
+			.from(projects)
+			.where(eq(projects.id, projectId))
+			.limit(1);
+		identityId = project?.cloud_identity_id ?? null;
+	}
+	if (!identityId) return null;
+	const [identity] = await db
+		.select({ provider: cloudIdentities.provider })
+		.from(cloudIdentities)
+		.where(eq(cloudIdentities.id, identityId))
+		.limit(1);
+	const provider = identity?.provider;
+	return typeof provider === "string" && isCloudProviderSlug(provider) ? provider : null;
+}
+
 /** Inserts a component of `kind` on a project, scoped to `environmentId`. Singletons upsert on the
  * composite `(project_id, environment_id)` — the table's actual unique; multi kinds require a name
  * and conflict (handled by the caller) on `(project_id, environment_id, name)`. Returns the
@@ -836,6 +877,21 @@ export async function insertProjectComponent(
 		} else {
 			delete insertValues.fabric_id;
 		}
+	}
+
+	// A NEW cluster row with no instance types gets the catalog's default node for its cloud (#5251).
+	// Left empty, the snapshot carries `[]` and the template's own default applies — on AWS that is
+	// 2× m5a.4xlarge, ~17× what the console's own create path buys, and a different machine per entry
+	// point. INSERT ONLY: this goes into `insertValues` and never into the ON CONFLICT `set` below,
+	// because `component add` upserts and an existing row the caller is amending must keep exactly
+	// what it has — a NULL there is a deployed cluster's current shape, and back-filling it would
+	// re-shape (replace the node pool of) a running cluster on its next apply.
+	if (def.table === projectCluster && hasNoInstanceTypes(insertValues.instance_types)) {
+		const provider = await clusterProvider(db, projectId, insertValues.cloud_identity_id);
+		// Unknown provider (no linked identity yet, or a cloud with no catalog): leave it NULL and
+		// let the template default apply, exactly as before. Guessing a cloud would stamp another
+		// cloud's SKU on the row.
+		if (provider) insertValues.instance_types = [DEFAULT_INSTANCE_TYPE[provider]];
 	}
 
 	if (def.singleton) {

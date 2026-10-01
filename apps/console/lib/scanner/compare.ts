@@ -63,7 +63,7 @@ export async function compareProviders(
 			const { items, total } = computeCostItems(
 				costInputForProvider(stack, provider),
 				prices,
-				{ clusterService: meta.clusterService, secretsService: meta.secretsService },
+				{ clusterService: meta.clusterService, secretsService: meta.secretsService, provider },
 			);
 			return { provider, region, monthly: Math.round(total), items };
 		}),

@@ -332,7 +332,7 @@ export const CATALOG: Catalog = {
 		],
 		"compute": {
 			"aws": {
-				"default_instance": "t3.medium",
+				"default_instance": "t3.large",
 				"default_k8s_version": "1.35",
 				"k8s_versions": [
 					"1.35",
@@ -584,7 +584,7 @@ export const CATALOG: Catalog = {
 				]
 			},
 			"hetzner": {
-				"default_instance": "cax11",
+				"default_instance": "cpx22",
 				"default_k8s_version": "1.35",
 				"k8s_versions": [
 					"1.35"
@@ -2129,6 +2129,13 @@ export const INSTANCE_TYPES: Record<CloudProviderSlug, InstanceTypeOption[]> = {
 				"vcpu": 4,
 				"memoryGb": 8,
 				"cost": "~€8/mo"
+			},
+			{
+				"value": "cpx22",
+				"label": "CPX22 (x86, AMD)",
+				"vcpu": 2,
+				"memoryGb": 4,
+				"cost": "~€19/mo"
 			}
 		],
 		"alibaba": [
@@ -2241,10 +2248,10 @@ export const AUTOSCALER: Record<CloudProviderSlug, AutoscalerMeta> = {
 
 /** Default instance type per provider (used for new project forms). */
 export const DEFAULT_INSTANCE_TYPE: Record<CloudProviderSlug, string> = {
-		"aws": "t3.medium",
+		"aws": "t3.large",
 		"gcp": "e2-standard-2",
 		"azure": "Standard_D2s_v5",
-		"hetzner": "cax11",
+		"hetzner": "cpx22",
 		"alibaba": "ecs.g6.large"
 	};
 
@@ -2398,28 +2405,32 @@ export const INSTANCE_TYPE_MAP: Record<CloudProviderSlug, Record<CloudProviderSl
 				"cax21": "t3.large",
 				"cax31": "t3.xlarge",
 				"cx23": "t3.medium",
-				"cx33": "t3.large"
+				"cx33": "t3.large",
+				"cpx22": "t3.large"
 			},
 			"gcp": {
 				"cax11": "e2-standard-2",
 				"cax21": "e2-standard-2",
 				"cax31": "e2-standard-4",
 				"cx23": "e2-standard-2",
-				"cx33": "e2-standard-2"
+				"cx33": "e2-standard-2",
+				"cpx22": "e2-standard-2"
 			},
 			"azure": {
 				"cax11": "Standard_D2s_v5",
 				"cax21": "Standard_D4s_v5",
 				"cax31": "Standard_D8s_v5",
 				"cx23": "Standard_D2s_v5",
-				"cx33": "Standard_D4s_v5"
+				"cx33": "Standard_D4s_v5",
+				"cpx22": "Standard_D2s_v5"
 			},
 			"alibaba": {
 				"cax11": "ecs.g6.large",
 				"cax21": "ecs.g6.xlarge",
 				"cax31": "ecs.g6.2xlarge",
 				"cx23": "ecs.g6.large",
-				"cx33": "ecs.g6.xlarge"
+				"cx33": "ecs.g6.xlarge",
+				"cpx22": "ecs.g6.large"
 			}
 		},
 		"alibaba": {
