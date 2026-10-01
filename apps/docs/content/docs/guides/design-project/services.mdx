@@ -94,7 +94,7 @@ Each binding declares any number of injected variables. Each maps an environment
 
 The non-secret facets (`endpoint`, `port`) are written into the manifest as templated values; the credential facets (`username`, `password`, `connection string`) are delivered as a `secretKeyRef` and never written into the manifest.
 
-A binding can also target a [bring-your-own IaC](/guides/design-project/bring-your-own-charts) resource by its Terraform address, in which case the facets resolve against the customer module's declared output names.
+A binding can also target a [bring-your-own IaC](/guides/design-project/bring-your-own-charts) resource by its OpenTofu address, in which case the facets resolve against the customer module's declared output names.
 
 ## Runtime
 

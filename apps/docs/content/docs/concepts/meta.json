@@ -20,7 +20,6 @@
 		"cost-estimation",
 		"---Execution---",
 		"runner",
-		"runner-scaling",
 		"job-queue",
 		"realtime",
 		"isolated-execution",

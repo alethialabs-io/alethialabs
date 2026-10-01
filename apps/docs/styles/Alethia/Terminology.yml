@@ -11,10 +11,11 @@ ignorecase: false
 action:
   name: replace
 swap:
-  # Capital 'K8s' only — the informal abbreviation, always "Kubernetes" in prose.
-  # Lowercase `k8s` is left alone: it's a real identifier (the elench control set /
-  # provider is literally keyed `k8s`, parallel to `aws`/`gcp`).
+  # The informal abbreviation is always "Kubernetes" in prose, in either case. Where
+  # `k8s` is a real identifier (the Elench control set / provider is keyed `k8s`,
+  # parallel to `aws`/`gcp`), it belongs in a code span — which Vale never reads.
   'K8s': Kubernetes
+  'k8s': Kubernetes
   'Argo CD': ArgoCD
   'Open Tofu': OpenTofu
   'Github': GitHub

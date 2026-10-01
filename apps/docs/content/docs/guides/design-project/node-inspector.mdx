@@ -53,7 +53,7 @@ no per-node cloud selector.
 Under the header, a strip shows the resource's **resolved status** — a grayscale dot and a mono label —
 followed by the most actionable line for that state (a config issue, a failure message, or a probe
 reason). If the real cloud has diverged from what Alethia recorded, a `N drifted` chip rides alongside
-the state; hover it to see the Terraform addresses that diverged.
+the state; hover it to see the OpenTofu addresses that diverged.
 
 Status merges the design's readiness with the environment's server truth, and picks one state to show.
 See [The canvas → Status without colour](/guides/design-project/the-canvas) for the full vocabulary and
@@ -70,7 +70,7 @@ The **Overview** tab is a read-only summary of the selected resource:
 | **Endpoints** | What the deploy produced (for example a database hostname or ArgoCD URL), each with a copy button |
 | **Cost** | The resource's estimated monthly cost from the last plan |
 | **Recent activity** | The environment's latest jobs, condensed to the most recent few |
-| **Drift** | Each drifted Terraform address, listed on its own |
+| **Drift** | Each drifted OpenTofu address, listed on its own |
 | **Configuration** | The resource's scalar configuration values |
 
 Sections that have nothing to show are omitted — Endpoints appears only once the resource is deployed,
@@ -78,11 +78,11 @@ and Cost appears only once the resource has been priced.
 
 ## Break down cost by resource (Cost)
 
-The **Cost** tab shows the resource's monthly spend, itemised by Terraform address.
+The **Cost** tab shows the resource's monthly spend, itemised by OpenTofu address.
 
 1. Open the **Cost** tab.
 2. Read the **Monthly** rollup at the top.
-3. Read the **Breakdown** — one line per Terraform address, sorted from most to least expensive.
+3. Read the **Breakdown** — one line per OpenTofu address, sorted from most to least expensive.
 
 The rollup and the per-line detail both come from the last plan's Infracost breakdown, and the tab
 notes when that plan ran.

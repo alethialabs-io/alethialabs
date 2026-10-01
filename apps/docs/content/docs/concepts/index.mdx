@@ -66,20 +66,20 @@ Deep dives into the platform's key technical patterns:
   <Card title="Database Schema" href="https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/database-schema.md">
     Full PostgreSQL schema — tables, enums, functions, LISTEN/NOTIFY.
   </Card>
-  <Card title="Job Queue Pattern" href="/concepts/job-queue">
+  <Card title="Job queue" href="/concepts/job-queue">
     Atomic claiming, FOR UPDATE SKIP LOCKED, failure recovery.
   </Card>
-  <Card title="Runner Scaling" href="/concepts/runner-scaling">
-    The in-app scaler sizing per-provider warm pools on Hetzner VMs by queue depth.
+  <Card title="Warm-pool scaling" href="/concepts/runner/scaling">
+    The in-app scaler keeping a warm floor of runners per provider and lifting it by queue depth.
   </Card>
   <Card title="Cloud Provider Abstraction" href="/concepts/cloud-abstraction">
     Registry, region mapping, instance types, provider_config JSONB.
   </Card>
   <Card title="Provisioning Pipeline" href="/concepts/provisioning-pipeline">
-    Form values → config snapshot → ProjectConfig → terraform.tfvars.json → infrastructure.
+    Form values → config snapshot → ProjectConfig → `terraform.tfvars.json` → infrastructure.
   </Card>
-  <Card title="Real-time Architecture" href="/concepts/realtime">
-    LISTEN/NOTIFY → SSE, log streaming, store synchronization.
+  <Card title="Real-time updates" href="/concepts/realtime">
+    LISTEN/NOTIFY → SSE for job logs and support threads; polling for everything else.
   </Card>
   <Card title="Cost Estimation" href="/concepts/cost-estimation">
     AWS Pricing API, real-time sidebar, Infracost integration.
@@ -96,7 +96,7 @@ Deep dives into the platform's key technical patterns:
   <Card title="GitOps & ArgoCD" href="/concepts/gitops-argocd">
     App of Apps pattern, infra facts, Helm values.
   </Card>
-  <Card title="Bring Your Own IaC" href="/concepts/bring-your-own-iac">
+  <Card title="Bring-your-own IaC" href="/concepts/bring-your-own-iac">
     Provision from your own OpenTofu module — safety gate, variable contract, operator model.
   </Card>
   <Card title="Release System" href="https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/release-system.md">

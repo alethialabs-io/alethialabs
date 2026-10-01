@@ -180,7 +180,8 @@ pipeline that gates on it — use `alethia project plan` below.
 ## The `project` job commands
 
 These `project` subcommands queue infrastructure operations that [Runners](/concepts/runner) execute. They
-implement the Plan-Review-Apply workflow from the terminal, one environment at a time.
+implement the Plan-Review-Apply workflow from the terminal, one environment at a time. The same
+workflow in the console is [Plan and apply in the console](/guides/jobs/plan-and-apply).
 
 ## `alethia project plan`
 
@@ -227,7 +228,7 @@ alethia project apply --project boutique --env prod --latest-plan --wait   # scr
 
 Either flag makes the apply use the exact plan you reviewed. If the project's configuration
 changed since that plan was generated, the job fails with a
-[config hash mismatch](/guides/jobs/plan-and-apply).
+[config hash mismatch](/guides/jobs/plan-and-apply#config-hash-validation).
 
 `--latest-plan` resolves that plan from the project itself, so no id moves between two commands:
 plan, review, then apply. It prints the job it chose before it queues anything. It resolves `PLAN`
@@ -247,13 +248,8 @@ another project's plan. Write it as
 `alethia jobs get --latest --project boutique --type PLAN`, as
 [Scripting Examples](#scripting-examples) does.
 
-<Callout type="info">
-A DEPLOY job is `tofu plan` → **[verify](/reference/glossary) gate** → `tofu apply` → ArgoCD scaffold.
-The verify gate is **fail-closed**: a hard control failure blocks *before* `tofu apply` unless an
-authorized override waives it. The report is attached to the job's `execution_metadata` and rendered
-in the console Plan tab — inspect it with
-`alethia jobs logs --latest --project boutique --type DEPLOY --follow`.
-</Callout>
+A DEPLOY job runs the fail-closed [verify gate](/guides/jobs/plan-and-apply#verify-gate) before
+`tofu apply`. Follow it with `alethia jobs logs --latest --project boutique --type DEPLOY --follow`.
 
 ## `alethia project destroy`
 
@@ -275,7 +271,8 @@ alethia project destroy --project boutique --env prod --cascade --wait   # prod 
 | `--cascade` | No | Also destroy every environment placed on this environment's cluster, those environments first. Prints the full list, in order, and confirms before it queues anything. |
 | `-w`, `--wait` | No | Block until the job completes. With `--cascade`, until every job completes. |
 
-Queues a DESTROY job. The Runner runs `tofu destroy` to tear down all resources. OpenTofu state is preserved (it lives behind the Console state proxy, not on the Runner), so accidental destroys can be recovered by re-applying.
+Queues a DESTROY job. The Runner runs `tofu destroy` to tear down all resources — see the console
+guide's [destroy workflow](/guides/jobs/plan-and-apply#destroy-workflow) for what is kept and what is lost.
 
 ### Destroying an environment that other environments run on
 

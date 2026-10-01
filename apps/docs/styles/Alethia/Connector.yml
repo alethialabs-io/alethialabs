@@ -1,0 +1,16 @@
+extends: substitution
+message: "Use '%s' instead of '%s' — the console calls the provider catalog 'Connectors'."
+link: https://github.com/alethialabs-io/alethialabs/blob/dev/apps/docs/content/docs/reference/glossary.mdx
+# The console's navigation and page title name the catalog of provider types "Connectors"
+# (apps/console/components/shell/nav-config.ts), and the glossary defines "connector" as the
+# catalog type. Only phrases that can mean nothing else are matched: bare "integration" is a
+# third-party term the console itself uses (a PagerDuty integration key, Discord → Integrations),
+# so it is never flagged.
+level: error
+ignorecase: true
+action:
+  name: replace
+swap:
+  'provider integrations': provider connectors
+  'provider integration': provider connector
+  'integrations page': Connectors page

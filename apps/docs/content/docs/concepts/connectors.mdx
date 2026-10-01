@@ -1,11 +1,13 @@
 ---
-title: Connectors Architecture
+title: Connectors architecture
 description: How pluggable per-category connectors are declared, stored, and composed into a provision.
 ---
 
-# Connectors Architecture
+# Connectors architecture
 
-Connectors decouple **what** a Project needs (a DNS zone, secrets, a registry, observability) from **who** provides it. Cloud (AWS/GCP/Azure) and Git (GitHub/GitLab/Bitbucket) connectors are first-class; the **pluggable per-category** connectors — Cloudflare, Vault, Docker Hub, Datadog, Grafana Cloud — are added by registration, not by editing call sites.
+Connectors decouple **what** a Project needs (a DNS zone, secrets, a registry, observability) from **who** provides it. A **connector** is a provider *type* in the catalog; an account you actually connect to a cloud is a **cloud identity** (see the [glossary](/reference/glossary#connectivity)). Cloud and Git connectors are first-class; the **pluggable per-category** connectors are added by registration, not by editing call sites.
+
+This page explains how the catalog is built and how credentials flow. To connect an account, read its status, or disconnect it, see [Connectors](/guides/connectors).
 
 ## Single source of truth
 
@@ -23,14 +25,14 @@ Each provider impl exposes a small interface: `Category()`, `Slug()`, `ModulePat
 
 ## Credential storage
 
-API-key credentials live in the `connector_credentials` table, owner/org-scoped under the same RLS as everything else. Secret fields are encrypted at rest with AES-256-GCM (`ALETHIA_CRED_ENCRYPTION_KEY`); non-secret fields (a Vault address, a Docker Hub username) are stored in clear. A lightweight verification ping marks a credential verified.
+API-key credentials live in the `connector_credentials` table, owner/org-scoped under the same RLS as everything else. Secret fields are encrypted at rest with AES-256-GCM (`ALETHIA_CRED_ENCRYPTION_KEY`); non-secret fields (a Vault address, a Docker Hub username) are stored in clear.
 
 ## Runtime credential flow
 
 The zero-credential model is preserved end to end:
 
 1. A Project's `config_snapshot` carries only **identifiers** — including each component's chosen provider slug — never secrets.
-2. When a runner **claims** a job, the claim endpoint resolves the connectors the Project references, decrypts their credentials, and attaches them to the claim response (alongside the cloud identity).
+2. When a runner **claims** a job, the claim endpoint (`app/api/jobs/claim/route.ts`) resolves the connectors the Project references, decrypts their credentials **in the console**, and attaches the plaintext to the claim response (alongside the cloud identity). The runner never holds the encryption key.
 3. The runner injects them into OpenTofu variables **in memory** at provision time.
 
 ## Module composition

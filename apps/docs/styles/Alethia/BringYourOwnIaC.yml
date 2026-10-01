@@ -1,0 +1,23 @@
+extends: existence
+message: "Write 'bring-your-own IaC' (or 'BYO IaC'), not '%s'."
+link: https://github.com/alethialabs-io/alethialabs/blob/dev/.claude/skills/alethia-docs/SKILL.md
+# Error-level: the feature has two accepted written forms — "bring-your-own IaC" (sentence case:
+# "Bring-your-own IaC" only at the start of a sentence, heading or title) and the short "BYO IaC".
+# The console's menu label "Bring your own IaC" (no hyphens, capital B) is also allowed, because
+# docs quote it verbatim as the thing to click. Everything below is a drifted variant.
+level: error
+ignorecase: false
+nonword: true
+tokens:
+  # Title case, hyphenated or not.
+  - '\bBring[ -]Your[ -]Own[ -]IaC\b'
+  # Hyphen joined onto IaC, or IaC miscased.
+  - '\b[Bb]ring-your-own-IaC\b'
+  - '\b[Bb]ring[ -]your[ -]own (?:IAC|iac|Iac)\b'
+  # The short form is two words with "BYO" upper case and "IaC" in its own case.
+  - '\bBYO-IaC\b'
+  - '\b(?:BYO|Byo|byo)[ -](?:IAC|iac|Iac)\b'
+  - '\b(?:Byo|byo)[ -]IaC\b'
+  - '\bBYOIaC\b'
+  # The hyphenated sentence-case form, mid-sentence (after a lowercase word or a comma).
+  - '(?<=[a-z,;:]\s+)Bring-your-own IaC\b'

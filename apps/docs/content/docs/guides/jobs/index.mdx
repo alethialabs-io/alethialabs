@@ -5,7 +5,7 @@ description: Job list page with status and type filtering, search, and real-time
 
 # Jobs
 
-Every infrastructure operation is modeled as a **job**. The Jobs page shows all jobs with filtering, search, and real-time status updates. For the technical deep dive on how jobs are queued and claimed, see [Job Queue Pattern](/concepts/job-queue).
+Every infrastructure operation is modeled as a **job**. The Jobs page shows all jobs with filtering, search, and real-time status updates. For the technical deep dive on how jobs are queued and claimed, see [Job queue](/concepts/job-queue).
 
 ## Job List Page
 
@@ -38,7 +38,7 @@ Click any row to navigate to the [job detail page](/guides/jobs/job-detail).
 
 ### Live Updates
 
-The list stays current through TanStack Query polling: it refetches every 5 seconds while any visible job is in-flight (QUEUED, CLAIMED, or PROCESSING) and every 30 seconds otherwise, so new rows and status changes appear without a page refresh. (Per-job log streaming on the detail page uses a Postgres LISTEN/NOTIFY → SSE subscription — see [Real-time Architecture](/concepts/realtime).)
+The list stays current through TanStack Query polling: it refetches every 5 seconds while any visible job is in-flight (QUEUED, CLAIMED, or PROCESSING) and every 30 seconds otherwise, so new rows and status changes appear without a page refresh. (Per-job log streaming on the detail page uses a Postgres LISTEN/NOTIFY → SSE subscription — see [Real-time updates](/concepts/realtime).)
 
 ## Runner Select Popover
 

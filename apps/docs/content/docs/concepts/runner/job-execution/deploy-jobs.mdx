@@ -26,17 +26,19 @@ control is failing.
 ### Mint cloud credentials
 Same keyless per-job minting as PLAN jobs. See [Cloud Credentials](/concepts/runner/cloud-credentials).
 
-### Download plan artifact
-Fetches the binary `plan.tfplan` from the PLAN job (`GET /api/jobs/{planJobId}/plan-artifact`) into
-the job workdir. If it can't be fetched, the runner re-plans.
-
-### Validate config hash
-Compares the environment's current `configuration_hash` against the plan job's. If they differ (the
-project was edited after planning), the job fails:
+### Validate against the plan job
+Fetches the bound PLAN job and fails unless it finished `SUCCESS`. When both jobs carry a
+`configuration_hash` and the two differ (the project was edited after planning), the job fails:
 
 > "configuration changed since plan was generated"
 
-This prevents applying a stale plan. See [Plan & Apply](/guides/jobs/plan-and-apply).
+Only jobs queued through the jobs API (`POST /api/jobs`, which the CLI uses) carry the hash; a
+console-queued job relies on the saved artifact below. See
+[Config hash validation](/guides/jobs/plan-and-apply#config-hash-validation).
+
+### Download plan artifact
+Fetches the binary plan from the PLAN job (`GET /api/jobs/{planJobId}/plan-artifact`) into the job
+workdir and applies it. If it can't be fetched, the runner re-plans.
 
 ### tofu init
 Initializes against the Console HTTP state proxy (`backend "http"`, per-job `TF_HTTP_PASSWORD`) —

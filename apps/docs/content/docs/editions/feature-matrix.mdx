@@ -71,6 +71,22 @@ Everything here is **open-source** — the authorization model is the same in bo
   [OpenFGA operator guide](/concepts/access-control/openfga).
 </Callout>
 
+## Operations
+
+| Capability | Community | Enterprise |
+|---|:--:|:--:|
+| **Alerting** — alert policies, channels, delivery log | — | ✅ |
+| **Advanced alerting** — security/governance rules from Activity events | — | ✅ |
+| **Bring-your-own runners** — deploy into your cloud or register your own | — | ✅ |
+| **Managed warm-pool fleet** operations | — | ✅ |
+
+<Callout type="info">
+  On the hosted service, entitlements follow each organization's billing plan
+  (`apps/console/lib/billing/plan.ts`). The **Team** plan sits between the two columns: it unlocks
+  multi-member organizations, alerting and bring-your-own runners, but not teams, custom roles,
+  Activity export, advanced alerting, SSO or managed pools.
+</Callout>
+
 ## How the line is drawn
 
 Community is a **complete single-tenant product**: roles, grants, hierarchy, deny, the PDP, RLS, and the Activity

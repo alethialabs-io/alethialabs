@@ -56,7 +56,7 @@ Click **Add runner** to open a sheet that chooses between two paths — **Deploy
 
     **This path is AWS only.** The account picker lists verified AWS identities alone, because `infra/templates/runner/` holds one template. A deploy into GCP, Azure, Alibaba Cloud or Hetzner is refused when you queue it — in this form and in `alethia runner deploy`. Use **Register your own** for those clouds; a registered Runner provisions every cloud Alethia supports, wherever it runs.
 
-    Deployed Runners support [scale-to-zero](/concepts/runner/scaling) — they shut down when no jobs are queued and restart automatically when needed.
+    A deployed Runner is one always-on ECS Fargate task (`desired_count = 1` in `infra/templates/runner/aws/main.tf`); it does not scale with the queue. Only the managed fleet scales — see [Warm-pool scaling](/concepts/runner/scaling).
   </Tab>
   <Tab value="Register (Self · Registered)">
     For bringing your own Runner — your own IaC (OpenTofu/Terraform), or just `alethia runner start` — on infrastructure you control, on **any** cloud. This creates a `self`-operated, `registered` runner:

@@ -15,7 +15,7 @@ console says it passed" into something you can verify independently, later, with
 Each receipt is bound to the exact change it describes:
 
 - **`plan_sha256`** — the hash of the exact OpenTofu plan that was applied.
-- **verdict** — the elench gate's decision (`pass` / `warn` / `fail` / `not_evaluable`).
+- **verdict** — the Elench gate's decision (`pass` / `warn` / `fail` / `not_evaluable`).
 - **catalog version** — which control catalog produced the verdict (an old receipt is only meaningful
   against the catalog that generated it).
 - the full per-control report, the provider, OpenTofu version, the runner, and the evaluation time.
