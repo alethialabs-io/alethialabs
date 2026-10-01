@@ -13,7 +13,7 @@ alethia is the command-line interface for the platform. It provides terminal-bas
 |----------|-------|
 | Language | Go |
 | Framework | [Cobra](https://github.com/spf13/cobra) (commands) + [Charmbracelet](https://charm.sh/) (TUI) |
-| Version | Managed by release-please (`alethia-v*` tags) |
+| Version | Managed by release-please (`cli-v*` tags) |
 | Distribution | Homebrew · Scoop · install script (get.alethialabs.io) · .deb/.rpm/.apk · Docker · GitHub Releases (macOS/Linux/Windows, amd64/arm64) |
 
 ## How It Works
@@ -30,7 +30,7 @@ alethia is a **thin client** that communicates with the Alethia API over HTTPS. 
 
 <Cards>
   <Card title="Connector Commands" href="/reference/cli/connector">
-    Connect AWS, GCP, and Azure cloud accounts.
+    Connect AWS, GCP, Azure, Hetzner, and Alibaba Cloud accounts.
   </Card>
   <Card title="Project Commands" href="/reference/cli/project">
     List and inspect infrastructure configurations.
@@ -80,31 +80,31 @@ See [Identity & Global Options](/reference/cli/identity) for details.
 
 ## Quick Start
 
+The recommended path declares the project in an `alethia.yaml` file and applies it.
+
 ```bash
 # Install
 brew install alethialabs-io/tap/alethia
 
-# Point at your control plane and authenticate
-export ALETHIA_WEB_ORIGIN=https://app.alethialabs.io
+# Sign in. The default control plane is https://alethialabs.io
 alethia login
 
-# Confirm who you are and pick an active org
-alethia whoami
-alethia org switch
-
-# Connect a cloud account (AWS, GCP, or Azure)
+# Connect a cloud account: aws, gcp, azure, hetzner, or alibaba
 alethia connector gcp --project my-gcp-project
 
-# Create a project, or name one you already have
-alethia project create boutique
+# Write ./alethia.yaml for a project named boutique
+alethia init --project boutique
 
-# Plan infrastructure — --project takes the NAME
-alethia project plan --project boutique --wait
-
-# Or queue it and follow the logs of the job you just started
-alethia project plan --project boutique
-alethia jobs logs --latest --follow
-
-# Deploy
-alethia project apply --project boutique --wait
+# Create what the file declares, show the plan, and deploy every environment
+alethia apply
 ```
+
+On a terminal, `alethia init` shows a form for the values you do not pass as flags. It skips
+the sign-in when this machine is already signed in. `alethia apply` shows the plan and asks
+before it deploys. Pass `--yes` to skip the question.
+
+`alethia up` runs the same first run in one command. It skips each step that is already done.
+It cannot connect a cloud account for you, so it stops and names the `alethia connector`
+command when none is connected.
+
+See [`alethia init`](/reference/cli/init) and [Plan & Apply](/reference/cli/plan-and-apply) for every flag.
