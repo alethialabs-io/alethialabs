@@ -256,13 +256,16 @@ func TestAssertNoSecrets_MalformedEntries(t *testing.T) {
 // (#1389) cross, and nothing else ALETHIA_-prefixed does.
 func TestBuildChildEnv_StageSecretRail(t *testing.T) {
 	parent := []string{
-		`ALETHIA_STAGE_ADDON_SECRETS={"addon-1":{"apiKey":"plain"}}`,
-		"ALETHIA_STAGE_TALOS_CONFIG=talos-yaml",
-		"ALETHIA_STAGE_NOT_A_REAL_KEY=nope",
 		"ALETHIA_RECEIPT_SIGNING_KEY=priv",
 		"PATH=/usr/bin",
 	}
-	child := buildChildEnv(parent, "/work/job-1")
+	secrets := map[string]string{
+		EnvAddonSecrets:                `{"addon-1":{"apiKey":"plain"}}`,
+		EnvTalosConfig:                 "talos-yaml",
+		"ALETHIA_STAGE_NOT_A_REAL_KEY": "nope",
+		"ALETHIA_RECEIPT_SIGNING_KEY":  "smuggled",
+	}
+	child := buildChildEnv(parent, "/work/job-1", secrets)
 	if err := assertNoSecrets(child); err != nil {
 		t.Fatalf("assertNoSecrets on buildChildEnv output: %v", err)
 	}
@@ -589,16 +592,18 @@ func TestBuildArgsKeepsSecretValuesOffArgv(t *testing.T) {
 	parent := []string{
 		"PATH=/usr/bin",
 		"TF_HTTP_USERNAME=job-user",
-		"TF_HTTP_PASSWORD=STATE-TOKEN-CANARY",
 		"HCLOUD_TOKEN=HCLOUD-CANARY",
 		"DIGITALOCEAN_ACCESS_TOKEN=DO-CANARY",
 		"CIVO_TOKEN=CIVO-CANARY",
-		"ALETHIA_STAGE_GIT_TOKEN=GHP-CANARY",
-		"ALETHIA_STAGE_GIT_TOKENS=GHP-MAP-CANARY",
-		`ALETHIA_STAGE_ADDON_SECRETS={"a":{"k":"ADDON-PLAINTEXT-CANARY"}}`,
-		"ALETHIA_STAGE_TALOS_CONFIG=TALOS-ADMIN-CANARY",
 	}
-	childEnv := buildChildEnv(parent, workDir)
+	secrets := map[string]string{
+		EnvStateToken:   "STATE-TOKEN-CANARY",
+		EnvGitToken:     "GHP-CANARY",
+		EnvGitTokens:    "GHP-MAP-CANARY",
+		EnvAddonSecrets: `{"a":{"k":"ADDON-PLAINTEXT-CANARY"}}`,
+		EnvTalosConfig:  "TALOS-ADMIN-CANARY",
+	}
+	childEnv := buildChildEnv(parent, workDir, secrets)
 	c := Container{Runtime: "docker", Image: "img", Operator: "self"}
 	args := c.buildArgs(Spec{Kind: "deploy", JobID: "j", WorkDir: workDir}, childEnv)
 	joined := strings.Join(args, " ")

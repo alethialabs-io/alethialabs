@@ -14,6 +14,13 @@
 #
 # Usage: scripts/e2e/commit-proof.sh <run_id> <cloud>
 #
+# A `templates` row (#4113) additionally splits the bundle's templates-summary.json into ONE proof
+# directory PER STARTER TEMPLATE — demos/proofs/templates/{apps,chart,ai}/<stamp>/ — each holding that
+# template's own verdict, commit and Applications, beside a copy of the run's provision-summary.json
+# and VERDICT.txt and a pointer to the full run bundle. A template is filed only when its OWN verdict
+# is PASS: a template the run proved is evidence even on a run a later phase failed, and one it did
+# not prove is never filed as if it had been.
+#
 # Run it once PER CLOUD of a multi-cloud nightly: each call commits that leg's bundle, carries its
 # post-teardown verification receipt into it when the run has one, and appends that leg's row.
 #
@@ -166,8 +173,45 @@ if [ -n "$integrity_reason" ]; then
   esac
 fi
 
+# ── STARTER TEMPLATES (#4113): decide every per-template directory BEFORE writing anything, so a
+#    refusal leaves the tree exactly as it was. ──
+templates_root="$root/demos/proofs/templates"
+templates_pass=()
+if [ "$dimension" = "templates" ]; then
+  tsum="$src/templates-summary.json"
+  [ -f "$tsum" ] || {
+    echo "commit-proof: a templates row, but the bundle carries no templates-summary.json — nothing to file per template" >&2
+    exit 1
+  }
+  for t in apps chart ai; do
+    v="$(jq -r --arg t "$t" '[.templates[]? | select(.template == $t)][0].verdict // "ABSENT"' "$tsum")"
+    if [ "$v" = "PASS" ]; then
+      [ ! -e "$templates_root/$t/$stamp" ] || {
+        echo "commit-proof: demos/proofs/templates/$t/$stamp already exists — refusing to overwrite a committed template proof" >&2
+        exit 1
+      }
+      templates_pass+=("$t")
+    else
+      echo "commit-proof: template '$t' is $v in this run — NOT filed under demos/proofs/templates/$t/" >&2
+    fi
+  done
+fi
+
 mkdir -p "$dest/$stamp"
 cp -R "$src"/. "$dest/$stamp"/
+
+for t in "${templates_pass[@]+"${templates_pass[@]}"}"; do
+  tdir="$templates_root/$t/$stamp"
+  mkdir -p "$tdir"
+  jq --arg t "$t" --arg run "demos/proofs/${cloud}/${stamp}" \
+    '{issue, provider, cluster, run_bundle: $run, run_verdict: .verdict}
+     + ([.templates[] | select(.template == $t)][0])' \
+    "$src/templates-summary.json" >"$tdir/template-summary.json"
+  cp "$src/provision-summary.json" "$tdir/provision-summary.json"
+  [ -f "$src/VERDICT.txt" ] && cp "$src/VERDICT.txt" "$tdir/VERDICT.txt"
+  printf 'The full run bundle this template proof was split from: demos/proofs/%s/%s\n' "$cloud" "$stamp" >"$tdir/RUN-BUNDLE.txt"
+  echo "commit-proof: filed demos/proofs/templates/$t/$stamp ($(jq -r '"\(.commit[0:12]) · \(.applications | length) Application(s)"' "$tdir/template-summary.json"))"
+done
 
 # ── TEARDOWN EVIDENCE. The post-teardown verification receipt (#4398) is a SEPARATE artifact, and
 #    like every artifact it expires in 30 days. Carried verbatim into the bundle it becomes the only

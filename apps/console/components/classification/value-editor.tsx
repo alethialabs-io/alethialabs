@@ -56,6 +56,9 @@ export function ValueEditor({
 	const enforceLabelId = useId();
 	const approvalLabelId = useId();
 	const verifyLabelId = useId();
+	const labelFieldId = useId();
+	const slugFieldId = useId();
+	const minApprovalsId = useId();
 	const form = useForm<ValueInput>({
 		resolver: zodResolver(valueInputSchema),
 		defaultValues: {
@@ -124,8 +127,11 @@ export function ValueEditor({
 				<form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
 					<div className="flex gap-3">
 						<div className="flex-1">
-							<label className="mb-1.5 block text-xs font-medium">Label</label>
+							<label htmlFor={labelFieldId} className="mb-1.5 block text-xs font-medium">
+								Label
+							</label>
 							<Input
+								id={labelFieldId}
 								autoFocus
 								placeholder="Production"
 								{...form.register("label")}
@@ -138,8 +144,11 @@ export function ValueEditor({
 							/>
 						</div>
 						<div className="flex-1">
-							<label className="mb-1.5 block text-xs font-medium">Slug</label>
+							<label htmlFor={slugFieldId} className="mb-1.5 block text-xs font-medium">
+								Slug
+							</label>
 							<Input
+								id={slugFieldId}
 								placeholder="prod"
 								className="font-mono text-xs"
 								{...form.register("value")}
@@ -210,8 +219,11 @@ export function ValueEditor({
 								</div>
 								{enforcement.require_approval && (
 									<div className="flex items-center justify-between gap-4">
-										<div className="text-ui-sm">Minimum approvals</div>
+										<label htmlFor={minApprovalsId} className="text-ui-sm">
+											Minimum approvals
+										</label>
 										<Input
+											id={minApprovalsId}
 											type="number"
 											min={1}
 											max={10}

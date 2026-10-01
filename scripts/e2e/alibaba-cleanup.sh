@@ -63,6 +63,10 @@ set -euo pipefail
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"
+# The sweep-handle KEY (project-id or e2e-run) and how a discovered resource is attributed to one
+# (#5096). Read its header before touching any preflight discovery below.
+# shellcheck source-path=SCRIPTDIR source=lib/scope-key.sh
+. "${E2E_LIB_DIR}/scope-key.sh"
 probe_reset
 
 # ── `--self-test` exercises the three-state probe contract against a stubbed `aliyun` and exits.
@@ -148,7 +152,14 @@ for bin in aliyun jq; do
 	fi
 done
 
-TAGK="alethia:project-id"          # the Alibaba sweep-handle key (alibabaTagStyle: colon-namespaced)
+# ── The KEY half of the scope (#5096): `alethia:project-id` unless ALETHIA_E2E_SCOPE_KEY says
+#    `e2e-run`; anything else is refused (scripts/e2e/lib/scope-key.sh). Honoured here so the variable
+#    means the same thing to all five sweepers. PREFLIGHT discovery on this cloud deliberately stays
+#    on project-id alone: the only stack that lacks an `e2e-` project-id is a CLI-created one, and
+#    the cli-demo dimension excludes alibaba by maintainer ruling (#4227) — so an e2e-run scan here
+#    would be code with no stack to find. Add it with the dimension, mirroring aws-cleanup.sh. ──
+SCOPE_KEY="$(e2e_scope_key)" || exit 2
+TAGK="alethia:${SCOPE_KEY}"        # the Alibaba sweep-handle key (alibabaTagStyle: colon-namespaced)
 PROJECT_ID_TAG="e2e-${ENV}"        # its unique per-run value (config.ID = e2e-<env>)
 CLUSTER_NAME=""                    # the ACK cluster name (<project>-<env>); may be derived below
 CLUSTER_ID=""                      # the ACK cluster id — the secondary (out-of-band) scope

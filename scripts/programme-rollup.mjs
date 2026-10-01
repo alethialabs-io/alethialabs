@@ -226,8 +226,23 @@ const DIMENSIONS = [
 	// `composedByFull: false`, mirroring FULL_EXCLUDES: `full` re-drives the same spine through a
 	// seeded job row, so composing it in would buy a second cluster plus a console build per bar and
 	// red three cells on a CLI defect. A full-bar PASS must never credit this.
+	// #4113: the three PUBLIC starter templates, each deployed once through the path the docs tell a
+	// user to follow. HETZNER-ONLY BY DESIGN — `clouds` mirrors `dimension_providers` in
+	// scripts/e2e/resolve-dimension.sh, and the self-test holds the two together. A cloud outside
+	// `clouds` renders `ceiling` ("—"), never `never_run`: the workflow refuses that dispatch before
+	// anything is built, so there is no run anyone could make to move it, and listing it as the
+	// cheapest next thing to prove would send someone to a door that is locked on purpose.
+	//
+	// `composedByFull: false`, mirroring FULL_EXCLUDES: this dimension owns the apps-destination slot
+	// `full`'s A0.6 repos also fill.
+	{ id: "templates", label: "Starter templates", gate: "ALETHIA_E2E_TEMPLATES", gates: [{ name: "ALETHIA_E2E_TEMPLATES", kind: "derived" }], composedByFull: false, reachedAt: "argocd-installed", clouds: ["hetzner"], cloudsWhy: "proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud", what: "alethia-starter-apps, -chart and -ai each converge at their template commit through the documented path, on one cluster" },
 	{ id: "cli-demo", label: "CLI-driven", gate: "ALETHIA_E2E_CLI_DEMO_PROVISION", gates: [{ name: "ALETHIA_E2E_CLI_DEMO_PROVISION", kind: "derived" }], composedByFull: false, what: "a floor-shaped cluster provisioned through the real `alethia` binary rather than a seeded job row — the ACTOR, not the surface area" },
 ];
+/** Whether `d` can run on `cloud` at all — false only for a dimension that declares `clouds`. */
+export function dimensionRunsOn(d, cloud) {
+	return !Array.isArray(d.clouds) || d.clouds.includes(cloud);
+}
+
 // The composite dimension. A PASS here is evidence for every dimension the full bar ACTUALLY
 // EXERCISES — which is not the same as every dimension in DIMENSIONS, and the difference is
 // load-bearing. `full` (scripts/e2e/resolve-dimension.sh) exports SOAK + MAX_CONFIG + ALL_ADDONS
@@ -479,6 +494,22 @@ export function canonicalDimension(token) {
 export const COMPOSITE_RED_DIMENSION = "full-bar";
 
 /**
+ * Red labels that name a SCENARIO riding a run rather than a dimension, and so contest NO grid cell.
+ *
+ * `fabric-demo` is emitted by `red_label()` in scripts/e2e/resolve-dimension.sh when the fabric demo
+ * (#845) rode the run (#5153). Run 36648775773 was a floor night that went red only in the fabric
+ * gate, with every floor assertion passing, and was titled "(floor)" — which contested a proven
+ * gcp/floor cell over a failure the floor never had. Known-with-no-cells is the honest answer: the
+ * label is recognised (so it is not reported as vocabulary drift) and it moves no cell.
+ *
+ * The three RIDER labels and `riders` join it for the same reason: `keyless-db`, `xacct-secrets` and
+ * `xacct-registry` are what `red_label()` titles a red with when that rider rode the run, and
+ * `riders` when two or more scenarios did. The first keyless-db dispatch filed three floor-only-in-
+ * name reds (#5201/#5204/#5205) that contested aws, gcp and azure floor cells the floor never failed.
+ */
+export const SCENARIO_RED_LABELS = ["fabric-demo", "keyless-db", "xacct-secrets", "xacct-registry", "riders"];
+
+/**
  * Which grid columns a nightly RED's dimension label refers to.
  *
  * THREE ANSWERS, NEVER TWO. A label this file does not recognise returns an EMPTY list with
@@ -500,6 +531,7 @@ export const COMPOSITE_RED_DIMENSION = "full-bar";
 export function redDimensions(label, dimensionIds, compositeIds) {
 	const dim = canonicalDimension(label);
 	if (dim === COMPOSITE_RED_DIMENSION) return { known: true, composite: true, dimensions: [...compositeIds] };
+	if (SCENARIO_RED_LABELS.includes(dim)) return { known: true, composite: false, dimensions: [] };
 	if (dimensionIds.includes(dim)) return { known: true, composite: false, dimensions: [dim] };
 	return { known: false, composite: false, dimensions: [] };
 }
@@ -1063,6 +1095,12 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		const compositeBundle = compositeClaim && bundleKind(compositeClaim.bundle) === "path" ? compositeClaim.bundle : null;
 		const compositeSummary = compositeBundle ? readBundleSummary(path.join(bundlePath(compositeBundle), "provision-summary.json")) : null;
 		for (const d of DIMENSIONS) {
+			// A dimension restricted to some clouds is a CEILING elsewhere: refused before spend, so
+			// neither a claim nor a composite can move it, and it is not work anyone can pick up.
+			if (!dimensionRunsOn(d, cloud)) {
+				grid[cloud][d.id] = { state: STATE.ceiling, why: `${d.label} runs on ${d.clouds.join(", ")} only — ${d.cloudsWhy}`, row: null };
+				continue;
+			}
 			const applies = compositeAppliesTo.get(d.id);
 			let credits = applies;
 			let discredits = applies;
@@ -1133,6 +1171,10 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	for (const r of rows) {
 		if (!clouds.includes(r.cloud)) {
 			failures.push(`${LEDGER}:${r.line}: cloud ${JSON.stringify(r.cloud)} is not one of the declared clouds (${clouds.join(", ")})`);
+		}
+		const rowDim = DIMENSIONS.find((d) => d.id === canonicalDimension(r.dimension));
+		if (rowDim && !dimensionRunsOn(rowDim, r.cloud)) {
+			failures.push(`${LEDGER}:${r.line}: dimension ${JSON.stringify(r.dimension)} runs on ${rowDim.clouds.join(", ")} only, so a ${JSON.stringify(r.cloud)} row claims a run the workflow refuses`);
 		}
 		if (r.dimension !== COMPOSITE && !DIMENSIONS.some((d) => d.id === canonicalDimension(r.dimension))) {
 			failures.push(
@@ -1815,7 +1857,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 
 
 	// ── tallies ──
-	const tally = { proven: 0, failing: 0, blocked: 0, never_run: 0, stale: 0, contested: 0 };
+	const tally = { proven: 0, failing: 0, blocked: 0, never_run: 0, stale: 0, contested: 0, ceiling: 0 };
 	for (const cloud of clouds) {
 		for (const d of DIMENSIONS) tally[grid[cloud][d.id].state]++;
 	}
@@ -1875,7 +1917,9 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 /** @param {ReturnType<typeof derive>} v */
 export function render(v) {
 	const L = [];
-	const total = v.clouds.length * DIMENSIONS.length;
+	// Cells a dimension can never run on (its `clouds`) are not proof cells: counting them would make
+	// a cloud look behind on work that is refused on it by design.
+	const total = v.clouds.length * DIMENSIONS.length - v.tally.ceiling;
 
 	L.push("## Where the programme actually is");
 	L.push("");
@@ -2485,6 +2529,16 @@ function runSelfTest() {
 	let r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "floor", "PASS", "demos/proofs/aws/20260801T000000Z") });
 	ok("a PASS with an existing committed bundle is proven", r.grid.aws.floor.state === "proven", r.grid.aws.floor.why);
 
+	// A cloud-restricted dimension (#4113): proven where it runs, a CEILING where it cannot, and a
+	// ledger row for a refused cloud is an integrity failure rather than a proof.
+	r = derive({ ...base, ledgerText: hdr + row("2026-10-01", "hetzner", "templates", "PASS", "demos/proofs/hetzner/20261001T000000Z") });
+	ok("a hetzner templates PASS is proven", r.grid.hetzner.templates.state === "proven", r.grid.hetzner.templates.why);
+	ok("...and the templates cell on aws is a ceiling, not never-run", r.grid.aws.templates.state === "ceiling" && /hetzner only/.test(r.grid.aws.templates.why), JSON.stringify(r.grid.aws.templates));
+	ok("...and a ceiling is not offered as next work", !r.next.some((n) => n.dimension === "templates" && n.cloud === "aws"));
+	r = derive({ ...base, ledgerText: hdr + row("2026-10-01", "aws", "templates", "PASS", "demos/proofs/aws/20261001T000000Z") });
+	ok("an aws templates row is an integrity failure", r.failures.some((f) => /runs on hetzner only/.test(f)), JSON.stringify(r.failures));
+	ok("...and it does not prove the ceiling cell", r.grid.aws.templates.state === "ceiling");
+
 	// The regression that produced four retracted rows: a PASS whose bundle is an expiring run tag.
 	r = derive({ ...base, ledgerText: hdr + row("2026-07-22", "aws", "floor", "PASS", "nightly-29895597616") });
 	ok("a PASS carrying an expiring CI run tag is NOT proven", r.grid.aws.floor.state === "never_run", r.grid.aws.floor.why);
@@ -3085,8 +3139,11 @@ function runSelfTest() {
 
 	// VACUITY. An empty ledger must report every cell never-run, not zero cells.
 	const empty = derive({ ...base, ledgerText: hdr });
-	const cells = empty.clouds.length * DIMENSIONS.length;
-	ok("vacuity: an empty ledger reports every cell never-run", empty.tally.never_run === cells && empty.tally.proven === 0, JSON.stringify(empty.tally));
+	// Every cell a dimension CAN run on — a cloud outside a dimension's `clouds` is a ceiling, and
+	// the count of those is derived from the same declaration, never typed.
+	const ceilings = empty.clouds.reduce((n, c) => n + DIMENSIONS.filter((d) => !dimensionRunsOn(d, c)).length, 0);
+	const cells = empty.clouds.length * DIMENSIONS.length - ceilings;
+	ok("vacuity: an empty ledger reports every cell never-run", empty.tally.never_run === cells && empty.tally.proven === 0 && empty.tally.ceiling === ceilings, JSON.stringify(empty.tally));
 	ok("vacuity: the grid is fully populated", empty.clouds.every((c) => DIMENSIONS.every((d) => empty.grid[c][d.id] !== undefined)));
 	ok("vacuity: rendering an all-never-run grid still produces the tables", (() => {
 		const out = render(empty);
@@ -3590,6 +3647,23 @@ function runSelfTest() {
 		// The dimension ids themselves must exist on both sides, or one file is describing a
 		// programme the other has never heard of.
 		const resolverDims = new Set((/^DIMENSIONS="([^"]*)"/m.exec(resolver)?.[1] ?? "").split(/\s+/).filter(Boolean));
+		// `clouds` is a copy of dimension_providers(). Read the shell `case` and hold them together in
+		// BOTH directions: a restriction only one side knows is a cell rendered `ceiling` that the
+		// workflow would happily run, or a dispatch refused on a cloud the grid says is open.
+		const provBody = /dimension_providers\(\)\s*\{([\s\S]*?)\n\}/.exec(resolver)?.[1] ?? "";
+		const restricted = new Map();
+		for (const m of provBody.matchAll(/^\s*([a-z0-9-]+)\)\s*echo\s+"([^"]+)"/gm)) restricted.set(m[1], m[2].split(/\s+/).filter(Boolean).sort().join(" "));
+		ok(
+			"dimension_providers() was actually parsed out of the resolver",
+			restricted.size > 0,
+			`parsed ${JSON.stringify([...restricted])} — the regex or the shell case changed shape`,
+		);
+		const inJsClouds = new Map(DIMENSIONS.filter((d) => Array.isArray(d.clouds)).map((d) => [d.id, [...d.clouds].sort().join(" ")]));
+		ok(
+			"every cloud restriction here is the resolver's, and every resolver restriction is here",
+			restricted.size === inJsClouds.size && [...restricted].every(([id, c]) => inJsClouds.get(id) === c),
+			`resolver ${JSON.stringify([...restricted])} vs this file ${JSON.stringify([...inJsClouds])}`,
+		);
 		ok(
 			"every rollup column is a dimension the resolver can actually run",
 			DIMENSIONS.every((d) => resolverDims.has(d.id)),
@@ -3643,6 +3717,38 @@ function runSelfTest() {
 			"the composite expands to what the BAR runs, not to every column",
 			redDimensions(COMPOSITE_RED_DIMENSION, ids, comp).dimensions.length === comp.length && comp.length < ids.length,
 			`composite=${JSON.stringify(comp)} all=${JSON.stringify(ids)}`,
+		);
+		// red_label() (#5153) emits a SCENARIO label on a fabric night. Parsed from the resolver, not
+		// restated: renaming FABRIC_RED_LABEL there without teaching this file would report every
+		// fabric red as vocabulary drift — and, worse, a label that fell back to a real column would
+		// contest a cell the fabric failure never touched, which is the bug being fixed.
+		const fabricLabel = /^FABRIC_RED_LABEL="([^"]+)"/m.exec(resolver)?.[1] ?? "";
+		const fabricResolved = redDimensions(fabricLabel, ids, comp);
+		ok(
+			"red_label's fabric-demo label is a known SCENARIO label that contests no grid cell (#5153)",
+			fabricLabel !== "" && SCENARIO_RED_LABELS.includes(fabricLabel) && fabricResolved.known && fabricResolved.dimensions.length === 0,
+			`FABRIC_RED_LABEL=${JSON.stringify(fabricLabel)} resolved ${JSON.stringify(fabricResolved)}`,
+		);
+		// The riders and the several-scenarios label, parsed from the resolver the same way: a rename
+		// there that this list did not follow would contest a floor cell over a keyless failure again.
+		for (const name of ["KEYLESS_DB", "SECRETS_XACCT", "XACCT_REGISTRY", "RIDERS"]) {
+			const label = new RegExp(`^${name}_RED_LABEL="([^"]+)"`, "m").exec(resolver)?.[1] ?? "";
+			const resolved = redDimensions(label, ids, comp);
+			ok(
+				`red_label's ${name} label is a known SCENARIO label that contests no grid cell`,
+				label !== "" && SCENARIO_RED_LABELS.includes(label) && resolved.known && resolved.dimensions.length === 0,
+				`${name}_RED_LABEL=${JSON.stringify(label)} resolved ${JSON.stringify(resolved)}`,
+			);
+			ok(
+				`...and parseNightlyRed reads the ${name} label out of a red's title`,
+				parseNightlyRed({ title: `e2e nightly: aws RED (${label})`, number: 1, createdAt: "2026-09-30" })?.dimension === label,
+				JSON.stringify(parseNightlyRed({ title: `e2e nightly: aws RED (${label})`, number: 1, createdAt: "2026-09-30" })),
+			);
+		}
+		ok(
+			"...and parseNightlyRed reads it out of a fabric red's title",
+			parseNightlyRed({ title: "e2e nightly: gcp RED (fabric-demo)", number: 1, createdAt: "2026-09-30" })?.dimension === fabricLabel,
+			JSON.stringify(parseNightlyRed({ title: "e2e nightly: gcp RED (fabric-demo)", number: 1, createdAt: "2026-09-30" })),
 		);
 	}
 

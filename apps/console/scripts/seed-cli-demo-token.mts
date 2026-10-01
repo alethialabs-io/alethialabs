@@ -26,15 +26,29 @@
 // So both travel together in one JSON file, at --out, mode 0600. Nothing is printed to stdout:
 // a credential on stdout ends up in the job log the moment any caller forgets to redirect it.
 //
+// WHY IT ALSO DEFINES THE `e2e-run` CLASSIFICATION (#5096). A stack the CLI creates gets its config
+// from the console, so its `alethia:project-id` tag is the project's UUID — and every e2e sweeper and
+// the orphan reaper find a run's resources by an `e2e-` handle. The run's handle therefore travels as
+// a classification: this seed defines the `e2e-run` dimension with THIS run's value, and the demo's
+// `classify` beat assigns it through the real binary (`alethia classification assign`), exactly as
+// a customer classifies a project. The console snapshots it into the job and the runner stamps it on
+// every resource as `alethia:e2e-run`. The CLI has no command that DEFINES a dimension — that is an
+// org-settings action in the console — so the seed performs it, the same way it performs the other
+// org setup a person would have done in the browser.
+//
 // Usage:
-//   tsx scripts/seed-cli-demo-token.mts --out /tmp/cli-demo.json
+//   tsx scripts/seed-cli-demo-token.mts --out /tmp/cli-demo.json --e2e-run e2e-<run_id>-<attempt>
 
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 
+import { and, eq } from "drizzle-orm";
+
 import { mintServiceToken } from "@/lib/cli/service-token";
 import { getServiceDb } from "@/lib/db";
 import { profiles } from "@/lib/db/schema/accounts";
+import { classificationDimension, classificationValue } from "@/lib/db/schema/classification";
+import { slugSchema } from "@/lib/validations/classification";
 import { resolveOwner, seedOrgAndPeople } from "@/lib/seed/builders";
 import { makeIds } from "@/lib/seed/ids";
 
@@ -44,9 +58,67 @@ function arg(name: string, fallback: string): string {
 	return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
+/** The classification dimension key the e2e sweepers read back as `alethia:e2e-run` (#5096). */
+const E2E_RUN_DIMENSION = "e2e-run";
+
+/**
+ * The run's `e2e-run` value: REQUIRED, a valid classification slug, and the exact CI shape the
+ * sweepers' discovery accepts (`e2e-<run_id>-<attempt>`, scripts/e2e/lib/scope-key.sh). Refused
+ * here rather than defaulted, because a seed that silently skipped it would let the whole run pass
+ * with a stack no sweeper can find if it leaks — the failure #5096 exists to remove.
+ */
+function e2eRunValue(): string {
+	const value = arg("e2e-run", "");
+	if (!value) {
+		throw new Error("--e2e-run <e2e-<run_id>-<attempt>> is required: it is the sweep handle a leaked CLI-created stack is found by (#5096)");
+	}
+	if (!slugSchema.safeParse(value).success || !/^e2e-[0-9]+-[0-9]+$/.test(value)) {
+		throw new Error(`--e2e-run ${JSON.stringify(value)} is not e2e-<run_id>-<attempt> — the only shape the orphan reaper accepts for this handle`);
+	}
+	return value;
+}
+
+/**
+ * Defines the `e2e-run` dimension in the org, holding one value: this run's. Idempotent — a re-run
+ * of the step against the same database finds both rows and changes nothing. Scoped to `project`,
+ * which is what the demo's `classify` beat assigns it to.
+ */
+async function seedE2ERunDimension(
+	db: ReturnType<typeof getServiceDb>,
+	orgId: string,
+	ownerId: string,
+	value: string,
+): Promise<void> {
+	await db
+		.insert(classificationDimension)
+		.values({
+			org_id: orgId,
+			created_by: ownerId,
+			key: E2E_RUN_DIMENSION,
+			label: "E2E run",
+			description: "The e2e run that created this resource. Read by the e2e orphan reaper (#5096).",
+			applies_to: ["project"],
+		})
+		.onConflictDoNothing();
+	const [dimension] = await db
+		.select({ id: classificationDimension.id })
+		.from(classificationDimension)
+		.where(and(eq(classificationDimension.org_id, orgId), eq(classificationDimension.key, E2E_RUN_DIMENSION)))
+		.limit(1);
+	if (!dimension) {
+		throw new Error(`the ${E2E_RUN_DIMENSION} dimension was not found after it was inserted for org ${orgId}`);
+	}
+	await db
+		.insert(classificationValue)
+		.values({ org_id: orgId, dimension_id: dimension.id, value, label: value })
+		.onConflictDoNothing();
+}
+
 async function main(): Promise<void> {
 	const email = arg("email", "cli-demo@e2e.alethialabs.io");
 	const slug = arg("slug", "cli-demo");
+	// Read first, so a missing value refuses before anything is written.
+	const e2eRun = e2eRunValue();
 
 	const db = getServiceDb();
 	const id = makeIds(`cli-demo::${slug}`);
@@ -79,6 +151,8 @@ async function main(): Promise<void> {
 		.values({ id: ownerId, email, full_name: "Alethia CLI demo", avatar_url: null })
 		.onConflictDoNothing();
 
+	await seedE2ERunDimension(db, orgId, ownerId, e2eRun);
+
 	const { token, token_prefix } = await mintServiceToken({
 		organizationId: orgId,
 		// Named for the run, so a token left behind in a shared database is attributable rather
@@ -97,7 +171,9 @@ async function main(): Promise<void> {
 	writeFileSync(out, `${JSON.stringify({ orgId, ownerId, token }, null, 2)}\n`, { mode: 0o600 });
 	// The PREFIX is safe to log and is what makes a leaked token attributable later; the token
 	// itself never reaches stdout or stderr.
-	process.stderr.write(`seeded org=${orgId} owner=${ownerId} token_prefix=${token_prefix} -> ${out}\n`);
+	process.stderr.write(
+		`seeded org=${orgId} owner=${ownerId} token_prefix=${token_prefix} ${E2E_RUN_DIMENSION}=${e2eRun} -> ${out}\n`,
+	);
 }
 
 main().catch((err) => {

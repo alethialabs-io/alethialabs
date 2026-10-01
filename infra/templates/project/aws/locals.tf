@@ -1,4 +1,11 @@
 locals {
+  # Whether the EKS module is configured to exist — plan-known, and the LENGTH of rds.tf's cluster
+  # ingress list (see the note there). A local rather than `var.provision_eks` read in rds.tf because
+  # the template-knob generator attributes a variable to every component whose wiring reads it, and
+  # reading the cluster switch inside the database module call re-filed it as a DATABASE knob the
+  # console would offer on the database card.
+  eks_configured = var.provision_eks
+
   aws_regions_short = {
     "ap-east-1"      = "ae1"
     "ap-northeast-1" = "an1"

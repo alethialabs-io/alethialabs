@@ -81,8 +81,9 @@ func TestSecretsXacctDecide(t *testing.T) {
 	})
 
 	// A BLOCKED lane resolves to OFF carrying its reason — never a silent skip, and never an error
-	// (the maintainer enabling the scenario globally should not red every non-AWS leg). gcp is here
-	// too, for a different reason: the env is AWS-only, so gcp's lane is runnable but UNWIRED.
+	// (the maintainer enabling the scenario globally should not red every non-AWS leg). gcp and azure
+	// are here too, for a different reason: the env is AWS-only, so their lanes are runnable but
+	// UNWIRED.
 	for _, provider := range []string{"gcp", "azure", "alibaba", "hetzner"} {
 		t.Run(provider+" is blocked with a reason", func(t *testing.T) {
 			withXacctEnv(t, awsComplete)
@@ -103,12 +104,12 @@ func TestSecretsXacctDecide(t *testing.T) {
 // The lane verdicts are the SSOT the parity board, the recording script and the run half all quote.
 // Keep them from rotting into a bare "not supported".
 func TestSecretsXacctLaneReasonsAreSubstantive(t *testing.T) {
-	for _, p := range []string{"aws", "gcp"} {
+	for _, p := range []string{"aws", "gcp", "azure"} {
 		if ok, reason := secretsXacctLane(p); !ok || reason != "" {
 			t.Fatalf("%s must be a runnable lane, got ok=%v reason=%q", p, ok, reason)
 		}
 	}
-	for _, p := range []string{"azure", "alibaba"} {
+	for _, p := range []string{"alibaba"} {
 		ok, reason := secretsXacctLane(p)
 		if ok {
 			t.Fatalf("%s is not provable today", p)
@@ -518,5 +519,132 @@ func TestSecretsXacct_GCPAdoptKeyAndPatternMatchTemplate(t *testing.T) {
 	tmpl := strings.ReplaceAll(m[1], `\\`, `\`)
 	if tmpl != gcpSAEmail.String() {
 		t.Fatalf("gcpSAEmail = %q but the template validates %q — they must be the same pattern", gcpSAEmail.String(), tmpl)
+	}
+}
+
+// Azure runs only against an ADOPTED standing identity — the one subscription B's grant names
+// (infra/azure-secrets-e2e). Without it the cluster creates a per-run identity with a fresh object id
+// and could only be denied, after the cluster has been bought.
+func TestSecretsXacctAzureRequiresAStandingIdentity(t *testing.T) {
+	azureComplete := map[string]string{
+		envSecretsXacct:                     "1",
+		envSecretsXacctAccount + "_AZURE":   "00000000-0000-0000-0000-00000000000b",
+		envSecretsXacctVaultURL:             "https://alethia-xacct-abc123.vault.azure.net/",
+		envSecretsXacctRemoteKey + "_AZURE": "alethia-e2e-xacct-canary",
+		envSecretsXacctExpectSHA + "_AZURE": testSHA,
+		envSecretsXacctESOIdName:            "alethia-e2e-xacct-eso",
+		envSecretsXacctESOIdRG:              "alethia-e2e-xacct-identity",
+	}
+
+	t.Run("complete is on", func(t *testing.T) {
+		withXacctEnv(t, azureComplete)
+		on, blocked, err := secretsXacctFromEnv("azure").decide()
+		if !on || blocked != "" || err != nil {
+			t.Fatalf("complete azure config ⇒ on; got on=%v blocked=%q err=%v", on, blocked, err)
+		}
+	})
+
+	// The azure values arrive as _AZURE siblings, because ACCOUNT/REMOTE_KEY/EXPECT_SHA256 are shared
+	// with the aws and gcp legs. The sibling must win over a flat value set for another cloud.
+	t.Run("the _AZURE siblings win over the flat aws values", func(t *testing.T) {
+		withXacctEnv(t, azureComplete)
+		t.Setenv(envSecretsXacctAccount, "222222222222")
+		t.Setenv(envSecretsXacctRemoteKey, "alethia-e2e/xacct-canary")
+		c := secretsXacctFromEnv("azure")
+		if c.account != azureComplete[envSecretsXacctAccount+"_AZURE"] || c.remoteKey != azureComplete[envSecretsXacctRemoteKey+"_AZURE"] {
+			t.Fatalf("azure must read its siblings; got account=%q remoteKey=%q", c.account, c.remoteKey)
+		}
+	})
+
+	for _, missing := range []string{envSecretsXacctVaultURL, envSecretsXacctESOIdName, envSecretsXacctESOIdRG} {
+		t.Run("missing "+missing, func(t *testing.T) {
+			withXacctEnv(t, azureComplete)
+			t.Setenv(missing, "")
+			on, _, err := secretsXacctFromEnv("azure").decide()
+			if on || err == nil || !strings.Contains(err.Error(), missing) {
+				t.Fatalf("must refuse and name %s; got on=%v err=%v", missing, on, err)
+			}
+		})
+	}
+
+	t.Run("missing the subscription is refused", func(t *testing.T) {
+		withXacctEnv(t, azureComplete)
+		t.Setenv(envSecretsXacctAccount+"_AZURE", "")
+		on, _, err := secretsXacctFromEnv("azure").decide()
+		if on || err == nil || !strings.Contains(err.Error(), envSecretsXacctAccount) {
+			t.Fatalf("must refuse and name %s; got on=%v err=%v", envSecretsXacctAccount, on, err)
+		}
+	})
+
+	t.Run("no vault and no identity is off with a reason, not an error", func(t *testing.T) {
+		withXacctEnv(t, azureComplete)
+		for _, k := range []string{envSecretsXacctVaultURL, envSecretsXacctESOIdName, envSecretsXacctESOIdRG} {
+			t.Setenv(k, "")
+		}
+		on, blocked, err := secretsXacctFromEnv("azure").decide()
+		if on || err != nil {
+			t.Fatalf("unwired azure ⇒ off without error; got on=%v err=%v", on, err)
+		}
+		for _, k := range []string{envSecretsXacctVaultURL, envSecretsXacctESOIdName, envSecretsXacctESOIdRG} {
+			if !strings.Contains(blocked, k) {
+				t.Fatalf("the reason must name %s, got %q", k, blocked)
+			}
+		}
+	})
+
+	t.Run("the summary target is the account-B vault", func(t *testing.T) {
+		withXacctEnv(t, azureComplete)
+		if got := secretsXacctFromEnv("azure").targetRef(); got != azureComplete[envSecretsXacctVaultURL] {
+			t.Fatalf("azure targetRef = %q, want the vault URL", got)
+		}
+	})
+}
+
+// adoptStandingIdentity on azure must land BOTH template keys, merge into the fixture's
+// provider_config, and refuse a conflict without writing half of the pair.
+func TestSecretsXacctAdoptStandingIdentityAzure(t *testing.T) {
+	az := secretsXacctConfig{provider: "azure", esoIdName: "alethia-e2e-xacct-eso", esoIdRG: "alethia-e2e-xacct-identity"}
+
+	t.Run("merges both keys", func(t *testing.T) {
+		snap := map[string]any{"cluster": map[string]any{"provider_config": map[string]any{"aks_spot": true}}}
+		if err := az.adoptStandingIdentity(snap); err != nil {
+			t.Fatal(err)
+		}
+		pc := snap["cluster"].(map[string]any)["provider_config"].(map[string]any)
+		if pc[secretsXacctAzureAdoptNameKey] != az.esoIdName || pc[secretsXacctAzureAdoptRGKey] != az.esoIdRG || pc["aks_spot"] != true {
+			t.Fatalf("got %+v", pc)
+		}
+	})
+
+	t.Run("refuses a conflicting resource group and writes nothing", func(t *testing.T) {
+		snap := map[string]any{"cluster": map[string]any{"provider_config": map[string]any{secretsXacctAzureAdoptRGKey: "rg-other"}}}
+		if err := az.adoptStandingIdentity(snap); err == nil {
+			t.Fatal("two identities for one cluster must be refused")
+		}
+		if _, wrote := snap["cluster"].(map[string]any)["provider_config"].(map[string]any)[secretsXacctAzureAdoptNameKey]; wrote {
+			t.Fatal("a refusal must leave the snapshot untouched, not half-adopted")
+		}
+	})
+
+	t.Run("refuses a half-configured identity", func(t *testing.T) {
+		if err := (secretsXacctConfig{provider: "azure", esoIdName: "x"}).adoptStandingIdentity(map[string]any{}); err == nil {
+			t.Fatal("the template needs name AND resource group; one alone must be refused")
+		}
+	})
+}
+
+// The azure adopt keys are copies of variable names owned by the Azure project template. A typo here
+// would write keys tofu never reads, and the cluster would quietly create a per-run identity that
+// subscription B's grant never names.
+func TestSecretsXacct_AzureAdoptKeysMatchTemplate(t *testing.T) {
+	path := filepath.Join(e2ePackageDir(t), "..", "..", "infra", "templates", "project", "azure", "variables.tf")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, key := range []string{secretsXacctAzureAdoptNameKey, secretsXacctAzureAdoptRGKey} {
+		if !strings.Contains(string(raw), `variable "`+key+`" {`) {
+			t.Errorf("%s declares no variable %q — the harness would write a key tofu never reads", path, key)
+		}
 	}
 }

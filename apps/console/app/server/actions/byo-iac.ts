@@ -17,7 +17,7 @@ import { and, eq } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { authorize } from "@/lib/authz/guard";
-import { getServiceDb, type Tx, withActorScope } from "@/lib/db";
+import { type Tx, withActorScope } from "@/lib/db";
 import { jobs, projectEnvironments, projectIacSources } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
@@ -291,7 +291,8 @@ export async function getIacSource(
 /**
  * Queues an IAC_SCAN job for the environment's attached IaC source: the runner clones the repo,
  * pins the commit it checked out, inventories the module (providers + module sources) and runs
- * `tofu validate`, posting an IacScanReport that finalizeIacScan writes back onto the row. Marks
+ * `tofu validate`, posting an IacScanReport that finalizeIacScan (lib/addons/iac-scan-finalize.ts)
+ * writes back onto the row. Marks
  * the row `scanning` immediately so the UI can show progress. The job's config_snapshot carries
  * the repo coords (flat repo_url so the runner's git-token route resolves a token) + the row
  * identity so the result maps back.
@@ -352,41 +353,6 @@ export async function scanIacSource(input: {
 	return { ok: true, jobId };
 }
 
-/**
- * Writes a finished IAC_SCAN job's report back onto its project_iac_sources row (called from the
- * job status route on SUCCESS/FAILED). Uses the service DB (the runner-facing status route has no
- * user session) and maps back via the row identity stashed in config_snapshot. `done` requires the
- * job to have SUCCEEDED with an ok report — and only then is the scanned commit pinned onto
- * commit_sha (the sha a deploy will actually apply). A not-ok / failed scan clears the pin, so
- * provisioning stays locked until a clean re-scan.
- */
-export async function finalizeIacScan(jobId: string): Promise<void> {
-	const db = getServiceDb();
-	const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
-	if (!job || job.job_type !== "IAC_SCAN") return;
-	const snap = job.config_snapshot ?? {};
-	const projectId = typeof snap.project_id === "string" ? snap.project_id : null;
-	const environmentId = typeof snap.environment_id === "string" ? snap.environment_id : null;
-	const iacSourceId = typeof snap.iac_source_id === "string" ? snap.iac_source_id : null;
-	if (!projectId || !environmentId || !iacSourceId) return;
-
-	const report = job.execution_metadata?.iac_scan_result ?? null;
-	const done = job.status === "SUCCESS" && report !== null && report.ok;
-
-	await db
-		.update(projectIacSources)
-		.set({
-			scan_status: done ? "done" : "failed",
-			scan_report: report,
-			commit_sha: done ? (report?.commit_sha ?? null) : null,
-			scanned_at: new Date(),
-			updated_at: new Date(),
-		})
-		.where(
-			and(
-				eq(projectIacSources.id, iacSourceId),
-				eq(projectIacSources.project_id, projectId),
-				eq(projectIacSources.environment_id, environmentId),
-			),
-		);
-}
+// The IAC_SCAN write-back (finalizeIacScan) lives in lib/addons/iac-scan-finalize.ts. It PINS the
+// commit a deploy will apply, so as a public Server Action in this `"use server"` file it was the
+// one write standing between an unscanned module and provisioning (#5219).

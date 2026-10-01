@@ -188,8 +188,10 @@ then replaces it atomically (a temp file, then a rename). It refuses to pin a ch
 verify to a trusted root for this host name.
 
 Merge it. `node scripts/ci/check-e2e-issuer-health.mjs --expected-url https://e2e-issuer.alethialabs.io`
-now exits `0`. Run *E2E issuer health* once by hand (`gh workflow run e2e-issuer-health.yml --ref dev`).
-Its schedule starts only when the workflow reaches `main`.
+now exits `0`. That command is the by-hand run of *E2E issuer health*: it is the same script the
+workflow runs. Do not use `gh workflow run e2e-issuer-health.yml` yet. GitHub registers a workflow
+only once its file is on the default branch, so until `e2e-issuer-health.yml` reaches `main` that
+command returns HTTP 404 on every ref, including `--ref dev`. Its schedule also starts only then.
 
 **7. The four trust applies** — only after #4903 (the e2e stacks' remote state) is resolved. Follow
 [`docs/testing/e2e-federation-apply-runbook.md`](../../docs/testing/e2e-federation-apply-runbook.md),

@@ -1,0 +1,1342 @@
+{
+  "format_version": "1.2",
+  "prior_state": {
+    "format_version": "1.0",
+    "terraform_version": "1.9.0",
+    "values": {
+      "root_module": {
+        "resources": [
+          {
+            "address": "hcloud_firewall.this",
+            "mode": "managed",
+            "name": "this",
+            "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+            "schema_version": 0,
+            "sensitive_values": {
+              "apply_to": [
+                {},
+                {},
+                {},
+                {}
+              ],
+              "labels": {},
+              "rule": [
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false,
+                    false
+                  ]
+                },
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false,
+                    false
+                  ]
+                },
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false,
+                    false
+                  ]
+                },
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false
+                  ]
+                },
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false
+                  ]
+                },
+                {
+                  "destination_ips": [],
+                  "source_ips": [
+                    false
+                  ]
+                }
+              ]
+            },
+            "type": "hcloud_firewall",
+            "values": {
+              "apply_to": [
+                {
+                  "label_selector": null,
+                  "server": 168043102
+                },
+                {
+                  "label_selector": null,
+                  "server": 168043103
+                },
+                {
+                  "label_selector": null,
+                  "server": 168043104
+                },
+                {
+                  "label_selector": null,
+                  "server": 168043105
+                }
+              ],
+              "id": "11706771",
+              "labels": {
+                "alethia:project-id": "p-fixture",
+                "managed-by": "alethia"
+              },
+              "name": "alethia-nl-36667774857-1",
+              "rule": [
+                {
+                  "description": "Talos apid",
+                  "destination_ips": [],
+                  "direction": "in",
+                  "port": "50000",
+                  "protocol": "tcp",
+                  "source_ips": [
+                    "0.0.0.0/0",
+                    "::/0"
+                  ]
+                },
+                {
+                  "description": "Talos apid (trustd)",
+                  "destination_ips": [],
+                  "direction": "in",
+                  "port": "50001",
+                  "protocol": "tcp",
+                  "source_ips": [
+                    "0.0.0.0/0",
+                    "::/0"
+                  ]
+                },
+                {
+                  "description": "Kubernetes API server",
+                  "destination_ips": [],
+                  "direction": "in",
+                  "port": "6443",
+                  "protocol": "tcp",
+                  "source_ips": [
+                    "0.0.0.0/0",
+                    "::/0"
+                  ]
+                },
+                {
+                  "description": "Intra-cluster TCP (private network)",
+                  "destination_ips": [],
+                  "direction": "in",
+                  "port": "any",
+                  "protocol": "tcp",
+                  "source_ips": [
+                    "10.0.0.0/16"
+                  ]
+                },
+                {
+                  "description": "Intra-cluster UDP (private network)",
+                  "destination_ips": [],
+                  "direction": "in",
+                  "port": "any",
+                  "protocol": "udp",
+                  "source_ips": [
+                    "10.0.0.0/16"
+                  ]
+                },
+                {
+                  "description": "Intra-cluster ICMP (private network)",
+                  "destination_ips": [],
+                  "direction": "in",
+                  "port": null,
+                  "protocol": "icmp",
+                  "source_ips": [
+                    "10.0.0.0/16"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "address": "hcloud_primary_ip.control_plane_ipv4[0]",
+            "index": 0,
+            "mode": "managed",
+            "name": "control_plane_ipv4",
+            "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+            "schema_version": 0,
+            "sensitive_values": {
+              "labels": {}
+            },
+            "type": "hcloud_primary_ip",
+            "values": {
+              "assignee_id": 168043102,
+              "assignee_type": "server",
+              "auto_delete": false,
+              "datacenter": "nbg1-dc3",
+              "delete_protection": false,
+              "id": 152443086,
+              "ip_address": "203.0.113.10",
+              "ip_network": null,
+              "labels": {
+                "alethia:project-id": "p-fixture",
+                "managed-by": "alethia"
+              },
+              "location": "nbg1",
+              "name": "alethia-nl-36667774857-1-cp-1-ipv4",
+              "type": "ipv4"
+            }
+          },
+          {
+            "address": "hcloud_server.control_planes[\"alethia-nl-36667774857-1-cp-1\"]",
+            "index": "alethia-nl-36667774857-1-cp-1",
+            "mode": "managed",
+            "name": "control_planes",
+            "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+            "schema_version": 0,
+            "sensitive_values": {
+              "firewall_ids": [
+                false
+              ],
+              "labels": {},
+              "network": [
+                {
+                  "alias_ips": []
+                }
+              ],
+              "public_net": [
+                {}
+              ]
+            },
+            "type": "hcloud_server",
+            "values": {
+              "firewall_ids": [
+                11706771
+              ],
+              "id": "168043102",
+              "image": "talos",
+              "ipv4_address": "203.0.113.10",
+              "labels": {
+                "alethia:project-id": "p-fixture",
+                "managed-by": "alethia"
+              },
+              "location": "nbg1",
+              "name": "alethia-nl-36667774857-1-cp-1",
+              "network": [
+                {
+                  "alias_ips": [],
+                  "ip": "10.0.0.12",
+                  "mac_address": "",
+                  "network_id": 12696325
+                }
+              ],
+              "public_net": [
+                {
+                  "ipv4": 152443086,
+                  "ipv4_enabled": true,
+                  "ipv6": 0,
+                  "ipv6_enabled": true
+                }
+              ],
+              "server_type": "cx32"
+            }
+          },
+          {
+            "address": "hcloud_primary_ip.worker_ipv4[0]",
+            "index": 0,
+            "mode": "managed",
+            "name": "worker_ipv4",
+            "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+            "schema_version": 0,
+            "sensitive_values": {
+              "labels": {}
+            },
+            "type": "hcloud_primary_ip",
+            "values": {
+              "assignee_id": 168043103,
+              "assignee_type": "server",
+              "auto_delete": false,
+              "datacenter": "nbg1-dc3",
+              "delete_protection": false,
+              "id": 152443085,
+              "ip_address": "203.0.113.11",
+              "ip_network": null,
+              "labels": {
+                "alethia:project-id": "p-fixture",
+                "managed-by": "alethia"
+              },
+              "location": "nbg1",
+              "name": "alethia-nl-36667774857-1-worker-1-ipv4",
+              "type": "ipv4"
+            }
+          },
+          {
+            "address": "hcloud_server.workers[\"alethia-nl-36667774857-1-worker-1\"]",
+            "index": "alethia-nl-36667774857-1-worker-1",
+            "mode": "managed",
+            "name": "workers",
+            "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+            "schema_version": 0,
+            "sensitive_values": {
+              "firewall_ids": [
+                false
+              ],
+              "labels": {},
+              "network": [
+                {
+                  "alias_ips": []
+                }
+              ],
+              "public_net": [
+                {}
+              ]
+            },
+            "type": "hcloud_server",
+            "values": {
+              "firewall_ids": [
+                11706771
+              ],
+              "id": "168043103",
+              "image": "talos",
+              "ipv4_address": "203.0.113.11",
+              "labels": {
+                "alethia:project-id": "p-fixture",
+                "managed-by": "alethia"
+              },
+              "location": "nbg1",
+              "name": "alethia-nl-36667774857-1-worker-1",
+              "network": [
+                {
+                  "alias_ips": [],
+                  "ip": "10.0.0.14",
+                  "mac_address": "",
+                  "network_id": 12696325
+                }
+              ],
+              "public_net": [
+                {
+                  "ipv4": 152443085,
+                  "ipv4_enabled": true,
+                  "ipv6": 0,
+                  "ipv6_enabled": true
+                }
+              ],
+              "server_type": "cx32"
+            }
+          },
+          {
+            "address": "hcloud_primary_ip.worker_ipv4[1]",
+            "index": 1,
+            "mode": "managed",
+            "name": "worker_ipv4",
+            "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+            "schema_version": 0,
+            "sensitive_values": {
+              "labels": {}
+            },
+            "type": "hcloud_primary_ip",
+            "values": {
+              "assignee_id": 168043104,
+              "assignee_type": "server",
+              "auto_delete": false,
+              "datacenter": "nbg1-dc3",
+              "delete_protection": false,
+              "id": 152443088,
+              "ip_address": "203.0.113.12",
+              "ip_network": null,
+              "labels": {
+                "alethia:project-id": "p-fixture",
+                "managed-by": "alethia"
+              },
+              "location": "nbg1",
+              "name": "alethia-nl-36667774857-1-worker-2-ipv4",
+              "type": "ipv4"
+            }
+          },
+          {
+            "address": "hcloud_server.workers[\"alethia-nl-36667774857-1-worker-2\"]",
+            "index": "alethia-nl-36667774857-1-worker-2",
+            "mode": "managed",
+            "name": "workers",
+            "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+            "schema_version": 0,
+            "sensitive_values": {
+              "firewall_ids": [
+                false
+              ],
+              "labels": {},
+              "network": [
+                {
+                  "alias_ips": []
+                }
+              ],
+              "public_net": [
+                {}
+              ]
+            },
+            "type": "hcloud_server",
+            "values": {
+              "firewall_ids": [
+                11706771
+              ],
+              "id": "168043104",
+              "image": "talos",
+              "ipv4_address": "203.0.113.12",
+              "labels": {
+                "alethia:project-id": "p-fixture",
+                "managed-by": "alethia"
+              },
+              "location": "nbg1",
+              "name": "alethia-nl-36667774857-1-worker-2",
+              "network": [
+                {
+                  "alias_ips": [],
+                  "ip": "10.0.0.16",
+                  "mac_address": "",
+                  "network_id": 12696325
+                }
+              ],
+              "public_net": [
+                {
+                  "ipv4": 152443088,
+                  "ipv4_enabled": true,
+                  "ipv6": 0,
+                  "ipv6_enabled": true
+                }
+              ],
+              "server_type": "cx32"
+            }
+          },
+          {
+            "address": "hcloud_primary_ip.worker_ipv4[2]",
+            "index": 2,
+            "mode": "managed",
+            "name": "worker_ipv4",
+            "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+            "schema_version": 0,
+            "sensitive_values": {
+              "labels": {}
+            },
+            "type": "hcloud_primary_ip",
+            "values": {
+              "assignee_id": 168043105,
+              "assignee_type": "server",
+              "auto_delete": false,
+              "datacenter": "nbg1-dc3",
+              "delete_protection": false,
+              "id": 152443087,
+              "ip_address": "203.0.113.13",
+              "ip_network": null,
+              "labels": {
+                "alethia:project-id": "p-fixture",
+                "managed-by": "alethia"
+              },
+              "location": "nbg1",
+              "name": "alethia-nl-36667774857-1-worker-3-ipv4",
+              "type": "ipv4"
+            }
+          },
+          {
+            "address": "hcloud_server.workers[\"alethia-nl-36667774857-1-worker-3\"]",
+            "index": "alethia-nl-36667774857-1-worker-3",
+            "mode": "managed",
+            "name": "workers",
+            "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+            "schema_version": 0,
+            "sensitive_values": {
+              "firewall_ids": [
+                false
+              ],
+              "labels": {},
+              "network": [
+                {
+                  "alias_ips": []
+                }
+              ],
+              "public_net": [
+                {}
+              ]
+            },
+            "type": "hcloud_server",
+            "values": {
+              "firewall_ids": [
+                11706771
+              ],
+              "id": "168043105",
+              "image": "talos",
+              "ipv4_address": "203.0.113.13",
+              "labels": {
+                "alethia:project-id": "p-fixture",
+                "managed-by": "alethia"
+              },
+              "location": "nbg1",
+              "name": "alethia-nl-36667774857-1-worker-3",
+              "network": [
+                {
+                  "alias_ips": [],
+                  "ip": "10.0.0.18",
+                  "mac_address": "",
+                  "network_id": 12696325
+                }
+              ],
+              "public_net": [
+                {
+                  "ipv4": 152443087,
+                  "ipv4_enabled": true,
+                  "ipv6": 0,
+                  "ipv6_enabled": true
+                }
+              ],
+              "server_type": "cx32"
+            }
+          },
+          {
+            "address": "talos_machine_secrets.this",
+            "mode": "managed",
+            "name": "this",
+            "provider_name": "registry.opentofu.org/siderolabs/talos",
+            "schema_version": 0,
+            "sensitive_values": {
+              "client_configuration": {
+                "client_key": true
+              },
+              "machine_secrets": {
+                "certs": {
+                  "etcd": {
+                    "key": true
+                  },
+                  "k8s": {
+                    "key": true
+                  },
+                  "k8s_aggregator": {
+                    "key": true
+                  },
+                  "k8s_serviceaccount": {
+                    "key": true
+                  },
+                  "os": {
+                    "key": true
+                  }
+                },
+                "cluster": {
+                  "secret": true
+                },
+                "secrets": {
+                  "aescbc_encryption_secret": true,
+                  "bootstrap_token": true,
+                  "secretbox_encryption_secret": true
+                },
+                "trustdinfo": {
+                  "token": true
+                }
+              }
+            },
+            "type": "talos_machine_secrets",
+            "values": {
+              "client_configuration": {
+                "ca_certificate": "LS0tLS1-fixture-ca",
+                "client_certificate": "LS0tLS1-fixture-crt",
+                "client_key": "LS0tLS1-fixture-key"
+              },
+              "id": "machine_secrets",
+              "machine_secrets": {
+                "certs": {
+                  "etcd": {
+                    "cert": "fixture-cert",
+                    "key": "fixture-key"
+                  },
+                  "k8s": {
+                    "cert": "fixture-cert",
+                    "key": "fixture-key"
+                  },
+                  "k8s_aggregator": {
+                    "cert": "fixture-cert",
+                    "key": "fixture-key"
+                  },
+                  "k8s_serviceaccount": {
+                    "key": "fixture-sa-key"
+                  },
+                  "os": {
+                    "cert": "fixture-cert",
+                    "key": "fixture-key"
+                  }
+                },
+                "cluster": {
+                  "id": "fixture-cluster-id",
+                  "secret": "fixture-cluster-secret"
+                },
+                "secrets": {
+                  "aescbc_encryption_secret": null,
+                  "bootstrap_token": "fixture.token",
+                  "secretbox_encryption_secret": "fixture-sb"
+                },
+                "trustdinfo": {
+                  "token": "fixture.trustd"
+                }
+              },
+              "talos_version": "v1.11.0"
+            }
+          },
+          {
+            "address": "talos_cluster_kubeconfig.this",
+            "mode": "managed",
+            "name": "this",
+            "provider_name": "registry.opentofu.org/siderolabs/talos",
+            "schema_version": 0,
+            "sensitive_values": {
+              "client_configuration": {
+                "client_key": true
+              },
+              "kubeconfig_raw": true,
+              "kubernetes_client_configuration": {
+                "client_key": true
+              }
+            },
+            "type": "talos_cluster_kubeconfig",
+            "values": {
+              "certificate_renewal_duration": "720h",
+              "client_configuration": {
+                "ca_certificate": "LS0tLS1-fixture-ca",
+                "client_certificate": "LS0tLS1-fixture-crt",
+                "client_key": "LS0tLS1-fixture-key"
+              },
+              "endpoint": "203.0.113.10",
+              "id": "alethia-nl-36667774857-1",
+              "kubeconfig_raw": "apiVersion: v1\nkind: Config\n# fixture\n",
+              "kubernetes_client_configuration": {
+                "ca_certificate": "fixture-k8s-ca",
+                "client_certificate": "fixture-k8s-crt",
+                "client_key": "fixture-k8s-key",
+                "host": "https://203.0.113.10:6443"
+              },
+              "node": "203.0.113.10",
+              "timeouts": null
+            }
+          }
+        ]
+      }
+    }
+  },
+  "resource_drift": [
+    {
+      "address": "hcloud_firewall.this",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "after": {
+          "apply_to": [
+            {
+              "label_selector": null,
+              "server": 168043102
+            },
+            {
+              "label_selector": null,
+              "server": 168043103
+            },
+            {
+              "label_selector": null,
+              "server": 168043104
+            },
+            {
+              "label_selector": null,
+              "server": 168043105
+            }
+          ],
+          "id": "11706771",
+          "labels": {
+            "alethia:project-id": "p-fixture",
+            "managed-by": "alethia"
+          },
+          "name": "alethia-nl-36667774857-1",
+          "rule": [
+            {
+              "description": "Talos apid",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "50000",
+              "protocol": "tcp",
+              "source_ips": [
+                "0.0.0.0/0",
+                "::/0"
+              ]
+            },
+            {
+              "description": "Talos apid (trustd)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "50001",
+              "protocol": "tcp",
+              "source_ips": [
+                "0.0.0.0/0",
+                "::/0"
+              ]
+            },
+            {
+              "description": "Kubernetes API server",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "6443",
+              "protocol": "tcp",
+              "source_ips": [
+                "0.0.0.0/0",
+                "::/0"
+              ]
+            },
+            {
+              "description": "Intra-cluster TCP (private network)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "any",
+              "protocol": "tcp",
+              "source_ips": [
+                "10.0.0.0/16"
+              ]
+            },
+            {
+              "description": "Intra-cluster UDP (private network)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "any",
+              "protocol": "udp",
+              "source_ips": [
+                "10.0.0.0/16"
+              ]
+            },
+            {
+              "description": "Intra-cluster ICMP (private network)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": null,
+              "protocol": "icmp",
+              "source_ips": [
+                "10.0.0.0/16"
+              ]
+            }
+          ]
+        },
+        "after_sensitive": {
+          "apply_to": [
+            {},
+            {},
+            {},
+            {}
+          ],
+          "labels": {},
+          "rule": [
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            }
+          ]
+        },
+        "before": {
+          "apply_to": [],
+          "id": "11706771",
+          "labels": {
+            "alethia:project-id": "p-fixture",
+            "managed-by": "alethia"
+          },
+          "name": "alethia-nl-36667774857-1",
+          "rule": [
+            {
+              "description": "Talos apid",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "50000",
+              "protocol": "tcp",
+              "source_ips": [
+                "0.0.0.0/0",
+                "::/0"
+              ]
+            },
+            {
+              "description": "Talos apid (trustd)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "50001",
+              "protocol": "tcp",
+              "source_ips": [
+                "0.0.0.0/0",
+                "::/0"
+              ]
+            },
+            {
+              "description": "Kubernetes API server",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "6443",
+              "protocol": "tcp",
+              "source_ips": [
+                "0.0.0.0/0",
+                "::/0"
+              ]
+            },
+            {
+              "description": "Intra-cluster TCP (private network)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "any",
+              "protocol": "tcp",
+              "source_ips": [
+                "10.0.0.0/16"
+              ]
+            },
+            {
+              "description": "Intra-cluster UDP (private network)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": "any",
+              "protocol": "udp",
+              "source_ips": [
+                "10.0.0.0/16"
+              ]
+            },
+            {
+              "description": "Intra-cluster ICMP (private network)",
+              "destination_ips": [],
+              "direction": "in",
+              "port": null,
+              "protocol": "icmp",
+              "source_ips": [
+                "10.0.0.0/16"
+              ]
+            }
+          ]
+        },
+        "before_sensitive": {
+          "apply_to": [],
+          "labels": {},
+          "rule": [
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false,
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            },
+            {
+              "destination_ips": [],
+              "source_ips": [
+                false
+              ]
+            }
+          ]
+        }
+      },
+      "mode": "managed",
+      "name": "this",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "type": "hcloud_firewall"
+    },
+    {
+      "address": "hcloud_primary_ip.control_plane_ipv4[0]",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "after": {
+          "assignee_id": 168043102,
+          "assignee_type": "server",
+          "auto_delete": false,
+          "datacenter": "nbg1-dc3",
+          "delete_protection": false,
+          "id": 152443086,
+          "ip_address": "203.0.113.10",
+          "ip_network": null,
+          "labels": {
+            "alethia:project-id": "p-fixture",
+            "managed-by": "alethia"
+          },
+          "location": "nbg1",
+          "name": "alethia-nl-36667774857-1-cp-1-ipv4",
+          "type": "ipv4"
+        },
+        "after_sensitive": {
+          "labels": {}
+        },
+        "before": {
+          "assignee_id": 0,
+          "assignee_type": "unassigned",
+          "auto_delete": false,
+          "datacenter": "nbg1-dc3",
+          "delete_protection": false,
+          "id": 152443086,
+          "ip_address": "203.0.113.10",
+          "ip_network": null,
+          "labels": {
+            "alethia:project-id": "p-fixture",
+            "managed-by": "alethia"
+          },
+          "location": "nbg1",
+          "name": "alethia-nl-36667774857-1-cp-1-ipv4",
+          "type": "ipv4"
+        },
+        "before_sensitive": {
+          "labels": {}
+        }
+      },
+      "index": 0,
+      "mode": "managed",
+      "name": "control_plane_ipv4",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "type": "hcloud_primary_ip"
+    },
+    {
+      "address": "hcloud_primary_ip.worker_ipv4[0]",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "after": {
+          "assignee_id": 168043103,
+          "assignee_type": "server",
+          "auto_delete": false,
+          "datacenter": "nbg1-dc3",
+          "delete_protection": false,
+          "id": 152443085,
+          "ip_address": "203.0.113.11",
+          "ip_network": null,
+          "labels": {
+            "alethia:project-id": "p-fixture",
+            "managed-by": "alethia"
+          },
+          "location": "nbg1",
+          "name": "alethia-nl-36667774857-1-worker-1-ipv4",
+          "type": "ipv4"
+        },
+        "after_sensitive": {
+          "labels": {}
+        },
+        "before": {
+          "assignee_id": 0,
+          "assignee_type": "unassigned",
+          "auto_delete": false,
+          "datacenter": "nbg1-dc3",
+          "delete_protection": false,
+          "id": 152443085,
+          "ip_address": "203.0.113.11",
+          "ip_network": null,
+          "labels": {
+            "alethia:project-id": "p-fixture",
+            "managed-by": "alethia"
+          },
+          "location": "nbg1",
+          "name": "alethia-nl-36667774857-1-worker-1-ipv4",
+          "type": "ipv4"
+        },
+        "before_sensitive": {
+          "labels": {}
+        }
+      },
+      "index": 0,
+      "mode": "managed",
+      "name": "worker_ipv4",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "type": "hcloud_primary_ip"
+    },
+    {
+      "address": "hcloud_primary_ip.worker_ipv4[1]",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "after": {
+          "assignee_id": 168043104,
+          "assignee_type": "server",
+          "auto_delete": false,
+          "datacenter": "nbg1-dc3",
+          "delete_protection": false,
+          "id": 152443088,
+          "ip_address": "203.0.113.12",
+          "ip_network": null,
+          "labels": {
+            "alethia:project-id": "p-fixture",
+            "managed-by": "alethia"
+          },
+          "location": "nbg1",
+          "name": "alethia-nl-36667774857-1-worker-2-ipv4",
+          "type": "ipv4"
+        },
+        "after_sensitive": {
+          "labels": {}
+        },
+        "before": {
+          "assignee_id": 0,
+          "assignee_type": "unassigned",
+          "auto_delete": false,
+          "datacenter": "nbg1-dc3",
+          "delete_protection": false,
+          "id": 152443088,
+          "ip_address": "203.0.113.12",
+          "ip_network": null,
+          "labels": {
+            "alethia:project-id": "p-fixture",
+            "managed-by": "alethia"
+          },
+          "location": "nbg1",
+          "name": "alethia-nl-36667774857-1-worker-2-ipv4",
+          "type": "ipv4"
+        },
+        "before_sensitive": {
+          "labels": {}
+        }
+      },
+      "index": 1,
+      "mode": "managed",
+      "name": "worker_ipv4",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "type": "hcloud_primary_ip"
+    },
+    {
+      "address": "hcloud_primary_ip.worker_ipv4[2]",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "after": {
+          "assignee_id": 168043105,
+          "assignee_type": "server",
+          "auto_delete": false,
+          "datacenter": "nbg1-dc3",
+          "delete_protection": false,
+          "id": 152443087,
+          "ip_address": "203.0.113.13",
+          "ip_network": null,
+          "labels": {
+            "alethia:project-id": "p-fixture",
+            "managed-by": "alethia"
+          },
+          "location": "nbg1",
+          "name": "alethia-nl-36667774857-1-worker-3-ipv4",
+          "type": "ipv4"
+        },
+        "after_sensitive": {
+          "labels": {}
+        },
+        "before": {
+          "assignee_id": 0,
+          "assignee_type": "unassigned",
+          "auto_delete": false,
+          "datacenter": "nbg1-dc3",
+          "delete_protection": false,
+          "id": 152443087,
+          "ip_address": "203.0.113.13",
+          "ip_network": null,
+          "labels": {
+            "alethia:project-id": "p-fixture",
+            "managed-by": "alethia"
+          },
+          "location": "nbg1",
+          "name": "alethia-nl-36667774857-1-worker-3-ipv4",
+          "type": "ipv4"
+        },
+        "before_sensitive": {
+          "labels": {}
+        }
+      },
+      "index": 2,
+      "mode": "managed",
+      "name": "worker_ipv4",
+      "provider_name": "registry.opentofu.org/hetznercloud/hcloud",
+      "type": "hcloud_primary_ip"
+    },
+    {
+      "address": "talos_machine_secrets.this",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "after": {
+          "client_configuration": {
+            "ca_certificate": "LS0tLS1-fixture-ca",
+            "client_certificate": "LS0tLS1-fixture-crt",
+            "client_key": "LS0tLS1-fixture-key"
+          },
+          "id": "machine_secrets",
+          "machine_secrets": {
+            "certs": {
+              "etcd": {
+                "cert": "fixture-cert",
+                "key": "fixture-key"
+              },
+              "k8s": {
+                "cert": "fixture-cert",
+                "key": "fixture-key"
+              },
+              "k8s_aggregator": {
+                "cert": "fixture-cert",
+                "key": "fixture-key"
+              },
+              "k8s_serviceaccount": {
+                "key": "fixture-sa-key"
+              },
+              "os": {
+                "cert": "fixture-cert",
+                "key": "fixture-key"
+              }
+            },
+            "cluster": {
+              "id": "fixture-cluster-id",
+              "secret": "fixture-cluster-secret"
+            },
+            "secrets": {
+              "aescbc_encryption_secret": null,
+              "bootstrap_token": "fixture.token",
+              "secretbox_encryption_secret": "fixture-sb"
+            },
+            "trustdinfo": {
+              "token": "fixture.trustd"
+            }
+          },
+          "talos_version": "v1.11.0"
+        },
+        "after_sensitive": {
+          "client_configuration": {
+            "client_key": true
+          },
+          "machine_secrets": {
+            "certs": {
+              "etcd": {
+                "key": true
+              },
+              "k8s": {
+                "key": true
+              },
+              "k8s_aggregator": {
+                "key": true
+              },
+              "k8s_serviceaccount": {
+                "key": true
+              },
+              "os": {
+                "key": true
+              }
+            },
+            "cluster": {
+              "secret": true
+            },
+            "secrets": {
+              "aescbc_encryption_secret": true,
+              "bootstrap_token": true,
+              "secretbox_encryption_secret": true
+            },
+            "trustdinfo": {
+              "token": true
+            }
+          }
+        },
+        "before": {
+          "client_configuration": {
+            "ca_certificate": "LS0tLS1-fixture-ca",
+            "client_certificate": "LS0tLS1-fixture-crt",
+            "client_key": "LS0tLS1-fixture-key"
+          },
+          "id": "machine_secrets",
+          "machine_secrets": {
+            "certs": {
+              "etcd": {
+                "cert": "fixture-cert",
+                "key": "fixture-key"
+              },
+              "k8s": {
+                "cert": "fixture-cert",
+                "key": "fixture-key"
+              },
+              "k8s_aggregator": {
+                "cert": "fixture-cert",
+                "key": "fixture-key"
+              },
+              "k8s_serviceaccount": {
+                "key": "fixture-sa-key"
+              },
+              "os": {
+                "cert": "fixture-cert",
+                "key": "fixture-key"
+              }
+            },
+            "cluster": {
+              "id": "fixture-cluster-id",
+              "secret": "fixture-cluster-secret"
+            },
+            "secrets": {
+              "aescbc_encryption_secret": null,
+              "bootstrap_token": "fixture.token",
+              "secretbox_encryption_secret": "fixture-sb"
+            },
+            "trustdinfo": {
+              "token": "fixture.trustd"
+            }
+          },
+          "talos_version": "v1.11.0"
+        },
+        "before_sensitive": {
+          "client_configuration": {
+            "client_key": true
+          },
+          "machine_secrets": {
+            "certs": {
+              "etcd": {
+                "key": true
+              },
+              "k8s": {
+                "key": true
+              },
+              "k8s_aggregator": {
+                "key": true
+              },
+              "k8s_serviceaccount": {
+                "key": true
+              },
+              "os": {
+                "key": true
+              }
+            },
+            "cluster": {
+              "secret": true
+            },
+            "secrets": {
+              "aescbc_encryption_secret": true,
+              "bootstrap_token": true,
+              "secretbox_encryption_secret": true
+            },
+            "trustdinfo": {
+              "token": true
+            }
+          }
+        }
+      },
+      "mode": "managed",
+      "name": "this",
+      "provider_name": "registry.opentofu.org/siderolabs/talos",
+      "type": "talos_machine_secrets"
+    },
+    {
+      "address": "talos_cluster_kubeconfig.this",
+      "change": {
+        "actions": [
+          "update"
+        ],
+        "after": {
+          "certificate_renewal_duration": "720h",
+          "client_configuration": {
+            "ca_certificate": "LS0tLS1-fixture-ca",
+            "client_certificate": "LS0tLS1-fixture-crt",
+            "client_key": "LS0tLS1-fixture-key"
+          },
+          "endpoint": "203.0.113.10",
+          "id": "alethia-nl-36667774857-1",
+          "kubeconfig_raw": "apiVersion: v1\nkind: Config\n# fixture\n",
+          "kubernetes_client_configuration": {
+            "ca_certificate": "fixture-k8s-ca",
+            "client_certificate": "fixture-k8s-crt",
+            "client_key": "fixture-k8s-key",
+            "host": "https://203.0.113.10:6443"
+          },
+          "node": "203.0.113.10",
+          "timeouts": null
+        },
+        "after_sensitive": {
+          "client_configuration": {
+            "client_key": true
+          },
+          "kubeconfig_raw": true,
+          "kubernetes_client_configuration": {
+            "client_key": true
+          }
+        },
+        "before": {
+          "certificate_renewal_duration": "720h",
+          "client_configuration": {
+            "ca_certificate": "LS0tLS1-fixture-ca",
+            "client_certificate": "LS0tLS1-fixture-crt",
+            "client_key": "LS0tLS1-fixture-key"
+          },
+          "endpoint": "203.0.113.10",
+          "id": "alethia-nl-36667774857-1",
+          "kubeconfig_raw": "apiVersion: v1\nkind: Config\n# fixture\n",
+          "kubernetes_client_configuration": {
+            "ca_certificate": "fixture-k8s-ca",
+            "client_certificate": "fixture-k8s-crt",
+            "client_key": "fixture-k8s-key",
+            "host": "https://203.0.113.10:6443"
+          },
+          "node": "203.0.113.10",
+          "timeouts": null
+        },
+        "before_sensitive": {
+          "client_configuration": {
+            "client_key": true
+          },
+          "kubeconfig_raw": true,
+          "kubernetes_client_configuration": {
+            "client_key": true
+          }
+        }
+      },
+      "mode": "managed",
+      "name": "this",
+      "provider_name": "registry.opentofu.org/siderolabs/talos",
+      "type": "talos_cluster_kubeconfig"
+    }
+  ],
+  "terraform_version": "1.9.0"
+}

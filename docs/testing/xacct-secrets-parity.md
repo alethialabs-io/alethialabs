@@ -20,12 +20,12 @@ Every run is recorded by `scripts/e2e/secrets-e2e.sh`, including blocked ones.
 | **`ExternalSecret` consumption** (a workload actually reads through the store) | ✅ | ✅ | ✅ | ✅ |
 | Standing-identity adoption (target-side grant applied once) | ✅ n/a — role name already deterministic | ✅ `external_secrets_service_account_email` | ✅ `external_secrets_identity_name` + `_resource_group` | 🚫 impossible — see below |
 | Adoption reachable from a project (cluster `provider_config` → tofu; the cluster card's Advanced section) | n/a | ✅ | ✅ | n/a |
-| Account-B stack for the nightly | ✅ `infra/aws-secrets-e2e` | ✅ `infra/gcp-secrets-e2e` | 🚫 not written | 🚫 not written |
-| **In-cluster e2e (real read, value verified)** | ⏳ harness shipped; awaiting enablement from `main` | ⏳ harness shipped (adopts the standing GSA); awaiting enablement from `main` | 🚫 | 🚫 |
+| Account-B stack for the nightly | ✅ `infra/aws-secrets-e2e` | ✅ `infra/gcp-secrets-e2e` | ✅ `infra/azure-secrets-e2e` (unapplied: needs a second subscription) | 🚫 not written |
+| **In-cluster e2e (real read, value verified)** | ⏳ harness shipped; awaiting enablement from `main` | ⏳ harness shipped (adopts the standing GSA); awaiting enablement from `main` | ⏳ harness shipped (adopts the standing identity); awaiting the stack's apply and enablement from `main` | 🚫 |
 | Connector row `active` (console-connectable) | 🚫 `coming_soon` until the e2e is green | 🚫 | 🚫 | 🚫 |
 | Security-reviewed | ✅ | ✅ | ✅ | ✅ |
 
-## Why only AWS and GCP can run
+## Why AWS, GCP and Azure can run, and Alibaba cannot
 
 All four lanes render a working store. What differs is whether account B's read grant can survive the
 cluster being **destroyed and recreated every night** — the grant names the *cluster's* external-secrets
@@ -50,10 +50,16 @@ renames it. The nightly writes it the same way (`adoptStandingIdentity`,
 sets the account-B project without the GSA, since that run could only be denied. Account B's grant is
 `infra/gcp-secrets-e2e`; the standing GSA itself lives in project A and is created out of band.
 
-**Azure — blocked, twice.** The role assignment binds the managed identity's **object id**, regenerated
-on every create, so a stable name buys nothing. *Unblocked by*
-`external_secrets_identity_name`/`_resource_group`, which reach tofu by the same passthrough as GCP's. Independently, cross-*subscription* needs a second
-subscription in the same tenant, which is not available today.
+**Azure — runnable, against an adopted identity; waiting on a second subscription.** The role
+assignment binds the managed identity's **object id**, regenerated on every create, so a stable name
+buys nothing. The cluster therefore adopts a standing identity through
+`external_secrets_identity_name`/`_resource_group`, which reach tofu by the same passthrough as GCP's.
+The nightly sets them from `E2E_SECRETS_XACCT_ESO_IDENTITY_{NAME,RG}` (`adoptStandingIdentity`).
+`infra/azure-secrets-e2e` creates that identity in the cluster's subscription and grants it
+`Key Vault Secrets User` on one canary secret in subscription B. Each run's issuer never reaches
+subscription B: the template writes a per-cluster federated credential on the adopted identity.
+Applying the stack needs a second subscription in the same tenant, which is the one thing not yet
+provided.
 
 **Alibaba — honest exclusion.** ESO's RRSA performs a single `AssumeRoleWithOIDC` with no chaining, so
 account B must host a RAM OIDC provider registered against **this cluster's** ACK issuer, fingerprints
@@ -101,7 +107,9 @@ result in the ledger like any other run.
       (plus the shared `_REMOTE_KEY` / `_EXPECT_SHA256`), then dispatch `gcp` **from `main`** and record
       the run. The e2e provisioner must be able to grant `roles/iam.workloadIdentityUser` on that GSA —
       the template writes that binding when it adopts one.
-- [ ] Azure lane: a second subscription, plus a standing identity.
+- [ ] Azure lane: provide a second subscription in the same tenant, apply `infra/azure-secrets-e2e`
+      (it creates the standing identity too), set the six variables its README lists, then dispatch
+      `azure` **from `main`** and record the run.
 - [ ] Console: nothing writes `project_secrets.provider` / `provider_config` today
       (`providerConfigFields` in `registry.generated.ts` has zero consumers), so the connector cannot
       be selected from the UI at all. The e2e seeds the snapshot directly and is unaffected, but the

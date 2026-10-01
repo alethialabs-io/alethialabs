@@ -1,0 +1,57 @@
+{
+  "enabled": true,
+  "provider": "gcp",
+  "fabric_cluster": "gke-ew3-36758753092-1-alethia-nl",
+  "apps_repo": "https://github.com/alethialabs-io/alethia-examples",
+  "tiers": [
+    {
+      "tier": "dev-1",
+      "namespace": "boutique-dev-1",
+      "placed": true,
+      "tenant_app": "app-alethia-nl-boutique-dev-1",
+      "tenant_appproject": "tenant-alethia-nl-boutique-dev-1",
+      "source_path": "examples/online-boutique/overlays/dev-1",
+      "caused_by_placement": true,
+      "converged": true,
+      "managed_resources": 35
+    },
+    {
+      "tier": "staging",
+      "namespace": "boutique-staging",
+      "placed": true,
+      "tenant_app": "app-alethia-nl-boutique-staging",
+      "tenant_appproject": "tenant-alethia-nl-boutique-staging",
+      "source_path": "examples/online-boutique/overlays/staging",
+      "caused_by_placement": true,
+      "converged": true,
+      "managed_resources": 35
+    }
+  ],
+  "vcluster": {
+    "name": "boutique-staging",
+    "tier": "staging",
+    "placed": true,
+    "app": "vc-app-alethia-nl-boutique-staging",
+    "source_path": "examples/online-boutique/overlays/staging",
+    "caused_by_placement": true,
+    "managed_resources": 35,
+    "deregistered": true
+  },
+  "prod": {
+    "tier": "prod",
+    "stage": "production",
+    "stage_label": "36758753092-1",
+    "deploy_job": "e84027af-295a-43e5-97d8-6d2c4074f7aa",
+    "placement_mode": "dedicated",
+    "dedicated": true
+  },
+  "base_apps_repo": "https://github.com/alethialabs-io/alethia-e2e-apps",
+  "pre_existing_applications": 5,
+  "argocd_not_reinstalled": true,
+  "receipt_scope": "fabric",
+  "fabric_plan_sha256": "200697f99cdae97a410c3ea0ff1a69a576a4c86ec61b48f1e80552f04af84819",
+  "drift_checked": true,
+  "drift_in_sync": true,
+  "drift_drifted": 0,
+  "verdict": "✅ fabric-demo on gke-ew3-36758753092-1-alethia-nl: prod: prod(production,dedicated=true,stage_label=36758753092-1) · placements dev-1→boutique-dev-1(examples/online-boutique/overlays/dev-1,res=35,converged=true) staging→boutique-staging(examples/online-boutique/overlays/staging,res=35,converged=true) · vcluster: boutique-staging(examples/online-boutique/overlays/staging,res=35,deregistered=true) · argocd-preserved=true · receipt(fabric)=200697f99cda… · drift: in_sync=true drifted=0"
+}

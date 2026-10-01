@@ -493,6 +493,12 @@ func TestSensitivityMaskShapes(t *testing.T) {
 		{"explicit false does not mark", nil, map[string]any{"conf": false}, false, ReasonUndeclaredCollection},
 		{"empty map mask does not mark", nil, map[string]any{"conf": map[string]any{}}, false, ReasonUndeclaredCollection},
 		{"empty list mask does not mark", nil, map[string]any{"conf": []any{}}, false, ReasonUndeclaredCollection},
+		// OpenTofu's plan JSON keeps a slot per list/set element even when nothing is marked
+		// (jsonstate.SensitiveAsBoolWithPathValueMarks). Structure is not a mark: #845 run
+		// 36706419571's firewall apply_to read as sensitive on exactly this shape.
+		{"a list of unmarked primitive slots does not mark", nil, map[string]any{"conf": []any{false, false}}, false, ReasonUndeclaredCollection},
+		{"a list of unmarked object slots does not mark", nil, map[string]any{"conf": []any{map[string]any{}, map[string]any{"x": []any{false}}}}, false, ReasonUndeclaredCollection},
+		{"a true deep inside a list slot marks", nil, map[string]any{"conf": []any{map[string]any{}, map[string]any{"x": []any{false, true}}}}, true, ""},
 		{"mask for another attribute is irrelevant", nil, map[string]any{"other": true}, false, ReasonUndeclaredCollection},
 		{"mask that is not an object is ignored", nil, "not-a-mask", false, ReasonUndeclaredCollection},
 	}
@@ -915,7 +921,8 @@ func TestWeakestReasonIsReported(t *testing.T) {
 // unranked reason sorts as the weakest possible, so a new reason added without a rank can
 // only ever understate a dismissal. This fails the day someone adds one and forgets.
 func TestReasonStrengthCoversEveryReason(t *testing.T) {
-	for _, r := range []NormalizedReason{ReasonEmptyCollection, ReasonUndeclaredCollection, ReasonComputedAttribute} {
+	for _, r := range []NormalizedReason{ReasonEmptyCollection, ReasonUndeclaredCollection, ReasonComputedAttribute,
+		ReasonSensitivityOnly, ReasonAssignmentBackReference, ReasonInapplicableField, ReasonKubernetesOwned} {
 		if reasonStrength(r) == 0 {
 			t.Errorf("reason %q has no strength rank — it would sort below every real one", r)
 		}
@@ -951,6 +958,9 @@ func TestSchemasNeverIncreaseDrift(t *testing.T) {
 		"drifted golden": loadPlan(t, "drifted.json"),
 		"in sync golden": loadPlan(t, "in_sync.json"),
 		"bucket residue": planWithConfig(nil, bucketTimestampDrift()),
+		"hetzner fabric": loadPlan(t, "hetzner_fabric_refresh.json"),
+		"aws fabric":     loadPlan(t, "aws_fabric_refresh.json"),
+		"gcp fabric":     loadPlan(t, gcpFixture),
 	}
 	for name, plan := range plans {
 		t.Run(name, func(t *testing.T) {
@@ -966,6 +976,15 @@ func TestSchemasNeverIncreaseDrift(t *testing.T) {
 						t.Fatalf("%s/%s: %d resources examined with schemas, %d without — a resource was lost",
 							provider, typ, got.Drifted+got.Normalized, base.Drifted+base.Normalized)
 					}
+				}
+			}
+			// And the real, captured provider schemas the hetzner, aws and gcp fixtures were produced
+			// under, which carry the sensitive and nested shapes the permissive one does not.
+			for _, doc := range []string{hetznerSchemas, awsSchemas, gcpSchemas} {
+				got := AnalyzeWithSchemas(plan, loadSchemas(t, doc))
+				if got.Drifted > base.Drifted || got.Drifted+got.Normalized != base.Drifted+base.Normalized {
+					t.Fatalf("%s: drifted %d -> %d, examined %d -> %d", doc, base.Drifted, got.Drifted,
+						base.Drifted+base.Normalized, got.Drifted+got.Normalized)
 				}
 			}
 		})

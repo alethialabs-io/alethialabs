@@ -15,6 +15,7 @@ import { Boxes, Download, ListFilter, Users } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
+	type ActivityPage,
 	type ActivityRow,
 	getActivityExportCsv,
 } from "@/app/server/actions/activity";
@@ -61,6 +62,25 @@ const DAY = 86_400_000;
 // preset and re-reading the clock in the guard.
 const RETENTION_GRACE = 3_600_000;
 const SEARCH_DEBOUNCE = 300;
+
+/** One counted facet option as the server returns it. */
+type FacetCount = NonNullable<ActivityPage["facets"]>["actors"][number];
+
+/** A facet's options as a value → count lookup (empty while the facets are unknown). */
+function facetCounts(options: FacetCount[] | undefined): Map<string, number> {
+	return new Map((options ?? []).map((o) => [o.value, o.count]));
+}
+
+/** The count behind one Events-sheet token: `type:<resource_type>` or `result:<allow|deny>`. */
+function eventTokenCount(
+	token: string,
+	types: Map<string, number>,
+	decisions: Map<string, number>,
+): number {
+	if (token.startsWith("type:")) return types.get(token.slice(5)) ?? 0;
+	if (token.startsWith("result:")) return decisions.get(token.slice(7)) ?? 0;
+	return 0;
+}
 
 /** The default range picker's trigger label. */
 const DEFAULT_RANGE_LABEL =
@@ -190,22 +210,56 @@ export function ActivityLog({
 		[retentionDays, patch],
 	);
 
-	// Facet options come from the org's FULL member / project lists (their own shared query
-	// caches), never from the rows on screen — an option that vanished as you selected it
-	// would make the facet unusable. That is the standard's unfiltered-universe rule.
-	const userOptions = useMemo(
-		() =>
-			members.map((m) => ({
-				value: m.userId,
-				label: m.name?.trim() || m.email,
-				hint: m.name?.trim() ? m.email : undefined,
+	// The facet counts come from the server's facet passes (lib/queries/activity.ts), which see
+	// the scope and none of the filters — so a count holds still as you select options, the
+	// standard's unfiltered-universe rule. They ride on the FIRST page only; while it loads the
+	// options render without a figure rather than with a zero that is not yet true.
+	const facets = activity.data?.pages[0]?.facets ?? null;
+
+	// Options are the org's FULL member / project lists (their own shared query caches), never
+	// the rows on screen, so an option cannot vanish as it is selected. An actor the log knows
+	// and the member list no longer does (someone who left) is appended from the facet, so their
+	// events stay one filter away.
+	const userOptions = useMemo(() => {
+		const counts = facetCounts(facets?.actors);
+		const options = members.map((m) => ({
+			value: m.userId,
+			label: m.name?.trim() || m.email,
+			hint: m.name?.trim() ? m.email : undefined,
+			count: facets ? (counts.get(m.userId) ?? 0) : undefined,
+		}));
+		const known = new Set(members.map((m) => m.userId));
+		for (const a of facets?.actors ?? []) {
+			if (known.has(a.value)) continue;
+			options.push({
+				value: a.value,
+				label: a.label ?? "Former member",
+				hint: undefined,
+				count: a.count,
+			});
+		}
+		return options;
+	}, [members, facets]);
+	const projectOptions = useMemo(() => {
+		const counts = facetCounts(facets?.projects);
+		return projects.map((p) => ({
+			value: p.id,
+			label: p.project_name,
+			count: facets ? (counts.get(p.id) ?? 0) : undefined,
+		}));
+	}, [projects, facets]);
+	const eventGroups = useMemo(() => {
+		if (!facets) return EVENT_GROUPS;
+		const types = facetCounts(facets.resourceTypes);
+		const decisions = facetCounts(facets.decisions);
+		return EVENT_GROUPS.map((g) => ({
+			...g,
+			options: g.options.map((o) => ({
+				...o,
+				count: eventTokenCount(o.value, types, decisions),
 			})),
-		[members],
-	);
-	const projectOptions = useMemo(
-		() => projects.map((p) => ({ value: p.id, label: p.project_name })),
-		[projects],
-	);
+		}));
+	}, [facets]);
 	const activeFilters = countActiveFilters(filters, DEFAULT_ACTIVITY_FILTERS);
 
 	async function onExport() {
@@ -316,7 +370,7 @@ export function ActivityLog({
 				<GroupedFilterSheet
 					label="Events"
 					icon={ListFilter}
-					groups={EVENT_GROUPS}
+					groups={eventGroups}
 					value={filters.eventTokens}
 					onChange={(next) => set("eventTokens", next)}
 					title="Filter by event"

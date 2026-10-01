@@ -18,6 +18,7 @@ import {
 } from "@repo/ui/table";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
+import { rowKeyActivation } from "@/components/data-table";
 
 /**
  * A status cell.
@@ -74,7 +75,10 @@ export function ProjectsTable({
 					{rows.map((s) => (
 						<TableRow
 							key={s.id}
+							role="row"
+							tabIndex={onRowClick ? 0 : undefined}
 							onClick={onRowClick ? () => onRowClick(s.id) : undefined}
+							onKeyDown={onRowClick ? rowKeyActivation(() => onRowClick(s.id)) : undefined}
 							className={onRowClick ? "cursor-pointer" : undefined}
 						>
 							<TableCell className={cn(TD, "font-medium")}>{s.name ?? "—"}</TableCell>
@@ -120,7 +124,10 @@ export function JobsTable({
 					{rows.map((j) => (
 						<TableRow
 							key={j.id}
+							role="row"
+							tabIndex={onRowClick ? 0 : undefined}
 							onClick={onRowClick ? () => onRowClick(j.id) : undefined}
+							onKeyDown={onRowClick ? rowKeyActivation(() => onRowClick(j.id)) : undefined}
 							className={onRowClick ? "cursor-pointer" : undefined}
 						>
 							<TableCell className={cn(TD, "font-mono")}>{j.type ?? "—"}</TableCell>

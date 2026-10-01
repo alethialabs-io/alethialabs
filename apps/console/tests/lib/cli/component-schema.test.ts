@@ -173,6 +173,17 @@ describe("--set field types travel with the field name", () => {
 		},
 	);
 
+	// #5087: the node disk is published with the registry's own 1..2000 integer bound. The
+	// per-cloud floor is NOT published — the registry has no provider to choose one with — so a
+	// client can refuse only what every cloud refuses, and Go's validateNodeDiskSize owns the rest.
+	it("publishes cluster.node_disk_size_gb as an integer in 1..2000", () => {
+		expect(publishedKind("cluster").fields).toContain("node_disk_size_gb");
+		const branch = valueBranch("cluster", "node_disk_size_gb");
+		expect(branch.type).toBe("integer");
+		expect(branch.minimum).toBe(1);
+		expect(branch.maximum).toBe(2000);
+	});
+
 	// The published document is deliberately a SUPERSET of what the server accepts, never a subset:
 	// apps_path's mirrored grammar (traversal, quotes, whitespace) is not expressible in JSON
 	// Schema, so the node says only "string". A client validating against it can therefore refuse

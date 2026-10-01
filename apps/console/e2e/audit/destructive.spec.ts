@@ -518,10 +518,23 @@ async function stagedContent(table: string, orgId: string): Promise<{ rows: numb
  * in one of these tables still fails the control; what this cannot see is a control whose mutation
  * would INSERT into one of them — none in the registry does today, and the bound is stated rather
  * than implied.
+ *
+ * `fleet_leader` is the same scaler's LEASE row, and it moves once per console boot, not once per
+ * pass (#5067). `lib/fleet/scaler.ts` starts its loop on a 60 s `setInterval` (a `wakeFleetScaler`
+ * can bring the first pass forward), and that first pass's `tryBecomeFleetLeader`
+ * (`lib/fleet/queue.ts`, the table's only writer; service role, no org) inserts the singleton; every
+ * later tick renews it with an UPDATE, which a row count cannot see. Measured on
+ * run 36055847035: `addons.remove` opened its dialog ~55–60 s after boot and failed with "Cancel was
+ * pressed and rows still moved: fleet_leader 0→1". The CHECK on `singleton` pins the table to at most
+ * one row, so the only growth this entry can ever excuse is that single 0→1 — and a fall to 0 still
+ * fails. Waiting for the first tick before snapshotting was the alternative, and it is the weaker
+ * one: it spends up to a minute of wall clock on every run to make a platform timer's schedule part
+ * of the assertion, and it silently goes back to racing the day `TICK_INTERVAL_MS` changes.
  */
 const AMBIENT_GROWTH: ReadonlyMap<string, string> = new Map([
 	["fleet_actions", "the fleet scaler records each pass's decision (lib/fleet)"],
 	["runner_bootstrap_tokens", "the fleet scaler mints a token for each runner it would create (lib/fleet)"],
+	["fleet_leader", "the fleet scaler's first tick inserts its singleton leader lease, ~60 s after boot (lib/fleet)"],
 ]);
 
 function diffFingerprints(before: Map<string, number>, after: Map<string, number>): string[] {

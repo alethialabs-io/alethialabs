@@ -10,6 +10,7 @@
 import { and, eq, lt, ne, or, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
+import { persistableErrorText } from "@/lib/errors";
 import {
 	registerLoop,
 	superviseLoop,
@@ -110,7 +111,7 @@ async function persistHealth(
 		.set({
 			is_verified: result.status !== "disconnected",
 			status: result.status,
-			last_error: result.error,
+			last_error: persistableErrorText(result.error),
 			last_tested_at: new Date(),
 			verified_account_id: result.accountId,
 			missing_permissions: result.missingPermissions,

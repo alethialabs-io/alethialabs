@@ -29,9 +29,12 @@ resource "alicloud_ram_role" "external_secrets" {
   assume_role_policy_document = jsonencode({
     Version = "1"
     Statement = [{
-      Effect    = "Allow"
-      Action    = "sts:AssumeRole"
-      Principal = { Federated = try(module.cluster[0].rrsa_oidc_provider_arn, null) != null ? [module.cluster[0].rrsa_oidc_provider_arn] : [] }
+      Effect = "Allow"
+      Action = "sts:AssumeRole"
+      # The probe sits INSIDE the list so it never chooses the list's LENGTH (the aws/rds.tf rule,
+      # enforced by scripts/check-templates-refresh-safe.mjs). This role only exists with the cluster,
+      # so the rendered document is byte-identical wherever it is actually planned.
+      Principal = { Federated = [try(module.cluster[0].rrsa_oidc_provider_arn, null) != null ? module.cluster[0].rrsa_oidc_provider_arn : ""] }
       Condition = {
         StringEquals = {
           "oidc:iss" = try(module.cluster[0].rrsa_oidc_issuer_url, null) != null ? module.cluster[0].rrsa_oidc_issuer_url : ""

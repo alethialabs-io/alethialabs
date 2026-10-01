@@ -42,12 +42,12 @@ vi.mock("@/lib/analytics/server", () => ({
 // without a real DB insert (the mockDb stub has no `insert`). Best-effort callers are `.catch()`ed.
 const recordDriftPosture = vi.fn().mockResolvedValue(undefined);
 const recordFabricDriftPosture = vi.fn().mockResolvedValue(undefined);
-vi.mock("@/app/server/actions/drift", () => ({
+vi.mock("@/lib/drift/posture", () => ({
 	recordDriftPosture: (...a: unknown[]) => recordDriftPosture(...a),
 	recordFabricDriftPosture: (...a: unknown[]) => recordFabricDriftPosture(...a),
 }));
 const maybeAutoHeal = vi.fn().mockResolvedValue(undefined);
-vi.mock("@/app/server/actions/reconcile", () => ({
+vi.mock("@/lib/reconcile/auto-heal", () => ({
 	maybeAutoHeal: (...a: unknown[]) => maybeAutoHeal(...a),
 }));
 
@@ -357,5 +357,33 @@ describe("PUT /api/jobs/[id]/status — #841 split drift", () => {
 		expect(recordFabricDriftPosture).not.toHaveBeenCalled();
 		// infra drift still self-heals.
 		expect(maybeAutoHeal).toHaveBeenCalledWith("proj-1", "env-1");
+	});
+});
+
+describe("PUT /api/jobs/[id]/status — a lost claim answers 409 (#5162)", () => {
+	/** Makes the update_job_status RPC throw the way drizzle does: a wrapper whose `cause` is the
+	 *  postgres.js error carrying the SQLSTATE. */
+	function rpcThrows(code: string) {
+		const driverError = Object.assign(
+			new Error("Job not found or not owned by this runner"),
+			{ code },
+		);
+		const db = {
+			execute: () =>
+				Promise.reject(new Error("Failed query: select update_job_status(...)", { cause: driverError })),
+		};
+		vi.mocked(getServiceDb).mockReturnValue(db as never);
+	}
+
+	it("answers 409 when the RPC refuses the post for ownership (SQLSTATE AL409)", async () => {
+		rpcThrows("AL409");
+		const res = await put("job-1", { status: "PROCESSING", execution_metadata: { cluster_name: "c" } });
+		expect(res.status).toBe(409);
+		expect(emitAlertEventSafe).not.toHaveBeenCalled();
+	});
+
+	it("keeps any OTHER database failure a 500 (a transient error the runner may retry)", async () => {
+		rpcThrows("57P01");
+		expect((await put("job-1", { status: "SUCCESS" })).status).toBe(500);
 	});
 });

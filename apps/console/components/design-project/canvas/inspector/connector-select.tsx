@@ -26,7 +26,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
-import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { ConnectorIcon, isThirdPartyMark } from "@/components/connectors/connector-icon";
 import { ProviderConfigFields } from "@/components/connectors/provider-config-fields";
 import { useConnectedProviders } from "@/components/design-project/connectors-context";
 import {
@@ -224,7 +224,12 @@ export function ConnectorSelect({
 							<SelectItem key={provider.slug} value={provider.slug} disabled={Boolean(reason)}>
 								<span className="flex items-center gap-2">
 									<span className="flex h-4 w-4 items-center justify-center">
-										<ConnectorIcon src={provider.icon_url} name={provider.name} size={16} />
+										<ConnectorIcon
+											src={provider.icon_url}
+											name={provider.name}
+											size={16}
+											mono={!isThirdPartyMark(provider.icon_url)}
+										/>
 									</span>
 									{provider.name}
 									{reason ? (

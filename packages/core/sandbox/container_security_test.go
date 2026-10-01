@@ -35,7 +35,7 @@ func TestSandboxHardeningArgs_NoEgress(t *testing.T) {
 	c := Container{Runtime: "docker", Image: "alethia/runner:test", Operator: "managed", PidsLimit: 512, MemLimit: "2g"}
 	workDir := t.TempDir()
 	spec := Spec{Kind: "chart_scan", JobID: "sec-1", WorkDir: workDir, NoEgress: true}
-	childEnv := buildChildEnv([]string{"PATH=/usr/bin"}, workDir)
+	childEnv := buildChildEnv([]string{"PATH=/usr/bin"}, workDir, nil)
 
 	args := c.buildArgs(spec, childEnv)
 
@@ -81,7 +81,7 @@ func TestSandboxHardeningArgs_EgressUsesConfiguredNetNotHost(t *testing.T) {
 	c := Container{Runtime: "docker", Image: "alethia/runner:test", Operator: "managed", EgressEnforced: true, Network: "alethia-egress"}
 	workDir := t.TempDir()
 	spec := Spec{Kind: "deploy", JobID: "sec-2", WorkDir: workDir}
-	args := c.buildArgs(spec, buildChildEnv([]string{"PATH=/usr/bin"}, workDir))
+	args := c.buildArgs(spec, buildChildEnv([]string{"PATH=/usr/bin"}, workDir, nil))
 
 	if !hasFlagPair(args, "--network", "alethia-egress") {
 		t.Errorf("expected the egress-filtered fleet net, got argv: %v", args)
@@ -99,7 +99,7 @@ func TestSandboxHardeningArgs_CredDirsMountedReadOnly(t *testing.T) {
 	workDir := t.TempDir()
 	c := Container{Runtime: "docker", Image: "alethia/runner:test", Operator: "self"}
 	// AWS_CONFIG_FILE points at a file under credDir → the backend RO-mounts its parent dir.
-	childEnv := buildChildEnv([]string{"PATH=/usr/bin", "AWS_CONFIG_FILE=" + credDir + "/config"}, workDir)
+	childEnv := buildChildEnv([]string{"PATH=/usr/bin", "AWS_CONFIG_FILE=" + credDir + "/config"}, workDir, nil)
 	args := c.buildArgs(Spec{Kind: "deploy", JobID: "sec-3", WorkDir: workDir}, childEnv)
 
 	if !hasFlagPair(args, "-v", credDir+":"+credDir+":ro") {

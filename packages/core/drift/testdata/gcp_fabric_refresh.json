@@ -1,0 +1,3208 @@
+{
+ "format_version": "1.2",
+ "prior_state": {
+  "format_version": "1.0",
+  "terraform_version": "1.9.0",
+  "values": {
+   "root_module": {
+    "child_modules": [
+     {
+      "address": "module.gke[0]",
+      "resources": [
+       {
+        "address": "module.gke[0].google_container_cluster.cluster",
+        "mode": "managed",
+        "name": "cluster",
+        "provider_name": "registry.opentofu.org/hashicorp/google",
+        "schema_version": 2,
+        "sensitive_values": {
+         "addons_config": [],
+         "anonymous_authentication_config": [],
+         "authenticator_groups_config": [],
+         "binary_authorization": [],
+         "cluster_autoscaling": [],
+         "confidential_nodes": [],
+         "control_plane_endpoints_config": [],
+         "cost_management_config": [],
+         "database_encryption": [
+          {}
+         ],
+         "default_snat_status": [],
+         "dns_config": [],
+         "effective_labels": {},
+         "enable_k8s_beta_apis": [],
+         "enterprise_config": [],
+         "fleet": [],
+         "gateway_api_config": [],
+         "gke_auto_upgrade_config": [],
+         "identity_service_config": [],
+         "ip_allocation_policy": [
+          {
+           "additional_ip_ranges_config": [],
+           "additional_pod_ranges_config": [],
+           "pod_cidr_overprovision_config": []
+          }
+         ],
+         "logging_config": [],
+         "maintenance_policy": [],
+         "master_auth": [
+          {
+           "client_certificate_config": [
+            {}
+           ],
+           "client_key": true
+          }
+         ],
+         "master_authorized_networks_config": [],
+         "mesh_certificates": [],
+         "monitoring_config": [],
+         "network_performance_config": [],
+         "network_policy": [
+          {}
+         ],
+         "node_config": [
+          {
+           "advanced_machine_features": [],
+           "boot_disk": [
+            {}
+           ],
+           "confidential_nodes": [],
+           "containerd_config": [],
+           "effective_taints": [],
+           "ephemeral_storage_local_ssd_config": [],
+           "fast_socket": [],
+           "gcfs_config": [],
+           "guest_accelerator": [],
+           "gvnic": [],
+           "host_maintenance_policy": [],
+           "kubelet_config": [
+            {
+             "allowed_unsafe_sysctls": [],
+             "eviction_minimum_reclaim": [],
+             "eviction_soft": [],
+             "eviction_soft_grace_period": []
+            }
+           ],
+           "labels": {},
+           "linux_node_config": [],
+           "local_nvme_ssd_block_config": [],
+           "metadata": {},
+           "oauth_scopes": [
+            false
+           ],
+           "reservation_affinity": [],
+           "resource_labels": {},
+           "resource_manager_tags": {},
+           "secondary_boot_disks": [],
+           "shielded_instance_config": [
+            {}
+           ],
+           "sole_tenant_config": [],
+           "storage_pools": [],
+           "tags": [],
+           "taint": [],
+           "windows_node_config": [
+            {}
+           ],
+           "workload_metadata_config": [
+            {}
+           ]
+          }
+         ],
+         "node_locations": [],
+         "node_pool": [
+          {
+           "autoscaling": [
+            {}
+           ],
+           "instance_group_urls": [
+            false
+           ],
+           "managed_instance_group_urls": [
+            false
+           ],
+           "management": [
+            {}
+           ],
+           "network_config": [
+            {
+             "additional_node_network_configs": [],
+             "additional_pod_network_configs": [],
+             "network_performance_config": [],
+             "pod_cidr_overprovision_config": []
+            }
+           ],
+           "node_config": [
+            {
+             "advanced_machine_features": [],
+             "boot_disk": [
+              {}
+             ],
+             "confidential_nodes": [],
+             "containerd_config": [],
+             "effective_taints": [],
+             "ephemeral_storage_local_ssd_config": [],
+             "fast_socket": [],
+             "gcfs_config": [],
+             "guest_accelerator": [],
+             "gvnic": [],
+             "host_maintenance_policy": [],
+             "kubelet_config": [
+              {
+               "allowed_unsafe_sysctls": [],
+               "eviction_minimum_reclaim": [],
+               "eviction_soft": [],
+               "eviction_soft_grace_period": []
+              }
+             ],
+             "labels": {},
+             "linux_node_config": [],
+             "local_nvme_ssd_block_config": [],
+             "metadata": {},
+             "oauth_scopes": [
+              false
+             ],
+             "reservation_affinity": [],
+             "resource_labels": {},
+             "resource_manager_tags": {},
+             "secondary_boot_disks": [],
+             "shielded_instance_config": [
+              {}
+             ],
+             "sole_tenant_config": [],
+             "storage_pools": [],
+             "tags": [],
+             "taint": [],
+             "windows_node_config": [
+              {}
+             ],
+             "workload_metadata_config": [
+              {}
+             ]
+            }
+           ],
+           "node_locations": [
+            false
+           ],
+           "placement_policy": [],
+           "queued_provisioning": [],
+           "upgrade_settings": [
+            {
+             "blue_green_settings": []
+            }
+           ]
+          }
+         ],
+         "node_pool_auto_config": [],
+         "node_pool_defaults": [],
+         "notification_config": [],
+         "pod_autoscaling": [],
+         "private_cluster_config": [
+          {
+           "master_global_access_config": []
+          }
+         ],
+         "rbac_binding_config": [],
+         "release_channel": [
+          {}
+         ],
+         "resource_labels": {},
+         "resource_usage_export_config": [],
+         "secret_manager_config": [],
+         "security_posture_config": [],
+         "service_external_ips_config": [],
+         "terraform_labels": {},
+         "user_managed_keys_config": [],
+         "vertical_pod_autoscaling": [],
+         "workload_identity_config": [
+          {}
+         ]
+        },
+        "type": "google_container_cluster",
+        "values": {
+         "addons_config": [],
+         "allow_net_admin": null,
+         "anonymous_authentication_config": [],
+         "authenticator_groups_config": [],
+         "binary_authorization": [],
+         "cluster_autoscaling": [],
+         "cluster_ipv4_cidr": "10.1.0.0/16",
+         "confidential_nodes": [],
+         "control_plane_endpoints_config": [],
+         "cost_management_config": [],
+         "database_encryption": [
+          {
+           "key_name": "projects/example-project/locations/europe-west3/keyRings/kms-ew3-36740452010-2-alethia-nl/cryptoKeys/gke-secrets",
+           "state": "ENCRYPTED"
+          }
+         ],
+         "datapath_provider": null,
+         "default_max_pods_per_node": 110,
+         "default_snat_status": [],
+         "deletion_protection": false,
+         "description": "",
+         "disable_l4_lb_firewall_reconciliation": null,
+         "dns_config": [],
+         "effective_labels": {
+          "environment": "36740452010-2",
+          "managed-by": "opentofu"
+         },
+         "enable_autopilot": null,
+         "enable_cilium_clusterwide_network_policy": null,
+         "enable_fqdn_network_policy": null,
+         "enable_intranode_visibility": null,
+         "enable_k8s_beta_apis": [],
+         "enable_kubernetes_alpha": null,
+         "enable_l4_ilb_subsetting": null,
+         "enable_legacy_abac": null,
+         "enable_multi_networking": null,
+         "enable_shielded_nodes": true,
+         "enable_tpu": null,
+         "endpoint": "203.0.113.10",
+         "enterprise_config": [],
+         "fleet": [],
+         "gateway_api_config": [],
+         "gke_auto_upgrade_config": [],
+         "id": "projects/example-project/locations/europe-west3-a/clusters/gke-ew3-36740452010-2-alethia-nl",
+         "identity_service_config": [],
+         "in_transit_encryption_config": null,
+         "initial_node_count": 1,
+         "ip_allocation_policy": [
+          {
+           "additional_ip_ranges_config": [],
+           "additional_pod_ranges_config": [],
+           "cluster_ipv4_cidr_block": null,
+           "cluster_secondary_range_name": "gke-ew3-36740452010-2-alethia-nl-pods",
+           "pod_cidr_overprovision_config": [],
+           "services_ipv4_cidr_block": null,
+           "services_secondary_range_name": "gke-ew3-36740452010-2-alethia-nl-services",
+           "stack_type": null
+          }
+         ],
+         "label_fingerprint": "0123abcd",
+         "location": "europe-west3-a",
+         "logging_config": [],
+         "logging_service": "logging.googleapis.com/kubernetes",
+         "maintenance_policy": [],
+         "master_auth": [
+          {
+           "client_certificate": "",
+           "client_certificate_config": [
+            {
+             "issue_client_certificate": false
+            }
+           ],
+           "client_key": "",
+           "cluster_ca_certificate": "Q0EtUExBQ0VIT0xERVI="
+          }
+         ],
+         "master_authorized_networks_config": [],
+         "master_version": "1.35.8-gke.1380000",
+         "mesh_certificates": [],
+         "min_master_version": "1.35",
+         "monitoring_config": [],
+         "monitoring_service": "monitoring.googleapis.com/kubernetes",
+         "name": "gke-ew3-36740452010-2-alethia-nl",
+         "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+         "network_performance_config": [],
+         "network_policy": [
+          {
+           "enabled": true,
+           "provider": "CALICO"
+          }
+         ],
+         "networking_mode": "VPC_NATIVE",
+         "node_config": [
+          {
+           "advanced_machine_features": [],
+           "boot_disk": [
+            {
+             "disk_type": "pd-standard",
+             "provisioned_iops": 0,
+             "provisioned_throughput": 0,
+             "size_gb": 60
+            }
+           ],
+           "boot_disk_kms_key": null,
+           "confidential_nodes": [],
+           "containerd_config": [],
+           "disk_size_gb": 60,
+           "disk_type": "pd-standard",
+           "effective_taints": [],
+           "enable_confidential_storage": false,
+           "ephemeral_storage_local_ssd_config": [],
+           "fast_socket": [],
+           "flex_start": false,
+           "gcfs_config": [],
+           "guest_accelerator": [],
+           "gvnic": [],
+           "host_maintenance_policy": [],
+           "image_type": "COS_CONTAINERD",
+           "kubelet_config": [
+            {
+             "allowed_unsafe_sysctls": [],
+             "container_log_max_files": 0,
+             "container_log_max_size": null,
+             "cpu_cfs_quota": false,
+             "cpu_cfs_quota_period": null,
+             "cpu_manager_policy": null,
+             "eviction_max_pod_grace_period_seconds": 0,
+             "eviction_minimum_reclaim": [],
+             "eviction_soft": [],
+             "eviction_soft_grace_period": [],
+             "image_gc_high_threshold_percent": 0,
+             "image_gc_low_threshold_percent": 0,
+             "image_maximum_gc_age": null,
+             "image_minimum_gc_age": null,
+             "insecure_kubelet_readonly_port_enabled": "FALSE",
+             "max_parallel_image_pulls": 2,
+             "pod_pids_limit": 0,
+             "single_process_oom_kill": false
+            }
+           ],
+           "labels": {
+            "alethia_e2e-run": "e2e-36740452010-2",
+            "alethia_project-id": "e2e-36740452010-2",
+            "environment": "36740452010-2",
+            "managed-by": "opentofu",
+            "service": "alethia-nl"
+           },
+           "linux_node_config": [],
+           "local_nvme_ssd_block_config": [],
+           "local_ssd_count": 0,
+           "local_ssd_encryption_mode": null,
+           "logging_variant": "DEFAULT",
+           "machine_type": "e2-standard-4",
+           "max_run_duration": null,
+           "metadata": {
+            "disable-legacy-endpoints": "true"
+           },
+           "min_cpu_platform": null,
+           "node_group": null,
+           "oauth_scopes": [
+            "https://www.googleapis.com/auth/cloud-platform"
+           ],
+           "preemptible": false,
+           "reservation_affinity": [],
+           "resource_labels": {
+            "goog-gke-node-pool-provisioning-model": "on-demand"
+           },
+           "resource_manager_tags": {},
+           "secondary_boot_disks": [],
+           "service_account": "default",
+           "shielded_instance_config": [
+            {
+             "enable_integrity_monitoring": true,
+             "enable_secure_boot": true
+            }
+           ],
+           "sole_tenant_config": [],
+           "spot": false,
+           "storage_pools": [],
+           "tags": [],
+           "taint": [],
+           "windows_node_config": [
+            {
+             "osversion": null
+            }
+           ],
+           "workload_metadata_config": [
+            {
+             "mode": "GKE_METADATA"
+            }
+           ]
+          }
+         ],
+         "node_locations": [],
+         "node_pool": [
+          {
+           "autoscaling": [
+            {
+             "location_policy": "BALANCED",
+             "max_node_count": 4,
+             "min_node_count": 3,
+             "total_max_node_count": 0,
+             "total_min_node_count": 0
+            }
+           ],
+           "initial_node_count": 3,
+           "instance_group_urls": [
+            "https://www.googleapis.com/compute/v1/projects/example-project/zones/europe-west3-a/instanceGroupManagers/gke-gke-ew3-36740452-gke-ew3-36740452-5b4d5b62-grp"
+           ],
+           "managed_instance_group_urls": [
+            "https://www.googleapis.com/compute/v1/projects/example-project/zones/europe-west3-a/instanceGroups/gke-gke-ew3-36740452-gke-ew3-36740452-5b4d5b62-grp"
+           ],
+           "management": [
+            {
+             "auto_repair": true,
+             "auto_upgrade": true
+            }
+           ],
+           "max_pods_per_node": 110,
+           "name": "gke-ew3-36740452010-2-alethia-n-a10049e",
+           "name_prefix": null,
+           "network_config": [
+            {
+             "additional_node_network_configs": [],
+             "additional_pod_network_configs": [],
+             "create_pod_range": false,
+             "enable_private_nodes": true,
+             "network_performance_config": [],
+             "pod_cidr_overprovision_config": [],
+             "pod_ipv4_cidr_block": "10.1.0.0/16",
+             "pod_range": "gke-ew3-36740452010-2-alethia-nl-pods",
+             "subnetwork": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private"
+            }
+           ],
+           "node_config": [
+            {
+             "advanced_machine_features": [],
+             "boot_disk": [
+              {
+               "disk_type": "pd-standard",
+               "provisioned_iops": 0,
+               "provisioned_throughput": 0,
+               "size_gb": 60
+              }
+             ],
+             "boot_disk_kms_key": null,
+             "confidential_nodes": [],
+             "containerd_config": [],
+             "disk_size_gb": 60,
+             "disk_type": "pd-standard",
+             "effective_taints": [],
+             "enable_confidential_storage": false,
+             "ephemeral_storage_local_ssd_config": [],
+             "fast_socket": [],
+             "flex_start": false,
+             "gcfs_config": [],
+             "guest_accelerator": [],
+             "gvnic": [],
+             "host_maintenance_policy": [],
+             "image_type": "COS_CONTAINERD",
+             "kubelet_config": [
+              {
+               "allowed_unsafe_sysctls": [],
+               "container_log_max_files": 0,
+               "container_log_max_size": null,
+               "cpu_cfs_quota": false,
+               "cpu_cfs_quota_period": null,
+               "cpu_manager_policy": null,
+               "eviction_max_pod_grace_period_seconds": 0,
+               "eviction_minimum_reclaim": [],
+               "eviction_soft": [],
+               "eviction_soft_grace_period": [],
+               "image_gc_high_threshold_percent": 0,
+               "image_gc_low_threshold_percent": 0,
+               "image_maximum_gc_age": null,
+               "image_minimum_gc_age": null,
+               "insecure_kubelet_readonly_port_enabled": "FALSE",
+               "max_parallel_image_pulls": 2,
+               "pod_pids_limit": 0,
+               "single_process_oom_kill": false
+              }
+             ],
+             "labels": {
+              "alethia_e2e-run": "e2e-36740452010-2",
+              "alethia_project-id": "e2e-36740452010-2",
+              "environment": "36740452010-2",
+              "managed-by": "opentofu",
+              "service": "alethia-nl"
+             },
+             "linux_node_config": [],
+             "local_nvme_ssd_block_config": [],
+             "local_ssd_count": 0,
+             "local_ssd_encryption_mode": null,
+             "logging_variant": "DEFAULT",
+             "machine_type": "e2-standard-4",
+             "max_run_duration": null,
+             "metadata": {
+              "disable-legacy-endpoints": "true"
+             },
+             "min_cpu_platform": null,
+             "node_group": null,
+             "oauth_scopes": [
+              "https://www.googleapis.com/auth/cloud-platform"
+             ],
+             "preemptible": false,
+             "reservation_affinity": [],
+             "resource_labels": {
+              "goog-gke-node-pool-provisioning-model": "on-demand"
+             },
+             "resource_manager_tags": {},
+             "secondary_boot_disks": [],
+             "service_account": "default",
+             "shielded_instance_config": [
+              {
+               "enable_integrity_monitoring": true,
+               "enable_secure_boot": true
+              }
+             ],
+             "sole_tenant_config": [],
+             "spot": false,
+             "storage_pools": [],
+             "tags": [],
+             "taint": [],
+             "windows_node_config": [
+              {
+               "osversion": null
+              }
+             ],
+             "workload_metadata_config": [
+              {
+               "mode": "GKE_METADATA"
+              }
+             ]
+            }
+           ],
+           "node_count": 3,
+           "node_locations": [
+            "europe-west3-a"
+           ],
+           "placement_policy": [],
+           "queued_provisioning": [],
+           "upgrade_settings": [
+            {
+             "blue_green_settings": [],
+             "max_surge": 1,
+             "max_unavailable": 0,
+             "strategy": "SURGE"
+            }
+           ],
+           "version": "1.35.8-gke.1380000"
+          }
+         ],
+         "node_pool_auto_config": [],
+         "node_pool_defaults": [],
+         "node_version": "1.35.8-gke.1380000",
+         "notification_config": [],
+         "operation": null,
+         "pod_autoscaling": [],
+         "private_cluster_config": [
+          {
+           "enable_private_endpoint": false,
+           "enable_private_nodes": true,
+           "master_global_access_config": [],
+           "master_ipv4_cidr_block": "172.16.0.0/28",
+           "peering_name": null,
+           "private_endpoint": null,
+           "private_endpoint_subnetwork": null,
+           "public_endpoint": null
+          }
+         ],
+         "private_ipv6_google_access": null,
+         "project": "example-project",
+         "rbac_binding_config": [],
+         "release_channel": [
+          {
+           "channel": "REGULAR"
+          }
+         ],
+         "remove_default_node_pool": true,
+         "resource_labels": {
+          "environment": "36740452010-2",
+          "managed-by": "opentofu"
+         },
+         "resource_usage_export_config": [],
+         "secret_manager_config": [],
+         "security_posture_config": [],
+         "self_link": "https://container.googleapis.com/v1/projects/example-project/locations/europe-west3-a/clusters/gke-ew3-36740452010-2-alethia-nl",
+         "service_external_ips_config": [],
+         "services_ipv4_cidr": "10.2.0.0/20",
+         "subnetwork": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private",
+         "terraform_labels": {
+          "environment": "36740452010-2",
+          "managed-by": "opentofu"
+         },
+         "timeouts": null,
+         "tpu_ipv4_cidr_block": null,
+         "user_managed_keys_config": [],
+         "vertical_pod_autoscaling": [],
+         "workload_identity_config": [
+          {
+           "workload_pool": "example-project.svc.id.goog"
+          }
+         ]
+        }
+       },
+       {
+        "address": "module.gke[0].google_container_node_pool.default[0]",
+        "index": 0,
+        "mode": "managed",
+        "name": "default",
+        "provider_name": "registry.opentofu.org/hashicorp/google",
+        "schema_version": 1,
+        "sensitive_values": {
+         "autoscaling": [
+          {}
+         ],
+         "instance_group_urls": [
+          false
+         ],
+         "managed_instance_group_urls": [
+          false
+         ],
+         "management": [
+          {}
+         ],
+         "network_config": [
+          {
+           "additional_node_network_configs": [],
+           "additional_pod_network_configs": [],
+           "network_performance_config": [],
+           "pod_cidr_overprovision_config": []
+          }
+         ],
+         "node_config": [
+          {
+           "advanced_machine_features": [],
+           "boot_disk": [
+            {}
+           ],
+           "confidential_nodes": [],
+           "containerd_config": [],
+           "effective_taints": [],
+           "ephemeral_storage_local_ssd_config": [],
+           "fast_socket": [],
+           "gcfs_config": [],
+           "guest_accelerator": [],
+           "gvnic": [],
+           "host_maintenance_policy": [],
+           "kubelet_config": [
+            {
+             "allowed_unsafe_sysctls": [],
+             "eviction_minimum_reclaim": [],
+             "eviction_soft": [],
+             "eviction_soft_grace_period": []
+            }
+           ],
+           "labels": {},
+           "linux_node_config": [],
+           "local_nvme_ssd_block_config": [],
+           "metadata": {},
+           "oauth_scopes": [
+            false
+           ],
+           "reservation_affinity": [],
+           "resource_labels": {},
+           "resource_manager_tags": {},
+           "secondary_boot_disks": [],
+           "shielded_instance_config": [
+            {}
+           ],
+           "sole_tenant_config": [],
+           "storage_pools": [],
+           "tags": [],
+           "taint": [],
+           "windows_node_config": [
+            {}
+           ],
+           "workload_metadata_config": [
+            {}
+           ]
+          }
+         ],
+         "node_locations": [
+          false
+         ],
+         "placement_policy": [],
+         "queued_provisioning": [],
+         "upgrade_settings": [
+          {
+           "blue_green_settings": []
+          }
+         ]
+        },
+        "type": "google_container_node_pool",
+        "values": {
+         "autoscaling": [
+          {
+           "location_policy": "BALANCED",
+           "max_node_count": 4,
+           "min_node_count": 3,
+           "total_max_node_count": 0,
+           "total_min_node_count": 0
+          }
+         ],
+         "cluster": "gke-ew3-36740452010-2-alethia-nl",
+         "id": "projects/example-project/locations/europe-west3-a/clusters/gke-ew3-36740452010-2-alethia-nl/nodePools/gke-ew3-36740452010-2-alethia-n-a10049e",
+         "initial_node_count": 3,
+         "instance_group_urls": [
+          "https://www.googleapis.com/compute/v1/projects/example-project/zones/europe-west3-a/instanceGroupManagers/gke-gke-ew3-36740452-gke-ew3-36740452-5b4d5b62-grp"
+         ],
+         "location": "europe-west3-a",
+         "managed_instance_group_urls": [
+          "https://www.googleapis.com/compute/v1/projects/example-project/zones/europe-west3-a/instanceGroups/gke-gke-ew3-36740452-gke-ew3-36740452-5b4d5b62-grp"
+         ],
+         "management": [
+          {
+           "auto_repair": true,
+           "auto_upgrade": true
+          }
+         ],
+         "max_pods_per_node": 110,
+         "name": "gke-ew3-36740452010-2-alethia-n-a10049e",
+         "name_prefix": null,
+         "network_config": [
+          {
+           "additional_node_network_configs": [],
+           "additional_pod_network_configs": [],
+           "create_pod_range": false,
+           "enable_private_nodes": true,
+           "network_performance_config": [],
+           "pod_cidr_overprovision_config": [],
+           "pod_ipv4_cidr_block": "10.1.0.0/16",
+           "pod_range": "gke-ew3-36740452010-2-alethia-nl-pods",
+           "subnetwork": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private"
+          }
+         ],
+         "node_config": [
+          {
+           "advanced_machine_features": [],
+           "boot_disk": [
+            {
+             "disk_type": "pd-standard",
+             "provisioned_iops": 0,
+             "provisioned_throughput": 0,
+             "size_gb": 60
+            }
+           ],
+           "boot_disk_kms_key": null,
+           "confidential_nodes": [],
+           "containerd_config": [],
+           "disk_size_gb": 60,
+           "disk_type": "pd-standard",
+           "effective_taints": [],
+           "enable_confidential_storage": false,
+           "ephemeral_storage_local_ssd_config": [],
+           "fast_socket": [],
+           "flex_start": false,
+           "gcfs_config": [],
+           "guest_accelerator": [],
+           "gvnic": [],
+           "host_maintenance_policy": [],
+           "image_type": "COS_CONTAINERD",
+           "kubelet_config": [
+            {
+             "allowed_unsafe_sysctls": [],
+             "container_log_max_files": 0,
+             "container_log_max_size": null,
+             "cpu_cfs_quota": false,
+             "cpu_cfs_quota_period": null,
+             "cpu_manager_policy": null,
+             "eviction_max_pod_grace_period_seconds": 0,
+             "eviction_minimum_reclaim": [],
+             "eviction_soft": [],
+             "eviction_soft_grace_period": [],
+             "image_gc_high_threshold_percent": 0,
+             "image_gc_low_threshold_percent": 0,
+             "image_maximum_gc_age": null,
+             "image_minimum_gc_age": null,
+             "insecure_kubelet_readonly_port_enabled": "FALSE",
+             "max_parallel_image_pulls": 2,
+             "pod_pids_limit": 0,
+             "single_process_oom_kill": false
+            }
+           ],
+           "labels": {
+            "alethia_e2e-run": "e2e-36740452010-2",
+            "alethia_project-id": "e2e-36740452010-2",
+            "environment": "36740452010-2",
+            "managed-by": "opentofu",
+            "service": "alethia-nl"
+           },
+           "linux_node_config": [],
+           "local_nvme_ssd_block_config": [],
+           "local_ssd_count": 0,
+           "local_ssd_encryption_mode": null,
+           "logging_variant": "DEFAULT",
+           "machine_type": "e2-standard-4",
+           "max_run_duration": null,
+           "metadata": {
+            "disable-legacy-endpoints": "true"
+           },
+           "min_cpu_platform": null,
+           "node_group": null,
+           "oauth_scopes": [
+            "https://www.googleapis.com/auth/cloud-platform"
+           ],
+           "preemptible": false,
+           "reservation_affinity": [],
+           "resource_labels": {
+            "goog-gke-node-pool-provisioning-model": "on-demand"
+           },
+           "resource_manager_tags": {},
+           "secondary_boot_disks": [],
+           "service_account": "default",
+           "shielded_instance_config": [
+            {
+             "enable_integrity_monitoring": true,
+             "enable_secure_boot": true
+            }
+           ],
+           "sole_tenant_config": [],
+           "spot": false,
+           "storage_pools": [],
+           "tags": [],
+           "taint": [],
+           "windows_node_config": [
+            {
+             "osversion": null
+            }
+           ],
+           "workload_metadata_config": [
+            {
+             "mode": "GKE_METADATA"
+            }
+           ]
+          }
+         ],
+         "node_count": 3,
+         "node_locations": [
+          "europe-west3-a"
+         ],
+         "operation": null,
+         "placement_policy": [],
+         "project": "example-project",
+         "queued_provisioning": [],
+         "timeouts": null,
+         "upgrade_settings": [
+          {
+           "blue_green_settings": [],
+           "max_surge": 1,
+           "max_unavailable": 0,
+           "strategy": "SURGE"
+          }
+         ],
+         "version": "1.35.8-gke.1380000"
+        }
+       }
+      ]
+     },
+     {
+      "address": "module.vpc_network[0]",
+      "resources": [
+       {
+        "address": "module.vpc_network[0].google_compute_firewall.allow_health_checks",
+        "mode": "managed",
+        "name": "allow_health_checks",
+        "provider_name": "registry.opentofu.org/hashicorp/google",
+        "schema_version": 1,
+        "sensitive_values": {
+         "allow": [
+          {
+           "ports": []
+          }
+         ],
+         "deny": [],
+         "destination_ranges": [],
+         "log_config": [],
+         "params": [],
+         "source_ranges": [
+          false,
+          false
+         ],
+         "source_service_accounts": [],
+         "source_tags": [],
+         "target_service_accounts": [],
+         "target_tags": []
+        },
+        "type": "google_compute_firewall",
+        "values": {
+         "allow": [
+          {
+           "ports": [],
+           "protocol": "tcp"
+          }
+         ],
+         "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+         "deny": [],
+         "description": "",
+         "destination_ranges": [],
+         "direction": "INGRESS",
+         "disabled": false,
+         "enable_logging": null,
+         "id": "projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-health-checks",
+         "log_config": [],
+         "name": "alethia-nl-36740452010-2-vpc-allow-health-checks",
+         "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+         "params": [],
+         "priority": 1000,
+         "project": "example-project",
+         "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-health-checks",
+         "source_ranges": [
+          "130.211.0.0/22",
+          "35.191.0.0/16"
+         ],
+         "source_service_accounts": [],
+         "source_tags": [],
+         "target_service_accounts": [],
+         "target_tags": [],
+         "timeouts": null
+        }
+       },
+       {
+        "address": "module.vpc_network[0].google_compute_firewall.allow_internal",
+        "mode": "managed",
+        "name": "allow_internal",
+        "provider_name": "registry.opentofu.org/hashicorp/google",
+        "schema_version": 1,
+        "sensitive_values": {
+         "allow": [
+          {
+           "ports": []
+          },
+          {
+           "ports": []
+          },
+          {
+           "ports": []
+          }
+         ],
+         "deny": [],
+         "destination_ranges": [],
+         "log_config": [],
+         "params": [],
+         "source_ranges": [
+          false
+         ],
+         "source_service_accounts": [],
+         "source_tags": [],
+         "target_service_accounts": [],
+         "target_tags": []
+        },
+        "type": "google_compute_firewall",
+        "values": {
+         "allow": [
+          {
+           "ports": [],
+           "protocol": "icmp"
+          },
+          {
+           "ports": [],
+           "protocol": "tcp"
+          },
+          {
+           "ports": [],
+           "protocol": "udp"
+          }
+         ],
+         "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+         "deny": [],
+         "description": "",
+         "destination_ranges": [],
+         "direction": "INGRESS",
+         "disabled": false,
+         "enable_logging": null,
+         "id": "projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-internal",
+         "log_config": [],
+         "name": "alethia-nl-36740452010-2-vpc-allow-internal",
+         "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+         "params": [],
+         "priority": 1000,
+         "project": "example-project",
+         "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-internal",
+         "source_ranges": [
+          "10.0.0.0/8"
+         ],
+         "source_service_accounts": [],
+         "source_tags": [],
+         "target_service_accounts": [],
+         "target_tags": [],
+         "timeouts": null
+        }
+       },
+       {
+        "address": "module.vpc_network[0].google_compute_global_address.private_service_access",
+        "mode": "managed",
+        "name": "private_service_access",
+        "provider_name": "registry.opentofu.org/hashicorp/google",
+        "schema_version": 0,
+        "sensitive_values": {
+         "effective_labels": {},
+         "labels": {},
+         "terraform_labels": {}
+        },
+        "type": "google_compute_global_address",
+        "values": {
+         "address": "10.100.0.0",
+         "address_type": "INTERNAL",
+         "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+         "description": "",
+         "effective_labels": {},
+         "id": "projects/example-project/global/addresses/alethia-nl-36740452010-2-psa",
+         "ip_version": null,
+         "label_fingerprint": "42WmSpB8rSM=",
+         "labels": {},
+         "name": "alethia-nl-36740452010-2-psa",
+         "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+         "prefix_length": 16,
+         "project": "example-project",
+         "purpose": "VPC_PEERING",
+         "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/global/addresses/alethia-nl-36740452010-2-psa",
+         "terraform_labels": {},
+         "timeouts": null
+        }
+       },
+       {
+        "address": "module.vpc_network[0].google_compute_router.router",
+        "mode": "managed",
+        "name": "router",
+        "provider_name": "registry.opentofu.org/hashicorp/google",
+        "schema_version": 0,
+        "sensitive_values": {
+         "bgp": [
+          {
+           "advertised_groups": [],
+           "advertised_ip_ranges": []
+          }
+         ],
+         "md5_authentication_keys": []
+        },
+        "type": "google_compute_router",
+        "values": {
+         "bgp": [
+          {
+           "advertise_mode": "DEFAULT",
+           "advertised_groups": [],
+           "advertised_ip_ranges": [],
+           "asn": 64514,
+           "identifier_range": null,
+           "keepalive_interval": 20
+          }
+         ],
+         "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+         "description": "",
+         "encrypted_interconnect_router": null,
+         "id": "projects/example-project/regions/europe-west3/routers/alethia-nl-36740452010-2-router",
+         "md5_authentication_keys": [],
+         "name": "alethia-nl-36740452010-2-router",
+         "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+         "project": "example-project",
+         "region": "europe-west3",
+         "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/regions/europe-west3/routers/alethia-nl-36740452010-2-router",
+         "timeouts": null
+        }
+       },
+       {
+        "address": "module.vpc_network[0].google_compute_subnetwork.private",
+        "mode": "managed",
+        "name": "private",
+        "provider_name": "registry.opentofu.org/hashicorp/google",
+        "schema_version": 0,
+        "sensitive_values": {
+         "log_config": [
+          {
+           "metadata_fields": []
+          }
+         ],
+         "params": [],
+         "secondary_ip_range": [
+          {},
+          {}
+         ]
+        },
+        "type": "google_compute_subnetwork",
+        "values": {
+         "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+         "description": "",
+         "enable_flow_logs": null,
+         "external_ipv6_prefix": null,
+         "fingerprint": "abcdEFGH123=",
+         "gateway_address": "10.0.0.1",
+         "id": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private",
+         "internal_ipv6_prefix": null,
+         "ip_cidr_range": "10.0.0.0/20",
+         "ip_collection": null,
+         "ipv6_access_type": null,
+         "ipv6_cidr_range": null,
+         "ipv6_gce_endpoint": null,
+         "log_config": [
+          {
+           "aggregation_interval": "INTERVAL_5_SEC",
+           "filter_expr": "true",
+           "flow_sampling": 0.5,
+           "metadata": "INCLUDE_ALL_METADATA",
+           "metadata_fields": []
+          }
+         ],
+         "name": "alethia-nl-36740452010-2-private",
+         "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+         "params": [],
+         "private_ip_google_access": true,
+         "private_ipv6_google_access": null,
+         "project": "example-project",
+         "purpose": "PRIVATE",
+         "region": "europe-west3",
+         "reserved_internal_range": null,
+         "role": null,
+         "secondary_ip_range": [
+          {
+           "ip_cidr_range": "10.1.0.0/16",
+           "range_name": "gke-ew3-36740452010-2-alethia-nl-pods",
+           "reserved_internal_range": null
+          },
+          {
+           "ip_cidr_range": "10.2.0.0/20",
+           "range_name": "gke-ew3-36740452010-2-alethia-nl-services",
+           "reserved_internal_range": null
+          }
+         ],
+         "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private",
+         "send_secondary_ip_range_if_empty": null,
+         "stack_type": "IPV4_ONLY",
+         "state": null,
+         "subnetwork_id": null,
+         "timeouts": null
+        }
+       }
+      ]
+     }
+    ],
+    "resources": [
+     {
+      "address": "google_kms_crypto_key.gke_secrets[0]",
+      "index": 0,
+      "mode": "managed",
+      "name": "gke_secrets",
+      "provider_name": "registry.opentofu.org/hashicorp/google",
+      "schema_version": 1,
+      "sensitive_values": {
+       "effective_labels": {},
+       "labels": {},
+       "primary": [],
+       "terraform_labels": {},
+       "version_template": [
+        {}
+       ]
+      },
+      "type": "google_kms_crypto_key",
+      "values": {
+       "crypto_key_backend": "",
+       "destroy_scheduled_duration": "86400s",
+       "effective_labels": {},
+       "id": "projects/example-project/locations/europe-west3/keyRings/kms-ew3-36740452010-2-alethia-nl/cryptoKeys/gke-secrets",
+       "import_only": false,
+       "key_ring": "projects/example-project/locations/europe-west3/keyRings/kms-ew3-36740452010-2-alethia-nl",
+       "labels": {},
+       "name": "gke-secrets",
+       "primary": [],
+       "purpose": "ENCRYPT_DECRYPT",
+       "rotation_period": "7776000s",
+       "skip_initial_version_creation": false,
+       "terraform_labels": {},
+       "timeouts": null,
+       "version_template": [
+        {
+         "algorithm": "GOOGLE_SYMMETRIC_ENCRYPTION",
+         "protection_level": "SOFTWARE"
+        }
+       ]
+      }
+     },
+     {
+      "address": "google_service_account_iam_member.external_dns_wi[0]",
+      "index": 0,
+      "mode": "managed",
+      "name": "external_dns_wi",
+      "provider_name": "registry.opentofu.org/hashicorp/google",
+      "schema_version": 0,
+      "sensitive_values": {
+       "condition": []
+      },
+      "type": "google_service_account_iam_member",
+      "values": {
+       "condition": [],
+       "etag": "BwZctarbiXQ=",
+       "id": "projects/example-project/serviceAccounts/extdns-404896e1@example-project.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:example-project.svc.id.goog[external-dns/external-dns-sa]",
+       "member": "serviceAccount:example-project.svc.id.goog[external-dns/external-dns-sa]",
+       "role": "roles/iam.workloadIdentityUser",
+       "service_account_id": "projects/example-project/serviceAccounts/extdns-404896e1@example-project.iam.gserviceaccount.com"
+      }
+     }
+    ]
+   }
+  }
+ },
+ "resource_drift": [
+  {
+   "address": "google_kms_crypto_key.gke_secrets[0]",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "after": {
+     "crypto_key_backend": "",
+     "destroy_scheduled_duration": "86400s",
+     "effective_labels": {},
+     "id": "projects/example-project/locations/europe-west3/keyRings/kms-ew3-36740452010-2-alethia-nl/cryptoKeys/gke-secrets",
+     "import_only": false,
+     "key_ring": "projects/example-project/locations/europe-west3/keyRings/kms-ew3-36740452010-2-alethia-nl",
+     "labels": {},
+     "name": "gke-secrets",
+     "primary": [],
+     "purpose": "ENCRYPT_DECRYPT",
+     "rotation_period": "7776000s",
+     "skip_initial_version_creation": false,
+     "terraform_labels": {},
+     "timeouts": null,
+     "version_template": [
+      {
+       "algorithm": "GOOGLE_SYMMETRIC_ENCRYPTION",
+       "protection_level": "SOFTWARE"
+      }
+     ]
+    },
+    "after_sensitive": {
+     "effective_labels": {},
+     "labels": {},
+     "primary": [],
+     "terraform_labels": {},
+     "version_template": [
+      {}
+     ]
+    },
+    "after_unknown": {},
+    "before": {
+     "crypto_key_backend": "",
+     "destroy_scheduled_duration": "86400s",
+     "effective_labels": {},
+     "id": "projects/example-project/locations/europe-west3/keyRings/kms-ew3-36740452010-2-alethia-nl/cryptoKeys/gke-secrets",
+     "import_only": false,
+     "key_ring": "projects/example-project/locations/europe-west3/keyRings/kms-ew3-36740452010-2-alethia-nl",
+     "labels": null,
+     "name": "gke-secrets",
+     "primary": [],
+     "purpose": "ENCRYPT_DECRYPT",
+     "rotation_period": "7776000s",
+     "skip_initial_version_creation": false,
+     "terraform_labels": {},
+     "timeouts": null,
+     "version_template": [
+      {
+       "algorithm": "GOOGLE_SYMMETRIC_ENCRYPTION",
+       "protection_level": "SOFTWARE"
+      }
+     ]
+    },
+    "before_sensitive": {
+     "effective_labels": {},
+     "primary": [],
+     "terraform_labels": {},
+     "version_template": [
+      {}
+     ]
+    }
+   },
+   "index": 0,
+   "mode": "managed",
+   "name": "gke_secrets",
+   "provider_name": "registry.opentofu.org/hashicorp/google",
+   "type": "google_kms_crypto_key"
+  },
+  {
+   "address": "google_service_account_iam_member.external_dns_wi[0]",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "after": {
+     "condition": [],
+     "etag": "BwZctarbiXQ=",
+     "id": "projects/example-project/serviceAccounts/extdns-404896e1@example-project.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:example-project.svc.id.goog[external-dns/external-dns-sa]",
+     "member": "serviceAccount:example-project.svc.id.goog[external-dns/external-dns-sa]",
+     "role": "roles/iam.workloadIdentityUser",
+     "service_account_id": "projects/example-project/serviceAccounts/extdns-404896e1@example-project.iam.gserviceaccount.com"
+    },
+    "after_sensitive": {
+     "condition": []
+    },
+    "after_unknown": {},
+    "before": {
+     "condition": [],
+     "etag": "BwZctaqc/iE=",
+     "id": "projects/example-project/serviceAccounts/extdns-404896e1@example-project.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:example-project.svc.id.goog[external-dns/external-dns-sa]",
+     "member": "serviceAccount:example-project.svc.id.goog[external-dns/external-dns-sa]",
+     "role": "roles/iam.workloadIdentityUser",
+     "service_account_id": "projects/example-project/serviceAccounts/extdns-404896e1@example-project.iam.gserviceaccount.com"
+    },
+    "before_sensitive": {
+     "condition": []
+    }
+   },
+   "index": 0,
+   "mode": "managed",
+   "name": "external_dns_wi",
+   "provider_name": "registry.opentofu.org/hashicorp/google",
+   "type": "google_service_account_iam_member"
+  },
+  {
+   "address": "module.gke[0].google_container_cluster.cluster",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "after": {
+     "addons_config": [],
+     "allow_net_admin": null,
+     "anonymous_authentication_config": [],
+     "authenticator_groups_config": [],
+     "binary_authorization": [],
+     "cluster_autoscaling": [],
+     "cluster_ipv4_cidr": "10.1.0.0/16",
+     "confidential_nodes": [],
+     "control_plane_endpoints_config": [],
+     "cost_management_config": [],
+     "database_encryption": [
+      {
+       "key_name": "projects/example-project/locations/europe-west3/keyRings/kms-ew3-36740452010-2-alethia-nl/cryptoKeys/gke-secrets",
+       "state": "ENCRYPTED"
+      }
+     ],
+     "datapath_provider": null,
+     "default_max_pods_per_node": 110,
+     "default_snat_status": [],
+     "deletion_protection": false,
+     "description": "",
+     "disable_l4_lb_firewall_reconciliation": null,
+     "dns_config": [],
+     "effective_labels": {
+      "environment": "36740452010-2",
+      "managed-by": "opentofu"
+     },
+     "enable_autopilot": null,
+     "enable_cilium_clusterwide_network_policy": null,
+     "enable_fqdn_network_policy": null,
+     "enable_intranode_visibility": null,
+     "enable_k8s_beta_apis": [],
+     "enable_kubernetes_alpha": null,
+     "enable_l4_ilb_subsetting": null,
+     "enable_legacy_abac": null,
+     "enable_multi_networking": null,
+     "enable_shielded_nodes": true,
+     "enable_tpu": null,
+     "endpoint": "203.0.113.10",
+     "enterprise_config": [],
+     "fleet": [],
+     "gateway_api_config": [],
+     "gke_auto_upgrade_config": [],
+     "id": "projects/example-project/locations/europe-west3-a/clusters/gke-ew3-36740452010-2-alethia-nl",
+     "identity_service_config": [],
+     "in_transit_encryption_config": null,
+     "initial_node_count": 1,
+     "ip_allocation_policy": [
+      {
+       "additional_ip_ranges_config": [],
+       "additional_pod_ranges_config": [],
+       "cluster_ipv4_cidr_block": null,
+       "cluster_secondary_range_name": "gke-ew3-36740452010-2-alethia-nl-pods",
+       "pod_cidr_overprovision_config": [],
+       "services_ipv4_cidr_block": null,
+       "services_secondary_range_name": "gke-ew3-36740452010-2-alethia-nl-services",
+       "stack_type": null
+      }
+     ],
+     "label_fingerprint": "0123abcd",
+     "location": "europe-west3-a",
+     "logging_config": [],
+     "logging_service": "logging.googleapis.com/kubernetes",
+     "maintenance_policy": [],
+     "master_auth": [
+      {
+       "client_certificate": "",
+       "client_certificate_config": [
+        {
+         "issue_client_certificate": false
+        }
+       ],
+       "client_key": "",
+       "cluster_ca_certificate": "Q0EtUExBQ0VIT0xERVI="
+      }
+     ],
+     "master_authorized_networks_config": [],
+     "master_version": "1.35.8-gke.1380000",
+     "mesh_certificates": [],
+     "min_master_version": "1.35",
+     "monitoring_config": [],
+     "monitoring_service": "monitoring.googleapis.com/kubernetes",
+     "name": "gke-ew3-36740452010-2-alethia-nl",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "network_performance_config": [],
+     "network_policy": [
+      {
+       "enabled": true,
+       "provider": "CALICO"
+      }
+     ],
+     "networking_mode": "VPC_NATIVE",
+     "node_config": [
+      {
+       "advanced_machine_features": [],
+       "boot_disk": [
+        {
+         "disk_type": "pd-standard",
+         "provisioned_iops": 0,
+         "provisioned_throughput": 0,
+         "size_gb": 60
+        }
+       ],
+       "boot_disk_kms_key": null,
+       "confidential_nodes": [],
+       "containerd_config": [],
+       "disk_size_gb": 60,
+       "disk_type": "pd-standard",
+       "effective_taints": [],
+       "enable_confidential_storage": false,
+       "ephemeral_storage_local_ssd_config": [],
+       "fast_socket": [],
+       "flex_start": false,
+       "gcfs_config": [],
+       "guest_accelerator": [],
+       "gvnic": [],
+       "host_maintenance_policy": [],
+       "image_type": "COS_CONTAINERD",
+       "kubelet_config": [
+        {
+         "allowed_unsafe_sysctls": [],
+         "container_log_max_files": 0,
+         "container_log_max_size": null,
+         "cpu_cfs_quota": false,
+         "cpu_cfs_quota_period": null,
+         "cpu_manager_policy": null,
+         "eviction_max_pod_grace_period_seconds": 0,
+         "eviction_minimum_reclaim": [],
+         "eviction_soft": [],
+         "eviction_soft_grace_period": [],
+         "image_gc_high_threshold_percent": 0,
+         "image_gc_low_threshold_percent": 0,
+         "image_maximum_gc_age": null,
+         "image_minimum_gc_age": null,
+         "insecure_kubelet_readonly_port_enabled": "FALSE",
+         "max_parallel_image_pulls": 2,
+         "pod_pids_limit": 0,
+         "single_process_oom_kill": false
+        }
+       ],
+       "labels": {
+        "alethia_e2e-run": "e2e-36740452010-2",
+        "alethia_project-id": "e2e-36740452010-2",
+        "environment": "36740452010-2",
+        "managed-by": "opentofu",
+        "service": "alethia-nl"
+       },
+       "linux_node_config": [],
+       "local_nvme_ssd_block_config": [],
+       "local_ssd_count": 0,
+       "local_ssd_encryption_mode": null,
+       "logging_variant": "DEFAULT",
+       "machine_type": "e2-standard-4",
+       "max_run_duration": null,
+       "metadata": {
+        "disable-legacy-endpoints": "true"
+       },
+       "min_cpu_platform": null,
+       "node_group": null,
+       "oauth_scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+       ],
+       "preemptible": false,
+       "reservation_affinity": [],
+       "resource_labels": {
+        "goog-gke-node-pool-provisioning-model": "on-demand"
+       },
+       "resource_manager_tags": {},
+       "secondary_boot_disks": [],
+       "service_account": "default",
+       "shielded_instance_config": [
+        {
+         "enable_integrity_monitoring": true,
+         "enable_secure_boot": true
+        }
+       ],
+       "sole_tenant_config": [],
+       "spot": false,
+       "storage_pools": [],
+       "tags": [],
+       "taint": [],
+       "windows_node_config": [
+        {
+         "osversion": null
+        }
+       ],
+       "workload_metadata_config": [
+        {
+         "mode": "GKE_METADATA"
+        }
+       ]
+      }
+     ],
+     "node_locations": [],
+     "node_pool": [
+      {
+       "autoscaling": [
+        {
+         "location_policy": "BALANCED",
+         "max_node_count": 4,
+         "min_node_count": 3,
+         "total_max_node_count": 0,
+         "total_min_node_count": 0
+        }
+       ],
+       "initial_node_count": 3,
+       "instance_group_urls": [
+        "https://www.googleapis.com/compute/v1/projects/example-project/zones/europe-west3-a/instanceGroupManagers/gke-gke-ew3-36740452-gke-ew3-36740452-5b4d5b62-grp"
+       ],
+       "managed_instance_group_urls": [
+        "https://www.googleapis.com/compute/v1/projects/example-project/zones/europe-west3-a/instanceGroups/gke-gke-ew3-36740452-gke-ew3-36740452-5b4d5b62-grp"
+       ],
+       "management": [
+        {
+         "auto_repair": true,
+         "auto_upgrade": true
+        }
+       ],
+       "max_pods_per_node": 110,
+       "name": "gke-ew3-36740452010-2-alethia-n-a10049e",
+       "name_prefix": null,
+       "network_config": [
+        {
+         "additional_node_network_configs": [],
+         "additional_pod_network_configs": [],
+         "create_pod_range": false,
+         "enable_private_nodes": true,
+         "network_performance_config": [],
+         "pod_cidr_overprovision_config": [],
+         "pod_ipv4_cidr_block": "10.1.0.0/16",
+         "pod_range": "gke-ew3-36740452010-2-alethia-nl-pods",
+         "subnetwork": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private"
+        }
+       ],
+       "node_config": [
+        {
+         "advanced_machine_features": [],
+         "boot_disk": [
+          {
+           "disk_type": "pd-standard",
+           "provisioned_iops": 0,
+           "provisioned_throughput": 0,
+           "size_gb": 60
+          }
+         ],
+         "boot_disk_kms_key": null,
+         "confidential_nodes": [],
+         "containerd_config": [],
+         "disk_size_gb": 60,
+         "disk_type": "pd-standard",
+         "effective_taints": [],
+         "enable_confidential_storage": false,
+         "ephemeral_storage_local_ssd_config": [],
+         "fast_socket": [],
+         "flex_start": false,
+         "gcfs_config": [],
+         "guest_accelerator": [],
+         "gvnic": [],
+         "host_maintenance_policy": [],
+         "image_type": "COS_CONTAINERD",
+         "kubelet_config": [
+          {
+           "allowed_unsafe_sysctls": [],
+           "container_log_max_files": 0,
+           "container_log_max_size": null,
+           "cpu_cfs_quota": false,
+           "cpu_cfs_quota_period": null,
+           "cpu_manager_policy": null,
+           "eviction_max_pod_grace_period_seconds": 0,
+           "eviction_minimum_reclaim": [],
+           "eviction_soft": [],
+           "eviction_soft_grace_period": [],
+           "image_gc_high_threshold_percent": 0,
+           "image_gc_low_threshold_percent": 0,
+           "image_maximum_gc_age": null,
+           "image_minimum_gc_age": null,
+           "insecure_kubelet_readonly_port_enabled": "FALSE",
+           "max_parallel_image_pulls": 2,
+           "pod_pids_limit": 0,
+           "single_process_oom_kill": false
+          }
+         ],
+         "labels": {
+          "alethia_e2e-run": "e2e-36740452010-2",
+          "alethia_project-id": "e2e-36740452010-2",
+          "environment": "36740452010-2",
+          "managed-by": "opentofu",
+          "service": "alethia-nl"
+         },
+         "linux_node_config": [],
+         "local_nvme_ssd_block_config": [],
+         "local_ssd_count": 0,
+         "local_ssd_encryption_mode": null,
+         "logging_variant": "DEFAULT",
+         "machine_type": "e2-standard-4",
+         "max_run_duration": null,
+         "metadata": {
+          "disable-legacy-endpoints": "true"
+         },
+         "min_cpu_platform": null,
+         "node_group": null,
+         "oauth_scopes": [
+          "https://www.googleapis.com/auth/cloud-platform"
+         ],
+         "preemptible": false,
+         "reservation_affinity": [],
+         "resource_labels": {
+          "goog-gke-node-pool-provisioning-model": "on-demand"
+         },
+         "resource_manager_tags": {},
+         "secondary_boot_disks": [],
+         "service_account": "default",
+         "shielded_instance_config": [
+          {
+           "enable_integrity_monitoring": true,
+           "enable_secure_boot": true
+          }
+         ],
+         "sole_tenant_config": [],
+         "spot": false,
+         "storage_pools": [],
+         "tags": [],
+         "taint": [],
+         "windows_node_config": [
+          {
+           "osversion": null
+          }
+         ],
+         "workload_metadata_config": [
+          {
+           "mode": "GKE_METADATA"
+          }
+         ]
+        }
+       ],
+       "node_count": 3,
+       "node_locations": [
+        "europe-west3-a"
+       ],
+       "placement_policy": [],
+       "queued_provisioning": [],
+       "upgrade_settings": [
+        {
+         "blue_green_settings": [],
+         "max_surge": 1,
+         "max_unavailable": 0,
+         "strategy": "SURGE"
+        }
+       ],
+       "version": "1.35.8-gke.1380000"
+      }
+     ],
+     "node_pool_auto_config": [],
+     "node_pool_defaults": [],
+     "node_version": "1.35.8-gke.1380000",
+     "notification_config": [],
+     "operation": null,
+     "pod_autoscaling": [],
+     "private_cluster_config": [
+      {
+       "enable_private_endpoint": false,
+       "enable_private_nodes": true,
+       "master_global_access_config": [],
+       "master_ipv4_cidr_block": "172.16.0.0/28",
+       "peering_name": null,
+       "private_endpoint": null,
+       "private_endpoint_subnetwork": null,
+       "public_endpoint": null
+      }
+     ],
+     "private_ipv6_google_access": null,
+     "project": "example-project",
+     "rbac_binding_config": [],
+     "release_channel": [
+      {
+       "channel": "REGULAR"
+      }
+     ],
+     "remove_default_node_pool": true,
+     "resource_labels": {
+      "environment": "36740452010-2",
+      "managed-by": "opentofu"
+     },
+     "resource_usage_export_config": [],
+     "secret_manager_config": [],
+     "security_posture_config": [],
+     "self_link": "https://container.googleapis.com/v1/projects/example-project/locations/europe-west3-a/clusters/gke-ew3-36740452010-2-alethia-nl",
+     "service_external_ips_config": [],
+     "services_ipv4_cidr": "10.2.0.0/20",
+     "subnetwork": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private",
+     "terraform_labels": {
+      "environment": "36740452010-2",
+      "managed-by": "opentofu"
+     },
+     "timeouts": null,
+     "tpu_ipv4_cidr_block": null,
+     "user_managed_keys_config": [],
+     "vertical_pod_autoscaling": [],
+     "workload_identity_config": [
+      {
+       "workload_pool": "example-project.svc.id.goog"
+      }
+     ]
+    },
+    "after_sensitive": {
+     "addons_config": [],
+     "anonymous_authentication_config": [],
+     "authenticator_groups_config": [],
+     "binary_authorization": [],
+     "cluster_autoscaling": [],
+     "confidential_nodes": [],
+     "control_plane_endpoints_config": [],
+     "cost_management_config": [],
+     "database_encryption": [
+      {}
+     ],
+     "default_snat_status": [],
+     "dns_config": [],
+     "effective_labels": {},
+     "enable_k8s_beta_apis": [],
+     "enterprise_config": [],
+     "fleet": [],
+     "gateway_api_config": [],
+     "gke_auto_upgrade_config": [],
+     "identity_service_config": [],
+     "ip_allocation_policy": [
+      {
+       "additional_ip_ranges_config": [],
+       "additional_pod_ranges_config": [],
+       "pod_cidr_overprovision_config": []
+      }
+     ],
+     "logging_config": [],
+     "maintenance_policy": [],
+     "master_auth": [
+      {
+       "client_certificate_config": [
+        {}
+       ],
+       "client_key": true
+      }
+     ],
+     "master_authorized_networks_config": [],
+     "mesh_certificates": [],
+     "monitoring_config": [],
+     "network_performance_config": [],
+     "network_policy": [
+      {}
+     ],
+     "node_config": [
+      {
+       "advanced_machine_features": [],
+       "boot_disk": [
+        {}
+       ],
+       "confidential_nodes": [],
+       "containerd_config": [],
+       "effective_taints": [],
+       "ephemeral_storage_local_ssd_config": [],
+       "fast_socket": [],
+       "gcfs_config": [],
+       "guest_accelerator": [],
+       "gvnic": [],
+       "host_maintenance_policy": [],
+       "kubelet_config": [
+        {
+         "allowed_unsafe_sysctls": [],
+         "eviction_minimum_reclaim": [],
+         "eviction_soft": [],
+         "eviction_soft_grace_period": []
+        }
+       ],
+       "labels": {},
+       "linux_node_config": [],
+       "local_nvme_ssd_block_config": [],
+       "metadata": {},
+       "oauth_scopes": [
+        false
+       ],
+       "reservation_affinity": [],
+       "resource_labels": {},
+       "resource_manager_tags": {},
+       "secondary_boot_disks": [],
+       "shielded_instance_config": [
+        {}
+       ],
+       "sole_tenant_config": [],
+       "storage_pools": [],
+       "tags": [],
+       "taint": [],
+       "windows_node_config": [
+        {}
+       ],
+       "workload_metadata_config": [
+        {}
+       ]
+      }
+     ],
+     "node_locations": [],
+     "node_pool": [
+      {
+       "autoscaling": [
+        {}
+       ],
+       "instance_group_urls": [
+        false
+       ],
+       "managed_instance_group_urls": [
+        false
+       ],
+       "management": [
+        {}
+       ],
+       "network_config": [
+        {
+         "additional_node_network_configs": [],
+         "additional_pod_network_configs": [],
+         "network_performance_config": [],
+         "pod_cidr_overprovision_config": []
+        }
+       ],
+       "node_config": [
+        {
+         "advanced_machine_features": [],
+         "boot_disk": [
+          {}
+         ],
+         "confidential_nodes": [],
+         "containerd_config": [],
+         "effective_taints": [],
+         "ephemeral_storage_local_ssd_config": [],
+         "fast_socket": [],
+         "gcfs_config": [],
+         "guest_accelerator": [],
+         "gvnic": [],
+         "host_maintenance_policy": [],
+         "kubelet_config": [
+          {
+           "allowed_unsafe_sysctls": [],
+           "eviction_minimum_reclaim": [],
+           "eviction_soft": [],
+           "eviction_soft_grace_period": []
+          }
+         ],
+         "labels": {},
+         "linux_node_config": [],
+         "local_nvme_ssd_block_config": [],
+         "metadata": {},
+         "oauth_scopes": [
+          false
+         ],
+         "reservation_affinity": [],
+         "resource_labels": {},
+         "resource_manager_tags": {},
+         "secondary_boot_disks": [],
+         "shielded_instance_config": [
+          {}
+         ],
+         "sole_tenant_config": [],
+         "storage_pools": [],
+         "tags": [],
+         "taint": [],
+         "windows_node_config": [
+          {}
+         ],
+         "workload_metadata_config": [
+          {}
+         ]
+        }
+       ],
+       "node_locations": [
+        false
+       ],
+       "placement_policy": [],
+       "queued_provisioning": [],
+       "upgrade_settings": [
+        {
+         "blue_green_settings": []
+        }
+       ]
+      }
+     ],
+     "node_pool_auto_config": [],
+     "node_pool_defaults": [],
+     "notification_config": [],
+     "pod_autoscaling": [],
+     "private_cluster_config": [
+      {
+       "master_global_access_config": []
+      }
+     ],
+     "rbac_binding_config": [],
+     "release_channel": [
+      {}
+     ],
+     "resource_labels": {},
+     "resource_usage_export_config": [],
+     "secret_manager_config": [],
+     "security_posture_config": [],
+     "service_external_ips_config": [],
+     "terraform_labels": {},
+     "user_managed_keys_config": [],
+     "vertical_pod_autoscaling": [],
+     "workload_identity_config": [
+      {}
+     ]
+    },
+    "after_unknown": {},
+    "before": {
+     "addons_config": [],
+     "allow_net_admin": null,
+     "anonymous_authentication_config": [],
+     "authenticator_groups_config": [],
+     "binary_authorization": [],
+     "cluster_autoscaling": [],
+     "cluster_ipv4_cidr": "10.1.0.0/16",
+     "confidential_nodes": [],
+     "control_plane_endpoints_config": [],
+     "cost_management_config": [],
+     "database_encryption": [
+      {
+       "key_name": "projects/example-project/locations/europe-west3/keyRings/kms-ew3-36740452010-2-alethia-nl/cryptoKeys/gke-secrets",
+       "state": "ENCRYPTED"
+      }
+     ],
+     "datapath_provider": null,
+     "default_max_pods_per_node": 110,
+     "default_snat_status": [],
+     "deletion_protection": false,
+     "description": "",
+     "disable_l4_lb_firewall_reconciliation": null,
+     "dns_config": [],
+     "effective_labels": {
+      "environment": "36740452010-2",
+      "managed-by": "opentofu"
+     },
+     "enable_autopilot": null,
+     "enable_cilium_clusterwide_network_policy": null,
+     "enable_fqdn_network_policy": null,
+     "enable_intranode_visibility": null,
+     "enable_k8s_beta_apis": [],
+     "enable_kubernetes_alpha": null,
+     "enable_l4_ilb_subsetting": null,
+     "enable_legacy_abac": null,
+     "enable_multi_networking": null,
+     "enable_shielded_nodes": true,
+     "enable_tpu": null,
+     "endpoint": "203.0.113.10",
+     "enterprise_config": [],
+     "fleet": [],
+     "gateway_api_config": [],
+     "gke_auto_upgrade_config": [],
+     "id": "projects/example-project/locations/europe-west3-a/clusters/gke-ew3-36740452010-2-alethia-nl",
+     "identity_service_config": [],
+     "in_transit_encryption_config": null,
+     "initial_node_count": 1,
+     "ip_allocation_policy": [
+      {
+       "additional_ip_ranges_config": [],
+       "additional_pod_ranges_config": [],
+       "cluster_ipv4_cidr_block": null,
+       "cluster_secondary_range_name": "gke-ew3-36740452010-2-alethia-nl-pods",
+       "pod_cidr_overprovision_config": [],
+       "services_ipv4_cidr_block": null,
+       "services_secondary_range_name": "gke-ew3-36740452010-2-alethia-nl-services",
+       "stack_type": null
+      }
+     ],
+     "label_fingerprint": "0123abcd",
+     "location": "europe-west3-a",
+     "logging_config": [],
+     "logging_service": "logging.googleapis.com/kubernetes",
+     "maintenance_policy": [],
+     "master_auth": [
+      {
+       "client_certificate": "",
+       "client_certificate_config": [
+        {
+         "issue_client_certificate": false
+        }
+       ],
+       "client_key": "",
+       "cluster_ca_certificate": "Q0EtUExBQ0VIT0xERVI="
+      }
+     ],
+     "master_authorized_networks_config": [],
+     "master_version": "1.35.8-gke.1380000",
+     "mesh_certificates": [],
+     "min_master_version": "1.35",
+     "monitoring_config": [],
+     "monitoring_service": "monitoring.googleapis.com/kubernetes",
+     "name": "gke-ew3-36740452010-2-alethia-nl",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "network_performance_config": [],
+     "network_policy": [
+      {
+       "enabled": true,
+       "provider": "CALICO"
+      }
+     ],
+     "networking_mode": "VPC_NATIVE",
+     "node_config": [],
+     "node_locations": [],
+     "node_pool": [],
+     "node_pool_auto_config": [],
+     "node_pool_defaults": [],
+     "node_version": "1.35.8-gke.1380000",
+     "notification_config": [],
+     "operation": null,
+     "pod_autoscaling": [],
+     "private_cluster_config": [
+      {
+       "enable_private_endpoint": false,
+       "enable_private_nodes": true,
+       "master_global_access_config": [],
+       "master_ipv4_cidr_block": "172.16.0.0/28",
+       "peering_name": null,
+       "private_endpoint": null,
+       "private_endpoint_subnetwork": null,
+       "public_endpoint": null
+      }
+     ],
+     "private_ipv6_google_access": null,
+     "project": "example-project",
+     "rbac_binding_config": [],
+     "release_channel": [
+      {
+       "channel": "REGULAR"
+      }
+     ],
+     "remove_default_node_pool": true,
+     "resource_labels": {
+      "environment": "36740452010-2",
+      "managed-by": "opentofu"
+     },
+     "resource_usage_export_config": [],
+     "secret_manager_config": [],
+     "security_posture_config": [],
+     "self_link": "https://container.googleapis.com/v1/projects/example-project/locations/europe-west3-a/clusters/gke-ew3-36740452010-2-alethia-nl",
+     "service_external_ips_config": [],
+     "services_ipv4_cidr": "10.2.0.0/20",
+     "subnetwork": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private",
+     "terraform_labels": {
+      "environment": "36740452010-2",
+      "managed-by": "opentofu"
+     },
+     "timeouts": null,
+     "tpu_ipv4_cidr_block": null,
+     "user_managed_keys_config": [],
+     "vertical_pod_autoscaling": [],
+     "workload_identity_config": [
+      {
+       "workload_pool": "example-project.svc.id.goog"
+      }
+     ]
+    },
+    "before_sensitive": {
+     "addons_config": [],
+     "anonymous_authentication_config": [],
+     "authenticator_groups_config": [],
+     "binary_authorization": [],
+     "cluster_autoscaling": [],
+     "confidential_nodes": [],
+     "control_plane_endpoints_config": [],
+     "cost_management_config": [],
+     "database_encryption": [
+      {}
+     ],
+     "default_snat_status": [],
+     "dns_config": [],
+     "effective_labels": {},
+     "enable_k8s_beta_apis": [],
+     "enterprise_config": [],
+     "fleet": [],
+     "gateway_api_config": [],
+     "gke_auto_upgrade_config": [],
+     "identity_service_config": [],
+     "ip_allocation_policy": [
+      {
+       "additional_ip_ranges_config": [],
+       "additional_pod_ranges_config": [],
+       "pod_cidr_overprovision_config": []
+      }
+     ],
+     "logging_config": [],
+     "maintenance_policy": [],
+     "master_auth": [
+      {
+       "client_certificate_config": [
+        {}
+       ],
+       "client_key": true
+      }
+     ],
+     "master_authorized_networks_config": [],
+     "mesh_certificates": [],
+     "monitoring_config": [],
+     "network_performance_config": [],
+     "network_policy": [
+      {}
+     ],
+     "node_config": [],
+     "node_locations": [],
+     "node_pool": [],
+     "node_pool_auto_config": [],
+     "node_pool_defaults": [],
+     "notification_config": [],
+     "pod_autoscaling": [],
+     "private_cluster_config": [
+      {
+       "master_global_access_config": []
+      }
+     ],
+     "rbac_binding_config": [],
+     "release_channel": [
+      {}
+     ],
+     "resource_labels": {},
+     "resource_usage_export_config": [],
+     "secret_manager_config": [],
+     "security_posture_config": [],
+     "service_external_ips_config": [],
+     "terraform_labels": {},
+     "user_managed_keys_config": [],
+     "vertical_pod_autoscaling": [],
+     "workload_identity_config": [
+      {}
+     ]
+    }
+   },
+   "mode": "managed",
+   "module_address": "module.gke[0]",
+   "name": "cluster",
+   "provider_name": "registry.opentofu.org/hashicorp/google",
+   "type": "google_container_cluster"
+  },
+  {
+   "address": "module.gke[0].google_container_node_pool.default[0]",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "after": {
+     "autoscaling": [
+      {
+       "location_policy": "BALANCED",
+       "max_node_count": 4,
+       "min_node_count": 3,
+       "total_max_node_count": 0,
+       "total_min_node_count": 0
+      }
+     ],
+     "cluster": "gke-ew3-36740452010-2-alethia-nl",
+     "id": "projects/example-project/locations/europe-west3-a/clusters/gke-ew3-36740452010-2-alethia-nl/nodePools/gke-ew3-36740452010-2-alethia-n-a10049e",
+     "initial_node_count": 3,
+     "instance_group_urls": [
+      "https://www.googleapis.com/compute/v1/projects/example-project/zones/europe-west3-a/instanceGroupManagers/gke-gke-ew3-36740452-gke-ew3-36740452-5b4d5b62-grp"
+     ],
+     "location": "europe-west3-a",
+     "managed_instance_group_urls": [
+      "https://www.googleapis.com/compute/v1/projects/example-project/zones/europe-west3-a/instanceGroups/gke-gke-ew3-36740452-gke-ew3-36740452-5b4d5b62-grp"
+     ],
+     "management": [
+      {
+       "auto_repair": true,
+       "auto_upgrade": true
+      }
+     ],
+     "max_pods_per_node": 110,
+     "name": "gke-ew3-36740452010-2-alethia-n-a10049e",
+     "name_prefix": null,
+     "network_config": [
+      {
+       "additional_node_network_configs": [],
+       "additional_pod_network_configs": [],
+       "create_pod_range": false,
+       "enable_private_nodes": true,
+       "network_performance_config": [],
+       "pod_cidr_overprovision_config": [],
+       "pod_ipv4_cidr_block": "10.1.0.0/16",
+       "pod_range": "gke-ew3-36740452010-2-alethia-nl-pods",
+       "subnetwork": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private"
+      }
+     ],
+     "node_config": [
+      {
+       "advanced_machine_features": [],
+       "boot_disk": [
+        {
+         "disk_type": "pd-standard",
+         "provisioned_iops": 0,
+         "provisioned_throughput": 0,
+         "size_gb": 60
+        }
+       ],
+       "boot_disk_kms_key": null,
+       "confidential_nodes": [],
+       "containerd_config": [],
+       "disk_size_gb": 60,
+       "disk_type": "pd-standard",
+       "effective_taints": [],
+       "enable_confidential_storage": false,
+       "ephemeral_storage_local_ssd_config": [],
+       "fast_socket": [],
+       "flex_start": false,
+       "gcfs_config": [],
+       "guest_accelerator": [],
+       "gvnic": [],
+       "host_maintenance_policy": [],
+       "image_type": "COS_CONTAINERD",
+       "kubelet_config": [
+        {
+         "allowed_unsafe_sysctls": [],
+         "container_log_max_files": 0,
+         "container_log_max_size": null,
+         "cpu_cfs_quota": false,
+         "cpu_cfs_quota_period": null,
+         "cpu_manager_policy": null,
+         "eviction_max_pod_grace_period_seconds": 0,
+         "eviction_minimum_reclaim": [],
+         "eviction_soft": [],
+         "eviction_soft_grace_period": [],
+         "image_gc_high_threshold_percent": 0,
+         "image_gc_low_threshold_percent": 0,
+         "image_maximum_gc_age": null,
+         "image_minimum_gc_age": null,
+         "insecure_kubelet_readonly_port_enabled": "FALSE",
+         "max_parallel_image_pulls": 2,
+         "pod_pids_limit": 0,
+         "single_process_oom_kill": false
+        }
+       ],
+       "labels": {
+        "alethia_e2e-run": "e2e-36740452010-2",
+        "alethia_project-id": "e2e-36740452010-2",
+        "environment": "36740452010-2",
+        "managed-by": "opentofu",
+        "service": "alethia-nl"
+       },
+       "linux_node_config": [],
+       "local_nvme_ssd_block_config": [],
+       "local_ssd_count": 0,
+       "local_ssd_encryption_mode": null,
+       "logging_variant": "DEFAULT",
+       "machine_type": "e2-standard-4",
+       "max_run_duration": null,
+       "metadata": {
+        "disable-legacy-endpoints": "true"
+       },
+       "min_cpu_platform": null,
+       "node_group": null,
+       "oauth_scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+       ],
+       "preemptible": false,
+       "reservation_affinity": [],
+       "resource_labels": {
+        "goog-gke-node-pool-provisioning-model": "on-demand"
+       },
+       "resource_manager_tags": {},
+       "secondary_boot_disks": [],
+       "service_account": "default",
+       "shielded_instance_config": [
+        {
+         "enable_integrity_monitoring": true,
+         "enable_secure_boot": true
+        }
+       ],
+       "sole_tenant_config": [],
+       "spot": false,
+       "storage_pools": [],
+       "tags": [],
+       "taint": [],
+       "windows_node_config": [
+        {
+         "osversion": null
+        }
+       ],
+       "workload_metadata_config": [
+        {
+         "mode": "GKE_METADATA"
+        }
+       ]
+      }
+     ],
+     "node_count": 3,
+     "node_locations": [
+      "europe-west3-a"
+     ],
+     "operation": null,
+     "placement_policy": [],
+     "project": "example-project",
+     "queued_provisioning": [],
+     "timeouts": null,
+     "upgrade_settings": [
+      {
+       "blue_green_settings": [],
+       "max_surge": 1,
+       "max_unavailable": 0,
+       "strategy": "SURGE"
+      }
+     ],
+     "version": "1.35.8-gke.1380000"
+    },
+    "after_sensitive": {
+     "autoscaling": [
+      {}
+     ],
+     "instance_group_urls": [
+      false
+     ],
+     "managed_instance_group_urls": [
+      false
+     ],
+     "management": [
+      {}
+     ],
+     "network_config": [
+      {
+       "additional_node_network_configs": [],
+       "additional_pod_network_configs": [],
+       "network_performance_config": [],
+       "pod_cidr_overprovision_config": []
+      }
+     ],
+     "node_config": [
+      {
+       "advanced_machine_features": [],
+       "boot_disk": [
+        {}
+       ],
+       "confidential_nodes": [],
+       "containerd_config": [],
+       "effective_taints": [],
+       "ephemeral_storage_local_ssd_config": [],
+       "fast_socket": [],
+       "gcfs_config": [],
+       "guest_accelerator": [],
+       "gvnic": [],
+       "host_maintenance_policy": [],
+       "kubelet_config": [
+        {
+         "allowed_unsafe_sysctls": [],
+         "eviction_minimum_reclaim": [],
+         "eviction_soft": [],
+         "eviction_soft_grace_period": []
+        }
+       ],
+       "labels": {},
+       "linux_node_config": [],
+       "local_nvme_ssd_block_config": [],
+       "metadata": {},
+       "oauth_scopes": [
+        false
+       ],
+       "reservation_affinity": [],
+       "resource_labels": {},
+       "resource_manager_tags": {},
+       "secondary_boot_disks": [],
+       "shielded_instance_config": [
+        {}
+       ],
+       "sole_tenant_config": [],
+       "storage_pools": [],
+       "tags": [],
+       "taint": [],
+       "windows_node_config": [
+        {}
+       ],
+       "workload_metadata_config": [
+        {}
+       ]
+      }
+     ],
+     "node_locations": [
+      false
+     ],
+     "placement_policy": [],
+     "queued_provisioning": [],
+     "upgrade_settings": [
+      {
+       "blue_green_settings": []
+      }
+     ]
+    },
+    "after_unknown": {},
+    "before": {
+     "autoscaling": [
+      {
+       "location_policy": "BALANCED",
+       "max_node_count": 4,
+       "min_node_count": 3,
+       "total_max_node_count": 0,
+       "total_min_node_count": 0
+      }
+     ],
+     "cluster": "gke-ew3-36740452010-2-alethia-nl",
+     "id": "projects/example-project/locations/europe-west3-a/clusters/gke-ew3-36740452010-2-alethia-nl/nodePools/gke-ew3-36740452010-2-alethia-n-a10049e",
+     "initial_node_count": 3,
+     "instance_group_urls": [
+      "https://www.googleapis.com/compute/v1/projects/example-project/zones/europe-west3-a/instanceGroupManagers/gke-gke-ew3-36740452-gke-ew3-36740452-5b4d5b62-grp"
+     ],
+     "location": "europe-west3-a",
+     "managed_instance_group_urls": [
+      "https://www.googleapis.com/compute/v1/projects/example-project/zones/europe-west3-a/instanceGroups/gke-gke-ew3-36740452-gke-ew3-36740452-5b4d5b62-grp"
+     ],
+     "management": [
+      {
+       "auto_repair": true,
+       "auto_upgrade": true
+      }
+     ],
+     "max_pods_per_node": 110,
+     "name": "gke-ew3-36740452010-2-alethia-n-a10049e",
+     "name_prefix": null,
+     "network_config": [
+      {
+       "additional_node_network_configs": [],
+       "additional_pod_network_configs": [],
+       "create_pod_range": false,
+       "enable_private_nodes": true,
+       "network_performance_config": [],
+       "pod_cidr_overprovision_config": [],
+       "pod_ipv4_cidr_block": "10.1.0.0/16",
+       "pod_range": "gke-ew3-36740452010-2-alethia-nl-pods",
+       "subnetwork": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private"
+      }
+     ],
+     "node_config": [
+      {
+       "advanced_machine_features": [],
+       "boot_disk": [
+        {
+         "disk_type": "pd-standard",
+         "provisioned_iops": 0,
+         "provisioned_throughput": 0,
+         "size_gb": 60
+        }
+       ],
+       "boot_disk_kms_key": null,
+       "confidential_nodes": [],
+       "containerd_config": [],
+       "disk_size_gb": 60,
+       "disk_type": "pd-standard",
+       "effective_taints": [],
+       "enable_confidential_storage": false,
+       "ephemeral_storage_local_ssd_config": [],
+       "fast_socket": [],
+       "flex_start": false,
+       "gcfs_config": [],
+       "guest_accelerator": [],
+       "gvnic": [],
+       "host_maintenance_policy": [],
+       "image_type": "COS_CONTAINERD",
+       "kubelet_config": [
+        {
+         "allowed_unsafe_sysctls": [],
+         "container_log_max_files": 0,
+         "container_log_max_size": null,
+         "cpu_cfs_quota": false,
+         "cpu_cfs_quota_period": null,
+         "cpu_manager_policy": null,
+         "eviction_max_pod_grace_period_seconds": 0,
+         "eviction_minimum_reclaim": [],
+         "eviction_soft": [],
+         "eviction_soft_grace_period": [],
+         "image_gc_high_threshold_percent": 0,
+         "image_gc_low_threshold_percent": 0,
+         "image_maximum_gc_age": null,
+         "image_minimum_gc_age": null,
+         "insecure_kubelet_readonly_port_enabled": "FALSE",
+         "max_parallel_image_pulls": 2,
+         "pod_pids_limit": 0,
+         "single_process_oom_kill": false
+        }
+       ],
+       "labels": {
+        "alethia_e2e-run": "e2e-36740452010-2",
+        "alethia_project-id": "e2e-36740452010-2",
+        "environment": "36740452010-2",
+        "managed-by": "opentofu",
+        "service": "alethia-nl"
+       },
+       "linux_node_config": [],
+       "local_nvme_ssd_block_config": [],
+       "local_ssd_count": 0,
+       "local_ssd_encryption_mode": null,
+       "logging_variant": "DEFAULT",
+       "machine_type": "e2-standard-4",
+       "max_run_duration": null,
+       "metadata": {
+        "disable-legacy-endpoints": "true"
+       },
+       "min_cpu_platform": null,
+       "node_group": null,
+       "oauth_scopes": [
+        "https://www.googleapis.com/auth/cloud-platform"
+       ],
+       "preemptible": false,
+       "reservation_affinity": [],
+       "resource_labels": {
+        "goog-gke-node-pool-provisioning-model": "on-demand"
+       },
+       "resource_manager_tags": null,
+       "secondary_boot_disks": [],
+       "service_account": "default",
+       "shielded_instance_config": [
+        {
+         "enable_integrity_monitoring": true,
+         "enable_secure_boot": true
+        }
+       ],
+       "sole_tenant_config": [],
+       "spot": false,
+       "storage_pools": null,
+       "tags": null,
+       "taint": [],
+       "windows_node_config": [
+        {
+         "osversion": null
+        }
+       ],
+       "workload_metadata_config": [
+        {
+         "mode": "GKE_METADATA"
+        }
+       ]
+      }
+     ],
+     "node_count": 3,
+     "node_locations": [
+      "europe-west3-a"
+     ],
+     "operation": null,
+     "placement_policy": [],
+     "project": "example-project",
+     "queued_provisioning": [],
+     "timeouts": null,
+     "upgrade_settings": [
+      {
+       "blue_green_settings": [],
+       "max_surge": 1,
+       "max_unavailable": 0,
+       "strategy": "SURGE"
+      }
+     ],
+     "version": "1.35.8-gke.1380000"
+    },
+    "before_sensitive": {
+     "autoscaling": [
+      {}
+     ],
+     "instance_group_urls": [
+      false
+     ],
+     "managed_instance_group_urls": [
+      false
+     ],
+     "management": [
+      {}
+     ],
+     "network_config": [
+      {
+       "additional_node_network_configs": [],
+       "additional_pod_network_configs": [],
+       "network_performance_config": [],
+       "pod_cidr_overprovision_config": []
+      }
+     ],
+     "node_config": [
+      {
+       "advanced_machine_features": [],
+       "boot_disk": [
+        {}
+       ],
+       "confidential_nodes": [],
+       "containerd_config": [],
+       "effective_taints": [],
+       "ephemeral_storage_local_ssd_config": [],
+       "fast_socket": [],
+       "gcfs_config": [],
+       "guest_accelerator": [],
+       "gvnic": [],
+       "host_maintenance_policy": [],
+       "kubelet_config": [
+        {
+         "allowed_unsafe_sysctls": [],
+         "eviction_minimum_reclaim": [],
+         "eviction_soft": [],
+         "eviction_soft_grace_period": []
+        }
+       ],
+       "labels": {},
+       "linux_node_config": [],
+       "local_nvme_ssd_block_config": [],
+       "metadata": {},
+       "oauth_scopes": [
+        false
+       ],
+       "reservation_affinity": [],
+       "resource_labels": {},
+       "secondary_boot_disks": [],
+       "shielded_instance_config": [
+        {}
+       ],
+       "sole_tenant_config": [],
+       "taint": [],
+       "windows_node_config": [
+        {}
+       ],
+       "workload_metadata_config": [
+        {}
+       ]
+      }
+     ],
+     "node_locations": [
+      false
+     ],
+     "placement_policy": [],
+     "queued_provisioning": [],
+     "upgrade_settings": [
+      {
+       "blue_green_settings": []
+      }
+     ]
+    }
+   },
+   "index": 0,
+   "mode": "managed",
+   "module_address": "module.gke[0]",
+   "name": "default",
+   "provider_name": "registry.opentofu.org/hashicorp/google",
+   "type": "google_container_node_pool"
+  },
+  {
+   "address": "module.vpc_network[0].google_compute_firewall.allow_health_checks",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "after": {
+     "allow": [
+      {
+       "ports": [],
+       "protocol": "tcp"
+      }
+     ],
+     "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+     "deny": [],
+     "description": "",
+     "destination_ranges": [],
+     "direction": "INGRESS",
+     "disabled": false,
+     "enable_logging": null,
+     "id": "projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-health-checks",
+     "log_config": [],
+     "name": "alethia-nl-36740452010-2-vpc-allow-health-checks",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "params": [],
+     "priority": 1000,
+     "project": "example-project",
+     "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-health-checks",
+     "source_ranges": [
+      "130.211.0.0/22",
+      "35.191.0.0/16"
+     ],
+     "source_service_accounts": [],
+     "source_tags": [],
+     "target_service_accounts": [],
+     "target_tags": [],
+     "timeouts": null
+    },
+    "after_sensitive": {
+     "allow": [
+      {
+       "ports": []
+      }
+     ],
+     "deny": [],
+     "destination_ranges": [],
+     "log_config": [],
+     "params": [],
+     "source_ranges": [
+      false,
+      false
+     ],
+     "source_service_accounts": [],
+     "source_tags": [],
+     "target_service_accounts": [],
+     "target_tags": []
+    },
+    "after_unknown": {},
+    "before": {
+     "allow": [
+      {
+       "ports": [],
+       "protocol": "tcp"
+      }
+     ],
+     "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+     "deny": [],
+     "description": "",
+     "destination_ranges": [],
+     "direction": "INGRESS",
+     "disabled": false,
+     "enable_logging": null,
+     "id": "projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-health-checks",
+     "log_config": [],
+     "name": "alethia-nl-36740452010-2-vpc-allow-health-checks",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "params": [],
+     "priority": 1000,
+     "project": "example-project",
+     "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-health-checks",
+     "source_ranges": [
+      "130.211.0.0/22",
+      "35.191.0.0/16"
+     ],
+     "source_service_accounts": null,
+     "source_tags": null,
+     "target_service_accounts": null,
+     "target_tags": null,
+     "timeouts": null
+    },
+    "before_sensitive": {
+     "allow": [
+      {
+       "ports": []
+      }
+     ],
+     "deny": [],
+     "destination_ranges": [],
+     "log_config": [],
+     "params": [],
+     "source_ranges": [
+      false,
+      false
+     ]
+    }
+   },
+   "mode": "managed",
+   "module_address": "module.vpc_network[0]",
+   "name": "allow_health_checks",
+   "provider_name": "registry.opentofu.org/hashicorp/google",
+   "type": "google_compute_firewall"
+  },
+  {
+   "address": "module.vpc_network[0].google_compute_firewall.allow_internal",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "after": {
+     "allow": [
+      {
+       "ports": [],
+       "protocol": "icmp"
+      },
+      {
+       "ports": [],
+       "protocol": "tcp"
+      },
+      {
+       "ports": [],
+       "protocol": "udp"
+      }
+     ],
+     "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+     "deny": [],
+     "description": "",
+     "destination_ranges": [],
+     "direction": "INGRESS",
+     "disabled": false,
+     "enable_logging": null,
+     "id": "projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-internal",
+     "log_config": [],
+     "name": "alethia-nl-36740452010-2-vpc-allow-internal",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "params": [],
+     "priority": 1000,
+     "project": "example-project",
+     "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-internal",
+     "source_ranges": [
+      "10.0.0.0/8"
+     ],
+     "source_service_accounts": [],
+     "source_tags": [],
+     "target_service_accounts": [],
+     "target_tags": [],
+     "timeouts": null
+    },
+    "after_sensitive": {
+     "allow": [
+      {
+       "ports": []
+      },
+      {
+       "ports": []
+      },
+      {
+       "ports": []
+      }
+     ],
+     "deny": [],
+     "destination_ranges": [],
+     "log_config": [],
+     "params": [],
+     "source_ranges": [
+      false
+     ],
+     "source_service_accounts": [],
+     "source_tags": [],
+     "target_service_accounts": [],
+     "target_tags": []
+    },
+    "after_unknown": {},
+    "before": {
+     "allow": [
+      {
+       "ports": [],
+       "protocol": "icmp"
+      },
+      {
+       "ports": [],
+       "protocol": "tcp"
+      },
+      {
+       "ports": [],
+       "protocol": "udp"
+      }
+     ],
+     "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+     "deny": [],
+     "description": "",
+     "destination_ranges": [],
+     "direction": "INGRESS",
+     "disabled": false,
+     "enable_logging": null,
+     "id": "projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-internal",
+     "log_config": [],
+     "name": "alethia-nl-36740452010-2-vpc-allow-internal",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "params": [],
+     "priority": 1000,
+     "project": "example-project",
+     "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/global/firewalls/alethia-nl-36740452010-2-vpc-allow-internal",
+     "source_ranges": [
+      "10.0.0.0/8"
+     ],
+     "source_service_accounts": null,
+     "source_tags": null,
+     "target_service_accounts": null,
+     "target_tags": null,
+     "timeouts": null
+    },
+    "before_sensitive": {
+     "allow": [
+      {
+       "ports": []
+      },
+      {
+       "ports": []
+      },
+      {
+       "ports": []
+      }
+     ],
+     "deny": [],
+     "destination_ranges": [],
+     "log_config": [],
+     "params": [],
+     "source_ranges": [
+      false
+     ]
+    }
+   },
+   "mode": "managed",
+   "module_address": "module.vpc_network[0]",
+   "name": "allow_internal",
+   "provider_name": "registry.opentofu.org/hashicorp/google",
+   "type": "google_compute_firewall"
+  },
+  {
+   "address": "module.vpc_network[0].google_compute_global_address.private_service_access",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "after": {
+     "address": "10.100.0.0",
+     "address_type": "INTERNAL",
+     "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+     "description": "",
+     "effective_labels": {},
+     "id": "projects/example-project/global/addresses/alethia-nl-36740452010-2-psa",
+     "ip_version": null,
+     "label_fingerprint": "42WmSpB8rSM=",
+     "labels": {},
+     "name": "alethia-nl-36740452010-2-psa",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "prefix_length": 16,
+     "project": "example-project",
+     "purpose": "VPC_PEERING",
+     "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/global/addresses/alethia-nl-36740452010-2-psa",
+     "terraform_labels": {},
+     "timeouts": null
+    },
+    "after_sensitive": {
+     "effective_labels": {},
+     "labels": {},
+     "terraform_labels": {}
+    },
+    "after_unknown": {},
+    "before": {
+     "address": "10.100.0.0",
+     "address_type": "INTERNAL",
+     "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+     "description": "",
+     "effective_labels": {},
+     "id": "projects/example-project/global/addresses/alethia-nl-36740452010-2-psa",
+     "ip_version": null,
+     "label_fingerprint": "42WmSpB8rSM=",
+     "labels": null,
+     "name": "alethia-nl-36740452010-2-psa",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "prefix_length": 16,
+     "project": "example-project",
+     "purpose": "VPC_PEERING",
+     "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/global/addresses/alethia-nl-36740452010-2-psa",
+     "terraform_labels": {},
+     "timeouts": null
+    },
+    "before_sensitive": {
+     "effective_labels": {},
+     "terraform_labels": {}
+    }
+   },
+   "mode": "managed",
+   "module_address": "module.vpc_network[0]",
+   "name": "private_service_access",
+   "provider_name": "registry.opentofu.org/hashicorp/google",
+   "type": "google_compute_global_address"
+  },
+  {
+   "address": "module.vpc_network[0].google_compute_router.router",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "after": {
+     "bgp": [
+      {
+       "advertise_mode": "DEFAULT",
+       "advertised_groups": [],
+       "advertised_ip_ranges": [],
+       "asn": 64514,
+       "identifier_range": null,
+       "keepalive_interval": 20
+      }
+     ],
+     "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+     "description": "",
+     "encrypted_interconnect_router": null,
+     "id": "projects/example-project/regions/europe-west3/routers/alethia-nl-36740452010-2-router",
+     "md5_authentication_keys": [],
+     "name": "alethia-nl-36740452010-2-router",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "project": "example-project",
+     "region": "europe-west3",
+     "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/regions/europe-west3/routers/alethia-nl-36740452010-2-router",
+     "timeouts": null
+    },
+    "after_sensitive": {
+     "bgp": [
+      {
+       "advertised_groups": [],
+       "advertised_ip_ranges": []
+      }
+     ],
+     "md5_authentication_keys": []
+    },
+    "after_unknown": {},
+    "before": {
+     "bgp": [
+      {
+       "advertise_mode": "DEFAULT",
+       "advertised_groups": null,
+       "advertised_ip_ranges": [],
+       "asn": 64514,
+       "identifier_range": null,
+       "keepalive_interval": 20
+      }
+     ],
+     "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+     "description": "",
+     "encrypted_interconnect_router": null,
+     "id": "projects/example-project/regions/europe-west3/routers/alethia-nl-36740452010-2-router",
+     "md5_authentication_keys": [],
+     "name": "alethia-nl-36740452010-2-router",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "project": "example-project",
+     "region": "europe-west3",
+     "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/regions/europe-west3/routers/alethia-nl-36740452010-2-router",
+     "timeouts": null
+    },
+    "before_sensitive": {
+     "bgp": [
+      {
+       "advertised_ip_ranges": []
+      }
+     ],
+     "md5_authentication_keys": []
+    }
+   },
+   "mode": "managed",
+   "module_address": "module.vpc_network[0]",
+   "name": "router",
+   "provider_name": "registry.opentofu.org/hashicorp/google",
+   "type": "google_compute_router"
+  },
+  {
+   "address": "module.vpc_network[0].google_compute_subnetwork.private",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "after": {
+     "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+     "description": "",
+     "enable_flow_logs": null,
+     "external_ipv6_prefix": null,
+     "fingerprint": "abcdEFGH123=",
+     "gateway_address": "10.0.0.1",
+     "id": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private",
+     "internal_ipv6_prefix": null,
+     "ip_cidr_range": "10.0.0.0/20",
+     "ip_collection": null,
+     "ipv6_access_type": null,
+     "ipv6_cidr_range": null,
+     "ipv6_gce_endpoint": null,
+     "log_config": [
+      {
+       "aggregation_interval": "INTERVAL_5_SEC",
+       "filter_expr": "true",
+       "flow_sampling": 0.5,
+       "metadata": "INCLUDE_ALL_METADATA",
+       "metadata_fields": []
+      }
+     ],
+     "name": "alethia-nl-36740452010-2-private",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "params": [],
+     "private_ip_google_access": true,
+     "private_ipv6_google_access": null,
+     "project": "example-project",
+     "purpose": "PRIVATE",
+     "region": "europe-west3",
+     "reserved_internal_range": null,
+     "role": null,
+     "secondary_ip_range": [
+      {
+       "ip_cidr_range": "10.1.0.0/16",
+       "range_name": "gke-ew3-36740452010-2-alethia-nl-pods",
+       "reserved_internal_range": null
+      },
+      {
+       "ip_cidr_range": "10.2.0.0/20",
+       "range_name": "gke-ew3-36740452010-2-alethia-nl-services",
+       "reserved_internal_range": null
+      }
+     ],
+     "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private",
+     "send_secondary_ip_range_if_empty": null,
+     "stack_type": "IPV4_ONLY",
+     "state": null,
+     "subnetwork_id": null,
+     "timeouts": null
+    },
+    "after_sensitive": {
+     "log_config": [
+      {
+       "metadata_fields": []
+      }
+     ],
+     "params": [],
+     "secondary_ip_range": [
+      {},
+      {}
+     ]
+    },
+    "after_unknown": {},
+    "before": {
+     "creation_timestamp": "2026-09-30T09:10:00.000-07:00",
+     "description": "",
+     "enable_flow_logs": null,
+     "external_ipv6_prefix": null,
+     "fingerprint": "abcdEFGH123=",
+     "gateway_address": "10.0.0.1",
+     "id": "projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private",
+     "internal_ipv6_prefix": null,
+     "ip_cidr_range": "10.0.0.0/20",
+     "ip_collection": null,
+     "ipv6_access_type": null,
+     "ipv6_cidr_range": null,
+     "ipv6_gce_endpoint": null,
+     "log_config": [
+      {
+       "aggregation_interval": "INTERVAL_5_SEC",
+       "filter_expr": "true",
+       "flow_sampling": 0.5,
+       "metadata": "INCLUDE_ALL_METADATA",
+       "metadata_fields": null
+      }
+     ],
+     "name": "alethia-nl-36740452010-2-private",
+     "network": "projects/example-project/global/networks/alethia-nl-36740452010-2-vpc",
+     "params": [],
+     "private_ip_google_access": true,
+     "private_ipv6_google_access": null,
+     "project": "example-project",
+     "purpose": "PRIVATE",
+     "region": "europe-west3",
+     "reserved_internal_range": null,
+     "role": null,
+     "secondary_ip_range": [
+      {
+       "ip_cidr_range": "10.1.0.0/16",
+       "range_name": "gke-ew3-36740452010-2-alethia-nl-pods",
+       "reserved_internal_range": null
+      },
+      {
+       "ip_cidr_range": "10.2.0.0/20",
+       "range_name": "gke-ew3-36740452010-2-alethia-nl-services",
+       "reserved_internal_range": null
+      }
+     ],
+     "self_link": "https://www.googleapis.com/compute/v1/projects/example-project/regions/europe-west3/subnetworks/alethia-nl-36740452010-2-private",
+     "send_secondary_ip_range_if_empty": null,
+     "stack_type": "IPV4_ONLY",
+     "state": null,
+     "subnetwork_id": null,
+     "timeouts": null
+    },
+    "before_sensitive": {
+     "log_config": [
+      {}
+     ],
+     "params": [],
+     "secondary_ip_range": [
+      {},
+      {}
+     ]
+    }
+   },
+   "mode": "managed",
+   "module_address": "module.vpc_network[0]",
+   "name": "private",
+   "provider_name": "registry.opentofu.org/hashicorp/google",
+   "type": "google_compute_subnetwork"
+  }
+ ],
+ "terraform_version": "1.9.0"
+}

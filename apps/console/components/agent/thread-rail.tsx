@@ -140,6 +140,7 @@ export function ThreadRail({
 				<div className="flex items-center gap-2 border border-border bg-background px-2.5 py-1 focus-within:ring-3 focus-within:ring-ring/25">
 					<Search className="h-3.5 w-3.5 flex-none text-muted-foreground" />
 					<Input
+						aria-label="Search chats"
 						value={q}
 						onChange={(e) => setQ(e.target.value)}
 						placeholder="Search chats"

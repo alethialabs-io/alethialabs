@@ -33,6 +33,7 @@ import {
 	getValidProviderToken,
 } from "@/app/server/actions/identities";
 import { auth } from "@/lib/auth";
+import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { resolveAccountId } from "@/lib/auth/accounts";
 import { markFailed, markHealthy } from "@/lib/connectors/health";
@@ -49,6 +50,7 @@ beforeEach(() => {
 	// Default to "the provider IS linked" so each existing case keeps exercising the branch it
 	// was written for; the no-link branch is asserted explicitly below.
 	mockResolveAccountId.mockResolvedValue("acct-row-1");
+	vi.mocked(getOwner).mockResolvedValue("user-1");
 });
 
 describe("getLinkedProviders", () => {
@@ -67,6 +69,12 @@ describe("getLinkedProviders", () => {
 	it("returns an empty list when nothing is linked", async () => {
 		listUserAccounts.mockResolvedValue([] as never);
 		expect(await getLinkedProviders()).toEqual([]);
+	});
+
+	it("returns an empty list WITHOUT asking the auth API when there is no session", async () => {
+		vi.mocked(getOwner).mockResolvedValue(null);
+		expect(await getLinkedProviders()).toEqual([]);
+		expect(listUserAccounts).not.toHaveBeenCalled();
 	});
 
 	it("fails closed (empty) when the auth API throws", async () => {

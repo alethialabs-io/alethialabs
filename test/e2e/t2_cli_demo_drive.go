@@ -144,7 +144,11 @@ func ResolveCLIDemoRun(t *testing.T) *CLIDemoRun {
 			"against production with a token minted in this job's throwaway database. Point it at the "+
 			"console this job booted.", cliDemoConsoleURLEnv, apiBase)
 	}
-	run := &CLIDemoRun{Bin: CLIDemoBinary(), Token: creds.Token, OrgID: creds.OrgID, APIBase: apiBase}
+	gitOps, err := cliDemoGitOps(t2ArgoReposFromEnv())
+	if err != nil {
+		t.Fatalf("cli-demo: %v", err)
+	}
+	run := &CLIDemoRun{Bin: CLIDemoBinary(), Token: creds.Token, OrgID: creds.OrgID, APIBase: apiBase, GitOps: gitOps}
 	// exec.LookPath, not os.Stat: CLIDemoBinary's default is the BARE name `alethia`, which it
 	// documents as "whatever is on PATH" — os.Stat resolves a bare name against the cwd and can
 	// never find it there. LookPath searches PATH for a bare name and checks a path as given.
@@ -157,6 +161,28 @@ func ResolveCLIDemoRun(t *testing.T) *CLIDemoRun {
 	}
 	run.Bin = resolved
 	return run
+}
+
+// cliDemoGitOps returns the A0.6 repo inputs the `apps-repo` and `chart-attach` beats wire, and
+// refuses a run that does not have all of them (#5109).
+//
+// WHY A REFUSAL AND NOT A SKIP. The two beats are the only way the repos reach a CLI-authored
+// project. Without the inputs they would pass empty values: `chart attach` refuses an empty --repo,
+// and an empty apps_destination_repo renders no `apps` Application. Skipping the beats instead would drop A0.6 from the one path where the CLI is the actor, and the
+// run would still report the demo as driven. The nightly always has the inputs: it sets
+// E2E_ARGO_APPS_REPO, and that is what switches ALETHIA_E2E_ARGO_REPOS_REQUIRE on. So the refusal
+// only fires on a dispatch that is missing them, and it fires before anything is bought.
+func cliDemoGitOps(c t2ArgoRepos) (t2ArgoRepos, error) {
+	enabled, err := c.decide()
+	if err != nil {
+		return t2ArgoRepos{}, err
+	}
+	if !enabled {
+		return t2ArgoRepos{}, fmt.Errorf("the A0.6 inputs are not wired (%s, %s, %s). The `apps-repo` and "+
+			"`chart-attach` beats are how the apps repo and the BYO chart reach a CLI-authored project, and "+
+			"without them there is nothing to wire", envArgoAppsRepo, envArgoByoChartRepo, envArgoGitToken)
+	}
+	return c, nil
 }
 
 // cliDemoConsoleURLEnv names the real console the beats drive.
@@ -306,6 +332,47 @@ func assertRunTaggedEnv(r *CLIDemoRun, out string) error {
 		"name (listed: %s). The cluster is named `<project>-<environment name>`, so a rewritten name "+
 		"would deploy a cluster the sweep and the teardown do not target (they target %q):\n%s",
 		r.EnvName, strings.Join(names, ", "), CLIDemoClusterName(r), out)
+}
+
+// assertRunClassified is the `classify` beat's claim: the project now carries EXACTLY this run's
+// `e2e-run` value (#5096), read back from the product rather than inferred from the assign's exit
+// code.
+//
+// It is refused here, before a cluster is bought, because nothing later would notice. A project
+// that is not classified still plans, applies and converges — the only thing it loses is the tag,
+// and the tag is only ever read by a sweeper looking for a stack that LEAKED. A run that skipped
+// this would pass every assertion and leave behind exactly the stack #5096 is about.
+//
+// Exact equality on the value, not "some e2e-run value": the in-run teardown scopes on
+// `e2e-<ENV>` for THIS run, so another run's value would tag the stack with a handle this run's
+// teardown does not sweep.
+func assertRunClassified(r *CLIDemoRun, out string) error {
+	start := strings.Index(out, "[")
+	end := strings.LastIndex(out, "]")
+	if start == -1 || end <= start {
+		return fmt.Errorf("`classification show --output json` produced no JSON array — the project "+
+			"carries no classification, so no sweeper can find its stack if it leaks:\n%s", out)
+	}
+	var rows []struct {
+		DimensionKey string `json:"dimension_key"`
+		Value        string `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &rows); err != nil {
+		return fmt.Errorf("parsing the project's classification: %w\n%s", err, out)
+	}
+	want := e2eRunValue(r.EnvName)
+	var got []string
+	for _, row := range rows {
+		if row.DimensionKey != e2eRunDimension {
+			continue
+		}
+		if row.Value == want {
+			return nil
+		}
+		got = append(got, row.Value)
+	}
+	return fmt.Errorf("project %s carries %s=%v, want %q — the stack would be tagged with a handle this "+
+		"run's teardown does not sweep, or with none:\n%s", r.ProjectID, e2eRunDimension, got, want, out)
 }
 
 // CLIDemoClusterName is the cluster the CLI-authored project provisions, derived from the SAME
@@ -633,10 +700,11 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 	t.Helper()
 
 	ran := 0
-	for _, b := range CLIDemoBeats {
-		if b.Phase != phase {
-			continue
-		}
+	beats, skipped := cliDemoBeatsFor(run, phase)
+	for _, why := range skipped {
+		t.Logf("cli-demo [%s] WITHHELD %s", phase, why)
+	}
+	for _, b := range beats {
 		if b.AwaitEnvSettled {
 			if err := awaitCLIDemoEnvSettled(ctx, run, func(c context.Context) (string, error) {
 				return readCLIDemoEnvStatus(c, run)

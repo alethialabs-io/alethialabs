@@ -103,20 +103,35 @@ func TestBuildChildEnv_AllowlistsAndStripsSecrets(t *testing.T) {
 		"AWS_CONFIG_FILE=/tmp/alethia-aws-abc/config",
 		"AWS_PROFILE=alethia-customer",
 		"AZURE_FEDERATED_TOKEN_FILE=/tmp/alethia-azure-xyz/oidc-token",
-		"TF_HTTP_PASSWORD=state-token",
+		"TF_HTTP_PASSWORD=stale-runner-env-token", // the runner env is never a secret source
 		"TF_HTTP_USERNAME=alethia",
 		"PATH=/usr/bin",
 		// egress forward-proxy (Step 3b) — must cross so the child routes through the proxy
 		"HTTPS_PROXY=http://alethia-egress-proxy:3128",
 		"HTTP_PROXY=http://alethia-egress-proxy:3128",
 		"NO_PROXY=localhost,127.0.0.1",
-		// a per-job stage secret the parent stashed for the child
-		"ALETHIA_STAGE_GIT_TOKEN=ghp_x",
-		// per-repo BYO chart tokens (JSON map) — same ALETHIA_STAGE_* allowlist
-		`ALETHIA_STAGE_GIT_TOKENS={"https://gitlab.com/acme/chart":"glpat_y"}`,
+		// a stale stage key in the RUNNER's env must not cross — only Spec.Secrets does
+		"ALETHIA_STAGE_GIT_TOKEN=stale-runner-env-git",
+	}
+	// This job's secrets, on the per-job channel.
+	secrets := map[string]string{
+		EnvStateToken: "state-token",
+		EnvGitToken:   "ghp_x",
+		// per-repo BYO chart tokens (JSON map) — same stage allowlist
+		EnvGitTokens: `{"https://gitlab.com/acme/chart":"glpat_y"}`,
 	}
 
-	child := buildChildEnv(parent, "/work/job-1")
+	child := buildChildEnv(parent, "/work/job-1", secrets)
+	for _, want := range []string{"TF_HTTP_PASSWORD=state-token", "ALETHIA_STAGE_GIT_TOKEN=ghp_x"} {
+		if !envHas(child, want) {
+			t.Errorf("child env missing %q from Spec.Secrets", want)
+		}
+	}
+	for _, stale := range []string{"TF_HTTP_PASSWORD=stale-runner-env-token", "ALETHIA_STAGE_GIT_TOKEN=stale-runner-env-git"} {
+		if envHas(child, stale) {
+			t.Errorf("child env carried %q from the runner's own env", stale)
+		}
+	}
 
 	// The guard MUST pass on the produced env.
 	if err := assertNoSecrets(child); err != nil {

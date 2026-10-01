@@ -23,7 +23,7 @@ import {
 import { isEnumMember } from "@/lib/coerce";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { CONNECTOR_DOCS_BASE } from "@/components/connectors/connector-assets";
-import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { ConnectorIcon, isThirdPartyMark } from "@/components/connectors/connector-icon";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { AwsConnection } from "@/components/connectors/aws-connection";
 import { AzureConnection } from "@/components/connectors/azure-connection";
@@ -99,7 +99,7 @@ export const TOKEN_CLOUD_META: Record<
 };
 
 /**
- * Shared header for a connect-flow sheet — the provider's grayscale logo beside the title +
+ * Shared header for a connect-flow sheet — the provider's logo beside the title +
  * description, matching the manage sheet so connect and manage read as one family.
  */
 export function ConnectSheetHeader({
@@ -117,12 +117,14 @@ export function ConnectSheetHeader({
 				{integration && (
 					<div className="flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/50 bg-background p-2">
 						{integration.category === "git" ? (
-							<GitProviderIcon provider={integration.slug} size={26} />
+							<GitProviderIcon provider={integration.slug} size={26} mono={false} />
 						) : (
 							<ConnectorIcon
 								src={integration.icon_url}
 								name={integration.name}
 								size={28}
+								mono={!isThirdPartyMark(integration.icon_url)}
+								canLink
 							/>
 						)}
 					</div>

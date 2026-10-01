@@ -76,6 +76,7 @@ export function CaseComposer({
 	return (
 		<div className="space-y-2">
 			<Textarea
+				aria-label="Reply"
 				value={body}
 				onChange={(e) => setBody(e.target.value)}
 				onKeyDown={(e) => {

@@ -323,19 +323,50 @@ func fabricDemoVClusterTier(provider string, tiers []fabricDemoOverlayTier) (fab
 	return fabricDemoOverlayTier{}, fmt.Errorf("%s = %q, which is not one of the configured tiers %v", envFabricDemoVCluster, want, names)
 }
 
-// fabricDemoVClusterSlug names this scenario's vcluster. Disjoint from #1308's `e2e-vc-` so both can
-// live inside one Fabric lifetime. Bounded to 54 chars so the host namespace `vcluster-<name>` still
-// fits the 63-char limit.
-func fabricDemoVClusterSlug(env string) string {
-	clean := strings.Trim(fabricDemoSlugUnsafe.ReplaceAllString(strings.ToLower(strings.TrimSpace(env)), "-"), "-")
-	if clean == "" {
-		clean = "env"
+// fabricDemoVClusterName names this scenario's vcluster: the namespace the tier's overlay DECLARES.
+//
+// It used to be a run-scoped slug (`e2e-vcdemo-<env>`), and the vcluster tier could never converge.
+// A vcluster env's snapshot `namespace` is BOTH the virtual cluster's name AND the namespace its app
+// deploys into inside it (runVClusterDeploy → vclusterAppInput → the Application's
+// destination.namespace, packages/core/provisioner/deploy_vcluster.go). ArgoCD's
+// CreateNamespace=true creates exactly that one namespace — and nothing else. The overlay stamps
+// every resource into ITS namespace (`namespace: boutique-staging`) and deliberately ships no
+// Namespace object, so the sync asked a fresh, empty vcluster to create Deployments in a namespace
+// that did not exist there. Run 36634781502 (hetzner): registered, then
+// `health="Missing" sync="OutOfSync"` for the whole ten minutes — nothing was ever created.
+//
+// The namespace tiers never hit this because they already pass tier.Namespace — see
+// fabricDemoDefaultOverlays: "each mapped to the namespace ITS OVERLAY DECLARES … a mismatch can
+// never converge". The vcluster tier is held to the same contract.
+//
+// Collisions: the vcluster lives on its OWN API server, so sharing a name with the namespace tier
+// of the same overlay is safe — its host footprint is `vcluster-<name>`, its ArgoCD registration is
+// a cluster Secret, and its AppProject/Application carry the `vc-` prefixes. #1308's vcluster is
+// `e2e-vc-<env>`. Bounded to 54 chars so the host namespace `vcluster-<name>` still fits 63.
+func fabricDemoVClusterName(tier fabricDemoOverlayTier) (string, error) {
+	name := strings.TrimSpace(tier.Namespace)
+	if name == "" {
+		return "", fmt.Errorf("vcluster tier %q declares no namespace — the vcluster's in-cluster namespace must be the one its overlay stamps", tier.Tier)
 	}
-	name := "e2e-vcdemo-" + clean
-	if len(name) > 54 {
-		name = strings.TrimRight(name[:54], "-")
+	if !isRFC1123Label(name) || len(name) > 54 {
+		return "", fmt.Errorf("vcluster tier %q namespace %q is not a valid vcluster name (RFC-1123 label, at most 54 chars so `vcluster-<name>` fits 63)", tier.Tier, name)
 	}
-	return name
+	return name, nil
+}
+
+// fabricDemoVClusterParams builds the #1308 body's parameters for #845's vcluster tier. Pure, so the
+// contract that the snapshot's namespace is the overlay's namespace is pinned by a unit test.
+func fabricDemoVClusterParams(p fabricDemoParams, vcTier fabricDemoOverlayTier, repo string) (vclusterTenantParams, error) {
+	vcName, err := fabricDemoVClusterName(vcTier)
+	if err != nil {
+		return vclusterTenantParams{}, err
+	}
+	return vclusterTenantParams{
+		project: p.project, env: p.env, provider: p.provider, region: p.region,
+		fabricClust: p.fabricClust, owner: p.owner,
+		appsRepo: repo, appsPath: fabricDemoOverlayPath(vcTier.Tier),
+		vcName: vcName, label: "fabric-demo vcluster tier (#845)", requireAppResources: true,
+	}, nil
 }
 
 // sameRepoURL compares two git URLs modulo case, a trailing slash and a `.git` suffix — the three
@@ -631,6 +662,33 @@ func fabricDemoSummaryVerdict(s FabricDemoSummary) string {
 	}
 	return fmt.Sprintf("%s fabric-demo on %s: %s · placements %s · %s · argocd-preserved=%t · receipt(%s)=%s · %s",
 		icon, s.Fabric, prod, tiers, vc, s.ArgoNotReinstalled, s.ReceiptScope, shortPlanSHA(s.FabricPlanSHA), drift)
+}
+
+// fabricDemoDriftedLines renders each drifted resource of a posture as `address (kind)
+// attrs=a,b`, one per line, joined for the gate's failure message.
+//
+// The gate used to print `address (kind)` only. Run 36667774857 failed on seven resources and
+// named none of the attributes behind them, although the analyzer had them — the job log carried
+// `"attributes":["assignee_id","assignee_type"]` and the gate threw it away, so diagnosing the
+// failure meant grepping the runner's raw posture line. Same fix, same format as the BYO-IaC leg's
+// byoIacPosture.detail; `attrs=<none reported>` says the ANALYZER named nothing (a drift verdict
+// reached before any leaf was computed), which is itself a diagnosis, not a missing field.
+func fabricDemoDriftedLines(p byoIacPosture) string {
+	lines := make([]string, 0, len(p.Details))
+	for _, d := range p.Details {
+		s := d.Address
+		if s == "" {
+			s = d.Type
+		}
+		s += " (" + d.Kind + ")"
+		if len(d.Attributes) > 0 {
+			s += " attrs=" + strings.Join(d.Attributes, ",")
+		} else {
+			s += " attrs=<none reported>"
+		}
+		lines = append(lines, s)
+	}
+	return strings.Join(lines, "\n         ")
 }
 
 // shortPlanSHA renders a plan digest for the one-line verdict without dumping 64 hex chars.

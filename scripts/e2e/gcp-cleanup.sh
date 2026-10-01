@@ -85,6 +85,10 @@ set -euo pipefail
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"
+# The sweep-handle KEY (project-id or e2e-run) and how a discovered resource is attributed to one
+# (#5096). Read its header before touching any preflight discovery below.
+# shellcheck source-path=SCRIPTDIR source=lib/scope-key.sh
+. "${E2E_LIB_DIR}/scope-key.sh"
 probe_reset
 
 # ── `--self-test` exercises the three-state probe contract against a stubbed `gcloud` and exits.
@@ -144,7 +148,8 @@ PREFLIGHT_MAX_ENVS="${PREFLIGHT_MAX_ENVS:-3}"               # orphans attempted 
 # ── Guard 1: a specific ENV is REQUIRED. No ENV ⇒ no filter ⇒ hard refuse. ──
 if [ -z "$ENV" ]; then
 	echo "✗ REFUSING TO RUN: ALETHIA_E2E_ENV is unset." >&2
-	echo "  This script only ever deletes resources labelled alethia_project-id=e2e-<ENV> (or named" >&2
+	echo "  This script only ever deletes resources labelled alethia_project-id=e2e-<ENV> (or" >&2
+	echo "  alethia_e2e-run=e2e-<ENV> with ALETHIA_E2E_SCOPE_KEY=e2e-run, or named" >&2
 	echo "  with the unique -<ENV>-) — never project-wide. Set ALETHIA_E2E_ENV to the unique per-run" >&2
 	echo "  value (<run_id>-<attempt>)." >&2
 	exit 2
@@ -178,7 +183,12 @@ if [ "$SELF_TEST" != "1" ] && ! command -v gcloud >/dev/null 2>&1; then
 	exit 2
 fi
 
-# The value of the alethia_project-id label carried by every tofu-managed resource for THIS run.
+# ── The KEY half of the scope (#5096). `alethia_project-id` unless ALETHIA_E2E_SCOPE_KEY says
+#    `e2e-run` (the cli-demo dimension, whose stack's project-id is a UUID); anything else is refused.
+#    The VALUE half is unchanged: `e2e-<ENV>` under either key. See scripts/e2e/lib/scope-key.sh. ──
+SCOPE_KEY="$(e2e_scope_key)" || exit 2
+PID_LABEL_KEY="alethia_${SCOPE_KEY}"
+# The value of the scope label carried by every tofu-managed resource for THIS run.
 PID_LABEL="e2e-${ENV}"
 CLUSTER=""         # discovered below (gke-<short>-<ENV>-<project>); may be found via ENV-embed fallback
 CLUSTER_LOCATION="" # the cluster's zone or region (zonal in T2)
@@ -186,7 +196,7 @@ NETWORK=""          # the run's VPC name (<project>-<ENV>-vpc) — secondary bin
 
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
 if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
-	echo "→ gcp belt-and-suspenders cleanup in ${REGION}, scope alethia_project-id=${PID_LABEL}"
+	echo "→ gcp belt-and-suspenders cleanup in ${REGION}, scope ${PID_LABEL_KEY}=${PID_LABEL}"
 	[ "$VERIFY_ONLY" = "1" ] && echo "  (VERIFY_ONLY=1 — re-listing the cloud, sweeping nothing, deleting nothing)"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 fi
@@ -291,7 +301,7 @@ retry_delete() {
 list_gke_clusters() {
 	assert_scope
 	gc_list gke-cluster container clusters list \
-		--filter="resourceLabels.alethia_project-id=${PID_LABEL}" \
+		--filter="resourceLabels.${PID_LABEL_KEY}=${PID_LABEL}" \
 		--format="value(name,location,network)"
 }
 
@@ -527,7 +537,7 @@ list_pvc_disks() { # name<TAB>zone<TAB>region
 		# widening the delete past an attributable label is what scope-locking forbids. What must not
 		# survive it is the VERDICT — see report_unbound_pvc_disks below (#4621), which asks the
 		# cheaper question this branch can still answer and reports UNVERIFIABLE when it cannot bind.
-		f="labels.alethia_project-id=${PID_LABEL} AND name~^pvc-"
+		f="labels.${PID_LABEL_KEY}=${PID_LABEL} AND name~^pvc-"
 	fi
 	gc_list pvc-disk compute disks list --filter="$f" \
 		--format="value(name,zone.basename(),region.basename())"
@@ -596,7 +606,7 @@ report_unbound_pvc_disks() {
 #       labels (addresses do), else by the unique `-<ENV>-` name embedding. ──
 list_addresses() { # name<TAB>region ("" ⇒ global)
 	assert_scope
-	gc_list address compute addresses list --filter="labels.alethia_project-id=${PID_LABEL} OR name~-${ENV}-" \
+	gc_list address compute addresses list --filter="labels.${PID_LABEL_KEY}=${PID_LABEL} OR name~-${ENV}-" \
 		--format="value(name,region.basename())"
 }
 list_routers() { # name<TAB>region
@@ -696,24 +706,24 @@ sweep_network() {
 list_sql_instances() {
 	assert_scope
 	# Cloud SQL exposes labels as settings.userLabels, NOT labels.
-	gc_list cloud-sql sql instances list --filter="settings.userLabels.alethia_project-id=${PID_LABEL}" \
+	gc_list cloud-sql sql instances list --filter="settings.userLabels.${PID_LABEL_KEY}=${PID_LABEL}" \
 		--format="value(name)"
 }
 list_redis_instances() {
 	assert_scope
 	gc_list memorystore redis instances list --region "${REGION}" \
-		--filter="labels.alethia_project-id=${PID_LABEL}" \
+		--filter="labels.${PID_LABEL_KEY}=${PID_LABEL}" \
 		--format="value(name)"
 }
 list_buckets() {
 	assert_scope
-	gc_list bucket storage buckets list --filter="labels.alethia_project-id=${PID_LABEL}" \
+	gc_list bucket storage buckets list --filter="labels.${PID_LABEL_KEY}=${PID_LABEL}" \
 		--format="value(name)"
 }
 list_artifact_repos() {
 	assert_scope
 	gc_list artifact-repo artifacts repositories list --location "${REGION}" \
-		--filter="labels.alethia_project-id=${PID_LABEL}" \
+		--filter="labels.${PID_LABEL_KEY}=${PID_LABEL}" \
 		--format="value(name)"
 }
 # NON-BILLABLE residue (still reclaimed — a stale one blocks re-creating the same name)
@@ -728,17 +738,17 @@ list_firestore_dbs() {
 }
 list_pubsub_topics() {
 	assert_scope
-	gc_list pubsub-topic pubsub topics list --filter="labels.alethia_project-id=${PID_LABEL}" \
+	gc_list pubsub-topic pubsub topics list --filter="labels.${PID_LABEL_KEY}=${PID_LABEL}" \
 		--format="value(name)"
 }
 list_secrets() {
 	assert_scope
-	gc_list secret secrets list --filter="labels.alethia_project-id=${PID_LABEL}" \
+	gc_list secret secrets list --filter="labels.${PID_LABEL_KEY}=${PID_LABEL}" \
 		--format="value(name)"
 }
 list_dns_zones() {
 	assert_scope
-	gc_list dns-zone dns managed-zones list --filter="labels.alethia_project-id=${PID_LABEL}" \
+	gc_list dns-zone dns managed-zones list --filter="labels.${PID_LABEL_KEY}=${PID_LABEL}" \
 		--format="value(name)"
 }
 
@@ -828,12 +838,16 @@ finalize_verification() {
 	return 0
 }
 
-# ── sweep_env <env> — the full scope-locked sweep + verify for ONE run's ENV. Sets the
-#    ENV/PID_LABEL/CLUSTER/NETWORK globals the sweep functions read, then runs them in the same
-#    strict dependency order as the normal path. Returns verify_swept's status (0 clean / 1 leak);
-#    DRY_RUN lists only and returns 0. Used by PREFLIGHT to sweep each discovered prior-run orphan. ──
+# ── sweep_env <env> <key> — the full scope-locked sweep + verify for ONE run's (ENV, key) pair.
+#    Sets the ENV/SCOPE_KEY/PID_LABEL_KEY/PID_LABEL/CLUSTER/NETWORK globals the sweep functions
+#    read, then runs them in the same strict dependency order as the normal path. The key is
+#    re-validated through the same allowlist as the top of the file (#5096), so a discovery bug
+#    cannot hand a delete an unknown key. Returns verify_swept's status (0 clean / 1 leak); DRY_RUN
+#    lists only and returns 0. Used by PREFLIGHT to sweep each discovered prior-run orphan. ──
 sweep_env() {
 	ENV="$1"
+	SCOPE_KEY="$(ALETHIA_E2E_SCOPE_KEY="${2:-}" e2e_scope_key)" || return 1
+	PID_LABEL_KEY="alethia_${SCOPE_KEY}"
 	PID_LABEL="e2e-${ENV}"
 	CLUSTER=""
 	CLUSTER_LOCATION=""
@@ -850,39 +864,51 @@ sweep_env() {
 	verify_swept
 }
 
-# ── list_orphan_envs — every OTHER e2e run's ENV that still has labelled resources in this project
-#    (prior-run orphans). Enumerates all values of the `alethia_project-id` label across the labelled
-#    resource types (GKE clusters primarily; disks/addresses too), keeps only `e2e-`-prefixed values,
-#    strips the prefix, EXCLUDES this run (SELF_ENV), and re-validates each against the SAME
-#    specificity + prod/shared denylist guards as the top-of-file ENV guards — so a preflight can
-#    never widen past a genuine prior nightly. Empty output ⇒ nothing to sweep. ──
+# ── list_orphan_envs — every OTHER e2e run's (ENV, key) pair that still has labelled resources in
+#    this project (prior-run orphans), as `<env>\t<key>` lines. Reads BOTH handle labels off every
+#    resource of the labelled types (GKE clusters primarily; disks/addresses too), attributes each
+#    resource to exactly one pair (e2e_scope_attribute, lib/scope-key.sh), EXCLUDES this run
+#    (SELF_ENV), and re-validates each against the SAME specificity + prod/shared denylist guards as
+#    the top-of-file ENV guards — so a preflight can never widen past a genuine prior nightly.
+#    Empty output ⇒ nothing to sweep.
+#
+#    TWO HANDLES (#5096). A stack the CLI created carries its project's UUID as
+#    `alethia_project-id`, so reading that label alone never saw it. Every e2e stack now also
+#    carries `alethia_e2e-run=e2e-<ENV>`. A resource whose project-id is itself an `e2e-` handle is
+#    attributed to it — every seeded stack, including every one standing from before the new label
+#    — and only otherwise to its e2e-run label, so a seeded stack is swept once, not twice. ──
 list_orphan_envs() {
-	local vals v oenv
+	local vals pid run pair oenv
 	vals="$(
 		{
 			# Through gc_list, so a listing that FAILS is recorded rather than folded into "no
 			# orphans". The preflight does not gate on it (it never blocks its caller), but it warns
 			# — "nothing to sweep" and "could not look" are not the same report.
-			gc_list orphan-scan container clusters list --format="value(resourceLabels.alethia_project-id)"
-			gc_list orphan-scan compute disks list --format="value(labels.alethia_project-id)"
-			gc_list orphan-scan compute addresses list --format="value(labels.alethia_project-id)"
+			#
+			# `value(a,b)` prints the two labels TAB-separated, with an empty field for a missing
+			# one; the loop below splits with awk, which keeps an empty field where `read` would
+			# collapse it.
+			gc_list orphan-scan container clusters list --format="value(resourceLabels.alethia_project-id,resourceLabels.alethia_e2e-run)"
+			gc_list orphan-scan compute disks list --format="value(labels.alethia_project-id,labels.alethia_e2e-run)"
+			gc_list orphan-scan compute addresses list --format="value(labels.alethia_project-id,labels.alethia_e2e-run)"
 			# The managed services too, now that they are discoverable by label. Without these a run
 			# killed AFTER its GKE cluster went but BEFORE Cloud SQL did left an orphan no preflight
 			# could ever name — the compute half found nothing, so the whole ENV went unswept while
 			# a db-custom instance billed by the hour.
-			gc_list orphan-scan sql instances list --format="value(settings.userLabels.alethia_project-id)"
-			gc_list orphan-scan storage buckets list --format="value(labels.alethia_project-id)"
-		} | grep -E '^e2e-' | sort -u || true
+			gc_list orphan-scan sql instances list --format="value(settings.userLabels.alethia_project-id,settings.userLabels.alethia_e2e-run)"
+			gc_list orphan-scan storage buckets list --format="value(labels.alethia_project-id,labels.alethia_e2e-run)"
+		} | awk -F'\t' 'NF { print $1 "|" $2 }' | sort -u || true
 	)"
-	while IFS= read -r v; do
-		[ -n "$v" ] || continue
-		oenv="${v#e2e-}"
+	while IFS='|' read -r pid run; do
+		pair="$(e2e_scope_attribute "$pid" "$run")"
+		[ -n "$pair" ] || continue # neither handle — never a prod project-id, never a customer label
+		oenv="${pair%%$'\t'*}"
 		[ "$oenv" = "$SELF_ENV" ] && continue # skip THIS run (its own teardown handles it)
 		printf '%s' "$oenv" | grep -Eq '^[a-z0-9][a-z0-9._-]{4,62}$' || continue
 		case "$oenv" in
 		prod | prod-* | production | production-* | staging | staging-* | main | alethia | alethia-* | data) continue ;;
 		esac
-		printf '%s\n' "$oenv"
+		printf '%s\n' "$pair"
 	done <<<"$vals" | sort -u
 }
 
@@ -909,8 +935,7 @@ if [ "$PREFLIGHT" = "1" ]; then
 		echo "✓ preflight: no prior-run e2e orphans — nothing to sweep"
 		exit 0
 	fi
-	# shellcheck disable=SC2086
-	echo "  orphan run ENVs found: $(printf '%s ' $orphans)"
+	echo "  orphan run ENVs found: $(printf '%s\n' "$orphans" | awk -F'\t' 'NF { printf "%s[%s] ", $1, $2 }')"
 	echo "  budget: ${PREFLIGHT_BUDGET_SECONDS}s wall-clock, at most ${PREFLIGHT_MAX_ENVS} orphan(s) this run"
 	residual=0
 	attempted=0
@@ -918,21 +943,21 @@ if [ "$PREFLIGHT" = "1" ]; then
 	# Anything the bounds stop us from reaching is NAMED, not silently dropped — an unswept orphan
 	# is BILLING, so "we ran out of budget" has to be as visible as "we tried and failed".
 	skipped=""
-	while IFS= read -r oenv; do
+	while IFS=$'\t' read -r oenv okey; do
 		[ -n "$oenv" ] || continue
 		if [ "$attempted" -ge "$PREFLIGHT_MAX_ENVS" ]; then
-			skipped="${skipped}${oenv} (cap) "
+			skipped="${skipped}${oenv}[${okey}] (cap) "
 			continue
 		fi
 		now=$(date +%s)
 		if [ "$now" -ge "$deadline" ]; then
-			skipped="${skipped}${oenv} (budget) "
+			skipped="${skipped}${oenv}[${okey}] (budget) "
 			continue
 		fi
 		attempted=$((attempted + 1))
-		echo "── preflight sweep: prior run ${oenv} (${attempted}/${PREFLIGHT_MAX_ENVS}, $((deadline - now))s budget left) ──"
-		if ! sweep_env "$oenv"; then
-			echo "::warning::preflight could not fully sweep prior-run orphan ${oenv} (still billing) — the always() teardown / next preflight will retry. NOT failing this provisioning run."
+		echo "── preflight sweep: prior run ${oenv} by alethia_${okey} (${attempted}/${PREFLIGHT_MAX_ENVS}, $((deadline - now))s budget left) ──"
+		if ! sweep_env "$oenv" "$okey"; then
+			echo "::warning::preflight could not fully sweep prior-run orphan ${oenv} (alethia_${okey}, still billing) — the always() teardown / next preflight will retry. NOT failing this provisioning run."
 			residual=1
 		fi
 	done <<<"$orphans"
@@ -941,7 +966,7 @@ if [ "$PREFLIGHT" = "1" ]; then
 		# orphan every night is how an orphan survives long enough to eat a job cap. This is the
 		# signal that a human has to sweep it by hand; it still does not fail the step.
 		echo "::error::preflight left orphan(s) UNSWEPT and BILLING — bounds reached before they were reached: ${skipped}"
-		echo "::error::sweep by hand, scope-locked: ALETHIA_E2E_ENV=<env> ALETHIA_E2E_REGION=${REGION} ./scripts/e2e/gcp-cleanup.sh"
+		echo "::error::sweep by hand, scope-locked: ALETHIA_E2E_ENV=<env> ALETHIA_E2E_SCOPE_KEY=<key> ALETHIA_E2E_REGION=${REGION} ./scripts/e2e/gcp-cleanup.sh"
 		residual=1
 	fi
 	if [ "$residual" = "1" ]; then
@@ -1225,6 +1250,54 @@ if [ "$SELF_TEST" = "1" ]; then
  - The resource 'projects/p/global/networks/alethia-nl-${ENV}-vpc' was not found" yes
 	unset -f st_gone_case
 
+	# ── #5096: THE PREFLIGHT SEES A CLI-CREATED STACK, AND STILL SEES EVERY OLD ONE. ─────────────
+	#
+	# The stub answers only a `--format` that projects BOTH handle labels, in the order the loop
+	# reads them — so dropping the e2e-run column empties every row and reds the assertion. Rows are
+	# gcloud's `value(a,b)` shape: tab-separated, an EMPTY field for a missing label.
+	#
+	#   the cli-demo cluster: project-id is the project's UUID     → found by e2e-run
+	#   a seeded disk after this change: both handles              → swept ONCE, by project-id
+	#   a seeded address from before it: project-id only           → still found (compat)
+	#   a customer bucket with neither handle                      → never an orphan
+	#   THIS run's own stack under the new handle                  → excluded
+	gc() {
+		local a fmt=""
+		for a in "$@"; do
+			case "$a" in --format=*) fmt="${a#--format=}" ;; esac
+		done
+		case "$fmt" in *alethia_project-id,*alethia_e2e-run*) ;; *) return 0 ;; esac
+		case "$1 ${2:-}" in
+		"container clusters")
+			printf '%s\t%s\n' "3e9d7e82-6bfc-4faa-9006-7c1e27d72249" "e2e-36135826614-1"
+			printf '%s\t%s\n' "3e9d7e82-1111-4faa-9006-7c1e27d72249" "e2e-${ENV}"
+			;;
+		"compute disks") printf '%s\t%s\n' "e2e-36135826614-2" "e2e-36135826614-2" ;;
+		"compute addresses") printf '%s\t%s\n' "e2e-31459117502-1" "" ;;
+		"storage buckets") printf '%s\t%s\n' "3e9d7e82-0000-4faa-9006-7c1e27d72249" "" ;;
+		*) : ;;
+		esac
+		return 0
+	}
+	probe_reset
+	st_orphans="$(list_orphan_envs 2>/dev/null | tr '\t\n' ': ' | sed 's/ $//')"
+	unset -f gc
+	st_want="31459117502-1:project-id 36135826614-1:e2e-run 36135826614-2:project-id"
+	if [ "$st_orphans" = "$st_want" ]; then
+		echo "  ✓ preflight discovery: a CLI stack by e2e-run, seeded stacks by project-id (old and new), once each"
+	else
+		echo "  ✗ preflight discovery — want [${st_want}], got [${st_orphans}]" >&2
+		st_fails=$((st_fails + 1))
+	fi
+	st_rc=0
+	( sweep_env 36135826614-1 cluster >/dev/null 2>&1 ) || st_rc=$?
+	if [ "$st_rc" -ne 0 ]; then
+		echo "  ✓ sweep_env refuses an unknown scope key"
+	else
+		echo "  ✗ sweep_env accepted the scope key 'cluster'" >&2
+		st_fails=$((st_fails + 1))
+	fi
+
 	if [ "$st_fails" -ne 0 ]; then
 		echo "✗ gcp-cleanup.sh self-test: ${st_fails} failure(s)" >&2
 		exit 1
@@ -1247,7 +1320,7 @@ if [ "$VERIFY_ONLY" != "1" ]; then
 fi
 
 if [ "$DRY_RUN" = "1" ]; then
-	echo "✓ gcp DRY RUN complete for alethia_project-id=${PID_LABEL} (nothing deleted, nothing verified)"
+	echo "✓ gcp DRY RUN complete for ${PID_LABEL_KEY}=${PID_LABEL} (nothing deleted, nothing verified)"
 	exit 0
 fi
 

@@ -366,12 +366,12 @@ function readHetznerTypes() {
 const FIXTURE_RESOLVER = 'FULL_BAR_CRON="17 5 * * 0"\n';
 const FIVE = ["hetzner", "aws", "gcp", "azure", "alibaba"];
 const TODAY_CEILING = ["aws", "gcp", "azure"].map((p) => `matrix.provider == '${p}' && (vars.E2E_${p.toUpperCase()}_COST_CEILING_USD || '300')`).join(" || ");
-const TODAY_CAP = `matrix.provider == 'hetzner' && (vars.E2E_HETZNER_SERVER_TYPES || 'cpx22,cpx32,cx33') || ''`;
+const TODAY_CAP = `matrix.provider == 'hetzner' && (vars.E2E_HETZNER_SERVER_TYPES || 'cpx22,cpx32') || ''`;
 const TODAY_PREPAID = `matrix.provider == 'alibaba' && !inputs.alibaba_allow_prepaid && '1' || ''`;
 const E2E_TYPES = [
 	{ source: "variables.tf", type: "cpx22" },
 	{ source: "heavy.json", type: "cpx32" },
-	{ source: "demo.json", type: "cx33" },
+	{ source: "demo.json", type: "cpx32" },
 ];
 
 /**
@@ -460,10 +460,10 @@ function runSelfTest() {
 	assert("...while the dispatch-input waiver passes", !has(today, "R3"));
 
 	// R4 — the cap vs what the e2e provisions.
-	const tooTight = run(fixture({ cap: TODAY_CAP.replace(",cx33", "") }));
+	const tooTight = run(fixture({ cap: TODAY_CAP.replace(",cpx32", "") }));
 	assert(
-		"a cap that drops cx33 while demo.json provisions it FAILS R4, naming the type and the file",
-		tooTight.failures.some((f) => f.startsWith("R4 hetzner:") && f.includes('"cx33"') && f.includes("demo.json")),
+		"a cap that drops cpx32 while demo.json provisions it FAILS R4, naming the type and the file",
+		tooTight.failures.some((f) => f.startsWith("R4 hetzner:") && f.includes('"cpx32"') && f.includes("demo.json")),
 		JSON.stringify(tooTight.failures),
 	);
 	const biggerFixture = run(fixture(), [...E2E_TYPES, { source: "heavy.json", type: "ccx63" }]);

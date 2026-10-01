@@ -33,7 +33,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
-import { FormControl, FormField, FormItem, FormMessage } from "@repo/ui/form";
+import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@repo/ui/form";
 import { Label } from "@repo/ui/label";
 import {
 	Sheet,
@@ -44,7 +44,7 @@ import {
 } from "@repo/ui/sheet";
 import { CloudIdentitySelector } from "@/components/design-project/cloud-identity-selector";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
-import { FieldLabel } from "@/components/runners/field-help";
+import { FieldHelp, FieldLabel, RequiredMark } from "@/components/runners/field-help";
 import {
 	AlertTriangle,
 	ArrowLeft,
@@ -311,15 +311,18 @@ function DeployForm({
 					name="name"
 					render={({ field }) => (
 						<FormItem>
-							<FieldLabel
-								required
-								help={{
-									title: "Runner name",
-									description: "A label to identify this runner in the list and in logs.",
-								}}
-							>
-								Name
-							</FieldLabel>
+							{/* FieldLabel's row, with a FormLabel in it: the FormLabel is what points `htmlFor` at the
+							    id FormControl gives the input, so "Name" is the field's accessible name. */}
+							<div className="flex items-center gap-1.5">
+								<FormLabel className="text-sm">
+									Name
+									<RequiredMark />
+								</FormLabel>
+								<FieldHelp
+									title="Runner name"
+									description="A label to identify this runner in the list and in logs."
+								/>
+							</div>
 							<FormControl>
 								<Input placeholder="e.g. prod-eu-west-1" className="h-9" autoFocus {...field} />
 							</FormControl>
@@ -541,15 +544,18 @@ alethia runner start`}
 					name="name"
 					render={({ field }) => (
 						<FormItem>
-							<FieldLabel
-								required
-								help={{
-									title: "Runner name",
-									description: "A human-readable label to identify this runner in the list and in logs.",
-								}}
-							>
-								Name
-							</FieldLabel>
+							{/* FieldLabel's row, with a FormLabel in it: the FormLabel is what points `htmlFor` at the
+							    id FormControl gives the input, so "Name" is the field's accessible name. */}
+							<div className="flex items-center gap-1.5">
+								<FormLabel className="text-sm">
+									Name
+									<RequiredMark />
+								</FormLabel>
+								<FieldHelp
+									title="Runner name"
+									description="A human-readable label to identify this runner in the list and in logs."
+								/>
+							</div>
 							<FormControl>
 								<Input placeholder="e.g. fargate-eu-west-1" className="h-9" autoFocus {...field} />
 							</FormControl>

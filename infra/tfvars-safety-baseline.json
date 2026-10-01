@@ -81,8 +81,23 @@
 		},
 		{
 			"stack": "infra/cp-hetzner",
+			"variable": "email_forward_to",
+			"reason": "\"\" is the dormant value and only matters when manage_email_routing is true: it is the destination address's `email` and is read by the precondition on cloudflare_email_routing_address.dest, which fails the plan while it is empty. So the empty default cannot reach Cloudflare — it turns into a plan error, which is the intended direction. Supplied by the EMAIL_FORWARD_TO key of alethia/prod/env (optional load in infra-cp-hetzner.yml) at adoption (#4374). It must equal the LIVE destination exactly: `email` forces replacement, so any other value plans a destroy of the live destination address."
+		},
+		{
+			"stack": "infra/cp-hetzner",
+			"variable": "email_routing_address_id",
+			"reason": "\"\" is the dormant value: the import in email-routing-imports.tf is gated on manage_email_routing, not on this, and the precondition on cloudflare_email_routing_address.dest fails the PLAN when the input is true and this is empty — so the empty default cannot silently turn an import into a second create. Supplied by the EMAIL_ROUTING_ADDRESS_ID key of alethia/prod/env at adoption (#4374). Account data, not a secret; kept out of the repo because it is one account's id."
+		},
+		{
+			"stack": "infra/cp-hetzner",
+			"variable": "email_routing_rule_ids",
+			"reason": "{} is the dormant value: the rule imports in email-routing-imports.tf iterate it only when manage_email_routing is true, and the precondition on cloudflare_email_routing_rule.inbound fails the PLAN for every adopted local-part (local.adopted_addresses) missing from it — so an empty or partial map cannot quietly create a second forward rule beside a live one. An unknown key fails too (import target does not exist). Supplied by the EMAIL_ROUTING_RULE_IDS key of alethia/prod/env, a JSON object keyed by local-part, at adoption (#4374)."
+		},
+		{
+			"stack": "infra/cp-hetzner",
 			"variable": "manage_email_routing",
-			"reason": "DECIDED (#3291): the dormancy is deliberate and now DECLARED, not pending. false leaves 11 Cloudflare email-routing resources gated out of existence (email-routing.tf:39,49,57,81), including the 8 inbound addresses printed in transactional email footers and on the contact/CLA/legal/security pages. The routing is live, bootstrapped out-of-band, and absent from this stack's state — so the gate says 'Terraform does not own these', not 'not switched on yet'. What is ENFORCED: nothing supplies the variable, so the default holds — no committed terraform.tfvars in this stack, and infra-cp-hetzner.yml's apply loads exactly five TF_VAR_* from Secrets Manager, none of them this. What is NOT enforced, and is why the description carries the long version: importing those resources into state (or creating them from a local apply) while the input stays unset leaves configuration at zero instances and state at one, which is a planned DESTROY that infra-cp-hetzner.yml applies -auto-approve, unattended, on the next push to main touching infra/cp-hetzner/** — no check or CI job notices. Adoption (import + set the input in ONE change) is #4374 and is deliberately NOT done here."
+			"reason": "DECIDED (#3291), ADOPTION WIRED (#4374): false leaves the 11 Cloudflare email-routing resources in email-routing.tf gated out of existence, including the 8 inbound addresses printed in transactional email footers and on the contact/CLA/legal/security pages, and leaves every import block in email-routing-imports.tf with an empty for_each. The routing is live, bootstrapped out-of-band, and absent from this stack's state until the maintainer adopts it. What SUPPLIES it: infra-cp-hetzner.yml's apply loads TF_VAR_manage_email_routing from the MANAGE_EMAIL_ROUTING key of alethia/prod/env ONLY when that key is present (load_opt), so the default holds until the maintainer adds it together with the import IDs. What is ENFORCED: input true with an adopted ID missing fails the plan (preconditions in email-routing.tf). What is NOT enforced: removing the key or setting it false AFTER adoption leaves configuration at zero instances and state at eleven, a planned DESTROY of live inbound mail (and the settings destroy disables Email Routing for the zone) that the workflow applies -auto-approve on the next push to main touching infra/cp-hetzner/**. That is why the key, once added, stays."
 		},
 		{
 			"stack": "infra/cp-hetzner",

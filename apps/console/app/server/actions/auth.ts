@@ -7,13 +7,12 @@
 // email instead of a sign-in code. Signup proceeds normally (emailOTP creates the
 // user on verify).
 //
-// action-boundary-ok: this is the PRE-auth surface — there is by definition no actor to
-// resolve and nothing to authorize yet, so it cannot satisfy check-action-boundary.mjs. It
-// reads `user` through the service client only to answer "does this address exist?".
-// Note that the answer IS observable to the client (auth-form.tsx branches to a "no-account"
-// step), i.e. this endpoint distinguishes registered from unregistered addresses. That is the
-// deliberate cost of refusing to silently create an account on the login path, not an
-// oversight — but it does mean this action wants a rate limit before it wants anything else.
+// The one export, requestEmailCode, is the PRE-auth surface, and carries the exception marker
+// check-action-boundary.mjs requires — on the export itself, where it excuses that export and no
+// other. The answer IS observable to the client (auth-form.tsx branches to a "no-account" step),
+// i.e. this endpoint distinguishes registered from unregistered addresses. That is the deliberate
+// cost of refusing to silently create an account on the login path, not an oversight — but it
+// does mean this action wants a rate limit before it wants anything else.
 
 import { eq, sql } from "drizzle-orm";
 import { getAuthConfig } from "@/lib/config/auth";
@@ -43,6 +42,8 @@ async function emailHasAccount(email: string): Promise<boolean> {
  * Decides whether to proceed with an email sign-in code. On `login`, an address
  * with no account is emailed a "create an account" message and we return
  * `no-account` (no user is created). `signup` always proceeds.
+ *
+ * action-boundary-ok: the sign-in request itself — no session can exist yet; it reads `user` only to answer "does this address exist?"
  */
 export async function requestEmailCode({
 	email,

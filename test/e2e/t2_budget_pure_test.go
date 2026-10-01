@@ -95,21 +95,28 @@ func TestT2BudgetCoversEveryEnabledScenario(t *testing.T) {
 	for _, v := range scenarios {
 		t.Setenv(v, "")
 	}
-	base, err := ResolveT2Budget("aws", "ladder")
-	if err != nil {
-		t.Fatalf("baseline: %v", err)
-	}
 	for _, v := range scenarios {
 		t.Run(v, func(t *testing.T) {
+			// Each scenario is measured on a cloud it can RUN on. Every scenario runs on aws except
+			// the hetzner-only starter-templates proof (#4113), whose term is provider-gated because
+			// it is refused everywhere else before any spend.
+			cloud := "aws"
+			if v == envTemplates {
+				cloud = templatesProvider
+			}
 			for _, other := range scenarios {
 				t.Setenv(other, "")
+			}
+			base, err := ResolveT2Budget(cloud, "ladder")
+			if err != nil {
+				t.Fatalf("baseline: %v", err)
 			}
 			if v == "ALETHIA_E2E_SOAK" {
 				t.Setenv(v, "10m")
 			} else {
 				t.Setenv(v, "1")
 			}
-			b, err := ResolveT2Budget("aws", "ladder")
+			b, err := ResolveT2Budget(cloud, "ladder")
 			if err != nil {
 				t.Fatalf("with %s on: %v", v, err)
 			}

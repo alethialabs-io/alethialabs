@@ -22,7 +22,8 @@ import (
 // Contract constants mirrored from packages/core/provisioner/deploy_vcluster.go (a different Go module,
 // so the e2e package cannot import them). buildVClusterSpec derives these per-env names off the env's
 // namespace (== the vcluster name): the control-plane runs as a StatefulSet named <vcName> in host
-// namespace `vcluster-<vcName>`, and exportKubeConfig writes `vcluster-kubeconfig-<vcName>` into argocd.
+// namespace `vcluster-<vcName>`, and exportKubeConfig writes `vcluster-kubeconfig-<vcName>` into that
+// same host namespace (buildVClusterSpec's KubeconfigNamespace).
 const (
 	vcHostNamespacePrefix    = "vcluster-"
 	vcKubeconfigSecretPrefix = "vcluster-kubeconfig-"
@@ -65,9 +66,9 @@ func driveT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, 
 
 	// Capture the argocd-server creationTimestamp BEFORE — the vcluster deploy must NOT reinstall the
 	// shared Fabric's ArgoCD (it belongs to the Fabric; the vcluster registers WITH it).
-	argoBefore, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
+	argoBefore, err := argocdServerCreated(ctx, kc)
 	if err != nil {
-		t.Fatalf("read argocd-server before vcluster deploy: %v\n%s", err, argoBefore)
+		t.Fatalf("read argocd-server before vcluster deploy: %v", err)
 	}
 
 	// ── 1. Seed the vcluster DEPLOY job (owner = the SeedRunner owner so the running base runner claims it). ──
@@ -152,9 +153,9 @@ func driveT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, 
 	}
 
 	// (e) ArgoCD was NOT reinstalled — creationTimestamp unchanged.
-	argoAfter, err := nsKubectl(ctx, kc, "get", "deployment", "argocd-server", "-n", "argocd", "-o", "jsonpath={.metadata.creationTimestamp}")
+	argoAfter, err := argocdServerCreated(ctx, kc)
 	if err != nil {
-		t.Fatalf("read argocd-server after vcluster deploy: %v\n%s", err, argoAfter)
+		t.Fatalf("read argocd-server after vcluster deploy: %v", err)
 	}
 	if err := argocdNotReinstalled(argoBefore, argoAfter); err != nil {
 		t.Fatalf("no-reinstall assertion: %v", err)
@@ -184,7 +185,9 @@ func driveT2VClusterTenant(t *testing.T, ctx context.Context, cp *ControlPlane, 
 		t.Fatalf("vcluster teardown: ArgoCD cluster Secret leaked: %v", err)
 	}
 	// (h) The exported kubeconfig Secret (the standing credential) is gone.
-	if err := assertKubeResourceGone(ctx, kc, "secret", kubeconfigSecret, "argocd"); err != nil {
+	//     buildVClusterSpec exports it into the vcluster's OWN host namespace (KubeconfigNamespace =
+	//     hostNS), not `argocd` — asserting it gone from `argocd` passed whether or not it leaked.
+	if err := assertKubeResourceGone(ctx, kc, "secret", kubeconfigSecret, hostNS); err != nil {
 		t.Fatalf("vcluster teardown: exported kubeconfig Secret leaked: %v", err)
 	}
 	res.Deregistered = true
@@ -198,7 +201,7 @@ func waitVClusterAppHealthy(t *testing.T, ctx context.Context, kc, vcName string
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var lastErr error
-	var lastHealth, lastSync string
+	var lastHealth, lastSync, lastApp string
 	for {
 		appsJSON, err := nsKubectl(ctx, kc, "get", "applications", "-n", "argocd", "-o", "json")
 		if err != nil {
@@ -208,6 +211,7 @@ func waitVClusterAppHealthy(t *testing.T, ctx context.Context, kc, vcName string
 			if ferr != nil {
 				lastErr = ferr
 			} else {
+				lastApp = app.Metadata.Name
 				// Re-read the health/sync status of the matched app by name (findVClusterApp only reads
 				// routing fields).
 				health, _ := nsKubectl(ctx, kc, "get", "application", app.Metadata.Name, "-n", "argocd", "-o", "jsonpath={.status.health.status}")
@@ -220,7 +224,11 @@ func waitVClusterAppHealthy(t *testing.T, ctx context.Context, kc, vcName string
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("vcluster app never reached Healthy+Synced within %s: %v", timeout, lastErr)
+			// The failure branch is the one that has to NAME the cause (#845, run 36634781502 printed
+			// only health/sync). The vcluster's synced pods live in its HOST namespace, which is
+			// where the scheduling half looks. Bounded: at most five 5s reads.
+			t.Fatalf("vcluster app never reached Healthy+Synced within %s: %v%s", timeout, lastErr,
+				dumpArgoAppDiagnosis(ctx, kc, lastApp, vcName, vcHostNamespacePrefix+vcName))
 		}
 		select {
 		case <-ctx.Done():

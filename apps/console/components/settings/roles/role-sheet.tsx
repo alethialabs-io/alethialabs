@@ -124,6 +124,7 @@ export function RoleSheet({
 			body: () => (
 				<div className="space-y-3">
 					<Input
+						aria-label="Role name"
 						placeholder="project-deployer"
 						autoComplete="off"
 						disabled={!canManage}
@@ -133,6 +134,7 @@ export function RoleSheet({
 						<p className="text-destructive text-xs">{errors.name.message}</p>
 					)}
 					<Textarea
+						aria-label="Role description"
 						placeholder="What this role is for (optional)"
 						rows={2}
 						disabled={!canManage}

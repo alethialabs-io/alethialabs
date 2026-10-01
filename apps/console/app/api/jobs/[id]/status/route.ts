@@ -7,8 +7,8 @@ import {
 	finalizeDeployment,
 	setIacSourceStatus,
 } from "@/lib/jobs/finalize-deployment";
-import { finalizeChartScan } from "@/app/server/actions/byo-charts";
-import { finalizeIacScan } from "@/app/server/actions/byo-iac";
+import { finalizeChartScan } from "@/lib/addons/chart-scan-finalize";
+import { finalizeIacScan } from "@/lib/addons/iac-scan-finalize";
 import {
 	enqueueBuildAfterProvision,
 	enqueueDeployAfterBuild,
@@ -17,15 +17,15 @@ import {
 import {
 	recordDriftPosture,
 	recordFabricDriftPosture,
-} from "@/app/server/actions/drift";
-import { recordEnvironmentCost } from "@/app/server/actions/cost";
+} from "@/lib/drift/posture";
+import { recordEnvironmentCost } from "@/lib/cost/record-environment-cost";
 import {
 	advancePromotionOnPlan,
 	failPromotionForJob,
 	finalizePromotionOnDeploy,
-} from "@/app/server/actions/promotions";
+} from "@/lib/promotions/lifecycle";
 import { recordProbeResult } from "@/lib/probes/persistence";
-import { maybeAutoHeal } from "@/app/server/actions/reconcile";
+import { maybeAutoHeal } from "@/lib/reconcile/auto-heal";
 import {
 	recordAddonHealth,
 	recordSecurityPosture,
@@ -40,6 +40,7 @@ import {
 	type EnvTransitionContext,
 	transitionEnv,
 } from "@/lib/db/env-status";
+import { JOB_NOT_OWNED_SQLSTATE, pgErrorCode } from "@/lib/db/pg-error";
 import { jobs } from "@/lib/db/schema";
 import { scrubExecutionMetadata } from "@/lib/jobs/scrub-metadata";
 import { releaseStateLocksForJob } from "@/lib/runners/state-lock";
@@ -592,6 +593,16 @@ export async function PUT(
 
 		return NextResponse.json({ success: true });
 	} catch (err: unknown) {
+		// The job is no longer this runner's (stale-job recovery requeued it). 409, not 500: the
+		// runner treats this as a lost claim and stops the job, where a 500 reads as a transient
+		// failure to retry through — or, before #5162, to discard.
+		if (pgErrorCode(err) === JOB_NOT_OWNED_SQLSTATE) {
+			jlog.warn("status post refused: job not owned by this runner");
+			return NextResponse.json(
+				{ error: "Job not found or not owned by this runner" },
+				{ status: 409 },
+			);
+		}
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";
 		return NextResponse.json({ error: message }, { status: 500 });

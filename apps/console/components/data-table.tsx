@@ -23,7 +23,7 @@ import {
 	ChevronLeft,
 	ChevronRight,
 } from "lucide-react";
-import { useState } from "react";
+import { type KeyboardEvent, useState } from "react";
 
 import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 import { Button } from "@repo/ui/button";
@@ -44,6 +44,23 @@ import {
 	TableRow,
 } from "@repo/ui/table";
 import { cn } from "@repo/ui/utils";
+
+/**
+ * The keyboard half of a clickable table row: Enter or Space pressed ON the row runs `activate`.
+ * A key pressed on a control inside the row belongs to that control, so it is left alone. Pair it
+ * with `tabIndex={0}` so the row can be reached at all; `role="row"` states the role the `<tr>`
+ * already has, keeping the table a table for a screen reader instead of turning a row of cells
+ * into one opaque button.
+ */
+export function rowKeyActivation(activate: () => void) {
+	return (e: KeyboardEvent<HTMLTableRowElement>) => {
+		if (e.target !== e.currentTarget) return;
+		if (e.key === "Enter" || e.key === " ") {
+			e.preventDefault();
+			activate();
+		}
+	};
+}
 
 interface DataTableProps<TData extends { id?: string }, TValue> {
 	columns: ColumnDef<TData, TValue>[];
@@ -185,25 +202,36 @@ export function DataTable<TData extends { id?: string }, TValue>({
 						{headerGroup.headers.map((header) => (
 							<TableHead
 								key={header.id}
-								className={cn(
-									header.column.getCanSort() && "cursor-pointer select-none",
-								)}
-								onClick={header.column.getToggleSortingHandler()}
+								aria-sort={
+									header.column.getIsSorted() === "asc"
+										? "ascending"
+										: header.column.getIsSorted() === "desc"
+											? "descending"
+											: undefined
+								}
 							>
-								{header.isPlaceholder ? null : (
+								{header.isPlaceholder ? null : header.column.getCanSort() ? (
+									// The sort toggle is a real button, so it is announced and reached by Tab; it
+									// used to be an `onClick` on the `<th>`, which was neither.
+									<button
+										type="button"
+										onClick={header.column.getToggleSortingHandler()}
+										className="flex cursor-pointer select-none items-center gap-1 text-left"
+									>
+										{flexRender(header.column.columnDef.header, header.getContext())}
+										<span className="ml-1">
+											{header.column.getIsSorted() === "asc" ? (
+												<ArrowUp className="h-3.5 w-3.5" />
+											) : header.column.getIsSorted() === "desc" ? (
+												<ArrowDown className="h-3.5 w-3.5" />
+											) : (
+												<ArrowUpDown className="h-3.5 w-3.5 text-text-tertiary" />
+											)}
+										</span>
+									</button>
+								) : (
 									<div className="flex items-center gap-1">
 										{flexRender(header.column.columnDef.header, header.getContext())}
-										{header.column.getCanSort() && (
-											<span className="ml-1">
-												{header.column.getIsSorted() === "asc" ? (
-													<ArrowUp className="h-3.5 w-3.5" />
-												) : header.column.getIsSorted() === "desc" ? (
-													<ArrowDown className="h-3.5 w-3.5" />
-												) : (
-													<ArrowUpDown className="h-3.5 w-3.5 text-text-tertiary" />
-												)}
-											</span>
-										)}
 									</div>
 								)}
 							</TableHead>
@@ -222,7 +250,10 @@ export function DataTable<TData extends { id?: string }, TValue>({
 									: undefined
 							}
 							className={cn(onRowClick && "cursor-pointer")}
-							onClick={() => onRowClick?.(row.original)}
+							role="row"
+							tabIndex={onRowClick ? 0 : undefined}
+							onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+							onKeyDown={onRowClick ? rowKeyActivation(() => onRowClick(row.original)) : undefined}
 						>
 							{row.getVisibleCells().map((cell) => (
 								<TableCell key={cell.id}>

@@ -294,7 +294,7 @@ export function RepositorySelector({
           className={className}
           onClick={() => handleLinkAccount(provider)}
         >
-          <GitProviderIcon provider={provider} className={iconClassName} />{" "}
+          <GitProviderIcon provider={provider} className={iconClassName} mono={false} />{" "}
           {text}
         </Button>
       </DisabledReason>
@@ -376,6 +376,7 @@ export function RepositorySelector({
           </Button>
         </div>
         <Input
+          aria-label="Repository URL"
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
           placeholder="https://github.com/organization/repository"
@@ -437,7 +438,7 @@ export function RepositorySelector({
               )}
             >
               {selectedProvider ? (
-                <GitProviderIcon provider={selectedProvider} size={18} />
+                <GitProviderIcon provider={selectedProvider} size={18} mono={false} />
               ) : (
                 <SelectValue />
               )}
@@ -446,7 +447,7 @@ export function RepositorySelector({
               {linkedProviders.map((p) => (
                 <SelectItem key={p} value={p}>
                   <div className="flex items-center gap-2">
-                    <GitProviderIcon provider={p} />
+                    <GitProviderIcon provider={p} mono={false} />
                     <span className="capitalize">{p}</span>
                   </div>
                 </SelectItem>
@@ -596,7 +597,7 @@ export function RepositorySelector({
             )}
             title="Relink account"
           >
-            <GitProviderIcon provider={authRecoveryProvider} size={14} />
+            <GitProviderIcon provider={authRecoveryProvider} size={14} mono={false} />
           </Button>
         ) : (
           <Button

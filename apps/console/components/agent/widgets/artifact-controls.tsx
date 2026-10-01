@@ -119,6 +119,7 @@ export function SaveArtifactButton({
             : "Save dashboard as artifact"}
         </div>
         <Input
+          aria-label="Artifact name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Artifact name"

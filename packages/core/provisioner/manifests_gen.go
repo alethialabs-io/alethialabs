@@ -587,6 +587,13 @@ func writeBindingExternalSecrets(dir string, vc *types.ProjectConfig, outputs ma
 	return skips, count, nil
 }
 
+// AppsRepoHasManifests reports whether a checked-out apps repo at dir would be treated as
+// bring-your-own — i.e. whether generateAppManifests would leave it untouched and render NOTHING
+// (no app workloads, no keyless sidecar or bootstrap Job, no keyless decision record). Exported so
+// the e2e keyless scenario can refuse a repo that would make its proof unreachable BEFORE it buys a
+// cluster, by asking the product's own predicate rather than a copy of it.
+func AppsRepoHasManifests(dir string) bool { return hasManifests(dir) }
+
 // hasManifests reports whether the repo root already holds any Kubernetes YAML — the
 // guard that keeps generation from overwriting a bring-your-own manifests repo.
 func hasManifests(dir string) bool {

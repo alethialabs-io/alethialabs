@@ -14,6 +14,10 @@ audit trail; git history is the timeline. Parity board:
   ArgoCD Application managing at least one real resource) · `byo-iac` (the seven-job custody chain:
   a customer **OpenTofu** root module refused when unsafe, applied through the state proxy, drifted,
   healed, destroyed, state cleared) · `day2` (the A0.3 soak: liveness, drift posture, PVC) ·
+  `cli-demo` (a floor-shaped cluster provisioned through the real `alethia` binary) · `templates`
+  (#4113, **hetzner only**: the three public starter templates, each converging at its own commit
+  through the documented path, on one cluster; each template's proof is also filed under
+  `demos/proofs/templates/<template>/<stamp>/`) ·
   `full` (every dimension in one apply **except** those declared in `FULL_EXCLUDES`).
 
   **`gitops` was called `byo`, and the rename is a correction.** The old name, plus a programme
@@ -105,3 +109,15 @@ audit trail; git history is the timeline. Parity board:
 | 2026-09-24 | 9908dbf | aws | floor | **PASS** | aws: ✅ apply(126 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (8/8 asserted)→destroyed(1) | `demos/proofs/aws/20260924T093515Z` | — |
 | 2026-09-24 | 9908dbf | azure | floor | **PASS** | azure: ✅ apply(30 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (4/4 asserted)→destroyed(1) | `demos/proofs/azure/20260924T091428Z` | — |
 | 2026-09-24 | 9908dbf | hetzner | floor | **PASS** | hetzner: ✅ apply(19 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (5/5 asserted)→destroyed(1) | `demos/proofs/hetzner/20260924T084044Z` | — |
+| 2026-09-29 | 3d63d36 | hetzner | floor | **PASS** | hetzner: ✅ apply(19 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (5/5 asserted)→destroyed(1) | `demos/proofs/hetzner/20260929T100449Z` | — |
+| 2026-09-29 | 3d63d36 | aws | floor | **PASS** | aws: ✅ apply(126 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (8/8 asserted)→destroyed(1) | `demos/proofs/aws/20260929T110032Z` | — |
+| 2026-09-29 | 3d63d36 | gcp | floor | **PASS** | gcp: ✅ apply(25 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (4/4 asserted)→destroyed(1) | `demos/proofs/gcp/20260929T102050Z` | — |
+| 2026-09-29 | 3d63d36 | azure | floor | **PASS** | azure: ✅ apply(30 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (4/4 asserted)→destroyed(1) | `demos/proofs/azure/20260929T103904Z` | — |
+| 2026-09-29 | a64083b | hetzner | cli-demo | **PASS** | hetzner: ✅ apply(22 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (4/4 asserted)→destroyed(1) | `demos/proofs/hetzner/20260929T170219Z` | — |
+| 2026-09-30 | d763182 | hetzner | cli-demo | **PASS** | hetzner: ✅ apply(22 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (4/4 asserted)→destroyed(1) | `demos/proofs/hetzner/20260930T011519Z` | — |
+| 2026-09-30 | 463679e | aws | cli-demo | **PASS** | aws: ✅ apply(116 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (7/7 asserted)→destroyed(1) | `demos/proofs/aws/20260930T061330Z` | — |
+| 2026-09-30 | d4c29ae | gcp | cli-demo | **PASS** | gcp: ✅ apply(25 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (3/3 asserted)→destroyed(1) | `demos/proofs/gcp/20260930T065516Z` | — |
+| 2026-09-30 | 04d8ebf | azure | cli-demo | **PASS** | azure: ✅ apply(34 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (3/3 asserted)→destroyed(1) | `demos/proofs/azure/20260930T095658Z` | — |
+| 2026-09-30 | 9ac0b57 | hetzner | floor | **PASS** | hetzner: ✅ apply(25 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (5/5 asserted)→destroyed(1) | `demos/proofs/hetzner/20260930T124805Z` | — |
+| 2026-09-30 | 2f1a403 | aws | floor | **PASS** | aws: ✅ apply(116 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (8/8 asserted)→destroyed(1) | `demos/proofs/aws/20260930T194843Z` | — |
+| 2026-09-30 | 2f1a403 | gcp | floor | **PASS** | gcp: ✅ apply(25 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (4/4 asserted)→destroyed(1) | `demos/proofs/gcp/20260930T190822Z` | — |
