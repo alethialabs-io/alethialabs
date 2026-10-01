@@ -66,7 +66,7 @@ replaced by this.
 
 | Tier   | Cluster                | Cost | Where it runs |
 | ------ | ---------------------- | ---- | ------------- |
-| **T1** | hermetic local `kind`  | $0   | `ci.yml` → `provision-e2e`; currently no live trigger (#4173) |
+| **T1** | hermetic local `kind`  | $0   | `ci.yml` → `provision-e2e`, on every Mergify queue build (#2759) |
 | **T2** | a **real cloud** cluster | ~cents/run | `e2e-nightly.yml`, nightly + manual, **maintainer-gated** |
 
 Both drive the identical spine — the real runner binary claims a real `DEPLOY` job from

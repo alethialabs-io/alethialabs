@@ -214,6 +214,7 @@ export function ChartWorkloadPanel({ nodeId }: { nodeId: string }) {
 					<div className="space-y-1">
 						<span className="vx-eyebrow text-ui-3xs">Replicas</span>
 						<Input
+							aria-label="Replicas"
 							type="number"
 							min={0}
 							value={draft.config.replicas ?? ""}
@@ -285,6 +286,7 @@ function EnvEditor({
 				// Positional rows — the index is their identity.
 				<div key={i} className="flex items-center gap-1.5">
 					<Input
+						aria-label="Environment variable name"
 						value={row.name}
 						placeholder="NAME"
 						className="h-8 flex-1 font-mono text-xs"
@@ -293,6 +295,7 @@ function EnvEditor({
 						}
 					/>
 					<Input
+						aria-label="Environment variable value"
 						value={row.value}
 						placeholder="value"
 						className="h-8 flex-1 font-mono text-xs"
@@ -338,6 +341,7 @@ function PathEditor({
 				// Positional rows — the index is their identity.
 				<div key={i} className="flex items-center gap-1.5">
 					<Input
+						aria-label="Knob"
 						value={key}
 						placeholder="knob"
 						className="h-8 flex-1 font-mono text-xs"
@@ -347,6 +351,7 @@ function PathEditor({
 					/>
 					<span className="shrink-0 font-mono text-xs text-muted-foreground">→</span>
 					<Input
+						aria-label="Values path"
 						value={path}
 						placeholder="dot.path.in.values"
 						className="h-8 flex-1 font-mono text-xs"

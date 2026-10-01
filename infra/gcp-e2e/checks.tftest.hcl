@@ -40,9 +40,13 @@ variables {
   billing_account_id = "000000-000000-000000"
 }
 
-# The committed posture: terraform.tfvars sets the issuer to null, so nothing is created.
+# Trust OFF: with the issuer unset nothing is created. Set explicitly — terraform.tfvars now carries the
+# real origin (#4226), so the default posture is no longer "off".
 run "unset_plans_no_broker_trust" {
   command = plan
+  variables {
+    e2e_broker_issuer_url = null
+  }
 
   assert {
     condition = alltrue([
@@ -143,4 +147,15 @@ run "sharing_the_github_pool_is_reported" {
     }
   }
   expect_failures = [check.e2e_broker_trust_is_additive]
+}
+
+# The committed posture (#4226, maintainer ruling 2026-09-23): terraform.tfvars names the Cloudflare
+# custom domain infra/e2e-issuer binds, so an apply of this stack plans the broker trust at exactly it.
+run "committed_posture_trusts_the_custom_domain" {
+  command = plan
+
+  assert {
+    condition     = google_iam_workload_identity_pool_provider.e2e_broker[0].oidc[0].issuer_uri == "https://e2e-issuer.alethialabs.io"
+    error_message = "the committed issuer must be https://e2e-issuer.alethialabs.io — the host infra/e2e-issuer serves."
+  }
 }

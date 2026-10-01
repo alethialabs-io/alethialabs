@@ -2,7 +2,11 @@
 # infra/gcp-e2e stack, by a maintainer with an admin identity in the DEDICATED e2e project.
 
 # REQUIRED — must be the SAME project_id the parent infra/gcp-e2e stack uses.
-project_id = "alethia-e2e-nightly"
+# NOT "alethia-e2e-nightly" — that is the provisioner SERVICE ACCOUNT's id, not a project. The live
+# project is the one in the E2E_GCP_SA_EMAIL repo variable (`alethia-e2e-nightly@<project>.iam…`).
+# Its id is deliberately not written in this repo (pnpm check:forbidden-names); the placeholder below
+# fails project_id validation until you replace it. Runbook: docs/testing/e2e-state-migration.md §1.
+project_id = "REPLACE-WITH-GCP_E2E_PROJECT_ID"
 
 # Where the bucket lives. "EU" (multi-region) by default; a single region such as "europe-west3"
 # also works. State is tiny, so multi-region costs nothing meaningful.

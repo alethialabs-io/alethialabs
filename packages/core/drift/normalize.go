@@ -10,6 +10,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/tfaddr"
 	tfjson "github.com/hashicorp/terraform-json"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // NormalizedReason names why a refresh delta was dismissed as representational
@@ -30,6 +31,28 @@ const (
 	// from configuration at all. No configured intent can govern it and no apply can
 	// converge it.
 	ReasonComputedAttribute NormalizedReason = "computed_attribute"
+	// ReasonSensitivityOnly — OpenTofu reported the resource as changed, yet every attribute
+	// VALUE is identical and only the sensitivity MARKS differ (which paths OpenTofu redacts
+	// when it renders the value). A mark is display metadata held in state, not a property of
+	// the infrastructure. See sensitivityOnly for the full argument and its narrowings.
+	ReasonSensitivityOnly NormalizedReason = "sensitivity_only"
+	// ReasonAssignmentBackReference — the delta on this resource is exactly the reverse edge
+	// of an assignment ANOTHER managed resource in the same state declares and still holds
+	// (a primary IP or firewall reporting the server that attached it; an IAM role, security
+	// group, route table, EIP or default NACL reporting the attachment resources that populate
+	// it; a GKE cluster reporting the node pools attached to it). See backref.go, awsbackref.go
+	// and gcpbackref.go.
+	ReasonAssignmentBackReference NormalizedReason = "assignment_back_reference"
+	// ReasonInapplicableField — a field the cloud API ignores for this element moved from null to
+	// its zero value: icmp_type/icmp_code on a network ACL rule whose protocol is not ICMP. No
+	// traffic decision can differ. See awsInapplicableRoots (awsbackref.go).
+	ReasonInapplicableField NormalizedReason = "inapplicable_field"
+	// ReasonKubernetesOwned — the delta is a security-group rule a Kubernetes controller owns: the
+	// AWS Load Balancer Controller's rule for a TargetGroupBinding that exists in the cluster at scan
+	// time. Unlike every other reason this is NOT "the infrastructure matches intent": it diverged
+	// from the configuration, and the divergence is owned by the cluster rather than out of band
+	// (maintainer ruling 2026-09-30). Only reachable with cluster evidence. See k8sowned.go.
+	ReasonKubernetesOwned NormalizedReason = "kubernetes_owned"
 )
 
 // reasonStrength ranks how firm each dismissal is, so examine can report the WEAKEST
@@ -37,31 +60,61 @@ const (
 //
 // The ordering is an argument, not a preference:
 //
-//   - empty_collection (3) needs no external evidence at all. It is a cardinality
+//   - empty_collection (7) needs no external evidence at all. It is a cardinality
 //     identity — null and [] both denote ∅ — so it is true by construction.
-//   - computed_attribute (2) rests on ONE fact read from the provider's own published
+//   - sensitivity_only (6) is also an identity — every value on both sides is equal — but
+//     it rests on facts about OpenTofu rather than none: that a resource whose values
+//     are equal and whose types are equal (both sides are decoded against the same schema)
+//     can only differ in its marks. That is how OpenTofu's drift comparison is written
+//     (cty RawEquals compares marks), not a property of the data itself. Its schema-mark
+//     form (schemaMarksOnly) also reads the provider schema, as computed_attribute does;
+//     the ranking never has to choose between them, because a sensitivity_only verdict is
+//     only ever reached with zero differing leaves and so is never combined with another.
+//   - computed_attribute (5) rests on ONE fact read from the provider's own published
 //     schema: the attribute has no config path into it. Firm, but it is a fact about a
 //     document we fetched, and a wrong or stale schema would weaken it.
-//   - undeclared_collection (1) rests on the absence of a config expression PLUS an
+//   - undeclared_collection (4) rests on the absence of a config expression PLUS an
 //     inference about how the provider's Read behaved at create time. Two links, the
 //     second unverifiable from the plan.
+//   - assignment_back_reference (3) rests on a HAND-WRITTEN claim about a provider's API
+//     (that it reports an assignment made from the owner or an attachment resource back on
+//     the target), verified against two views of state. The verification is strong, but the
+//     claim it verifies is ours, not the provider's.
+//   - inapplicable_field (2) rests on a HAND-WRITTEN claim about the cloud API's semantics
+//     (that ICMP type/code mean nothing on a non-ICMP rule) and on nothing the state can
+//     verify.
+//   - kubernetes_owned (1) is not a claim that nothing diverged at all: the rule IS a change to
+//     a managed resource, and what excuses it is evidence from OUTSIDE the plan (the cluster,
+//     read at scan time) plus a hand-written model of a controller's behaviour. It ranks weakest
+//     for that, and so that a resource dismissed partly on it is always LABELLED with it — the
+//     ruling that made it a reason requires it to stay visible as what it is.
 //
 // An unranked value sorts as the weakest possible, so adding a reason and forgetting to
 // rank it can only understate a dismissal, never overstate one.
 func reasonStrength(r NormalizedReason) int {
 	switch r {
 	case ReasonEmptyCollection:
-		return 3
+		return 7
+	case ReasonSensitivityOnly:
+		return 6
 	case ReasonComputedAttribute:
-		return 2
+		return 5
 	case ReasonUndeclaredCollection:
+		return 4
+	case ReasonAssignmentBackReference:
+		return 3
+	case ReasonInapplicableField:
+		return 2
+	case ReasonKubernetesOwned:
 		return 1
 	default:
 		return 0
 	}
 }
 
-// NormalizedResource is one resource whose EVERY refresh delta was representational.
+// NormalizedResource is one resource whose EVERY refresh delta was representational — or, under
+// ReasonKubernetesOwned alone, whose only non-representational delta is owned by a controller in the
+// cluster. That one reason records a real change, kept visible rather than counted as drift.
 //
 // It carries attribute PATHS and never attribute VALUES. Plan JSON attribute values
 // are plaintext secrets — DB passwords, kubeconfigs, cloud tokens (see
@@ -109,11 +162,15 @@ type verdict struct {
 //     may dismiss, so it stays drift.
 //   - There must be at least one differing leaf. Otherwise a change carrying no
 //     before/after at all would be dismissed vacuously — silence dressed as proof.
+//     The ONE exception needs positive evidence in place of a leaf: equal, number-free
+//     values whose sensitivity masks differ (sensitivityOnly, marks.go), or whose equal
+//     masks the PROVIDER SCHEMA explains (schemaMarksOnly, marks.go). Equal values with
+//     equal masks and no such schema evidence remain drift.
 //
 // A resource is dismissed only when EVERY differing leaf is representational. One real
 // delta anywhere and the whole resource stays drift with its original Kind; resources
 // are never partially forgiven.
-func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex) verdict {
+func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex, traits traitIndex, st *stateIndex, cluster *ClusterEvidence) verdict {
 	act := rc.Change.Actions
 	asDrift := verdict{Drift: true, Kind: classify(act)}
 
@@ -127,6 +184,17 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex) ve
 	}
 	leaves := diffLeaves(before, after, rc.Change.BeforeSensitive, rc.Change.AfterSensitive)
 	if len(leaves) == 0 {
+		// No VALUE differs, yet OpenTofu reported a change. Dismissible only on positive
+		// evidence of what did change — the sensitivity marks, either printed differently or
+		// explained by the provider schema — never merely because nothing visible did (that
+		// would be the vacuous dismissal this guard exists for).
+		if paths, ok := sensitivityOnly(before, after, rc.Change.BeforeSensitive, rc.Change.AfterSensitive); ok {
+			return verdict{Reason: ReasonSensitivityOnly, Attributes: paths}
+		}
+		tr, trKnown := traits[schemaKey{provider: rc.ProviderName, resourceType: rc.Type}]
+		if paths, ok := schemaMarksOnly(before, after, rc.Change.BeforeSensitive, rc.Change.AfterSensitive, tr, trKnown); ok {
+			return verdict{Reason: ReasonSensitivityOnly, Attributes: paths}
+		}
 		return asDrift
 	}
 
@@ -142,10 +210,13 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex) ve
 	// the verdicts it reached before — which is what keeps the azure fixture pinned.
 	attrSchema, typeFound := schemas[schemaKey{provider: rc.ProviderName, resourceType: rc.Type}]
 	ev := evidence{
-		declared:    declared,
-		configKnown: configKnown,
-		attrSchema:  attrSchema,
-		schemaKnown: schemas != nil && typeFound,
+		declared:     declared,
+		configKnown:  configKnown,
+		attrSchema:   attrSchema,
+		schemaKnown:  schemas != nil && typeFound,
+		backRefs:     backReferenceRoots(rc, before, after, st),
+		inapplicable: awsInapplicableRoots(rc, before, after),
+		k8sOwned:     awsKubernetesOwnedRoots(rc, before, after, st, cluster),
 	}
 
 	// Every differing leaf path, computed BEFORE the dismissal loop so the drift branch can
@@ -244,6 +315,20 @@ func (d leafDelta) normalizing(ev evidence) (NormalizedReason, bool) {
 	beforeNull := !d.beforeSet || d.before == nil
 	afterNull := !d.afterSet || d.after == nil
 
+	// The kubernetes-owned, inapplicable-field and back-reference tiers are tried FIRST, weakest
+	// first, because a leaf that could be dismissed more than one way must carry the weaker one.
+	// Their roots are verified per resource (awsKubernetesOwnedRoots, awsInapplicableRoots,
+	// backReferenceRoots), so these are lookups, not judgements.
+	if _, ok := ev.k8sOwned[d.root]; ok && !d.sensitive {
+		return ReasonKubernetesOwned, true
+	}
+	if _, ok := ev.inapplicable[d.root]; ok && !d.sensitive {
+		return ReasonInapplicableField, true
+	}
+	if _, ok := ev.backRefs[d.root]; ok && !d.sensitive {
+		return ReasonAssignmentBackReference, true
+	}
+
 	// Tier 1, both directions. tags {"a":"b"} -> {} is tags REMOVED out-of-band and must
 	// stay drift, so only the null side may be empty-or-absent — never both sides
 	// flattened to ∅ before comparing, which is how detection of sweep-handle removal
@@ -317,6 +402,18 @@ type evidence struct {
 	// schemaKnown is true when a provider-schema document was supplied AND it covered
 	// this resource's provider and type.
 	schemaKnown bool
+	// backRefs is the set of top-level attributes whose whole delta backReferenceRoots
+	// verified as an assignment back-reference. Nil — the tier does not fire — without a
+	// prior_state, or for any resource that tier does not recognise.
+	backRefs map[string]struct{}
+	// inapplicable is the set of top-level attributes whose whole delta awsInapplicableRoots
+	// verified as a null -> 0 move of a field the API ignores for that element. Nil for any
+	// resource that tier does not recognise.
+	inapplicable map[string]struct{}
+	// k8sOwned is the set of top-level attributes whose whole delta awsKubernetesOwnedRoots
+	// verified as rules a live TargetGroupBinding accounts for (plus rules state declares). Nil
+	// without cluster evidence, or for any resource that tier does not recognise.
+	k8sOwned map[string]struct{}
 }
 
 // isCollection reports whether v is a list or a map. Scalars are never collections.
@@ -451,18 +548,38 @@ func maskChildKey(mask any, key string) any {
 	return nil
 }
 
-// maskMarks reports whether a sensitivity mask marks this position. A nested mask means
-// something beneath is sensitive, which is treated as marking the whole position —
-// conservative by design, since the cost of over-marking is a retained drift entry and
-// the cost of under-marking is a dismissed secret.
+// maskMarks reports whether a sensitivity mask marks this position or ANY position beneath
+// it. A `true` anywhere inside marks the whole position — conservative by design, since the
+// cost of over-marking is a retained drift entry and the cost of under-marking is a
+// dismissed secret.
+//
+// What it must NOT read as a mark is the mask's STRUCTURE. OpenTofu's plan JSON
+// (jsonstate.SensitiveAsBoolWithPathValueMarks) keeps one slot per element of every list and
+// set, rendering an unmarked primitive element as `false` and an unmarked object element as
+// `{}`: a firewall with four apply_to blocks has the mask `"apply_to": [{}, {}, {}, {}]` and
+// not a single sensitive value in it. Until #845's run 36706419571 this function counted any
+// non-empty container as a mark, so every non-empty list attribute on every provider read as
+// sensitive and was undismissable by every tier that respects sensitivity — which is why the
+// hetzner firewall's apply_to back-reference never fired against real plan JSON, while the
+// hand-written fixture (mask `{}`) passed. Only `true` is a mark.
 func maskMarks(mask any) bool {
 	switch v := mask.(type) {
 	case bool:
 		return v
 	case map[string]any:
-		return len(v) > 0
+		for _, e := range v {
+			if maskMarks(e) {
+				return true
+			}
+		}
+		return false
 	case []any:
-		return len(v) > 0
+		for _, e := range v {
+			if maskMarks(e) {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -550,4 +667,83 @@ func indexSchemas(doc *tfjson.ProviderSchemas) schemaIndex {
 		return nil
 	}
 	return out
+}
+
+// schemaTraits are the two whole-schema facts the schema-mark branch of the sensitivity
+// tier needs (marks.go, schemaMarksOnly), found anywhere in a resource type's schema: in a
+// top-level attribute, a nested attribute type, or a nested block, at any depth.
+type schemaTraits struct {
+	// sensitive: the schema declares at least one Sensitive attribute, so OpenTofu's
+	// schema.ValueMarks can put a mark on this type's values.
+	sensitive bool
+	// dynamic: some attribute is typed with DynamicPseudoType (`any`). Its values carry
+	// their own type, and two different types can encode to the same JSON, so equal JSON
+	// no longer proves equal values.
+	dynamic bool
+}
+
+// traitIndex maps a resource schema to its traits.
+type traitIndex map[schemaKey]schemaTraits
+
+// indexSchemaTraits computes schemaTraits for every resource type in a
+// `providers schema -json` document. Returns nil for no document, which the schema-mark
+// branch treats as no evidence: it never fires.
+func indexSchemaTraits(doc *tfjson.ProviderSchemas) traitIndex {
+	if doc == nil || len(doc.Schemas) == 0 {
+		return nil
+	}
+	out := traitIndex{}
+	for provider, ps := range doc.Schemas {
+		if ps == nil {
+			continue
+		}
+		for typ, sch := range ps.ResourceSchemas {
+			if sch == nil || sch.Block == nil {
+				continue
+			}
+			out[schemaKey{provider: provider, resourceType: typ}] = blockTraits(sch.Block)
+		}
+	}
+	return out
+}
+
+// blockTraits folds the traits of every attribute and nested block in b.
+func blockTraits(b *tfjson.SchemaBlock) schemaTraits {
+	var t schemaTraits
+	if b == nil {
+		return t
+	}
+	for _, a := range b.Attributes {
+		t = t.or(attrTraits(a))
+	}
+	for _, nb := range b.NestedBlocks {
+		if nb != nil {
+			t = t.or(blockTraits(nb.Block))
+		}
+	}
+	return t
+}
+
+// attrTraits reports one attribute's traits, descending a nested attribute type. An
+// attribute the document describes with neither a type nor a nested type is read as
+// dynamic, so a shape this does not recognise can only keep a resource as drift.
+func attrTraits(a *tfjson.SchemaAttribute) schemaTraits {
+	if a == nil {
+		return schemaTraits{}
+	}
+	t := schemaTraits{sensitive: a.Sensitive}
+	switch {
+	case a.AttributeNestedType != nil:
+		for _, na := range a.AttributeNestedType.Attributes {
+			t = t.or(attrTraits(na))
+		}
+	case a.AttributeType == cty.NilType, a.AttributeType.HasDynamicTypes():
+		t.dynamic = true
+	}
+	return t
+}
+
+// or is the union of two trait sets.
+func (t schemaTraits) or(u schemaTraits) schemaTraits {
+	return schemaTraits{sensitive: t.sensitive || u.sensitive, dynamic: t.dynamic || u.dynamic}
 }

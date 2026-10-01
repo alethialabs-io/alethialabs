@@ -7,7 +7,7 @@
 // SERVER-SIDE (useRolesQuery) and created/edited through the AccordionForm RoleSheet. Built-ins
 // come from the bootstrap (registry); custom-role authoring is gated on the customRoles entitlement.
 
-import { Lock, Pencil, Plus, Shield, Trash2 } from "lucide-react";
+import { Lock, Pencil, Plus, SearchX, Shield, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -48,6 +48,8 @@ import { cn } from "@repo/ui/utils";
 import {
 	DEFAULT_ROLES_FILTERS,
 	filterBuiltins,
+	hasNoMatches,
+	noMatchesDescription,
 	normalizeRolesQuery,
 	ROLE_KIND_OPTIONS,
 	showsKind,
@@ -71,6 +73,12 @@ function RailRow({
 		<button
 			type="button"
 			onClick={onClick}
+			// The rail is a set of buttons choosing which role the detail pane shows — the WAI-ARIA
+			// "current item in a set" case, so `aria-current`, not `aria-pressed` (a toggle that would
+			// unpress on a second click) nor `aria-selected` (valid only on option/tab/row roles).
+			// Without it the selected row was indistinguishable from the rest to a screen reader, and
+			// R8 filed the default `owner` row inert for doing nothing when pressed again (#4980).
+			aria-current={active ? "true" : undefined}
 			className={cn(
 				"flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-2 text-left transition-colors",
 				active ? "bg-surface-muted" : "hover:bg-surface-muted/60",
@@ -118,9 +126,16 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 	const {
 		data: customAll = [],
 		isFetching,
+		isPending,
 		isPlaceholderData,
 	} = useRolesQuery(query.search);
 	const custom = showsKind(query, "custom") ? customAll : [];
+	// The role UNIVERSE — every custom role, unsearched. This is the shared base key the page
+	// prefetches, so with no search it is the same cache entry as the call above and costs no
+	// extra request. Facet hints and the empty state's "None of the N roles" count against it,
+	// never against the search result (lib/query/README.md: counts come from the unfiltered
+	// universe). `undefined` until it has loaded, and the count is then left unstated.
+	const { data: customUniverse } = useRolesQuery();
 	const invalidate = useInvalidateRoles();
 
 	const [selectedId, setSelectedId] = useState<string>(builtin[0]?.id ?? "");
@@ -136,6 +151,16 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 		[builtin, query],
 	);
 	const activeFilters = countActiveFilters(filters, DEFAULT_ROLES_FILTERS);
+	// Filters are active and neither bucket kept a row — read off the SETTLED lists only. While a
+	// search is in flight `custom` is the previous search's answer (placeholder data) or the `[]`
+	// default (first load), so neither may decide "nothing matches"; the dimmed master-detail
+	// stays up until the current query answers.
+	const noMatches = hasNoMatches({
+		activeFilters,
+		builtinCount: builtinList.length,
+		customCount: custom.length,
+		settled: !isPending && !isPlaceholderData,
+	});
 
 	const selected =
 		[...builtin, ...custom].find((r) => r.id === selectedId) ?? builtin[0] ?? null;
@@ -199,7 +224,12 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 					options={ROLE_KIND_OPTIONS.map((o) => ({
 						value: o.value,
 						label: o.label,
-						hint: String(o.value === "builtin" ? builtin.length : customAll.length),
+						hint:
+							o.value === "builtin"
+								? String(builtin.length)
+								: customUniverse === undefined
+									? undefined
+									: String(customUniverse.length),
 					}))}
 					value={filters.kinds}
 					onChange={(next) => set("kinds", next)}
@@ -209,7 +239,27 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 				<FilterBarReset count={activeFilters} onReset={reset} />
 			</FilterBar>
 
-			{/* master-detail */}
+			{/* Zero results: the shared empty state IN PLACE OF the master-detail, not a muted
+			    line in each rail bucket. The detail pane would otherwise keep showing a role the
+			    filters just excluded (`selected` falls back to the first built-in), and the audit's
+			    F10 reads `[data-slot="empty"]` for exactly this state (#4939). */}
+			{noMatches ? (
+				<EmptyState
+					className="border"
+					icon={<SearchX />}
+					title="No roles match"
+					description={noMatchesDescription(
+							customUniverse === undefined
+								? undefined
+								: builtin.length + customUniverse.length,
+						)}
+					action={
+						<Button variant="outline" size="sm" onClick={reset}>
+							Reset filters
+						</Button>
+					}
+				/>
+			) : (
 			<div
 				className={cn(
 					"grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]",
@@ -286,6 +336,7 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 					)}
 				</div>
 			</div>
+			)}
 
 			<RoleSheet
 				open={sheetOpen}

@@ -220,6 +220,10 @@ const CENSUS_EXCEPTIONS: Record<string, string> = {
 		"are not deriving a name from a display name.",
 	"apps/console/scripts/check-offer-parity.mjs":
 		"Tokenises an offer axis name for matching; produces no stored name.",
+	"scripts/ci/check-e2e-issuer-health.mjs":
+		"isBareOrigin VALIDATES an issuer origin (https:// + dot-separated DNS labels) byte for byte, " +
+		"the same regex the four trust stacks' e2e_broker_issuer_url validation uses; it derives no " +
+		"name and produces no slug (#4226).",
 	"scripts/check-cli-surface.mjs":
 		"docsTreeCommandCount reads the box-drawing command tree in cli/commands/index.mdx and asks " +
 		"whether a token on a ├──/└── line LOOKS like a command name, to corroborate the CLI census's " +

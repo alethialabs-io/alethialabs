@@ -8,8 +8,8 @@
 // enable switch that confirms on disable, the unified ChannelVerify re-verify control, and
 // a confirmed Delete. "Used by" cross-links into the Policies section.
 
-import { Plus, Send, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Plus, SearchX, Send, Trash2 } from "lucide-react";
+import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import {
 	type AlertsBootstrap,
@@ -32,6 +32,7 @@ import { CHANNEL_TYPE_META } from "@/components/alerts/channel-meta";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { FieldHelp } from "@/components/alerts/field-help";
 import { RecipientsEditor } from "@/components/alerts/recipients-editor";
+import { useAlertChannelFilters } from "@/lib/stores/use-alerts-filters";
 import { useAlertsSection } from "@/lib/stores/use-alerts-section";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
@@ -83,6 +84,7 @@ export function ChannelsPanel({
 		channels.map((c) => c.id),
 	);
 	const { rows, facets, stale } = view;
+	const resetFilters = useAlertChannelFilters((s) => s.reset);
 
 	const doDelete = async (c: ChannelDTO) => {
 		try {
@@ -138,9 +140,19 @@ export function ChannelsPanel({
 								Configured channels
 							</div>
 							{rows.length === 0 ? (
-								<div className="px-4 py-4 text-text-tertiary text-xs">
-									No channels match these filters.
-								</div>
+								// The shared empty state, not a line of muted text: the zero-result answer
+								// is the same component on every console list, and it carries the way out
+								// (the audit's F10 reads `[data-slot="empty"]` for exactly this, #4939).
+								<EmptyState
+									icon={<SearchX />}
+									title="No channels match"
+									description={`None of the ${channels.length} channels match these filters.`}
+									action={
+										<Button variant="outline" size="sm" onClick={resetFilters}>
+											Reset filters
+										</Button>
+									}
+								/>
 							) : (
 								/*
 								 * A single-select rail, so it is a listbox of options — not a stack of
@@ -283,6 +295,10 @@ function ChannelDetail({
 	const [recipients, setRecipients] = useState<string[]>(channel.recipients);
 	const [url, setUrl] = useState("");
 	const [secret, setSecret] = useState("");
+	// Each credential field's `id`, paired with its `<Label htmlFor>` so the label names it.
+	const routingKeyId = useId();
+	const urlId = useId();
+	const secretId = useId();
 	const [routingKey, setRoutingKey] = useState("");
 	const [saving, setSaving] = useState(false);
 	const [disableConfirm, setDisableConfirm] = useState(false);
@@ -452,9 +468,10 @@ function ChannelDetail({
 
 				{meta.credential === "routingKey" && (
 					<div className="space-y-2">
-						<Label>Integration routing key</Label>
+						<Label htmlFor={routingKeyId}>Integration routing key</Label>
 						{canManage ? (
 							<Input
+								id={routingKeyId}
 								value={routingKey}
 								onChange={(e) => setRoutingKey(e.target.value)}
 								placeholder="•••••• (leave blank to keep current)"
@@ -471,13 +488,14 @@ function ChannelDetail({
 				{meta.credential === "url" && (
 					<div className="space-y-4">
 						<div className="space-y-2">
-							<Label>
+							<Label htmlFor={urlId}>
 								{channel.type === "webhook"
 									? "Payload URL"
 									: `${meta.name} webhook URL`}
 							</Label>
 							{canManage ? (
 								<Input
+									id={urlId}
 									value={url}
 									onChange={(e) => setUrl(e.target.value)}
 									placeholder="•••••• (leave blank to keep current)"
@@ -494,7 +512,7 @@ function ChannelDetail({
 						{channel.type === "webhook" && canManage && (
 							<div className="space-y-2">
 								<div className="flex items-center gap-1.5">
-									<Label>Signing secret</Label>
+									<Label htmlFor={secretId}>Signing secret</Label>
 									<FieldHelp title="Signing secret">
 										Optional. If set, Alethia signs each request body and sends{" "}
 										<code className="font-mono">X-Alethia-Signature: sha256=…</code>{" "}
@@ -502,6 +520,7 @@ function ChannelDetail({
 									</FieldHelp>
 								</div>
 								<Input
+									id={secretId}
 									value={secret}
 									onChange={(e) => setSecret(e.target.value)}
 									placeholder="Leave blank to keep current"

@@ -23,6 +23,10 @@ import type {
 	PolicyDTO,
 } from "@/app/server/actions/alerts";
 import type { AlertDeliveryStatus } from "@/lib/db/schema/enums";
+import {
+	filterStateFromUrl,
+	type ParamReader,
+} from "@/lib/query/filter-url-codec";
 
 // ── Facets ─────────────────────────────────────────────────────────────────────
 
@@ -219,4 +223,60 @@ export function normalizeActivityQuery(
 	const status = normalizeList(filters.status);
 	if (status) query.status = status;
 	return query;
+}
+
+// ── The URL ────────────────────────────────────────────────────────────────────
+
+// The hub stacks three panels on ONE route, so their params are prefixed — an unprefixed `search`
+// from three stores would collide. These maps are read by BOTH halves of the round trip:
+// `alerts-filters.ts` hands them to `useFilterUrlSync`, and the alerts ROUTE decodes a pasted link
+// through them to prefetch the filtered lists (#4980). One copy, or the server prefetches a key
+// the client never asks for.
+
+/** URL param per Channels filter. */
+export const CHANNEL_URL_PARAMS = {
+	search: "channel",
+	types: "channelType",
+	status: "channelStatus",
+} satisfies Record<keyof ChannelFilters, string>;
+
+/** URL param per Policies filter. */
+export const POLICY_URL_PARAMS = {
+	search: "policy",
+	status: "policyStatus",
+	kinds: "policyKind",
+	channels: "policyChannel",
+} satisfies Record<keyof PolicyFilters, string>;
+
+/** URL param per Activity filter. */
+export const ACTIVITY_URL_PARAMS = {
+	search: "activity",
+	status: "activityStatus",
+} satisfies Record<keyof ActivityFilters, string>;
+
+/** The three lists' queries a URL names — the keys the client settles on once it has read the link. */
+export interface AlertsUrlQueries {
+	channels: NormalizedChannelsQuery;
+	policies: NormalizedPoliciesQuery;
+	activity: NormalizedActivityQuery;
+}
+
+/**
+ * Decode a hub URL into the three normalized queries, exactly as the client's stores hold them
+ * once `useFilterUrlSync` has run and each debounce has caught up. The alerts route prefetches
+ * these so a pasted filtered link renders its filtered lists instead of the unfiltered rows as
+ * `keepPreviousData` placeholders (#4980, the audit's F8 on `policyStatus`).
+ */
+export function alertsQueriesFromUrl(params: ParamReader): AlertsUrlQueries {
+	return {
+		channels: normalizeChannelsQuery(
+			filterStateFromUrl(params, DEFAULT_CHANNEL_FILTERS, CHANNEL_URL_PARAMS),
+		),
+		policies: normalizePoliciesQuery(
+			filterStateFromUrl(params, DEFAULT_POLICY_FILTERS, POLICY_URL_PARAMS),
+		),
+		activity: normalizeActivityQuery(
+			filterStateFromUrl(params, DEFAULT_ACTIVITY_FILTERS, ACTIVITY_URL_PARAMS),
+		),
+	};
 }

@@ -8,7 +8,11 @@ import { CreateProjectForm } from "@/components/create-project/create-project-fo
 import type { ScratchKind } from "@/components/create-project/start-from-scratch-cards";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import { isByoHelmEnabled } from "@/lib/addons/byo-flag";
-import { getCloudConnectSetup } from "@/lib/connectors/cloud-connect-setup";
+import {
+	computePlatformConfigured,
+	getCloudConnectSetup,
+} from "@/lib/connectors/cloud-connect-setup";
+import { gitProviderAvailability } from "@/lib/connectors/git-providers";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 import { arrayIncludes } from "@/lib/type-guards";
 
@@ -82,6 +86,7 @@ export default async function NewProjectPage({
 			canCollaborate={collab.canInvite}
 			byoHelmEnabled={byoHelmEnabled}
 			byoIacEnabled={byoIacEnabled}
+			providerAvailability={gitProviderAvailability(computePlatformConfigured())}
 		/>
 	);
 }

@@ -36,6 +36,7 @@ import {
 	cacheEngines,
 	dbEngines,
 } from "@/lib/cloud-providers/generated/catalog";
+import { effectiveCapacityMode } from "@/lib/cloud-providers/nosql-capacity";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import { helmRegistryUrl } from "@/lib/connectors/helm-registry-hosts";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
@@ -509,11 +510,16 @@ export const NODE_REGISTRY: NodeRegistry = {
 		label: "NoSQL table",
 		icon: Table2,
 		card: {
-			facts: ({ config }) => [
+			facts: ({ config, provider }) => [
 				{ label: "Partition key", value: config.partition_key ?? "" },
 				{
+					// The mode the table GETS, not the one stored: an Azure row saved as `provisioned`
+					// before Cosmos went serverless-only (#4320) must not read "provisioned" here.
 					label: "Mode",
-					value: config.capacity_mode === "provisioned" ? "provisioned" : "on-demand",
+					value:
+						effectiveCapacityMode(provider, config.capacity_mode) === "provisioned"
+							? "provisioned"
+							: "on-demand",
 				},
 				{ label: "PITR", value: config.point_in_time_recovery === false ? "off" : "on" },
 			],

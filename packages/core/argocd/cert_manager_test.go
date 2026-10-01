@@ -181,7 +181,7 @@ func TestCertManagerRendersOnlyWhereItCanIssue(t *testing.T) {
 // no solver it would render `dns01:` with an empty body — an issuer that exists and never issues.
 func TestCertManagerInstallsForAWebhookCAWithoutAnIssuer(t *testing.T) {
 	f := certManagerFacts("hetzner")
-	f.WebhookCAAddOns = []string{"scylla-operator"}
+	f.WebhookCAConsumers = []string{"scylla-operator"}
 
 	if !f.CertManagerEnabled() {
 		t.Fatal("the controller must install: a fail-closed webhook with no CA rejects every CR the operator owns")
@@ -218,7 +218,7 @@ func TestCertManagerInstallsForAWebhookCAWithoutAnIssuer(t *testing.T) {
 // must never shadow the issuing one.
 func TestCertManagerIssuerStillWinsWhenBothHold(t *testing.T) {
 	f := certManagerFacts("aws")
-	f.WebhookCAAddOns = []string{"scylla-operator"}
+	f.WebhookCAConsumers = []string{"scylla-operator"}
 
 	if !f.CertManagerIssuerEnabled() || !f.CertManagerEnabled() {
 		t.Fatal("aws with a full fact set must both install and issue")
@@ -235,13 +235,13 @@ func TestCertManagerIssuerStillWinsWhenBothHold(t *testing.T) {
 	}
 }
 
-// TestWebhookCAAddOnsIsDerivedFromTheInstallSpecs pins the DIRECTION the fact travels.
+// TestWebhookCAConsumersIsDerivedFromTheInstallSpecs pins the DIRECTION the fact travels.
 //
 // The tempting shortcut is to ask, in Go, "is this hetzner and does the project have a nosql
 // node?". That puts a second copy of the carriage decision here, where it stops agreeing with the
 // TypeScript mapper the day a second operator needs a webhook CA or another cloud carries a kind
 // in-cluster. The spec that CAUSES the requirement is the only thing that states it.
-func TestWebhookCAAddOnsIsDerivedFromTheInstallSpecs(t *testing.T) {
+func TestWebhookCAConsumersIsDerivedFromTheInstallSpecs(t *testing.T) {
 	vc := &types.ProjectConfig{
 		Provider: "hetzner",
 		AddOns: []types.AddOnInstall{
@@ -250,16 +250,16 @@ func TestWebhookCAAddOnsIsDerivedFromTheInstallSpecs(t *testing.T) {
 			{ID: "topic-events"},
 		},
 	}
-	got := webhookCAAddOns(vc)
+	got := webhookCAConsumers(vc)
 	if len(got) != 1 || got[0] != "scylla-operator" {
-		t.Fatalf("webhookCAAddOns = %v, want exactly [scylla-operator]", got)
+		t.Fatalf("webhookCAConsumers = %v, want exactly [scylla-operator]", got)
 	}
 
 	// And nothing at all when no spec asks — so the predicate cannot drift on by default, which
 	// would install cert-manager on every cluster in the fleet.
 	vc.AddOns[1].RequiresCertManager = false
-	if got := webhookCAAddOns(vc); len(got) != 0 {
-		t.Errorf("webhookCAAddOns = %v with no spec asking, want empty", got)
+	if got := webhookCAConsumers(vc); len(got) != 0 {
+		t.Errorf("webhookCAConsumers = %v with no spec asking, want empty", got)
 	}
 }
 
@@ -498,6 +498,156 @@ func TestCertManagerRenderThroughRealPipeline(t *testing.T) {
 			files := renderAll(t, certManagerFacts(provider))
 			if got, ok := files[file]; ok {
 				t.Errorf("%s has no cert-manager DNS01 solver, so %s must not render at all:\n%s", provider, file, got)
+			}
+		})
+	}
+}
+
+// kserveConsumer is the project-level webhook-CA marker the AI Workloads template sets (#4990).
+const kserveConsumer = "kserve"
+
+// allFiveClouds is every provider Alethia provisions. The project-level marker must work on every
+// one of them, because the decision it implements (#4990, option A) was chosen over "require a
+// domain" precisely because alibaba and hetzner can never satisfy that.
+var allFiveClouds = []string{"aws", "gcp", "azure", "alibaba", "hetzner"}
+
+// countCertManagerApplications counts the cert-manager Applications across a whole render. The
+// marker must never add a second one next to the platform Application: two owners of one set of
+// CRDs is the #1722 collision.
+func countCertManagerApplications(files map[string]string) int {
+	n := 0
+	for _, body := range files {
+		n += strings.Count(body, "\n  name: cert-manager\n")
+	}
+	return n
+}
+
+// TestWebhookCAConsumersIncludesTheProjectMarker pins the second source of the fact: a workload
+// that is NOT an add-on (KServe from the starter's own addons/ Applications) reaches the same gate
+// through ProjectConfig.WebhookCAConsumers. A name declared twice counts once, and a blank entry
+// counts as nothing — so a malformed marker cannot turn cert-manager on for the whole fleet.
+func TestWebhookCAConsumersIncludesTheProjectMarker(t *testing.T) {
+	vc := &types.ProjectConfig{
+		Provider:           "hetzner",
+		AddOns:             []types.AddOnInstall{{ID: "scylla-operator", RequiresCertManager: true}},
+		WebhookCAConsumers: []string{kserveConsumer, " ", "scylla-operator"},
+	}
+	got := webhookCAConsumers(vc)
+	if strings.Join(got, ",") != "kserve,scylla-operator" {
+		t.Fatalf("webhookCAConsumers = %v, want [kserve scylla-operator] (sorted, de-duplicated, blanks dropped)", got)
+	}
+
+	vc.AddOns = nil
+	vc.WebhookCAConsumers = []string{"", "  "}
+	if got := webhookCAConsumers(vc); len(got) != 0 {
+		t.Errorf("webhookCAConsumers = %v for a marker of blanks, want empty", got)
+	}
+}
+
+// TestWebhookCAMarkerInstallsCertManagerWithNoDomain — marker on, no domain, no managed
+// certificate: the controller renders on every cloud, issuer-free, and says so.
+func TestWebhookCAMarkerInstallsCertManagerWithNoDomain(t *testing.T) {
+	for _, provider := range allFiveClouds {
+		t.Run(provider, func(t *testing.T) {
+			vc := &types.ProjectConfig{
+				Provider:           types.CloudProvider(provider),
+				WebhookCAConsumers: []string{kserveConsumer},
+			}
+			f := BuildFromOutputs(map[string]interface{}{}, vc)
+
+			if !f.CertManagerEnabled() {
+				t.Fatal("KServe's chart renders a cert-manager Certificate and Issuer — without the controller and CRDs it cannot start")
+			}
+			if f.CertManagerIssuerEnabled() {
+				t.Error("no domain and no managed certificate — the ISSUER half must stay closed")
+			}
+			manifest, err := certManagerIssuerManifest(f)
+			if err != nil {
+				t.Fatalf("issuer render: %v", err)
+			}
+			if manifest != "" {
+				t.Errorf("a ClusterIssuer was rendered for a deploy that issues nothing:\n%s", manifest)
+			}
+
+			files := renderAll(t, f)
+			got, ok := files["cert-manager.yaml"]
+			if !ok {
+				t.Fatal("cert-manager.yaml did not render — the marker reached the facts but not the template")
+			}
+			if n := countCertManagerApplications(files); n != 1 {
+				t.Errorf("rendered %d cert-manager Applications, want exactly 1 (one CRD owner, #1722)", n)
+			}
+			// No solver, so no identity: an arm rendered here would carry an EMPTY value.
+			for _, key := range []string{
+				"eks.amazonaws.com/role-arn",
+				"iam.gke.io/gcp-service-account",
+				"azure.workload.identity/client-id",
+				"azure.workload.identity/use",
+			} {
+				if strings.Contains(got, key) {
+					t.Errorf("issuer-free cert-manager binds a solver identity (%s) that does not exist:\n%s", key, got)
+				}
+			}
+
+			d := certManagerDecision(f)
+			if d.Status != infraStatusInstalled {
+				t.Errorf("decision status = %q, want installed", d.Status)
+			}
+			for _, want := range []string{"NO ClusterIssuer", kserveConsumer} {
+				if !strings.Contains(d.Reason, want) {
+					t.Errorf("the decision does not say %q:\n%s", want, d.Reason)
+				}
+			}
+		})
+	}
+}
+
+// TestNoWebhookCAMarkerAndNoDomainInstallsNothing — the negative half. Without the marker, a
+// project with no domain gets no cert-manager at all, so the marker is what turns it on and
+// nothing turns it on by default.
+func TestNoWebhookCAMarkerAndNoDomainInstallsNothing(t *testing.T) {
+	for _, provider := range allFiveClouds {
+		t.Run(provider, func(t *testing.T) {
+			f := BuildFromOutputs(map[string]interface{}{}, &types.ProjectConfig{Provider: types.CloudProvider(provider)})
+			if f.CertManagerEnabled() {
+				t.Fatal("cert-manager enabled with no marker, no add-on asking and no domain")
+			}
+			if _, ok := renderAll(t, f)["cert-manager.yaml"]; ok {
+				t.Error("cert-manager.yaml rendered with nothing asking for it")
+			}
+			if d := certManagerDecision(f); d.Status != infraStatusSkipped {
+				t.Errorf("decision status = %q, want skipped", d.Status)
+			}
+		})
+	}
+}
+
+// TestWebhookCAMarkerWithManagedCertificateKeepsOneCertManager — marker on AND a managed
+// certificate on a cloud that can issue: still ONE cert-manager Application, and it does both
+// jobs — the ClusterIssuer is created and the solver identity is bound, and the same controller
+// serves KServe's self-signed Issuer. The webhook arm is additive and must not shadow issuing.
+func TestWebhookCAMarkerWithManagedCertificateKeepsOneCertManager(t *testing.T) {
+	for _, provider := range []string{"aws", "gcp", "azure"} {
+		t.Run(provider, func(t *testing.T) {
+			f := certManagerFacts(provider)
+			f.WebhookCAConsumers = webhookCAConsumers(&types.ProjectConfig{WebhookCAConsumers: []string{kserveConsumer}})
+
+			if !f.CertManagerIssuerEnabled() || !f.CertManagerWebhookCARequired() {
+				t.Fatal("both halves must hold: a managed certificate AND a webhook-CA consumer")
+			}
+			manifest, err := certManagerIssuerManifest(f)
+			if err != nil {
+				t.Fatalf("issuer render: %v", err)
+			}
+			if manifest == "" {
+				t.Error("the marker suppressed the ClusterIssuer on a cloud that can issue")
+			}
+			files := renderAll(t, f)
+			if n := countCertManagerApplications(files); n != 1 {
+				t.Errorf("rendered %d cert-manager Applications, want exactly 1 (one CRD owner, #1722)", n)
+			}
+			if d := certManagerDecision(f); !strings.Contains(d.Reason, CertManagerIssuerName) {
+				t.Errorf("the issuing decision was shadowed by the webhook-CA one:\n%s", d.Reason)
 			}
 		})
 	}

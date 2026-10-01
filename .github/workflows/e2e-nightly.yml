@@ -85,7 +85,7 @@ on:
         type: string
         default: ""
       dimension:
-        description: "Which DIMENSION to prove. Blank keeps the old floor/full_bar behaviour. The middle values were previously reachable ONLY from a laptop — a boolean cannot express them — so a cell whose cause had been fixed could sit stale with no way to re-drive it from CI. `gitops` is the A0.6 apps-repo + BYO Helm chart proof (renamed from `byo`, which still works); `byo-iac` is the separate seven-job customer-OpenTofu custody chain. Costs scale with the dimension, not with this input: addons and maxconfig are heavy, gitops/byo-iac/day2 are near-floor."
+        description: "Which DIMENSION to prove. Blank keeps the old floor/full_bar behaviour. The middle values were previously reachable ONLY from a laptop — a boolean cannot express them — so a cell whose cause had been fixed could sit stale with no way to re-drive it from CI. `gitops` is the A0.6 apps-repo + BYO Helm chart proof (renamed from `byo`, which still works); `byo-iac` is the separate seven-job customer-OpenTofu custody chain. `templates` (#4113, HETZNER ONLY — refused on any other provider before anything is built) deploys the three public starter templates on one cluster. Costs scale with the dimension, not with this input: addons and maxconfig are heavy, gitops/byo-iac/day2 are near-floor."
         type: choice
         options:
           - ""
@@ -97,8 +97,33 @@ on:
           - byo
           - day2
           - cli-demo
+          - templates
           - full
         default: ""
+      cli_demo_grid:
+        description: "CLI-DEMO GRID (#4227). Requires dimension=cli-demo; IGNORES `provider`. Runs hetzner → aws → gcp → azure ONE AT A TIME and stops at the first red leg (a later leg is cancelled before it buys anything). Each managed leg proves the E2E assertion broker path before any spend, and green-skips while that cloud's broker trust is not wired (vars.E2E_ISSUER_URL + E2E_ISSUER_GITHUB_AUDIENCE, and on gcp E2E_GCP_BROKER_WIF_AUDIENCE). Alibaba is excluded by maintainer ruling. Dispatch from dev: the broker admits e2e-nightly.yml@refs/heads/dev only."
+        type: boolean
+        default: false
+      fabric_demo:
+        description: "FABRIC DEMO (#845) for THIS RUN ONLY. Same effect as setting vars.E2E_FABRIC_DEMO, without the variable: a repo variable reaches every later run, including the scheduled nightly on main (the 2026-09-25 leak ran fabric on all four clouds). A dispatch input dies with the run. The variable still works as the maintainer's standing switch."
+        type: boolean
+        default: false
+      keyless_db:
+        description: "KEYLESS DB (#1450/#1513) for THIS RUN ONLY, on the named engine. Same effect as vars.E2E_KEYLESS_DB=1 + E2E_KEYLESS_DB_ENGINE (and the _GCP/_AZURE engine siblings), without a variable that leaks into the scheduled nightly. Version and instance class still come from the E2E_KEYLESS_DB_ENGINE_VERSION / _INSTANCE_CLASS vars (and their per-cloud siblings); with none set, postgres takes per-cloud defaults and mysql is refused before any spend, naming the missing vars. Not on cli-demo (refused): the CLI-created deploy carries no database."
+        type: choice
+        options:
+          - ""
+          - postgres
+          - mysql
+        default: ""
+      secrets_xacct:
+        description: "CROSS-ACCOUNT SECRETS (#1268) for THIS RUN ONLY. Same effect as vars.E2E_SECRETS_XACCT, without the leak. The target-account vars (E2E_SECRETS_XACCT_*) must still be wired; a partial set is refused before any spend. Not on cli-demo (refused)."
+        type: boolean
+        default: false
+      xacct_registry:
+        description: "CROSS-ACCOUNT REGISTRY (#1046/#1047) for THIS RUN ONLY. Same effect as vars.E2E_XACCT_REGISTRY, without the leak. The target-registry vars (E2E_XACCT_REGISTRY_*) must still be wired; a partial set is refused before any spend. Not on cli-demo (refused)."
+        type: boolean
+        default: false
       full_bar:
         description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws/gcp/azure; hetzner and alibaba are guarded by a pre-apply shape control instead (server-type cap; prepaid refusal). Dispatch one cloud at a time and watch it."
         type: boolean
@@ -134,6 +159,9 @@ jobs:
     outputs:
       dimension: ${{ steps.d.outputs.dimension }}
       heavy: ${{ steps.d.outputs.heavy }}
+      # Whether the runner-image job builds. `heavy` OR a rider whose render needs selfimage.Ref() —
+      # see the note on that job.
+      runner_image: ${{ steps.d.outputs.runner_image }}
     steps:
       - uses: actions/checkout@v7
       - id: d
@@ -143,14 +171,71 @@ jobs:
           DISPATCH_DIMENSION: ${{ github.event.inputs.dimension }}
           SCHEDULE: ${{ github.event.schedule }}
           E2E_SOAK: ${{ vars.E2E_SOAK }}
+          CLI_DEMO_GRID: ${{ github.event.inputs.cli_demo_grid }}
+          RIDER_KEYLESS_DB: ${{ github.event.inputs.keyless_db }}
+          RIDER_SECRETS_XACCT: ${{ github.event.inputs.secrets_xacct }}
+          RIDER_XACCT_REGISTRY: ${{ github.event.inputs.xacct_registry }}
+          VAR_KEYLESS_DB: ${{ vars.E2E_KEYLESS_DB }}
+          VAR_XACCT_REGISTRY: ${{ vars.E2E_XACCT_REGISTRY }}
+          DISPATCH_PROVIDER: ${{ github.event.inputs.provider }}
         run: |
           dim="$(bash scripts/e2e/resolve-dimension.sh)"
           heavy="$(bash scripts/e2e/resolve-dimension.sh --heavy "$dim")"
+          # The three RIDER inputs layer a database / a connector row / a foreign-image service onto
+          # the DEPLOY snapshot the HARNESS seeds. On cli-demo the DEPLOY is created BY THE CLI, so
+          # that snapshot is never written and nothing the rider asserts on is ever rendered — the
+          # layer would poll for objects nobody pushed and fail late, on a bought cluster. The T2
+          # step withholds the matching VARIABLES on cli-demo (a standing switch must not make the
+          # cli-demo grid unrunnable, #2630's lesson); an explicit per-run ASK is refused here instead,
+          # before the runner image is built or any cloud is touched, so it cannot read as proven.
+          if [ "$dim" = "cli-demo" ]; then
+            asked=""
+            [ -n "${RIDER_KEYLESS_DB:-}" ] && asked="$asked keyless_db=${RIDER_KEYLESS_DB}"
+            [ "${RIDER_SECRETS_XACCT:-false}" = "true" ] && asked="$asked secrets_xacct"
+            [ "${RIDER_XACCT_REGISTRY:-false}" = "true" ] && asked="$asked xacct_registry"
+            if [ -n "$asked" ]; then
+              echo "::error::dimension=cli-demo cannot carry${asked}: the CLI-created DEPLOY has no snapshot for the rider to layer onto, so the proof would fail on a bought cluster. Dispatch the rider on floor or gitops — refusing before anything is built or bought."
+              exit 1
+            fi
+          fi
+          # A dimension may be restricted to some clouds (`templates` is hetzner-only, #4113). The
+          # list is the resolver's, never retyped here. Refused HERE, before the runner image is
+          # built or any cloud is touched; the T2 harness refuses it a second time before spend.
+          allowed="$(bash scripts/e2e/resolve-dimension.sh --providers "$dim")"
+          if [ -n "$allowed" ]; then
+            if [ "${CLI_DEMO_GRID:-false}" = "true" ] || [ -z "${DISPATCH_PROVIDER:-}" ] || ! printf ' %s ' "$allowed" | grep -q " ${DISPATCH_PROVIDER} "; then
+              echo "::error::dimension=$dim runs only on: $allowed (dispatched provider: '${DISPATCH_PROVIDER:-<none>}') — refusing before anything is built or bought."
+              exit 1
+            fi
+          fi
+          # The grid (#4227) is a SERIAL, stop-on-first-red run of the cli-demo dimension across
+          # four clouds. On any other dimension it would fan a floor/maxconfig/… run out to four
+          # clouds one at a time for no reason anyone asked for, so it is refused here — before the
+          # runner image is built or any cloud is touched.
+          if [ "${CLI_DEMO_GRID:-false}" = "true" ] && [ "$dim" != "cli-demo" ]; then
+            echo "::error::cli_demo_grid requires dimension=cli-demo (resolved: $dim) — refusing before anything is built or bought."
+            exit 1
+          fi
+          # The runner image is ALSO needed by two riders, whatever the dimension: keyless_db renders
+          # the db-authproxy sidecar (aws, azure) and the db-bootstrap Job (every cloud) from
+          # selfimage.Ref(), and xacct_registry its registry-token refresher. Without it each
+          # binding fails closed ("no runner image for the Azure db-authproxy sidecar", run
+          # 36711798677). Read the way the T2 step hands them to the harness: a dispatch ask, else
+          # the variable judged by t2Truthy; cli-demo withholds both, so it never needs the build.
+          truthy() { case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in 1 | true | yes | on) return 0 ;; esac; return 1; }
+          runner_image="$heavy"
+          if [ "$dim" != "cli-demo" ]; then
+            if [ -n "${RIDER_KEYLESS_DB:-}" ] || truthy "${VAR_KEYLESS_DB:-}" \
+              || [ "${RIDER_XACCT_REGISTRY:-false}" = "true" ] || truthy "${VAR_XACCT_REGISTRY:-}"; then
+              runner_image=true
+            fi
+          fi
           {
             echo "dimension=$dim"
             echo "heavy=$heavy"
+            echo "runner_image=$runner_image"
           } >> "$GITHUB_OUTPUT"
-          echo "::notice::dimension=$dim heavy=$heavy"
+          echo "::notice::dimension=$dim heavy=$heavy runner_image=$runner_image"
 
   # ── The image the in-cluster bootstrap Jobs run, built FROM THE COMMIT UNDER TEST. ──
   #
@@ -176,10 +261,11 @@ jobs:
   runner-image:
     name: Publish the runner image the bootstrap Jobs run
     needs: resolve
-    # Only a dimension that installs Vault needs it. `heavy` is true for exactly maxconfig, addons
+    # A dimension that installs Vault needs it. `heavy` is true for exactly maxconfig, addons
     # and full — derived by resolve-dimension.sh from the FIDELITY, so it cannot drift from the
-    # set of dimensions that switch ALL_ADDONS/MAX_CONFIG on.
-    if: ${{ needs.resolve.outputs.heavy == 'true' }}
+    # set of dimensions that switch ALL_ADDONS/MAX_CONFIG on. The keyless_db and xacct_registry
+    # riders need it on ANY dimension; `runner_image` is `heavy` widened by exactly those two.
+    if: ${{ needs.resolve.outputs.runner_image == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -326,7 +412,17 @@ jobs:
     # 180 → 195 (fabric 275 → 290) with the managed teardown window's 30m → 45m, measured on
     # aws/floor run 33155063965. Same rule as every other move here: the ladder rung moved, so its
     # outermost backstop moves with it, and the offline guard is what said so.
-    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 300 || 205 }}
+    #
+    # fabric 290/300 → EXTENDED 330/345, and the branch now also opens for the three RIDERS
+    # (keyless DB, cross-account secrets, cross-account registry — by dispatch input or variable).
+    # The riders exist so those proofs ride ONE cluster rather than one each, and the ordinary cap
+    # refused exactly that before spend: floor + all three riders needs a 209m step against 190m.
+    # The widest composition the extended cap promises is day2 + fabric + every rider (step 329 /
+    # job 344, measured by TestArgoBudgetCeilingFitsTheWorkflowCaps); full + fabric + every rider
+    # needs a job past GitHub's 360m hosted ceiling and is refused by t2budget before any spend
+    # (TestExtendedCapRefusesTheHeavyFabricRiderStack). A standing rider variable therefore raises
+    # this BACKSTOP on every scheduled night — the finer go-timeout the ladder derives still binds.
+    timeout-minutes: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 345 || 205 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -344,10 +440,20 @@ jobs:
       group: e2e-nightly-${{ matrix.provider }}
       cancel-in-progress: false
     strategy:
-      fail-fast: false
+      # ── THE CLI-DEMO GRID (#4227) is the one run that is SERIAL and STOPS ON THE FIRST RED. ──
+      #
+      # Everywhere else the legs are independent proofs, so one red must not cancel another
+      # (fail-fast: false) and three may run at once. The grid is a sequence of PAID proofs of one
+      # claim — "the whole product is drivable from the terminal, on every cloud" — so a red leg
+      # answers the question for the run, and buying the next cloud after it is spend with no
+      # information in it. max-parallel 1 makes the legs run one at a time in matrix order
+      # (hetzner, the cheapest, first); fail-fast then cancels every leg still QUEUED when one goes
+      # red. The red leg itself is never cut short: its conclusion only exists after its own
+      # always() teardown and teardown verification have run, so fail-fast cannot interrupt a sweep.
+      fail-fast: ${{ github.event.inputs.cli_demo_grid == 'true' }}
       # Never run more than 3 real provisions at once (cost + shared-account API pressure);
       # the per-provider concurrency group already serializes same-cloud runs (BYOC A3.2).
-      max-parallel: 3
+      max-parallel: ${{ github.event.inputs.cli_demo_grid == 'true' && 1 || 3 }}
       matrix:
         # On the nightly `schedule` run the full set; on a manual `workflow_dispatch` run ONLY
         # the chosen provider (so dispatching "aws" doesn't also spin up hetzner). Derived from
@@ -357,7 +463,11 @@ jobs:
         # design, and only happens AFTER that cloud's manual dispatch + kill-drill. To add a
         # cloud: extend the `options:` above, this array, the gate `case`, the credential step,
         # and the sweeper `case` in teardown.
-        provider: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.provider)) || fromJSON('["hetzner","aws","gcp","azure","alibaba"]') }}
+        #
+        # The cli-demo grid (#4227) is a DISPATCH-only third branch, in serial order, cheapest first;
+        # alibaba is excluded by maintainer ruling. The scheduled set stays the LAST literal on this
+        # line — scripts/check-e2e-spend-guard.mjs reads it from there.
+        provider: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.cli_demo_grid == 'true' && fromJSON('["hetzner","aws","gcp","azure"]') || fromJSON(format('["{0}"]', github.event.inputs.provider))) || fromJSON('["hetzner","aws","gcp","azure","alibaba"]') }}
     services:
       # Mirrors ci.yml's integration/provision-e2e jobs: a throwaway Postgres that
       # db:migrate turns into the real control-plane schema + programmables
@@ -440,6 +550,12 @@ jobs:
         id: gate
         env:
           PROVIDER: ${{ matrix.provider }}
+          DIMENSION: ${{ needs.resolve.outputs.dimension }}
+          # The cli-demo BROKER gate's inputs (#4227). Repo VARIABLES — an origin, an audience and a
+          # pool name are identifiers, not credentials. The matching trust is #4226's to apply.
+          E2E_ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
+          E2E_ISSUER_GITHUB_AUDIENCE: ${{ vars.E2E_ISSUER_GITHUB_AUDIENCE }}
+          E2E_GCP_BROKER_WIF_AUDIENCE: ${{ vars.E2E_GCP_BROKER_WIF_AUDIENCE }}
         run: |
           case "$PROVIDER" in
             hetzner) TOKEN="$HCLOUD_TOKEN";              SECRET_NAME="HCLOUD_TOKEN (repo secret)" ;;
@@ -449,13 +565,56 @@ jobs:
             alibaba) TOKEN="$E2E_ALIBABA_ROLE_ARN";      SECRET_NAME="E2E_ALIBABA_ROLE_ARN (repo variable)" ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
           esac
-          if [ -n "$TOKEN" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::T2 real-cloud proof ENABLED for $PROVIDER ($SECRET_NAME present) — provisioning a real ephemeral cluster."
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
+          if [ -z "$TOKEN" ]; then
+            { echo "run=false"; echo "skip_kind=cloud"; } >> "$GITHUB_OUTPUT"
             echo "::warning::T2 real-cloud proof SKIPPED for $PROVIDER — repo secret $SECRET_NAME is not set. This nightly is a no-op (green) until a maintainer opts in. To enable it: docs/testing/e2e-nightly-enablement.md (apply the stack, set the companion vars FIRST, dispatch this cloud alone, kill-drill, then set the gate)."
+            exit 0
           fi
+          # ── THE CLI-DEMO BROKER GATE (#4227). On aws, gcp and azure the `connector` beat can only
+          #    COMPLETE when the console under test gets its assertions from the E2E assertion broker
+          #    and the cloud trusts that broker (#4226). Until a maintainer has applied that trust and
+          #    set the variables that name it, the leg would build the console (~10 min) and then be
+          #    refused by AssertCLIDemoConnectorIsDrivable — a red that says nothing new, every run.
+          #    So it green-SKIPS here with a notice instead, before anything is built or bought, and
+          #    records `outcome: skipped` (never a pass) through its OWN proof step below — not
+          #    `Record gate-off proof`, whose conclusion scripts/programme-fetch.sh reads as "this
+          #    CLOUD's credential gate is off". Routing a broker skip through it would report aws's
+          #    credentials unwired on a night they were present (skip_kind keeps the two apart).
+          #
+          #    This decides only whether the trust is WIRED. Whether it WORKS is measured, before any
+          #    spend, by the "cli-demo — prove the broker assertion path" step, which reds the leg on
+          #    any refusal. Alibaba is excluded from the grid by maintainer ruling; hetzner has no
+          #    issuer in its path and is unaffected. ──
+          if [ "$DIMENSION" = "cli-demo" ]; then
+            case "$PROVIDER" in
+              aws | azure) NEED="E2E_ISSUER_URL E2E_ISSUER_GITHUB_AUDIENCE" ;;
+              gcp)         NEED="E2E_ISSUER_URL E2E_ISSUER_GITHUB_AUDIENCE E2E_GCP_BROKER_WIF_AUDIENCE" ;;
+              alibaba)
+                {
+                  echo "run=false"
+                  echo "skip_kind=cli-demo"
+                  echo "skip_reason=cli-demo excludes alibaba by maintainer ruling (#4227)"
+                } >> "$GITHUB_OUTPUT"
+                echo "::notice::cli-demo SKIPPED for alibaba — excluded from the broker-backed CLI demo by maintainer ruling on #4227. Nothing was built or bought."
+                exit 0 ;;
+              *) NEED="" ;;
+            esac
+            MISSING=""
+            for v in $NEED; do
+              [ -n "${!v:-}" ] || MISSING="$MISSING $v"
+            done
+            if [ -n "$MISSING" ]; then
+              {
+                echo "run=false"
+                echo "skip_kind=cli-demo"
+                echo "skip_reason=cli-demo broker trust not wired (#4226)"
+              } >> "$GITHUB_OUTPUT"
+              echo "::notice::cli-demo SKIPPED for $PROVIDER — the E2E assertion broker trust is not wired (unset:${MISSING}). The connector beat cannot complete without it, so nothing is built or bought. To enable: apply #4226's trust for $PROVIDER (docs/testing/e2e-federation-apply-runbook.md, part two), then set the variable(s)."
+              exit 0
+            fi
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::T2 real-cloud proof ENABLED for $PROVIDER ($SECRET_NAME present) — provisioning a real ephemeral cluster."
 
       # A gate-off matrix job still exists in the Actions jobs API, so job existence cannot say
       # whether this cloud ran. Emit the same run-scoped summary contract as a real proof instead:
@@ -472,7 +631,7 @@ jobs:
       # never mentions this one. Purely ADDITIVE: the path and every existing field are unchanged,
       # so the existing inference keeps working until the rollup is taught to prefer the stamp.
       - name: Record gate-off proof
-        if: steps.gate.outputs.run == 'false'
+        if: steps.gate.outputs.run == 'false' && steps.gate.outputs.skip_kind == 'cloud'
         env:
           PROVIDER: ${{ matrix.provider }}
           RUN_ID: ${{ github.run_id }}
@@ -485,6 +644,28 @@ jobs:
             --arg run_tag "nightly-${RUN_ID}-${RUN_ATTEMPT}" \
             --arg verdict "${PROVIDER}: SKIPPED — gate off, no secret/var wired" \
             '{provider: $provider, run_tag: $run_tag, outcome: "skipped", emitted_by: "gate-off", verdict: $verdict}' \
+            > "$OUT/provision-summary.json"
+
+      # The cli-demo broker gate's skip (#4227) — the SAME inert bundle contract as the step above
+      # (directory `gate-<run_id>-<attempt>`, no deploy_stage), so the per-leg rollup reads the leg
+      # as a SKIP rather than a red. A separate step, and a separate name, on purpose: this leg's
+      # CLOUD gate was ON, and `Record gate-off proof` must stay the one step whose conclusion means
+      # "this cloud's credentials are not wired" (scripts/programme-fetch.sh reads it by name).
+      - name: Record cli-demo broker-gate skip proof
+        if: steps.gate.outputs.run == 'false' && steps.gate.outputs.skip_kind == 'cli-demo'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SKIP_REASON: ${{ steps.gate.outputs.skip_reason }}
+        run: |
+          OUT="demos/proofs/${PROVIDER}/gate-${RUN_ID}-${RUN_ATTEMPT}"
+          mkdir -p "$OUT"
+          jq -n \
+            --arg provider "$PROVIDER" \
+            --arg run_tag "nightly-${RUN_ID}-${RUN_ATTEMPT}" \
+            --arg verdict "${PROVIDER}: SKIPPED — ${SKIP_REASON}" \
+            '{provider: $provider, run_tag: $run_tag, outcome: "skipped", emitted_by: "cli-demo-broker-gate", verdict: $verdict}' \
             > "$OUT/provision-summary.json"
 
       # ── Deterministic, unique-per-run cluster identity + region. `<project>-<env>` is the
@@ -600,7 +781,7 @@ jobs:
           # operator-facing line was the last place it did not.
           case "$dim" in
             full)
-              echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (18) + the day-2 soak on this run (heavy node shape; raised cost ceiling on aws; UNPRICED elsewhere)." ;;
+              echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (18) + the day-2 soak on this run (heavy node shape; raised cost ceiling on aws, gcp and azure; server-type cap on hetzner; prepaid purchases refused on alibaba unless this dispatch waives them)." ;;
             maxconfig)
               echo "::notice::MAX-CONFIG dimension — the 11-kind surface on the heavy node shape. No add-on sweep, no day-2 soak." ;;
             addons)
@@ -616,6 +797,8 @@ jobs:
               echo "::notice::GITOPS dimension — floor shape plus the A0.6 apps-repo + BYO Helm chart proof, REQUIRED on this dimension (it reds rather than skipping when the apps-repo env is unset). This is NOT the BYO-IaC custody chain; that is the byo-iac dimension." ;;
             cli-demo)
               echo "::notice::CLI-DEMO dimension — a FLOOR-shaped cluster provisioned through the real \`alethia\` binary rather than a seeded job row (MVP predicate 4). No max-config, no add-on sweep, no day-2 soak: what is under test is the ACTOR, not the surface area. Needs a built console and a seeded service token, so it is dispatch-only by construction." ;;
+            templates)
+              echo "::notice::TEMPLATES dimension (#4113, hetzner only) — ONE cluster (test/e2e/fixtures/cluster_json.templates.hetzner.json), two deploys: alethia-starter-ai as the apps repo plus alethia-starter-chart and alethia-starter-ai/chart as bring-your-own charts, then a redeploy of the same environment at alethia-starter-apps. Every Application the starter-templates page promises is asserted Healthy+Synced at the template's HEAD commit. The A0.6 repo variables are superseded on this dimension, and NO git token is served: the templates are public and cloned anonymously, exactly as a user's copy of a public template would be." ;;
             byo-iac)
               echo "::notice::BYO-IaC dimension — floor shape plus the seven-job custody chain: a customer OpenTofu module refused when unsafe, applied through the state proxy, drifted, healed, destroyed, state cleared. No partial credit." ;;
             *)
@@ -648,7 +831,7 @@ jobs:
           PROVIDER: ${{ matrix.provider }}
           # Read here, not only in the T2 step, because the fabric demo needs a BIGGER POOL and the
           # shape is decided here. See the demo branch below.
-          E2E_FABRIC_DEMO: ${{ vars.E2E_FABRIC_DEMO }}
+          E2E_FABRIC_DEMO: ${{ inputs.fabric_demo && '1' || vars.E2E_FABRIC_DEMO }}
         run: |
           # NET = per-provider network-block override (t2MergeNetworkJSON → snapshot `network`).
           # AWS folds single_nat_gateway=true into the FULL snapshot (one NAT vs one-per-AZ ≈ halves
@@ -731,7 +914,19 @@ jobs:
           # FULL-BAR: swap the floor shape for the provider's heavy profile. The fixture PATH is the
           # one the FT-5 guard names in its own failure message, so guard and workflow cannot disagree
           # about which file is used. The floor NUMBERS are the guard's, not this file's.
-          if [ "${E2E_HEAVY_SHAPE:-false}" = "true" ]; then
+          if [ "${E2E_DIMENSION:-}" = "templates" ]; then
+            # #4113: the starter templates carry their OWN shape — the AI stack's chart alone
+            # requests ~2 vCPU / 4.5 GiB, which the floor's single cpx22 cannot hold beside the
+            # platform, KServe and Kueue. The sizing argument lives beside the numbers, in
+            # test/e2e/t2_templates.go (templatesShapeWhy); the fixture is checked against it offline.
+            TPL="test/e2e/fixtures/cluster_json.templates.${PROVIDER}.json"
+            if [ ! -f "$TPL" ]; then
+              echo "::error::templates requested for '$PROVIDER' but $TPL does not exist — the templates dimension is hetzner-only (scripts/e2e/resolve-dimension.sh --providers templates)."
+              exit 1
+            fi
+            SHAPE="$(jq -c . "$TPL")"
+            echo "::notice::T2 TEMPLATES shape for $PROVIDER (from $TPL): $SHAPE"
+          elif [ "${E2E_HEAVY_SHAPE:-false}" = "true" ]; then
             HEAVY="test/e2e/fixtures/cluster_json.heavy.${PROVIDER}.json"
             if [ ! -f "$HEAVY" ]; then
               # Documented exclusion, not a silent gap (cloud-parity rule): a cloud without a heavy
@@ -1214,7 +1409,8 @@ jobs:
         env:
           PREFLIGHT: "1"
           ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
-          ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
+          # ALETHIA_E2E_REGION is inherited from $GITHUB_ENV — never re-declared at step level,
+          # which would SHADOW the export (TestWorkflowStepEnvDoesNotShadowGithubEnv, #5055).
         run: ./scripts/e2e/aws-cleanup.sh
 
       # ── The real proof. A finer step-level timeout than the job cap so a hung apply
@@ -1270,6 +1466,49 @@ jobs:
       #
       #    The database and the workspace are already here — the job has a postgres service, and
       #    `pnpm install` + `db:migrate` ran above. ──
+      # ── THE BROKER PATH, PROVEN BEFORE ANY SPEND (#4227). ──
+      #
+      #    On aws, gcp and azure the `connector` beat completes only if the console's assertion is
+      #    one the cloud trusts. This console borrows its assertions from the E2E assertion broker
+      #    (apps/e2e-issuer, see the start step's ALETHIA_E2E_ASSERTION_BROKER_URL), so this step
+      #    does that exact exchange once, here, and then presents the result to the cloud's own
+      #    token service: GitHub OIDC → broker assertion (claims checked) → AWS STS / Google STS +
+      #    IAM Credentials / Entra. A credential coming back is the only proof that #4226's trust is
+      #    APPLIED and not merely committed. Every token is discarded; none is printed.
+      #
+      #    Exit 0 ⇒ it writes ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN=<this cloud>, the ONE thing that
+      #    lifts AssertCLIDemoConnectorIsDrivable in the nightly (t2_cli_demo_provision.go), and on
+      #    gcp the broker WIF config the beat uploads (ALETHIA_E2E_CLI_DEMO_GCP_WIF_CONFIG). Exit 10 ⇒
+      #    the trust is not wired: a notice, green — the gate above normally catches that first.
+      #    Anything else ⇒ red, before ~10 minutes of console build and before any cloud resource is
+      #    bought, with the refusing link named (a broker allowlist that does not admit this ref, an
+      #    audience mismatch, a trust not applied).
+      #
+      #    Needs the job's `id-token: write`, which is already here for the clouds' own federation;
+      #    the workflow stays schedule/dispatch-only (scripts/check-workflow-oidc-isolation.mjs). ──
+      - name: cli-demo — prove the broker assertion path (no spend)
+        if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo' && (matrix.provider == 'aws' || matrix.provider == 'gcp' || matrix.provider == 'azure')
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          E2E_ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
+          E2E_ISSUER_GITHUB_AUDIENCE: ${{ vars.E2E_ISSUER_GITHUB_AUDIENCE }}
+          E2E_GCP_BROKER_WIF_AUDIENCE: ${{ vars.E2E_GCP_BROKER_WIF_AUDIENCE }}
+        run: |
+          set -uo pipefail
+          WIF="${RUNNER_TEMP}/cli-demo-gcp-broker-wif.json"
+          rc=0
+          node scripts/e2e/refresh-e2e-issuer-token.mjs prove --provider "$PROVIDER" --gcp-wif-config-out "$WIF" || rc=$?
+          case "$rc" in
+            0)
+              echo "ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN=${PROVIDER}" >> "$GITHUB_ENV"
+              if [ "$PROVIDER" = "gcp" ]; then
+                [ -s "$WIF" ] || { echo "::error::the broker proof passed on gcp but wrote no WIF config — the connector beat would upload nothing"; exit 1; }
+                echo "ALETHIA_E2E_CLI_DEMO_GCP_WIF_CONFIG=${WIF}" >> "$GITHUB_ENV"
+              fi ;;
+            10) echo "the broker trust is not wired for ${PROVIDER} — the connector refusal stands (see the notice above)" ;;
+            *) exit "$rc" ;;
+          esac
+
       - name: cli-demo — build @alethia/ee, then the console
         if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
         # ── THE BUILD NEEDS THE AUTH SETTINGS TOO, AND THAT IS NOT OBVIOUS ──
@@ -1316,8 +1555,27 @@ jobs:
           # branch scopes to `j.org_id = v_runner_org_id` (#392), so the harness registers its runner
           # in the token's org; reading both from one file is what makes them impossible to set
           # independently. Nothing is printed — a credential on stdout reaches the job log.
-          pnpm -F console exec tsx scripts/seed-cli-demo-token.mts --out "${RUNNER_TEMP}/cli-demo-creds.json"
+          #
+          # --e2e-run defines this run's `e2e-run` classification value in the org (#5096). The demo's
+          # `classify` beat assigns it to the project through the real CLI, and it is the ONLY handle
+          # a CLI-created stack carries that the sweepers and the orphan reaper select on — its
+          # project-id is the project's UUID. E2E_ENV is `<run_id>-<attempt>` (the naming step above).
+          pnpm -F console exec tsx scripts/seed-cli-demo-token.mts --out "${RUNNER_TEMP}/cli-demo-creds.json" \
+            --e2e-run "e2e-${E2E_ENV}"
           echo "ALETHIA_E2E_CLI_DEMO_CREDS=${RUNNER_TEMP}/cli-demo-creds.json" >> "$GITHUB_ENV"
+
+      # ── ONE THROWAWAY RECEIPT KEY FOR THE RUNNER AND THE CONSOLE (#5098). `verify receipt` trusts
+      #    only the platform key this console derives from ITS ALETHIA_RECEIPT_SIGNING_KEY, so the
+      #    runner must sign with that same key or the receipt-verify beat reports every receipt as
+      #    untrusted. The console starts before the spine, so the key is made here: fresh per run,
+      #    never a repo secret, masked, in a 0600 file. Only the file's PATH goes to $GITHUB_ENV.
+      #    The start step below reads the file, and the spine reads it for the runner
+      #    (test/e2e/t2_cli_demo_receipt_key.go). The tool's stdout is the ::add-mask:: command, so it
+      #    must NOT be redirected into $GITHUB_ENV. ──
+      - name: cli-demo — make this run's throwaway receipt-signing key
+        if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
+        working-directory: test/e2e
+        run: GOWORK=off go run ./cmd/clidemoreceiptkey --dir "$RUNNER_TEMP" --github-env "$GITHUB_ENV"
 
       - name: cli-demo — start the console and wait for it to answer
         if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
@@ -1340,7 +1598,37 @@ jobs:
           ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
           ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
           ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+          # The env-status convergence backstop's staleness gate (lib/reconcile/converge.ts), in whole
+          # minutes. The runner reports to the Go shim, which does not move env status (its FIDELITY
+          # BOUNDARY), so every job the CLI enqueues leaves its env QUEUED until this backstop
+          # settles it — and the next CLI enqueue is refused until then (#5090). The product default
+          # is 5; 1 is the smallest value `make_interval(mins => …)` accepts. The beats wait for the
+          # settle either way (awaitCLIDemoEnvSettled); this only makes the wait short.
+          ALETHIA_CONVERGE_MIN_AGE_MINUTES: "1"
+          # The `chart-attach` beat wires the A0.6 BYO chart through `alethia chart attach` (#5109).
+          # attachByoChart refuses with a 501 unless this is on (lib/addons/byo-flag.ts). The seeded
+          # path never needed it, because it writes the chart into the job row and skips the console.
+          ALETHIA_BYO_HELM_ENABLED: "true"
+          # ── THE CONSOLE'S ASSERTION SOURCE (#4227). With these two set, every assertion this
+          #    console presents to a cloud — the connector's inline probe included — comes from the
+          #    E2E assertion broker (apps/console/lib/oidc/assertion-source.ts), authenticated with a
+          #    fresh GitHub OIDC token per assertion from this job's `id-token: write`. Set ONLY on the
+          #    cloud whose broker path the step above PROVED (ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN), so an
+          #    unproven cloud keeps the local source and its refusal reads exactly as before. Hetzner
+          #    has no issuer in its path. Identifiers, not secrets. ──
+          CLI_DEMO_BROKER_URL: ${{ vars.E2E_ISSUER_URL }}
+          CLI_DEMO_BROKER_AUDIENCE: ${{ vars.E2E_ISSUER_GITHUB_AUDIENCE }}
         run: |
+          if [ -n "${ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN:-}" ]; then
+            export ALETHIA_E2E_ASSERTION_BROKER_URL="$CLI_DEMO_BROKER_URL"
+            export ALETHIA_E2E_ASSERTION_BROKER_AUDIENCE="$CLI_DEMO_BROKER_AUDIENCE"
+            echo "::notice::the cli-demo console takes its assertions from the E2E assertion broker (${CLI_DEMO_BROKER_URL}) — proven for ${ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN}"
+          fi
+          # The run's shared receipt key (#5098), read from the file the step above wrote. Exported
+          # for this process only; it is never echoed, and the step above masked it.
+          [ -s "${ALETHIA_E2E_CLI_DEMO_RECEIPT_KEY_FILE:-}" ] || { echo "::error::ALETHIA_E2E_CLI_DEMO_RECEIPT_KEY_FILE is unset or empty — the console would vouch for no platform key and receipt-verify could never pass"; exit 1; }
+          ALETHIA_RECEIPT_SIGNING_KEY="$(cat "$ALETHIA_E2E_CLI_DEMO_RECEIPT_KEY_FILE")"
+          export ALETHIA_RECEIPT_SIGNING_KEY
           pnpm -F console exec next start -p 3000 >"${RUNNER_TEMP}/cli-demo-console.log" 2>&1 &
           # POLL for a real answer rather than sleeping. A fixed sleep is either too short — and the
           # first beat fails on a console that was still booting, reported as "the CLI cannot reach
@@ -1372,15 +1660,18 @@ jobs:
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 285 || 190 }}
+        timeout-minutes: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 330 || 190 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
           ALETHIA_E2E_PROJECT: ${{ env.E2E_PROJECT }}
           ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
-          # Generalized region (the compute step also exports this to $GITHUB_ENV; explicit here
-          # for clarity). resolveT2Region reads ALETHIA_E2E_REGION for every provider.
-          ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
+          # ALETHIA_E2E_REGION (resolveT2Region reads it for every provider) and ALETHIA_E2E_CLI_BIN
+          # are deliberately NOT declared here: both are exported to $GITHUB_ENV by earlier steps
+          # (the compute step / gcpzone, and the cli-demo build step), and a step-level entry
+          # SHADOWS the export. #5055: `ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}` here rendered
+          # EMPTY over the built path, and the first-ever cli-demo run refused itself in 0.00s.
+          # TestWorkflowStepEnvDoesNotShadowGithubEnv (test/e2e) fails on the shape.
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
           # ── Day-2 SOAK window (BYOC A0.3). The soak's WINDOW is deliberately NOT set here.
           #    It is exported by the "Resolve full-bar dimension" step from
@@ -1418,7 +1709,11 @@ jobs:
           ALETHIA_E2E_ARGO_BYO_CHART_PATH: ${{ vars.E2E_ARGO_BYO_CHART_PATH }}
           ALETHIA_E2E_ARGO_BYO_CHART_REVISION: ${{ vars.E2E_ARGO_BYO_CHART_REVISION }}
           ALETHIA_E2E_ARGO_BYO_CHART_NAMESPACE: ${{ vars.E2E_ARGO_BYO_CHART_NAMESPACE }}
-          ALETHIA_E2E_GIT_TOKEN: ${{ secrets.E2E_GIT_TOKEN }}
+          # NOT served on the `templates` dimension (#4113). The three starter templates are PUBLIC
+          # and a user's copy of one is cloned anonymously; serving a token there would prove the
+          # credentialed path instead — and would hand a WRITE-capable credential to a run whose
+          # apps repo is a public template this organisation publishes.
+          ALETHIA_E2E_GIT_TOKEN: ${{ env.E2E_DIMENSION != 'templates' && secrets.E2E_GIT_TOKEN || '' }}
           # ── Per-cloud A0.6 repo overrides (P2-D, #1066). GCP + Azure often can't reuse the aws
           #    apps-repo / BYO chart: the manifests differ per cloud AND, per #687, the service-binding
           #    resolves against THAT cloud's tofu outputs. The T2 harness (t2ArgoEnvForProvider) prefers
@@ -1496,7 +1791,7 @@ jobs:
           #    E2E_FABRIC_DEMO is the only variable a maintainer must set to turn it on. UNSET ⇒
           #    empty ⇒ a clean skip, so these lines change nothing until then. Real-apply is
           #    main-gated, so this exercises meaningfully only from `main`. ──
-          ALETHIA_E2E_FABRIC_DEMO: ${{ vars.E2E_FABRIC_DEMO }}
+          ALETHIA_E2E_FABRIC_DEMO: ${{ inputs.fabric_demo && '1' || vars.E2E_FABRIC_DEMO }}
           ALETHIA_E2E_FABRIC_DEMO_REPO: ${{ vars.E2E_FABRIC_DEMO_REPO }}
           ALETHIA_E2E_FABRIC_DEMO_OVERLAYS: ${{ vars.E2E_FABRIC_DEMO_OVERLAYS }}
           ALETHIA_E2E_FABRIC_DEMO_VCLUSTER: ${{ vars.E2E_FABRIC_DEMO_VCLUSTER }}
@@ -1549,6 +1844,13 @@ jobs:
           ALETHIA_E2E_BYO_IAC_BLOCKED_PATH: ${{ vars.E2E_BYO_IAC_BLOCKED_PATH }}
           ALETHIA_E2E_BYO_IAC_TIMEOUT: ${{ vars.E2E_BYO_IAC_TIMEOUT }}
           ALETHIA_E2E_BYO_IAC_SUMMARY: ${{ runner.temp }}/byo-iac-summary.json
+          # ── STARTER TEMPLATES (#4113). Switched on by the `templates` dimension's fidelity
+          #    (ALETHIA_E2E_TEMPLATES=1 via $GITHUB_ENV — deliberately NOT declared here, a step-level
+          #    key would shadow it). The summary is written AT ASSERT TIME, after each phase, because
+          #    the cluster is destroyed before the capture runs (#2688): per Application the sync
+          #    revision (= the template's commit), sync/health and managed-resource count, and for the
+          #    AI template the hourly price of every server the run provisioned. ──
+          ALETHIA_E2E_TEMPLATES_SUMMARY: ${{ runner.temp }}/templates-summary.json
           # ── CROSS-ACCOUNT KEYLESS CLOUD-SM READ (#1268). Layers ON TOP of the base T2 proof: the
           #    base DEPLOY carries a *-xacct connector row AND a secret-kind binding, so the runner
           #    renders secretstore-<cloud>-xacct and the ExternalSecret that reads through it; the
@@ -1556,17 +1858,28 @@ jobs:
           #    so the value never enters CI config, logs or the proof bundle) and that a placed
           #    tenant is still refused (#1306).
           #
-          #    AWS and GCP. azure/alibaba resolve to a recorded BLOCKED reason and skip (see
+          #    AWS, GCP and Azure. alibaba resolves to a recorded BLOCKED reason and skips (see
           #    docs/testing/xacct-secrets-parity.md). Account B's read grant is applied ONCE, out of
-          #    band, by infra/aws-secrets-e2e / infra/gcp-secrets-e2e. GCP additionally needs the
-          #    STANDING external-secrets GSA that grant names (E2E_SECRETS_XACCT_ESO_GSA_EMAIL): the
-          #    harness makes the cluster adopt it. A gcp leg with neither PROJECT_ID nor the GSA set
-          #    records the lane as unwired and runs without the scenario; one without the other fails.
+          #    band, by infra/aws-secrets-e2e / infra/gcp-secrets-e2e / infra/azure-secrets-e2e. GCP
+          #    and Azure additionally need the STANDING external-secrets identity that grant names —
+          #    E2E_SECRETS_XACCT_ESO_GSA_EMAIL on gcp, E2E_SECRETS_XACCT_ESO_IDENTITY_{NAME,RG} on
+          #    azure — which the harness makes the cluster adopt. A gcp/azure leg with none of its own
+          #    variables set records the lane as unwired and runs without the scenario; a half-set
+          #    one fails before any spend.
+          #
+          #    ACCOUNT, REMOTE_KEY and EXPECT_SHA256 are shared by name with the aws leg but differ in
+          #    value, so azure reads its _AZURE siblings first (t2ArgoEnvForProvider; guarded by
+          #    TestPerCloudSiblingsReachTheNightly).
           #
           #    All plain VARIABLES, not secrets: a role ARN, an account id, a region, a secret name
           #    and a digest are not sensitive — which is exactly why the canary is compared by hash.
           #    Unset ⇒ a clean skip. ──
-          ALETHIA_E2E_SECRETS_XACCT: ${{ vars.E2E_SECRETS_XACCT }}
+          #    RIDER (see the resolve job): the dispatch input `secrets_xacct` asks for THIS RUN ONLY
+          #    and the variable stays the maintainer's standing switch — the `fabric_demo` precedent.
+          #    WITHHELD on cli-demo, whichever asked: the CLI-created DEPLOY never carries the xacct
+          #    connector row, so the layer would assert on a SecretStore nothing rendered. The harness
+          #    announces the withholding (secretsXacctConfig.decide) rather than going silent.
+          ALETHIA_E2E_SECRETS_XACCT: ${{ env.E2E_DIMENSION != 'cli-demo' && (inputs.secrets_xacct && '1' || vars.E2E_SECRETS_XACCT) || '' }}
           ALETHIA_E2E_SECRETS_XACCT_ACCOUNT: ${{ vars.E2E_SECRETS_XACCT_ACCOUNT }}
           ALETHIA_E2E_SECRETS_XACCT_REGION: ${{ vars.E2E_SECRETS_XACCT_REGION }}
           ALETHIA_E2E_SECRETS_XACCT_ROLE_ARN: ${{ vars.E2E_SECRETS_XACCT_ROLE_ARN }}
@@ -1580,6 +1893,11 @@ jobs:
           ALETHIA_E2E_SECRETS_XACCT_PROBE_NAMESPACE: ${{ vars.E2E_SECRETS_XACCT_PROBE_NAMESPACE }}
           ALETHIA_E2E_SECRETS_XACCT_EXPECT_SHA256: ${{ vars.E2E_SECRETS_XACCT_EXPECT_SHA256 }}
           ALETHIA_E2E_SECRETS_XACCT_ESO_GSA_EMAIL: ${{ vars.E2E_SECRETS_XACCT_ESO_GSA_EMAIL }}
+          ALETHIA_E2E_SECRETS_XACCT_ACCOUNT_AZURE: ${{ vars.E2E_SECRETS_XACCT_ACCOUNT_AZURE }}
+          ALETHIA_E2E_SECRETS_XACCT_REMOTE_KEY_AZURE: ${{ vars.E2E_SECRETS_XACCT_REMOTE_KEY_AZURE }}
+          ALETHIA_E2E_SECRETS_XACCT_EXPECT_SHA256_AZURE: ${{ vars.E2E_SECRETS_XACCT_EXPECT_SHA256_AZURE }}
+          ALETHIA_E2E_SECRETS_XACCT_ESO_IDENTITY_NAME: ${{ vars.E2E_SECRETS_XACCT_ESO_IDENTITY_NAME }}
+          ALETHIA_E2E_SECRETS_XACCT_ESO_IDENTITY_RG: ${{ vars.E2E_SECRETS_XACCT_ESO_IDENTITY_RG }}
           ALETHIA_E2E_SECRETS_XACCT_SUMMARY: ${{ runner.temp }}/secrets-xacct-summary.json
           # ── KEYLESS DATABASE AUTH (#1511) — the ship gate for epic #1500.
           #
@@ -1588,10 +1906,11 @@ jobs:
           #    rendered perfectly while being incapable of authenticating, for months, because no test
           #    ever opened a connection.
           #
-          #    ENGINE_VERSION + INSTANCE_CLASS have NO defaults and are REQUIRED when enabled: the
-          #    values valid on RDS are rejected by Cloud SQL and by Flexible Server, and again by the
-          #    same cloud's other engine. Use the per-cloud siblings (…_ENGINE_VERSION_GCP) on a leg
-          #    that differs. A missing one fails the run in seconds, before any provisioning spend.
+          #    ENGINE_VERSION + INSTANCE_CLASS: the values valid on RDS are rejected by Cloud SQL and by
+          #    Flexible Server, and again by the same cloud's other engine, so use the per-cloud
+          #    siblings (…_ENGINE_VERSION_GCP) on a leg that differs. For POSTGRES an unset one takes
+          #    keylessPostgresDefaults' per-cloud shape (test/e2e/t2_keyless_db.go); for MYSQL there is
+          #    no default and a missing one fails the run in seconds, before any provisioning spend.
           #
           #    REQUIRES the A0.6 apps repo above: the workload and its bootstrap Job reach the cluster
           #    only through GitOps, so without it there would be nothing to assert against.
@@ -1602,8 +1921,14 @@ jobs:
           #
           #    All plain VARIABLES. Unset ⇒ a clean skip; alibaba/hetzner resolve to the product's own
           #    documented exclusion and skip carrying it. ──
-          ALETHIA_E2E_KEYLESS_DB: ${{ vars.E2E_KEYLESS_DB }}
-          ALETHIA_E2E_KEYLESS_DB_ENGINE: ${{ vars.E2E_KEYLESS_DB_ENGINE }}
+          #    RIDER: the dispatch input `keyless_db` (postgres|mysql) turns this on for THIS RUN ONLY
+          #    and SELECTS THE ENGINE — on the base name and on every per-cloud engine sibling below,
+          #    because t2ArgoEnvForProvider lets a sibling WIN over the base and a standing
+          #    E2E_KEYLESS_DB_ENGINE_GCP would otherwise overrule the engine the dispatch asked for.
+          #    Version and class are NOT overridden: they stay the vars' (or, for postgres with none
+          #    set, keylessPostgresDefaults' per-cloud shape). Withheld on cli-demo, as above.
+          ALETHIA_E2E_KEYLESS_DB: ${{ env.E2E_DIMENSION != 'cli-demo' && (inputs.keyless_db != '' && '1' || vars.E2E_KEYLESS_DB) || '' }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE: ${{ inputs.keyless_db || vars.E2E_KEYLESS_DB_ENGINE }}
           ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION: ${{ vars.E2E_KEYLESS_DB_ENGINE_VERSION }}
           ALETHIA_E2E_KEYLESS_DB_INSTANCE_CLASS: ${{ vars.E2E_KEYLESS_DB_INSTANCE_CLASS }}
           ALETHIA_E2E_KEYLESS_DB_NAME: ${{ vars.E2E_KEYLESS_DB_NAME }}
@@ -1612,6 +1937,15 @@ jobs:
           ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE }}
           ALETHIA_E2E_KEYLESS_DB_NAMESPACE: ${{ vars.E2E_KEYLESS_DB_NAMESPACE }}
           ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
+          #    GCP only: the STANDING app→Cloud SQL account the gcp template ADOPTS (it cannot create or
+          #    grant one — cloudsql.client/instanceUser are project-scoped). infra/gcp-e2e outputs it as
+          #    e2e_gcp_keyless_app_db_sa_email. Unset ⇒ a gcp keyless run is refused before spend.
+          ALETHIA_E2E_KEYLESS_DB_GCP_APP_SA: ${{ vars.E2E_KEYLESS_DB_GCP_APP_SA }}
+          #    The keyless scenario brings its OWN apps repo per cloud, <prefix>-<provider>, and the
+          #    harness RESETS it (force-pushes a README-only orphan commit) before spend. Unset ⇒ the
+          #    default alethialabs-io/alethia-e2e-keyless-apps-{aws,gcp,azure}. E2E_GIT_TOKEN must be
+          #    able to PUSH to those three. The reset refuses any repo not named *keyless*-<provider>.
+          ALETHIA_E2E_KEYLESS_APPS_REPO_PREFIX: ${{ vars.E2E_KEYLESS_APPS_REPO_PREFIX }}
           #    The per-cloud siblings the comment above TELLS a maintainer to use. They were missing,
           #    and this was worse than an unwired scenario: ENGINE_VERSION and INSTANCE_CLASS have no
           #    defaults and are REQUIRED, so a maintainer who followed the documentation and set
@@ -1621,12 +1955,12 @@ jobs:
           #    file and the literal-scanning reachability guard could never see the gap.
           #    TestPerCloudSiblingsReachTheNightly now can. gcp + azure only, matching the A0.6 repo
           #    wave above — alibaba/hetzner carry the product's own documented exclusion and skip.
-          ALETHIA_E2E_KEYLESS_DB_ENGINE_GCP: ${{ vars.E2E_KEYLESS_DB_ENGINE_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_GCP: ${{ inputs.keyless_db || vars.E2E_KEYLESS_DB_ENGINE_GCP }}
           ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION_GCP: ${{ vars.E2E_KEYLESS_DB_ENGINE_VERSION_GCP }}
           ALETHIA_E2E_KEYLESS_DB_INSTANCE_CLASS_GCP: ${{ vars.E2E_KEYLESS_DB_INSTANCE_CLASS_GCP }}
           ALETHIA_E2E_KEYLESS_DB_IMAGE_GCP: ${{ vars.E2E_KEYLESS_DB_IMAGE_GCP }}
           ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE_GCP: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE_GCP }}
-          ALETHIA_E2E_KEYLESS_DB_ENGINE_AZURE: ${{ vars.E2E_KEYLESS_DB_ENGINE_AZURE }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_AZURE: ${{ inputs.keyless_db || vars.E2E_KEYLESS_DB_ENGINE_AZURE }}
           ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION_AZURE: ${{ vars.E2E_KEYLESS_DB_ENGINE_VERSION_AZURE }}
           ALETHIA_E2E_KEYLESS_DB_INSTANCE_CLASS_AZURE: ${{ vars.E2E_KEYLESS_DB_INSTANCE_CLASS_AZURE }}
           ALETHIA_E2E_KEYLESS_DB_IMAGE_AZURE: ${{ vars.E2E_KEYLESS_DB_IMAGE_AZURE }}
@@ -1660,7 +1994,10 @@ jobs:
           #    NOT SET TODAY, deliberately: the target-account trust (an ECR repository policy, a
           #    cross-project artifactregistry.reader grant, an AcrPull assignment) plus a scoped
           #    canary image must be applied out of band first. See docs/testing/xacct-registry-parity.md. ──
-          ALETHIA_E2E_XACCT_REGISTRY: ${{ vars.E2E_XACCT_REGISTRY }}
+          #    RIDER: the dispatch input `xacct_registry` asks for THIS RUN ONLY; the variable stays
+          #    the standing switch. Withheld on cli-demo: the CLI-created DEPLOY carries neither the
+          #    *-xacct registry row nor the foreign-image service the layer pulls through.
+          ALETHIA_E2E_XACCT_REGISTRY: ${{ env.E2E_DIMENSION != 'cli-demo' && (inputs.xacct_registry && '1' || vars.E2E_XACCT_REGISTRY) || '' }}
           ALETHIA_E2E_XACCT_REGISTRY_HOST: ${{ vars.E2E_XACCT_REGISTRY_HOST }}
           ALETHIA_E2E_XACCT_REGISTRY_IMAGE: ${{ vars.E2E_XACCT_REGISTRY_IMAGE }}
           ALETHIA_E2E_XACCT_REGISTRY_ACCOUNT: ${{ vars.E2E_XACCT_REGISTRY_ACCOUNT }}
@@ -1671,10 +2008,8 @@ jobs:
           ALETHIA_E2E_XACCT_REGISTRY_CLIENT_ID: ${{ vars.E2E_XACCT_REGISTRY_CLIENT_ID }}
           ALETHIA_E2E_XACCT_REGISTRY_SERVICE: ${{ vars.E2E_XACCT_REGISTRY_SERVICE }}
           ALETHIA_E2E_XACCT_REGISTRY_NAMESPACE: ${{ vars.E2E_XACCT_REGISTRY_NAMESPACE }}
-          #    The summary is written here but the nightly proof bundle does NOT fold it in yet: that
-          #    belongs in the capture step + demos/proofs/capture-proof.sh, which PR #1941 is
-          #    rewriting. Stated rather than half-wired — scripts/e2e/registry-e2e.sh points this at
-          #    its own bundle, so the verdict already has a real consumer on the recording path.
+          #    The capture step below passes the same path to demos/proofs/capture-proof.sh, which
+          #    folds the verdict into the bundle beside the keyless and xacct-secrets ones.
           ALETHIA_E2E_XACCT_REGISTRY_SUMMARY: ${{ runner.temp }}/xacct-registry-summary.json
 
           # ── ACM certificate against the DELEGATED zone (#1773). ────────────────────────────────
@@ -1808,16 +2143,15 @@ jobs:
           #    re-driving it through the CLI would double the bill to re-prove it. That is why this
           #    is safe to leave ON for every cloud rather than dispatching it like a spend scenario.
           #
-          #    ALETHIA_E2E_CLI_BIN points at the binary under test. Leave it UNSET and the harness
-          #    uses whatever `alethia` is on PATH. Point it at a RELEASE artifact to prove the bar
-          #    against the binary that actually ships — which is the only run that means anything:
-          #    the released CLI was v0.4.0 while `project ... placement` (#2313) and
-          #    `connector hetzner` (#2316) existed only on dev, so a green run against a working-tree
-          #    build would have proven the wrong thing.
+          #    ALETHIA_E2E_CLI_BIN points at the binary under test. It is NOT set here: the
+          #    "cli-demo — build the `alethia` binary under test" step exports it to $GITHUB_ENV —
+          #    vars.E2E_CLI_BIN when a maintainer pinned a RELEASE artifact (the only run that means
+          #    anything: the released CLI was v0.4.0 while `project ... placement` (#2313) and
+          #    `connector hetzner` (#2316) existed only on dev), else a build of this checkout.
+          #    Re-declaring it here shadows that export (see the region note above, #5055).
           #
-          #    Both plain VARIABLES. Unset ⇒ empty ⇒ a clean skip. ──
+          #    A plain VARIABLE. Unset ⇒ empty ⇒ a clean skip. ──
           ALETHIA_E2E_CLI_DEMO: ${{ vars.E2E_CLI_DEMO }}
-          ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}
           # ── The image the in-cluster bootstrap Jobs run (#3216). `selfimage.Ref()` reads this
           #    FIRST, ahead of the ALETHIA_RUNNER_SELF_IMAGE a published image bakes in — which is
           #    exactly the override it was built for, and which nothing that shipped ever set.
@@ -1825,11 +2159,10 @@ jobs:
           #    A DIGEST, from the runner-image job, built from THIS commit. Not a released tag: the
           #    e2e must not prove a binary built from a different commit than the one under test.
           #
-          #    EMPTY on a non-heavy dimension, because the job is skipped there — and empty is the
-          #    correct answer, not a broken one. `Ref()` returns "", both renderers fail closed and
-          #    say so, and no dimension below `maxconfig`/`addons`/`full` installs a Vault to
-          #    bootstrap. So this degrades to exactly today's behaviour rather than to a Job that
-          #    cannot succeed.
+          #    EMPTY on a non-heavy dimension with no keyless_db/xacct_registry rider, because the job
+          #    is skipped there — and empty is the correct answer, not a broken one. `Ref()` returns
+          #    "", the renderers fail closed and say so, and nothing on such a run renders a Job or
+          #    sidecar from it.
           ALETHIA_RUNNER_IMAGE: ${{ needs.runner-image.outputs.image }}
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
@@ -1863,18 +2196,19 @@ jobs:
           #    $300 it would be refused on every gcp/azure/aws leg (PR #4977 review). `!= ''` is the
           #    same test the job/step caps use. ──
           INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
-          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || matrix.provider == 'gcp' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_GCP_COST_CEILING_FULL_USD || '600') || (vars.E2E_GCP_COST_CEILING_USD || '300')) || matrix.provider == 'azure' && ((env.E2E_HEAVY_SHAPE == 'true' || vars.E2E_FABRIC_DEMO != '') && (vars.E2E_AZURE_COST_CEILING_FULL_USD || '600') || (vars.E2E_AZURE_COST_CEILING_USD || '300')) || '' }}
+          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && ((env.E2E_HEAVY_SHAPE == 'true' || (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '')) && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || matrix.provider == 'gcp' && ((env.E2E_HEAVY_SHAPE == 'true' || (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '')) && (vars.E2E_GCP_COST_CEILING_FULL_USD || '600') || (vars.E2E_GCP_COST_CEILING_USD || '300')) || matrix.provider == 'azure' && ((env.E2E_HEAVY_SHAPE == 'true' || (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '')) && (vars.E2E_AZURE_COST_CEILING_FULL_USD || '600') || (vars.E2E_AZURE_COST_CEILING_USD || '300')) || '' }}
           # ── Pre-apply SHAPE controls for the clouds Infracost cannot price (#2385). Read by the
           #    runner (stage.go spendPolicyFromEnv) and enforced after the plan, before the apply.
           #
           #    HETZNER — an allowlist of server types. Hetzner names do not sort by price (cpx, cx and
           #    ccx are three product lines), so "above the cap" means "not listed". The default admits
-          #    exactly what the e2e provisions: cpx22 (the template + hetzner_provider.go default),
-          #    cpx32 (cluster_json.heavy.hetzner.json) and cx33 (cluster_json.demo.hetzner.json and
-          #    maxconfig.go). The spend guard re-derives that list from those files on every PR, so a
-          #    fixture that moves to a bigger type fails CI rather than a paid run. A var widens it —
-          #    a standing, deliberate change.
-          ALETHIA_SPEND_HCLOUD_SERVER_TYPES: ${{ matrix.provider == 'hetzner' && (vars.E2E_HETZNER_SERVER_TYPES || 'cpx22,cpx32,cx33') || '' }}
+          #    exactly what the e2e provisions: cpx22 (the template + hetzner_provider.go default) and
+          #    cpx32 (cluster_json.heavy.hetzner.json, cluster_json.demo.hetzner.json and maxconfig.go).
+          #    cx33 was dropped with #5069: Hetzner offers it in no datacenter, so nothing provisions
+          #    it. The spend guard re-derives that list from those files on every PR, so a fixture
+          #    that moves to a bigger type fails CI rather than a paid run. A var widens it — a
+          #    standing, deliberate change.
+          ALETHIA_SPEND_HCLOUD_SERVER_TYPES: ${{ matrix.provider == 'hetzner' && (vars.E2E_HETZNER_SERVER_TYPES || 'cpx22,cpx32') || '' }}
           #    ALIBABA — refuse a prepaid (Subscription / PrePaid) purchase, which a monthly ceiling
           #    could never see: the money goes at purchase and a teardown does not reliably refund
           #    it (modules/cr/main.tf, #2333). ON BY DEFAULT, including every schedule. It DOES red an
@@ -1937,8 +2271,8 @@ jobs:
           # this offline on every PR, across every cloud x dimension, and additionally holds these
           # two to being the SAME expressions as the `timeout-minutes:` above — which the
           # "if you change one, change both" instruction asked for and nothing enforced.
-          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 285 || 190 }}
-          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 300 || 205 }}
+          T2_STEP_CAP_MINUTES: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 330 || 190 }}
+          T2_JOB_CAP_MINUTES: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 345 || 205 }}
           # Where the go-test stream is teed so capture-proof.sh can put the ASSERTIONS in the
           # committed bundle. ALETHIA_E2E_T2_RUNNER_LOG above is the RUNNER's deployment log — a
           # different stream, which carries no `--- PASS` and no A0.x decision lines.
@@ -2062,6 +2396,10 @@ jobs:
           # set; folded into the bundle + step-summary verdict, with the rotation dwell beside it so
           # a shortened-dwell PASS cannot read like a full one. Absent ⇒ the capture is unchanged.
           ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
+          # Cross-account registry summary (#1047), at the SAME path the t2 step set. It was written on
+          # every run that took the layer and passed HERE on none, so no bundle ever carried the
+          # registry verdict. Folded in exactly like the keyless one above (absent ⇒ unchanged).
+          ALETHIA_E2E_XACCT_REGISTRY_SUMMARY: ${{ runner.temp }}/xacct-registry-summary.json
           # Day-2 access summary (P2-E), written by the T2 test at the SAME path the t2 step set;
           # pass it through so the capture folds the access verdict into the bundle + step summary
           # (#1525 — it was written but never read). Absent ⇒ the capture is unchanged.
@@ -2077,9 +2415,12 @@ jobs:
           # step set; folded into the bundle + step summary (absent ⇒ unchanged). It carries only
           # names, booleans, counts and a PUBLIC commit + plan digest.
           ALETHIA_E2E_BYO_IAC_SUMMARY: ${{ runner.temp }}/byo-iac-summary.json
+          # Starter-template verdicts (#4113), written by the T2 test at the SAME path the t2 step
+          # set; folded into the bundle as templates-summary.json (absent ⇒ unchanged).
+          ALETHIA_E2E_TEMPLATES_SUMMARY: ${{ runner.temp }}/templates-summary.json
           # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
-          # the capture script reads (region + the unique cluster name for the summary).
-          ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
+          # the capture script reads (the unique cluster name for the summary). The region needs
+          # no mapping: ALETHIA_E2E_REGION is itself exported, and re-declaring it would shadow it.
           ALETHIA_E2E_CLUSTER: ${{ env.E2E_CLUSTER }}
         run: |
           # The runner's kubeconfig only exists on the success path. Point KUBECONFIG at it
@@ -2385,6 +2726,37 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # ── CLI-DEMO: AN UNVERIFIED TEARDOWN IS A RED LEG (#4227). ──
+      #
+      #    The verification above deliberately never reds a leg, and for the provisioning legs that
+      #    stays true: "it provisioned" and "the account is clean" are two claims, kept on two axes
+      #    since #2330. The cli-demo claim is different in kind — "a prospect gets from an empty
+      #    account to a running, verified, TORN-DOWN cluster using `alethia` alone" — so a teardown
+      #    nobody could verify leaves that claim unproven, and #4227's acceptance says so outright: a
+      #    failed teardown is a red result. It is also what stops the serial grid: fail-fast cancels
+      #    the next cloud only on a red, and buying aws while hetzner may still be billing is the
+      #    spend the grid's order exists to avoid.
+      #
+      #    Reads the RECEIPT, never the step's exit code, and only CLEAN passes. RESIDUAL,
+      #    UNVERIFIABLE and an absent receipt (the scrub deleted it, or nothing wrote it) are all red:
+      #    each is "nothing here proves the account is empty". Runs on success AND failure
+      #    (`always()`), after the receipt exists, and changes nothing in the cloud. ──
+      - name: cli-demo — the teardown must be VERIFIED CLEAN
+        if: always() && steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          set -uo pipefail
+          RECEIPT="${RUNNER_TEMP}/teardown-verify/out/teardown-verify.json"
+          verdict="$(jq -r '.verdict // "UNVERIFIABLE"' "$RECEIPT" 2>/dev/null || echo ABSENT)"
+          [ -n "$verdict" ] || verdict=ABSENT
+          if [ "$verdict" = "CLEAN" ]; then
+            echo "::notice::cli-demo ${PROVIDER}: teardown verified CLEAN — the cloud was re-listed and holds nothing for this run."
+            exit 0
+          fi
+          echo "::error::cli-demo ${PROVIDER}: teardown verdict ${verdict} — not verified clean, so this leg is RED (#4227) and the grid stops here. The receipt and the sweep above say what is standing; e2e-orphan-reaper.yml reclaims out of band."
+          exit 1
+
       # ── WHY THIS RUNS LAST, and not before the apply (where it used to sit). ──
       #
       # It was placed early so a STALE TABLE would red in seconds rather than after a 50-minute
@@ -2412,7 +2784,9 @@ jobs:
         if: always() && steps.gate.outputs.run == 'true' && vars.E2E_CLI_DEMO != ''
         env:
           ALETHIA_E2E_CLI_DEMO: ${{ vars.E2E_CLI_DEMO }}
-          ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}
+          # A pinned release wins; else the path the cli-demo build step exported (read BACK, not
+          # shadowed — #5055); else empty, and the script below builds one.
+          ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN || env.ALETHIA_E2E_CLI_BIN }}
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
           # ── CEILING SATISFACTION PROBES (t2_cli_ceiling.go). ──
           #
@@ -2542,6 +2916,16 @@ jobs:
           DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
           DISPATCH_DIMENSION: ${{ github.event.inputs.dimension }}
           SCHEDULE: ${{ github.event.schedule }}
+          # The SAME value the T2 step hands the harness as ALETHIA_E2E_FABRIC_DEMO. When the fabric
+          # demo rode the run, red_label titles a red `(fabric-demo)` instead of the base dimension,
+          # so a fabric-gate failure neither dedups onto nor contests that dimension's cell (#5153).
+          E2E_FABRIC_DEMO: ${{ inputs.fabric_demo && '1' || vars.E2E_FABRIC_DEMO }}
+          # The three RIDERS, each the value the T2 step hands the harness (red_label drops them on
+          # cli-demo, as the T2 step does): a rider-only red is titled `(keyless-db)`, `(xacct-secrets)`,
+          # `(xacct-registry)` or `(riders)` and contests no floor cell (#5201/#5204/#5205).
+          E2E_KEYLESS_DB: ${{ inputs.keyless_db != '' && '1' || vars.E2E_KEYLESS_DB }}
+          E2E_SECRETS_XACCT: ${{ inputs.secrets_xacct && '1' || vars.E2E_SECRETS_XACCT }}
+          E2E_XACCT_REGISTRY: ${{ inputs.xacct_registry && '1' || vars.E2E_XACCT_REGISTRY }}
         run: |
           set -euo pipefail
           # The dimension is part of every red issue TITLE, which is the dedup key: keyed on the cloud

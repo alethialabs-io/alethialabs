@@ -673,14 +673,23 @@ func t2RequireMaxConfigNodeShape(provider string, snapshot map[string]any) (fata
 //
 //	dev 1.57 + staging 1.67 + staging-in-vcluster 1.67 = 4.91 vCPU / 4.14 GiB of workload requests
 //
-// fabricDemoPlatform* is what shares the node with it: ArgoCD (already installed by the base
-// scenario), the vcluster control plane, the platform rail (cert-manager / metrics-server / ingress),
-// and per-node kube overhead. Deliberately generous — the cost of over-reserving is a slightly bigger
-// node, and the cost of under-reserving is the 11-hour failure this guard exists to prevent.
+// fabricDemoPlatform* is what shares the POOL with it: ArgoCD (already installed by the base
+// scenario), the vcluster control plane, the platform rail (cert-manager / metrics-server / ingress)
+// and the cluster's own singletons (DNS, konnectivity, network-policy control plane). Deliberately
+// generous — the cost of over-reserving is a slightly bigger node, and the cost of under-reserving is
+// the 11-hour failure this guard exists to prevent.
+//
+// What is NOT in it any more is the PER-NODE overhead. It used to be ("+ kube overhead"), which was
+// one constant standing in for something that scales with the node count and differs by cloud — and
+// the floor was compared against NOMINAL capacity, so on GKE the per-node reservation and system
+// DaemonSets (~0.93 vCPU per e2-standard-4) were not paid for anywhere. That is now
+// fabricDemoNodeReservationFor (fabricdemo_node_reservation.go), subtracted from each node before the
+// comparison. The 1.8 is left unchanged rather than re-derived: nothing has measured the cluster-scoped
+// share alone, and lowering it on arithmetic would be the unmeasured-number mistake in reverse.
 const (
 	fabricDemoPerCopyVCPU   = 1.7 // one boutique copy, staging's replica bump included, rounded up
 	fabricDemoPerCopyMemGB  = 1.5
-	fabricDemoPlatformVCPU  = 1.8 // ArgoCD + vcluster control plane + platform rail + kube overhead
+	fabricDemoPlatformVCPU  = 1.8 // ArgoCD + vcluster control plane + platform rail + cluster singletons
 	fabricDemoPlatformMemGB = 3.0
 	fabricDemoMinNodes      = 2 // one node cannot be drained/rescheduled around; also pod-per-node room
 )
@@ -700,8 +709,11 @@ func fabricDemoNodeFloor(tierCount int) (vcpu, memGB float64) {
 // provision, returns (fatal, msg), hard-fails only under ALETHIA_E2E_T2_REQUIRE, and prints the real
 // shortfall rather than restating a floor that could drift.
 //
-// A full-bar run needs no special case: the heavy profile is larger than the demo floor on every
-// cloud, so the same total-capacity comparison simply passes.
+// The floor is compared against what the pool can SCHEDULE — nodes × (nominal − the provider's
+// per-node reservation) — not against nominal capacity (#845, gcp run 36648775773: e2-standard-4 ×2
+// is 8 vCPU nominal against a 6.9 floor, but ~6.1 schedulable, and the staging tier went Degraded).
+// A cloud whose e2e quota caps its total vCPU (fabricDemoRegionalVCPUQuota) is also refused over that
+// quota, and its floor refusal says whether any in-quota shape exists — Azure's does not.
 //
 // tierCount comes from the caller's already-parsed tiers, so a misconfigured
 // ALETHIA_E2E_FABRIC_DEMO_OVERLAYS fails in fabricDemoTiers (which is fail-closed on zero) rather
@@ -736,11 +748,33 @@ func t2RequireFabricDemoNodeShape(provider string, snapshot map[string]any, tier
 	vcpu, _ := t2Num(ns["vcpu"])
 	mem, _ := t2Num(ns["memory_gb"])
 	totalVCPU, totalMem := vcpu*desired, mem*desired
-	if totalVCPU < minVCPU || totalMem < minMemGB {
+	quota, capped := fabricDemoRegionalVCPUQuota[provider]
+	if capped && totalVCPU > quota {
 		return t2RequireIsHard(), fmt.Sprintf(
-			"fabric demo on %s needs >= %.1f total vCPU and >= %.1f GB across the pool (%d boutique copies at ~%.1f vCPU / %.1f GB each, plus ArgoCD + the vcluster control plane + the platform rail); node_size %.0fvCPU/%.0fGB × %d = %.0fvCPU/%.0fGB — size up the demo profile (%s)",
+			"fabric demo on %s: node_size %.0fvCPU × %d = %.0f vCPU exceeds the e2e subscription's %.0f regional vCPU quota (#5075, #5121) — the apply would fail on quota after spend starts",
+			provider, vcpu, int(desired), totalVCPU, quota)
+	}
+	res, ok := fabricDemoNodeReservationFor(provider, vcpu, mem)
+	if !ok {
+		return t2RequireIsHard(), fmt.Sprintf(
+			"fabric demo on %q: no per-node reservation model (fabricDemoNodeReservationFor), so what the pool can SCHEDULE cannot be computed — nominal capacity is not an answer", provider)
+	}
+	schedVCPU, schedMem := fabricDemoSchedulable(res, desired, vcpu, mem)
+	if schedVCPU < minVCPU || schedMem < minMemGB {
+		msg := fmt.Sprintf(
+			"fabric demo on %s needs >= %.1f vCPU and >= %.1f GB SCHEDULABLE across the pool (%d boutique copies at ~%.1f vCPU / %.1f GB each, plus ArgoCD + the vcluster control plane + the platform rail); node_size %.0fvCPU/%.0fGB × %d = %.0fvCPU/%.0fGB nominal, but %s, leaving %.2f vCPU / %.2f GB schedulable",
 			provider, minVCPU, minMemGB, tierCount+1, fabricDemoPerCopyVCPU, fabricDemoPerCopyMemGB,
-			vcpu, mem, int(desired), totalVCPU, totalMem, demoFixture)
+			vcpu, mem, int(desired), totalVCPU, totalMem, res, schedVCPU, schedMem)
+		if capped {
+			// Not "add a node": on a quota-capped cloud that advice leads straight into the quota refusal
+			// above, and the enumeration test proves no bigger SKU helps either.
+			msg += fmt.Sprintf(
+				". %s's e2e subscription has a %.0f regional vCPU quota (#5075, #5121) and NO catalog shape inside it clears this floor (TestFabricDemoAzureHasNoInQuotaShape) — the fabric demo cannot run on %s until that quota is raised",
+				provider, quota, provider)
+		} else {
+			msg += fmt.Sprintf(" — add a node to the demo profile (%s)", demoFixture)
+		}
+		return t2RequireIsHard(), msg
 	}
 	return false, ""
 }

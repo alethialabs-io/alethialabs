@@ -509,6 +509,7 @@ export function AddonConfigForm({
               </CollapsibleTrigger>
               <CollapsibleContent className="pt-2">
                 <Textarea
+                  aria-label="Raw Helm values (YAML)"
                   rows={8}
                   spellCheck={false}
                   placeholder={

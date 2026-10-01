@@ -5,12 +5,17 @@
 # assertion broker (apps/e2e-issuer, contract in packages/workload-identity/src/broker.ts), in
 # ADDITION to the GitHub Actions OIDC trust in e2e-nightly.tf.
 #
-# OFF BY DEFAULT. `e2e_broker_issuer_url = null` (the committed value in terraform.tfvars) creates
-# no provider and renders no trust statement, so a plan on this change alone is a no-op. Setting it
-# to the broker's origin ADDS one IAM OIDC provider and one statement (`E2EBrokerAssertion`) to the
-# role's trust document; the GitHub statement is untouched. Setting it back to null removes both
-# and nothing else — the trust is additive and independently removable. The checks in checks.tf
-# report on every plan if either half stops being true.
+# GATED ON THE ISSUER, NOT OFF. The committed terraform.tfvars sets `e2e_broker_issuer_url` to
+# https://e2e-issuer.alethialabs.io (#5004), and the broker trust is created whenever it is non-null
+# — so any plan or apply of this stack proposes one IAM OIDC provider and one trust statement. Apply
+# only after the issuer serves at that origin (docs/testing/e2e-state-migration.md,
+# infra/e2e-issuer/README.md). To plan without the broker, pass
+# `-var-file=<(printf 'e2e_broker_issuer_url = null\n')` — a plain `-var e2e_broker_issuer_url=null`
+# passes the string "null", not null.
+# Setting it to the broker's origin ADDS one IAM OIDC provider and one statement
+# (`E2EBrokerAssertion`) to the role's trust document; the GitHub statement is untouched. Setting it
+# back to null removes both and nothing else — the trust is additive and independently removable.
+# The checks in checks.tf report on every plan if either half stops being true.
 #
 # WHAT AWS CAN PIN, and what it cannot. For a generic (non-GitHub) OIDC provider, IAM exposes only
 # `<issuer>:aud` and `<issuer>:sub` (plus `amr`) as condition keys, so this trust pins:

@@ -23,11 +23,14 @@
 //    we assert `keys(statementMap).length === keys(s).length` on every file, which is a
 //    corruption tripwire the summary structurally cannot offer.
 //
-// 3. It makes the metric provider-agnostic. Under the v8 provider one statement is exactly one
-//    line (v8-to-istanbul's CovLine.toIstanbul emits whole-line ranges). Under `istanbul` it is
-//    not — several statements share a line. A ratchet reading `summary.lines` would therefore be
-//    measuring a DIFFERENT METRIC per project without ever saying so. Computing statements from
-//    `s` means the definition is identical everywhere by construction.
+// 3. It makes the metric independent of how the provider maps statements to lines. Under vitest
+//    <= 3 the v8 provider went through v8-to-istanbul, whose CovLine.toIstanbul emitted whole-line
+//    ranges, so one statement was exactly one line. Vitest 4 (#5048) replaced that with AST-based
+//    remapping (ast-v8-to-istanbul): statements are real AST statements, so several can share a
+//    line and one can span several — measured on packages/format, 86 statements over 71 distinct
+//    start lines, 7 of them multi-line. `istanbul` has always behaved that way. A ratchet reading
+//    `summary.lines` would therefore have changed METRIC silently at that upgrade. Computing
+//    statements from `s` means the definition is the same under every provider by construction.
 //
 // ── WHY STATEMENTS AND NOT LINES ────────────────────────────────────────────────────────────
 //

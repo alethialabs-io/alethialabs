@@ -35,7 +35,14 @@ import { EnvironmentPlacement } from "./environment-placement";
 import { RegionSelect } from "./region-select";
 import { SourceSummary } from "./source-summary";
 import type { ScratchKind } from "./start-from-scratch-cards";
-import { buildCreateInput, buildEmptyCreateInput } from "./templates";
+import { TemplatePicker } from "./template-picker";
+import {
+	DEFAULT_TEMPLATE,
+	type TemplateId,
+	buildCreateInput,
+	buildEmptyCreateInput,
+	templateOption,
+} from "./templates";
 
 /** The scan lifecycle union (mirrors `getScanProposal`). */
 type ScanResult =
@@ -64,7 +71,9 @@ interface ConfigureProjectProps {
 }
 
 const SCRATCH_META: Record<ScratchKind, { label: string; desc: string }> = {
-	template: { label: "Standard template", desc: "start from a template" },
+	// The template's LABEL is the picked template's title (see `scratchMeta` below); this is the
+	// fallback before anything renders.
+	template: { label: "Template", desc: "start from a template" },
 	blank: { label: "Blank project", desc: "an empty canvas" },
 	"byo-helm": { label: "BYO Helm chart", desc: "deploy via ArgoCD" },
 	"byo-iac": { label: "BYO IaC module", desc: "plan · verify · apply" },
@@ -119,6 +128,9 @@ export function ConfigureProject({
 	const [environments, setEnvironments] = useState<EnvironmentSpec[]>(
 		DEFAULT_ENVIRONMENT_MATRIX,
 	);
+	// Only read on the `?scratch=template` path; it picks the starter repository and the webhook-CA
+	// marker (#4990: the AI template declares KServe), not the cluster.
+	const [template, setTemplate] = useState<TemplateId>(DEFAULT_TEMPLATE);
 	const [creating, setCreating] = useState(false);
 	// The server's reason for refusing this create, rendered beside the field it is about. NOT form
 	// state — it is what came back, so it is cleared on the next attempt and never edited.
@@ -162,9 +174,8 @@ export function ConfigureProject({
 	// A cloud is required only when the create needs a provider — an import (its inferred stack targets
 	// one) or a Template (its cluster preset is per-provider). Blank / BYO create an empty project with
 	// no cloud (picked later on the canvas), exactly like the old "Create empty project" path.
-	const requiresCloud =
-		source.kind === "import" ||
-		(source.kind === "scratch" && source.scratch === "template");
+	const isTemplate = source.kind === "scratch" && source.scratch === "template";
+	const requiresCloud = source.kind === "import" || isTemplate;
 	const needsCloud = requiresCloud && !identityId;
 	const slug = slugify(name, "project");
 
@@ -248,7 +259,7 @@ export function ConfigureProject({
 				if (!identityId) throw new Error("A cloud account is required.");
 				input = buildCreateInput({
 					projectName: name,
-					template: "standard",
+					template,
 					provider,
 					cloudIdentityId: identityId,
 					defaultEnvironment,
@@ -293,7 +304,13 @@ export function ConfigureProject({
 				? "your repository"
 				: undefined;
 	const scratchMeta =
-		source.kind === "scratch" ? SCRATCH_META[source.scratch] : undefined;
+		source.kind === "scratch"
+			? isTemplate
+				? { ...SCRATCH_META.template, label: `${templateOption(template).title} template` }
+				: SCRATCH_META[source.scratch]
+			: undefined;
+	// Section numbers follow what is on screen: the Template section exists only for a template.
+	const sectionNo = (i: number) => String(i + (isTemplate ? 1 : 0)).padStart(2, "0");
 
 	return (
 		<div className="w-full">
@@ -381,7 +398,13 @@ export function ConfigureProject({
 						</p>
 					</Section>
 
-					<Section n="02" title="Cloud & region" hint="one per project">
+					{isTemplate && (
+						<Section n="02" title="Template" hint="picks a starter repository">
+							<TemplatePicker value={template} onChange={setTemplate} />
+						</Section>
+					)}
+
+					<Section n={sectionNo(2)} title="Cloud & region" hint="one per project">
 						{needsCloud && (
 							<Notice className="mb-3">
 								{source.kind === "import"
@@ -410,7 +433,7 @@ export function ConfigureProject({
 						</div>
 					</Section>
 
-					<Section n="03" title="Environments" hint="placed on Fabrics">
+					<Section n={sectionNo(3)} title="Environments" hint="placed on Fabrics">
 						<EnvironmentPlacement
 							value={environments}
 							onChange={setEnvironments}

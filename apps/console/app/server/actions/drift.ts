@@ -66,43 +66,6 @@ export async function getLatestDriftPosture(
 }
 
 /**
- * Upsert a project environment's drift posture. Called by the runner (service role)
- * after a DETECT_DRIFT job runs `tofu plan -refresh-only -json` → `drift.Analyze`.
- * Latest-wins per (project, environment).
- */
-export async function recordDriftPosture(input: {
-	projectId: string;
-	environmentId: string | null;
-	inSync: boolean;
-	drifted: number;
-	details: DriftDetail[];
-	scannedAt: string;
-}): Promise<void> {
-	const db = getServiceDb();
-	await db
-		.insert(environmentDrift)
-		.values({
-			project_id: input.projectId,
-			environment_id: input.environmentId,
-			in_sync: input.inSync,
-			drifted: input.drifted,
-			details: input.details,
-			scanned_at: new Date(input.scannedAt),
-			updated_at: new Date(),
-		})
-		.onConflictDoUpdate({
-			target: [environmentDrift.project_id, environmentDrift.environment_id],
-			set: {
-				in_sync: input.inSync,
-				drifted: input.drifted,
-				details: input.details,
-				scanned_at: new Date(input.scannedAt),
-				updated_at: new Date(),
-			},
-		});
-}
-
-/**
  * Latest INFRA drift posture for a Fabric (#841). Infra drift is per-Fabric: the Fabric owns the
  * tofu state (#838), so its refresh-only divergence belongs here, not to a delivery Environment.
  * PDP-gated (view); tenancy is walled by the parent-project org join exactly like
@@ -142,40 +105,6 @@ export async function getLatestFabricDrift(
 	};
 }
 
-/**
- * Upsert a Fabric's INFRA drift posture (#841). Called by the job-status route (service role) after a
- * DETECT_DRIFT job whose snapshot carries a `fabric_id` runs its refresh-only plan. Latest-wins per
- * (project, fabric). For a `dedicated` placement (env owns its Fabric 1:1) this mirrors the
- * `environment_drift` row; for a shared placement it is the single per-Fabric infra truth.
- */
-export async function recordFabricDriftPosture(input: {
-	projectId: string;
-	fabricId: string;
-	inSync: boolean;
-	drifted: number;
-	details: DriftDetail[];
-	scannedAt: string;
-}): Promise<void> {
-	const db = getServiceDb();
-	await db
-		.insert(fabricDrift)
-		.values({
-			project_id: input.projectId,
-			fabric_id: input.fabricId,
-			in_sync: input.inSync,
-			drifted: input.drifted,
-			details: input.details,
-			scanned_at: new Date(input.scannedAt),
-			updated_at: new Date(),
-		})
-		.onConflictDoUpdate({
-			target: [fabricDrift.project_id, fabricDrift.fabric_id],
-			set: {
-				in_sync: input.inSync,
-				drifted: input.drifted,
-				details: input.details,
-				scanned_at: new Date(input.scannedAt),
-				updated_at: new Date(),
-			},
-		});
-}
+// The WRITES (recordDriftPosture, recordFabricDriftPosture) live in lib/drift/posture.ts. They are
+// the job-status route's service-role seam; as exports of this `"use server"` file anyone could
+// overwrite any project's drift posture — including marking a drifted environment in sync (#5219).

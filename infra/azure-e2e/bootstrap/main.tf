@@ -15,7 +15,8 @@
 # is already published as a repo variable — so this state is worth a storage account.
 #
 # This stack's OWN state goes into the container it creates, via one documented two-phase init
-# (`-backend=false` → apply → `-migrate-state`). Runbook: docs/testing/e2e-state-migration.md.
+# (temporary local-backend override → apply → delete it →
+# `-migrate-state`; `-backend=false` cannot plan). Runbook: docs/testing/e2e-state-migration.md.
 
 locals {
   tags = {

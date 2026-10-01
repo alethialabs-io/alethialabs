@@ -69,9 +69,10 @@ export async function currentActor(): Promise<Actor> {
 	//    the console by a second route.
 	//
 	//    A ForbiddenError, not a bare Error, on two counts: API and CLI routes classify on that
-	//    type to answer 403, and `[org]/layout.tsx` matches the bare string "Unauthorized" EXACTLY
-	//    to bounce to sign-in — which this is not. The session is fine; the address is not the
-	//    caller's to ask for.
+	//    type to answer 403, and `[org]/layout.tsx` bounces to sign-in only on an
+	//    `UnauthorizedError` (`classifyOrgScopeFailure`, `lib/auth/org-scope-failure.ts`, matches
+	//    by class) — which this is not: `ForbiddenError` does not extend it. The session is fine;
+	//    the address is not the caller's to ask for.
 	//
 	//    ⚠ It does NOT become a 404 on a page render. `[org]/layout.tsx`'s try/catch wraps only
 	//    `resolveOrgScope`, which never calls this; a throw from a page's own reader escapes to

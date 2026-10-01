@@ -5,7 +5,7 @@ import { asRecord, toRecordArray } from "@/lib/records";
 import { boolOr, numOr, toArray, toStr, toStrArray } from "@/lib/coerce";
 import { tool } from "ai";
 import { z } from "zod";
-import { getRegionPrices } from "@/app/server/actions/pricing";
+import { getRegionPrices } from "@/lib/pricing/region-prices";
 import {
 	AUTOSCALER,
 	CACHE_NODE_TYPES,

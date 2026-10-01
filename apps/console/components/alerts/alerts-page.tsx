@@ -90,11 +90,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 
 	// The plan doesn't unlock alerting — show the upsell instead of the surface.
 	if (!alerting) {
-		return (
-			<div className="mx-auto w-full max-w-[1200px]">
-				<FeatureUpsell feature="alerting" />
-			</div>
-		);
+		return <FeatureUpsell feature="alerting" />;
 	}
 
 	// A write on this hub has to reach BOTH halves of it. `router.refresh()` re-runs the RSC and
@@ -123,7 +119,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 	};
 
 	return (
-		<div className="mx-auto w-full max-w-[1200px] space-y-12">
+		<div className="space-y-12">
 			{/*
 			 * No console page paints a page title any more — the sidebar entry and the breadcrumb
 			 * both say "Alerts". A route still needs exactly one `h1` for its outline, though, and
@@ -133,7 +129,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 			 */}
 			<h1 className="sr-only">Alerts</h1>
 
-			<section id="policies" className="scroll-mt-4">
+			<section id="policies" className="scroll-mt-4" aria-busy={policiesView.busy}>
 				<SectionHeading
 					className="mb-4"
 					title={sectionTitle(ShieldAlert, "Policies")}
@@ -149,7 +145,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 				/>
 			</section>
 
-			<section id="channels" className="scroll-mt-4">
+			<section id="channels" className="scroll-mt-4" aria-busy={channelsView.busy}>
 				<SectionHeading
 					className="mb-4"
 					title={sectionTitle(Webhook, "Channels")}
@@ -165,7 +161,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 				/>
 			</section>
 
-			<section id="activity" className="scroll-mt-4">
+			<section id="activity" className="scroll-mt-4" aria-busy={activityView.busy}>
 				<SectionHeading
 					className="mb-4"
 					title={sectionTitle(Activity, "Activity")}

@@ -50,6 +50,41 @@
 //   - Every wait is BOUNDED (ALETHIA_E2E_FABRIC_DEMO_TIMEOUT) so a never-converging overlay fails
 //     loudly instead of hanging until the job cap kills the leg.
 //
+// # The prod tier is the DEDICATED placement, and it is asserted, not assumed
+//
+// #845 asks, per cloud, for ONE Fabric: dev and staging as namespace placements, a vcluster tier,
+// and "a dedicated-Fabric prod placement". In the product, a Fabric IS the cluster a dedicated
+// placement provisions (provisioner.selectPlacementPath: an empty or `dedicated` placement_mode runs
+// the full-cluster tofu), and namespace/vcluster placements then target it by cluster_name. So the
+// prod tier's placement is the BASE deploy — the only placement in this run that provisions a
+// cluster, and therefore the only one that carries its own signed receipt.
+//
+// That used to be implicit: fabricDemoStage mapped a "prod" tier name and nothing ever placed or
+// asserted one. Two things now hold it, and they are different KINDS of claim:
+//
+//   - CHECKED: assertFabricDemoProd reads the base DEPLOY job's config_snapshot and requires it to
+//     resolve to the dedicated path. That column is not where anything else in this gate came from,
+//     so a base deploy submitted as a namespace/vcluster placement fails here. Note the harness
+//     itself builds that snapshot, so in practice this pins the harness's own submission — it is a
+//     regression guard on what the run ASKED for, not an observation of the path the runner took.
+//   - BY CONSTRUCTION, not checked: that this placement owns the Fabric and carries the receipt.
+//     fabricDemoParams.fabricClust and .planSHA are both read from the SAME base job's
+//     execution_metadata (t2_provision_test.go), so re-reading that row and comparing it with them
+//     would compare a column with itself. The receipt is the one the base run already verified
+//     (VerifySignedReceipt) and the verdict already requires as FabricPlanSHA. The summary records
+//     neither as a separate prod-tier proof, because neither was separately proven.
+//
+// fabricDemoVerdictPass cannot read green without the checked half. fabricDemoTiers refuses a tier
+// that maps to production, so prod can never be quietly downgraded to a namespace tenant on somebody
+// else's Fabric.
+//
+// What this does NOT claim: that the prod Fabric hosts nothing else. "One Fabric per cloud" puts the
+// dev/staging tenants on the same cluster. A prod on a cluster SEPARATE from the tenants is a second
+// full cluster provision + destroy per cloud, which does not fit inside this leg's job ceiling; it
+// would have to be its own leg. And the base snapshot's environment_stage is the run's env slug, not
+// `production`: environment_stage names the tofu workspace and the cluster, so relabelling it would
+// make concurrent runs collide. The summary records that label (stage_label) rather than hiding it.
+//
 // # The namespace is load-bearing, not cosmetic
 //
 // RenderNamespaceTenant pins the tenant AppProject to `destinations: [{server: in-cluster, namespace:
@@ -100,6 +135,11 @@ const fabricDemoDefaultOverlays = "dev-1=boutique-dev-1,staging=boutique-staging
 // one vcluster placement — it is the isolation rung neither Porter nor Qovery offers, so it is the
 // headline of this gate, not an optional extra.
 const fabricDemoDefaultVClusterTier = "staging"
+
+// fabricDemoProdTier names #845's dedicated-Fabric prod tier. It is NOT an overlay tier: its
+// placement is the base dedicated deploy (see the package comment), so it is asserted by
+// assertFabricDemoProd and refused by fabricDemoTiers.
+const fabricDemoProdTier = "prod"
 
 // fabricDemoPollInterval is how often a convergence poll re-reads. A Kustomize render plus an ArgoCD
 // sync is tens of seconds, so a short poll is not wasted.
@@ -221,7 +261,8 @@ func isRFC1123Label(s string) bool {
 // fabricDemoTiers resolves the tiers this run REQUIRES to have converged, parsing `tier[=namespace]`
 // pairs. Fail-closed on an empty result (a gate that iterates zero tiers reports success having
 // asserted nothing), on a duplicate tier, on a duplicate namespace (two placements would fight over
-// one namespace), and on a namespace that is not a valid RFC-1123 label.
+// one namespace), on a namespace that is not a valid RFC-1123 label, and on a tier that maps to the
+// production stage (prod is the dedicated placement, never a namespace tenant).
 func fabricDemoTiers(env, provider string) ([]fabricDemoOverlayTier, error) {
 	raw := t2ArgoEnvForProvider(envFabricDemoOverlays, provider, fabricDemoDefaultOverlays)
 	var tiers []fabricDemoOverlayTier
@@ -243,6 +284,11 @@ func fabricDemoTiers(env, provider string) ([]fabricDemoOverlayTier, error) {
 		}
 		if !isRFC1123Label(ns) {
 			return nil, fmt.Errorf("%s entry %q resolves to namespace %q, which is not a valid RFC-1123 label", envFabricDemoOverlays, part, ns)
+		}
+		if fabricDemoStage(tier) == fabricDemoStage(fabricDemoProdTier) {
+			// Prod is the DEDICATED placement (the base deploy — see the package comment). Placing it
+			// as a namespace tenant would make the "prod" the gate reports a tenant on a shared Fabric.
+			return nil, fmt.Errorf("%s entry %q maps to the %s stage — the prod tier is the DEDICATED placement that owns the Fabric, never a namespace tenant on it", envFabricDemoOverlays, part, fabricDemoStage(tier))
 		}
 		if seenTier[tier] {
 			return nil, fmt.Errorf("%s lists tier %q twice", envFabricDemoOverlays, tier)
@@ -277,19 +323,50 @@ func fabricDemoVClusterTier(provider string, tiers []fabricDemoOverlayTier) (fab
 	return fabricDemoOverlayTier{}, fmt.Errorf("%s = %q, which is not one of the configured tiers %v", envFabricDemoVCluster, want, names)
 }
 
-// fabricDemoVClusterSlug names this scenario's vcluster. Disjoint from #1308's `e2e-vc-` so both can
-// live inside one Fabric lifetime. Bounded to 54 chars so the host namespace `vcluster-<name>` still
-// fits the 63-char limit.
-func fabricDemoVClusterSlug(env string) string {
-	clean := strings.Trim(fabricDemoSlugUnsafe.ReplaceAllString(strings.ToLower(strings.TrimSpace(env)), "-"), "-")
-	if clean == "" {
-		clean = "env"
+// fabricDemoVClusterName names this scenario's vcluster: the namespace the tier's overlay DECLARES.
+//
+// It used to be a run-scoped slug (`e2e-vcdemo-<env>`), and the vcluster tier could never converge.
+// A vcluster env's snapshot `namespace` is BOTH the virtual cluster's name AND the namespace its app
+// deploys into inside it (runVClusterDeploy → vclusterAppInput → the Application's
+// destination.namespace, packages/core/provisioner/deploy_vcluster.go). ArgoCD's
+// CreateNamespace=true creates exactly that one namespace — and nothing else. The overlay stamps
+// every resource into ITS namespace (`namespace: boutique-staging`) and deliberately ships no
+// Namespace object, so the sync asked a fresh, empty vcluster to create Deployments in a namespace
+// that did not exist there. Run 36634781502 (hetzner): registered, then
+// `health="Missing" sync="OutOfSync"` for the whole ten minutes — nothing was ever created.
+//
+// The namespace tiers never hit this because they already pass tier.Namespace — see
+// fabricDemoDefaultOverlays: "each mapped to the namespace ITS OVERLAY DECLARES … a mismatch can
+// never converge". The vcluster tier is held to the same contract.
+//
+// Collisions: the vcluster lives on its OWN API server, so sharing a name with the namespace tier
+// of the same overlay is safe — its host footprint is `vcluster-<name>`, its ArgoCD registration is
+// a cluster Secret, and its AppProject/Application carry the `vc-` prefixes. #1308's vcluster is
+// `e2e-vc-<env>`. Bounded to 54 chars so the host namespace `vcluster-<name>` still fits 63.
+func fabricDemoVClusterName(tier fabricDemoOverlayTier) (string, error) {
+	name := strings.TrimSpace(tier.Namespace)
+	if name == "" {
+		return "", fmt.Errorf("vcluster tier %q declares no namespace — the vcluster's in-cluster namespace must be the one its overlay stamps", tier.Tier)
 	}
-	name := "e2e-vcdemo-" + clean
-	if len(name) > 54 {
-		name = strings.TrimRight(name[:54], "-")
+	if !isRFC1123Label(name) || len(name) > 54 {
+		return "", fmt.Errorf("vcluster tier %q namespace %q is not a valid vcluster name (RFC-1123 label, at most 54 chars so `vcluster-<name>` fits 63)", tier.Tier, name)
 	}
-	return name
+	return name, nil
+}
+
+// fabricDemoVClusterParams builds the #1308 body's parameters for #845's vcluster tier. Pure, so the
+// contract that the snapshot's namespace is the overlay's namespace is pinned by a unit test.
+func fabricDemoVClusterParams(p fabricDemoParams, vcTier fabricDemoOverlayTier, repo string) (vclusterTenantParams, error) {
+	vcName, err := fabricDemoVClusterName(vcTier)
+	if err != nil {
+		return vclusterTenantParams{}, err
+	}
+	return vclusterTenantParams{
+		project: p.project, env: p.env, provider: p.provider, region: p.region,
+		fabricClust: p.fabricClust, owner: p.owner,
+		appsRepo: repo, appsPath: fabricDemoOverlayPath(vcTier.Tier),
+		vcName: vcName, label: "fabric-demo vcluster tier (#845)", requireAppResources: true,
+	}, nil
 }
 
 // sameRepoURL compares two git URLs modulo case, a trailing slash and a `.git` suffix — the three
@@ -433,6 +510,59 @@ type FabricDemoVCluster struct {
 	Deregistered      bool   `json:"deregistered"`
 }
 
+// FabricDemoProd is the prod tier's result — the DEDICATED placement that provisioned the Fabric.
+// Only Dedicated is a checked claim; the rest is recorded from the base job's config_snapshot. It
+// deliberately carries no "owns the Fabric" or "receipt verified" flag: both hold by construction
+// (see the package comment), and a boolean for them would print a tautology as a proof.
+type FabricDemoProd struct {
+	Tier  string `json:"tier"`  // fabricDemoProdTier
+	Stage string `json:"stage"` // fabricDemoStage(Tier) — the enum the tier maps to
+	// StageLabel is the environment_stage the base snapshot ACTUALLY carried (the run's env slug —
+	// see the package comment for why it is not relabelled). Recorded, not asserted.
+	StageLabel    string `json:"stage_label"`
+	DeployJob     string `json:"deploy_job"`
+	PlacementMode string `json:"placement_mode"` // as resolved from the base snapshot; "" reads as dedicated
+	// Dedicated: the base snapshot resolves to the full-cluster path (provisioner.selectPlacementPath's
+	// rule), not a namespace/vcluster one.
+	Dedicated bool `json:"dedicated"`
+}
+
+// assertFabricDemoProd checks the prod tier's DEDICATED placement from the base DEPLOY job's
+// config_snapshot: its placement_mode must be empty or `dedicated`, exactly provisioner.
+// selectPlacementPath's rule. It does not re-check the Fabric's cluster name or receipt — those came
+// from the same job's execution_metadata, so a re-read could only agree with itself. The result is
+// filled as far as the checks got, so a failure still leaves an honest partial record.
+func assertFabricDemoProd(deployJobID string, snapshotJSON []byte) (FabricDemoProd, error) {
+	res := FabricDemoProd{Tier: fabricDemoProdTier, Stage: fabricDemoStage(fabricDemoProdTier), DeployJob: deployJobID}
+	if strings.TrimSpace(deployJobID) == "" {
+		return res, fmt.Errorf("no base DEPLOY job id — the prod tier's dedicated placement cannot be located, so it cannot be asserted")
+	}
+	var snap struct {
+		PlacementMode    *string `json:"placement_mode"`
+		EnvironmentStage string  `json:"environment_stage"`
+	}
+	if len(snapshotJSON) == 0 {
+		return res, fmt.Errorf("base DEPLOY job %s has an empty config_snapshot — nothing says which placement path it ran", deployJobID)
+	}
+	if err := json.Unmarshal(snapshotJSON, &snap); err != nil {
+		return res, fmt.Errorf("decode base DEPLOY job %s config_snapshot: %w", deployJobID, err)
+	}
+	res.StageLabel = snap.EnvironmentStage
+	mode := ""
+	if snap.PlacementMode != nil {
+		mode = strings.ToLower(strings.TrimSpace(*snap.PlacementMode))
+	}
+	switch mode {
+	case "", "dedicated":
+		res.PlacementMode = "dedicated"
+	default:
+		res.PlacementMode = mode
+		return res, fmt.Errorf("the prod tier's placement (base DEPLOY job %s) ran as placement_mode=%q — prod must be the DEDICATED placement that provisions its own Fabric", deployJobID, mode)
+	}
+	res.Dedicated = true
+	return res, nil
+}
+
 // FabricDemoSummary is the machine-readable result of the #845 acceptance gate, written to
 // ALETHIA_E2E_FABRIC_DEMO_SUMMARY so the proof capture can fold one line into the per-provider step
 // summary. It carries only names/booleans/counts and the Fabric's PUBLIC plan digest — no secrets.
@@ -443,6 +573,7 @@ type FabricDemoSummary struct {
 	Repo     string             `json:"apps_repo"`
 	Tiers    []FabricDemoTier   `json:"tiers"`
 	VCluster FabricDemoVCluster `json:"vcluster"`
+	Prod     FabricDemoProd     `json:"prod"`
 	// BaseAppsRepo and PreExistingApps record what the placements were measured AGAINST, so a reader
 	// can see the causality baseline rather than take it on trust.
 	BaseAppsRepo       string `json:"base_apps_repo"`
@@ -461,7 +592,7 @@ type FabricDemoSummary struct {
 
 // fabricDemoVerdictPass reports whether every check that RAN passed non-vacuously. A scenario with
 // zero tiers, or one whose artifacts pre-existed the placements, or one that synced the repo root,
-// or one without a vcluster tier, can never pass.
+// or one without a vcluster tier, or one without a proven dedicated prod tier, can never pass.
 func fabricDemoVerdictPass(s FabricDemoSummary) bool {
 	if !s.Enabled || len(s.Tiers) == 0 {
 		return false
@@ -479,6 +610,13 @@ func fabricDemoVerdictPass(s FabricDemoSummary) bool {
 	// deregistered vcluster tier is not this gate and must not read green.
 	v := s.VCluster
 	if !v.Placed || !v.CausedByPlacement || v.ResourceCount == 0 || !v.Deregistered {
+		return false
+	}
+	// #845 also requires a dedicated-Fabric PROD placement. Without the base deploy proven to be the
+	// dedicated placement, the demo's top tier is unasserted. (Its receipt is FabricPlanSHA, required
+	// below — the same receipt, so it is not required twice.)
+	pr := s.Prod
+	if pr.Tier != fabricDemoProdTier || pr.Stage != fabricDemoStage(fabricDemoProdTier) || !pr.Dedicated {
 		return false
 	}
 	if !s.ArgoNotReinstalled {
@@ -514,12 +652,43 @@ func fabricDemoSummaryVerdict(s FabricDemoSummary) string {
 	if s.VCluster.Placed {
 		vc = fmt.Sprintf("vcluster: %s(%s,res=%d,deregistered=%t)", s.VCluster.Name, s.VCluster.SourcePath, s.VCluster.ResourceCount, s.VCluster.Deregistered)
 	}
+	prod := "prod: n/a"
+	if s.Prod.Tier != "" {
+		prod = fmt.Sprintf("prod: %s(%s,dedicated=%t,stage_label=%s)", s.Prod.Tier, s.Prod.Stage, s.Prod.Dedicated, s.Prod.StageLabel)
+	}
 	drift := "drift: n/a"
 	if s.DriftChecked {
 		drift = fmt.Sprintf("drift: in_sync=%t drifted=%d", s.DriftInSync, s.DriftDrifted)
 	}
-	return fmt.Sprintf("%s fabric-demo on %s: placements %s · %s · argocd-preserved=%t · receipt(%s)=%s · %s",
-		icon, s.Fabric, tiers, vc, s.ArgoNotReinstalled, s.ReceiptScope, shortPlanSHA(s.FabricPlanSHA), drift)
+	return fmt.Sprintf("%s fabric-demo on %s: %s · placements %s · %s · argocd-preserved=%t · receipt(%s)=%s · %s",
+		icon, s.Fabric, prod, tiers, vc, s.ArgoNotReinstalled, s.ReceiptScope, shortPlanSHA(s.FabricPlanSHA), drift)
+}
+
+// fabricDemoDriftedLines renders each drifted resource of a posture as `address (kind)
+// attrs=a,b`, one per line, joined for the gate's failure message.
+//
+// The gate used to print `address (kind)` only. Run 36667774857 failed on seven resources and
+// named none of the attributes behind them, although the analyzer had them — the job log carried
+// `"attributes":["assignee_id","assignee_type"]` and the gate threw it away, so diagnosing the
+// failure meant grepping the runner's raw posture line. Same fix, same format as the BYO-IaC leg's
+// byoIacPosture.detail; `attrs=<none reported>` says the ANALYZER named nothing (a drift verdict
+// reached before any leaf was computed), which is itself a diagnosis, not a missing field.
+func fabricDemoDriftedLines(p byoIacPosture) string {
+	lines := make([]string, 0, len(p.Details))
+	for _, d := range p.Details {
+		s := d.Address
+		if s == "" {
+			s = d.Type
+		}
+		s += " (" + d.Kind + ")"
+		if len(d.Attributes) > 0 {
+			s += " attrs=" + strings.Join(d.Attributes, ",")
+		} else {
+			s += " attrs=<none reported>"
+		}
+		lines = append(lines, s)
+	}
+	return strings.Join(lines, "\n         ")
 }
 
 // shortPlanSHA renders a plan digest for the one-line verdict without dumping 64 hex chars.

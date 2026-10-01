@@ -364,32 +364,66 @@ $$;
 -- instead of requeued forever. The function RETURNS the jobs it failed terminally so the caller
 -- (lib/jobs/recovery.ts) can drive each one's environment status through the env-status CAS
 -- (deployFailed / destroyFailed / planFailed) — a terminal job must not leave its env stuck.
--- Return type changed INTEGER -> TABLE(...): Postgres can't change a function's return type via
--- CREATE OR REPLACE on an existing DB (error 42P13), so drop the old signature first — same pattern as
--- update_job_status / sweep_offline_runners above. IF EXISTS keeps it idempotent on a fresh DB.
+--
+-- NEVER REQUEUE A JOB WHOSE APPLY STARTED (#5162). The runner posts `apply_started_at` into
+-- execution_metadata the moment its deploy stage reaches `tofu apply` (runner.go watchApplyStart).
+-- Requeueing such a job runs the apply a SECOND time against live infrastructure nobody asked to
+-- change again, and the receipt of the apply that really ran is lost — observed on the aws/gcp
+-- cli-demo DEPLOYs of grid run 36652642517, where a heartbeat gap requeued a 116-resource apply
+-- mid-flight and the runner then applied it again. Staleness does not prove the runner is dead
+-- (a network blip or GC pause lapses the heartbeat of a runner still applying), so such a job is
+-- instead failed TERMINAL for reconciliation: FAILED, orphan_risk set, and — unlike the poison cap —
+-- runner_id KEPT, so a runner that was in fact still applying can still land its report: its later
+-- metadata/SUCCESS post takes update_job_status's late_report path, which merges the receipt into
+-- this row rather than being refused as "not owned". `reason` tells the caller which rule fired.
+--
+-- Return type changed INTEGER -> TABLE(...) and again to add `reason`: Postgres can't change a
+-- function's return type via CREATE OR REPLACE on an existing DB (error 42P13), so drop the old
+-- signature first — same pattern as update_job_status / sweep_offline_runners above. The drop is by
+-- argument list (none), so it removes every earlier return shape. IF EXISTS keeps it idempotent.
 DROP FUNCTION IF EXISTS public.recover_stale_jobs();
 CREATE OR REPLACE FUNCTION public.recover_stale_jobs()
-RETURNS TABLE(job_id UUID, job_type public.provision_job_type, environment_id UUID, org_id UUID, project_id UUID)
+RETURNS TABLE(job_id UUID, job_type public.provision_job_type, environment_id UUID, org_id UUID, project_id UUID, reason TEXT)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
     RETURN QUERY
     WITH updated AS (
         UPDATE public.jobs j
         SET attempts = j.attempts + 1,
-            -- At/over the cap → terminal FAILED; otherwise requeue.
-            status = CASE WHEN j.attempts + 1 >= j.max_attempts
+            -- Apply started, or at/over the cap → terminal FAILED; otherwise requeue.
+            status = CASE WHEN j.execution_metadata->>'apply_started_at' IS NOT NULL
+                            OR j.attempts + 1 >= j.max_attempts
                           THEN 'FAILED'::public.provision_job_status
                           ELSE 'QUEUED'::public.provision_job_status END,
-            -- Requeue clears the claim; a terminal fail keeps runner_id/claimed_at for forensics.
-            runner_id  = CASE WHEN j.attempts + 1 >= j.max_attempts THEN j.runner_id  ELSE NULL END,
-            claimed_at = CASE WHEN j.attempts + 1 >= j.max_attempts THEN j.claimed_at ELSE NULL END,
-            started_at = CASE WHEN j.attempts + 1 >= j.max_attempts THEN j.started_at ELSE NULL END,
-            completed_at = CASE WHEN j.attempts + 1 >= j.max_attempts THEN now() ELSE j.completed_at END,
-            error_message = CASE WHEN j.attempts + 1 >= j.max_attempts
+            -- Requeue clears the claim; a terminal fail keeps runner_id/claimed_at (forensics, and so
+            -- the owning runner's late report still lands — see the header).
+            runner_id  = CASE WHEN j.execution_metadata->>'apply_started_at' IS NOT NULL
+                                OR j.attempts + 1 >= j.max_attempts THEN j.runner_id  ELSE NULL END,
+            claimed_at = CASE WHEN j.execution_metadata->>'apply_started_at' IS NOT NULL
+                                OR j.attempts + 1 >= j.max_attempts THEN j.claimed_at ELSE NULL END,
+            started_at = CASE WHEN j.execution_metadata->>'apply_started_at' IS NOT NULL
+                                OR j.attempts + 1 >= j.max_attempts THEN j.started_at ELSE NULL END,
+            completed_at = CASE WHEN j.execution_metadata->>'apply_started_at' IS NOT NULL
+                                  OR j.attempts + 1 >= j.max_attempts THEN now() ELSE j.completed_at END,
+            error_message = CASE
+                WHEN j.execution_metadata->>'apply_started_at' IS NOT NULL
+                THEN 'Lost contact with the runner after the apply had started (its heartbeat lapsed or '
+                     || 'it stopped making progress). The job was NOT retried: a retry would run the apply '
+                     || 'a second time. The apply may have changed cloud resources; check the environment '
+                     || 'and reconcile it before deploying again.'
+                WHEN j.attempts + 1 >= j.max_attempts
                 THEN 'Job exceeded max attempts (' || j.max_attempts
                      || '): its runner repeatedly died or stalled mid-run. Failed terminally by the '
                      || 'poison-job cap to protect the queue.'
                 ELSE j.error_message END,
+            execution_metadata = CASE
+                WHEN j.execution_metadata->>'apply_started_at' IS NOT NULL
+                THEN j.execution_metadata || jsonb_build_object(
+                         'orphan_risk', true,
+                         'orphan_risk_reason', 'the runner lost contact after the apply started; cloud '
+                             || 'resources may have changed without a recorded outcome and need reconciling',
+                         'recovery_refused_requeue_at', now())
+                ELSE j.execution_metadata END,
             updated_at = now()
         WHERE j.status IN ('CLAIMED', 'PROCESSING')
           AND (
@@ -407,11 +441,14 @@ BEGIN
                 SELECT 1 FROM public.runners r
                 WHERE r.id = j.runner_id AND r.last_heartbeat > now() - INTERVAL '5 minutes') )
           )
+        -- RETURNING sees the NEW row, so the apply marker is still readable and status is the new one.
         RETURNING j.id, j.job_type, j.environment_id, j.org_id, j.project_id,
-                  (j.status = 'FAILED') AS terminal
+                  (j.status = 'FAILED') AS terminal,
+                  CASE WHEN j.execution_metadata->>'apply_started_at' IS NOT NULL
+                       THEN 'apply_started' ELSE 'max_attempts' END AS reason
     )
     -- Only the terminally-failed jobs need an env-status transition; requeued ones keep their env.
-    SELECT u.id, u.job_type, u.environment_id, u.org_id, u.project_id
+    SELECT u.id, u.job_type, u.environment_id, u.org_id, u.project_id, u.reason
     FROM updated u
     WHERE u.terminal;
 END;
@@ -549,7 +586,10 @@ BEGIN
         WHERE id = p_job_id AND runner_id = p_runner_id;
         RETURN false;
     END IF;
-    RAISE EXCEPTION 'Job not found or not owned by this runner';
+    -- A distinct SQLSTATE so the status route can answer 409 (not a generic 500) and the runner can
+    -- tell "this job was taken from you" apart from a transient failure (#5162). AL409 is a
+    -- project-defined code; nothing else raises it.
+    RAISE EXCEPTION 'Job not found or not owned by this runner' USING ERRCODE = 'AL409';
 END;
 $$;
 

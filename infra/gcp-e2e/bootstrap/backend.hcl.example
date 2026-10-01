@@ -8,8 +8,14 @@
 # Auth comes from Application Default Credentials (`gcloud auth application-default login` as the
 # admin who applies this) — no static state keys, matching infra/aws-oidc.
 #
-# `bucket` is the bucket THIS stack creates: on the very first apply it does not exist yet, so run
-# `tofu init -backend=false` first, apply, then re-init with `-migrate-state`.
+# `bucket` is the bucket THIS stack creates: on the very first apply it does not exist yet, so apply
+# first under a temporary local-backend `backend_override.tf` (not `-backend=false`, which cannot
+# plan), delete the override, then re-init with `-migrate-state`. Runbook:
+# docs/testing/e2e-state-migration.md.
 
-bucket = "alethia-tofu-state-alethia-e2e-nightly"
+# The derived name is alethia-tofu-state-<project_id>, where project_id is the live e2e project named
+# in the E2E_GCP_SA_EMAIL repo variable — NOT "alethia-e2e-nightly", which is the service account's id.
+# Its id is not written in this repo (pnpm check:forbidden-names): replace the placeholder with
+# `tofu -chdir=infra/gcp-e2e/bootstrap output -raw state_bucket`.
+bucket = "alethia-tofu-state-REPLACE-WITH-GCP_E2E_PROJECT_ID"
 prefix = "gcp-e2e-bootstrap"

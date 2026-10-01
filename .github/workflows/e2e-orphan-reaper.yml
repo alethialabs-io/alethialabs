@@ -109,9 +109,18 @@ jobs:
         # PREFLIGHT discovery it had been missing — the stated reason it was excluded here.
         #
         # Its discovery keys on `alethia_project-id=e2e-*` (a Kubernetes-style LABEL, as the
-        # hetzner template stamps it) and reads the cluster name back off the matched resources.
-        # It deliberately does NOT key on the cluster name: that is `alethia-nl-<run_id>-<attempt>`,
-        # and `alethia-nl` is a prefix of prod's naming, not a test-only marker.
+        # hetzner template stamps it) OR `alethia_e2e-run=e2e-<run_id>-<attempt>`, and reads the
+        # cluster name back off the matched resources. It deliberately does NOT key on the cluster
+        # name: that is `alethia-nl-<run_id>-<attempt>`, and `alethia-nl` is a prefix of prod's
+        # naming, not a test-only marker.
+        #
+        # TWO HANDLES, ON EVERY CLOUD (#5096). A stack the CLI created (the cli-demo dimension) gets
+        # its config from the console, so its project-id is the project's UUID and the project-id
+        # handle alone cannot see it. Every e2e stack now also carries the `e2e-run`
+        # CLASSIFICATION (a real product input the cli-demo org defines and the CLI assigns), and
+        # each sweeper's PREFLIGHT discovers under BOTH — the old handle kept so nothing standing
+        # from before goes dark. Each resource is attributed to ONE handle and swept scope-locked to
+        # it; scripts/e2e/lib/scope-key.sh owns that rule.
         provider: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.provider != 'all' && fromJSON(format('["{0}"]', github.event.inputs.provider)) || fromJSON('["aws","gcp","azure","alibaba","hetzner"]') }}
     env:
       # DRY_RUN defaults ON for a dispatch and OFF for the schedule — the scheduled run is the one
@@ -431,4 +440,9 @@ jobs:
             echo "> gained the \`PREFLIGHT\` discovery whose absence was the stated reason it was excluded."
             echo "> Its discovery keys on the \`alethia_project-id=e2e-*\` label, never on the cluster name —"
             echo "> \`alethia-nl-\` is a prefix of prod's naming, not a test-only marker."
+            echo ">"
+            echo "> **Two handles (#5096).** aws, gcp, azure and hetzner also discover by the \`e2e-run\`"
+            echo "> classification (\`alethia:e2e-run\` / \`alethia_e2e-run\` = \`e2e-<run_id>-<attempt>\`), the only"
+            echo "> handle a CLI-created (cli-demo) stack carries. alibaba discovers by project-id alone:"
+            echo "> the cli-demo dimension excludes it (#4227), so no alibaba stack lacks that handle."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -38,6 +38,7 @@ package e2e
 // performed would be claiming the one thing it cannot do.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,9 +59,13 @@ type CLIDemoRun struct {
 	Provider string
 	// Region is the region the project provisions into.
 	Region string
-	// Project is the project NAME the run creates.
+	// Project is the project NAME the run creates. It is the harness's ALETHIA_E2E_PROJECT.
 	Project string
-	// EnvName is the environment the beats plan/apply/destroy against.
+	// EnvName is the environment the beats plan/apply/destroy against. It is the harness's
+	// ALETHIA_E2E_ENV (`<run_id>-<attempt>` in CI), and the `project-env` beat CREATES an
+	// environment with exactly this name (#5095). It is set once, before the first beat, and no
+	// beat may overwrite it: the cluster is named `<project>-<env NAME>` (CLIDemoClusterName), so
+	// this value is the run tag the in-run sweep, the LB capture and the teardown all key on.
 	EnvName string
 
 	// ── minted as the run proceeds ──
@@ -96,25 +101,60 @@ type CLIDemoRun struct {
 	// context kills it, reporting as "the CLI cannot reach apply" when the truth is that nobody
 	// answered it.
 	RunnerID string
+	// GitOps holds the A0.6 repo coordinates the `apps-repo` and `chart-attach` beats wire into the
+	// project (#5109): the apps-destination repo and the BYO chart. They come from the same
+	// t2ArgoReposFromEnv the seeded path's applyToSnapshot reads, so the two paths wire the same
+	// repos and the spine's A0.6 assertions address the same Application and Secret names on both.
+	// ResolveCLIDemoRun sets it and refuses the run when the inputs are not wired.
+	GitOps t2ArgoRepos
+	// CertZone is the delegated zone and run-scoped domain the `dns-cert` beat authors, or nil when
+	// this run does not prove the certificate (#1773, ALETHIA_E2E_ACM_CERT off or not on this cloud).
+	// Set by cliDemoCertZoneFrom from the SAME acmCertConfig the seeded path's applyToSnapshot
+	// writes, so the two paths ask for the same zone and the same name.
+	CertZone *CLIDemoCertZone
+}
+
+// CLIDemoCertZone is what the `dns-cert` beat puts into the run's environment.
+type CLIDemoCertZone struct {
+	// ZoneID is the PRE-DELEGATED hosted zone. Bringing it is what makes cloud_dns_enabled false, so
+	// the validation record lands in a zone the public internet can resolve.
+	ZoneID string
+	// DomainName is the run-scoped name the certificate covers (acmCertDomain).
+	DomainName string
+}
+
+// cliDemoCertZoneFrom returns the zone the `dns-cert` beat authors, or nil when the certificate
+// scenario is not on for this run. `on` is acmCertConfig.decide()'s verdict, passed in rather than
+// recomputed so the beat and runT2AcmCert cannot disagree about whether the run asked.
+func cliDemoCertZoneFrom(c acmCertConfig, on bool) *CLIDemoCertZone {
+	if !on {
+		return nil
+	}
+	return &CLIDemoCertZone{ZoneID: c.zoneID, DomainName: c.domainName}
 }
 
 // CLIDemoPhase says WHERE in the provisioning spine a beat can run. It exists because the demo's
 // order and the harness's order are not the same order, and pretending otherwise deadlocks.
 //
-// The spine registers a runner row, enqueues a job, THEN starts the runner process, then waits.
-// A beat that enqueues a job and blocks on it (`--wait`) before that process exists would wait
-// forever on a claimer that has not started. A beat that reads the cluster before convergence
-// would read nothing. So each beat declares the window it is valid in, and the driver runs one
-// window at a time from the place in the spine that window means.
+// The spine registers a runner row, starts the runner process, and only then lets the CLI enqueue
+// jobs (#5090). A beat that reads the cluster before convergence would read nothing. So each beat
+// declares the window it is valid in, and the driver runs one window at a time from the place in the
+// spine that window means.
 type CLIDemoPhase string
 
 const (
 	// CLIDemoAuthoring — needs the CONSOLE only: identity, the connector, and authoring the
 	// project. No job, no runner, no cluster.
 	CLIDemoAuthoring CLIDemoPhase = "authoring"
-	// CLIDemoEnqueue — creates the PLAN and DEPLOY jobs. Runs where the spine used to seed its job
-	// row, so the runner process starts immediately after and claims both. These beats must NOT
-	// pass `--wait`: the CLI would block on a runner that does not exist yet.
+	// CLIDemoEnqueue — creates the PLAN and then the DEPLOY job, ONE AT A TIME. It runs AFTER the
+	// runner process has started (#5090), because the two cannot both be queued: every enqueue moves
+	// the environment to QUEUED through the env-status CAS, and `enqueueDeploy` does not accept
+	// QUEUED (apps/console/lib/db/env-status.ts) — a second job on an env with one in flight is
+	// refused. So `project plan` passes `--wait`, which needs a live claimer, and `project apply`
+	// runs only once the PLAN is terminal. That is also the order a person types them in.
+	//
+	// It used to run BEFORE the runner started, on the belief that the runner would "claim both".
+	// It never could: run 36130590853's `apply` was refused because the PLAN was still QUEUED.
 	CLIDemoEnqueue CLIDemoPhase = "enqueue"
 	// CLIDemoConverged — the read-backs, valid only once the cluster is up and asserted: logs, the
 	// cluster, the signed receipt, drift, cost, add-ons.
@@ -158,6 +198,20 @@ type CLIDemoBeat struct {
 	Timeout time.Duration
 	// Why documents anything surprising about the invocation. Optional.
 	Why string
+	// AwaitEnvSettled holds the beat until the run's environment is SETTLED — out of
+	// QUEUED/PROVISIONING/DESTROYING — before it runs (#5090). Set on every beat that enqueues a
+	// job after an earlier one did: the console refuses an enqueue on an env with a job in flight,
+	// and under this harness the env does not settle when the job ends. The runner reports to the
+	// Go shim, which runs the job-status SQL but not the console's env-status move (its FIDELITY
+	// BOUNDARY, controlplane.go handleStatus), so the env waits for the console's convergence
+	// backstop (lib/reconcile/converge.ts). A person on a real console never waits: the status
+	// route settles it in the same request.
+	AwaitEnvSettled bool
+	// Skip, when set and returning a non-empty sentence, withholds the beat on THIS run and logs the
+	// sentence. It is for a beat whose input is itself optional — `dns-cert` exists only on a run that
+	// proves the certificate. It never withholds a beat from the pre-spend checks: those build every
+	// beat's argv regardless, so the invocation is proven to parse on runs that do not perform it.
+	Skip func(r *CLIDemoRun) string
 }
 
 // cliDemoNotDriven records, per step id, WHY the provisioning run does not perform it. Every entry
@@ -169,13 +223,13 @@ var cliDemoNotDriven = map[string]string{
 		"authenticates with a service token this job minted, so the step is performed by a different " +
 		"mechanism than a prospect would use — recorded rather than counted.",
 
-	// The BYO surfaces. Each needs a customer fixture repo, and each already has a dimension that
-	// proves it end to end with those fixtures wired. Re-driving them here would buy the same proof
-	// through a different actor while doubling the fixtures this dimension depends on.
-	"chart-attach": "a customer Helm chart needs the A0.6 fixture repos, which the `gitops` dimension " +
-		"wires and proves (E2E_ARGO_BYO_CHART_*). Driving it here would duplicate that dimension's " +
-		"fixture surface without proving anything new about the CLI as the actor.",
-	"chart-scan": "same fixture surface as chart-attach — proven by the `gitops` dimension.",
+	// The BYO surfaces. `chart-attach` IS driven (#5109): the nightly runs A0.6 on this leg too, and
+	// on the CLI path nothing but the CLI can put the BYO chart into the project. The rest each need
+	// their own fixture and already have a dimension that proves them end to end.
+	"chart-scan": "`chart attach` already queues the scan itself (attachByoChart calls scanByoChart), so " +
+		"a scan beat would put a second CHART_SCAN job in front of the PLAN. Its verdict would also never " +
+		"be recorded here: finalizeChartScan runs in the console's job-status route, and this harness's " +
+		"runner reports to the Go shim instead. The deploy does not gate on it.",
 	"iac": "the BYO-IaC custody chain is the `byo-iac` dimension's whole assertion (a customer " +
 		"OpenTofu root refused when unsafe, applied through the state proxy, drifted, healed, " +
 		"destroyed, state cleared). It needs its own fixture module and its own budget.",
@@ -242,13 +296,46 @@ var CLIDemoBeats = []CLIDemoBeat{
 		StepID: "project-env",
 		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
+			// `dedicated` is spelled out: the route's default for an ADDED environment is
+			// `namespace`, which would place this tier on the default Fabric — a Fabric no job
+			// here ever provisions — instead of giving it the cluster the demo deploys.
+			return []string{
+				"project", "env", "add", r.EnvName, "--project", r.ProjectID,
+				"--stage", "development", "--placement-mode", "dedicated", "--no-input",
+			}
+		},
+		ReadBack: func(r *CLIDemoRun) []string {
 			return []string{"project", "env", "list", "--project", r.ProjectID, "--output", "json", "--no-input"}
 		},
-		After: captureDefaultEnv,
-		Why: "captures the DEFAULT environment rather than assuming one. `project create --stage " +
-			"development` makes `development` and `preview`, and the harness's own env name is a " +
-			"different thing entirely — addressing the wrong one fails with `Environment \"x\" not " +
-			"found`, which reads as a CLI defect and is a harness assumption.",
+		After: assertRunTaggedEnv,
+		Why: "the environment carries the RUN TAG, through the same input a person uses to name one " +
+			"(#5095). The cluster is named `<project>-<environment name>`, and `project create --stage " +
+			"development` names the default environment `development`, which carries no run tag. A " +
+			"cluster without the tag defeats the run-scoped sweep (`cluster=<project>-<env>`) and the " +
+			"in-process teardown, which derive the name from the same CLIDemoRun fields.",
+	},
+	{
+		StepID: "classify",
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			// All four positionals, as the command documents for a scripted caller: the dimension and
+			// the value are the ones the seed step defined in this org. `project`, not
+			// `project_environment`: the console folds the project's assignments into every
+			// environment's snapshot, and a project-level tag reaches every stack the demo builds.
+			return []string{
+				"classification", "assign", "project", r.ProjectID,
+				e2eRunDimension, e2eRunValue(r.EnvName), "--no-input",
+			}
+		},
+		ReadBack: func(r *CLIDemoRun) []string {
+			return []string{"classification", "show", "project", r.ProjectID, "--output", "json", "--no-input"}
+		},
+		After: assertRunClassified,
+		Why: "the `e2e-run` classification is the sweep handle (#5096). The console builds this " +
+			"project's config, so its `alethia:project-id` is the project's UUID and no sweeper selects " +
+			"on it; `alethia:e2e-run=e2e-<ENV>` is what the in-run teardown (ALETHIA_E2E_SCOPE_KEY) and " +
+			"the orphan reaper find it by. It runs before the PLAN because the plan and the deploy " +
+			"snapshot the classification that exists when they are enqueued.",
 	},
 	{
 		StepID: "component-kinds",
@@ -306,6 +393,89 @@ var CLIDemoBeats = []CLIDemoBeat{
 		Why: "`alethia plan` over the file `alethia init` just wrote must find the project ALREADY " +
 			"there — the commands and the file describe one project, or they describe two.",
 	},
+	// ── THE TWO A0.6 REPOS (#5109). On the seeded path t2ArgoRepos.applyToSnapshot writes both
+	//    into the job row. Here the console builds the snapshot from what the CLI authored, so
+	//    unless a beat wires them the deploy correctly derives no `apps` Application. Run 36141504059
+	//    got that far: deploy SUCCESS, then A0.6 red on "apps" missing.
+	//
+	//    Both come AFTER manifest-plan on purpose. That beat asserts the file `init` wrote and the
+	//    project the commands built are the same shape, and neither beat below is something `init`
+	//    writes. Both come BEFORE the enqueue phase, because the PLAN and the DEPLOY snapshot what
+	//    exists when they are enqueued. ──
+	{
+		StepID: "apps-repo",
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			return []string{
+				"project", "component", "add", "--project", r.ProjectID, "--kind", "repositories",
+				"--env", r.EnvName, "--set", "apps_destination_repo=" + r.GitOps.appsRepo, "--no-input",
+			}
+		},
+		ReadBack: func(r *CLIDemoRun) []string {
+			return []string{
+				"project", "component", "list", "--project", r.ProjectID, "--env", r.EnvName,
+				"--kind", "repositories", "--output", "json", "--no-input",
+			}
+		},
+		After: assertAppsRepoWired,
+		Why: "the `repositories` singleton is what buildConfigSnapshot emits as " +
+			"repositories.apps_destination_repo, which is what makes the runner render the `apps` " +
+			"app-of-apps and its `repo-apps` credential.",
+	},
+	{
+		StepID: "chart-attach",
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			// The id is the seeded path's byoAddonID, so the spine's A0.6 assertions address
+			// `addon-byo-e2e` and `repo-byo-<hash>` on both paths without a second set of names.
+			return []string{
+				"chart", "attach", byoAddonID, "--project", r.ProjectID, "--env", r.EnvName,
+				"--repo", r.GitOps.byoChartRepo, "--chart-path", r.GitOps.byoChartPath,
+				"--ref", r.GitOps.byoRevision, "--namespace", r.GitOps.byoNamespace, "--no-input",
+			}
+		},
+		ReadBack: func(r *CLIDemoRun) []string {
+			return []string{
+				"chart", "list", "--project", r.ProjectID, "--env", r.EnvName, "--output", "json", "--no-input",
+			}
+		},
+		After: assertByoChartAttached,
+		Why: "a `source='byo'` project_addons row, which resolveByoChartInstall renders as the same " +
+			"managed git-source add-on the seeded path appends. The attach also queues a CHART_SCAN, " +
+			"which the runner claims once it starts. The deploy does not wait for its verdict.",
+	},
+	// ── THE CERTIFICATE (#1773, #5087). On the seeded path acmCertConfig.applyToSnapshot writes the
+	//    brought zone and the certificate ask straight into the job row. Here the console builds the
+	//    snapshot from what the CLI authored, so without this beat the deploy asks for no certificate
+	//    and runT2AcmCert asserts one nothing requested. Run 36639509726 is the record: the aws leg
+	//    passed every beat, the deploy carried `route53_zone_id = ""` and no aws_acm_certificate, and
+	//    the verdict blamed a delegation that `dig NS` shows is in place.
+	//
+	//    After manifest-plan for the same reason as the two repo beats (it asserts 0 components), and
+	//    before the enqueue phase, because the DEPLOY snapshots what exists when it is enqueued. ──
+	{
+		StepID: "dns-cert",
+		Phase:  CLIDemoAuthoring,
+		Args:   cliDemoDNSCertArgs,
+		Skip: func(r *CLIDemoRun) string {
+			if r.CertZone != nil {
+				return ""
+			}
+			return "this run does not prove the ACM certificate (ALETHIA_E2E_ACM_CERT is off, or this cloud " +
+				"has no certificate lane), so there is no delegated zone to bring"
+		},
+		ReadBack: func(r *CLIDemoRun) []string {
+			return []string{
+				"project", "component", "list", "--project", r.ProjectID, "--env", r.EnvName,
+				"--kind", "dns", "--output", "json", "--no-input",
+			}
+		},
+		After: assertDNSCertWired,
+		Why: "the same two halves the seeded path writes: zone_id brings the delegated zone, and " +
+			"managed_certificate is the ask (the aws template reads it as acm_certificate_enable). " +
+			"`provider` is left unset, as on the seeded path, so the zone is the cloud's native DNS — " +
+			"acm-certificate.tf builds only when dns_provider is native.",
+	},
 	{
 		StepID: "staged",
 		Phase:  CLIDemoAuthoring,
@@ -319,10 +489,16 @@ var CLIDemoBeats = []CLIDemoBeat{
 		StepID: "plan",
 		Phase:  CLIDemoEnqueue,
 		Args: func(r *CLIDemoRun) []string {
-			// NO --wait. The runner process starts AFTER this phase, so blocking here would wait
-			// on a claimer that does not exist. The spine waits instead, on the DEPLOY job.
-			return []string{"project", "plan", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--no-input"}
+			// --wait, and it is REQUIRED (#5090): the environment admits one job in flight, so the
+			// `apply` beat below is refused while this PLAN is still QUEUED or PROCESSING. The runner
+			// process is already running when this phase executes, so the wait has a claimer.
+			return []string{"project", "plan", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--wait", "--no-input"}
 		},
+		// A real `tofu plan` on the runner, not a console round-trip: the default bound is sized
+		// for the latter.
+		Timeout: cliDemoPlanWait,
+		Why: "the prospect's order — plan, read it, then apply. `--wait` is what makes the next beat " +
+			"legal: an env with a job in flight refuses a second one (409, #5090).",
 	},
 	{
 		StepID: "apply",
@@ -330,7 +506,8 @@ var CLIDemoBeats = []CLIDemoBeat{
 		Args: func(r *CLIDemoRun) []string {
 			return []string{"project", "apply", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--no-input"}
 		},
-		After: captureApplyJobID,
+		After:           captureApplyJobID,
+		AwaitEnvSettled: true,
 		Why: "the beat the whole dimension exists for — the DEPLOY job is enqueued BY THE CLI, not by a " +
 			"seeded row. --runner-id is REQUIRED: without it the CLI calls selectRunner(), which prompts, " +
 			"and a prompt in CI hangs until the context kills it and reports as an unreachable command.",
@@ -343,7 +520,10 @@ var CLIDemoBeats = []CLIDemoBeat{
 	{
 		StepID: "cluster-get",
 		Phase:  CLIDemoConverged,
-		Args:   func(r *CLIDemoRun) []string { return []string{"clusters", "get", r.ProjectID, "--no-input"} },
+		Args:   func(r *CLIDemoRun) []string { return []string{"clusters", "get", r.Project, "--no-input"} },
+		Why: "BY PROJECT NAME. `cluster get`'s selector matches a project name, a cluster name or a " +
+			"CLUSTER id (apps/cli/cmd/clusters_get.go clusterMatches) — never a project id, so " +
+			"passing ProjectID matched nothing and exited non-zero.",
 	},
 	{
 		StepID: "receipt-verify",
@@ -380,9 +560,29 @@ var CLIDemoBeats = []CLIDemoBeat{
 		Args: func(r *CLIDemoRun) []string {
 			return []string{"project", "destroy", "--project-id", r.ProjectID, "--env", r.EnvName, "--yes", "--wait", "--no-input"}
 		},
-		Timeout: 30 * time.Minute,
-		Why:     "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
+		Timeout:         30 * time.Minute,
+		AwaitEnvSettled: true,
+		Why:             "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
 	},
+}
+
+// t2ClusterTarget names the project and environment this run's cluster is built from — the pair
+// the in-process teardown destroys, the hetzner LB capture scopes to, and the cluster_name
+// assertion checks (#5095).
+//
+// On the seeded path that is the harness's own ALETHIA_E2E_PROJECT / ALETHIA_E2E_ENV. On the
+// cli-demo path the CLI authored the project, so the answer is whatever the beats actually passed
+// to `project create` and `project env add` — read off the run, never restated. Run 36135826614
+// is why: the beats deployed `alethia-nl-development` while the teardown destroyed
+// `alethia-nl-36135826614-1`, and only the state-driven destroy kept that from being a leak.
+//
+// Called when the teardown RUNS rather than when it is registered, so it sees the run as the beats
+// left it.
+func t2ClusterTarget(project, env string, cliDemo *CLIDemoRun) (string, string) {
+	if cliDemo != nil {
+		return cliDemo.Project, cliDemo.EnvName
+	}
+	return project, env
 }
 
 // cliDemoManifestPath is where this run's `alethia.yaml` lives.
@@ -442,6 +642,217 @@ func assertManifestPlanIsClean(r *CLIDemoRun, out string) error {
 	return nil
 }
 
+// assertAppsRepoWired is the `apps-repo` beat's read-back: the run's environment holds a
+// `repositories` component whose apps_destination_repo is EXACTLY the repo the beat set (#5109).
+//
+// Exact equality, because this is the value the runner derives the `apps` Application and the
+// `repo-apps` credential from. A normalised or truncated URL would get past this check and fail
+// later as an A0.6 convergence timeout, after the cluster has been paid for.
+func assertAppsRepoWired(r *CLIDemoRun, out string) error {
+	want := r.GitOps.appsRepo
+	if want == "" {
+		return fmt.Errorf("the run carries no apps repo, so there was nothing to wire; ResolveCLIDemoRun should have refused before any beat ran")
+	}
+	start := strings.Index(out, "[")
+	end := strings.LastIndex(out, "]")
+	if start == -1 || end <= start {
+		return fmt.Errorf("`project component list --output json` produced no JSON array:\n%s", out)
+	}
+	var comps []struct {
+		Kind   string         `json:"kind"`
+		Config map[string]any `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &comps); err != nil {
+		return fmt.Errorf("parsing the component list: %w\n%s", err, out)
+	}
+	for _, c := range comps {
+		if c.Kind != "repositories" {
+			continue
+		}
+		got, _ := c.Config["apps_destination_repo"].(string)
+		if got != want {
+			return fmt.Errorf("environment %q stores apps_destination_repo %q, want %q. The deploy renders "+
+				"the `apps` Application from the stored value, so A0.6 would assert a repo the beat did not set",
+				r.EnvName, got, want)
+		}
+		return nil
+	}
+	return fmt.Errorf("`project component add --kind repositories` succeeded, but environment %q lists no "+
+		"repositories component. The deploy would render no `apps` Application, and A0.6 would fail after "+
+		"the cluster was bought:\n%s", r.EnvName, out)
+}
+
+// assertByoChartAttached is the `chart-attach` beat's read-back: the run's environment holds the
+// BYO chart under the seeded id with the coordinates the beat sent (#5109).
+//
+// Every coordinate is compared, not just the id. The runner renders the Application from repo,
+// path and ref, and the credential Secret's name is a hash of the repo URL. So any rewritten field
+// would produce a different Application or a different Secret, and the spine's A0.6 assertions,
+// which address them by the seeded names, would fail only after the cluster was bought.
+func assertByoChartAttached(r *CLIDemoRun, out string) error {
+	g := r.GitOps
+	if g.byoChartRepo == "" {
+		return fmt.Errorf("the run carries no BYO chart repo, so there was nothing to attach; ResolveCLIDemoRun should have refused before any beat ran")
+	}
+	start := strings.Index(out, "{")
+	end := strings.LastIndex(out, "}")
+	if start == -1 || end <= start {
+		return fmt.Errorf("`chart list --output json` produced no JSON object:\n%s", out)
+	}
+	var view struct {
+		Environment string `json:"environment"`
+		Charts      []struct {
+			ID        string `json:"id"`
+			RepoURL   string `json:"repo_url"`
+			ChartPath string `json:"chart_path"`
+			Ref       string `json:"ref"`
+			Namespace string `json:"namespace"`
+		} `json:"charts"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &view); err != nil {
+		return fmt.Errorf("parsing the chart list: %w\n%s", err, out)
+	}
+	if view.Environment != r.EnvName {
+		return fmt.Errorf("`chart list --env %s` answered for environment %q. The chart would be attached "+
+			"to a tier the deploy does not build", r.EnvName, view.Environment)
+	}
+	for _, c := range view.Charts {
+		if c.ID != byoAddonID {
+			continue
+		}
+		var diffs []string
+		for _, f := range []struct{ name, got, want string }{
+			{"repo_url", c.RepoURL, g.byoChartRepo},
+			{"chart_path", c.ChartPath, g.byoChartPath},
+			{"ref", c.Ref, g.byoRevision},
+			{"namespace", c.Namespace, g.byoNamespace},
+		} {
+			if f.got != f.want {
+				diffs = append(diffs, fmt.Sprintf("%s=%q (want %q)", f.name, f.got, f.want))
+			}
+		}
+		if len(diffs) > 0 {
+			return fmt.Errorf("chart %q is stored with %s. The deploy renders %s from the stored "+
+				"values, so A0.6 would assert a chart the beat did not attach", byoAddonID,
+				strings.Join(diffs, ", "), g.byoAppName())
+		}
+		return nil
+	}
+	ids := make([]string, 0, len(view.Charts))
+	for _, c := range view.Charts {
+		ids = append(ids, c.ID)
+	}
+	return fmt.Errorf("`chart attach %s` succeeded, but environment %q lists no chart with that id "+
+		"(listed: %v). The server keeps an id that is already a slug unchanged, so a different id means "+
+		"the attach went somewhere else:\n%s", byoAddonID, r.EnvName, ids, out)
+}
+
+// cliDemoDNSCertArgs builds the `dns-cert` beat: the run's environment gets a `dns` singleton that
+// brings the delegated zone and asks for the managed certificate.
+//
+// It builds a full argv even when the run carries no zone, with empty values. The pre-spend flag
+// check runs every beat's argv through the real parser on every run, and building it here means a
+// cheap hetzner dispatch still proves the aws invocation parses. DriveCLIDemoPhase never performs it
+// without a zone, because the beat's Skip withholds it first.
+func cliDemoDNSCertArgs(r *CLIDemoRun) []string {
+	var zoneID, domain string
+	if r.CertZone != nil {
+		zoneID, domain = r.CertZone.ZoneID, r.CertZone.DomainName
+	}
+	return []string{
+		"project", "component", "add", "--project", r.ProjectID, "--kind", "dns", "--env", r.EnvName,
+		"--set", "enabled=true",
+		"--set", "zone_id=" + zoneID,
+		"--set", "domain_name=" + domain,
+		"--set", "managed_certificate=true",
+		"--no-input",
+	}
+}
+
+// assertDNSCertWired is the `dns-cert` beat's read-back: the run's environment holds a `dns`
+// component that is enabled, brings EXACTLY the zone and domain the beat set, and asks for the
+// certificate.
+//
+// Every field is compared, because each one alone changes what the deploy builds: a lost zone_id
+// makes the template create its own zone (which proves nothing about delegation), a lost
+// managed_certificate builds no certificate, and a rewritten domain requests a certificate for a
+// name the run did not scope.
+func assertDNSCertWired(r *CLIDemoRun, out string) error {
+	if r.CertZone == nil {
+		return fmt.Errorf("the run carries no delegated zone, so there was nothing to wire; the beat's Skip should have withheld it")
+	}
+	start := strings.Index(out, "[")
+	end := strings.LastIndex(out, "]")
+	if start == -1 || end <= start {
+		return fmt.Errorf("`project component list --output json` produced no JSON array:\n%s", out)
+	}
+	var comps []struct {
+		Kind   string         `json:"kind"`
+		Config map[string]any `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &comps); err != nil {
+		return fmt.Errorf("parsing the component list: %w\n%s", err, out)
+	}
+	for _, c := range comps {
+		if c.Kind != "dns" {
+			continue
+		}
+		var diffs []string
+		if got, _ := c.Config["enabled"].(bool); !got {
+			diffs = append(diffs, fmt.Sprintf("enabled=%v (want true)", c.Config["enabled"]))
+		}
+		if got, _ := c.Config["zone_id"].(string); got != r.CertZone.ZoneID {
+			diffs = append(diffs, fmt.Sprintf("zone_id=%q (want %q)", got, r.CertZone.ZoneID))
+		}
+		if got, _ := c.Config["domain_name"].(string); got != r.CertZone.DomainName {
+			diffs = append(diffs, fmt.Sprintf("domain_name=%q (want %q)", got, r.CertZone.DomainName))
+		}
+		if got, _ := c.Config["managed_certificate"].(bool); !got {
+			diffs = append(diffs, fmt.Sprintf("managed_certificate=%v (want true)", c.Config["managed_certificate"]))
+		}
+		if len(diffs) > 0 {
+			return fmt.Errorf("environment %q stores its dns component with %s. The deploy builds the "+
+				"certificate from the stored values, so runT2AcmCert would assert a certificate the beat did "+
+				"not ask for", r.EnvName, strings.Join(diffs, ", "))
+		}
+		return nil
+	}
+	return fmt.Errorf("`project component add --kind dns` succeeded, but environment %q lists no dns "+
+		"component. The deploy would ask for no certificate:\n%s", r.EnvName, out)
+}
+
+// cliDemoBeatsFor returns the beats DriveCLIDemoPhase performs for one phase of this run, in table
+// order, and the sentence logged for each beat withheld by its Skip.
+//
+// Split from the driver so the withholding is testable without a binary: a beat that is silently
+// dropped and a beat that is withheld with a reason must never look the same.
+func cliDemoBeatsFor(run *CLIDemoRun, phase CLIDemoPhase) (beats []CLIDemoBeat, skipped []string) {
+	for _, b := range CLIDemoBeats {
+		if b.Phase != phase {
+			continue
+		}
+		if b.Skip != nil {
+			if why := b.Skip(run); why != "" {
+				skipped = append(skipped, fmt.Sprintf("%s: %s", b.StepID, why))
+				continue
+			}
+		}
+		beats = append(beats, b)
+	}
+	return beats, skipped
+}
+
+// cliDemoPerformedBeatCount is how many beats this run performs across every phase, which is what
+// the spine's closing log may claim. len(CLIDemoBeats) would count a withheld beat as performed.
+func cliDemoPerformedBeatCount(run *CLIDemoRun) int {
+	n := 0
+	for _, phase := range []CLIDemoPhase{CLIDemoAuthoring, CLIDemoEnqueue, CLIDemoConverged, CLIDemoTeardown} {
+		beats, _ := cliDemoBeatsFor(run, phase)
+		n += len(beats)
+	}
+	return n
+}
+
 // cliDemoConnectorFlags is the NON-INTERACTIVE invocation of `connector <cloud>`, per cloud.
 //
 // ── WHY THIS TABLE EXISTS (#4083) ──
@@ -483,16 +894,19 @@ var cliDemoConnectorFlags = map[string]func() []string{
 	// ARN is an identifier — the same reason it is safe in argv here.
 	"aws": func() []string { return []string{"--role-arn", t2Env("E2E_AWS_ROLE_ARN", "")} },
 
-	// --wif-config takes a PATH (or "-" for stdin), and google-github-actions/auth has already
-	// written exactly that file and exported its path. Handing over the path rather than the bytes
-	// keeps the harness out of the business of parsing a credential config it does not own.
+	// --wif-config takes a PATH (or "-" for stdin). It is the BROKER's config (#4227), written by
+	// scripts/e2e/refresh-e2e-issuer-token.mjs only after that script proved the broker path on gcp:
+	// the broker pool's provider as audience and the e2e SA to impersonate. It is NOT the file
+	// google-github-actions/auth wrote (GOOGLE_APPLICATION_CREDENTIALS), which names the GITHUB pool —
+	// a pool whose provider cannot verify an assertion this console presents — so uploading it could
+	// never complete. Unset ⇒ an empty flag value ⇒ cliDemoConnectorEmptyFlags refuses before spend.
 	//
 	// --project is required by the command under --no-input even though /connect derives the
 	// project from the WIF config: without it `connector gcp` refuses with "no project given".
 	"gcp": func() []string {
 		return []string{
 			"--project", t2AmbientAccountID("gcp"),
-			"--wif-config", t2Env("GOOGLE_APPLICATION_CREDENTIALS", ""),
+			"--wif-config", t2Env(cliDemoGCPWifConfigEnv, ""),
 		}
 	},
 
@@ -508,7 +922,7 @@ var cliDemoConnectorFlags = map[string]func() []string{
 	},
 
 	// The RAM role, shaped like aws's. Present so the table covers the provider list; the
-	// dimension is not being driven on alibaba.
+	// dimension is not driven on alibaba (excluded by maintainer ruling on #4227).
 	"alibaba": func() []string { return []string{"--role-arn", t2Env("E2E_ALIBABA_ROLE_ARN", "")} },
 }
 
@@ -568,10 +982,49 @@ func cliDemoConnectorStdin(r *CLIDemoRun) string {
 	return ""
 }
 
-// cliDemoConnectorIssuerTrustEnv is the maintainer's opt-in: set it once the console this dimension
-// boots has an OIDC issuer the clouds below actually trust, and the refusal lifts with no code
-// change.
+// cliDemoConnectorIssuerTrustEnv is the maintainer's MANUAL opt-in, for a local run: set it once the
+// console being driven has an OIDC issuer the clouds actually trust, and the refusal lifts with no
+// code change. The nightly never sets it — it lifts through cliDemoBrokerProvenEnv instead, which
+// is a measurement rather than a statement.
 const cliDemoConnectorIssuerTrustEnv = "ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED"
+
+// cliDemoBrokerProvenEnv names the ONE cloud whose broker path the workflow proved before any spend
+// (#4227): scripts/e2e/refresh-e2e-issuer-token.mjs minted a broker assertion for this run, checked
+// its claims, and the cloud's own token service accepted it. e2e-nightly.yml writes it only after
+// that script exits 0, and starts the console with the broker as its assertion source — so on that
+// cloud the connector's inline probe authenticates with an assertion the cloud is proven to trust.
+//
+// It carries the PROVIDER, not a boolean, so a value left over from another leg can never lift this
+// one: a mismatch reads as "not proven".
+const cliDemoBrokerProvenEnv = "ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN"
+
+// cliDemoGCPWifConfigEnv is the path of the broker WIF config the same script writes on gcp — see
+// cliDemoConnectorFlags["gcp"].
+const cliDemoGCPWifConfigEnv = "ALETHIA_E2E_CLI_DEMO_GCP_WIF_CONFIG"
+
+// cliDemoBrokerClouds are the clouds whose connector the E2E assertion broker can lift. Alibaba is
+// excluded by maintainer ruling (#4227); hetzner needs no issuer at all. A closed list on purpose:
+// a sixth cloud does not inherit the lift, it has to be added here with a trust behind it.
+var cliDemoBrokerClouds = map[string]bool{"aws": true, "gcp": true, "azure": true}
+
+// cliDemoConnectorLift answers whether the refusal in cliDemoConnectorIssuerTrust is lifted for
+// provider, and on whose authority. Pure — it reads the environment through getenv — so every
+// branch is unit-tested without a cloud.
+//
+//	"broker"     — the workflow PROVED the broker path for exactly this cloud (preferred: measured)
+//	"maintainer" — ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED is set by hand (a local run's statement)
+//	""           — not lifted; the table's reason stands
+//
+// A broker proof for a cloud outside cliDemoBrokerClouds lifts nothing, whatever the variable says.
+func cliDemoConnectorLift(provider string, getenv func(string) string) string {
+	if cliDemoBrokerClouds[provider] && strings.TrimSpace(getenv(cliDemoBrokerProvenEnv)) == provider {
+		return "broker"
+	}
+	if t2Truthy(getenv(cliDemoConnectorIssuerTrustEnv)) {
+		return "maintainer"
+	}
+	return ""
+}
 
 // cliDemoConnectorIssuerTrust records, per cloud, why `connector <cloud>` cannot COMPLETE against
 // the console this dimension boots — or "" when it can.
@@ -599,28 +1052,34 @@ const cliDemoConnectorIssuerTrustEnv = "ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED"
 // Hetzner is unaffected because its connector has no issuer in the path — the token is encrypted
 // and the probe is a bearer GET against api.hetzner.cloud.
 //
-// So these three cells are blocked on a MAINTAINER decision about the e2e console's identity, not
-// on this harness. Recorded here, refused loudly before spend (AssertCLIDemoConnectorIsDrivable),
-// and liftable in one repo variable — never silently skipped, which would report a cell the run
-// never drove.
+// ── WHAT LIFTS IT (#4227) ──
+//
+// The console does not need its own trusted issuer if it borrows one: with
+// ALETHIA_E2E_ASSERTION_BROKER_URL set, apps/console/lib/oidc/assertion-source.ts asks the E2E
+// assertion broker (apps/e2e-issuer) for each assertion instead of minting it, and #4226 makes the
+// e2e identities on aws, gcp and azure trust that broker. The nightly proves the chain before any
+// spend and records it in cliDemoBrokerProvenEnv; cliDemoConnectorLift reads it. The reasons below
+// are what stands on a cloud where that proof has NOT happened, which is why they stay.
+//
+// Recorded here, refused loudly before spend (AssertCLIDemoConnectorIsDrivable) — never silently
+// skipped, which would report a cell the run never drove.
 var cliDemoConnectorIssuerTrust = map[string]string{
 	"hetzner": "",
 	"aws": "`connector aws` submits a role ARN and the console then runs AssumeRoleWithWebIdentity " +
 		"with a token it signed itself. The e2e role trusts token.actions.githubusercontent.com only " +
-		"(infra/aws-oidc/e2e-nightly.tf), so the console's assertion is refused and the beat exits 1.",
+		"(infra/aws-oidc/e2e-nightly.tf), so the console's assertion is refused and the beat exits 1. " +
+		"Lifted by a proven broker path (#4227), whose E2EBrokerAssertion statement #4226 adds.",
 	"gcp": "`connector gcp` submits a WIF credential config and the console then exchanges its own " +
-		"minted subject token at Google STS. The e2e pool's provider trusts GitHub's issuer, not this " +
-		"console's, so the exchange is refused and the beat exits 1. SECOND, INDEPENDENT BLOCKER: the " +
-		"config this beat uploads is the one google-github-actions/auth wrote, and with no token_format " +
-		"that is an external_account whose credential_source.file is a RUNNER-LOCAL path holding a " +
-		"short-lived GitHub OIDC token. The console stores it verbatim and can never resolve that path, " +
-		"so lifting the issuer decision alone does not make this cell drivable — it needs a credential " +
-		"whose source the console can read.",
+		"minted subject token at Google STS. The e2e GitHub pool's provider trusts GitHub's issuer, not " +
+		"this console's, so the exchange is refused and the beat exits 1. Lifted by a proven broker path " +
+		"(#4227), which also writes the config the beat uploads: the broker pool's provider as audience " +
+		"(the console supplies the subject token itself, so credential_source is never read).",
 	"azure": "`connector azure` submits tenant/client/subscription and the console then presents a " +
 		"client assertion it signed itself. The managed identity's federated credential names GitHub's " +
-		"issuer, so Entra answers AADSTS70021 and the beat exits 1.",
-	"alibaba": "same keyless shape as aws, and the dimension is not being driven on alibaba — the " +
-		"maintainer's cli-demo scope is hetzner, aws, gcp and azure.",
+		"issuer, so Entra answers AADSTS70021 and the beat exits 1. Lifted by a proven broker path " +
+		"(#4227), whose e2e-assertion-broker federated credential #4226 adds.",
+	"alibaba": "same keyless shape as aws, and the dimension is not driven on alibaba — excluded from " +
+		"the broker proof by maintainer ruling on #4227; the cli-demo scope is hetzner, aws, gcp and azure.",
 }
 
 // ValidateCLIDemoBeats holds the two tables to each other. Returns every problem at once, because

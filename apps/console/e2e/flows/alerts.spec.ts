@@ -134,14 +134,16 @@ test.describe("Alerts — empty states, through EmptyState", () => {
 		await expect(countPill(s.policies)).toHaveText("0");
 	});
 
-	test("the ledger's empty state is the table's own message, not an EmptyState", async ({
+	// #4968 (F10, #4939) moved the ledger's empty state from the table's muted row into the shared
+	// EmptyState; with no filter on it says nothing has been delivered yet and offers no Reset.
+	test("an empty ledger lands in the shared EmptyState, which says nothing was delivered yet", async ({
 		team,
 	}) => {
 		await gotoAlerts(team.page, team.orgSlug!);
 		const { activity } = sections(team.page);
-		await expect(
-			activity.getByText("No activity matches these filters."),
-		).toBeVisible();
+		await expect(activity.locator("[data-slot='empty']")).toBeVisible();
+		await expect(activity.getByText("No activity yet")).toBeVisible();
+		await expect(activity.getByRole("button", { name: "Reset filters" })).toHaveCount(0);
 	});
 });
 
@@ -467,15 +469,16 @@ test.describe("Alerts — the channel filter store (channel*)", () => {
 		await expect(channels.getByRole("button", { name: "Paused 1" })).toBeVisible();
 	});
 
-	test("a filter that matches nothing shows the filtered message, not the EmptyState", async ({
+	// #4968 (F10, #4939): a filter that matches nothing lands in the shared EmptyState too, and that
+	// state carries the way out — Reset filters.
+	test("a filter that matches nothing lands in the shared EmptyState, which offers Reset", async ({
 		team,
 	}) => {
 		await gotoAlerts(team.page, team.orgSlug!, "?channel=zzz-no-such-channel");
 		const { channels } = sections(team.page);
-		await expect(
-			channels.getByText("No channels match these filters."),
-		).toBeVisible();
-		await expect(channels.locator("[data-slot='empty']")).toHaveCount(0);
+		await expect(channels.locator("[data-slot='empty']")).toBeVisible();
+		await expect(channels.getByText("No channels match")).toBeVisible();
+		await expect(channels.getByRole("button", { name: "Reset filters" })).toBeVisible();
 		await expect(countPill(channels)).toHaveText("0");
 	});
 });

@@ -8,19 +8,29 @@
 
 import { test, expect } from "../fixtures/qa";
 import { pendingInvitationId } from "../helpers/db";
-import { logCursor, waitForOtp } from "../helpers/otp";
-import { organizationApi } from "../helpers/personas";
+import { emailOtpSignIn, organizationApi } from "../helpers/personas";
 import type { Page } from "@playwright/test";
 
-/** Email-OTP sign-in with a longer OTP wait (busy dev server logs the code late). */
+/**
+ * Email-OTP sign-in with a longer OTP wait (a busy dev server logs the code late).
+ *
+ * Delegates to the shared walk rather than keeping a copy of it, because the copy that lived here
+ * had drifted from it in the two ways that failed this file together on run 35917620550:
+ *
+ *  - It read "the newest sign-in code in the log" with no recipient. The release gate's qa leg
+ *    runs 3 workers against one shared console log, so this file's signups run side by side with
+ *    each other and with other files' — and a walk could take a code logged for somebody else.
+ *    The retry trace of "a blank org name…" shows it: `send-verification-otp` 200, then
+ *    `sign-in/email-otp` with `{"otp":"401640"}` answered **400 INVALID_OTP** 64 ms later; the
+ *    page sat on "That code didn't work", and `waitForURL(/onboarding/)` waited 30 s for a
+ *    navigation that a rejected code never makes. `emailOtpSignIn` matches per RECIPIENT.
+ *  - It never answered the consent banner. When a walk did reach /onboarding (the retry of "a
+ *    reserved slug…"), the fixed "Privacy choices" panel covered "Customize URL" and the click
+ *    retried against it until the 180 s test timeout. `emailOtpSignIn` rejects analytics first —
+ *    the choice a fresh browser must make — and that first-party cookie carries to /onboarding.
+ */
 async function otpSignIn(page: Page, email: string, mode: "signup" | "login"): Promise<void> {
-	const cursor = await logCursor();
-	await page.goto(`/${mode}`);
-	await page.getByRole("button", { name: /continue with email/i }).click();
-	await page.locator("#email").fill(email);
-	await page.getByRole("button", { name: /continue with email/i }).click();
-	const code = await waitForOtp(cursor, { timeoutMs: 150_000 });
-	await page.locator("input[data-input-otp]").first().fill(code);
+	await emailOtpSignIn(page, email, mode, { otpTimeoutMs: 150_000 });
 }
 
 /** A unique, never-registered email so a login attempt genuinely hits the no-account branch. */
@@ -57,7 +67,11 @@ test.describe("Onboarding negatives — login gating", () => {
 		await expect(page.getByRole("heading", { name: /no account for this email/i })).toBeVisible({
 			timeout: 15_000,
 		});
+		// ONE button of this name: the card's, which carries the typed email to /signup. The topbar
+		// switch says the same words but is navigation, so it is a LINK — it announced itself as a
+		// second "Create an account" button until run 35917620550 failed on it in strict mode.
 		await expect(page.getByRole("button", { name: /create an account/i })).toBeVisible();
+		await expect(page.getByRole("link", { name: /create an account/i })).toBeVisible();
 	});
 
 	test("an invalid email format does not advance past the email step", async ({ page }) => {

@@ -241,7 +241,7 @@ Everything below already exists; none of it was reachable from this file.
 | `scripts/lib/scope-overlap.mjs` | The ONE scope-glob matcher (normalize · `**` as zero-or-more · prefix subsumption · wildcard segments) plus the live-board audit behind coordinate.sh's report. Shared by all three surfaces after each answered the question differently. `--report` reads a board on stdin; `--json`; `--self-test` (fixtures + mutation controls). |
 | `scripts/board-dashboard.mjs` | Read-only HTML dashboard: per-wave READY/CLAIMED/BLOCKED/DONE, in-flight dev PRs with check rollups, scope collisions, and a "NEEDS YOU" panel. `--out`, `--open`, `--json`. |
 | `scripts/lib/board-pr.sh` | Shared, fail-closed board↔PR predicates. Extracted after two copies drifted and silently stopped matching `Fixes #n`. |
-| `scripts/merge-signal-health.sh` | Tracks whether the observe-only heavy E2Es are reliable enough to promote to required. |
+| `scripts/merge-signal-health.sh` | Grades the observe-only heavy E2Es over Mergify's queue builds (`mergify/merge-queue/*`) and says whether one is reliable enough to promote to required. Exits 1 on an empty/stale source or an UNREACHABLE signal. Test: `scripts/merge-signal-health-test.sh`. |
 
 **Environment knobs:** `ALETHIA_LEASE_TTL` (3600s) · `ALETHIA_PR_IDLE_TTL` (4× lease TTL) — the two the stalled
 predicate tests, through `board_unit_is_stalled` in `scripts/lib/board-pr.sh`, so the report and `--takeover`

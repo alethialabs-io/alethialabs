@@ -9,8 +9,8 @@
 	],
 	"version": 1,
 	"source": {
-		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/35713083980",
-		"commit": "c776a4d15a119ad8ee5178d8820d8c38f635999b"
+		"run": "https://github.com/alethialabs-io/alethialabs/actions/runs/36058527139",
+		"commit": "8f5c3953a19062f4d725accfd6cbca53b4c1b7f0"
 	},
 	"runs": {
 		"routes": {
@@ -19,7 +19,7 @@
 			"persona": "the run's own owner",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names",
-			"runKey": "e2e-e2e-1790071077565-126895",
+			"runKey": "e2e-e2e-1790284776229-271151",
 			"records": [
 				{
 					"route": "/[org]",
@@ -1911,7 +1911,7 @@
 			"persona": "the `member` persona, compared against the owner of the same org",
 			"org": "a SECOND organisation, created by that spec and never touched by the primary run",
 			"covers": "only the org-only routes; the parameterised ones need a project the persona cannot be given",
-			"runKey": "e2e-e2e-audit-owner-1790071082412-1",
+			"runKey": "e2e-e2e-audit-owner-1790284780636-1",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2081,7 +2081,7 @@
 			"persona": "the run's own owner, in the `audit-interaction` project — which ACTIVATES controls and never presses a confirm",
 			"org": "a fresh, empty organisation created for the run",
 			"covers": "every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS",
-			"runKey": "e2e-e2e-1790071076472-657034",
+			"runKey": "e2e-e2e-1790284806754-823087",
 			"records": [
 				{
 					"route": "/[org]",
@@ -2207,14 +2207,12 @@
 				{
 					"route": "/[org]/[project]/jobs",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/jobs",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the rows); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/jobs",
@@ -2253,14 +2251,12 @@
 				{
 					"route": "/[org]/[project]/settings/access",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/access",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/access",
@@ -2310,8 +2306,7 @@
 				{
 					"route": "/[org]/[project]/settings/general",
 					"predicate": "R8",
-					"verdict": "FAIL",
-					"detail": "1 control named a destructive verb the ledger does not declare — of 1 control enumerated on this route"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/[project]/settings/preview",
@@ -2362,85 +2357,81 @@
 				{
 					"route": "/[org]/~/alerts",
 					"predicate": "F10",
-					"verdict": "FAIL",
-					"detail": "a nonsense search rendered no `[data-slot=\"empty\"]` inside `main`; 2 hand-rolled \"no results\" messages outside the shared empty state"
-				},
-				{
-					"route": "/[org]/~/alerts",
-					"predicate": "F8",
 					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/alerts",
+					"predicate": "F8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/alerts",
 					"predicate": "F9",
 					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/alerts",
 					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/clusters",
+					"predicate": "F10",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/clusters",
+					"predicate": "F8",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/clusters",
+					"predicate": "F9",
+					"verdict": "N/A",
+					"reason": "not-a-list-page"
+				},
+				{
+					"route": "/[org]/~/clusters",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/connectors",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/connectors",
+					"predicate": "F8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/connectors",
+					"predicate": "F9",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/connectors",
+					"predicate": "R8",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/evidence",
+					"predicate": "F10",
+					"verdict": "PASS"
+				},
+				{
+					"route": "/[org]/~/evidence",
+					"predicate": "F8",
 					"verdict": "FAIL",
-					"detail": "1 enabled control did nothing within 1000ms, 1 control named a destructive verb the ledger does not declare — of 29 controls enumerated on this route"
-				},
-				{
-					"route": "/[org]/~/clusters",
-					"predicate": "F10",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/clusters",
-					"predicate": "F8",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/clusters",
-					"predicate": "F9",
-					"verdict": "N/A",
-					"reason": "not-a-list-page"
-				},
-				{
-					"route": "/[org]/~/clusters",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/connectors",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/connectors",
-					"predicate": "F8",
-					"verdict": "FAIL",
-					"detail": "reload() kept the param but not the narrowed list"
-				},
-				{
-					"route": "/[org]/~/connectors",
-					"predicate": "F9",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/connectors",
-					"predicate": "R8",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/evidence",
-					"predicate": "F10",
-					"verdict": "PASS"
-				},
-				{
-					"route": "/[org]/~/evidence",
-					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+					"detail": "Reset left a filter param in the URL — 1 later step not reached"
 				},
 				{
 					"route": "/[org]/~/evidence",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/evidence",
@@ -2488,8 +2479,7 @@
 				{
 					"route": "/[org]/~/jobs/[id]",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/new",
@@ -2522,14 +2512,12 @@
 				{
 					"route": "/[org]/~/runners",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/runners",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/runners",
@@ -2623,8 +2611,7 @@
 				{
 					"route": "/[org]/~/settings/billing",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
@@ -2635,14 +2622,12 @@
 				{
 					"route": "/[org]/~/settings/billing/invoices",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 0 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/billing/invoices",
@@ -2670,8 +2655,7 @@
 				{
 					"route": "/[org]/~/settings/classification",
 					"predicate": "R8",
-					"verdict": "FAIL",
-					"detail": "1 enabled control did nothing within 1000ms — of 4 controls enumerated on this route"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/general",
@@ -2694,8 +2678,7 @@
 				{
 					"route": "/[org]/~/settings/general",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/members",
@@ -2715,14 +2698,12 @@
 				{
 					"route": "/[org]/~/settings/members",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/roles",
 					"predicate": "F10",
-					"verdict": "FAIL",
-					"detail": "a nonsense search rendered no `[data-slot=\"empty\"]` inside `main`"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/roles",
@@ -2747,14 +2728,12 @@
 				{
 					"route": "/[org]/~/settings/sso",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/sso",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "the list rendered 1 row(s) (read from the count-pill); a filter over fewer than 2 narrows nothing — e2e/helpers/seed-filters.ts seeds no pair for this surface"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/sso",
@@ -2769,20 +2748,17 @@
 				{
 					"route": "/[org]/~/settings/teams",
 					"predicate": "F8",
-					"verdict": "NOT MEASURED",
-					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/teams",
 					"predicate": "F9",
-					"verdict": "NOT MEASURED",
-					"reason": "no option of the facet found narrowed the list — every unselected option with a count covers every row, so applying one could not tell a working bar from a broken one"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/settings/teams",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/support",
@@ -2851,8 +2827,7 @@
 				{
 					"route": "/[org]/~/support/ask",
 					"predicate": "R8",
-					"verdict": "FAIL",
-					"detail": "1 enabled control did nothing within 1000ms — of 5 controls enumerated on this route"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/[org]/~/support/cases/[id]",
@@ -2941,8 +2916,7 @@
 				{
 					"route": "/[org]/~/usage",
 					"predicate": "R8",
-					"verdict": "N/A",
-					"reason": "no-enabled-controls"
+					"verdict": "PASS"
 				},
 				{
 					"route": "/cli/login",

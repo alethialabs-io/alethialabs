@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @vitest-environment node
 
+import { brotliCompressSync, gzipSync } from "node:zlib";
 import * as jose from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -128,6 +129,49 @@ describe("brokered workload assertion source", () => {
         audience: "alethia-gcp-wif",
       }),
     ).rejects.toThrow("E2E assertion broker refused the request (HTTP 403).");
+  });
+
+  it("names a compressed broker body instead of echoing its bytes", async () => {
+    configureBroker();
+    // What grid run 36611808450 received: the broker's JSON as a brotli stream the transport never
+    // decoded, with its content-encoding header gone.
+    mockGithubThen(
+      new Response(
+        brotliCompressSync(
+          Buffer.from(JSON.stringify({ assertion: "must.not.leak" })),
+        ),
+        { headers: { "content-type": "application/json" } },
+      ),
+    );
+    const err = await assertionSourceForProvider("aws")
+      .getAssertion({ audience: "sts.amazonaws.com" })
+      .catch((e: unknown) => e);
+    const message = err instanceof Error ? err.message : "";
+    expect(message).toMatch(
+      /^E2E assertion broker returned a body that is not JSON \(HTTP 200, content-type application\/json, content-encoding none, \d+ bytes, starts [0-9a-f]{2}( [0-9a-f]{2}){7}\)\.$/,
+    );
+    expect(message).not.toContain("must.not.leak");
+  });
+
+  it("names a non-JSON GitHub OIDC body without echoing it", async () => {
+    configureBroker();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(gzipSync(Buffer.from('{"value":"github.secret.token"}')), {
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      ),
+    );
+    const err = await assertionSourceForProvider("aws")
+      .getAssertion({ audience: "sts.amazonaws.com" })
+      .catch((e: unknown) => e);
+    const message = err instanceof Error ? err.message : "";
+    expect(message).toContain("GitHub OIDC returned a body that is not JSON");
+    expect(message).toContain("starts 1f 8b");
+    expect(message).not.toContain("secret");
   });
 
   it("refuses malformed, expired, and provider-mismatched assertions", async () => {

@@ -434,7 +434,11 @@ variable "cosmos_db_collections" {
   type = list(object({
     name          = string
     partition_key = optional(string, "/id")
-    billing_mode  = optional(string, "PAY_PER_REQUEST")
+    # No `billing_mode` (#4320, maintainer ruling 2026-09-23): Cosmos here is SERVERLESS ONLY. Throughput
+    # is bought per ACCOUNT, so a per-container billing mode had nothing to land on and a user who
+    # picked provisioned silently got serverless. Replica regions are the one route to provisioned
+    # throughput (see `local.cosmos_replica_regions` in cosmos-db.tf). An old tfvars still carrying the
+    # key is harmless: tofu drops object attributes the declared type omits.
     # Point-in-time restore. Offered per table by the canvas, but Cosmos buys it per ACCOUNT (the
     # `backup` block below), so any container asking for it puts the whole account in continuous
     # backup mode — see `local.cosmos_backup_type` in cosmos-db.tf.

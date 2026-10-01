@@ -3220,10 +3220,6 @@ export const NOSQL: Record<CloudProviderSlug, NosqlConfig> = {
 				{
 					"value": "on_demand",
 					"label": "Serverless"
-				},
-				{
-					"value": "provisioned",
-					"label": "Provisioned Throughput"
 				}
 			],
 			"keyTypes": [

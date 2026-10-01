@@ -14,7 +14,9 @@
 // usable access path was asserted. This surface closes that: it proves (a) the deploy
 // SURFACED an access path (cluster_endpoint in the persisted execution_metadata — what the
 // console reads), (b) the runner-written CLI-free kubeconfig (exec-plugin → kube-token)
-// AUTHENTICATES and is AUTHORIZED for a real action (`kubectl auth can-i '*' '*'` → yes) —
+// AUTHENTICATES and is AUTHORIZED for a real action (`kubectl auth can-i '*' '*'` → yes, or — only where the
+// authorizer cannot evaluate a wildcard, as AKS's Azure-RBAC webhook cannot — every question in
+// day2ConcreteAdminChecks → yes) —
 // distinct from the soak's UNAUTHENTICATED /readyz liveness — over a real node read, and
 // (c) where an ingress exists (AWS ALB+ACM today) the ArgoCD URL resolves. The
 // orchestration that drives these against `*testing.T` + a live cluster lives in the
@@ -273,43 +275,130 @@ func evaluateArgoURLStatus(code int) error {
 	return fmt.Errorf("ArgoCD URL returned status %d (want 200 or a login redirect)", code)
 }
 
+// day2WildcardAction is the strongest authorization question the probe can ask: `can-i '*' '*'`
+// answers "yes" only for an identity that may do everything, everywhere. It is asked FIRST on
+// every cloud and, where the authorizer can evaluate it, its answer is final.
+const day2WildcardAction = "* / *"
+
+// day2ConcreteAdminChecks is the fallback question set, asked ONLY when the wildcard question
+// could not be EVALUATED (see wildcardUnevaluable) — never when it was answered "no". Each is a
+// concrete verb on a concrete resource that only a cluster-admin-shaped identity holds: minting
+// cluster-wide RBAC, deleting namespaces, reading every namespace's secrets, and installing CRDs.
+// ALL must answer "yes"; one "no" (or one unevaluable answer) fails the probe.
+//
+// Why it exists: AKS with Azure RBAC for Kubernetes authorizes through the guard webhook, which
+// maps each SubjectAccessReview onto Azure data actions and REJECTS a `*` verb/resource/group
+// unless its operations map is loaded ("Wildcard support for Resource/Verb/Group is not enabled",
+// kubeguard/guard authz/providers/azure/rbac/checkaccessreqhelper.go getDataActions). kubectl
+// renders that evaluation error as `no - an error on the server ("unknown") has prevented the
+// request from succeeding`. A seeded azure run never hit it because t2MergeAzureAdminGroup puts
+// the e2e SP's Entra group in admin_group_object_ids, which AKS binds to cluster-admin through
+// Kubernetes RBAC, and the RBAC authorizer answers `*` itself. The CLI-created environment has no
+// admin group, so its runner identity is cluster-admin ONLY through the template's
+// azurerm_role_assignment.runner_cluster_admin ("Azure Kubernetes Service RBAC Cluster Admin"),
+// i.e. only through the webhook — authorized for every concrete action (it installed ArgoCD and
+// read the nodes in grid run 36652642517) and still unable to answer the wildcard.
+var day2ConcreteAdminChecks = [][]string{
+	{"create", "clusterrolebindings.rbac.authorization.k8s.io"},
+	{"delete", "namespaces"},
+	{"get", "secrets", "--all-namespaces"},
+	{"create", "customresourcedefinitions.apiextensions.k8s.io"},
+}
+
+// day2ConcreteAction is the AuthAction recorded when the concrete fallback answered.
+const day2ConcreteAction = "concrete cluster-admin set (wildcard unevaluable)"
+
+// wildcardUnevaluable reports whether a `can-i` answer is an authorizer ERROR rather than a
+// decision: kubectl prints `no - <evaluationError>` when the SubjectAccessReview came back with an
+// evaluationError, and the apiserver wraps a webhook failure as `an error on the server`. A plain
+// "no", a 401 or a 403 is a DECISION and is never treated as unevaluable, so it cannot reach the
+// weaker fallback. Network failures are classified first by the caller.
+func wildcardUnevaluable(out string) bool {
+	s := strings.ToLower(strings.TrimSpace(out))
+	if !strings.HasPrefix(s, "no - ") {
+		return false
+	}
+	return strings.Contains(s, "an error on the server") || strings.Contains(s, "wildcard support")
+}
+
+// canIRunner asks one `kubectl auth can-i <args...>` question and returns its combined output.
+type canIRunner func(ctx context.Context, args ...string) string
+
 // probeKubeAuthorized runs `kubectl --kubeconfig <kc> auth can-i '*' '*'` on a bounded poll
 // until the surfaced identity is AUTHORIZED, or the timeout elapses. Returns the last
-// (reachable, authorized) observation; a persistent auth rejection (reachable-but-401/403 —
-// the #1040 / AKS-admin-group class) burns the timeout then fails with the classifier's
-// verdict, so a red run is diagnosable from logs alone. Never mutates the cluster.
-func probeKubeAuthorized(ctx context.Context, kubeconfigPath string, timeout time.Duration) (reachable, authorized bool, err error) {
+// (reachable, authorized) observation and the question that produced it; a persistent auth
+// rejection (reachable-but-401/403 — the #1040 / AKS-admin-group class) burns the timeout then
+// fails with the classifier's verdict, so a red run is diagnosable from logs alone. Never mutates
+// the cluster.
+func probeKubeAuthorized(ctx context.Context, kubeconfigPath string, timeout time.Duration) (reachable, authorized bool, action string, err error) {
+	run := func(ctx context.Context, args ...string) string {
+		return kubeAuthCanIOnce(ctx, kubeconfigPath, args...)
+	}
+	return probeKubeAuthorizedWith(ctx, run, timeout, day2PollInterval)
+}
+
+// probeKubeAuthorizedWith is probeKubeAuthorized over an injected can-i runner and poll interval,
+// so the wildcard-then-concrete decision is unit-tested without a cluster.
+func probeKubeAuthorizedWith(ctx context.Context, run canIRunner, timeout, interval time.Duration) (reachable, authorized bool, action string, err error) {
 	deadline := time.Now().Add(timeout)
 	var lastOut string
 	for {
-		out := kubeAuthCanIOnce(ctx, kubeconfigPath)
+		action = day2WildcardAction
+		out := run(ctx, "*", "*")
 		lastOut = out
 		reachable, authorized = classifyCanI(out)
+		if reachable && !authorized && wildcardUnevaluable(out) {
+			action = day2ConcreteAction
+			reachable, authorized, lastOut = askConcreteAdminChecks(ctx, run, out)
+		}
 		if authorized {
-			return true, true, nil
+			return true, true, action, nil
 		}
 		if time.Now().After(deadline) {
-			return reachable, authorized, fmt.Errorf(
-				"day-2 kube access is not authorized within %s (reachable=%t authorized=%t) — the surfaced kubeconfig's identity is admitted but not permitted (check the EKS access entry / AKS AAD-admin group ↔ the kube-token identity); last `auth can-i '*' '*'`:\n%s",
-				timeout, reachable, authorized, strings.TrimSpace(lastOut))
+			return reachable, authorized, action, fmt.Errorf(
+				"day-2 kube access is not authorized within %s (reachable=%t authorized=%t, asked %s) — the surfaced kubeconfig's identity is admitted but not permitted (check the EKS access entry / AKS AAD-admin group or runner RBAC Cluster Admin role assignment ↔ the kube-token identity); last `auth can-i`:\n%s",
+				timeout, reachable, authorized, action, strings.TrimSpace(lastOut))
 		}
 		select {
 		case <-ctx.Done():
-			return reachable, authorized, fmt.Errorf("context cancelled during day-2 kube access probe (%v); last output:\n%s", ctx.Err(), strings.TrimSpace(lastOut))
-		case <-time.After(day2PollInterval):
+			return reachable, authorized, action, fmt.Errorf("context cancelled during day-2 kube access probe (%v); last output:\n%s", ctx.Err(), strings.TrimSpace(lastOut))
+		case <-time.After(interval):
 		}
 	}
 }
 
-// kubeAuthCanIOnce runs one `kubectl auth can-i '*' '*'` via an EXPLICIT kubeconfig (the
-// tier's INDEPENDENT path — never the runner's side-effect KUBECONFIG env) and returns its
-// combined output for classifyCanI. Bounded by its own short timeout under ctx.
-func kubeAuthCanIOnce(ctx context.Context, kubeconfigPath string) string {
-	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath, "auth", "can-i", "*", "*")
-	out, _ := cmd.CombinedOutput() // a denial exits non-zero; classifyCanI reads the text, not the code
-	return string(out)
+// askConcreteAdminChecks asks every day2ConcreteAdminChecks question and reports authorized only
+// when ALL answered "yes". The returned output names the first question that did not, prefixed by
+// the wildcard answer that triggered the fallback, so a red run shows both.
+func askConcreteAdminChecks(ctx context.Context, run canIRunner, wildcardOut string) (reachable, authorized bool, out string) {
+	reachable = true
+	for _, q := range day2ConcreteAdminChecks {
+		o := run(ctx, q...)
+		r, a := classifyCanI(o)
+		if !a {
+			return r, false, fmt.Sprintf("can-i * * → %s\ncan-i %s → %s",
+				strings.TrimSpace(wildcardOut), strings.Join(q, " "), strings.TrimSpace(o))
+		}
+	}
+	return reachable, true, strings.TrimSpace(wildcardOut)
+}
+
+// kubeAuthCanIOnce runs one `kubectl auth can-i <args...>` via an EXPLICIT kubeconfig (the
+// tier's INDEPENDENT path — never the runner's side-effect KUBECONFIG env) and returns the text
+// classifyCanI reads. can-i writes its answer ("yes", "no", "no - <evaluationError>") to STDOUT,
+// so stdout is the answer whenever there is one; kubectl's stderr is consulted only when stdout is
+// empty — an unreachable server, a 401, a 403 — and then through kubectlRead's error line. Keeping
+// the streams apart means a stderr warning on an ALLOWED call cannot turn "yes" into a denial.
+// Bounded by its own short timeout under ctx.
+func kubeAuthCanIOnce(ctx context.Context, kubeconfigPath string, args ...string) string {
+	out, err := kubectlRead(ctx, 30*time.Second, kubeconfigPath, append([]string{"auth", "can-i"}, args...)...)
+	if answer := strings.TrimSpace(string(out)); answer != "" {
+		return answer // a denial exits non-zero; classifyCanI reads the text, not the code
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // probeReadyNodes reads the cluster's nodes via the surfaced kubeconfig and returns the Ready

@@ -6,7 +6,8 @@
 #   tofu init -backend-config=backend.hcl
 #
 # The storage account below is the one THIS stack creates: on the very first apply it does not exist
-# yet, so run `tofu init -backend=false` first, apply, then re-init with `-migrate-state`.
+# yet, so apply first under a temporary local-backend `backend_override.tf` (not `-backend=false`,
+# which cannot plan), delete the override, then re-init with `-migrate-state`.
 #
 # `use_azuread_auth` is REQUIRED, not a preference: the account is created with
 # `shared_access_key_enabled = false`, so there is no account key for the backend's default auth

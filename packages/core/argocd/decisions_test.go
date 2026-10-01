@@ -900,3 +900,27 @@ func TestArgocdURLDecision_AzureNamesTheCertificateAsTheBlocker(t *testing.T) {
 		t.Errorf("azure argocd-url skip reason should name the missing TLS certificate, got %q", d.Reason)
 	}
 }
+
+// TestInfraServiceDecisions_WebhookCAMarkerWithoutDNS — the full decision record for an AI
+// Workloads project with no domain (#4990): cert-manager is recorded INSTALLED and issuer-free on
+// every cloud, while external-dns still honestly records its skip. The console shows this list,
+// so a marker that installed cert-manager but recorded it as skipped would send the operator
+// looking for a missing controller that is in fact running.
+func TestInfraServiceDecisions_WebhookCAMarkerWithoutDNS(t *testing.T) {
+	for _, provider := range []string{"aws", "gcp", "azure", "alibaba", "hetzner"} {
+		f := &InfraFacts{Provider: provider, WebhookCAConsumers: []string{"kserve"}}
+		decisions := InfraServiceDecisions(f)
+		assertAllReasonsNonEmpty(t, decisions)
+
+		cm := decisionFor(t, decisions, "cert-manager")
+		if cm.Status != infraStatusInstalled {
+			t.Errorf("%s cert-manager: want installed for the kserve webhook CA, got %s (%s)", provider, cm.Status, cm.Reason)
+		}
+		if !strings.Contains(cm.Reason, "NO ClusterIssuer") || !strings.Contains(cm.Reason, "kserve") {
+			t.Errorf("%s cert-manager reason must say it is issuer-free and name kserve, got %q", provider, cm.Reason)
+		}
+		if d := decisionFor(t, decisions, "external-dns"); d.Status != infraStatusSkipped {
+			t.Errorf("%s external-dns: the marker must not turn DNS on, got %s", provider, d.Status)
+		}
+	}
+}

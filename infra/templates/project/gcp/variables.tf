@@ -264,11 +264,11 @@ variable "gke_enable_private_endpoint" {
   description = "Whether the master endpoint is accessible only from private IP addresses"
 }
 
-variable "gke_log_retention_days" {
-  type        = number
-  default     = 14
-  description = "Cluster log retention in days"
-}
+# `gke_log_retention_days` was DELETED here (#4320, maintainer ruling 2026-09-23). It was declared,
+# reachable and read by nothing: GKE has no per-cluster log retention. Honouring it meant either
+# retuning the project's `_Default` log bucket — every log in a project this template does not own —
+# or a second bucket plus a sink that stores and bills the same logs twice. A stored provider_config
+# value is stripped by gcp_provider.go (gcpClusterReserved) rather than emitted undeclared.
 
 #########################################################################
 ##                   Cloud SQL Variables                               ##

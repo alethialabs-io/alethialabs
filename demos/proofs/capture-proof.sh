@@ -208,6 +208,149 @@ if [ "${1:-}" = "--self-test" ]; then
 		fails=$((fails + 1))
 	fi
 
+	# 7 · THE RECEIPT A BUNDLE CLAIMS IS THE APPLY'S, NOT THE DRY RUN'S. cli-demo plans before it
+	#     applies, and both sign a receipt; the dry run's comes first in the log. Shape copied from
+	#     run 36560987784's runner log, where `head -1` picked the dry run.
+	printf '%s\n' \
+		'Evidence receipt signed (key dde43f0644284c12, plan sha256 6299b3517874…)' \
+		'Dry-run complete. Plan and cost analysis finished.' \
+		'Evidence receipt signed (key dde43f0644284c12, plan sha256 fa541c3d171d…)' \
+		'Applying OpenTofu changes...' \
+		'Apply complete! Resources: 22 added, 0 changed, 0 destroyed.' \
+		'Evidence receipt signed (key dde43f0644284c12, plan sha256 1aa415750fee…)' \
+		'Applying OpenTofu changes...' \
+		>"$tmp/cli-demo-runner.log"
+	cli_dir="$(ALETHIA_E2E_T2_RUNNER_LOG="$tmp/cli-demo-runner.log" _capture clidemo success "$tmp/pass.json" cli-demo)"
+	_t "the bundle claims the first APPLIED plan, not the dry run's" ".receipt_plan_sha256" "$(_field "$cli_dir" .receipt_plan_sha256)" "fa541c3d171d"
+	# NEGATIVE CONTROL: a log whose only receipt is a dry run has no applied plan to claim.
+	printf '%s\n' \
+		'Evidence receipt signed (key dde43f0644284c12, plan sha256 6299b3517874…)' \
+		'Dry-run complete. Plan and cost analysis finished.' \
+		>"$tmp/dryrun-only.log"
+	dry_dir="$(ALETHIA_E2E_T2_RUNNER_LOG="$tmp/dryrun-only.log" _capture dryonly success "$tmp/pass.json" cli-demo)"
+	case "$(_field "$dry_dir" .receipt_plan_sha256)" in
+		6299b3517874) echo "  ✗ a dry-run-only log claimed the dry run's plan as the applied one" >&2; fails=$((fails + 1)) ;;
+		READ-FAILED) echo "  ✗ the dry-run-only bundle is unreadable — the check above proves nothing" >&2; fails=$((fails + 1)) ;;
+		*) echo "  ✓ a dry-run-only log claims no applied plan" ;;
+	esac
+
+	# 8 · A LATER RECEIPT IS NOT THE CLAIMED ONE (#5087/#5088, run 36652642517 aws). The DB is
+	#     modelled as the real storage, not as the answers the capture expects: rows of
+	#     public.jobs, each with ONE execution_metadata that the runner's posts jsonb-MERGE into
+	#     (update_job_status's `||`). The stub psql evaluates the capture's queries over those rows.
+	#
+	#     The shape: the cluster DEPLOY applied plan A, was requeued by recover_stale_jobs
+	#     (attempts=1), and its re-run applied plan B — whose post REPLACED A's receipt on the same
+	#     row. A BYO-IaC DEPLOY created later carries plan C. The runner log claims A. Neither B
+	#     nor C may be shipped as A's receipt.
+	stub="$tmp/stubbin"
+	mkdir -p "$stub"
+	cat >"$stub/psql" <<'STUB'
+#!/usr/bin/env bash
+# Evaluates capture-proof.sh's three queries over $CAPTURE_SELFTEST_JOBS (a JSON array of
+# public.jobs rows). Anything else is an error, so a changed query fails loudly, not silently.
+set -euo pipefail
+sql="${3:-}"
+rows="$CAPTURE_SELFTEST_JOBS"
+id="$(printf '%s' "$sql" | sed -n "s/.*WHERE id='\([^']*\)'.*/\1/p")"
+case "$sql" in
+	*json_agg*"job_type='DEPLOY'"*)
+		jq -c '[.[] | select(.job_type == "DEPLOY")] | sort_by(.created_at)
+			| map({id, attempts, has_receipt: (.execution_metadata | has("verify_receipt")),
+			       plan_sha256: .execution_metadata.verify_receipt.receipt.plan_sha256})' "$rows" ;;
+	*"execution_metadata->'verify_receipt'"*"WHERE id="*)
+		jq -c --arg id "$id" '[.[] | select(.id == $id)][0].execution_metadata.verify_receipt // null' "$rows" ;;
+	*"execution_metadata->'verify_result'"*"WHERE id="*)
+		jq -c --arg id "$id" '[.[] | select(.id == $id)][0].execution_metadata.verify_result // null' "$rows" ;;
+	*) echo "stub psql: unmodelled query: $sql" >&2; exit 1 ;;
+esac
+STUB
+	chmod +x "$stub/psql"
+	sha_a="5a9ab389ab2e0000000000000000000000000000000000000000000000000001"
+	sha_b="b133b4dc673a009e59d3b33a464e5d5d7a10e4da3778c012d2feb5541a787db8"
+	sha_c="1b255f650fa09c865cb37e6971ed3001708767a1bbb58800053658be0b2acb83"
+	sha_p="e41d442df4540000000000000000000000000000000000000000000000000002"
+	_post() { jq -nc --arg s "$1" '{verify_receipt:{key_id:"db70de7a6d85898b",receipt:{plan_sha256:$s}},verify_result:{pass:3,plan:$s}}'; }
+	# The cluster row's metadata is its two runs' posts MERGED in order — the storage, not a guess.
+	jq -n --argjson a "$(_post "$sha_a")" --argjson b "$(_post "$sha_b")" \
+		--argjson c "$(_post "$sha_c")" --argjson p "$(_post "$sha_p")" '[
+		{id:"5bfa7c79-fffb-4c77-ab9a-524834119efb", job_type:"PLAN",   created_at:"2026-09-30T01:25:00Z", attempts:0, execution_metadata:$p},
+		{id:"a7b4e89b-7428-4914-b84d-57764e24916b", job_type:"DEPLOY", created_at:"2026-09-30T01:27:00Z", attempts:1, execution_metadata:($a + $b)},
+		{id:"0505e209-de0f-4221-a4c0-98f8d90cbccf", job_type:"DEPLOY", created_at:"2026-09-30T01:52:00Z", attempts:0, execution_metadata:$c}
+	]' >"$tmp/jobs-rerun.json"
+	printf '%s\n' \
+		'Evidence receipt signed (key db70de7a6d85898b, plan sha256 e41d442df454…)' \
+		'Dry-run complete. Plan and cost analysis finished.' \
+		'Evidence receipt signed (key db70de7a6d85898b, plan sha256 5a9ab389ab2e…)' \
+		'Applying OpenTofu changes...' \
+		'Apply complete! Resources: 116 added, 0 changed, 0 destroyed.' \
+		'Evidence receipt signed (key db70de7a6d85898b, plan sha256 b133b4dc673a…)' \
+		'Applying OpenTofu changes...' \
+		'Apply complete! Resources: 0 added, 0 changed, 0 destroyed.' \
+		'Evidence receipt signed (key db70de7a6d85898b, plan sha256 1b255f650fa0…)' \
+		'Applying OpenTofu changes...' \
+		>"$tmp/rerun-runner.log"
+	rerun_dir="$(PATH="$stub:$PATH" ALETHIA_DATABASE_URL="postgres://selftest" CAPTURE_SELFTEST_JOBS="$tmp/jobs-rerun.json" \
+		ALETHIA_E2E_T2_RUNNER_LOG="$tmp/rerun-runner.log" _capture rerun success "$tmp/pass.json" cli-demo)"
+	_t "the re-run bundle still claims the plan that built the cluster" ".receipt_plan_sha256" "$(_field "$rerun_dir" .receipt_plan_sha256)" "5a9ab389ab2e"
+	if [ -f "$rerun_dir/receipt.json" ]; then
+		echo "  ✗ the bundle claims plan 5a9ab389ab2e but ships a receipt for $(jq -r '.receipt.plan_sha256[0:12]' "$rerun_dir/receipt.json" 2>/dev/null) — a later receipt was taken for the claimed one" >&2
+		fails=$((fails + 1))
+	else
+		echo "  ✓ no DEPLOY row carries the claimed receipt, so none is shipped (not the re-run's, not the BYO-IaC one)"
+	fi
+	if [ -f "$rerun_dir/verify-result.json" ]; then
+		echo "  ✗ verify-result.json was shipped for a job whose receipt is not the claimed plan's" >&2
+		fails=$((fails + 1))
+	else
+		echo "  ✓ verify-result.json is withheld with it"
+	fi
+	if [ -s "$rerun_dir/receipt.note" ] && grep -q 'a7b4e89b-7428-4914-b84d-57764e24916b' "$rerun_dir/receipt.note" \
+		&& grep -q 'attempts>0' "$rerun_dir/receipt.note"; then
+		echo "  ✓ the bundle records WHY it carries no receipt, naming the re-run row"
+	else
+		echo "  ✗ the bundle carries no receipt and no receipt.note saying why — absence would read as evidence" >&2
+		fails=$((fails + 1))
+	fi
+	# POSITIVE CONTROL — the same storage, but the cluster row was NOT re-run, so it still carries
+	# A. Without this, a capture that never pulls any receipt would pass every check above.
+	jq -n --argjson a "$(_post "$sha_a")" --argjson c "$(_post "$sha_c")" --argjson p "$(_post "$sha_p")" '[
+		{id:"5bfa7c79-fffb-4c77-ab9a-524834119efb", job_type:"PLAN",   created_at:"2026-09-30T01:25:00Z", attempts:0, execution_metadata:$p},
+		{id:"0505e209-de0f-4221-a4c0-98f8d90cbccf", job_type:"DEPLOY", created_at:"2026-09-30T01:52:00Z", attempts:0, execution_metadata:$c},
+		{id:"a7b4e89b-7428-4914-b84d-57764e24916b", job_type:"DEPLOY", created_at:"2026-09-30T01:27:00Z", attempts:0, execution_metadata:$a}
+	]' >"$tmp/jobs-once.json"
+	once_dir="$(PATH="$stub:$PATH" ALETHIA_DATABASE_URL="postgres://selftest" CAPTURE_SELFTEST_JOBS="$tmp/jobs-once.json" \
+		ALETHIA_E2E_T2_RUNNER_LOG="$tmp/rerun-runner.log" _capture once success "$tmp/pass.json" cli-demo)"
+	_t "a row that still carries the claimed receipt is the one shipped" "receipt.json plan" \
+		"$(jq -r '.receipt.plan_sha256 // "none"' "$once_dir/receipt.json" 2>/dev/null || echo none)" "$sha_a"
+	_t "verify-result.json comes from the same row" "verify-result.json plan" \
+		"$(jq -r '.plan // "none"' "$once_dir/verify-result.json" 2>/dev/null || echo none)" "$sha_a"
+	if bash "$root/demos/proofs/check-proof-integrity.sh" "$once_dir" >/dev/null 2>&1; then
+		echo "  ✓ the pinned bundle passes the integrity check"
+	else
+		echo "  ✗ the pinned bundle was REFUSED by check-proof-integrity.sh" >&2
+		fails=$((fails + 1))
+	fi
+
+	# 9 · STARTER TEMPLATES (#4113): the assert-time summary is folded into the bundle and named in
+	#     the verdict — and its ABSENCE leaves no file, rather than an empty one reading as a claim.
+	printf '%s\n' '{"issue":"#4113","verdict":"PASS","templates":[{"template":"apps","verdict":"PASS","commit":"cfe20cf21f03ac6e87ca0be5ebc65939c88daef6","applications":[]},{"template":"chart","verdict":"PASS","applications":[]},{"template":"ai","verdict":"PASS","applications":[]}]}' >"$tmp/templates.json"
+	tpl_dir="$(ALETHIA_E2E_TEMPLATES_SUMMARY="$tmp/templates.json" _capture templates success "$tmp/pass.json" templates)"
+	_t "the templates summary is folded into the bundle" "templates-summary.json verdict" \
+		"$(jq -r '.verdict // "none"' "$tpl_dir/templates-summary.json" 2>/dev/null || echo none)" "PASS"
+	if grep -q '^templates: PASS — apps=PASS chart=PASS ai=PASS$' "$tpl_dir/VERDICT.txt" 2>/dev/null; then
+		echo "  ✓ VERDICT.txt names every template's verdict"
+	else
+		echo "  ✗ VERDICT.txt does not name the templates' verdicts: $(grep '^templates:' "$tpl_dir/VERDICT.txt" 2>/dev/null)" >&2
+		fails=$((fails + 1))
+	fi
+	if [ -e "$pass_dir/templates-summary.json" ]; then
+		echo "  ✗ a bundle with no templates summary carries a templates-summary.json anyway" >&2
+		fails=$((fails + 1))
+	else
+		echo "  ✓ no templates summary, no templates-summary.json"
+	fi
+
 	if [ "$fails" -ne 0 ]; then
 		echo "capture-proof --self-test: $fails assertion(s) FAILED" >&2
 		exit 1
@@ -268,11 +411,24 @@ log_has "ArgoCD ready" && deploy_stage="argocd-ready"
 extract_int() { [ "$have_log" = 1 ] && grep -oE "$1" "$runner_log" | grep -oE '[0-9]+' | head -1 || true; }
 resources_added="$(extract_int 'Apply complete! Resources: [0-9]+ added')"
 resources_destroyed="$(extract_int 'Destroy complete! Resources: [0-9]+ destroyed')"
+# receipt_plan_for_first_apply <log> — prints the plan sha of the first receipt that an APPLY
+# followed. The first receipt in the log is not that: cli-demo runs `alethia plan --wait` before
+# `apply`, and the dry run signs a receipt too ("Dry-run complete." follows it, never "Applying").
+# Taking `head -1` reported that dry-run plan as the one this bundle proves, while the DEPLOY-job
+# receipt pulled below attested the real apply, so check-proof-integrity.sh refused the first
+# green cli-demo bundle (run 36560987784: dry run 6299b3517874, apply fa541c3d171d).
+receipt_plan_for_first_apply() {
+	awk '
+		/Evidence receipt signed/ { if (match($0, /plan sha256 [0-9a-f]+/)) { s = substr($0, RSTART + 12, RLENGTH - 12) } ; next }
+		/Dry-run complete/ { s = ""; next }
+		/Applying OpenTofu changes/ { if (s != "") { print s; exit } }
+	' "$1" 2>/dev/null || true
+}
 receipt_signed=false
 receipt_plan_sha=""
 if log_has "Evidence receipt signed"; then
 	receipt_signed=true
-	receipt_plan_sha="$(grep -oE 'plan sha256 [0-9a-f]+' "$runner_log" | grep -oE '[0-9a-f]+$' | head -1 || true)"
+	receipt_plan_sha="$(receipt_plan_for_first_apply "$runner_log")"
 fi
 destroyed=false
 log_has "Destroy complete!" && destroyed=true
@@ -399,28 +555,76 @@ if [ -n "${ALETHIA_DATABASE_URL:-}" ] && command -v psql >/dev/null 2>&1; then
 	# I wrote — those used a 16-char fixture and a stub that matched on the SHAPE of the query
 	# rather than on the shape of the data.
 	#
-	# So: accept 8-64 hex, and compare by PREFIX. 12 hex is 48 bits — ample against the handful
-	# of DEPLOY rows in one run, and `ORDER BY created_at ASC` settles a tie deterministically.
-	# `LIKE` is safe here because the value is hex-validated on the line below, so it cannot
-	# carry `%` or `_`.
-	if printf '%s' "$receipt_plan_sha" | grep -qE '^[0-9a-f]{8,64}$'; then
-		receipt_job="$(psql "$ALETHIA_DATABASE_URL" -tAc \
-			"SELECT id FROM public.jobs
-			  WHERE job_type='DEPLOY'
-			    AND execution_metadata->'verify_receipt'->'receipt'->>'plan_sha256' LIKE '$receipt_plan_sha%'
-			  ORDER BY created_at ASC LIMIT 1" 2>/dev/null | tr -d '[:space:]' || true)"
+	# So: accept 8-64 hex, and compare by PREFIX (jq `startswith` below). 12 hex is 48 bits —
+	# ample against the handful of DEPLOY rows in one run, and the rows arrive ordered by
+	# `created_at ASC`, so the first match settles a tie deterministically.
+	#
+	# WHERE THE RECEIPT LIVES, AND WHY IT CAN BE GONE (#5087/#5088, run 36652642517).
+	#
+	# The receipt is ONE key on ONE row: the runner posts it at the end of the deploy stage
+	# (postDeployMetadata → update_job_status), which jsonb-MERGES it into public.jobs
+	# .execution_metadata. There is no history. So when a DEPLOY row runs twice, the second run's
+	# receipt REPLACES the first's on the same row — and a row does run twice: recover_stale_jobs
+	# requeues a CLAIMED/PROCESSING job whose runner stopped heartbeating (attempts+1, runner_id
+	# cleared), the first run's closing posts are then refused ("not owned by this runner") and
+	# dropped, and the runner claims the same id again. On 36652642517 aws that is exactly what
+	# happened: job a7b4e89b applied 116 resources under plan 5a9ab389ab2e, was requeued ~15m after
+	# its claim, and its re-run — a 0-add apply under plan b133b4dc673a — is the receipt the row
+	# carries. The 5a9ab receipt was never persisted anywhere.
+	#
+	# The old fallback then took "the earliest receipt-bearing DEPLOY", which was that same row,
+	# and shipped b133's receipt under a bundle claiming 5a9ab. check-proof-integrity.sh refused it
+	# — correctly — but the capture had already committed the mismatch into the bundle.
+	#
+	# So the rule is: when this bundle CLAIMS a plan, it ships that plan's receipt or NONE. The
+	# selection runs over the rows as DATA (one query, the decision in jq below) rather than over a
+	# series of SQL filters, so the self-test drives this exact decision against modelled rows.
+	# The fallback survives only for a bundle that claims no plan, where there is nothing for a
+	# receipt to contradict.
+	deploy_rows=""
+	if command -v jq >/dev/null 2>&1; then
+		deploy_rows="$(psql "$ALETHIA_DATABASE_URL" -tAc \
+			"SELECT COALESCE(json_agg(json_build_object(
+			           'id', id,
+			           'attempts', attempts,
+			           'has_receipt', execution_metadata ? 'verify_receipt',
+			           'plan_sha256', execution_metadata->'verify_receipt'->'receipt'->>'plan_sha256')
+			         ORDER BY created_at ASC), '[]'::json)
+			   FROM public.jobs WHERE job_type='DEPLOY'" 2>/dev/null || true)"
+		printf '%s' "$deploy_rows" | jq -e 'type == "array"' >/dev/null 2>&1 || deploy_rows=""
+	else
+		echo "::warning::capture-proof: jq is not installed, so the DEPLOY rows cannot be matched to the plan this bundle claims — no receipt is pulled."
 	fi
-	# Fallback: the EARLIEST DEPLOY that actually carries a receipt — the cluster apply, which is
-	# seeded before the BYO-IaC one. Still deterministic and still a single job for both
-	# artifacts, but it is not the pinned plan, so say so rather than letting it pass as one.
-	if [ -z "$receipt_job" ]; then
-		receipt_job="$(psql "$ALETHIA_DATABASE_URL" -tAc \
-			"SELECT id FROM public.jobs
-			  WHERE job_type='DEPLOY' AND execution_metadata ? 'verify_receipt'
-			  ORDER BY created_at ASC LIMIT 1" 2>/dev/null | tr -d '[:space:]' || true)"
-		if [ -n "$receipt_job" ] && [ -n "$receipt_plan_sha" ]; then
-			echo "::warning::capture-proof: no DEPLOY job carries a receipt for plan ${receipt_plan_sha}; fell back to the earliest receipt-bearing DEPLOY job. The committed receipt may not cover the plan this bundle reports."
+
+	if [ -n "$deploy_rows" ]; then
+		if printf '%s' "$receipt_plan_sha" | grep -qE '^[0-9a-f]{8,64}$'; then
+			receipt_job="$(printf '%s' "$deploy_rows" | jq -r --arg p "$receipt_plan_sha" \
+				'[.[] | select((.plan_sha256 // "") | startswith($p))][0].id // empty')"
+			if [ -z "$receipt_job" ]; then
+				# Name what the rows DO carry, and which were re-run: that is the difference between
+				# "the receipt was overwritten" and "the capture is looking in the wrong place".
+				carried="$(printf '%s' "$deploy_rows" | jq -r \
+					'[.[] | select(.has_receipt) | "\(.id) plan=\((.plan_sha256 // "none")[0:12]) attempts=\(.attempts)"] | join("; ")')"
+				rerun="$(printf '%s' "$deploy_rows" | jq -r '[.[] | select((.attempts // 0) > 0) | .id] | join(", ")')"
+				msg="no DEPLOY job carries a receipt for plan ${receipt_plan_sha}, the plan this bundle reports — so this bundle ships NO receipt.json or verify-result.json rather than one for a different plan. Receipt-bearing DEPLOY rows: ${carried:-none}."
+				[ -n "$rerun" ] && msg="$msg Requeued and re-run (attempts>0): ${rerun} — a re-run's receipt REPLACES the first run's on the same row, so the claimed receipt was overwritten or never persisted."
+				echo "::warning::capture-proof: $msg"
+				printf '%s\n' "$msg" | scrub_stream >"$out/receipt.note"
+			fi
+		elif [ -n "$receipt_plan_sha" ]; then
+			echo "::warning::capture-proof: the claimed plan '${receipt_plan_sha}' is not 8-64 hex, so no receipt can be matched to it — none is pulled."
+			printf 'the claimed plan %s is not 8-64 hex; no receipt was matched to it\n' "$receipt_plan_sha" | scrub_stream >"$out/receipt.note"
+		else
+			# No claimed plan (no runner log, or no applied receipt in it): the EARLIEST DEPLOY that
+			# carries a receipt — the cluster apply, seeded before the BYO-IaC one. Deterministic,
+			# and a single job for both artifacts.
+			receipt_job="$(printf '%s' "$deploy_rows" | jq -r '[.[] | select(.has_receipt)][0].id // empty')"
 		fi
+	fi
+
+	if [ -n "$receipt_job" ] && ! printf '%s' "$receipt_job" | grep -qE '^[0-9a-fA-F-]{36}$'; then
+		echo "::warning::capture-proof: the selected DEPLOY id '$receipt_job' is not a uuid — no receipt is pulled."
+		receipt_job=""
 	fi
 
 	if [ -n "$receipt_job" ]; then
@@ -430,7 +634,7 @@ if [ -n "${ALETHIA_DATABASE_URL:-}" ] && command -v psql >/dev/null 2>&1; then
 		psql "$ALETHIA_DATABASE_URL" -tAc \
 			"SELECT COALESCE(execution_metadata->'verify_result','null') FROM public.jobs WHERE id='$receipt_job'" \
 			2>/dev/null | scrub_stream >"$out/verify-result.json" || true
-	else
+	elif [ ! -f "$out/receipt.note" ]; then
 		echo "::warning::capture-proof: no DEPLOY job in the control-plane DB carries a verify_receipt — this bundle ships no receipt.json or verify-result.json."
 	fi
 
@@ -548,6 +752,22 @@ if [ -n "$byo_iac_summary" ] && [ -f "$byo_iac_summary" ]; then
 	[ -n "$byo_iac_verdict" ] && echo "  · byo-iac: $byo_iac_verdict"
 fi
 
+# ── STARTER TEMPLATES (#4113). The T2 leg writes, per template, the commit its HEAD resolved to and,
+#    per Application, the sync revision, sync/health and managed-resource count — plus, for the AI
+#    template, the hourly price of every server the run provisioned. Names, public commits, counts
+#    and prices; never a secret (the templates are public and no token is served on this
+#    dimension). Folded in scrubbed as a backstop. Absent ⇒ the dimension was off and the capture is
+#    unchanged. scripts/e2e/commit-proof.sh splits it into demos/proofs/templates/<template>/<stamp>/.
+templates_summary="${ALETHIA_E2E_TEMPLATES_SUMMARY:-}"
+templates_verdict=""
+if [ -n "$templates_summary" ] && [ -f "$templates_summary" ]; then
+	scrub_stream <"$templates_summary" >"$out/templates-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/templates-summary.json" ]; then
+		templates_verdict="$(jq -r '"\(.verdict) — " + ([.templates[] | "\(.template)=\(.verdict)"] | join(" "))' "$out/templates-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$templates_verdict" ] && echo "  · templates: $templates_verdict"
+fi
+
 # ── Keyless database auth summary (#1511). The T2 layer writes verdicts, the mechanism it wired
 #    and the rotation dwell it actually held — booleans, names and a duration, never the canary
 #    (compared as a digest inside the test) and never a token. Fold it in (scrubbed as a backstop)
@@ -564,6 +784,22 @@ if [ -n "$keyless_summary" ] && [ -f "$keyless_summary" ]; then
 		keyless_dwell="$(jq -r '.rotation_dwell_seconds // empty' "$out/keyless-db-summary.json" 2>/dev/null || true)"
 	fi
 	[ -n "$keyless_verdict" ] && echo "  · keyless-db: $keyless_verdict (rotation dwell ${keyless_dwell:-?}s)"
+fi
+
+# ── Cross-account keyless REGISTRY summary (#1047). The T2 layer writes it at
+#    ALETHIA_E2E_XACCT_REGISTRY_SUMMARY — a registry host, an image reference and booleans, never a
+#    pull token (that is minted in-cluster and never leaves it). It was WRITTEN on every nightly that
+#    ran the layer and folded into NOTHING: the workflow never passed the path to this step, so the
+#    bundle a rider night commits carried no registry verdict at all, and the per-gate record for
+#    #1046 existed only on scripts/e2e/registry-e2e.sh's local path. Absent ⇒ unchanged. ──
+registry_summary="${ALETHIA_E2E_XACCT_REGISTRY_SUMMARY:-}"
+registry_verdict=""
+if [ -n "$registry_summary" ] && [ -f "$registry_summary" ]; then
+	scrub_stream <"$registry_summary" >"$out/xacct-registry-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/xacct-registry-summary.json" ]; then
+		registry_verdict="$(jq -r '.verdict // empty' "$out/xacct-registry-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$registry_verdict" ] && echo "  · xacct-registry: $registry_verdict"
 fi
 
 # ── ArgoCD convergence counts (#2688) — the ONE summary that changes what a bundle MEANS. ──
@@ -731,8 +967,10 @@ day2offer: ${day2_offer_verdict:-n/a (day-2 offer postures off or not reached)}
 fabric-demo: ${fabric_demo_verdict:-n/a (#845 Fabric placement gate off or not reached)}
 acm-cert: ${acm_cert_verdict:-n/a (#1773 ACM certificate gate off or not reached)}
 byo-iac:   ${byo_iac_verdict:-n/a (#1765 BYO-IaC continuous proof off or not reached)}
+templates: ${templates_verdict:-n/a (#4113 starter templates off or not reached)}
 xacct:     ${xacct_verdict:-n/a (#1268 cross-account secrets off or not reached)}
 keyless-db: ${keyless_verdict:-n/a (#1511 keyless DB auth off or not reached)}
+xacct-registry: ${registry_verdict:-n/a (#1047 cross-account registry off or not reached)}
 argocd:    ${argo_assert_verdict:-UNMEASURED (#2688 — no assertion summary; this bundle carries no ArgoCD counts)}
 EOF
 
@@ -809,6 +1047,8 @@ echo "✓ proof bundle scrubbed + grep-clean: $out"
 	echo "| fabric placements (#845) | ${fabric_demo_verdict:-n/a} |"
 	echo "| xacct secrets (#1268) | ${xacct_verdict:-n/a} |"
 	echo "| keyless DB (#1511) | ${keyless_verdict:-n/a} (rotation dwell ${keyless_dwell:-?}s) |"
+	echo "| xacct registry (#1047) | ${registry_verdict:-n/a} |"
+	echo "| starter templates (#4113) | ${templates_verdict:-n/a} |"
 	echo "| commit | \`${git_sha}\` |"
 	echo
 } >>"${GITHUB_STEP_SUMMARY:-/dev/stdout}"

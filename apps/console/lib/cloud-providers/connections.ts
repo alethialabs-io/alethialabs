@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { captureServerException } from "@/lib/analytics/server";
 import { log } from "@/lib/observability/log";
+import { persistableErrorText } from "@/lib/errors";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, projects } from "@/lib/db/schema";
 import { encryptSecret } from "@/lib/crypto/secrets";
@@ -274,12 +275,15 @@ async function verifyConnectionInline(
 	}
 
 	const ok = result.status !== "disconnected";
+	// The ONE form of the probe's error that is stored, logged and returned: a message quoting raw
+	// response bytes (a NUL) would otherwise fail this UPDATE and reach the user as a SQL error.
+	const lastError = persistableErrorText(result.error);
 	await db
 		.update(cloudIdentities)
 		.set({
 			is_verified: ok,
 			status: result.status, // connected | degraded | disconnected
-			last_error: result.error,
+			last_error: lastError,
 			last_tested_at: new Date(),
 			verified_account_id: result.accountId,
 			missing_permissions: result.missingPermissions,
@@ -298,7 +302,7 @@ async function verifyConnectionInline(
 		provider: identity.provider,
 		identity_id: identityId,
 		status: result.status,
-		last_error: result.error,
+		last_error: lastError,
 		missing_permissions: result.missingPermissions.length
 			? result.missingPermissions.join(",")
 			: undefined,
@@ -306,7 +310,7 @@ async function verifyConnectionInline(
 	if (result.status === "disconnected") {
 		log.error("cloud connection verify failed", logFields);
 		void captureServerException(
-			new Error(`Cloud connection verify failed for ${identity.provider}: ${result.error ?? "unknown error"}`),
+			new Error(`Cloud connection verify failed for ${identity.provider}: ${lastError ?? "unknown error"}`),
 			{ orgId: scope.orgId, props: { provider: identity.provider, identity_id: identityId } },
 		);
 	} else if (result.status === "degraded") {
@@ -343,7 +347,7 @@ async function verifyConnectionInline(
 		identityId,
 		verified: ok,
 		status: result.status,
-		error: result.error,
+		error: lastError,
 		missingPermissions: result.missingPermissions,
 	};
 }
@@ -368,7 +372,12 @@ async function loadIdentity(scope: ConnScope, identityId: string) {
 
 // --- AWS ---
 
-const ARN_REGEX = /^arn:aws:iam::(\d{12}):role\/[\w+=,.@-]+$/;
+// A role may live under an IAM PATH — `role/alethia-e2e/alethia-e2e-nightly` — and AWS returns the
+// path as part of the ARN. The old `role\/[\w+=,.@-]+$` refused every such role, which is what
+// failed the aws cli-demo leg (run 36599467921) at `connector aws`. The path is matched as
+// non-empty segments, so `role//x` and a trailing `/` are still refused. Partitions other than
+// `aws` stay refused here; packages/core/cloud/aws/tenant_identity.go's roleARNRe is the wider one.
+const ARN_REGEX = /^arn:aws:iam::(\d{12}):role\/(?:[\w+=,.@-]+\/)*[\w+=,.@-]+$/;
 
 /**
  * Validates an AWS IAM Role ARN and extracts its 12-digit account id. Throws on a

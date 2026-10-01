@@ -3,6 +3,7 @@
 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { webhookCaConsumersSchema } from "@/lib/addons/webhook-ca-consumers";
 import { toRecord } from "@/lib/coerce";
 import { HELM_REGISTRY_HOST_RULES } from "@/lib/connectors/helm-registry-hosts";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
@@ -433,6 +434,9 @@ const projectSchema = projectsInsert
 		// fans it out (a Fabric per `dedicated` env + one shared Fabric for the shared placements);
 		// absent, the legacy Prod(dedicated)+Preview(namespace) shape is kept. Exactly one is_default.
 		environments: environmentMatrixSchema.optional(),
+		// #4990: the project-level webhook-CA marker. A closed enum rather than the text[] drizzle-zod
+		// derives, so no write path can store a consumer nobody verified.
+		webhook_ca_consumers: webhookCaConsumersSchema.optional(),
 	});
 
 const networkSchema = networkInsert

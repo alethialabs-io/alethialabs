@@ -27,6 +27,7 @@
 
 import { test, expect } from "../fixtures/qa";
 import { scanA11y } from "../helpers/a11y";
+import { facetTrigger } from "../helpers/facet";
 
 /**
  * A members row's actions trigger and its select checkbox, BY PREFIX.
@@ -60,7 +61,7 @@ async function membersReady(session: {
 }): Promise<void> {
 	await session.page.goto(`/${session.orgSlug}/~/settings/members`);
 	await expect(session.page).not.toHaveURL(/\/login/);
-	await expect(session.page.getByRole("button", { name: /^Status/ })).toBeVisible({ timeout: 30_000 });
+	await expect(facetTrigger(session.page, /^Status/)).toBeVisible({ timeout: 30_000 });
 }
 
 // On a Pro org the "Invite member" button is remounted when `canInvite` resolves async
@@ -81,6 +82,33 @@ async function openInviteDialog(page: import("@playwright/test").Page) {
 	return dialog;
 }
 
+/**
+ * Opens an invitation row's menu and chooses "Cancel invitation", retrying until the confirmation
+ * dialog is up, and returns it.
+ *
+ * The members list refetches after a mutation or a reload and REMOUNTS its rows, so a menu opened
+ * on the outgoing row detaches mid-click — "element is not stable … element was detached from the
+ * DOM" failed the release-gate `qa` leg twice on 2026-09-23 (#4992, #5002), each time on a change
+ * that did not touch this page. Same retry-open shape as {@link openInviteDialog}: a half-open menu
+ * is closed with Escape before the next attempt, and the row is re-resolved on every attempt.
+ */
+async function askToCancelInvitation(page: import("@playwright/test").Page, email: string) {
+	const confirm = page.getByRole("alertdialog");
+	await expect(async () => {
+		if (await page.getByRole("menu").isVisible().catch(() => false)) {
+			await page.keyboard.press("Escape");
+		}
+		await page
+			.getByRole("row")
+			.filter({ hasText: email })
+			.getByRole("button", { name: ROW_MENU })
+			.click({ timeout: 5_000 });
+		await page.getByRole("menuitem", { name: /cancel invitation/i }).click({ timeout: 2_000 });
+		await expect(confirm).toBeVisible({ timeout: 2_000 });
+	}).toPass({ timeout: 30_000 });
+	return confirm;
+}
+
 // ---------------------------------------------------------------------------
 // Members — Hobby owner (read-only, invite gated behind Pro)
 // ---------------------------------------------------------------------------
@@ -95,7 +123,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		// and the figures are the Status facet's option counts.
 		await expect(owner.page.getByText("Organization members and pending invitations.")).toBeVisible();
 		await expect(owner.page.getByPlaceholder("Search name or email")).toBeVisible();
-		await expect(owner.page.getByRole("button", { name: /^Role/ })).toBeVisible();
+		await expect(facetTrigger(owner.page, /^Role/)).toBeVisible();
 		// The deleted strip, asserted as deleted. Its headings were the only "Seats" / "Pending
 		// invites" text on the page, so their absence is what says the strip did not come back.
 		await expect(owner.page.getByText("Seats")).toHaveCount(0);
@@ -132,7 +160,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		// The strip's "Pending invites" figure is this option's hint. A fresh Hobby org has none,
 		// and selecting the option clears the table — which is the same statement the old
 		// "Pending tab is empty" test made, against the control that exists.
-		await owner.page.getByRole("button", { name: /^Status/ }).click();
+		await facetTrigger(owner.page, /^Status/).click();
 		await expect(owner.page.getByRole("option", { name: /Pending/ })).toBeVisible();
 		await owner.page.getByRole("option", { name: /Pending/ }).click();
 		await owner.page.keyboard.press("Escape");
@@ -149,7 +177,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		await membersReady(owner);
 		// The lone member is the Owner — filtering to Viewer clears the table. The role filter is a
 		// FACET now, not the Radix Select the console filter standard bans from a filter bar.
-		await owner.page.getByRole("button", { name: /^Role/ }).click();
+		await facetTrigger(owner.page, /^Role/).click();
 		await owner.page.getByRole("option", { name: /Viewer/ }).click();
 		await owner.page.keyboard.press("Escape");
 		await expect(owner.page.getByText("No matching members")).toBeVisible();
@@ -157,7 +185,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 
 	test("the Suspended facet option is empty on a fresh org", async ({ owner }) => {
 		await membersReady(owner);
-		await owner.page.getByRole("button", { name: /^Status/ }).click();
+		await facetTrigger(owner.page, /^Status/).click();
 		await owner.page.getByRole("option", { name: /Suspended/ }).click();
 		await owner.page.keyboard.press("Escape");
 		await expect(owner.page.getByText("No matching members")).toBeVisible();
@@ -285,9 +313,7 @@ test.describe("RBAC — Members (Pro owner)", () => {
 		// Clean up: cancel the invitation so seeded rows don't accumulate. Cancelling ASKS FIRST as
 		// of #4271, and the confirm button is "Revoke invitation" — a third spelling, because the
 		// menu item that opened it says "Cancel invitation" and the way out says "Cancel".
-		await inviteRow.getByRole("button", { name: ROW_MENU }).click();
-		await team.page.getByRole("menuitem", { name: /cancel invitation/i }).click();
-		const confirm = team.page.getByRole("alertdialog");
+		const confirm = await askToCancelInvitation(team.page, email);
 		await expect(confirm.getByText("Cancel this invitation?")).toBeVisible();
 		await confirm.getByRole("button", { name: "Revoke invitation" }).click();
 		await expect(team.page.getByRole("row").filter({ hasText: email })).toHaveCount(0, {
@@ -307,9 +333,7 @@ test.describe("RBAC — Members (Pro owner)", () => {
 		const inviteRow = team.page.getByRole("row").filter({ hasText: email });
 		await expect(inviteRow).toBeVisible({ timeout: 30_000 });
 
-		await inviteRow.getByRole("button", { name: ROW_MENU }).click();
-		await team.page.getByRole("menuitem", { name: /cancel invitation/i }).click();
-		const confirm = team.page.getByRole("alertdialog");
+		const confirm = await askToCancelInvitation(team.page, email);
 		await expect(confirm.getByText("Cancel this invitation?")).toBeVisible();
 		await confirm.getByRole("button", { name: /^Cancel$/ }).click();
 		await expect(confirm).toBeHidden();
@@ -320,9 +344,8 @@ test.describe("RBAC — Members (Pro owner)", () => {
 		});
 
 		// Now really revoke it, so the org does not accumulate a pending row per run.
-		await team.page.getByRole("row").filter({ hasText: email }).getByRole("button", { name: ROW_MENU }).click();
-		await team.page.getByRole("menuitem", { name: /cancel invitation/i }).click();
-		await team.page.getByRole("alertdialog").getByRole("button", { name: "Revoke invitation" }).click();
+		const revoke = await askToCancelInvitation(team.page, email);
+		await revoke.getByRole("button", { name: "Revoke invitation" }).click();
 		await expect(team.page.getByRole("row").filter({ hasText: email })).toHaveCount(0, {
 			timeout: 30_000,
 		});
@@ -542,12 +565,17 @@ test.describe("RBAC — General settings", () => {
 		await expect(owner.page).toHaveURL(new RegExp(`/${owner.orgSlug}`));
 	});
 
-	test("Transfer ownership is a stub → surfaces a 'coming soon' toast", async ({ owner }) => {
+	// #4996 (R8): Transfer was a live button whose only effect was a "coming soon" toast. It is now
+	// disabled, and DisabledReason gives the reason to pointer, keyboard and screen reader alike.
+	test("Transfer ownership is a stub → disabled, and says ownership transfer is coming soon", async ({
+		owner,
+	}) => {
 		await owner.page.goto(generalUrl(owner.orgSlug));
 		await expect(owner.page.getByRole("heading", { name: "Danger zone" })).toBeVisible({
 			timeout: 30_000,
 		});
-		await owner.page.getByRole("button", { name: /^Transfer$/ }).click();
-		await expect(owner.page.getByText(/ownership transfer is coming soon/i)).toBeVisible();
+		const transfer = owner.page.getByRole("button", { name: /^Transfer$/ });
+		await expect(transfer).toBeDisabled();
+		await expect(transfer).toHaveAccessibleDescription(/ownership transfer is coming soon/i);
 	});
 });

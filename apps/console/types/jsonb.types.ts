@@ -812,6 +812,11 @@ export interface ExecutionMetadata {
 	// reconcile). The status route raises a `system.project.orphan_risk` alert on this.
 	orphan_risk?: boolean;
 	orphan_risk_reason?: string;
+	// DEPLOY jobs (#5162): ISO timestamp the runner posts the moment its stage reaches `tofu apply`.
+	// recover_stale_jobs never requeues a job carrying it — a retry would apply a second time — and
+	// fails it for reconciliation instead, stamping recovery_refused_requeue_at and orphan_risk.
+	apply_started_at?: string;
+	recovery_refused_requeue_at?: string;
 	// DEPLOY + DETECT_DRIFT jobs (#574): GitOps wiring outcome + apps-Application health
 	// snapshot. On a wiring hard-fail the runner posts a PARTIAL result carrying which step
 	// died; absent on pre-#574 jobs. Mirrors the Go `argocd.GitopsStatus`.
@@ -907,12 +912,21 @@ export interface SecurityReport {
 	scanned: boolean;
 }
 
-// Why a refresh delta was dismissed as representational rather than counted as drift.
+// Why a refresh delta was dismissed rather than counted as drift.
 // Mirrors the Go `drift.NormalizedReason` (packages/core/drift/normalize.go).
+//
+// Every value but one says the delta is representational. `kubernetes_owned` does not: the
+// resource DID change outside OpenTofu, and a controller in the cluster owns that change (an AWS
+// Load Balancer Controller security-group rule for a TargetGroupBinding that exists at scan
+// time). A surface that renders reasons must not present it as "no change".
 export type DriftNormalizedReason =
 	| "empty_collection"
 	| "undeclared_collection"
-	| "computed_attribute";
+	| "computed_attribute"
+	| "sensitivity_only"
+	| "assignment_back_reference"
+	| "inapplicable_field"
+	| "kubernetes_owned";
 
 // One resource whose every refresh delta was representational — a difference in how the
 // provider encodes a value, not a difference in the infrastructure.

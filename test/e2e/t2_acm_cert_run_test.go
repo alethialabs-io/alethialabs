@@ -34,6 +34,29 @@ func runT2AcmCert(t *testing.T, ctx context.Context, cp *ControlPlane, p acmCert
 	}
 	defer func() { writeAcmCertSummary(t, p.cfg, summary) }()
 
+	// (0) WAS THE JOB ASKED? Everything below judges what the deploy BUILT; this asks what it was
+	// told to build. A job that never asked for a certificate cannot have validated one, and blaming
+	// delegation for that sends the reader to the registrar for a defect in the harness. Run
+	// 36639509726 did exactly that: the CLI-created DEPLOY carried no zone and no ask, because the
+	// seeded path's snapshot layer never reaches a job the CLI enqueues (#5087).
+	snapRaw, err := cp.JobConfigSnapshot(ctx, p.jobID)
+	if err != nil {
+		summary.Detail = "could not read the deploy job's config_snapshot: " + err.Error()
+		t.Fatalf("acm-cert: %s", summary.Detail)
+	}
+	asked, carried, err := acmCertAskFromSnapshot(snapRaw, p.cfg.zoneID)
+	if err != nil {
+		summary.Detail = err.Error()
+		t.Fatalf("acm-cert: %s", summary.Detail)
+	}
+	if !asked {
+		summary.Detail = "the deploy job was never ASKED for a certificate in the brought zone"
+		t.Fatalf("acm-cert: %s — its config_snapshot carried %s; want dns.enabled=true, zone_id=%q and the "+
+			"certificate on. Delegation is not the question: nothing asked the template to build an "+
+			"aws_acm_certificate. On the seeded path acmCertConfig.applyToSnapshot writes the ask; on "+
+			"cli-demo the `dns-cert` beat authors it", summary.Detail, carried, p.cfg.zoneID)
+	}
+
 	stateBytes := cp.StateSnapshot(p.jobID)
 	if len(stateBytes) == 0 {
 		summary.Detail = "no tofu state snapshot for the deploy job"
@@ -69,9 +92,13 @@ func runT2AcmCert(t *testing.T, ctx context.Context, cp *ControlPlane, p acmCert
 	}
 	if validations == 0 {
 		summary.Detail = "no aws_acm_certificate_validation in state — the certificate was never validated"
-		t.Fatalf("acm-cert: %s. The validation CNAME goes into the BROUGHT zone (%s); if that zone is "+
+		// Reached only when (0) proved the job ASKED, so the template was told to build it and
+		// delegation is now a fair suspect — but not the only one, so the message names what was
+		// asked and says where to look before the registrar.
+		t.Fatalf("acm-cert: %s. The job WAS asked (%s), so check the deploy log for aws_acm_certificate "+
+			"first. If it was planned, the validation CNAME goes into the BROUGHT zone (%s); if that zone is "+
 			"not delegated from Cloudflare, ACM can never resolve it. Check `dig NS %s`",
-			summary.Detail, p.cfg.zoneID, p.cfg.zoneName)
+			summary.Detail, carried, p.cfg.zoneID, p.cfg.zoneName)
 	}
 	summary.CertIssued = true
 

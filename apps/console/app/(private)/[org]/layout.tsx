@@ -4,6 +4,7 @@
 import type React from "react";
 import { notFound, redirect } from "next/navigation";
 import { resolveOrgScope } from "@/app/server/actions/resolve";
+import { classifyOrgScopeFailure } from "@/lib/auth/org-scope-failure";
 import { getOwner } from "@/lib/auth/owner";
 import { deploymentMode } from "@/lib/billing/config";
 import { orgHasSelfRunners } from "@/lib/queries/runner-capabilities";
@@ -36,12 +37,15 @@ export default async function OrgLayout({
 	try {
 		({ orgId } = await resolveOrgScope(org));
 	} catch (e) {
-		// A lost session mid-request → sign-in; an authenticated-but-unknown/forbidden org → 404.
-		// Both still THROW, and that is deliberate: redirect() throws NEXT_REDIRECT, which no
-		// not-found boundary catches, so adding one above cannot turn this branch into a render.
-		// notFound() throws NEXT_NOT_FOUND and lands on `(private)/not-found.tsx` with a real 404
-		// status — the alternative, returning a not-found body from here, answers 200.
-		if (e instanceof Error && e.message === "Unauthorized") redirect("/login");
+		// A lost session → sign-in; an org this user is not in → the 404. Anything else is rethrown
+		// by the classifier, so it reaches the error boundary and is logged (#5001) instead of being
+		// reported as "Organization not found" about the user's own org.
+		//
+		// Both answers here still THROW, and that is deliberate: redirect() throws NEXT_REDIRECT,
+		// which no not-found boundary catches, so adding one above cannot turn this branch into a
+		// render. notFound() throws NEXT_NOT_FOUND and lands on `(private)/not-found.tsx` with a real
+		// 404 status — the alternative, returning a not-found body from here, answers 200.
+		if (classifyOrgScopeFailure(e) === "sign-in") redirect("/login");
 		notFound();
 	}
 	// Feedback is a hosted-only feature (it emails Alethia Labs); the shell hides it

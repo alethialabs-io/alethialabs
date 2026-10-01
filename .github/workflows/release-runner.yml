@@ -55,7 +55,8 @@ env:
 #                   `/alethia-runner-dev-runner:latest` that fails for the wrong reason.
 #   console notify  needs the OIDC assume only — the bearer is in Secrets Manager, and nothing
 #                   about it depends on either registry.
-#   Fargate roll    needs the ECR PUSH to have succeeded. The task definition pulls from ECR, so
+#   Fargate roll    needs the ECR PUSH to have succeeded. By ruling on #3438 there is no fleet,
+#                   so an absent cluster/service skips with a notice rather than failing. The task definition pulls from ECR, so
 #                   rolling the service when the new image never got there restarts every task
 #                   onto the OLD image and reports it as a deploy of the new one.
 #   release report  always. It names what published, what did not, and the maintainer action.
@@ -168,19 +169,17 @@ jobs:
 
       # Gated on the PUSH, not on the login and not on always(): see the header. A roll after a
       # failed push is a deploy of a version that was never uploaded.
-      - name: Force new Fargate deployment
+      #
+      # There is no Fargate runner fleet, by the maintainer's ruling on #3438 (2026-09-24). The
+      # script therefore skips with a ::notice:: when the cluster or service is absent, and it
+      # still fails on every other error, including a real roll error against a fleet that does
+      # exist. Its header explains the probe, and `--self-test` pins each branch.
+      - name: Force new Fargate deployment (skipped when no fleet exists)
         id: ecs-roll
         if: ${{ !cancelled() && steps.ecr-push.outcome == 'success' }}
         env:
           VERSION: ${{ steps.meta.outputs.VERSION }}
-        run: |
-          set -euo pipefail
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --force-new-deployment \
-            --region "$AWS_REGION"
-          echo "Deployment triggered for runner v${VERSION}"
+        run: bash .github/scripts/runner-ecs-roll.sh
 
       # This step must never fail. The job is already red from whichever stage failed, and a
       # report that can fail is a report that goes missing exactly when it is needed.
@@ -194,6 +193,7 @@ jobs:
           ECR_OUTCOME: ${{ steps.ecr-push.outcome }}
           NOTIFY_OUTCOME: ${{ steps.notify.outcome }}
           ECS_OUTCOME: ${{ steps.ecs-roll.outcome }}
+          ECS_FLEET: ${{ steps.ecs-roll.outputs.fleet }}
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
           set -euo pipefail
@@ -221,7 +221,11 @@ jobs:
             echo "| ECR login | $(mark "$ECR_LOGIN_OUTCOME") |"
             echo "| ECR \`${ECR_REPOSITORY}:${VERSION}\` + \`:latest\` | $(mark "$ECR_OUTCOME") |"
             echo "| console notified (\`POST /api/releases/runner\`) | $(mark "$NOTIFY_OUTCOME") |"
-            echo "| Fargate \`${ECS_SERVICE}\` rolled | $(mark "$ECS_OUTCOME") |"
+            if [ "$ECS_OUTCOME" = "success" ] && [ "$ECS_FLEET" = "absent" ]; then
+              echo "| Fargate \`${ECS_SERVICE}\` rolled | not applicable: no runner fleet exists (#3438) |"
+            else
+              echo "| Fargate \`${ECS_SERVICE}\` rolled | $(mark "$ECS_OUTCOME") |"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
           # The failure branch is the branch this step exists for. Everything above is true on a
@@ -238,20 +242,21 @@ jobs:
               echo "hand with an admin identity — see \`infra/aws-oidc/README.md\`. Until it is applied,"
               echo "\`alethia-runner-release-deployer\` holds \`ecr:PutImage\` on an ARN that names nothing."
               echo
-              echo "**Maintainer action:** apply \`infra/aws-oidc\`, confirm \`${ECS_CLUSTER}\` / \`${ECS_SERVICE}\` exist,"
-              echo "then re-run this workflow. Nothing in the repository needs to change."
+              echo "**Maintainer action:** apply \`infra/aws-oidc\`, then re-run this workflow. Nothing in the"
+              echo "repository needs to change. There is no Fargate fleet to confirm (#3438 ruling)."
               echo
               echo "The GHCR image is unaffected — check the table above. It is the image the console's"
               echo "runner templates and the AWS connector template pull, so customer-facing runners are"
-              echo "served by this release even though the managed fleet is not."
+              echo "served by this release even though the private mirror is not."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
           if [ "$ECS_OUTCOME" != "success" ]; then
             {
               echo
-              echo "> The Fargate service \`${ECS_SERVICE}\` was **not** rolled and is still running whatever"
-              echo "> image it had before this release. This is deliberate: rolling it without the new image"
-              echo "> in ECR would restart the fleet onto the old image and call it a deploy."
+              echo "> The Fargate roll did not complete. By ruling on #3438 no fleet exists, and an absent one"
+              echo "> is skipped with a notice rather than failed. So a failure here is a real ECS error against"
+              echo "> a service that DOES exist, and a skip means the ECR push above did not land. Rolling"
+              echo "> without the new image in ECR would restart the fleet onto the old one and call it a deploy."
             } >> "$GITHUB_STEP_SUMMARY"
           fi

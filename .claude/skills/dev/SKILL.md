@@ -149,6 +149,14 @@ be the same machine. Browsers and their OS libraries install on first run, then 
   Run it from the main checkout and nowhere else: from a worktree it would apply against
   empty state and build a **second** box, breaking `dev.alethialabs.io` —
   `require_main_checkout` in `scripts/env.sh` refuses that.
+- **The box's SSH allowlist follows this Mac's IP; do not hand-edit it.** The IP is dynamic,
+  and on 2026-09-23 an IP change left a restored box unreachable, and so un-reapable, for ~10h
+  (#5025). Before its first SSH, every `env:*` command now checks the public IP. If the IP is not
+  admitted, it rewrites the `/32` in the gitignored `terraform.tfvars` under `infra/sandbox/` (backup kept) and applies a
+  plan confined to `hcloud_firewall.sandbox`. It refuses any plan that touches anything else.
+  `pnpm env:allow-ip` does only that step. If the IP cannot be determined, the command fails
+  closed. `ALETHIA_SANDBOX_NO_IP_REFRESH=1` skips the refresh on a fixed IP, but `env:box` then
+  refuses to build a box this machine could not reach. Details: `infra/sandbox/README.md`.
 - **"box: down" from a worktree used to be a lie.** State is gitignored and lives only in
   the main checkout; `env.sh` now resolves it there. If you ever see a state-read error,
   that is a bug in the script, not something to work around.

@@ -3,10 +3,18 @@
   "name": "alethia-e2e-issuer",
   // The Worker serves ONLY at ISSUER_URL (a deploy `--var`); it refuses every other origin with
   // `issuer_origin_mismatch`, and the deploy workflow probes discovery at that origin afterwards.
-  // A custom domain or route added here must therefore be the same string as E2E_ISSUER_URL.
+  //
+  // Its origin is https://e2e-issuer.alethialabs.io, a Workers Custom Domain owned by infra/e2e-issuer
+  // (maintainer ruling on #4226, 2026-09-23) — NOT a route declared here. Declaring it here would make
+  // every deploy need zone-level Cloudflare permissions, which the deploy token deliberately lacks, and
+  // would put the binding in two owners. infra/e2e-issuer reads this file's "name".
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-01",
-  "workers_dev": true,
+  // Off: the issuer has exactly one origin. workers.dev would be a second, unmonitored hostname
+  // answering (with issuer_origin_mismatch) for a key-bearing service. The deploy workflow's preflight
+  // refuses to deploy this while E2E_ISSUER_URL still names a workers.dev origin, or while the custom
+  // domain does not yet route to this Worker — that would leave the issuer reachable nowhere.
+  "workers_dev": false,
   "durable_objects": {
     "bindings": [{ "name": "REPLAY_GUARD", "class_name": "ReplayGuard" }],
   },

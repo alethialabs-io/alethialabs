@@ -1,0 +1,819 @@
+{
+  "format_version": "1.0",
+  "provider_schemas": {
+    "registry.opentofu.org/hetznercloud/hcloud": {
+      "resource_schemas": {
+        "hcloud_firewall": {
+          "block": {
+            "attributes": {
+              "id": {
+                "computed": true,
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              },
+              "labels": {
+                "computed": true,
+                "description_kind": "plain",
+                "optional": true,
+                "type": [
+                  "map",
+                  "string"
+                ]
+              },
+              "name": {
+                "description_kind": "plain",
+                "required": true,
+                "type": "string"
+              }
+            },
+            "block_types": {
+              "apply_to": {
+                "block": {
+                  "attributes": {
+                    "label_selector": {
+                      "computed": true,
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "string"
+                    },
+                    "server": {
+                      "computed": true,
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "number"
+                    }
+                  },
+                  "description_kind": "plain"
+                },
+                "nesting_mode": "set"
+              },
+              "rule": {
+                "block": {
+                  "attributes": {
+                    "description": {
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "string"
+                    },
+                    "destination_ips": {
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": [
+                        "set",
+                        "string"
+                      ]
+                    },
+                    "direction": {
+                      "description_kind": "plain",
+                      "required": true,
+                      "type": "string"
+                    },
+                    "port": {
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "string"
+                    },
+                    "protocol": {
+                      "description_kind": "plain",
+                      "required": true,
+                      "type": "string"
+                    },
+                    "source_ips": {
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": [
+                        "set",
+                        "string"
+                      ]
+                    }
+                  },
+                  "description_kind": "plain"
+                },
+                "nesting_mode": "set"
+              }
+            },
+            "description_kind": "plain"
+          },
+          "version": 0
+        },
+        "hcloud_primary_ip": {
+          "block": {
+            "attributes": {
+              "assignee_id": {
+                "computed": true,
+                "description": "ID of the resource the Primary IP should be assigned to.",
+                "description_kind": "markdown",
+                "optional": true,
+                "type": "number"
+              },
+              "assignee_type": {
+                "computed": true,
+                "description": "Type of the resource the Primary IP should be assigned to.",
+                "description_kind": "markdown",
+                "optional": true,
+                "type": "string"
+              },
+              "auto_delete": {
+                "computed": true,
+                "description": "Whether auto delete is enabled. Setting `auto_delete` to `true` is not recommended, because if a server assigned to the managed ip is deleted, it will also delete the primary IP which will break the terraform state.",
+                "description_kind": "markdown",
+                "optional": true,
+                "type": "bool"
+              },
+              "datacenter": {
+                "computed": true,
+                "deprecated": true,
+                "deprecation_message": "The datacenter attribute is marked for removal, you must use the location attribute instead. See https://docs.hetzner.cloud/changelog#2026-07-01-removing-datacenters.",
+                "description": "Name of the Datacenter for the Primary IP. See the [Hetzner Docs](https://docs.hetzner.com/cloud/general/locations/#what-datacenters-are-there) for more details about datacenters.",
+                "description_kind": "markdown",
+                "optional": true,
+                "type": "string"
+              },
+              "delete_protection": {
+                "computed": true,
+                "description": " Whether delete protection is enabled.",
+                "description_kind": "markdown",
+                "optional": true,
+                "type": "bool"
+              },
+              "id": {
+                "computed": true,
+                "description": "ID of the Primary IP.",
+                "description_kind": "markdown",
+                "type": "number"
+              },
+              "ip_address": {
+                "computed": true,
+                "description": "IP address of the Primary IP.",
+                "description_kind": "markdown",
+                "type": "string"
+              },
+              "ip_network": {
+                "computed": true,
+                "description": "IP network of the Primary IP for IPv6 addresses. Only set if `type` is `ipv6`.",
+                "description_kind": "markdown",
+                "type": "string"
+              },
+              "labels": {
+                "computed": true,
+                "description": "User-defined [labels](https://docs.hetzner.cloud/reference/cloud#labels) (key-value pairs) for the resource.",
+                "description_kind": "markdown",
+                "optional": true,
+                "type": [
+                  "map",
+                  "string"
+                ]
+              },
+              "location": {
+                "computed": true,
+                "description": "Name of the Location for the Primary IP. See the [Hetzner Docs](https://docs.hetzner.com/cloud/general/locations/#what-locations-are-there) for more details about locations.",
+                "description_kind": "markdown",
+                "optional": true,
+                "type": "string"
+              },
+              "name": {
+                "description": "Name of the Primary IP.",
+                "description_kind": "markdown",
+                "required": true,
+                "type": "string"
+              },
+              "type": {
+                "description": "Type of the Primary IP (`ipv4` or `ipv6`).",
+                "description_kind": "markdown",
+                "required": true,
+                "type": "string"
+              }
+            },
+            "description": "Provides a Hetzner Cloud Primary IP resource.\n\nSee the [Primary IP API documentation](https://docs.hetzner.cloud/reference/cloud#tag/primary-ips) for more details.\n\n## Deprecations\n\n### `datacenter` attribute\n\nThe `datacenter` attribute is marked for removal since `v1.67.0`, you must use the `location` attribute instead.\n\nSee our [deprecation](https://docs.hetzner.cloud/changelog#2025-12-16-phasing-out-datacenters) and\n[removal](https://docs.hetzner.cloud/changelog#2026-07-01-removing-datacenters) changelog for more details.",
+            "description_kind": "markdown"
+          },
+          "version": 0
+        },
+        "hcloud_server": {
+          "block": {
+            "attributes": {
+              "allow_deprecated_images": {
+                "deprecated": true,
+                "deprecation_message": "Unused attribute, consider removing it from your configuration.",
+                "description_kind": "plain",
+                "optional": true,
+                "type": "bool"
+              },
+              "backup_window": {
+                "computed": true,
+                "deprecated": true,
+                "deprecation_message": "You should remove this property from your terraform configuration.",
+                "description_kind": "plain",
+                "type": "string"
+              },
+              "backups": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": "bool"
+              },
+              "datacenter": {
+                "computed": true,
+                "deprecated": true,
+                "deprecation_message": "The datacenter attribute is marked for removal, you must use the location attribute instead. See https://docs.hetzner.cloud/changelog#2026-07-01-removing-datacenters.",
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              },
+              "delete_protection": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": "bool"
+              },
+              "firewall_ids": {
+                "computed": true,
+                "description_kind": "plain",
+                "optional": true,
+                "type": [
+                  "set",
+                  "number"
+                ]
+              },
+              "id": {
+                "computed": true,
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              },
+              "ignore_remote_firewall_ids": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": "bool"
+              },
+              "image": {
+                "computed": true,
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              },
+              "ipv4_address": {
+                "computed": true,
+                "description_kind": "plain",
+                "type": "string"
+              },
+              "ipv6_address": {
+                "computed": true,
+                "description_kind": "plain",
+                "type": "string"
+              },
+              "ipv6_network": {
+                "computed": true,
+                "description_kind": "plain",
+                "type": "string"
+              },
+              "iso": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              },
+              "keep_disk": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": "bool"
+              },
+              "labels": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": [
+                  "map",
+                  "string"
+                ]
+              },
+              "location": {
+                "computed": true,
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              },
+              "name": {
+                "description_kind": "plain",
+                "required": true,
+                "type": "string"
+              },
+              "placement_group_id": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": "number"
+              },
+              "primary_disk_size": {
+                "computed": true,
+                "description_kind": "plain",
+                "type": "number"
+              },
+              "rebuild_protection": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": "bool"
+              },
+              "rescue": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              },
+              "server_type": {
+                "description_kind": "plain",
+                "required": true,
+                "type": "string"
+              },
+              "shutdown_before_deletion": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": "bool"
+              },
+              "ssh_keys": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": [
+                  "list",
+                  "string"
+                ]
+              },
+              "status": {
+                "computed": true,
+                "description_kind": "plain",
+                "type": "string"
+              },
+              "user_data": {
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              }
+            },
+            "block_types": {
+              "network": {
+                "block": {
+                  "attributes": {
+                    "alias_ips": {
+                      "computed": true,
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": [
+                        "set",
+                        "string"
+                      ]
+                    },
+                    "ip": {
+                      "computed": true,
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "string"
+                    },
+                    "mac_address": {
+                      "computed": true,
+                      "description_kind": "plain",
+                      "type": "string"
+                    },
+                    "network_id": {
+                      "computed": true,
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "number"
+                    },
+                    "subnet_id": {
+                      "computed": true,
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "string"
+                    }
+                  },
+                  "description_kind": "plain"
+                },
+                "nesting_mode": "set"
+              },
+              "public_net": {
+                "block": {
+                  "attributes": {
+                    "ipv4": {
+                      "computed": true,
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "number"
+                    },
+                    "ipv4_enabled": {
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "bool"
+                    },
+                    "ipv6": {
+                      "computed": true,
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "number"
+                    },
+                    "ipv6_enabled": {
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "bool"
+                    }
+                  },
+                  "description_kind": "plain"
+                },
+                "nesting_mode": "set"
+              },
+              "timeouts": {
+                "block": {
+                  "attributes": {
+                    "create": {
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "string"
+                    }
+                  },
+                  "description_kind": "plain"
+                },
+                "nesting_mode": "single"
+              }
+            },
+            "description_kind": "plain"
+          },
+          "version": 0
+        }
+      }
+    },
+    "registry.opentofu.org/siderolabs/talos": {
+      "resource_schemas": {
+        "talos_cluster_kubeconfig": {
+          "block": {
+            "attributes": {
+              "certificate_renewal_duration": {
+                "computed": true,
+                "description": "The duration in hours before the certificate is renewed, defaults to 720h. Must be a valid duration string",
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              },
+              "client_configuration": {
+                "description": "The client configuration data",
+                "description_kind": "plain",
+                "nested_type": {
+                  "attributes": {
+                    "ca_certificate": {
+                      "description": "The client CA certificate",
+                      "description_kind": "plain",
+                      "required": true,
+                      "type": "string"
+                    },
+                    "client_certificate": {
+                      "description": "The client certificate",
+                      "description_kind": "plain",
+                      "required": true,
+                      "type": "string"
+                    },
+                    "client_key": {
+                      "description": "The client key",
+                      "description_kind": "plain",
+                      "required": true,
+                      "sensitive": true,
+                      "type": "string"
+                    }
+                  },
+                  "nesting_mode": "single"
+                },
+                "required": true
+              },
+              "endpoint": {
+                "computed": true,
+                "description": "endpoint to use for the talosclient. If not set, the node value will be used",
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              },
+              "id": {
+                "computed": true,
+                "description_kind": "plain",
+                "type": "string"
+              },
+              "kubeconfig_raw": {
+                "computed": true,
+                "description": "The raw kubeconfig",
+                "description_kind": "plain",
+                "sensitive": true,
+                "type": "string"
+              },
+              "kubernetes_client_configuration": {
+                "computed": true,
+                "description": "The kubernetes client configuration",
+                "description_kind": "plain",
+                "nested_type": {
+                  "attributes": {
+                    "ca_certificate": {
+                      "computed": true,
+                      "description": "The kubernetes CA certificate",
+                      "description_kind": "plain",
+                      "type": "string"
+                    },
+                    "client_certificate": {
+                      "computed": true,
+                      "description": "The kubernetes client certificate",
+                      "description_kind": "plain",
+                      "type": "string"
+                    },
+                    "client_key": {
+                      "computed": true,
+                      "description": "The kubernetes client key",
+                      "description_kind": "plain",
+                      "sensitive": true,
+                      "type": "string"
+                    },
+                    "host": {
+                      "computed": true,
+                      "description": "The kubernetes host",
+                      "description_kind": "plain",
+                      "type": "string"
+                    }
+                  },
+                  "nesting_mode": "single"
+                }
+              },
+              "node": {
+                "description": "controlplane node to retrieve the kubeconfig from",
+                "description_kind": "plain",
+                "required": true,
+                "type": "string"
+              },
+              "timeouts": {
+                "description_kind": "plain",
+                "nested_type": {
+                  "attributes": {
+                    "create": {
+                      "description": "A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as \"30s\" or \"2h45m\". Valid time units are \"s\" (seconds), \"m\" (minutes), \"h\" (hours).",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "string"
+                    },
+                    "update": {
+                      "description": "A string that can be [parsed as a duration](https://pkg.go.dev/time#ParseDuration) consisting of numbers and unit suffixes, such as \"30s\" or \"2h45m\". Valid time units are \"s\" (seconds), \"m\" (minutes), \"h\" (hours).",
+                      "description_kind": "plain",
+                      "optional": true,
+                      "type": "string"
+                    }
+                  },
+                  "nesting_mode": "single"
+                },
+                "optional": true
+              }
+            },
+            "description": "Retrieves the kubeconfig for a Talos cluster",
+            "description_kind": "plain"
+          },
+          "version": 1
+        },
+        "talos_machine_secrets": {
+          "block": {
+            "attributes": {
+              "client_configuration": {
+                "computed": true,
+                "description": "The generated client configuration data",
+                "description_kind": "plain",
+                "nested_type": {
+                  "attributes": {
+                    "ca_certificate": {
+                      "computed": true,
+                      "description": "The client CA certificate",
+                      "description_kind": "plain",
+                      "type": "string"
+                    },
+                    "client_certificate": {
+                      "computed": true,
+                      "description": "The client certificate",
+                      "description_kind": "plain",
+                      "type": "string"
+                    },
+                    "client_key": {
+                      "computed": true,
+                      "description": "The client key",
+                      "description_kind": "plain",
+                      "sensitive": true,
+                      "type": "string"
+                    }
+                  },
+                  "nesting_mode": "single"
+                }
+              },
+              "id": {
+                "computed": true,
+                "description": "The computed ID of the Talos cluster",
+                "description_kind": "plain",
+                "type": "string"
+              },
+              "machine_secrets": {
+                "computed": true,
+                "description": "The secrets for the talos cluster",
+                "description_kind": "plain",
+                "nested_type": {
+                  "attributes": {
+                    "certs": {
+                      "computed": true,
+                      "description_kind": "plain",
+                      "nested_type": {
+                        "attributes": {
+                          "etcd": {
+                            "computed": true,
+                            "description": "The certificate and key pair",
+                            "description_kind": "plain",
+                            "nested_type": {
+                              "attributes": {
+                                "cert": {
+                                  "computed": true,
+                                  "description": "certificate data",
+                                  "description_kind": "plain",
+                                  "type": "string"
+                                },
+                                "key": {
+                                  "computed": true,
+                                  "description": "key data",
+                                  "description_kind": "plain",
+                                  "sensitive": true,
+                                  "type": "string"
+                                }
+                              },
+                              "nesting_mode": "single"
+                            }
+                          },
+                          "k8s": {
+                            "computed": true,
+                            "description": "The certificate and key pair",
+                            "description_kind": "plain",
+                            "nested_type": {
+                              "attributes": {
+                                "cert": {
+                                  "computed": true,
+                                  "description": "certificate data",
+                                  "description_kind": "plain",
+                                  "type": "string"
+                                },
+                                "key": {
+                                  "computed": true,
+                                  "description": "key data",
+                                  "description_kind": "plain",
+                                  "sensitive": true,
+                                  "type": "string"
+                                }
+                              },
+                              "nesting_mode": "single"
+                            }
+                          },
+                          "k8s_aggregator": {
+                            "computed": true,
+                            "description": "The certificate and key pair",
+                            "description_kind": "plain",
+                            "nested_type": {
+                              "attributes": {
+                                "cert": {
+                                  "computed": true,
+                                  "description": "certificate data",
+                                  "description_kind": "plain",
+                                  "type": "string"
+                                },
+                                "key": {
+                                  "computed": true,
+                                  "description": "key data",
+                                  "description_kind": "plain",
+                                  "sensitive": true,
+                                  "type": "string"
+                                }
+                              },
+                              "nesting_mode": "single"
+                            }
+                          },
+                          "k8s_serviceaccount": {
+                            "computed": true,
+                            "description": "The service account secrets",
+                            "description_kind": "plain",
+                            "nested_type": {
+                              "attributes": {
+                                "key": {
+                                  "computed": true,
+                                  "description": "The service account key",
+                                  "description_kind": "plain",
+                                  "sensitive": true,
+                                  "type": "string"
+                                }
+                              },
+                              "nesting_mode": "single"
+                            }
+                          },
+                          "os": {
+                            "computed": true,
+                            "description": "The certificate and key pair",
+                            "description_kind": "plain",
+                            "nested_type": {
+                              "attributes": {
+                                "cert": {
+                                  "computed": true,
+                                  "description": "certificate data",
+                                  "description_kind": "plain",
+                                  "type": "string"
+                                },
+                                "key": {
+                                  "computed": true,
+                                  "description": "key data",
+                                  "description_kind": "plain",
+                                  "sensitive": true,
+                                  "type": "string"
+                                }
+                              },
+                              "nesting_mode": "single"
+                            }
+                          }
+                        },
+                        "nesting_mode": "single"
+                      }
+                    },
+                    "cluster": {
+                      "computed": true,
+                      "description": "The cluster secrets",
+                      "description_kind": "plain",
+                      "nested_type": {
+                        "attributes": {
+                          "id": {
+                            "computed": true,
+                            "description": "The cluster ID",
+                            "description_kind": "plain",
+                            "type": "string"
+                          },
+                          "secret": {
+                            "computed": true,
+                            "description": "The cluster secret",
+                            "description_kind": "plain",
+                            "sensitive": true,
+                            "type": "string"
+                          }
+                        },
+                        "nesting_mode": "single"
+                      }
+                    },
+                    "secrets": {
+                      "computed": true,
+                      "description": "kubernetes cluster secrets",
+                      "description_kind": "plain",
+                      "nested_type": {
+                        "attributes": {
+                          "aescbc_encryption_secret": {
+                            "computed": true,
+                            "description": "The AES-CBC encryption secret",
+                            "description_kind": "plain",
+                            "sensitive": true,
+                            "type": "string"
+                          },
+                          "bootstrap_token": {
+                            "computed": true,
+                            "description": "The bootstrap token",
+                            "description_kind": "plain",
+                            "sensitive": true,
+                            "type": "string"
+                          },
+                          "secretbox_encryption_secret": {
+                            "computed": true,
+                            "description": "The secretbox encryption secret",
+                            "description_kind": "plain",
+                            "sensitive": true,
+                            "type": "string"
+                          }
+                        },
+                        "nesting_mode": "single"
+                      }
+                    },
+                    "trustdinfo": {
+                      "computed": true,
+                      "description": "trustd secrets",
+                      "description_kind": "plain",
+                      "nested_type": {
+                        "attributes": {
+                          "token": {
+                            "computed": true,
+                            "description": "The trustd token",
+                            "description_kind": "plain",
+                            "sensitive": true,
+                            "type": "string"
+                          }
+                        },
+                        "nesting_mode": "single"
+                      }
+                    }
+                  },
+                  "nesting_mode": "single"
+                }
+              },
+              "talos_version": {
+                "computed": true,
+                "description": "The Talos version contract used to generate the secrets. Example values: `v1.12`, `v1.12.1`, `1.12`, `1.12.1`",
+                "description_kind": "plain",
+                "optional": true,
+                "type": "string"
+              }
+            },
+            "description": "Generate machine secrets for Talos cluster.",
+            "description_kind": "plain"
+          },
+          "version": 1
+        }
+      }
+    }
+  }
+}

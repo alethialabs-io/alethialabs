@@ -78,6 +78,7 @@
     "source:community": "bash scripts/create-community-source.sh",
     "sync:connector-assets": "node scripts/sync-connector-assets.mjs",
     "env:box": "bash scripts/env.sh box",
+    "env:allow-ip": "bash scripts/env.sh allow-ip",
     "env:up": "bash scripts/env.sh up",
     "env:push": "bash scripts/env.sh push",
     "env:down": "bash scripts/env.sh down",
@@ -103,8 +104,8 @@
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
-    "prettier": "^3.9.7",
-    "turbo": "^2.10.13",
+    "prettier": "^3.9.9",
+    "turbo": "^2.11.3",
     "typescript": "5.9.3"
   },
   "packageManager": "pnpm@9.15.0",

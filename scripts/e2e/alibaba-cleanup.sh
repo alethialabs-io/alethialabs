@@ -63,6 +63,10 @@ set -euo pipefail
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"
+# The sweep-handle KEY (project-id or e2e-run) and how a discovered resource is attributed to one
+# (#5096). Read its header before touching any preflight discovery below.
+# shellcheck source-path=SCRIPTDIR source=lib/scope-key.sh
+. "${E2E_LIB_DIR}/scope-key.sh"
 probe_reset
 
 # ── `--self-test` exercises the three-state probe contract against a stubbed `aliyun` and exits.
@@ -148,7 +152,14 @@ for bin in aliyun jq; do
 	fi
 done
 
-TAGK="alethia:project-id"          # the Alibaba sweep-handle key (alibabaTagStyle: colon-namespaced)
+# ── The KEY half of the scope (#5096): `alethia:project-id` unless ALETHIA_E2E_SCOPE_KEY says
+#    `e2e-run`; anything else is refused (scripts/e2e/lib/scope-key.sh). Honoured here so the variable
+#    means the same thing to all five sweepers. PREFLIGHT discovery on this cloud deliberately stays
+#    on project-id alone: the only stack that lacks an `e2e-` project-id is a CLI-created one, and
+#    the cli-demo dimension excludes alibaba by maintainer ruling (#4227) — so an e2e-run scan here
+#    would be code with no stack to find. Add it with the dimension, mirroring aws-cleanup.sh. ──
+SCOPE_KEY="$(e2e_scope_key)" || exit 2
+TAGK="alethia:${SCOPE_KEY}"        # the Alibaba sweep-handle key (alibabaTagStyle: colon-namespaced)
 PROJECT_ID_TAG="e2e-${ENV}"        # its unique per-run value (config.ID = e2e-<env>)
 CLUSTER_NAME=""                    # the ACK cluster name (<project>-<env>); may be derived below
 CLUSTER_ID=""                      # the ACK cluster id — the secondary (out-of-band) scope
@@ -259,10 +270,22 @@ tagged_eips() { tagged_ids eip vpc DescribeEipAddresses '.EipAddresses.EipAddres
 
 # SLB (classic) tag filter param spelling differs per API version; use the documented Tag.N.Key.
 tagged_slbs() { tagged_ids slb slb DescribeLoadBalancers '.LoadBalancers.LoadBalancer[]?.LoadBalancerId'; }
-# ALB lister is ROA-ish RPC (`ListLoadBalancers` → `.LoadBalancers[].LoadBalancerId`).
+# ALB lister is RPC (`ListLoadBalancers` → `.LoadBalancers[].LoadBalancerId`).
+#
+# `--force` is REQUIRED here and nowhere else in this file (#2545). The aliyun CLI checks every
+# `--Name` against its bundled API metadata before sending. ECS/VPC/SLB describe `Tag` as a
+# `RepeatList`, which the CLI's matcher expands to `Tag.1.Key`, so those listers pass. ALB
+# 2020-06-16 describes `Tag` as `Array` with no sub-parameters, which the matcher only accepts as
+# the bare `--Tag` — and `--Tag Key=…,Value=…` is then sent VERBATIM as one `Tag=` query value,
+# which is not a tag filter. So the CLI pinned in CI (3.0.263, and 3.4.6 as well) refuses
+# `--Tag.1.Key` with "'--Tag.1.Key' is not a valid parameter or flag", the probe records ALB as
+# UNVERIFIABLE, and no run could prove an ALB gone. `--force` skips only that metadata check and
+# sends `Tag.1.Key=…&Tag.1.Value=…`, which is the wire form Alibaba's own SDK produces for this API
+# (openapi-util flattens an array of objects to `Tag.<n>.<field>`). Both claims were measured with
+# `--dryrun` against the pinned binary; scripts/e2e/alibaba-cleanup-argv-test.sh pins the argv.
 tagged_albs() {
 	assert_scope
-	ali_jq alb '.LoadBalancers[]?.LoadBalancerId' alb ListLoadBalancers \
+	ali_jq alb '.LoadBalancers[]?.LoadBalancerId' alb ListLoadBalancers --force \
 		--Tag.1.Key "$TAGK" --Tag.1.Value "$PROJECT_ID_TAG"
 }
 
@@ -326,9 +349,10 @@ cluster_tagged_ids() {
 cluster_instance_ids() { cluster_tagged_ids ecs-instance ecs DescribeInstances '.Instances.Instance[]?.InstanceId'; }
 cluster_disk_ids() { cluster_tagged_ids cloud-disk ecs DescribeDisks '.Disks.Disk[]?.DiskId'; }
 cluster_slb_ids() { cluster_tagged_ids slb slb DescribeLoadBalancers '.LoadBalancers.LoadBalancer[]?.LoadBalancerId'; }
+# `--force` for the reason given above tagged_albs — ALB's `Tag` is not a RepeatList to the CLI.
 cluster_alb_ids() {
 	[ -z "$CLUSTER_ID" ] && return 0
-	ali_jq alb '.LoadBalancers[]?.LoadBalancerId' alb ListLoadBalancers \
+	ali_jq alb '.LoadBalancers[]?.LoadBalancerId' alb ListLoadBalancers --force \
 		--Tag.1.Key "ack.aliyun.com" --Tag.1.Value "$CLUSTER_ID"
 }
 

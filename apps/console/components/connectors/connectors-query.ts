@@ -370,3 +370,32 @@ export function buildConnectorsView(
 		total: rows.length,
 	};
 }
+
+/** The `useQuery` seed for one query: the view built from the RSC's catalog, and how old it is. */
+export interface ConnectorsSeed {
+	initialData: () => ConnectorsView;
+	/** `undefined` = as fresh as the render; `0` = stale on arrival, so the fetch runs at once. */
+	initialDataUpdatedAt: number | undefined;
+}
+
+/**
+ * Seed the board's query for ANY filter state from the catalog the page was rendered with.
+ *
+ * The selection over the catalog is pure, so the props answer a filtered query exactly as they
+ * answer the pristine one. Seeding only the pristine key is what broke a pasted filtered link
+ * (#4939, the audit's F8): the page renders pristine, hydrates the store from the URL in a mount
+ * effect, and the filtered key then arrived with no data — `keepPreviousData` held the FULL list
+ * up under a URL that said otherwise until a server action re-read the whole catalog. A filtered
+ * seed is marked stale on arrival, so it is shown at once and refetched behind it; the pristine
+ * seed keeps the query's own `staleTime`, as before.
+ */
+export function seedConnectorsQuery(
+	catalog: ConnectorWithConnection[],
+	query: NormalizedConnectorQuery,
+	platformConfigured: Record<string, boolean> = {},
+): ConnectorsSeed {
+	return {
+		initialData: () => buildConnectorsView(catalog, query, platformConfigured),
+		initialDataUpdatedAt: isPristineQuery(query) ? undefined : 0,
+	};
+}

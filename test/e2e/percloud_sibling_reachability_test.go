@@ -54,6 +54,13 @@ var perCloudSiblingWave = map[string][]string{
 	"ALETHIA_E2E_KEYLESS_DB_INSTANCE_CLASS": {"GCP", "AZURE"},
 	"ALETHIA_E2E_KEYLESS_DB_IMAGE":          {"GCP", "AZURE"},
 	"ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE":   {"GCP", "AZURE"},
+	// Cross-account secrets (#1268): these three are shared by name with the aws leg, but their VALUES
+	// differ by cloud (an aws account id is not an azure subscription id; each account-B stack has its
+	// own canary). infra/azure-secrets-e2e's outputs name the _AZURE siblings. gcp reads PROJECT_ID
+	// instead of ACCOUNT, and its stack still documents the flat REMOTE_KEY/EXPECT_SHA256.
+	"ALETHIA_E2E_SECRETS_XACCT_ACCOUNT":       {"AZURE"},
+	"ALETHIA_E2E_SECRETS_XACCT_REMOTE_KEY":    {"AZURE"},
+	"ALETHIA_E2E_SECRETS_XACCT_EXPECT_SHA256": {"AZURE"},
 }
 
 // perCloudSiblingFlatOnly are the bases whose value does NOT vary by cloud, so the shared flat
@@ -86,27 +93,23 @@ var perCloudSiblingFlatOnly = map[string]string{
 	"ALETHIA_E2E_FABRIC_DEMO_OVERLAYS": "the tier→namespace map is what the overlays declare, a repo property; #845 requires the same tiers everywhere",
 	"ALETHIA_E2E_FABRIC_DEMO_VCLUSTER": "names which of those tiers is also vcluster-placed — same answer on every cloud",
 
-	// Cross-account secrets + registry: these are per-cloud by nature, but the WHOLE scenario is
-	// per-cloud already — the workflow sets the flat var while dispatching one cloud at a time, and the
-	// account-B stacks for gcp/azure are not written yet (#1268). A sibling wave belongs with those
-	// stacks, not before them.
-	"ALETHIA_E2E_SECRETS_XACCT_ACCOUNT":       "scenario is dispatched one cloud at a time; the gcp/azure account-B stacks are unwritten (#1268)",
-	"ALETHIA_E2E_SECRETS_XACCT_REGION":        "as above (#1268)",
-	"ALETHIA_E2E_SECRETS_XACCT_ROLE_ARN":      "as above (#1268)",
-	"ALETHIA_E2E_SECRETS_XACCT_OIDC_ARN":      "as above (#1268)",
-	"ALETHIA_E2E_SECRETS_XACCT_PROJECT_ID":    "as above (#1268)",
-	"ALETHIA_E2E_SECRETS_XACCT_VAULT_URL":     "as above (#1268)",
-	"ALETHIA_E2E_SECRETS_XACCT_EXTERNAL_ID":   "as above (#1268)",
-	"ALETHIA_E2E_SECRETS_XACCT_REMOTE_KEY":    "as above (#1268)",
-	"ALETHIA_E2E_SECRETS_XACCT_EXPECT_SHA256": "as above (#1268)",
-	"ALETHIA_E2E_XACCT_REGISTRY_ACCOUNT":      "registry xacct is deliberately not set today; a sibling wave belongs with its enablement",
-	"ALETHIA_E2E_XACCT_REGISTRY_PROJECT_ID":   "as above",
-	"ALETHIA_E2E_XACCT_REGISTRY_REGION":       "as above",
-	"ALETHIA_E2E_XACCT_REGISTRY_ROLE_ARN":     "as above",
-	"ALETHIA_E2E_XACCT_REGISTRY_READER_SA":    "as above",
-	"ALETHIA_E2E_XACCT_REGISTRY_CLIENT_ID":    "as above",
-	"ALETHIA_E2E_XACCT_REGISTRY_HOST":         "as above",
-	"ALETHIA_E2E_XACCT_REGISTRY_IMAGE":        "as above",
+	// Cross-account secrets: each of these is read by exactly ONE cloud's lane, so the flat variable
+	// cannot collide with another leg. The shared ones (ACCOUNT, REMOTE_KEY, EXPECT_SHA256) are in
+	// perCloudSiblingWave instead.
+	"ALETHIA_E2E_SECRETS_XACCT_REGION":      "read by the aws lane only (alibaba's is blocked) (#1268)",
+	"ALETHIA_E2E_SECRETS_XACCT_ROLE_ARN":    "read by the aws lane only (alibaba's is blocked) (#1268)",
+	"ALETHIA_E2E_SECRETS_XACCT_OIDC_ARN":    "alibaba-only, and that lane is blocked (#1268)",
+	"ALETHIA_E2E_SECRETS_XACCT_PROJECT_ID":  "gcp-only (#1268)",
+	"ALETHIA_E2E_SECRETS_XACCT_VAULT_URL":   "azure-only (#1268)",
+	"ALETHIA_E2E_SECRETS_XACCT_EXTERNAL_ID": "aws-only, an STS control (#1268)",
+	"ALETHIA_E2E_XACCT_REGISTRY_ACCOUNT":    "registry xacct is deliberately not set today; a sibling wave belongs with its enablement",
+	"ALETHIA_E2E_XACCT_REGISTRY_PROJECT_ID": "as above",
+	"ALETHIA_E2E_XACCT_REGISTRY_REGION":     "as above",
+	"ALETHIA_E2E_XACCT_REGISTRY_ROLE_ARN":   "as above",
+	"ALETHIA_E2E_XACCT_REGISTRY_READER_SA":  "as above",
+	"ALETHIA_E2E_XACCT_REGISTRY_CLIENT_ID":  "as above",
+	"ALETHIA_E2E_XACCT_REGISTRY_HOST":       "as above",
+	"ALETHIA_E2E_XACCT_REGISTRY_IMAGE":      "as above",
 }
 
 // TestPerCloudSiblingsReachTheNightly is the guard. For every base passed to t2ArgoEnvForProvider it

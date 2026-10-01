@@ -10,10 +10,42 @@
 package e2e
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestFabricDemoDriftedLinesNamesAttributes pins that the fabric drift gate prints the attribute
+// PATHS the analyzer emitted, per resource. The input is the posture run 36667774857 actually
+// persisted (trimmed to three of its seven resources): the gate printed `address (modified)` for
+// each and dropped the attributes, so the failure could not be diagnosed from the gate's message.
+func TestFabricDemoDriftedLinesNamesAttributes(t *testing.T) {
+	var p byoIacPosture
+	if err := json.Unmarshal([]byte(`{"in_sync":false,"drifted":3,"details":[
+	  {"address":"hcloud_firewall.this","type":"hcloud_firewall","kind":"modified","attributes":["apply_to"]},
+	  {"address":"hcloud_primary_ip.control_plane_ipv4[0]","type":"hcloud_primary_ip","kind":"modified","attributes":["assignee_id","assignee_type"]},
+	  {"address":"talos_machine_secrets.this","type":"talos_machine_secrets","kind":"modified"}]}`), &p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := fabricDemoDriftedLines(p)
+	for _, want := range []string{
+		"hcloud_firewall.this (modified) attrs=apply_to",
+		"hcloud_primary_ip.control_plane_ipv4[0] (modified) attrs=assignee_id,assignee_type",
+		// No attributes is a statement by the analyzer, and must read as one.
+		"talos_machine_secrets.this (modified) attrs=<none reported>",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("fabricDemoDriftedLines must carry %q, got:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "\n"); n != 2 {
+		t.Errorf("want one line per resource (2 separators), got %d:\n%s", n, got)
+	}
+	if got := fabricDemoDriftedLines(byoIacPosture{}); got != "" {
+		t.Errorf("an empty posture renders %q, want empty", got)
+	}
+}
 
 func TestFabricDemoSlug(t *testing.T) {
 	cases := []struct {
@@ -50,24 +82,52 @@ func TestFabricDemoSlug(t *testing.T) {
 	}
 }
 
-func TestFabricDemoVClusterSlugIsDisjoint(t *testing.T) {
-	const env = "run-1"
-	got := fabricDemoVClusterSlug(env)
+// TestFabricDemoVClusterDeploysIntoTheOverlaysNamespace pins the cause of run 36634781502's vcluster
+// tier sitting at health=Missing sync=OutOfSync: the snapshot's `namespace` is the in-vcluster
+// destination namespace (the ONE namespace CreateNamespace=true creates), so it must be the
+// namespace the overlay stamps on every resource — never a run-scoped slug.
+func TestFabricDemoVClusterDeploysIntoTheOverlaysNamespace(t *testing.T) {
+	tiers, err := fabricDemoTiers("run-1", "hetzner")
+	if err != nil {
+		t.Fatalf("tiers: %v", err)
+	}
+	vcTier, err := fabricDemoVClusterTier("hetzner", tiers)
+	if err != nil {
+		t.Fatalf("vcluster tier: %v", err)
+	}
+	p := fabricDemoParams{project: "shop", env: "run-1", provider: "hetzner", region: "nbg1", fabricClust: "fabric", owner: "o"}
+	vp, err := fabricDemoVClusterParams(p, vcTier, fabricDemoDefaultRepo)
+	if err != nil {
+		t.Fatalf("params: %v", err)
+	}
+	snap := buildVClusterSnapshot(vp, vclusterTenantName(vp))
+	if got := snap["namespace"]; got != vcTier.Namespace {
+		t.Fatalf("vcluster snapshot namespace = %v, want %q — the overlay %s stamps every resource into %q and ships no Namespace; ArgoCD's CreateNamespace creates only destination.namespace, so any other value leaves the sync asking an empty vcluster for a namespace that does not exist",
+			got, vcTier.Namespace, fabricDemoOverlayPath(vcTier.Tier), vcTier.Namespace)
+	}
+	repos, _ := snap["repositories"].(map[string]any)
+	if repos["apps_path"] != fabricDemoOverlayPath(vcTier.Tier) {
+		t.Fatalf("vcluster apps_path = %v, want %q", repos["apps_path"], fabricDemoOverlayPath(vcTier.Tier))
+	}
 
-	// #845 places its own vcluster inside the SAME Fabric lifetime as #1308's. Identical names would
+	// #845 places its vcluster inside the SAME Fabric lifetime as #1308's. Identical names would
 	// have the two scenarios helm-install over each other and destroy each other's registration.
-	if got == vclusterTenantSlug(env) {
-		t.Fatalf("fabric-demo vcluster %q collides with #1308's %q", got, vclusterTenantSlug(env))
+	if vp.vcName == vclusterTenantSlug(p.env) {
+		t.Fatalf("fabric-demo vcluster %q collides with #1308's", vp.vcName)
 	}
-	if got == namespaceTenantSlug(env) {
-		t.Fatalf("fabric-demo vcluster %q collides with #959's namespace", got)
+}
+
+func TestFabricDemoVClusterNameBounds(t *testing.T) {
+	if _, err := fabricDemoVClusterName(fabricDemoOverlayTier{Tier: "staging"}); err == nil {
+		t.Fatal("a tier with no namespace must be refused, not named")
 	}
-	// The host namespace is `vcluster-<name>` (prefix adds 9), which must still fit 63.
-	if len(got) > 54 {
-		t.Fatalf("vcluster name %q is %d chars — `vcluster-` + it would exceed the 63-char namespace limit", got, len(got))
+	// `vcluster-` (9) + name must fit the 63-char namespace limit.
+	long := fabricDemoOverlayTier{Tier: "staging", Namespace: strings.Repeat("a", 55)}
+	if _, err := fabricDemoVClusterName(long); err == nil {
+		t.Fatal("a 55-char namespace must be refused as a vcluster name")
 	}
-	if len(fabricDemoVClusterSlug(strings.Repeat("longenv", 20))) > 54 {
-		t.Fatal("a long env must still be bounded to 54 chars")
+	if _, err := fabricDemoVClusterName(fabricDemoOverlayTier{Tier: "staging", Namespace: "Bad_NS"}); err == nil {
+		t.Fatal("a non-RFC-1123 namespace must be refused")
 	}
 }
 
@@ -144,6 +204,10 @@ func TestFabricDemoTiers(t *testing.T) {
 		"duplicate namespace":    "dev=shared-ns,staging=shared-ns",
 		"invalid namespace":      "dev=Boutique_Dev!",
 		"namespace with a slash": "dev=boutique/dev",
+		// Prod is the DEDICATED placement; as a namespace tenant it would be reported as prod while
+		// sharing somebody else's Fabric.
+		"prod as a namespace tenant":       "dev=boutique-dev,prod=boutique-prod",
+		"production as a namespace tenant": "production=boutique-production",
 	}
 	for name, raw := range refuters {
 		t.Run("refutes/"+name, func(t *testing.T) {
@@ -225,6 +289,106 @@ func TestFabricDemoOverlayPathAndStage(t *testing.T) {
 		default:
 			t.Errorf("fabricDemoStage(%q) = %q, which is not an environment_stage enum value", tier, got)
 		}
+	}
+}
+
+// TestFabricDemoProdTierMapping pins the prod tier's identity: the tier name maps to the production
+// stage, no default overlay tier claims that stage (prod is never a namespace tenant), and the
+// vcluster tier — drawn from the overlay tiers — therefore can never be prod either.
+func TestFabricDemoProdTierMapping(t *testing.T) {
+	if got := fabricDemoStage(fabricDemoProdTier); got != "production" {
+		t.Fatalf("fabricDemoStage(%q) = %q, want production — the prod tier would ship the wrong stage", fabricDemoProdTier, got)
+	}
+	tiers, err := fabricDemoTiers("run1", "aws")
+	if err != nil {
+		t.Fatalf("default tiers: %v", err)
+	}
+	for _, tier := range tiers {
+		if fabricDemoStage(tier.Tier) == "production" {
+			t.Errorf("default overlay tier %q maps to production — prod must be the dedicated placement, not a namespace tenant", tier.Tier)
+		}
+	}
+	vc, err := fabricDemoVClusterTier("aws", tiers)
+	if err != nil {
+		t.Fatalf("default vcluster tier: %v", err)
+	}
+	if fabricDemoStage(vc.Tier) == "production" {
+		t.Errorf("vcluster tier %q maps to production — prod must be the dedicated placement", vc.Tier)
+	}
+}
+
+// TestAssertFabricDemoProd proves the prod tier assertion reads the base job's config_snapshot rather
+// than trusting a constant: the dedicated shape passes, and a base deploy that is not the dedicated
+// placement is refused with a partial record of how far the check got. It covers ONLY the snapshot:
+// the Fabric name and receipt come from the same job's execution_metadata and are not re-checked.
+func TestAssertFabricDemoProd(t *testing.T) {
+	const job = "11111111-1111-1111-1111-111111111111"
+	snap := func(extra string) []byte {
+		return []byte(`{"id":"e2e-run1","project_name":"acme","environment_stage":"run1"` + extra + `}`)
+	}
+
+	t.Run("placement_mode absent is the dedicated path", func(t *testing.T) {
+		got, err := assertFabricDemoProd(job, snap(""))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := FabricDemoProd{Tier: "prod", Stage: "production", StageLabel: "run1", DeployJob: job, PlacementMode: "dedicated", Dedicated: true}
+		if got != want {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+	})
+	t.Run("explicit dedicated passes", func(t *testing.T) {
+		if _, err := assertFabricDemoProd(job, snap(`,"placement_mode":" Dedicated "`)); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	t.Run("the result feeds a passing verdict", func(t *testing.T) {
+		got, err := assertFabricDemoProd(job, snap(""))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		s := passingFabricDemoSummary()
+		s.Prod = got
+		if !fabricDemoVerdictPass(s) {
+			t.Fatal("a prod tier assertFabricDemoProd accepted must satisfy the verdict")
+		}
+	})
+
+	refuters := []struct {
+		name        string
+		jobID       string
+		snap        []byte
+		wantMode    string
+		wantContain string
+	}{
+		{"no base job id", "", snap(""), "", "no base DEPLOY job id"},
+		{"empty snapshot", job, nil, "", "empty config_snapshot"},
+		{"malformed snapshot", job, []byte(`not json`), "", "decode"},
+		{"a namespace placement", job, snap(`,"placement_mode":"namespace"`), "namespace", "DEDICATED"},
+		{"a vcluster placement", job, snap(`,"placement_mode":"vcluster"`), "vcluster", "DEDICATED"},
+		{"an unknown placement", job, snap(`,"placement_mode":"shared"`), "shared", "DEDICATED"},
+	}
+	for _, c := range refuters {
+		t.Run("refutes/"+c.name, func(t *testing.T) {
+			got, err := assertFabricDemoProd(c.jobID, c.snap)
+			if err == nil {
+				t.Fatalf("accepted %+v — the prod tier would read proven without being the dedicated placement", got)
+			}
+			if !strings.Contains(err.Error(), c.wantContain) {
+				t.Errorf("error %q should mention %q", err.Error(), c.wantContain)
+			}
+			if got.Dedicated {
+				t.Error("a refused prod tier recorded Dedicated=true")
+			}
+			if got.PlacementMode != c.wantMode {
+				t.Errorf("partial record PlacementMode = %q, want %q — the summary must say what the base job ran as", got.PlacementMode, c.wantMode)
+			}
+			s := passingFabricDemoSummary()
+			s.Prod = got
+			if fabricDemoVerdictPass(s) {
+				t.Fatal("a refused prod tier still let the verdict read GREEN")
+			}
+		})
 	}
 }
 
@@ -477,6 +641,7 @@ func passingFabricDemoSummary() FabricDemoSummary {
 			{Tier: "staging", Namespace: "boutique-staging", Placed: true, TenantApp: "app-acme-boutique-staging", TenantProject: "tenant-acme-boutique-staging", SourcePath: fabricDemoOverlayPath("staging"), CausedByPlacement: true, Converged: true, ResourceCount: 3},
 		},
 		VCluster:           FabricDemoVCluster{Name: "e2e-vcdemo-run1", Tier: "staging", Placed: true, App: "vc-app", SourcePath: fabricDemoOverlayPath("staging"), CausedByPlacement: true, ResourceCount: 2, Deregistered: true},
+		Prod:               FabricDemoProd{Tier: "prod", Stage: "production", StageLabel: "run1", DeployJob: "job-1", PlacementMode: "dedicated", Dedicated: true},
 		ArgoNotReinstalled: true,
 		ReceiptScope:       "fabric",
 		FabricPlanSHA:      strings.Repeat("a", 64),
@@ -505,6 +670,10 @@ func TestFabricDemoVerdictPass(t *testing.T) {
 		"the vcluster delivered nothing":    func(s *FabricDemoSummary) { s.VCluster.ResourceCount = 0 },
 		"the vcluster leaked registration":  func(s *FabricDemoSummary) { s.VCluster.Deregistered = false },
 		"argocd was reinstalled":            func(s *FabricDemoSummary) { s.ArgoNotReinstalled = false },
+		"no prod tier at all":               func(s *FabricDemoSummary) { s.Prod = FabricDemoProd{} },
+		"prod was not dedicated":            func(s *FabricDemoSummary) { s.Prod.Dedicated = false },
+		"prod mapped to a non-prod stage":   func(s *FabricDemoSummary) { s.Prod.Stage = "development" },
+		"prod recorded under another tier":  func(s *FabricDemoSummary) { s.Prod.Tier = "staging" },
 		"no verified fabric receipt":        func(s *FabricDemoSummary) { s.FabricPlanSHA = "" },
 		"drift ran and reported not-synced": func(s *FabricDemoSummary) { s.DriftInSync = false },
 		"drift ran and found drift":         func(s *FabricDemoSummary) { s.DriftDrifted = 2 },
@@ -537,7 +706,7 @@ func TestFabricDemoSummaryVerdict(t *testing.T) {
 
 	t.Run("passing", func(t *testing.T) {
 		got := fabricDemoSummaryVerdict(passingFabricDemoSummary())
-		for _, want := range []string{"✅", fabricDemoOverlayPath("dev"), "boutique-dev", "e2e-vcdemo-run1", "receipt(fabric)", "in_sync=true"} {
+		for _, want := range []string{"✅", "prod: prod(production,dedicated=true,stage_label=run1)", fabricDemoOverlayPath("dev"), "boutique-dev", "e2e-vcdemo-run1", "receipt(fabric)", "in_sync=true"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("verdict %q is missing %q", got, want)
 			}

@@ -184,7 +184,6 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `gke_enable_private_endpoint` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `gke_enable_private_nodes` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `gke_instance_types` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
-| `gke_log_retention_days` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `gke_master_authorized_cidr_blocks` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `gke_node_desired_size` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `gke_node_max_size` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |

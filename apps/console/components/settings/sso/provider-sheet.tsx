@@ -9,7 +9,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { KeyRound } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { FormProvider, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import {
@@ -84,6 +84,8 @@ export function ProviderSheet({
 	const isEdit = provider != null;
 	const mode = isEdit ? "edit" : "create";
 
+	// The signing-certificate textarea's `id`, paired with its `<Label htmlFor>`.
+	const certId = useId();
 	const form = useForm<SsoProviderInput>({
 		resolver: zodResolver(ssoProviderSchema(mode)),
 		defaultValues: BLANK,
@@ -276,10 +278,11 @@ export function ProviderSheet({
 								{...form.register("entryPoint")}
 							/>
 							<div className="space-y-1.5">
-								<Label className="text-ui-xs text-text-tertiary">
+								<Label htmlFor={certId} className="text-ui-xs text-text-tertiary">
 									Signing certificate (X.509)
 								</Label>
 								<Textarea
+									id={certId}
 									rows={4}
 									className="font-mono text-ui-xs"
 									placeholder={
@@ -432,10 +435,13 @@ function Field({
 	hint?: string;
 	error?: string;
 }) {
+	const id = useId();
 	return (
 		<div className="space-y-1.5">
-			<Label className="text-ui-xs text-text-tertiary">{label}</Label>
-			<Input autoComplete="off" {...props} />
+			<Label htmlFor={id} className="text-ui-xs text-text-tertiary">
+				{label}
+			</Label>
+			<Input id={id} autoComplete="off" {...props} />
 			{hint && !error && (
 				<p className="text-ui-xs text-text-tertiary">{hint}</p>
 			)}

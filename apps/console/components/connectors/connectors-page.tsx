@@ -26,8 +26,8 @@ import {
 	DEFAULT_CONNECTOR_FILTERS,
 	GROUP_META,
 	buildConnectorsView,
-	isPristineQuery,
 	normalizeConnectorQuery,
+	seedConnectorsQuery,
 } from "@/components/connectors/connectors-query";
 import { ApiKeyConnection } from "@/components/connectors/api-key-connection";
 import {
@@ -161,11 +161,10 @@ export function ConnectorsPage({
 			),
 		placeholderData: keepPreviousData,
 		staleTime: 30_000,
-		// The pristine view is already on the wire as this RSC's props — seed it rather than
-		// re-fetching a list the page was rendered with.
-		initialData: isPristineQuery(query)
-			? () => buildConnectorsView(integrations, query, platformConfigured ?? {})
-			: undefined,
+		// The catalog is already on the wire as this RSC's props, and the selection over it is
+		// pure — so every filter state's first answer is seeded from them (#4939, F8). See
+		// `seedConnectorsQuery` for why seeding only the pristine key broke a pasted link.
+		...seedConnectorsQuery(integrations, query, platformConfigured ?? {}),
 	});
 
 	/** Re-read the board after a mutation: the RSC props AND every cached connectors key. */

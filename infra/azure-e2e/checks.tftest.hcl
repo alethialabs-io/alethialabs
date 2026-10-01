@@ -34,17 +34,22 @@ mock_provider "azuread" {
 variables {
   subscription_id         = "00000000-0000-0000-0000-000000000000"
   e2e_budget_alert_emails = []
-  # Overrides terraform.tfvars' "e2e-dev" so the `env` credential is NOT planned here. imports.tf
-  # adopts that credential with an import block, and OpenTofu (verified on 1.12.3) CRASHES when a
-  # test plan reaches an import: "Importing is not supported in testing context". With no `env`
-  # instance the import's for_each is empty and the plan never calls it — which also proves that
-  # branch plans cleanly. The cost: these runs cover the `ref` credential only.
+  # Overrides terraform.tfvars' "e2e-dev" so the `env` credential is NOT planned here. This was
+  # forced while imports.tf adopted that credential with an import block — OpenTofu (verified on
+  # 1.12.3) CRASHES when a test plan reaches an import: "Importing is not supported in testing
+  # context". That block is gone (the credential has been in state since 2026-08-25, #2462), so the
+  # override is no longer required; it stays until a run covering the `env` credential replaces it.
+  # The cost meanwhile: these runs cover the `ref` credential only.
   e2e_github_environment = ""
 }
 
-# The committed posture: terraform.tfvars sets the issuer to null, so nothing is created.
+# Trust OFF: with the issuer unset nothing is created. Set explicitly — terraform.tfvars now carries the
+# real origin (#4226), so the default posture is no longer "off".
 run "unset_plans_no_broker_credential" {
   command = plan
+  variables {
+    e2e_broker_issuer_url = null
+  }
 
   assert {
     condition     = length(azuread_application_federated_identity_credential.e2e_broker) == 0
@@ -82,4 +87,15 @@ run "an_issuer_with_a_path_is_refused" {
     e2e_broker_issuer_url = "https://alethialabs.io/api/oidc"
   }
   expect_failures = [var.e2e_broker_issuer_url]
+}
+
+# The committed posture (#4226, maintainer ruling 2026-09-23): terraform.tfvars names the Cloudflare
+# custom domain infra/e2e-issuer binds, so an apply of this stack plans the broker credential at exactly it.
+run "committed_posture_trusts_the_custom_domain" {
+  command = plan
+
+  assert {
+    condition     = azuread_application_federated_identity_credential.e2e_broker[0].issuer == "https://e2e-issuer.alethialabs.io"
+    error_message = "the committed issuer must be https://e2e-issuer.alethialabs.io — the host infra/e2e-issuer serves."
+  }
 }

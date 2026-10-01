@@ -76,3 +76,28 @@ export function isExpectedRequestError(e: unknown): boolean {
 	}
 	return errorMessage(e) === "Unauthorized";
 }
+
+/** Longest error text persisted to a `last_error` column; longer text is cut with an ellipsis. */
+export const MAX_PERSISTED_ERROR_CHARS = 1000;
+
+/**
+ * Makes an error message safe to store in a Postgres `text` column and to show a user: every control
+ * character except tab and newline (C0, DEL, C1 — NUL above all, which Postgres rejects outright with
+ * `invalid byte sequence for encoding "UTF8": 0x00`) becomes a visible `\xNN` escape, a lone UTF-16
+ * surrogate becomes U+FFFD, and the result is capped at `MAX_PERSISTED_ERROR_CHARS`.
+ *
+ * Without it, a probe error quoting raw bytes turned a connection-test failure into a failed UPDATE
+ * and a raw SQL error returned to the CLI (#5087, grid run 36611808450). null passes through.
+ */
+export function persistableErrorText(message: string | null): string | null {
+	if (message === null) return null;
+	const escaped = message
+		.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, (c) =>
+			`\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`,
+		)
+		.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "�");
+	if (escaped.length <= MAX_PERSISTED_ERROR_CHARS) return escaped;
+	let cut = escaped.slice(0, MAX_PERSISTED_ERROR_CHARS - 1);
+	if (/[\ud800-\udbff]$/.test(cut)) cut = cut.slice(0, -1);
+	return `${cut}…`;
+}

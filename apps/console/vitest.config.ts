@@ -50,6 +50,15 @@ export default defineConfig({
 			// components (components/**) are intentionally excluded: UI is covered by the focused
 			// @repo/ui component tests + e2e, so counting ~24k untested view lines here would make
 			// the badge read a misleadingly low number. (The component tests still run.)
+			//
+			// These globs are NOT anchored at this directory, and since vitest 4 that matters.
+			// Vitest 4 matches `include` against each file's ABSOLUTE path with picomatch
+			// `contains: true`, so `lib/**` matches any loaded file with a `lib/` segment anywhere
+			// in its path. Vitest 3 matched root-relative paths. The one file set this changed on
+			// #5048 is `scripts/lib/**`, which tests/ imports, so it is now measured as its own
+			// directory. That widens what is measured and hides nothing, so it is accepted rather
+			// than excluded. Untested files are still found by a glob rooted here, so an untested
+			// file under some other `lib/` directory stays out of the measurement.
 			include: ["lib/**", "app/server/actions/**"],
 			// EVERY entry below also has an entry in ./coverage-exclusions.yaml, and the two are
 			// checked against each other in both directions by `pnpm check:coverage-exclusions`.

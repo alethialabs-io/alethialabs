@@ -134,7 +134,7 @@ case " $* " in
   *" list "*|*" list-deleted "*|*" show "*) echo "rg-stub-selftest-4177-1" ;;
 esac'
 
-# One blob carrying every container `tagged_ids` reads (alibaba-cleanup.sh:252-261, 326-328), so a
+# One blob carrying every container the tagged_* and cluster_*_ids listers in alibaba-cleanup.sh read, so a
 # single fixture answers all of them. jq selects the key it wants and ignores the rest.
 write_stub aliyun '
 case " $* " in

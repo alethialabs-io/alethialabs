@@ -25,6 +25,8 @@ import {
 	runners,
 } from "@/lib/db/schema";
 import type { ProjectStatus } from "@/lib/db/schema/enums";
+import type { ExecutionMetadata } from "@/types/jsonb.types";
+import { JOB_NOT_OWNED_SQLSTATE, pgErrorCode } from "@/lib/db/pg-error";
 import { defaultIfFirst, describeIfDb } from "./db";
 
 const USER = randomUUID();
@@ -63,6 +65,7 @@ describeIfDb("recover_stale_jobs — poison cap + progress stall", () => {
 		maxAttempts?: number;
 		jobType?: "DEPLOY" | "PLAN" | "DESTROY" | "DEPLOY_RUNNER";
 		environmentId?: string | null;
+		executionMetadata?: ExecutionMetadata;
 	}): Promise<string> {
 		const id = randomUUID();
 		await getServiceDb()
@@ -78,6 +81,7 @@ describeIfDb("recover_stale_jobs — poison cap + progress stall", () => {
 				runner_id: opts.runnerId,
 				attempts: opts.attempts,
 				max_attempts: opts.maxAttempts ?? 5,
+				execution_metadata: opts.executionMetadata ?? null,
 			});
 		// Set the time-relative fields with SQL now() arithmetic (can't via drizzle values()).
 		await getServiceDb().execute(sql`
@@ -102,6 +106,7 @@ describeIfDb("recover_stale_jobs — poison cap + progress stall", () => {
 				runner_id: jobs.runner_id,
 				error_message: jobs.error_message,
 				completed_at: jobs.completed_at,
+				execution_metadata: jobs.execution_metadata,
 			})
 			.from(jobs)
 			.where(eq(jobs.id, id));
@@ -253,5 +258,104 @@ describeIfDb("recover_stale_jobs — poison cap + progress stall", () => {
 		expect(env.status as ProjectStatus).toBe("FAILED"); // env reconciled, not left PROVISIONING
 
 		await getServiceDb().delete(projectEnvironments).where(eq(projectEnvironments.id, envId));
+	});
+	// #5162 — the requeue-mid-apply shape. A heartbeat gap requeued a DEPLOY whose apply was running;
+	// the runner's receipt post was then refused as "not owned" and the job was applied a second time.
+
+	/** The token hash a seeded runner authenticates update_job_status with. */
+	async function tokenHashOf(runnerId: string): Promise<string> {
+		const [r] = await getServiceDb()
+			.select({ token_hash: runners.token_hash })
+			.from(runners)
+			.where(eq(runners.id, runnerId));
+		return r.token_hash;
+	}
+
+	it("(apply) never requeues a DEPLOY whose apply started — fails it for reconciliation, keeping the runner", async () => {
+		const j = await seedJob({
+			runnerId: deadRunner,
+			status: "PROCESSING",
+			claimedAgoMin: 20, // (A) fires: the heartbeat lapsed
+			progressAgoMin: 1,
+			attempts: 0, // far below the cap — the OLD code requeued this
+			jobType: "DEPLOY",
+			executionMetadata: { apply_started_at: "2026-09-30T00:00:00Z" },
+		});
+		const returned = await getServiceDb().execute<{ job_id: string; reason: string }>(
+			sql`select * from recover_stale_jobs()`,
+		);
+		expect(returned.find((r) => r.job_id === j)?.reason).toBe("apply_started");
+
+		const row = await jobRow(j);
+		expect(row.status).toBe("FAILED"); // NOT QUEUED — a requeue would apply a second time
+		expect(row.runner_id).toBe(deadRunner); // kept, so the owner's late report still lands
+		expect(row.completed_at).not.toBeNull();
+		expect(row.error_message).toMatch(/NOT retried/);
+		expect(row.execution_metadata?.orphan_risk).toBe(true);
+		expect(row.execution_metadata?.recovery_refused_requeue_at).toBeTruthy();
+		expect(row.execution_metadata?.apply_started_at).toBe("2026-09-30T00:00:00Z");
+	});
+
+	it("(apply) the stalled-but-alive path refuses the requeue too", async () => {
+		const j = await seedJob({
+			runnerId: liveRunner,
+			status: "PROCESSING",
+			claimedAgoMin: 2,
+			progressAgoMin: 40, // (B) fires
+			attempts: 0,
+			executionMetadata: { apply_started_at: "2026-09-30T00:00:00Z" },
+		});
+		await getServiceDb().execute(sql`select recover_stale_jobs()`);
+		const row = await jobRow(j);
+		expect(row.status).toBe("FAILED");
+		expect(row.runner_id).toBe(liveRunner);
+	});
+
+	it("(apply) a runner that was still applying lands its receipt after the refusal, and nobody else can", async () => {
+		const j = await seedJob({
+			runnerId: deadRunner,
+			status: "PROCESSING",
+			claimedAgoMin: 20,
+			progressAgoMin: 1,
+			attempts: 0,
+			executionMetadata: { apply_started_at: "2026-09-30T00:00:00Z" },
+		});
+		await getServiceDb().execute(sql`select recover_stale_jobs()`);
+
+		// The owning runner's post-apply report: accepted (not raised), merged as a late report.
+		const receipt = JSON.stringify({ verify_receipt: { plan_sha256: "abc" } });
+		const [res] = await getServiceDb().execute<{ applied: boolean }>(
+			sql`select update_job_status(${deadRunner}::uuid, ${await tokenHashOf(deadRunner)}, ${j}::uuid, 'SUCCESS', NULL, ${receipt}::jsonb) as applied`,
+		);
+		expect(res.applied).toBe(false); // the DB status (FAILED) stays authoritative
+		const row = await jobRow(j);
+		expect(row.status).toBe("FAILED");
+		expect(row.execution_metadata?.verify_receipt).toEqual({ plan_sha256: "abc" });
+
+		// Any OTHER runner is refused with the distinct SQLSTATE the status route maps to 409.
+		const refused = await getServiceDb()
+			.execute(
+				sql`select update_job_status(${liveRunner}::uuid, ${await tokenHashOf(liveRunner)}, ${j}::uuid, 'SUCCESS', NULL, NULL)`,
+			)
+			.then(
+				() => undefined,
+				(err: unknown) => err,
+			);
+		expect(pgErrorCode(refused)).toBe(JOB_NOT_OWNED_SQLSTATE);
+	});
+
+	it("(apply) still requeues a DEPLOY that never reached apply", async () => {
+		const j = await seedJob({
+			runnerId: deadRunner,
+			status: "PROCESSING",
+			claimedAgoMin: 20,
+			progressAgoMin: 1,
+			attempts: 0,
+			executionMetadata: { cluster_name: "pre-apply" },
+		});
+		await getServiceDb().execute(sql`select recover_stale_jobs()`);
+		const row = await jobRow(j);
+		expect(row.status).toBe("QUEUED");
+		expect(row.runner_id).toBeNull();
 	});
 });

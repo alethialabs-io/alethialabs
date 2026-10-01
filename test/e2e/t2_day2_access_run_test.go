@@ -48,7 +48,7 @@ func runT2Day2Access(t *testing.T, ctx context.Context, kc string, p day2AccessP
 		Provider:         p.provider,
 		EndpointSurfaced: targets.Endpoint != "",
 		Endpoint:         targets.Endpoint,
-		AuthAction:       "* / *",
+		AuthAction:       day2WildcardAction,
 		ArgoURLChecked:   targets.HasArgoURL,
 		ArgoURL:          targets.ArgoURL,
 	}
@@ -66,8 +66,8 @@ func runT2Day2Access(t *testing.T, ctx context.Context, kc string, p day2AccessP
 	// (a) AUTHORIZED action via the surfaced kubeconfig — the identity the kubeconfig binds
 	//     (exec-plugin → kube-token) must AUTHENTICATE and be PERMITTED. This is where the
 	//     "provisioned but not authorized" class (EKS access-entry #1040 / AKS AAD-admin) fails.
-	reachable, authorized, aerr := probeKubeAuthorized(ctx, kc, timeout)
-	summary.KubeReachable, summary.KubeAuthorized = reachable, authorized
+	reachable, authorized, action, aerr := probeKubeAuthorized(ctx, kc, timeout)
+	summary.KubeReachable, summary.KubeAuthorized, summary.AuthAction = reachable, authorized, action
 
 	// (b) a real authorized cluster read via the same kubeconfig.
 	nodes, nerr := probeReadyNodes(ctx, kc)

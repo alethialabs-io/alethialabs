@@ -19,27 +19,28 @@ provisioned.
 |---|---:|---:|---:|---:|
 | alibaba | 63 | 45 | 11 | 1 |
 | aws | 159 | 122 | 52 | 0 |
-| azure | 88 | 62 | 22 | 2 |
-| gcp | 104 | 84 | 34 | 1 |
-| hetzner | 37 | 27 | 4 | 2 |
+| azure | 87 | 61 | 22 | 1 |
+| gcp | 103 | 83 | 33 | 0 |
+| hetzner | 36 | 26 | 4 | 1 |
 
 **knobs** = root variables the root module declares, plus the object attributes a leaf component's item
-passthrough reaches. **reachable** = a `provider_config` merge lands on it. **settable** = reachable, and neither
-already written by the provider from a typed field nor unconditionally owned by it (merge-if-absent means an
-always-written key can never be reached). **declared-and-dead** = reachable and read by no resource or module
-argument — the shape a raw variable count cannot tell from a working knob.
+passthrough reaches. **reachable** = a `provider_config` merge lands on it. **settable** = reachable, read by
+something (a resource or module argument, or an output reporting a brought resource), and neither already written
+by the provider from a typed field nor unconditionally owned by it (merge-if-absent means an always-written key
+can never be reached) — exactly what the console's `knobsFor` offers. **declared-and-dead** = reachable and read
+by no resource or module argument — the shape a raw variable count cannot tell from a working knob.
 
 ## Per component
 
 | Component | alibaba | aws | azure | gcp | hetzner |
 |---|---:|---:|---:|---:|---:|
-| bucket | 0 / 2 | 3 / 16 | 0 / 7 | 4 / 11 | 0 / 10 |
+| bucket | 0 / 2 | 3 / 16 | 0 / 7 | 4 / 11 | 0 / 9 |
 | cache | 0 / 6 | 5 / 18 | 1 / 4 | 3 / 11 | — |
-| cluster | 9 / 17 | 11 / 21 | 11 / 18 | 13 / 21 | 2 / 11 |
+| cluster | 9 / 17 | 11 / 21 | 11 / 18 | 12 / 20 | 2 / 11 |
 | database | 0 / 8 | 4 / 11 | 3 / 11 | 7 / 14 | — |
 | dns | 1 / 5 | 7 / 16 | 4 / 8 | 3 / 7 | 2 / 5 |
 | network | 1 / 6 | 1 / 4 | 0 / 5 | 2 / 7 | 0 / 6 |
-| nosql | 0 / 2 | 8 / 20 | 1 / 11 | 2 / 4 | — |
+| nosql | 0 / 2 | 8 / 20 | 1 / 10 | 2 / 4 | — |
 | platform | 0 / 6 | 0 / 22 | 0 / 9 | 0 / 10 | 0 / 5 |
 | queue | 0 / 2 | 0 / 4 | 0 / 3 | 0 / 2 | — |
 | registry | 0 / 7 | 10 / 15 | 2 / 3 | 0 / 6 | — |
@@ -63,11 +64,18 @@ Each cell is **settable / declared**. A `—` means the cloud declares nothing t
 | Cloud | Component | Knob | Declared at |
 |---|---|---|---|
 | alibaba | dns | `alidns_managed_certificate` | infra/templates/project/alibaba/variables.tf:240 |
-| azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:478 |
-| azure | nosql | `billing_mode` | infra/templates/project/azure/variables.tf:433 |
-| gcp | cluster | `gke_log_retention_days` | infra/templates/project/gcp/variables.tf:267 |
-| hetzner | bucket | `encryption_enabled` | infra/templates/project/hetzner/variables.tf:258 |
+| azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:482 |
 | hetzner | dns | `dns_hosted_zone` | infra/templates/project/hetzner/variables.tf:244 |
+
+## Provider ceilings
+
+Declared, reachable, and **unhonourable by the provider** — nothing on that cloud could read them. Recorded under
+`ceiling:` in `infra/templates/project/knob-exclusions.yaml` with evidence, never offered as a control, and
+re-read on every run: an entry fails the check the moment a resource reads its knob.
+
+| Cloud | Component | Knob | Evidence |
+|---|---|---|---|
+| alibaba | dns | `alidns_managed_certificate` | #1824 |
 
 ## How a knob is attributed to a component
 

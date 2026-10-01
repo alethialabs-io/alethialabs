@@ -1,0 +1,31 @@
+{
+  "enabled": true,
+  "provider": "aws",
+  "repo": "https://github.com/alethialabs-io/alethia-examples",
+  "ref": "main",
+  "path": "iac/drift/aws",
+  "pinned_commit_sha": "a0eaa1c55c05c3cdbb5cf41f845cfd084ae02a32",
+  "gate_blocked_non_allowlisted": true,
+  "clone_at_pinned_commit_logged": true,
+  "gate_passed_logged": true,
+  "deploy_status": "SUCCESS",
+  "receipt_plan_sha256": "ce2d6cf6256554bfb805ecb62235726d1ccb883271b53678b1e9dca9af5f70b4",
+  "state_on_proxy": true,
+  "state_resources": 1,
+  "no_cluster_name_output": true,
+  "alethia_context": "alethia-nl/36758733127-1",
+  "drift_target": "/alethia/byo-iac/e2e36758/drift_marker",
+  "baseline_in_sync": true,
+  "mutation_applied": true,
+  "drifted_count": 1,
+  "drifted_types": [
+    "aws_ssm_parameter"
+  ],
+  "drifted_is_probe_resource": true,
+  "heal_status": "SUCCESS",
+  "healed_in_sync": true,
+  "destroy_status": "SUCCESS",
+  "state_cleared": true,
+  "state_cleared_by": "delete",
+  "verdict": "✅ byo-iac on aws: iac/drift/aws@a0eaa1c55c05… https://github.com/alethialabs-io/alethia-examples · gate-blocks-bad=true · pinned-clone-logged=true · receipt=ce2d6cf62565… · state-on-proxy=true(1 res) · no-cluster-output=true · ctx=alethia-nl/36758733127-1 · drift baseline-in-sync=true → induced(/alethia/byo-iac/e2e36758/drift_marker)=1[aws_ssm_parameter] → healed-in-sync=true · destroy=SUCCESS state-cleared=true"
+}

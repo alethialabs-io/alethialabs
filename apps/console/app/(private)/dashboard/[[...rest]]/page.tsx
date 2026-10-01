@@ -5,6 +5,13 @@ import { redirect } from "next/navigation";
 import { getActiveOrgSlug } from "@/app/server/actions/resolve";
 import { getOwner } from "@/lib/auth/owner";
 import { isOnboardingComplete } from "@/lib/auth/onboarding";
+import { pageMetadata } from "@/lib/seo/page-metadata";
+
+/** T4: a redirect still owns a title — the legacy tree lands on the org overview by default. */
+export const metadata = pageMetadata({
+	title: "Overview",
+	description: "Your organization's projects, usage, alerts, and recent jobs.",
+});
 
 /**
  * Legacy `/dashboard/*` catch-all → canonicalizes to the org-scoped tree. After C2c

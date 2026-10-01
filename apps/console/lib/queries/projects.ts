@@ -3,6 +3,10 @@
 
 import { eq } from "drizzle-orm";
 import type { Tx } from "@/lib/db";
+import {
+	normalizeWebhookCaConsumers,
+	type WebhookCaConsumer,
+} from "@/lib/addons/webhook-ca-consumers";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import {
 	type EnvironmentLifecycle,
@@ -146,6 +150,10 @@ export interface CreateProjectCoreInput {
 	 *  Prod(dedicated)+Preview(namespace-on-Prod-Fabric) shape — so the CLI route and any caller that
 	 *  doesn't set it are byte-identical to before. */
 	environments?: EnvironmentSpec[];
+	/** The project-level webhook-CA marker (#4990) — workloads that are not add-ons but need the
+	 *  cert-manager controller for their webhook CA. Set by the AI Workloads template; omitted by
+	 *  every other caller, which stores the column default (none). */
+	webhook_ca_consumers?: WebhookCaConsumer[];
 	/** The creating user id — stamped on every row. */
 	owner: string;
 	/** The ACTIVE ORG id — rows belong to the org, not the creating user (they diverge under EE). */
@@ -314,6 +322,9 @@ export async function insertProjectWithDefaultFabric(
 				region: input.region,
 				iac_version: input.iac_version,
 				cloud_identity_id: input.cloud_identity_id ?? null,
+				webhook_ca_consumers: normalizeWebhookCaConsumers(
+					input.webhook_ca_consumers,
+				),
 				slug: withSlug,
 				user_id: input.owner,
 				org_id: input.orgId,

@@ -303,6 +303,14 @@ typed token, and the App Router's RSC refetch that `useFilterUrlSync`'s URL rewr
 the evidence but is not the debounce's question — so a surface can PASS F10 while its URL half still
 round-trips per keystroke, and the evidence says how many times it did.
 
+**A list is read when it has ANSWERED, not when it holds still** (#4980). `settle()` in
+`e2e/audit/filters.ts` refuses any read taken while `main`, or anything in it, is `aria-busy="true"`,
+and a read still busy when its budget runs out never counts as the reloaded list or the reset count.
+Stillness alone cannot tell a `keepPreviousData` placeholder from an answer — `~/runners` and
+`~/alerts` passed and failed F8 on unchanged code according to how long the filtered fetch took. The
+console's filtered lists declare `aria-busy` until their rows answer the URL; a page that shows a
+placeholder WITHOUT declaring it can still be misread, and that is the page's defect to fix.
+
 The reference implementation is the evidence page —
 `components/evidence/{evidence-client,evidence-filter-bar}.tsx` and `evidence-query.ts`, plus
 `lib/stores/use-evidence-filters.ts` and `lib/query/use-evidence-query.ts`. Note it currently fails
@@ -319,7 +327,7 @@ H2: it hand-writes its own `<h2>`.
 | **R5** | axe reports zero serious or critical violations, **in both themes** | `scanRouteThemes()` returns none at `wcag2a`/`wcag2aa` in **light and dark**, each violation naming its theme, and both themes applied and painted differently | never |
 | **R6** | zero console errors, zero failed requests | nothing on `console.error`, no response ≥ 400 | never |
 | **R7** | interactive within budget | p95 under the route's recorded budget | never |
-| **R8** | every enabled control does something | every enabled `button`, same-origin `a[href]` and depth-1 `menuitem` in `main` — plus the shell chrome, measured once under `/[org]` — produces, within **1 000 ms** of activation, a navigation, a new overlay, a DOM mutation in `main`, an `aria-expanded\|pressed\|selected\|checked` flip, a network request, a download or a `role=status` toast | `redirect-only`, `no-enabled-controls` |
+| **R8** | every enabled control does something | every enabled `button`, same-origin `a[href]` and depth-1 `menuitem` in `main` — plus the shell chrome, measured once under `/[org]` — produces, within **1 000 ms** of activation, a navigation, a new overlay, a DOM mutation in `main`, an `aria-expanded\|pressed\|selected\|checked` flip, a network request, a download, a new tab or a toast (`role=status`, `role=alert`, or sonner's role-less `[data-sonner-toast]`, which renders outside `main`) | `redirect-only`, `no-enabled-controls` |
 
 **R8 IS MEASURED WITHOUT EVER PRESSING A CONFIRM.** `e2e/audit/inert.ts`'s `activate()` refuses to
 click while a dialog or an alertdialog is open, and a confirm button exists nowhere else — so the
@@ -339,6 +347,18 @@ means "every control in the console does something"**; it means every control th
 Closing that gap needs a STATIC matcher over the handlers, which is a different instrument in a
 different unit. The same reasoning is why H9 exists beside T5: one predicate per question.
 
+**Two R8 outcomes are not "inert", and both are the page's own claim** (#4980). A control that
+reports it is ALREADY in the state it selects — `aria-current` (any token but `false`),
+`aria-selected="true"`, or `aria-checked="true"` on a `radio`/`menuitemradio` — and does nothing when
+pressed records the effect `already-current`: selecting the current item again is correctly a no-op.
+`aria-pressed="true"` counts only on a button with `aria-pressed` siblings — a one-of-N pressed group
+such as the theme toggle; a LONE pressed toggle is expected to unpress and is still inert if it does not. And the
+enumeration waits for the page to settle (no `data-slot="skeleton"`, no `aria-busy`, a stable control
+count) before it runs; a route that never settled on its first load is **NOT MEASURED
+`page-not-ready`** as a whole — never N/A `no-enabled-controls`, which is a claim about the page — and
+so is a route whose reload after a dirtying control stops settling inside its short budget, so a
+stuck route costs one bounded wait rather than one per control.
+
 **ITS ERRORS ARE BIASED TOWARD PASS, deliberately.** Six of the seven effects are attributable to the
 click. The seventh — a DOM mutation anywhere in `main` — is not: an async re-render provoked by the
 PREVIOUS control can land inside this one's window. It is therefore checked LAST, after every
@@ -349,9 +369,18 @@ page that polls, "a request happened" is true of every control and therefore evi
 
 **Three things are declared out of scope, each with its reason, none of them silent.** A **disabled**
 control is not scored — it is counted as `disabled-with-reason` / `disabled-no-reason` for a later
-R9, because "why is this greyed out" is a different question. An **external** link PASSES on a real
+R9, because "why is this greyed out" is a different question. A reason counts only when the control's
+`aria-describedby` RESOLVES to text; a `title` does not, and neither does an id that names nothing. A
+disabled control never gets the hover that shows its title (`disabled:pointer-events-none`) and a
+disabled button takes no focus, so a title-only reason reaches nobody (the review of #5000). The
+console writes the counted shape with `@repo/ui/disabled-reason`. A control inside an **`inert`** subtree
+is not enumerated at all: the browser has already taken it out of the click, focus and accessibility
+model, so no user can reach it (#4939 — the chat scroller's faded-out "Scroll to latest"). An **external** link PASSES on a real
 `href` and is never clicked: activating it navigates the run out of the console, and whether the
-destination exists is not R8's question. A control that opens a **file chooser** is detected (via
+destination exists is not R8's question. A same-origin link that opens a **new tab** (`target="_blank"`)
+is activated, and the tab it opens (`page.on("popup")`) is its effect; the tab is closed unread, for
+the same reason — before #4939 nothing listened for it, so every same-origin docs link read as inert.
+A control that opens a **file chooser** is detected (via
 `page.on("filechooser")`, so the exclusion is reachable rather than vacuous) and excluded. So is the
 shell's **sign out**, and that one is a single spelled-out pattern: revoking the run's session would
 make every later verdict a measurement of the sign-in page wearing the route's name.

@@ -1,0 +1,8 @@
+{
+  "$comment": "Fixture: a pin that does not cover the served CA (2222…) — the state after Cloudflare re-issues from another CA.",
+  "issuer_url": "https://alethia-e2e-issuer.example.workers.dev",
+  "algorithm": "sha1",
+  "fingerprints": [
+    { "sha1": "5555555555555555555555555555555555555555" }
+  ]
+}

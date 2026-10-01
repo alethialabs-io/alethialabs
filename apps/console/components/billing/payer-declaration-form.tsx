@@ -226,15 +226,20 @@ export function PayerDeclarationForm({
 					required
 					error={form.formState.errors.authorityAttestation?.message}
 				>
-					<Input
-						placeholder="Director"
-						autoComplete="organization-title"
-						disabled={busy}
-						{...form.register("authorityAttestation")}
-					/>
-					<p className="pt-1 text-ui-xs text-text-tertiary">
-						A purchase that binds a legal person needs someone to say they can bind it.
-					</p>
+					{(id) => (
+						<>
+							<Input
+								id={id}
+								placeholder="Director"
+								autoComplete="organization-title"
+								disabled={busy}
+								{...form.register("authorityAttestation")}
+							/>
+							<p className="pt-1 text-ui-xs text-text-tertiary">
+								A purchase that binds a legal person needs someone to say they can bind it.
+							</p>
+						</>
+					)}
 				</Field>
 			)}
 

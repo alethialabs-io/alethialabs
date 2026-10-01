@@ -252,6 +252,9 @@ test.describe("Projects — the template path", () => {
 		await expect(owner.page.getByText("Standard template")).toBeVisible();
 		await expect(owner.page.getByText("start from a template")).toBeVisible();
 		await expect(owner.page.getByText("an empty canvas")).toHaveCount(0);
+		// #4110: the Template section IS a step only this path adds — the picker renders for
+		// `?scratch=template` alone, so this heading is the hand-off's second own marker.
+		await expect(owner.page.getByRole("heading", { name: "Template", exact: true })).toBeVisible();
 	});
 
 	test("each cloud tile is a named group, and a seeded account reads Connected", async ({
@@ -539,12 +542,22 @@ test.describe("Projects — General settings", () => {
 		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/settings/general`, {
 			waitUntil: "domcontentloaded",
 		});
-		const nameInput = owner.page.getByRole("textbox").first();
+		const nameInput = owner.page.getByRole("textbox", { name: "Project name" });
 		await expect(nameInput).toBeVisible({ timeout: 15_000 });
 		const newName = `e2e-renamed-${Date.now()}`;
-		await nameInput.fill(newName);
 		const save = owner.page.getByRole("button", { name: /save changes/i });
-		await expect(save).toBeEnabled();
+		// The page is reached on `domcontentloaded`, so the server-rendered input is visible — and
+		// fillable — before React hydrates. The name field is `register`ed (uncontrolled), and
+		// registration writes the form's default into the DOM node, so a pre-hydration fill is
+		// silently overwritten with the old name and Save never enables. The trace of the red run
+		// showed exactly that: the fill landed ~1s before the first client request. It failed once
+		// on dev too (qa run 36599021090, passed on retry). Re-fill until the HYDRATED form has seen
+		// the edit; the assertion — Save enables for a changed name — is unchanged.
+		await expect(async () => {
+			await nameInput.fill(newName);
+			await expect(save).toBeEnabled({ timeout: 1_000 });
+		}).toPass({ timeout: 15_000 });
+		await expect(nameInput).toHaveValue(newName);
 		await save.click();
 		await expect(owner.page.getByText(/project updated/i)).toBeVisible({ timeout: 15_000 });
 	});

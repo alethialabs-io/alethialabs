@@ -66,7 +66,6 @@ package e2e
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -136,7 +135,44 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// above: "required" means "if the base T2 proof runs, the repos proof must too" — with no
 	// cloud creds there is no cluster to prove anything on, so the whole test skips first. ──
 	repos := t2ArgoReposFromEnv()
-	reposEnabled, reposErr := repos.decide()
+	// #4113: the starter-templates proof OWNS the apps-destination slot the A0.6 repos would fill,
+	// and is refused off hetzner or beside the heavy surface — both before any spend. Resolved
+	// FIRST, because on this dimension the A0.6 inputs are superseded rather than judged: the
+	// workflow serves no git token here (the templates are public), and the repo variables it still
+	// forwards would otherwise read as a half-wired A0.6 config and red the run for nothing.
+	tmpl := templatesFromEnv(provider)
+	tmplOn, tmplErr := tmpl.decide()
+	if tmplErr != nil {
+		t.Fatalf("#4113 starter templates: %v", tmplErr)
+	}
+	var tmplCommits map[string]string
+	var tmplCharts map[string]ociChartPin
+	var reposEnabled bool
+	var reposErr error
+	if tmplOn {
+		cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		tmplCommits, tmplErr = resolveTemplateCommits(cctx)
+		ccancel()
+		if tmplErr != nil {
+			t.Fatalf("#4113 starter templates: resolve each template's HEAD before any spend: %v", tmplErr)
+		}
+		t.Logf("#4113: starter templates ENABLED — apps %s, chart %s, ai %s (HEAD, resolved anonymously); the A0.6 repo inputs are SUPERSEDED on this dimension",
+			tmplCommits[starterAppsRepo], tmplCommits[starterChartRepo], tmplCommits[starterAIRepo])
+		// The OCI charts the AI template pins, read from the template at that commit and resolved to
+		// manifest digests against their registries — ArgoCD 3.x reports the digest as the synced
+		// revision, and the expectation must not come from the cluster it judges.
+		pctx, pcancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		tmplCharts, tmplErr = resolveTemplateChartPins(pctx, fetchTemplateFileRaw, registryDigestResolver{}, templatesPhaseAExpect(), tmplCommits)
+		pcancel()
+		if tmplErr != nil {
+			t.Fatalf("#4113 starter templates: resolve the AI template's OCI chart pins before any spend: %v", tmplErr)
+		}
+		for app, pin := range tmplCharts {
+			t.Logf("#4113: %s pins %s:%s → %s (%s)", app, pin.RepoURL, pin.Tag, pin.Digest, pin.File)
+		}
+	} else {
+		reposEnabled, reposErr = repos.decide()
+	}
 	if reposErr != nil {
 		t.Fatalf("A0.6: %v", reposErr)
 	}
@@ -202,8 +238,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	}
 	switch {
 	case keylessOn:
-		t.Logf("#1511: keyless DB auth ENABLED — %s × %s, holding a session open for %s to prove the token mints per connection",
-			provider, keyless.engine, keyless.dwell)
+		t.Logf("#1511: keyless DB auth ENABLED — %s × %s (version %q, class %q%s), holding a session open for %s to prove the token mints per connection",
+			provider, keyless.engine, keyless.engineVersion, keyless.instanceClass, keylessDefaultedNote(keyless.defaulted), keyless.dwell)
+		// Before spend: empty this cloud's dedicated apps repo, then prove from a fresh clone that the
+		// product will write into it. A repo it treats as bring-your-own renders nothing keyless, and
+		// the run would only find out after buying a cluster (gcp 36711784359, azure 36711798677).
+		pfCtx, pfCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		pfErr := keylessAppsRepoReset(pfCtx, keyless.appsRepo, provider, os.Getenv(envArgoGitToken))
+		pfCancel()
+		if pfErr != nil {
+			t.Fatalf("#1511 keyless DB auth: %v", pfErr)
+		}
+		t.Logf("#1511: reset the dedicated keyless apps repo %s to a README-only commit; the deploy's apps destination is that repo", keyless.appsRepo)
 	case keylessBlocked != "":
 		t.Logf("#1511: keyless DB auth BLOCKED on %s × %s — %s", provider, keyless.engine, keylessBlocked)
 	default:
@@ -227,6 +273,20 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Logf("#1047: cross-account keyless registry EXCLUDED on %s — %s", provider, registryBlocked)
 	default:
 		t.Logf("#1047: cross-account keyless registry SKIPPED — set %s (+ its target vars) to enable.", envXacctRegistry)
+	}
+
+	// The three riders against the cli-demo dimension, before any spend: each layers onto the seeded
+	// DEPLOY snapshot, which a CLI-created DEPLOY never has (cliDemoRiderDecision).
+	riderNotes, riderErr := cliDemoRiderDecision(cliDemo != nil, map[string]bool{
+		"#1511 keyless DB":             keylessOn,
+		"#1268 cross-account secrets":  xacctOn,
+		"#1047 cross-account registry": registryOn,
+	})
+	for _, n := range riderNotes {
+		t.Log(n)
+	}
+	if riderErr != nil {
+		t.Fatal(riderErr)
 	}
 
 	root := t2RepoRoot(t)
@@ -286,11 +346,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	stagedTemplate := filepath.Join(stage, "project-templates", provider)
 	t2CopyTree(t, realTemplateSrc, stagedTemplate)
 
-	// ── Receipt signing key: runner gets the private half; we keep pub to VERIFY. ──
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	// ── Receipt signing key: runner gets the private half; we keep pub to VERIFY. On cli-demo it
+	// is the run's SHARED key, the one the CI console also holds, because `verify receipt` trusts
+	// only what that console vouches for (#5098, t2_cli_demo_receipt_key.go). ──
+	pub, priv, keySource, err := ResolveT2ReceiptKey(cliDemo != nil)
 	if err != nil {
-		t.Fatalf("generate ed25519 key: %v", err)
+		t.Fatalf("receipt signing key: %v", err)
 	}
+	t.Logf("receipt signing key: %s", keySource)
 
 	// ── Real control plane over real Postgres (reused verbatim from controlplane.go). ──
 	cp, err := NewControlPlane(ctx, dbURL)
@@ -337,7 +400,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// fidelity check runs against (lean synthetic by default; the REAL console fixture shape under
 	// ALETHIA_E2E_A05_REAL_SNAPSHOT); `full` layers the A0.6 repos + the per-cloud cluster-json
 	// override the runner actually consumes.
-	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, registry, registryOn, acmCert, acmCertOn, a05)
+	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, registry, registryOn, acmCert, acmCertOn, tmpl, tmplOn, a05)
 	if err != nil {
 		t.Fatalf("build deploy snapshot: %v", err)
 	}
@@ -409,6 +472,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		cliDemo.Project, cliDemo.EnvName = project, env
 		// The SAME shape the seeded path merges — read from ALETHIA_E2E_CLUSTER_JSON, not restated.
 		cliDemo.ClusterSets = CLIDemoClusterSets(t)
+		// #1773 on the CLI path: the zone and the certificate ask the seeded path writes into `full`
+		// never reach a CLI-created DEPLOY, so the `dns-cert` beat authors them. The same acmCert
+		// and the same verdict, so the beat runs exactly when runT2AcmCert will assert.
+		cliDemo.CertZone = cliDemoCertZoneFrom(acmCert, acmCertOn)
 		// ── Three refusals before anything is bought, cheapest first. ──
 		//
 		// 1. A cloud whose `connector` beat cannot COMPLETE against this dimension's console. Costs
@@ -422,14 +489,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		AssertCLIDemoBeatsAreLeafCommands(ctx, t, cliDemo)
 		AssertCLIDemoBeatFlagsAreRegistered(ctx, t, cliDemo)
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoAuthoring)
-		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoEnqueue)
-		jobID = cliDemo.ApplyJobID
-		if jobID == "" {
-			t.Fatal("cli-demo: `project apply` reported no job id — there is nothing to wait on")
-		}
-		t.Logf("cli-demo: DEPLOY job %s was created BY THE CLI (project %s)", jobID, cliDemo.ProjectID)
-		// The CLAIM is asserted separately, just after the runner process starts — see the call
-		// below. It cannot be asserted here: nothing is running yet to claim anything.
+		// The ENQUEUE phase is NOT driven here (#5090). `project plan --wait` needs a runner to
+		// claim its PLAN, and `project apply` is refused until that PLAN is terminal — so both run
+		// just after the runner process starts, below. `jobID` stays empty until then; the teardown
+		// closure reads it when it RUNS, not when it is registered.
 	} else {
 		var jerr error
 		jobID, jerr = seedT2DeployJob(ctx, cp, full, a05.jobGraph(), owner)
@@ -465,7 +528,11 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		// A workflow step cannot get ahead of this: the destroy runs IN-PROCESS below, inside this
 		// closure. So the capture is here, writing to the file the sweeper reads back — the same
 		// $RUNNER_TEMP hand-off the harness already uses for ALETHIA_E2E_ARGOCD_SUMMARY.
-		captureHetznerLoadBalancers(t, provider, clusterName)
+		//
+		// The target is re-derived HERE, not taken from `clusterName` above: on the cli-demo path
+		// the CLI authored the project, and the destroy must name what the beats built (#5095).
+		tdProject, tdEnv := t2ClusterTarget(project, env, cliDemo)
+		captureHetznerLoadBalancers(t, provider, tdProject+"-"+tdEnv)
 
 		// Per-provider, and the SAME function ResolveT2Budget reserves the window with — a
 		// flat 15m here was hetzner's number charged to every cloud (#2729).
@@ -493,7 +560,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Logf("──── runner process output ────\n%s", runnerOut.String())
 		}
 
-		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, project, env, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
+		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, tdProject, tdEnv, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
 			// The sweeper NAME follows the provider, and a window that EXPIRED is reported as a
 			// window rather than as a destroy error — the two are opposite findings that arrive
 			// wearing the same `signal: interrupt`. Both live in t2TeardownFailureLine, which is
@@ -564,6 +631,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// reported as a deploy TIMEOUT — naming the cluster when the fault is a tenancy mismatch
 	// (#392) that was decidable in ninety seconds. Cheap half first.
 	if cliDemo != nil {
+		// Here and not above: the runner is now live, so `project plan --wait` has a claimer and
+		// its PLAN goes terminal before `project apply` enqueues the DEPLOY (#5090).
+		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoEnqueue)
+		jobID = cliDemo.ApplyJobID
+		if jobID == "" {
+			t.Fatal("cli-demo: `project apply` reported no job id — there is nothing to wait on")
+		}
+		t.Logf("cli-demo: DEPLOY job %s was created BY THE CLI (project %s)", jobID, cliDemo.ProjectID)
 		AssertCLIDemoJobClaimed(ctx, t, cp, cliDemo)
 	}
 
@@ -630,7 +705,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//     for. Each cloud names its cluster differently (Talos/ACK: `<project>-<env>`;
 	//     EKS/GKE/AKS: `<kind>-<regionShort>-<env>-<project>`), so the check is
 	//     provider-aware — see t2ValidateClusterName.
-	if err := t2ValidateClusterName(provider, project, env, meta.ClusterName); err != nil {
+	//     The expected pair is the one the teardown destroys (t2ClusterTarget), so the assertion
+	//     and the destroy cannot disagree about which cluster is this run's (#5095).
+	wantProject, wantEnv := t2ClusterTarget(project, env, cliDemo)
+	if err := t2ValidateClusterName(provider, wantProject, wantEnv, meta.ClusterName); err != nil {
 		t.Fatalf("cluster_name assertion: %v", err)
 	}
 	// (2) cluster_ready ⇒ the reachability gate proved a live cluster, not just apply=0.
@@ -744,7 +822,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Fatalf("A0.6 repo-byo workload: %v", e)
 		}
 		t.Logf("A0.6: ArgoCD-with-repos proven — repo-apps + repo-byo Applications Healthy+Synced and managing real resources on real infra")
-	} else if err := AssertArgoAppsHealthy(ctx, kc, assertedApps, ArgoAssertTimeout()); err != nil {
+	} else if err := AssertArgoAppsHealthy(ctx, kc, assertedApps, argoTimeoutFor(tmplOn)); err != nil {
 		t.Fatalf("ArgoCD application health assertion failed: %v", err)
 	}
 	if AllAddOnsEnabled() {
@@ -814,6 +892,23 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//       row it wrote from the runner's real execution_metadata. Warn-only unless
 	//       ALETHIA_E2E_A05_ENFORCE; a no-op when A0.5 setup was disabled.
 	runA05ConsoleActive(t, ctx, cp, a05, root, jobID)
+
+	// (7.65) STARTER TEMPLATES (#4113). Off unless the `templates` dimension set ALETHIA_E2E_TEMPLATES.
+	//        Phase A (this deploy) is asserted explicitly — KServe, Kueue and the `addons` app-of-apps
+	//        are children of the customer repo, so the derived set above never saw them — then phase B
+	//        REDEPLOYS this same environment with the apps repository re-pointed at starter-apps and
+	//        asserts its root and both overlays. The verdict is written after each phase.
+	if tmplOn {
+		runT2Templates(t, ctx, cp, kc, templatesParams{
+			commits:     tmplCommits,
+			charts:      tmplCharts,
+			phaseAJobID: jobID,
+			phaseA:      full,
+			graph:       a05.jobGraph(),
+			owner:       owner,
+			clusterName: meta.ClusterName,
+		})
+	}
 
 	// (7.7) DAY-2 ACCESS surface (FULLY-TESTED P2-E). Opt-in via ALETHIA_E2E_DAY2_ACCESS — unset ⇒
 	//       a clean skip. Proves the SURFACED day-2 access path works: cluster_endpoint is surfaced in
@@ -987,7 +1082,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if cliDemo != nil {
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoConverged)
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoTeardown)
-		t.Logf("cli-demo: all %d beats performed through the real binary — the CLI was the actor for the whole demo", len(CLIDemoBeats))
+		t.Logf("cli-demo: all %d beats performed through the real binary — the CLI was the actor for the whole demo", cliDemoPerformedBeatCount(cliDemo))
 	}
 }
 
@@ -1101,6 +1196,9 @@ func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) string {
 // region so their ProviderTfvars resolve identically — the drift's refresh-only plan
 // reconciles the deploy's exact recorded state. The seed add-ons are included for fidelity
 // (they are post-apply Helm, inert to a refresh-only plan).
+//
+// `classification` carries the run's `e2e-run` handle (#5096) — the second sweep handle every e2e
+// stack now carries, whoever authored it (e2e_run_tag.go).
 func t2BaseSnapshot(project, env, provider, region string) map[string]any {
 	return map[string]any{
 		"id":                "e2e-" + env,
@@ -1109,6 +1207,7 @@ func t2BaseSnapshot(project, env, provider, region string) map[string]any {
 		"region":            region,
 		"provider":          provider,
 		"addons":            seedAddOns(),
+		"classification":    e2eRunClassification(env),
 	}
 }
 
@@ -1123,7 +1222,14 @@ func t2BaseSnapshot(project, env, provider, region string) map[string]any {
 // job takes the graph's user/org. Either way it MUST equal the SeedRunner owner, or the self-runner
 // claim (j.org_id = v_runner_org_id, #392) never matches and the job sits QUEUED until timeout.
 func seedT2DeployJob(ctx context.Context, cp *ControlPlane, snap map[string]any, g *a05Graph, leanOwnerID string) (string, error) {
-	jobID := newUUID()
+	return seedT2DeployJobWithID(ctx, cp, newUUID(), snap, g, leanOwnerID)
+}
+
+// seedT2DeployJobWithID is seedT2DeployJob with the job id chosen by the CALLER, so a follow-on
+// DEPLOY can have its tofu state aliased (ControlPlane.AliasStateToJob) BEFORE the row exists — a
+// runner that claimed the row between the insert and the alias would plan against an empty state
+// and try to build a second cluster.
+func seedT2DeployJobWithID(ctx context.Context, cp *ControlPlane, jobID string, snap map[string]any, g *a05Graph, leanOwnerID string) (string, error) {
 	snapshot, err := json.Marshal(snap)
 	if err != nil {
 		return "", err
@@ -1164,6 +1270,9 @@ func teardownT2Cluster(ctx context.Context, cpURL, jobID, project, env, provider
 		// identically — else GCP's project_id (and AWS account-scoped ARNs) are empty and the
 		// teardown fails. Empty for account-less providers, matching the deploy.
 		CloudAccountID: t2AmbientAccountID(provider),
+		// The same classification the deploy's snapshot carried (t2BaseSnapshot), so the destroy's
+		// tfvars are the deploy's tfvars.
+		Classification: e2eRunClassification(env),
 	}
 	backend := &cloud.HTTPBackendConfig{ConsoleURL: cpURL, JobID: jobID, Token: "e2e-teardown"}
 	return provisioner.RunDestroy(ctx, provisioner.DestroyParams{

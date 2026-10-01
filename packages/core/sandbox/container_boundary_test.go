@@ -37,7 +37,7 @@ func flagValues(args []string, flag string) []string {
 // precedence: an explicit no-egress stage overrides a configured egress net.
 func TestBuildArgs_LimitAndNetworkSelection(t *testing.T) {
 	workDir := t.TempDir()
-	childEnv := buildChildEnv([]string{"PATH=/usr/bin"}, workDir)
+	childEnv := buildChildEnv([]string{"PATH=/usr/bin"}, workDir, nil)
 
 	cases := []struct {
 		name        string
@@ -118,7 +118,7 @@ func TestBuildChildEnv_MalformedParentEntries(t *testing.T) {
 		"PATH_EXTRA=/should/not", // must NOT be read as PATH
 	}
 
-	got := buildChildEnv(parent, workDir)
+	got := buildChildEnv(parent, workDir, nil)
 
 	env := map[string]string{}
 	for _, kv := range got {
@@ -163,13 +163,13 @@ func TestBuildArgs_DeterministicAcrossParentEnvOrder(t *testing.T) {
 		reversed[len(forward)-1-i] = kv
 	}
 
-	first := c.buildArgs(spec, buildChildEnv(forward, workDir))
+	first := c.buildArgs(spec, buildChildEnv(forward, workDir, nil))
 	for i := 0; i < 8; i++ {
 		src := forward
 		if i%2 == 1 {
 			src = reversed
 		}
-		if got := c.buildArgs(spec, buildChildEnv(src, workDir)); !reflect.DeepEqual(got, first) {
+		if got := c.buildArgs(spec, buildChildEnv(src, workDir, nil)); !reflect.DeepEqual(got, first) {
 			t.Fatalf("argv is not deterministic:\n got %v\nwant %v", got, first)
 		}
 	}

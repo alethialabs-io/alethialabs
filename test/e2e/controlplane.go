@@ -70,6 +70,15 @@ type ControlPlane struct {
 	addonSecretsMu sync.Mutex
 	addonSecrets   map[string]map[string]string
 
+	// The Fabric admin talosconfigs this control plane holds, in write order (#1389). Each entry is
+	// keyed by the dedicated DEPLOY job that wrote it; a placement resolves its Fabric by the cluster
+	// name that job reported. See handlePutTalosconfig.
+	talosMu   sync.Mutex
+	talosHeld []heldTalosconfig
+	// talosStore overrides the Postgres reads the talosconfig channel makes; nil ⇒ the real pool. A
+	// test seam only; the harness itself never sets it.
+	talosStore talosStore
+
 	// In-memory OpenTofu http state backend, keyed by a STORAGE KEY (state + lock).
 	// The key is the requesting job's id by default, but a job may be ALIASED onto
 	// another job's slot (AliasStateToJob) so a follow-on job — a DETECT_DRIFT after a
@@ -279,6 +288,16 @@ func (cp *ControlPlane) JobState(ctx context.Context, jobID string) (status stri
 	return status, metaRaw, err
 }
 
+// JobConfigSnapshot returns the job's config_snapshot (raw JSON): what the job was ASKED to build,
+// as opposed to what it built. On the cli-demo path the console wrote it from what the CLI authored,
+// so it is the only place the harness can see whether a request reached the job.
+func (cp *ControlPlane) JobConfigSnapshot(ctx context.Context, jobID string) ([]byte, error) {
+	var raw []byte
+	err := cp.pool.QueryRow(ctx,
+		`SELECT config_snapshot FROM public.jobs WHERE id = $1`, jobID).Scan(&raw)
+	return raw, err
+}
+
 // JobFailureDetail returns a job's error_message and execution_metadata — the two columns a
 // terminal-failure report needs. Kept separate from JobState (which three call sites share)
 // because only the failure path wants error_message; widening JobState would churn all of them.
@@ -350,6 +369,11 @@ func (cp *ControlPlane) mux() http.Handler {
 	m.HandleFunc("POST /api/jobs/{id}/state-token", cp.handleStateToken)
 	m.HandleFunc("POST /api/jobs/{id}/git-token", cp.handleGitToken)
 	m.HandleFunc("POST /api/jobs/{id}/addon-secrets", cp.handleAddonSecrets)
+	// The hetzner-talos placement credential channel (#1389): a dedicated deploy PUTs the Fabric's
+	// admin talosconfig, a namespace/vcluster placement GETs it to mint kube access. Unserved, both
+	// 404'd and no hetzner placement could ever reach its Fabric (#845, run 36626677124).
+	m.HandleFunc("PUT /api/jobs/{id}/talosconfig", cp.handlePutTalosconfig)
+	m.HandleFunc("GET /api/jobs/{id}/talosconfig", cp.handleGetTalosconfig)
 	m.HandleFunc("POST /api/runners/heartbeat", cp.handleHeartbeat)
 	m.HandleFunc("GET /api/runners/wake", cp.handleWake)
 	// OpenTofu http state backend (in-memory). Lock is a distinct sub-path.
@@ -693,10 +717,31 @@ func parseAddonSecretKeys(raw []byte) (map[string][]string, error) {
 	return out, nil
 }
 
+// handleHeartbeat records the runner's liveness through the real runner_heartbeat function and
+// answers with the server-side-cancelled job ids.
+//
+// The liveness write is not optional. It used to answer 200 and write nothing, which was harmless
+// while nothing read runners.last_heartbeat during a run. On cli-demo a REAL console runs against
+// the same database, and its recovery loop (lib/jobs/recovery.ts → recover_stale_jobs) requeues a
+// claimed job whose runner has not heartbeated for 5 minutes once the claim is 15 minutes old. With
+// last_heartbeat frozen at SeedRunner, every cli-demo DEPLOY longer than 15 minutes was requeued
+// mid-apply: its closing posts were refused as "not owned by this runner", its receipt was never
+// stored, and the runner applied the same job a second time (run 36652642517, aws + gcp).
 func (cp *ControlPlane) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := cp.authHash(r); !ok {
+	runnerID, tokenHash, ok := cp.authHash(r)
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
+	}
+	// NULL version/providers: runner_heartbeat COALESCEs both, keeping what SeedRunner wrote. A
+	// pool-less ControlPlane (newLockOnlyControlPlane, the cancel-path pure test) has no runners row
+	// to refresh and no recovery loop to outlive, so it only answers.
+	if cp.pool != nil {
+		if _, err := cp.pool.Exec(r.Context(),
+			`SELECT public.runner_heartbeat($1::uuid, $2::text, NULL::text, NULL::public.cloud_provider[])`, runnerID, tokenHash); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"cancelled_job_ids": cp.heartbeatCancelledJobs()})
 }

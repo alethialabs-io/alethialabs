@@ -67,7 +67,7 @@ var nightlyExemptEnv = map[string]string{
 	"ALETHIA_E2E_ARGO_TIMEOUT":            "tuning knob with a sane default; overridden only for local debugging",
 	"ALETHIA_E2E_B6_REQUIRE":              "the B6 promotion gate is its own build tag and its own workflow",
 	"ALETHIA_E2E_A05_ENFORCE":             "A0.5 fidelity ramp: warn-only until the maintainer flips it, deliberately not wired yet",
-	"ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED": "the cli-demo connector beat needs an e2e console whose OIDC issuer the clouds actually trust; this one is started with NEXT_PUBLIC_APP_URL=http://localhost:3000 and no signing key, so the beat cannot COMPLETE in the nightly at any price. Deliberately NOT a repo variable: wiring it would make a paid connector dispatch reachable from CI before the identity it depends on exists. Set it by hand for a local run; wire it here when that console has a trusted issuer",
+	"ALETHIA_E2E_CLI_DEMO_ISSUER_TRUSTED": "the MANUAL lift of the cli-demo connector refusal, for a local run whose console has an issuer the clouds trust. The nightly lifts it through ALETHIA_E2E_CLI_DEMO_BROKER_PROVEN instead, which the workflow writes only after scripts/e2e/refresh-e2e-issuer-token.mjs has proven the broker path on that cloud (#4227) — a measurement, where this is a statement. Deliberately NOT a repo variable: it would lift the refusal on every cloud whether or not any trust exists",
 	"ALETHIA_E2E_A05_REAL_SNAPSHOT":       "A0.5 real-snapshot mode, enabled by hand during fidelity work",
 	"ALETHIA_E2E_HCLOUD_REGION":           "legacy alias for ALETHIA_E2E_REGION, kept for back-compat only",
 	"ALETHIA_E2E_DAY2_ACCESS_TIMEOUT":     "tuning knob for the day-2 layer; the layer's own enable var is wired",

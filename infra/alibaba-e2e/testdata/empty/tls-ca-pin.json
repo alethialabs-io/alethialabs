@@ -1,0 +1,6 @@
+{
+  "$comment": "Fixture: a pin nobody has populated yet.",
+  "issuer_url": "https://alethia-e2e-issuer.example.workers.dev",
+  "algorithm": "sha1",
+  "fingerprints": []
+}

@@ -74,8 +74,9 @@ receives merges from `staging`.
 
   You do not need to merge anything yourself, and you must never use `--admin` (it bypasses the
   queue) or merge a red PR. The heavy real-runner and browser E2Es run as observe-only signals
-  **on `dev`**, tracked by `scripts/merge-signal-health.sh` and the weekly *Merge-signal health*
-  workflow — the release gate is a promotion-path check and does not run on a `dev` PR at all
+  **on Mergify's queue builds** (the `mergify/merge-queue/*` draft PRs; T1 runs on every one, the
+  browser E2Es when their paths changed), graded by `scripts/merge-signal-health.sh` and the weekly
+  *Merge-signal health* workflow — the release gate is a promotion-path check and does not run on a `dev` PR at all
   unless you label it `release-gate:run`. See the promotion checklist below.
 
 - **A promotion PR (`dev → staging`, `staging → main`) lives as a DRAFT between promotions.**

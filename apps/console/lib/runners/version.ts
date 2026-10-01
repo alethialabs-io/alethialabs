@@ -1,6 +1,10 @@
-"use server";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
+
+// Service-role reads of the runner release catalog. NOT a `"use server"` file (it was one): every
+// export of such a file is a public POST-addressable Server Action, and these take no session
+// (#5219). The browser reaches release data through app/server/actions/runners.ts, which
+// authorizes first.
 
 import { desc, eq } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";

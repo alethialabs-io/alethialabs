@@ -54,6 +54,7 @@ import { CanvasMoreMenu } from "./canvas-more-menu";
 import { CostChip } from "./cost-chip";
 import { RunMenu } from "./run-menu";
 import { CanvasCommandPalette } from "./canvas-command-palette";
+import { useHasDrawnNodes } from "./use-has-drawn-nodes";
 import {
 	CanvasContextMenu,
 	useCanvasContextMenu,
@@ -116,6 +117,7 @@ function CanvasInner({
 	const searchParams = useSearchParams();
 	const orgSlug = useActiveOrgSlug();
 	const { fitView } = useReactFlow();
+	const hasDrawnNodes = useHasDrawnNodes();
 	// W5 click-to-place — computed here (inside the ReactFlowProvider) and handed to the palettes so
 	// they don't each need the React Flow context (and stay testable without a provider).
 	const dropPosition = useDropPosition();
@@ -667,6 +669,7 @@ function CanvasInner({
 				onSave={projectId ? undefined : handleSave}
 				onToggleView={onToggleForm}
 				onFitView={() => fitView({ padding: 0.3 })}
+				fitViewDisabled={!hasDrawnNodes}
 				onAskAi={openAssistantExclusive}
 				onArrange={() => void arrangeBoard(fitView)}
 				onEnvSettings={iacGoverned ? undefined : () => openCard({ kind: "env-settings" })}

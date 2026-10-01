@@ -8,90 +8,25 @@
 // client (it owns the org row + hooks).
 
 import { eq } from "drizzle-orm";
-import { z } from "zod";
 import { authorizeInOrg, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { organization } from "@/lib/db/schema";
+import {
+	type OrgMeta,
+	type OrgPrimaryAddress,
+	type OrgSettings,
+	orgSettingsForOrg,
+	parseMeta,
+} from "@/lib/org/settings";
 
-export interface OrgSettings {
-	name: string;
-	slug: string;
-	logo: string | null;
-	description: string;
-	/** Billing-derived primary address (set from checkout); null when unset. */
-	primaryAddress: OrgPrimaryAddress | null;
-	region: string;
-	defaultEnv: string;
-	terraformVersion: string;
-}
+export type { OrgPrimaryAddress, OrgSettings } from "@/lib/org/settings";
 
-/** The org's primary (billing-derived) address, stored in the org metadata JSON. */
-const orgPrimaryAddressSchema = z.object({
-	name: z.string(),
-	line1: z.string(),
-	line2: z.string().optional(),
-	city: z.string().optional(),
-	state: z.string().optional(),
-	postalCode: z.string().optional(),
-	country: z.string(),
-});
-export type OrgPrimaryAddress = z.infer<typeof orgPrimaryAddressSchema>;
+// The by-id read (orgSettingsForOrg) lives in lib/org/settings.ts. It takes an org id and reads
+// through the service client with no session, so as an export of this `"use server"` file it
+// answered ANY org's name, description and billing address to anyone who could name the id
+// (#5219). Its callers — getOrgSettings below and the CLI route — resolve the org first.
 
-/** The org metadata JSON blob. Every field is tolerant: a malformed value degrades to `undefined`
- *  (never throws, never lies), and a non-object blob to `{}` — parseMeta trusts nothing. */
-const orgMetaSchema = z
-	.object({
-		region: z.string().optional().catch(undefined),
-		description: z.string().optional().catch(undefined),
-		defaultEnv: z.string().optional().catch(undefined),
-		terraformVersion: z.string().optional().catch(undefined),
-		primaryAddress: orgPrimaryAddressSchema.optional().catch(undefined),
-	})
-	.catch({});
-type OrgMeta = z.infer<typeof orgMetaSchema>;
-
-/** Tolerant parse of the org metadata JSON blob. */
-function parseMeta(metadata: string | null): OrgMeta {
-	if (!metadata) return {};
-	try {
-		return orgMetaSchema.parse(JSON.parse(metadata));
-	} catch {
-		return {};
-	}
-}
-
-/** Current General-settings values, or null in the personal scope (no real org). */
-/**
- * The General-settings values for a given org id (no session lookup) — the shared read behind
- * both getOrgSettings (web, session-scoped) and the CLI org-settings route (token-scoped). Returns
- * null when the org row is missing. Callers are responsible for the community-mode short-circuit.
- */
-export async function orgSettingsForOrg(orgId: string): Promise<OrgSettings | null> {
-	const [org] = await getServiceDb()
-		.select({
-			name: organization.name,
-			slug: organization.slug,
-			logo: organization.logo,
-			metadata: organization.metadata,
-		})
-		.from(organization)
-		.where(eq(organization.id, orgId))
-		.limit(1);
-	if (!org) return null;
-
-	const m = parseMeta(org.metadata);
-	return {
-		name: org.name,
-		slug: org.slug ?? "",
-		logo: org.logo,
-		description: m.description ?? "",
-		primaryAddress: m.primaryAddress ?? null,
-		region: m.region ?? "eu-west-1",
-		defaultEnv: m.defaultEnv ?? "staging",
-		terraformVersion: m.terraformVersion ?? "1.9.5",
-	};
-}
-
+/** The active org's General-settings values, or null in the personal scope (no real org). */
 export async function getOrgSettings(): Promise<OrgSettings | null> {
 	const actor = await currentActor();
 	if (actor.orgId === actor.userId) return null;

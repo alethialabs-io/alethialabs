@@ -5,8 +5,9 @@
 #
 #   tofu init -backend-config=backend.hcl
 #
-# `bucket` is the bucket THIS stack creates: on the very first apply it does not exist yet, so run
-# `tofu init -backend=false` first, apply, then re-init with `-migrate-state`.
+# `bucket` is the bucket THIS stack creates: on the very first apply it does not exist yet, so apply
+# first under a temporary local-backend `backend_override.tf` (not `-backend=false`, which cannot
+# plan), delete the override, then re-init with `-migrate-state`.
 
 bucket = "alethia-tofu-state-e2e-alibaba"
 prefix = "alibaba-e2e-bootstrap"

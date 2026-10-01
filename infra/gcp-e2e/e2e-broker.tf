@@ -5,9 +5,15 @@
 # dedicated E2E assertion broker (apps/e2e-issuer, contract in packages/workload-identity/src/
 # broker.ts), in ADDITION to the GitHub Actions WIF trust in e2e-nightly.tf.
 #
-# OFF BY DEFAULT. `e2e_broker_issuer_url = null` (the committed value in terraform.tfvars) creates
-# nothing, so a plan on this change alone is a no-op. Setting it creates a pool, a provider and ONE
-# additive `google_service_account_iam_member`; setting it back to null destroys exactly those three.
+# GATED ON THE ISSUER, NOT OFF. The committed terraform.tfvars sets `e2e_broker_issuer_url` to
+# https://e2e-issuer.alethialabs.io (#5004), and the broker trust is created whenever it is non-null
+# — so any plan or apply of this stack proposes a pool, a provider and one SA IAM member. Apply only
+# after the issuer serves at that origin (docs/testing/e2e-state-migration.md,
+# infra/e2e-issuer/README.md). To plan without the broker, pass
+# `-var-file=<(printf 'e2e_broker_issuer_url = null\n')` — a plain `-var e2e_broker_issuer_url=null`
+# passes the string "null", not null.
+# Setting it creates a pool, a provider and ONE additive `google_service_account_iam_member`;
+# setting it back to null destroys exactly those three.
 #
 # A SEPARATE POOL, not a second provider in the GitHub pool — and that is load-bearing. The GitHub
 # binding (google_service_account_iam_member.e2e_wif) trusts

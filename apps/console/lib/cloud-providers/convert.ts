@@ -19,6 +19,7 @@ import {
 	cacheEngines,
 	dbEngines,
 } from "./generated/catalog";
+import { effectiveCapacityMode } from "./nosql-capacity";
 /**
  * Engines the TARGET cloud can back, from the catalog.
  *
@@ -245,6 +246,19 @@ export function convertProjectConfig(
 				component: "NoSQL",
 				message: targetNosql.portabilityNote,
 			});
+		}
+		// A capacity mode the target cannot build is rewritten to the one it can, and said out loud —
+		// converting a provisioned DynamoDB table to Azure used to carry `provisioned` into a Cosmos
+		// account that is serverless only (#4320), where it changed nothing and read as if it had.
+		for (const table of data.nosql_tables) {
+			const mode = effectiveCapacityMode(targetProvider, table.capacity_mode);
+			if (mode === table.capacity_mode) continue;
+			warnings.push({
+				severity: "warning",
+				component: "NoSQL",
+				message: `Table "${table.name}" asked for ${table.capacity_mode} capacity, which ${targetNosql.serviceName} does not offer here. It will use ${targetNosql.billingModes.find((m) => m.value === mode)?.label ?? mode} instead.`,
+			});
+			table.capacity_mode = mode;
 		}
 		if (!targetNosql.supportsRangeKey) {
 			for (const table of data.nosql_tables) {

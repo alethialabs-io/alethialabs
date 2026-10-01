@@ -18,7 +18,7 @@
   "dependencies": {
     "@react-email/components": "^1.0.12",
     "@repo/email": "workspace:*",
-    "drizzle-orm": "^0.45.2",
+    "drizzle-orm": "^0.45.3",
     "drizzle-zod": "^0.8.3",
     "react": "^19.3.0",
     "zod": "^4.6.5"

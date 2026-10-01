@@ -1079,6 +1079,13 @@
       "when": 1789733479334,
       "tag": "0153_public_prodigy",
       "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1790184874321,
+      "tag": "0154_chubby_lifeguard",
+      "breakpoints": true
     }
   ]
 }

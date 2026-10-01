@@ -21,12 +21,12 @@
 #             (notifications, CORS, object lock, lifecycle). So asking for CORS here is either
 #             honoured or a no-op; it is never an apply error, and it is no longer silently dropped
 #             before it reaches a resource.
-#   * Encryption — still NOT wired, and not a backlog item: Hetzner Object Storage supports exactly
+#   * Encryption — not a knob at all (DELETED by #4320): Hetzner Object Storage supports exactly
 #             one encryption type, SSE-C (per-request, customer-supplied keys), per Hetzner's own
 #             supported-actions matrix. There is no bucket-level default-encryption configuration
 #             for a resource to write, so minio_s3_bucket_server_side_encryption — which only offers
-#             AES256 (SSE-S3) and aws:kms — has nothing it could set. encryption_enabled stays
-#             informational. See var.buckets in variables.tf.
+#             AES256 (SSE-S3) and aws:kms — has nothing it could set. Objects are encrypted at rest
+#             regardless. See var.buckets in variables.tf.
 
 provider "minio" {
   # minio_server is the S3 endpoint HOST (no scheme); minio_ssl toggles https.

@@ -228,6 +228,7 @@ export function GcpConnection({
 							</FieldHelp>
 						</div>
 						<Textarea
+							aria-label="WIF credential config JSON"
 							value={raw}
 							onChange={(e) => setRaw(e.target.value)}
 							placeholder='{"type": "external_account", "audience": "//iam.googleapis.com/projects/...", ...}'

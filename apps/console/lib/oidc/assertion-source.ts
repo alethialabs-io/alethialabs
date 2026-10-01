@@ -12,6 +12,7 @@ import {
   type WorkloadProvider,
 } from "@repo/workload-identity";
 import { decodeJwt } from "jose";
+import { readJsonBody } from "@/lib/net/read-json-body";
 import { mintWorkloadToken, oidcIssuerConfigured } from "./issuer";
 
 const BROKER_URL_ENV = "ALETHIA_E2E_ASSERTION_BROKER_URL";
@@ -72,7 +73,7 @@ function brokerAssertionSource(
         );
       }
       const parsed = brokerAssertionResponseSchema.safeParse(
-        await response.json(),
+        await readJsonBody(response, "E2E assertion broker"),
       );
       if (!parsed.success)
         throw new Error("E2E assertion broker returned a malformed response.");
@@ -133,7 +134,7 @@ async function requestGithubToken(
       `GitHub OIDC refused the assertion request (HTTP ${response.status}).`,
     );
   }
-  const body: unknown = await response.json();
+  const body = await readJsonBody(response, "GitHub OIDC");
   if (
     !isObject(body) ||
     typeof body.value !== "string" ||

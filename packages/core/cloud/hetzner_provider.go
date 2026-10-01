@@ -371,20 +371,21 @@ func hetznerS3Region(region string) string {
 // an apply failure. This comment used to say CORS was ignored outright, which was true of
 // the template as written and is no longer.
 //
-// `encryption_enabled` IS still informational and reaches no resource, and the reason is
-// the backend, not the provider: Hetzner Object Storage supports exactly one encryption
-// type, SSE-C (per-request customer-supplied keys), and has no bucket-level default-
-// encryption configuration for a resource to write. Objects are encrypted at rest either
-// way. Recorded against the knob in the template and in infra/templates/project/knob-exclusions.yaml.
+// `encryption_enabled` is NOT emitted, and the template no longer declares it (#4320, maintainer
+// ruling 2026-09-23). It was informational and reached no resource, for a reason no wiring could fix:
+// Hetzner Object Storage supports exactly one encryption type, SSE-C (per-request customer-supplied
+// keys), and has no bucket-level default-encryption configuration for a resource to write. Objects are
+// encrypted at rest either way. The cross-cloud `EncryptionEnabled` field stays — AWS/GCP/Azure/
+// Alibaba read it — and the key stays RESERVED below as withdrawn, so a stored provider_config
+// cannot put it back.
 func buildHetznerBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		entry := map[string]interface{}{
-			"name":               b.Name,
-			"versioning":         b.Versioning,
-			"encryption_enabled": b.EncryptionEnabled,
-			"public_access":      b.PublicAccess,
-			"cors_origins":       ensureStringSlice(b.CorsOrigins),
+			"name":          b.Name,
+			"versioning":    b.Versioning,
+			"public_access": b.PublicAccess,
+			"cors_origins":  ensureStringSlice(b.CorsOrigins),
 		}
 		// The bucket is the ONE leaf component Hetzner provisions through OpenTofu. The database,
 		// cache, queue, topic, nosql table and secret are in-cluster charts (CloudNativePG, Valkey,

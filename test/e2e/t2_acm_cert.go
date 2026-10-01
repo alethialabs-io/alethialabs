@@ -247,6 +247,52 @@ func (c acmCertConfig) applyToSnapshot(snap map[string]any) {
 	}
 }
 
+// acmCertAskFromSnapshot reports whether a DEPLOY job's config_snapshot ASKED for the certificate in
+// the brought zone, and renders what its dns block carried so a "no" can say why.
+//
+// It exists so runT2AcmCert can tell "the job never asked" from "the job asked and ACM could not
+// validate". Run 36639509726 conflated them: the CLI-created DEPLOY carried no zone and no
+// certificate ask, and the verdict blamed a delegation that was in place.
+//
+// The ask is decided the way the product decides it (managedCertificateAsk in
+// packages/core/argocd/infra_facts.go, and aws_provider.go's acm_certificate_enable): the typed
+// dns.managed_certificate, overridden by provider_config.acm_certificate when that is a bool. The
+// seeded path asks through the override and the console through the typed field, and both count.
+// The zone must be the one the scenario brings: a job that asked for a certificate in a zone of its
+// own proves nothing about delegation.
+func acmCertAskFromSnapshot(raw []byte, wantZoneID string) (asked bool, carried string, err error) {
+	var snap struct {
+		DNS *struct {
+			Enabled            bool           `json:"enabled"`
+			ZoneID             string         `json:"zone_id"`
+			DomainName         string         `json:"domain_name"`
+			ManagedCertificate bool           `json:"managed_certificate"`
+			ProviderConfig     map[string]any `json:"provider_config"`
+		} `json:"dns"`
+	}
+	if len(raw) == 0 {
+		return false, "", fmt.Errorf("the job carries no config_snapshot")
+	}
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		return false, "", fmt.Errorf("parsing the job's config_snapshot: %w", err)
+	}
+	if snap.DNS == nil {
+		return false, "no dns block at all", nil
+	}
+	d := snap.DNS
+	ask := d.ManagedCertificate
+	override := "unset"
+	if v, ok := d.ProviderConfig["acm_certificate"]; ok {
+		override = fmt.Sprintf("%v", v)
+		if b, ok := v.(bool); ok {
+			ask = b
+		}
+	}
+	carried = fmt.Sprintf("dns.enabled=%v zone_id=%q domain_name=%q managed_certificate=%v provider_config.acm_certificate=%s",
+		d.Enabled, d.ZoneID, d.DomainName, d.ManagedCertificate, override)
+	return d.Enabled && ask && d.ZoneID != "" && d.ZoneID == wantZoneID, carried, nil
+}
+
 func acmCertTimeout() time.Duration {
 	if v := strings.TrimSpace(os.Getenv(envAcmCertTimeout)); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {

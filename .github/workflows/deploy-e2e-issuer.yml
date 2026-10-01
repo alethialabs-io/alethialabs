@@ -10,8 +10,33 @@
 #     infra/github/environments.tf next to `production`'s `main` policy. The environment holds the
 #     Cloudflare credentials, so a job that cannot select it cannot deploy at all.
 #
+# The issuer's ONE origin is https://e2e-issuer.alethialabs.io, a Workers Custom Domain owned by
+# infra/e2e-issuer (maintainer ruling on #4226, 2026-09-23); wrangler.jsonc turns workers.dev off. That
+# makes ordering load-bearing: deploying with workers.dev off before the custom domain routes to the
+# Worker would leave the issuer reachable NOWHERE. So a preflight gates the CODE deploy and refuses —
+# with the reason and the runbook step — unless vars.E2E_ISSUER_URL is the committed origin and that
+# origin already routes to this Worker. A refused deploy changes nothing that is live.
+#
 # Key material never rides a code deploy. `SIGNING_KEYS_JSON` is uploaded only when a dispatch
 # says so (`upload-signing-keys`), which is a ROTATION step, not a deploy step — see the README.
+#
+# A ROTATION NEVER WAITS ON THE ORIGIN MIGRATION (#5004 review). The upload runs BEFORE the preflight
+# and does not depend on it: `wrangler secret put` re-publishes the Worker's CURRENT code with the new
+# secret, at whatever origin it already serves. If the preflight then refuses the code deploy (e.g.
+# between merging the custom-domain change and finishing its runbook), a rotation dispatch skips the
+# code deploy with a warning, and still verifies that every uploaded kid is PUBLISHED at the
+# configured origin.
+#
+# A PENDING MIGRATION IS A SKIP, NOT A FAILURE (#5004 review). Between merging the custom-domain change
+# and runbook step 3, E2E_ISSUER_URL is still the workers.dev origin, and every matching push (a
+# pnpm-lock.yaml change lands about twice a week) would otherwise red this workflow — and
+# workflow-health.yml would report the same fact a second time — for as long as the maintainer's manual
+# steps wait. The protection is `if: steps.preflight.outputs.go == 'true'` on the deploy and verify
+# steps, not the exit code, so the preflight's distinct exit 3 (exactly: a well-formed *.workers.dev
+# origin that differs from the committed one) writes go=false, emits a notice and a job-summary
+# paragraph, and the job succeeds. EVERY other refusal stays red: an unset or malformed variable, a
+# foreign origin, or the committed origin not routing to the Worker (step 3 before step 2, a broken
+# binding).
 
 name: Deploy E2E assertion issuer
 
@@ -54,24 +79,70 @@ jobs:
       # the test suite run without them, and only the two wrangler steps receive them.
       - run: pnpm install --frozen-lockfile
       - run: pnpm -C apps/e2e-issuer run test
+      # FIRST, and independent of the origin: a key rotation must work in every state of the origin
+      # migration. The kids (public identifiers, never key material) are exported for the verify step;
+      # jq's parse error names a position, never the bytes around it.
       - name: Upload rotation-aware signing key set
+        id: upload
         if: github.event_name == 'workflow_dispatch' && inputs.upload-signing-keys
         working-directory: apps/e2e-issuer
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SIGNING_KEYS_JSON: ${{ secrets.SIGNING_KEYS_JSON }}
-        run: pnpm dlx wrangler@4.33.1 secret put SIGNING_KEYS_JSON <<< "$SIGNING_KEYS_JSON"
+        run: |
+          set -euo pipefail
+          kids="$(jq -r '[.keys[].kid] | join(",")' <<< "$SIGNING_KEYS_JSON")"
+          pnpm dlx wrangler@4.33.1 secret put SIGNING_KEYS_JSON <<< "$SIGNING_KEYS_JSON"
+          echo "kids=$kids" >> "$GITHUB_OUTPUT"
+      # Gates the CODE deploy only. Plain node, repository files only; the one network read is a GET of
+      # the public discovery document.
+      - name: Preflight — the origin is the committed one and already routes to this Worker
+        id: preflight
+        env:
+          ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
+          ROTATION: ${{ steps.upload.outcome == 'success' }}
+        run: |
+          set -uo pipefail
+          code=0
+          node scripts/ci/check-e2e-issuer-health.mjs --preflight --expected-url "$ISSUER_URL" || code=$?
+          if [ "$code" = "0" ]; then echo "go=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "go=false" >> "$GITHUB_OUTPUT"
+          # 3 = custom-domain migration pending (the script's notice names it). Neutral: nothing is deployed.
+          if [ "$code" = "3" ]; then
+            {
+              echo "### E2E issuer: custom-domain migration pending"
+              echo ""
+              echo "\`E2E_ISSUER_URL\` is still a \`workers.dev\` origin, not the committed custom domain. Custom-domain migration pending — see \`infra/e2e-issuer/README.md\` step 2–4; deploy skipped, live workers.dev issuer untouched."
+              if [ "$ROTATION" = "true" ]; then echo ""; echo "The rotated key set WAS uploaded to the running Worker; the next step verifies it is published."; fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$ROTATION" = "true" ]; then
+            echo "::warning title=code deploy skipped::the preflight refused the code deploy (reason above). The rotated key set WAS uploaded to the running Worker; the next step verifies it is published."
+            exit 0
+          fi
+          exit 1
       - name: Deploy Worker
+        if: steps.preflight.outputs.go == 'true'
         working-directory: apps/e2e-issuer
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
-          GITHUB_TOKEN_AUDIENCE: ${{ vars.GITHUB_TOKEN_AUDIENCE }}
+          # GitHub refuses any variable name starting with `GITHUB_` (HTTP 422), so the audience
+          # could never be set under the Worker's own binding name. It is read from the one
+          # repository variable the caller also reads (e2e-nightly.yml), so both sides of the match
+          # come from one value.
+          GITHUB_TOKEN_AUDIENCE: ${{ vars.E2E_ISSUER_GITHUB_AUDIENCE }}
           ALLOWED_REPOSITORIES: ${{ vars.ALLOWED_REPOSITORIES }}
           ALLOWED_WORKFLOW_REFS: ${{ vars.ALLOWED_WORKFLOW_REFS }}
+        # An empty value deploys a Worker that refuses every caller, while the deploy still reports
+        # green. Refuse the deploy instead, and name the missing variable.
         run: >-
+          for v in GITHUB_TOKEN_AUDIENCE ALLOWED_REPOSITORIES ALLOWED_WORKFLOW_REFS; do
+          [ -n "${!v}" ] || { echo "::error title=broker config missing::$v is empty (GITHUB_TOKEN_AUDIENCE comes from vars.E2E_ISSUER_GITHUB_AUDIENCE; the other two are e2e-issuer environment variables) — see apps/e2e-issuer/README.md"; exit 1; };
+          done;
           pnpm dlx wrangler@4.33.1 deploy
           --var "ISSUER_URL:$ISSUER_URL"
           --var "GITHUB_TOKEN_AUDIENCE:$GITHUB_TOKEN_AUDIENCE"
@@ -79,13 +150,24 @@ jobs:
           --var "ALLOWED_WORKFLOW_REFS:$ALLOWED_WORKFLOW_REFS"
       # The Worker refuses to serve at any origin but ISSUER_URL, so this is a measurement of the
       # deployed issuer, not an echo of the variable: a mismatch is a 503 here, not a silent
-      # cloud-side rejection later.
-      - name: Verify the deployed issuer serves discovery at its configured origin
+      # cloud-side rejection later. It re-probes for up to three minutes, until discovery names THIS origin (a new version and a new
+      # custom-domain certificate take a moment to serve everywhere), then fails naming the check —
+      # an unreachable origin says so, it does not surface as a bare curl exit code. The TLS pin and
+      # latency and key age are the scheduled health check's (e2e-issuer-health.yml), not a deploy gate.
+      - name: Verify the deployed issuer serves discovery and a usable JWKS at its configured origin
+        if: steps.preflight.outputs.go == 'true'
         env:
           ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
-        run: |
-          set -euo pipefail
-          discovery="$(curl -fsS --max-time 20 "$ISSUER_URL/.well-known/openid-configuration")"
-          served="$(printf '%s' "$discovery" | jq -r '.issuer')"
-          [ "$served" = "${ISSUER_URL%/}" ] || { echo "issuer mismatch: served '$served', configured '$ISSUER_URL'" >&2; exit 1; }
-          curl -fsS --max-time 20 "$ISSUER_URL/.well-known/jwks.json" | jq -e '.keys | length > 0' >/dev/null
+          KIDS: ${{ steps.upload.outputs.kids }}
+        run: node scripts/ci/check-e2e-issuer-health.mjs --expected-url "$ISSUER_URL" --checks config,discovery,jwks --expect-kids "$KIDS" --retry-seconds 180
+      # A rotation whose code deploy the preflight skipped: the Worker still serves at the origin it was
+      # last deployed for, which until runbook step 3 is also vars.E2E_ISSUER_URL. Only `jwks` is asked
+      # — the origin migration is not this dispatch's business. In the minutes between runbook steps 3
+      # and 4 the running Worker answers only at its OLD origin, so this reports that and the fix is
+      # step 4 itself (which re-verifies the kids).
+      - name: Verify the rotated key set is published (code deploy skipped)
+        if: steps.upload.outcome == 'success' && steps.preflight.outputs.go != 'true'
+        env:
+          ISSUER_URL: ${{ vars.E2E_ISSUER_URL }}
+          KIDS: ${{ steps.upload.outputs.kids }}
+        run: node scripts/ci/check-e2e-issuer-health.mjs --expected-url "$ISSUER_URL" --checks jwks --expect-kids "$KIDS" --retry-seconds 180

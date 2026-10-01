@@ -2,7 +2,11 @@
 # Apply this ONLY into a DEDICATED, throwaway e2e GCP project — never a prod/shared project.
 
 # The dedicated e2e project the nightly provisions into (REQUIRED).
-project_id = "alethia-e2e-nightly"
+# NOT "alethia-e2e-nightly" — that is the provisioner SERVICE ACCOUNT's id, not a project. The live
+# project is the one in the E2E_GCP_SA_EMAIL repo variable (`alethia-e2e-nightly@<project>.iam…`).
+# Its id is deliberately not written in this repo (pnpm check:forbidden-names); the placeholder below
+# fails project_id validation until you replace it. Runbook: docs/testing/e2e-state-migration.md §1.
+project_id = "REPLACE-WITH-GCP_E2E_PROJECT_ID"
 
 # The billing account the e2e project is linked to (REQUIRED for the budget). XXXXXX-XXXXXX-XXXXXX.
 billing_account_id = "000000-000000-000000"

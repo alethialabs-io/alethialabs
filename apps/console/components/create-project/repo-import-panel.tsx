@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import type { Repository } from "@/app/server/actions/git/types";
 import { scanRepo } from "@/app/server/actions/scanner";
 import { RepositorySelector } from "@/components/repository-selector";
+import type { GitProviderAvailability } from "@/lib/connectors/git-providers";
 import { cn } from "@repo/ui/utils";
 import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
@@ -17,6 +18,8 @@ import { SectionHeading } from "@repo/ui/section-heading";
 interface RepoImportPanelProps {
 	/** Optional wrapper class so the front door can slot the panel into its layout. */
 	className?: string;
+	/** Which git providers this instance can link (server-computed); unconfigured ones render disabled. */
+	providerAvailability: GitProviderAvailability;
 }
 
 /**
@@ -26,7 +29,7 @@ interface RepoImportPanelProps {
  * already renders the review via `getScanProposal` → `DesignProjectWorkbench` / `ScanReviewNotice`.
  * No agent involved and no new backend: this exposes the north-star motion as a button.
  */
-export function RepoImportPanel({ className }: RepoImportPanelProps) {
+export function RepoImportPanel({ className, providerAvailability }: RepoImportPanelProps) {
 	const router = useRouter();
 	const pathname = usePathname();
 	const [repoUrl, setRepoUrl] = useState<string | undefined>(undefined);
@@ -78,6 +81,7 @@ export function RepoImportPanel({ className }: RepoImportPanelProps) {
 						onRepositorySelect={onRepositorySelect}
 						label=""
 						placeholder="Select a repository to import…"
+						providerAvailability={providerAvailability}
 					/>
 					<div className="flex items-center justify-between gap-3">
 						<span className="truncate font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">

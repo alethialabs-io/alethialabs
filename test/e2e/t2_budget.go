@@ -69,7 +69,14 @@ const (
 	// reserved as deploy-wait. It covers the ordered command sequence plus the console the job
 	// booted answering them — generous, because a beat that times out on a slow first request would
 	// report the CLI cannot reach something it can.
+	//
+	// It also covers the two waits #5090 added in front of `project apply`: `project plan --wait`
+	// (bounded by cliDemoPlanWait) and the env settling after it (cliDemoEnvSettleWindow). The
+	// authoring beats took 25s in total on run 36130590853; 10m + 7m + that fits inside 20m.
 	cliDemoProvisionBudget = 20 * time.Minute
+	// cliDemoPlanWait bounds `project plan --wait` — a real `tofu init` + `tofu plan` on the runner.
+	// It sits INSIDE cliDemoProvisionBudget and is smaller than it on purpose.
+	cliDemoPlanWait = 10 * time.Minute
 
 	// The day-2 access layer had NO ladder term at all, so its probes spent against `headroom`
 	// unnoticed. At the old flat 3m that was survivable by luck; with a URL ceiling sized for an
@@ -185,6 +192,17 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 	if vclusterTenantEnabled() {
 		add("vcluster-placement", vclusterTenantBudget)
 	}
+	// The starter-templates proof (#4113): a wider window for the AI chart inside the base ArgoCD
+	// assertion, its own phase-A poll, a REDEPLOY of the same environment and that redeploy's poll.
+	// One named term, so the printed ladder says where the time goes.
+	//
+	// PROVIDER-GATED, unlike the terms above, and deliberately: the scenario is refused on every other
+	// cloud before anything is built (templatesConfig.decide, and the workflow's resolve job before
+	// that), so it can never SPEND there. Reserving an hour for it anyway put aws/gcp/azure/alibaba
+	// ladders past the workflow's caps for a run that cannot happen.
+	if templatesEnabled() && provider == templatesProvider {
+		add("templates", templatesBudget())
+	}
 	if fabricDemoEnabled() {
 		tiers, tErr := fabricDemoTiers(env, provider)
 		if tErr != nil {
@@ -242,6 +260,7 @@ func T2BudgetScenarioEnv() []string {
 		"ALETHIA_E2E_NAMESPACE_TENANT",
 		"ALETHIA_E2E_VCLUSTER",
 		envFabricDemo,
+		envTemplates,
 	}
 	sort.Strings(vars)
 	return vars

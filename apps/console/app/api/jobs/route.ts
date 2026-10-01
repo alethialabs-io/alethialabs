@@ -34,6 +34,7 @@ import {
 import { type CliCaller, credentialOf } from "@/lib/cli/providers";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
+import { EnvStateConflictError } from "@/lib/db/env-status";
 import { jobs, runners, projects } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import {
@@ -351,6 +352,13 @@ export async function POST(req: Request) {
 					{ error: "Configuration not found or unauthorized" },
 					{ status: 404 },
 				);
+			}
+			// The env already has a job in flight (or is otherwise not in a from-state this verb
+			// accepts). That is a CONFLICT with the resource's current state, not a server fault —
+			// the same request succeeds once the in-flight job settles. It was a 500 until #5090,
+			// which told the CLI user the console had broken when it had correctly refused.
+			if (e instanceof EnvStateConflictError) {
+				return NextResponse.json({ error: e.message }, { status: 409 });
 			}
 			throw e;
 		}

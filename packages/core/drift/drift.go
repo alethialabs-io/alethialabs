@@ -143,12 +143,31 @@ func Analyze(plan *tfjson.Plan) *Posture {
 //
 // Pure and deterministic in both arguments.
 func AnalyzeWithSchemas(plan *tfjson.Plan, schemas *tfjson.ProviderSchemas) *Posture {
+	return AnalyzeWithEvidence(plan, schemas, nil)
+}
+
+// AnalyzeWithEvidence is AnalyzeWithSchemas with one more piece of evidence: what the cluster
+// says about the security-group rules its controllers own (ParseClusterEvidence), read at scan
+// time by the caller.
+//
+// It is used for exactly one thing — reporting a rule the AWS Load Balancer Controller opened for
+// a TargetGroupBinding that exists as ReasonKubernetesOwned instead of drift. The rule stays in
+// NormalizedDetails under that reason, so it is never silent. See k8sowned.go.
+//
+// A nil cluster is the absence of evidence and is verdict-for-verdict identical to
+// AnalyzeWithSchemas. Like the schemas, the evidence is one-directional: it can only move a
+// resource from drifted to dismissed, never the reverse (TestClusterEvidenceNeverIncreasesDrift).
+//
+// Pure and deterministic in all three arguments.
+func AnalyzeWithEvidence(plan *tfjson.Plan, schemas *tfjson.ProviderSchemas, cluster *ClusterEvidence) *Posture {
 	p := &Posture{InSync: true}
 	if plan == nil {
 		return p
 	}
 	cfg := indexConfig(plan)
 	schemaIdx := indexSchemas(schemas)
+	traitIdx := indexSchemaTraits(schemas)
+	stateIdx := indexState(plan)
 	for _, rc := range plan.ResourceDrift {
 		if rc == nil || rc.Change == nil {
 			continue
@@ -160,7 +179,7 @@ func AnalyzeWithSchemas(plan *tfjson.Plan, schemas *tfjson.ProviderSchemas) *Pos
 		if rc.Change.Actions.NoOp() {
 			continue
 		}
-		v := examine(rc, cfg, schemaIdx)
+		v := examine(rc, cfg, schemaIdx, traitIdx, stateIdx, cluster)
 		if !v.Drift {
 			p.NormalizedDetails = append(p.NormalizedDetails, NormalizedResource{
 				Address:    rc.Address,

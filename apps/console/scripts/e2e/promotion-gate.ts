@@ -41,7 +41,7 @@ import {
 	advancePromotionOnPlan,
 	applyPromotionApproval,
 	finalizePromotionOnDeploy,
-} from "@/app/server/actions/promotions";
+} from "@/lib/promotions/lifecycle";
 
 /** Dispatches the requested promotion-chain step against the real console actions. */
 async function main(): Promise<void> {

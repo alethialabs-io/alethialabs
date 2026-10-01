@@ -1,0 +1,13 @@
+{
+  "schema": "alethia.e2e.teardown-verify/1",
+  "provider": "gcp",
+  "run_tag": "nightly-35975152791-1",
+  "scope": "run 35975152791-1",
+  "verdict": "CLEAN",
+  "reason": "the cloud was re-listed after the sweep and listed nothing for this run",
+  "exit_code": 0,
+  "unverifiable": [],
+  "unattributable": [],
+  "unverifiable_detail": [],
+  "measured_at": "2026-09-24T09:02:16Z"
+}

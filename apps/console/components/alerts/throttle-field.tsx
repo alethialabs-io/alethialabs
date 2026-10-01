@@ -61,6 +61,7 @@ export function ThrottleField({ value, onChange }: ThrottleFieldProps) {
 			{mode === "custom" && (
 				<div className="flex items-center gap-2">
 					<Input
+						aria-label="Custom window in minutes"
 						id={id}
 						type="number"
 						min={1}

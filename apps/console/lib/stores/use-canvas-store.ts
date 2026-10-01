@@ -14,9 +14,11 @@ import type { ByoChartState, ChartWorkloadState } from "@/app/server/actions/byo
 import type { IacGroup } from "@/lib/canvas/iac-inventory";
 import {
 	normalizeKeylessAuth,
+	normalizeManagedCertificate,
 	normalizeWafEnabled,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import { normalizeCapacityMode } from "@/lib/cloud-providers/nosql-capacity";
 import {
 	NODE_REGISTRY,
 	SINGLETON_KINDS,
@@ -289,9 +291,12 @@ function normalizeWafAcrossNodes(nodes: CanvasNode[]): CanvasNode[] {
 	let changed = false;
 	const next = nodes.map((n) => {
 		if (n.data.kind !== "dns") return n;
-		const config = normalizeWafEnabled(
-			n.data.config,
-			n.data.provider ?? projectProvider,
+		// The Managed TLS switch beside it is withheld on Alibaba for the same reason and by the same
+		// mechanism (#4320), so one pass over the DNS node clears both.
+		const provider = n.data.provider ?? projectProvider;
+		const config = normalizeManagedCertificate(
+			normalizeWafEnabled(n.data.config, provider),
+			provider,
 		);
 		if (config === n.data.config) return n;
 		changed = true;
@@ -300,6 +305,33 @@ function normalizeWafAcrossNodes(nodes: CanvasNode[]): CanvasNode[] {
 	// Returns the SAME array when nothing was coerced. `setGraph` derives `dirty` from that identity,
 	// and a `.map()` result is always a fresh array — without this, every project load would open
 	// with unsaved changes.
+	return changed ? next : nodes;
+}
+
+/**
+ * Rewrite a NoSQL table's `capacity_mode` to one its cloud can build — in practice, Azure rows saved
+ * as `provisioned` before #4320 made Cosmos serverless only.
+ *
+ * Same shape as `normalizeWafAcrossNodes`, and it runs at the same four moments (load, reseed, edit,
+ * re-placement) for the same reason: the Capacity mode card no longer offers the stored value, so the
+ * user could not clear it by hand, and normalising the DESIRED graph but not the baseline turns it
+ * into a staged change they can see and save. Returns the SAME array when nothing was rewritten, so
+ * a clean project does not open dirty.
+ */
+function normalizeCapacityAcrossNodes(nodes: CanvasNode[]): CanvasNode[] {
+	const projectProvider =
+		nodes.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ?? null;
+	let changed = false;
+	const next = nodes.map((n) => {
+		if (n.data.kind !== "nosql") return n;
+		const config = normalizeCapacityMode(
+			n.data.config,
+			n.data.provider ?? projectProvider,
+		);
+		if (config === n.data.config) return n;
+		changed = true;
+		return { ...n, data: { ...n.data, config } };
+	});
 	return changed ? next : nodes;
 }
 
@@ -640,7 +672,7 @@ export const useCanvasStore = create<CanvasStore>()(
 				// the coercion appears in the staged-changes bar as a pending change the user can
 				// see and save — rather than either a silent rewrite or a disabled switch they have
 				// no way to clear. `dirty` follows suit, so Save is live.
-				const normalized = normalizeWafAcrossNodes(withRoot);
+				const normalized = normalizeCapacityAcrossNodes(normalizeWafAcrossNodes(withRoot));
 				set({
 					nodes: normalized,
 					edges: deriveEdges(normalized),
@@ -691,7 +723,7 @@ export const useCanvasStore = create<CanvasStore>()(
 					set({ baseline: structuredClone(withRoot), seed });
 					return;
 				}
-				const normalized = normalizeWafAcrossNodes(withRoot);
+				const normalized = normalizeCapacityAcrossNodes(normalizeWafAcrossNodes(withRoot));
 				set({
 					nodes: normalized,
 					edges: deriveEdges(normalized),
@@ -943,10 +975,12 @@ export const useCanvasStore = create<CanvasStore>()(
 			},
 
 			updateNodeConfig: (id, patch) => {
-				const next = normalizeWafAcrossNodes(
-					normalizeKeylessAcrossNodes(
-						get().nodes.map((n) =>
-							n.id === id ? { ...n, data: withConfig(n.data, patch) } : n,
+				const next = normalizeCapacityAcrossNodes(
+					normalizeWafAcrossNodes(
+						normalizeKeylessAcrossNodes(
+							get().nodes.map((n) =>
+								n.id === id ? { ...n, data: withConfig(n.data, patch) } : n,
+							),
 						),
 					),
 				);
@@ -955,12 +989,14 @@ export const useCanvasStore = create<CanvasStore>()(
 
 			setNodeIdentity: (id, cloudIdentityId, provider) => {
 				get().commit();
-				const next = normalizeWafAcrossNodes(
-					normalizeKeylessAcrossNodes(
-						get().nodes.map((n) =>
-							n.id === id
-								? { ...n, data: withPlacement(n.data, cloudIdentityId, provider) }
-								: n,
+				const next = normalizeCapacityAcrossNodes(
+					normalizeWafAcrossNodes(
+						normalizeKeylessAcrossNodes(
+							get().nodes.map((n) =>
+								n.id === id
+									? { ...n, data: withPlacement(n.data, cloudIdentityId, provider) }
+									: n,
+							),
 						),
 					),
 				);

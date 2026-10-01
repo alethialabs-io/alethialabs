@@ -848,11 +848,6 @@ baseline:
     off: "alibaba,aws,azure,hetzner"
     state: unreviewed
     issue: "#2004"
-  - variable: gke_log_retention_days
-    on: "gcp"
-    off: "alibaba,aws,azure,hetzner"
-    state: unreviewed
-    issue: "#2004"
   - variable: gke_master_authorized_cidr_blocks
     on: "gcp"
     off: "alibaba,aws,azure,hetzner"

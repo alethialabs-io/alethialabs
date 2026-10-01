@@ -91,8 +91,11 @@ credits a dead declaration exactly as much as a working knob; only the carrier r
 (`check-offer-parity.mjs`) tells them apart.
 
 Three of those four have since been wired (`gke_enable_private_endpoint` by #4794; `gke_spot` and
-`gke_preemptible` earlier), and `gke_log_retention_days` is still dead — see the `dead:` section of
-`knob-exclusions.yaml`, which records why it is a maintainer decision rather than a lane's. The
+`gke_preemptible` earlier), and `gke_log_retention_days` was DELETED by #4320 on a maintainer ruling:
+GKE has no per-cluster log retention, and both ways to fake one reach outside the cluster (the
+project's `_Default` log bucket, or a second bucket that bills the same logs twice). The console's
+`knobsFor` now also withholds any knob that is reachable and read by nothing, so a dead declaration
+can no longer reach a user as a control while it waits in `knob-exclusions.yaml`. The
 paragraph above is kept in the past tense it was written in because the ARGUMENT is what it is for:
 the counts in this table still cannot tell a dead declaration from a working knob, whichever
 particular variables happen to be dead this month. The live answer is
@@ -105,7 +108,7 @@ some GCP. (AWS-only knobs with no analogue — Karpenter, IRSA, CloudFront-WAF �
 
 | # | Component | Knob | GCP | Azure | Analogue to add |
 |---|-----------|------|-----|-------|-----------------|
-| 1 | Cluster | log retention | ok | **missing** | `aks_log_retention_days` (Log Analytics) |
+| 1 | Cluster | log retention | none — GKE has no per-cluster retention (#4320) | **missing** | `aks_log_retention_days` (Log Analytics) |
 | 2 | Cluster | API-server authorized CIDRs | ok | **missing** | `aks_master_authorized_cidr_blocks` |
 | 3 | Cluster | node disk type | ok | ✅ shipped | `aks_os_disk_type` (Managed/Ephemeral) |
 | 4 | Cluster | spot/preemptible nodes | ✅ shipped | ✅ shipped | `aks_spot_*` (a separate node pool); `gke_spot`/`gke_preemptible` were declared-and-dead |

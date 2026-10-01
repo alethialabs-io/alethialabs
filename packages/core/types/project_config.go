@@ -60,6 +60,21 @@ type ProjectConfig struct {
 	// cluster + ArgoCD are up. Empty for projects that enabled no add-ons.
 	AddOns []AddOnInstall `json:"addons,omitempty"`
 
+	// WebhookCAConsumers names workloads on this project that are NOT marketplace add-ons but
+	// whose admission webhook still takes its serving certificate from cert-manager. The case it
+	// exists for is KServe (#4990): the AI Workloads starter ships it as its own ArgoCD Application
+	// from the customer's apps repo, so no AddOnInstall carries RequiresCertManager for it, yet
+	// KServe v0.15.2's chart always renders a cert-manager Certificate and a namespaced
+	// SelfSigned Issuer and cannot start without the cert-manager controller and CRDs.
+	//
+	// The console sets it on the PROJECT (projects.webhook_ca_consumers) when the project is
+	// created from a template that needs it, and emits it only when non-empty. The runner reads it
+	// into InfraFacts.WebhookCAConsumers alongside the add-on specs, so the platform cert-manager
+	// Application installs issuer-free and stays the ONE owner of the cert-manager CRDs (#1722).
+	// It never asks for a ClusterIssuer: public certificates remain the managed-certificate
+	// switch's job.
+	WebhookCAConsumers []string `json:"webhook_ca_consumers,omitempty"`
+
 	// IacSource, when set, marks this project as BRING-YOUR-OWN IaC: the runner
 	// provisions the customer's own OpenTofu root module (cloned at a pinned commit
 	// from git) instead of a bundled Alethia template. It is the fail-closed

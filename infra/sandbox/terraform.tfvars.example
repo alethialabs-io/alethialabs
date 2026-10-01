@@ -20,6 +20,8 @@ cloudflare_account_id = "..."
 ssh_public_key = "ssh-ed25519 AAAA... you@example.com"
 
 # Strongly recommended: narrow SSH to your own address. Find it with `curl -s ifconfig.me`.
+# Keep it to ONE IPv4 /32 on one line: when your IP changes, `pnpm env:*` rewrites that /32 and
+# refreshes only the firewall (see README.md, "The SSH allowlist follows your IP").
 # ssh_allowed_cidrs = ["203.0.113.4/32"]
 
 # ── Optional overrides ────────────────────────────────────────────────────────────

@@ -272,6 +272,16 @@ var CLIDemoSteps = []DemoStep{
 		Why:   "placement landed in #2313 — a two-tier project stops costing two clusters",
 	},
 	{
+		ID:    "classify",
+		Title: "Classify the project with the org's taxonomy",
+		Argv:  []string{"classification", "assign"},
+		Reach: CLIDriven,
+		Why: "the org's governed taxonomy reaches every cloud resource as an `alethia:<dimension>` tag. " +
+			"The demo assigns the `e2e-run` dimension its seed defined, and that tag is the only handle a " +
+			"leaked CLI-created stack carries that the orphan reaper can find (#5096): its project-id is " +
+			"the project's UUID, not an `e2e-` handle",
+	},
+	{
 		ID:    "component-kinds",
 		Title: "Discover what this cloud offers",
 		Argv:  []string{"project", "component", "kinds"},
@@ -282,6 +292,27 @@ var CLIDemoSteps = []DemoStep{
 		Title: "Author the components",
 		Argv:  []string{"project", "component", "add"},
 		Reach: CLIDriven,
+	},
+	{
+		ID:    "apps-repo",
+		Title: "Point the environment's GitOps at the apps repository",
+		Argv:  []string{"project", "component", "add"},
+		Reach: CLIDriven,
+		Why: "the `repositories` singleton, authored with `--kind repositories --set apps_destination_repo=<url>`. " +
+			"It is what makes the deploy render the `apps` app-of-apps and its `repo-apps` credential (#5109). " +
+			"It is a step of its own rather than part of component-add because the product reads it for a " +
+			"different purpose: component-add says what to build, and this says where the workloads come from",
+	},
+	{
+		ID:    "dns-cert",
+		Title: "Bring a delegated DNS zone and ask for a managed certificate",
+		Argv:  []string{"project", "component", "add"},
+		Reach: CLIDriven,
+		Why: "the `dns` singleton, authored with `--kind dns --set enabled=true --set zone_id=<zone> " +
+			"--set domain_name=<name> --set managed_certificate=true`. buildConfigSnapshot emits it as " +
+			"dns.zone_id (so the template brings the zone rather than creating one) and dns.managed_certificate " +
+			"(which the aws template reads as acm_certificate_enable). A step of its own because it is the " +
+			"CLI's half of the certificate path; delegating the zone is the other half, and that is dns-delegation",
 	},
 	{
 		ID:    "manifest-init",

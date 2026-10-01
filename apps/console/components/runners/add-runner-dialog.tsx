@@ -33,7 +33,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
-import { FormControl, FormField, FormItem, FormMessage } from "@repo/ui/form";
+import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@repo/ui/form";
 import { Label } from "@repo/ui/label";
 import {
 	Sheet,
@@ -44,7 +44,7 @@ import {
 } from "@repo/ui/sheet";
 import { CloudIdentitySelector } from "@/components/design-project/cloud-identity-selector";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
-import { FieldLabel } from "@/components/runners/field-help";
+import { FieldHelp, FieldLabel, RequiredMark } from "@/components/runners/field-help";
 import {
 	AlertTriangle,
 	ArrowLeft,
@@ -311,15 +311,18 @@ function DeployForm({
 					name="name"
 					render={({ field }) => (
 						<FormItem>
-							<FieldLabel
-								required
-								help={{
-									title: "Runner name",
-									description: "A label to identify this runner in the list and in logs.",
-								}}
-							>
-								Name
-							</FieldLabel>
+							{/* FieldLabel's row, with a FormLabel in it: the FormLabel is what points `htmlFor` at the
+							    id FormControl gives the input, so "Name" is the field's accessible name. */}
+							<div className="flex items-center gap-1.5">
+								<FormLabel className="text-sm">
+									Name
+									<RequiredMark />
+								</FormLabel>
+								<FieldHelp
+									title="Runner name"
+									description="A label to identify this runner in the list and in logs."
+								/>
+							</div>
 							<FormControl>
 								<Input placeholder="e.g. prod-eu-west-1" className="h-9" autoFocus {...field} />
 							</FormControl>
@@ -454,7 +457,13 @@ function CopyField({ label, value }: { label: string; value: string }) {
 				<code className="flex-1 break-all rounded-md border border-border/50 bg-muted px-3 py-2 font-mono text-xs">
 					{value}
 				</code>
-				<Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={copy}>
+				<Button
+					variant="outline"
+					size="icon"
+					className="h-9 w-9 shrink-0"
+					onClick={copy}
+					aria-label={copied ? `${label} copied` : `Copy ${label}`}
+				>
 					{copied ? <Check className="h-3.5 w-3.5 text-foreground" /> : <Copy className="h-3.5 w-3.5" />}
 				</Button>
 			</div>
@@ -535,15 +544,18 @@ alethia runner start`}
 					name="name"
 					render={({ field }) => (
 						<FormItem>
-							<FieldLabel
-								required
-								help={{
-									title: "Runner name",
-									description: "A human-readable label to identify this runner in the list and in logs.",
-								}}
-							>
-								Name
-							</FieldLabel>
+							{/* FieldLabel's row, with a FormLabel in it: the FormLabel is what points `htmlFor` at the
+							    id FormControl gives the input, so "Name" is the field's accessible name. */}
+							<div className="flex items-center gap-1.5">
+								<FormLabel className="text-sm">
+									Name
+									<RequiredMark />
+								</FormLabel>
+								<FieldHelp
+									title="Runner name"
+									description="A human-readable label to identify this runner in the list and in logs."
+								/>
+							</div>
 							<FormControl>
 								<Input placeholder="e.g. fargate-eu-west-1" className="h-9" autoFocus {...field} />
 							</FormControl>

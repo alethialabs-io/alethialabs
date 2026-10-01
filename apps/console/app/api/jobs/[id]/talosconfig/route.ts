@@ -11,9 +11,11 @@
 //   GET  — claim: the placement runner fetches the `decryptSecret`ed plaintext over the authenticated job
 //          channel to mint the kubeconfig. Never returned to the browser.
 //
-// Both are gated to the runner that OWNS an executing hetzner DEPLOY job; the write-back additionally
-// requires the job to be the Fabric-owning `dedicated` placement (so a runner holding a namespace/vcluster
-// job on a shared Fabric can't overwrite the Fabric's talosconfig).
+// Both are gated to the runner that OWNS an executing hetzner job. PUT needs the Fabric-owning `dedicated`
+// DEPLOY (so a runner holding a namespace/vcluster job on a shared Fabric can't overwrite the Fabric's
+// talosconfig). GET also admits the DESTROY of a namespace/vcluster placement: its teardown reaches the
+// Fabric exactly as its deploy did, and without this read no placement on Hetzner could be deregistered
+// (#845, run 36646962419). A dedicated DESTROY runs tofu against its own state and is refused.
 
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -41,13 +43,22 @@ type GatedJob = {
 	placementMode: string;
 };
 
+/** What the caller wants to do with the Fabric's talosconfig. */
+type TalosAccess = "read" | "write";
+
+/** Placement modes that run no tofu and reach an existing Fabric through its talosconfig. */
+const TALOS_PLACEMENT_MODES: ReadonlySet<string> = new Set(["namespace", "vcluster"]);
+
 /**
- * Verifies the runner owns an executing hetzner DEPLOY job and resolves its Fabric. Returns either the
- * gated job context or a NextResponse to return verbatim. Fail-closed at every step.
+ * Verifies the runner owns an executing hetzner job that may use the talosconfig for `access`, and
+ * resolves its Fabric. A DEPLOY may read or write; a DESTROY may only read, and only as a namespace/vcluster
+ * placement. Returns either the gated job context or a NextResponse to return verbatim. Fail-closed at
+ * every step.
  */
 async function gateHetznerJob(
 	req: Request,
 	jobId: string,
+	access: TalosAccess,
 ): Promise<{ ok: true; job: GatedJob } | { ok: false; res: NextResponse }> {
 	const { runnerId, error: authError } = await verifyRunnerToken(req);
 	if (authError) return { ok: false, res: authError };
@@ -75,7 +86,8 @@ async function gateHetznerJob(
 			res: NextResponse.json({ error: "Runner does not own this job" }, { status: 403 }),
 		};
 	}
-	if (job.job_type !== "DEPLOY") {
+	const isPlacementDestroy = job.job_type === "DESTROY" && access === "read";
+	if (job.job_type !== "DEPLOY" && !isPlacementDestroy) {
 		return {
 			ok: false,
 			res: NextResponse.json({ error: "Job kind has no talosconfig" }, { status: 403 }),
@@ -113,6 +125,13 @@ async function gateHetznerJob(
 			res: NextResponse.json({ error: "Environment is not placed on a Fabric" }, { status: 409 }),
 		};
 	}
+	// A DESTROY reads only as a placement: a dedicated teardown never needs the Fabric's admin credential.
+	if (isPlacementDestroy && !TALOS_PLACEMENT_MODES.has(env.placement_mode)) {
+		return {
+			ok: false,
+			res: NextResponse.json({ error: "Job kind has no talosconfig" }, { status: 403 }),
+		};
+	}
 	return { ok: true, job: { fabricId: env.fabric_id, placementMode: env.placement_mode } };
 }
 
@@ -123,7 +142,7 @@ async function gateHetznerJob(
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id: jobId } = await params;
 	try {
-		const gate = await gateHetznerJob(req, jobId);
+		const gate = await gateHetznerJob(req, jobId, "write");
 		if (!gate.ok) return gate.res;
 		if (gate.job.placementMode !== "dedicated") {
 			return NextResponse.json(
@@ -157,13 +176,13 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 /**
- * Claim: return the Fabric's decrypted admin talosconfig to the owning runner so a placement can mint a
- * kubeconfig. `{ talosconfig: null }` when the Fabric has none yet (the runner fails the placement closed).
+ * Claim: return the Fabric's decrypted admin talosconfig to the owning runner so a placement's deploy or
+ * teardown can mint a kubeconfig. `{ talosconfig: null }` when the Fabric has none yet (the runner fails the placement closed).
  */
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id: jobId } = await params;
 	try {
-		const gate = await gateHetznerJob(req, jobId);
+		const gate = await gateHetznerJob(req, jobId, "read");
 		if (!gate.ok) return gate.res;
 
 		const db = getServiceDb();

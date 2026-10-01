@@ -10,11 +10,10 @@
 // had no answer, `estimated_monthly_cost` was a column nothing wrote, and the cost promotion gate
 // was permanently inert.
 
-import { and, desc, eq, lt } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { environmentCost, projects } from "@/lib/db/schema";
-import { parseCostBreakdown } from "@/lib/plan/parse-cost";
 import type { CostResourceLine } from "@/types/jsonb.types";
 
 /** The latest priced picture of an environment. */
@@ -24,42 +23,6 @@ export interface EnvironmentCost {
 	resources: CostResourceLine[];
 	capturedAt: string;
 	planJobId: string | null;
-}
-
-/**
- * Persist a PLAN's Infracost breakdown as this environment's cost. Called by the job-status route
- * (service role) when a PLAN succeeds — the same seam `recordDriftPosture` uses for drift.
- *
- * Append-only: one row per (environment, plan). Keeping the history is what makes a cost DELTA
- * possible at all, which is what the promotion gate needs.
- */
-export async function recordEnvironmentCost(input: {
-	projectId: string;
-	environmentId: string;
-	planJobId: string;
-	costBreakdown: Record<string, unknown>;
-}): Promise<{ totalMonthly: number | null }> {
-	const summary = parseCostBreakdown(input.costBreakdown);
-
-	// Infracost prices resources by Terraform address — the SAME key the drift map uses — so a cost
-	// line can be attributed back to the card that designed it.
-	const resources: CostResourceLine[] = summary.resources.map((r) => ({
-		address: r.name,
-		resourceType: r.resourceType,
-		monthlyCost: r.monthlyCost ?? 0,
-	}));
-
-	const db = getServiceDb();
-	await db.insert(environmentCost).values({
-		project_id: input.projectId,
-		environment_id: input.environmentId,
-		plan_job_id: input.planJobId,
-		total_monthly: summary.totalMonthlyCost,
-		currency: "USD",
-		resources,
-	});
-
-	return { totalMonthly: summary.totalMonthlyCost };
 }
 
 /**
@@ -107,47 +70,11 @@ export async function getLatestEnvironmentCost(
 	};
 }
 
-/**
- * The environment's cost BEFORE the given plan — the baseline a delta is measured against.
- *
- * This is the number `promotions.ts` has been passing as `null` since the gate was written
- * ("Cost baseline isn't persisted per-env yet"), which is why the cost promotion gate has never
- * evaluated. Service-role: called from the promotion pipeline, which has already authorized.
- */
-export async function getPreviousEnvironmentCost(
-	environmentId: string,
-	beforePlanJobId: string,
-): Promise<number | null> {
-	const db = getServiceDb();
-
-	// This plan's own row — the point in time we look BEFORE.
-	const [current] = await db
-		.select({ captured_at: environmentCost.captured_at })
-		.from(environmentCost)
-		.where(
-			and(
-				eq(environmentCost.environment_id, environmentId),
-				eq(environmentCost.plan_job_id, beforePlanJobId),
-			),
-		)
-		.limit(1);
-	if (!current) return null;
-
-	// Strictly EARLIER than this plan's row — otherwise the baseline would be the plan itself and
-	// every delta would be zero, which is worse than no gate at all: it would look like it worked.
-	const [prior] = await db
-		.select({ total_monthly: environmentCost.total_monthly })
-		.from(environmentCost)
-		.where(
-			and(
-				eq(environmentCost.environment_id, environmentId),
-				lt(environmentCost.captured_at, current.captured_at),
-			),
-		)
-		.orderBy(desc(environmentCost.captured_at))
-		.limit(1);
-
-	// No earlier priced plan = the first time we've costed this environment. There's no baseline,
-	// so there's no delta — honest null, not a fabricated zero.
-	return prior?.total_monthly ?? null;
-}
+// The promotion gate's cost BASELINE (getPreviousEnvironmentCost) lives in
+// lib/cost/previous-environment-cost.ts: it is service-role and unauthorized, so as an export of
+// this `"use server"` file it was a public Server Action — and importing it from here dragged
+// lib/auth into the runner-callback promotion lifecycle.
+//
+// Likewise the WRITE (recordEnvironmentCost) lives in lib/cost/record-environment-cost.ts: it is the
+// job-status route's service-role seam, and as an export here anyone could append a fabricated cost
+// row to any environment — which is exactly the number the promotion cost gate compares against.

@@ -41,20 +41,21 @@ type InfraFacts struct {
 	// issuer is the portable half, and the only half Alethia can offer on a cloud whose
 	// native certificate has nothing to attach to.
 	ManagedCertificate bool
-	// WebhookCAAddOns names the add-ons on this deploy whose admission webhook takes its serving
-	// certificate from cert-manager (`cert-manager.io/inject-ca-from`). It is DERIVED FROM THE
-	// INSTALL SPECS, never from a second copy of "which kinds does this cloud carry in-cluster" —
-	// the console mapper that adds such an operator sets AddOnInstall.RequiresCertManager, and this
-	// reads it back, so one place knows and the Go gate cannot drift from the TypeScript that
-	// emits it.
+	// WebhookCAConsumers names what on this deploy has an admission webhook that takes its serving
+	// certificate from cert-manager (`cert-manager.io/inject-ca-from`, or a chart-rendered
+	// Certificate). It is DERIVED FROM WHAT THE CONSOLE DECLARED, never from a second copy of
+	// "which kinds does this cloud carry in-cluster": the add-on specs whose mapper set
+	// AddOnInstall.RequiresCertManager, plus the project-level ProjectConfig.WebhookCAConsumers
+	// for workloads that are not add-ons (KServe from the AI Workloads starter, #4990). One place
+	// knows each, and the Go gate cannot drift from the TypeScript that emits it.
 	//
 	// It exists because a fail-closed webhook with no CA is not a degraded add-on, it is a broken
 	// cluster: scylla-operator's ValidatingWebhookConfiguration is `failurePolicy: Fail`, so every
 	// ScyllaCluster is rejected until the CA is injected. That has to install cert-manager on a
 	// deploy that issues no public certificate at all — which is why the install gate and the
 	// ISSUE gate are two predicates now rather than one.
-	WebhookCAAddOns []string
-	EnableKarpenter bool
+	WebhookCAConsumers []string
+	EnableKarpenter    bool
 
 	ClusterName     string
 	ClusterEndpoint string
@@ -397,7 +398,7 @@ func (f *InfraFacts) CertManagerIssuerEnabled() bool {
 // CertManagerWebhookCARequired reports whether something on this deploy needs the cert-manager
 // CONTROLLER for an admission webhook's serving certificate, independently of whether any public
 // certificate is ever issued.
-func (f *InfraFacts) CertManagerWebhookCARequired() bool { return len(f.WebhookCAAddOns) > 0 }
+func (f *InfraFacts) CertManagerWebhookCARequired() bool { return len(f.WebhookCAConsumers) > 0 }
 
 // CertManagerEnabled reports whether the cert-manager platform Application renders for this deploy.
 // Kept as a method, and kept under THIS NAME, so the Go decision and the YAML template read the
@@ -449,7 +450,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		DNSConnector:         vc.DNS.Provider,
 		DNSCredentialPresent: dnsCredentialPresent(vc),
 		ManagedCertificate:   managedCertificateAsk(vc),
-		WebhookCAAddOns:      webhookCAAddOns(vc),
+		WebhookCAConsumers:   webhookCAConsumers(vc),
 		EnableKarpenter:      enableKarpenter,
 		AppsDestinationRepo:  vc.Repositories.AppsDestinationRepo,
 		AppsPath:             strings.TrimSpace(vc.Repositories.AppsPath),
@@ -651,7 +652,11 @@ func managedCertificateAsk(vc *types.ProjectConfig) bool {
 	return ask
 }
 
-// webhookCAAddOns lists the add-ons on this deploy that declared RequiresCertManager.
+// webhookCAConsumers lists everything on this deploy that needs the cert-manager controller for an
+// admission-webhook CA: the add-ons that declared RequiresCertManager, plus the non-add-on
+// workloads the project itself declared in ProjectConfig.WebhookCAConsumers (KServe from the AI
+// Workloads starter, #4990). Both feed the same fact, so there is one install gate and one
+// cert-manager Application however the need arrived; a name present in both appears once.
 //
 // It reads the INSTALL SPECS, which is the whole point: the alternative — asking "is this hetzner
 // and does the project have a nosql node?" — would put a second copy of the carriage decision in
@@ -661,12 +666,24 @@ func managedCertificateAsk(vc *types.ProjectConfig) bool {
 //
 // Sorted, so the facts render deterministically and a decision string built from them does not
 // churn between deploys on map-iteration order alone.
-func webhookCAAddOns(vc *types.ProjectConfig) []string {
+func webhookCAConsumers(vc *types.ProjectConfig) []string {
+	seen := map[string]bool{}
 	var ids []string
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
 	for _, a := range vc.AddOns {
 		if a.RequiresCertManager {
-			ids = append(ids, a.ID)
+			add(a.ID)
 		}
+	}
+	for _, c := range vc.WebhookCAConsumers {
+		add(c)
 	}
 	sort.Strings(ids)
 	return ids

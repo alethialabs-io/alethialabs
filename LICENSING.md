@@ -19,6 +19,16 @@ When a file carries its own SPDX identifier, that file-level identifier controls
 The default AGPL licence applies only when no more specific repository exception
 or third-party notice applies.
 
+### Repositories outside this monorepo
+
+The map above covers paths in this repository only. Other public repositories in
+the `alethialabs-io` organisation are governed by their own `LICENSE` and
+`NOTICE` files, not by this file.
+
+| Repository | Licence | Notes |
+|---|---|---|
+| `alethia-starter-apps`, `alethia-starter-chart`, `alethia-starter-ai`, `alethia-examples` | `Apache-2.0` | Template repositories. They are deliberately not AGPL: an application built from a template does not have to be published |
+
 ## Copyright and chain-of-title status
 
 ALETHIA LABS is registered in Bulgaria as a single-member variable capital company

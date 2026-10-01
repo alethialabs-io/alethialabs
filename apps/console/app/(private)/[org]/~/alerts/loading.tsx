@@ -6,7 +6,7 @@ import { Skeleton } from "@repo/ui/skeleton";
 /** Stacked-section skeleton for the Alerts hub while the bootstrap loads. */
 export default function AlertsLoading() {
 	return (
-		<div className="mx-auto w-full max-w-[1200px] space-y-12">
+		<div className="space-y-12">
 			{["policies", "channels", "activity"].map((id) => (
 				<section key={id} className="space-y-4">
 					<div className="flex items-center justify-between">

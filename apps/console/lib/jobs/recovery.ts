@@ -24,14 +24,33 @@ type SweptRunner = {
 	runner_name: string;
 };
 
-/** A job recover_stale_jobs failed TERMINAL at the poison-job cap (its env needs reconciling). */
+/**
+ * Why recover_stale_jobs failed a job terminally instead of requeueing it: `max_attempts` is the
+ * poison-job cap; `apply_started` is a job whose runner had reported the apply started, which is
+ * never requeued because a retry would apply a second time (#5162).
+ */
+type StaleFailReason = "max_attempts" | "apply_started";
+
+/** A job recover_stale_jobs failed TERMINAL (its env needs reconciling). */
 type FailedStaleJob = {
 	job_id: string;
 	job_type: ProvisionJobType;
 	environment_id: string | null;
 	org_id: string | null;
 	project_id: string | null;
+	reason: StaleFailReason;
 };
+
+/** The alert summary for a terminally-failed stale job — it has to say which rule fired, because the
+ *  two ask the operator for different things (a stuck queue vs. an environment to reconcile). */
+function staleFailSummary(reason: StaleFailReason): string {
+	switch (reason) {
+		case "apply_started":
+			return "The runner lost contact after the apply had started. The job was not retried, because a retry would apply a second time. Check the environment and reconcile it before deploying again.";
+		case "max_attempts":
+			return "The job exceeded its max attempts (its runner repeatedly died or stalled) and was failed by the poison-job cap.";
+	}
+}
 
 /** Map a terminally-failed provisioning job to the env-status CAS context that moves its env to
  *  FAILED. Only DEPLOY/DESTROY/PLAN own an env lifecycle status; other job types return null. */
@@ -51,8 +70,9 @@ function envFailContextFor(
 }
 
 /**
- * Requeue stale jobs (dead-runner or stalled-but-alive) and, for any the poison-job cap failed
- * TERMINAL, reconcile downstream state: route the env to FAILED through the env-status CAS
+ * Requeue stale jobs (dead-runner or stalled-but-alive) and, for any failed TERMINAL — by the
+ * poison-job cap, or because the apply had already started (never requeued, #5162) — reconcile
+ * downstream state: route the env to FAILED through the env-status CAS
  * (transitionEnv — never clobbers a newer terminal state, never throws) and emit a job-failed
  * alert so the operator sees a job that gave up. Best-effort per row; one failure never blocks
  * the rest. All writes go through getServiceDb (RLS-bypassing; the fleet/recovery loops are global).
@@ -68,14 +88,17 @@ export async function recoverStaleJobs(db: ReturnType<typeof getServiceDb>): Pro
 				orgId: j.org_id,
 				projectId: j.project_id,
 			}).catch((err) =>
-				rlog.error("env FAILED on poison-cap error", { err, job_id: j.job_id }),
+				rlog.error("env FAILED on stale-job terminal error", {
+					err,
+					job_id: j.job_id,
+					reason: j.reason,
+				}),
 			);
 		}
 		if (j.org_id) {
 			emitAlertEventSafe(j.org_id, "system.job.failed", {
 				title: `Job failed: ${j.job_type}`,
-				summary:
-					"The job exceeded its max attempts (its runner repeatedly died or stalled) and was failed by the poison-job cap.",
+				summary: staleFailSummary(j.reason),
 				severity: "critical",
 				job_id: j.job_id,
 				job_type: j.job_type,
@@ -92,10 +115,14 @@ export async function recoverStaleJobs(db: ReturnType<typeof getServiceDb>): Pro
 // collapse two concurrent recoveries of the same row to a single requeue. So the
 // self-host bundle needs no Lambda. See dataroom/spec/mvp/06-self-hosting-architecture.md.
 //
-// Residual (narrow): the stalled-but-alive path keys off progress_at, refreshed via the
-// log-ingest endpoint. If that endpoint is partitioned from a runner for >30min while its
-// heartbeat still lands, a genuinely-live apply can be requeued; the attempts cap bounds the
-// blast radius and the tofu state-lock guards against a concurrent second apply.
+// A requeue never re-runs an apply that STARTED (#5162): the runner posts `apply_started_at` the
+// moment its stage reaches `tofu apply`, and recover_stale_jobs fails such a job for
+// reconciliation instead of requeueing it — whether the runner is dead, or merely partitioned
+// while still applying (a heartbeat gap, a >30-min log-ingest partition). What remains is the
+// window before that post LANDS: the runner polls its phase marker once a second and retries a
+// failed post every tick, so a job that goes stale in that window with the post never having
+// landed is still requeued. If its runner was alive, its next post is refused (409), and it stops
+// the apply rather than race the new claim; the tofu state lock guards the rest.
 
 const RECOVERY_INTERVAL_MS = 60_000;
 

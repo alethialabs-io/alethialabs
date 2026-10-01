@@ -541,11 +541,13 @@ var MaxConfigKinds = []MaxConfigKind{
 			case "azure":
 				instanceTypes = []string{"Standard_D2s_v3"}
 			case "hetzner":
-				// cx33 (x86, 4 vCPU/8 GB). NOT a cax* type: those are Ampere ARM, hetznerServerArch
+				// cpx32 (x86, 4 vCPU/8 GB). NOT a cax* type: those are Ampere ARM, hetznerServerArch
 				// flips the whole Talos image to arm64, and a chart shipping an amd64-only image then
 				// CrashLoops — the fleet runner-arch churn class. m5.large used to land here and be
-				// passed straight to hcloud_server.server_type, which is not a Hetzner SKU at all.
-				instanceTypes = []string{"cx33"}
+				// passed straight to hcloud_server.server_type, which is not a Hetzner SKU at all. It was
+				// cx33 until #5069: same shape, but Hetzner lists cx33 as AVAILABLE in no datacenter, so
+				// the capacity preflight refused every run (t2_preflight.go).
+				instanceTypes = []string{"cpx32"}
 			case "alibaba":
 				// ecs.g6.large (2 vCPU/8 GB) — the catalog default, ACK's analogue of e2-standard-2.
 				// m5.large used to land in ack_instance_types, which ACK rejects.
@@ -600,33 +602,7 @@ var MaxConfigKinds = []MaxConfigKind{
 			min, max := 0.5, 4.0
 			port, backup := 5432, 7
 			iam := true
-			// Aurora takes a FULL minor, and it must be one AWS still offers — pinning a withdrawn
-			// one fails the apply outright ("Cannot find version 16.6 for aurora-postgresql", the
-			// break this constant was introduced to end). Sourced from packages/core/cloud so the
-			// nightly can never test a version the provisioner does not default to.
-			engineVersion, instanceClass := cloud.DefaultAuroraPostgresVersion, "db.r6g.large"
-			switch provider {
-			case "gcp":
-				// Cloud SQL composes POSTGRES_<version> — bare "16" is valid, a full minor is not;
-				// and db.r6g.large is an RDS class (Cloud SQL wants a db-* tier).
-				engineVersion, instanceClass = "16", "db-f1-micro"
-			case "azure":
-				// PostgreSQL Flexible Server takes a bare major version ("16") and a B_/GP_/MO_ SKU
-				// name — a full minor and the RDS class db.r6g.large are both rejected.
-				engineVersion, instanceClass = "16", "B_Standard_B1ms"
-			case "alibaba":
-				// ApsaraDB RDS PostgreSQL versions are MAJOR.0 ("16.0" — catalog `database.alibaba`
-				// offers 17.0/16.0/15.0/14.0, and nothing else), and the instance class is an
-				// ApsaraDB class, not an RDS one. pg.n2.small.2c is the template's own default
-				// (infra/templates/project/alibaba/variables.tf rds_instance_type).
-				engineVersion, instanceClass = "16.0", "pg.n2.small.2c"
-			case "hetzner":
-				// Hetzner's database is CloudNativePG in-cluster: engine_version becomes the CNPG
-				// image TAG (ghcr.io/cloudnative-pg/postgresql:<v>) and there is no instance class at
-				// all — sizing is storage GiB + replicas. Emitting an RDS class here would be a
-				// literal that no code path can consume.
-				engineVersion, instanceClass = "16", ""
-			}
+			engineVersion, instanceClass := maxConfigPostgresShape(provider)
 			pc.Databases = []types.ProjectDatabaseConfig{{
 				Name: maxConfigDatabaseName, EngineFamily: "postgres", EngineVersion: engineVersion,
 				InstanceClass: instanceClass, MinCapacity: &min, MaxCapacity: &max,
@@ -1398,4 +1374,39 @@ func meaningful(v any) bool {
 	default:
 		return true
 	}
+}
+
+// maxConfigPostgresShape is the per-cloud Postgres engine version and instance class the max-config
+// `database` kind provisions on each cloud. It is a
+// function rather than inline so the keyless-DB scenario can reuse the managed clouds' answers
+// (keylessPostgresDefaults) instead of keeping a second per-cloud table that could drift from this one.
+func maxConfigPostgresShape(provider string) (engineVersion, instanceClass string) {
+	// Aurora takes a FULL minor, and it must be one AWS still offers — pinning a withdrawn
+	// one fails the apply outright ("Cannot find version 16.6 for aurora-postgresql", the
+	// break this constant was introduced to end). Sourced from packages/core/cloud so the
+	// nightly can never test a version the provisioner does not default to.
+	engineVersion, instanceClass = cloud.DefaultAuroraPostgresVersion, "db.r6g.large"
+	switch provider {
+	case "gcp":
+		// Cloud SQL composes POSTGRES_<version> — bare "16" is valid, a full minor is not;
+		// and db.r6g.large is an RDS class (Cloud SQL wants a db-* tier).
+		engineVersion, instanceClass = "16", "db-f1-micro"
+	case "azure":
+		// PostgreSQL Flexible Server takes a bare major version ("16") and a B_/GP_/MO_ SKU
+		// name — a full minor and the RDS class db.r6g.large are both rejected.
+		engineVersion, instanceClass = "16", "B_Standard_B1ms"
+	case "alibaba":
+		// ApsaraDB RDS PostgreSQL versions are MAJOR.0 ("16.0" — catalog `database.alibaba`
+		// offers 17.0/16.0/15.0/14.0, and nothing else), and the instance class is an
+		// ApsaraDB class, not an RDS one. pg.n2.small.2c is the template's own default
+		// (infra/templates/project/alibaba/variables.tf rds_instance_type).
+		engineVersion, instanceClass = "16.0", "pg.n2.small.2c"
+	case "hetzner":
+		// Hetzner's database is CloudNativePG in-cluster: engine_version becomes the CNPG
+		// image TAG (ghcr.io/cloudnative-pg/postgresql:<v>) and there is no instance class at
+		// all — sizing is storage GiB + replicas. Emitting an RDS class here would be a
+		// literal that no code path can consume.
+		engineVersion, instanceClass = "16", ""
+	}
+	return engineVersion, instanceClass
 }

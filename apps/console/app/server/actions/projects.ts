@@ -20,7 +20,11 @@ import {
 	clusterAdminsByCluster,
 	serviceBindingsByOwner,
 } from "@/lib/db/normalized-reads";
-import { type EnvTransitionContext, transitionEnv } from "@/lib/db/env-status";
+import {
+	EnvStateConflictError,
+	type EnvTransitionContext,
+	transitionEnv,
+} from "@/lib/db/env-status";
 import {
 	auditLog,
 	cloudIdentities,
@@ -62,6 +66,11 @@ import {
 import type { ChartWorkloadOverlay } from "@/lib/addons/chart-overlay";
 import { isByoIacEnabled } from "@/lib/addons/byo-iac-flag";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
+import {
+	normalizeWebhookCaConsumers,
+	type WebhookCaConsumer,
+	webhookCaConsumersSchema,
+} from "@/lib/addons/webhook-ca-consumers";
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
 import { resolveServingCluster } from "@/lib/queries/cluster-for-env";
 import { pickDefaultEnvironment } from "@/lib/queries/default-environment";
@@ -89,6 +98,7 @@ import {
 	convertProjectConfig,
 	dbEngineFamily,
 	DEFAULT_K8S_VERSION,
+	effectiveCapacityModeForCloud,
 	getProvider,
 	dnsZoneUnsupportedReasonForCloud,
 	keylessUnavailableReasonForCloud,
@@ -339,6 +349,12 @@ export interface CreateProjectInput {
 		// fans it out into a Fabric per `dedicated` env + one shared Fabric for the shared placements;
 		// absent, the legacy Prod(dedicated)+Preview(namespace) shape is kept (see the core helper).
 		environments?: EnvironmentSpec[];
+		// The project-level webhook-CA marker (#4990): workloads that are NOT marketplace add-ons
+		// but whose admission webhook needs the cert-manager controller for its CA. The AI
+		// Workloads template sets `["kserve"]` — see `webhookCaConsumersForTemplate` in
+		// lib/addons/webhook-ca-consumers.ts. Omitted = none. Written at CREATE only;
+		// `updateProjectDesign` leaves the stored value alone.
+		webhook_ca_consumers?: WebhookCaConsumer[];
 	};
 	network: ComponentInsert<typeof projectNetwork.$inferInsert>;
 	cluster: Omit<
@@ -635,6 +651,12 @@ export async function createProject(data: CreateProjectInput) {
 	const actor = await authorize("create", { type: "project" });
 	const problem = projectNameProblem(data.project.project_name);
 	if (problem) throw new ProjectNameInvalidError(problem);
+	// Parsed behind `authorize` like the name: this is a POST-addressable action, so the TypeScript
+	// type is a hope, not a check, and an unknown consumer would install cert-manager on a claim
+	// nothing verified. A closed enum, so the failure is a defect, not a user-facing refusal.
+	const webhook_ca_consumers = webhookCaConsumersSchema.parse(
+		data.project.webhook_ca_consumers ?? [],
+	);
 	const owner = actor.userId;
 	// A project belongs to the ACTIVE ORG, not the creating user. In the community build these are the
 	// same value (`actor.orgId === userId`), so everything below is byte-identical there. They diverge
@@ -663,6 +685,7 @@ export async function createProject(data: CreateProjectInput) {
 			environment_stage,
 			placement_mode: projectFields.placement_mode,
 			environments: projectFields.environments,
+			webhook_ca_consumers,
 			owner,
 			orgId,
 		});
@@ -756,8 +779,13 @@ export async function updateProjectDesign(
 	const owner = actor.userId;
 	return withActorScope(actor, async (tx) => {
 		// environment_stage seeds the default env at create time; not a project column.
-		const { environment_stage, ...projectFields } = data.project;
+		// webhook_ca_consumers is set at CREATE by the template and is not a canvas field: the canvas
+		// form round-trips it (getProjectAsFormData), but a save must not be able to clear or widen
+		// the marker that installs cert-manager, so it is dropped here and the stored value stands.
+		const { environment_stage, webhook_ca_consumers, ...projectFields } =
+			data.project;
 		void environment_stage;
+		void webhook_ca_consumers;
 		await tx
 			.update(projects)
 			.set(projectFields)
@@ -1552,6 +1580,10 @@ async function buildConfigSnapshot(
 			envClassification,
 		);
 
+		const webhookCaConsumers = normalizeWebhookCaConsumers(
+			project.webhook_ca_consumers,
+		);
+
 		const configSnapshot = {
 			// An EXPLICIT PICK of the `projects` row, never `...project` (#1962). A DB-row spread
 			// puts every column of the table onto this HMAC-signed snapshot, so the next migration
@@ -1736,19 +1768,25 @@ async function buildConfigSnapshot(
 				...resolvePlacement(t),
 				subscriptions: topicSubs.get(t.id) ?? [],
 			})),
-			nosql_tables: nosqlTables.map((n) => ({
-				name: n.name,
-				partition_key: n.partition_key,
-				partition_key_type: n.partition_key_type,
-				sort_key: n.sort_key,
-				sort_key_type: n.sort_key_type,
-				table_type: n.table_type,
-				capacity_mode: n.capacity_mode,
-				point_in_time_recovery: n.point_in_time_recovery,
-				global_replicas: n.global_replicas,
-				provider_config: n.provider_config,
-				...resolvePlacement(n),
-			})),
+			nosql_tables: nosqlTables.map((n) => {
+				const placement = resolvePlacement(n);
+				return {
+					name: n.name,
+					partition_key: n.partition_key,
+					partition_key_type: n.partition_key_type,
+					sort_key: n.sort_key,
+					sort_key_type: n.sort_key_type,
+					table_type: n.table_type,
+					// The mode the table GETS on its cloud, not the stored one (#4320): Azure rows saved
+					// as `provisioned` before Cosmos went serverless-only snapshot as `on_demand`, so the
+					// snapshot and the config diff stop recording a billing mode nothing ever built.
+					capacity_mode: effectiveCapacityModeForCloud(placement.cloud_provider, n.capacity_mode),
+					point_in_time_recovery: n.point_in_time_recovery,
+					global_replicas: n.global_replicas,
+					provider_config: n.provider_config,
+					...placement,
+				};
+			}),
 			secrets: secrets.map((s) => ({
 				name: s.name,
 				generate: s.generate,
@@ -1804,6 +1842,14 @@ async function buildConfigSnapshot(
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
 			// ArgoCD Helm Application after the cluster + ArgoCD are up.
 			addons,
+			// #4990: the project-level webhook-CA marker (KServe from the AI Workloads starter).
+			// The runner reads it into the same fact `requiresCertManager` feeds, so cert-manager
+			// installs issuer-free with no domain. Emitted ONLY when non-empty — mirroring the Go
+			// `omitempty` — so every existing project's frozen snapshot bytes (and the T2
+			// fidelity fixtures) are unchanged.
+			...(webhookCaConsumers.length > 0
+				? { webhook_ca_consumers: webhookCaConsumers }
+				: {}),
 			// Config-time compatibility report (#1218) — non-blocking; the UI surfaces
 			// its warnings (cluster inspector / add-on config sheet #1221, canvas chip #1222).
 			compat,
@@ -1975,10 +2021,8 @@ async function enqueueEnvTransition(
 	meta: { orgId: string; projectId: string },
 ): Promise<void> {
 	const moved = await transitionEnv(tx, envId, context, jobId, meta);
-	if (!moved)
-		throw new Error(
-			"Environment is not in a valid state for this operation — a job may already be in progress.",
-		);
+	// Typed, so POST /api/jobs answers 409 (a state conflict) rather than 500 (#5090).
+	if (!moved) throw new EnvStateConflictError(context);
 }
 
 export async function planProject(
@@ -2525,6 +2569,8 @@ export async function getProjectAsFormData(
 			region: source.project.region,
 			cloud_identity_id: source.project.cloud_identity_id ?? "",
 			iac_version: source.project.iac_version,
+			// A duplicate of an AI Workloads project runs the same KServe, so it keeps the marker.
+			webhook_ca_consumers: source.project.webhook_ca_consumers,
 		},
 		network: source.components.network
 			? {

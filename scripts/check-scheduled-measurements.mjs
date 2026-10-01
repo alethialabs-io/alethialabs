@@ -186,6 +186,13 @@ export const NOT_A_MEASUREMENT = {
 			"written up, so it is the class's historian rather than an instance of it.",
 		issue: "#4397",
 	},
+	"e2e-issuer-health.yml": {
+		why:
+			"Its output is an upserted issue (label tracker:e2e-issuer-health), not an artifact — the same " +
+			"shape as workflow-health.yml. It deliberately runs the DEFAULT branch's tree: the pin it compares " +
+			"the live TLS chain with must be the one a maintainer applies infra/alibaba-e2e from, not dev's.",
+		issue: "#4226",
+	},
 	"ci.yml": {
 		why:
 			"A pull-request workflow that also carries a schedule. Its uploads are PR-scoped reports and " +

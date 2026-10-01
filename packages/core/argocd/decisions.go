@@ -155,7 +155,7 @@ func certManagerDecision(f *InfraFacts) InfraServiceDecision {
 		d.Status = infraStatusInstalled
 		d.Reason = fmt.Sprintf(
 			"installed (cert-manager) — NO ClusterIssuer: this deploy issues no certificate. The controller is here to inject the admission-webhook serving CA that %s needs (cert-manager.io/inject-ca-from); its webhook fails closed, so without the CA every custom resource it owns is rejected. %s",
-			strings.Join(f.WebhookCAAddOns, ", "), certManagerSkipReason(f))
+			strings.Join(f.WebhookCAConsumers, ", "), certManagerSkipReason(f))
 		return d
 	}
 	d.Status = infraStatusSkipped

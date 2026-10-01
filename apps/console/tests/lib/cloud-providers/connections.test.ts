@@ -412,6 +412,35 @@ describe("saveAwsIdentity", () => {
 		);
 	});
 
+	it("persists a NUL-bearing probe error sanitized instead of failing the UPDATE", async () => {
+		// Grid run 36611808450: V8's JSON.parse message quoted a brotli body, NUL included, and Postgres
+		// refused the UPDATE ("invalid byte sequence for encoding UTF8: 0x00") — the CLI got a SQL error.
+		const raw = `Unexpected token '\u001b', "\u001b\ufffd\u0004\u0000d~M\ufffdOw"... is not valid JSON`;
+		vi.mocked(probeHealth).mockResolvedValue({
+			status: "disconnected",
+			accountId: null,
+			error: raw,
+			missingPermissions: [],
+		});
+		queue(
+			[{ id: "ci-1", provider: "aws", status: "testing", credentials: {} }], // loadIdentity (save)
+			[], // credential update
+			[{ id: "ci-1", provider: "aws", status: "testing", credentials: {} }], // verify loadIdentity
+			[], // status update
+		);
+		const r = await saveAwsIdentity(SCOPE, "ci-1", "arn:aws:iam::123456789012:role/R");
+		const persisted = db._sets[1]?.last_error;
+		expect(typeof persisted).toBe("string");
+		expect(persisted).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+		expect(persisted).toContain("\\x00");
+		// The user, the log and error tracking all see the same sanitized text.
+		expect(r.error).toBe(persisted);
+		expect(log.error).toHaveBeenCalledWith(
+			"cloud connection verify failed",
+			expect.objectContaining({ last_error: persisted }),
+		);
+	});
+
 	it("throws on a malformed ARN before any db write", async () => {
 		await expect(saveAwsIdentity(SCOPE, "ci-1", "bad")).rejects.toThrow(/Invalid format/);
 		expect(db._sets).toHaveLength(0);
