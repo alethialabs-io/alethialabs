@@ -893,9 +893,9 @@ export async function insertProjectComponent(
 	}
 
 	// A NEW cluster row with no instance types gets the catalog's default node for its cloud (#5251).
-	// Left empty, the snapshot carries `[]` and the template's own default applies — on AWS that is
-	// 2× m5a.4xlarge, ~17× what the console's own create path buys, and a different machine per entry
-	// point. INSERT ONLY: this goes into `insertValues` and never into the ON CONFLICT `set` below,
+	// Left empty, the snapshot carries `[]` and the template's own default applies — which was 2×
+	// m5a.4xlarge on AWS until #5266 pinned every template default equal to the catalog's; the row is
+	// still stamped so it states its node rather than inheriting one. INSERT ONLY: this goes into `insertValues` and never into the ON CONFLICT `set` below,
 	// because `component add` upserts and an existing row the caller is amending must keep exactly
 	// what it has — a NULL there is a deployed cluster's current shape, and back-filling it would
 	// re-shape (replace the node pool of) a running cluster on its next apply.

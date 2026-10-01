@@ -102,7 +102,7 @@ export function ArtifactPanel() {
 			const c = detail.components.cluster;
 			const n = detail.components.network;
 			// All five clouds, not three: the slug now also decides what an EMPTY instance list is
-			// priced as (#5251), so folding hetzner/alibaba into "aws" would price them as m5a.4xlarge.
+			// priced as (#5251), so folding hetzner/alibaba into "aws" would price them as aws's default node.
 			const slug = asCloudProviderSlug(detail.cloudProvider);
 			const meta = getProvider(slug);
 			setCost(
