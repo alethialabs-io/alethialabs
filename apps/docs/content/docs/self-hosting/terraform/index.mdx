@@ -7,8 +7,8 @@ description: Provision a hardened control-plane VM on any of five clouds — clo
 
 The repeatable IaC path. Each cloud has a self-contained OpenTofu stack under `infra/cp-<cloud>/`
 that provisions **one** control-plane VM and fronts it with a **Cloudflare Tunnel**, so the box has
-**no public web ports**. It lands on the same [bundle](../index) as the [one-click](../one-click) VM
-and the [Helm](../helm) chart — pick this when you want version-controlled infrastructure with a
+**no public web ports**. It lands on the same [bundle](/self-hosting) as the [one-click](/self-hosting/one-click) VM
+and the [Helm](/self-hosting/helm) chart — pick this when you want version-controlled infrastructure with a
 plan/apply CI loop.
 
 > **Pick one.** The stacks all serve the **same domain/zone**, so they are alternatives — apply
@@ -19,11 +19,11 @@ plan/apply CI loop.
 
 | Cloud | Module | Box (x86) | Cost/mo | Admin access (no open web port) | Page |
 |---|---|---|---|---|---|
-| Hetzner | `infra/cp-hetzner` | `cx33` | ≈ €14 | SSH, key-only (firewall SSH-only) | [Hetzner](./hetzner) |
-| AWS | `infra/cp-aws` | `t3.large` | ≈ $72 | SSM Session Manager | [AWS](./aws) |
-| GCP | `infra/cp-gcp` | `e2-standard-2` | ≈ $57 | IAP tunnel | [GCP](./gcp) |
-| Azure | `infra/cp-azure` | `Standard_D2s_v5` | ≈ $90 | `az vm run-command` + Serial Console | [Azure](./azure) |
-| Alibaba | `infra/cp-alibaba` | `ecs.g7.large` | ≈ $75–95 | ECS Session Manager | [Alibaba](./alibaba) |
+| Hetzner | `infra/cp-hetzner` | `cx33` | ≈ €14 | SSH, key-only (firewall SSH-only) | [Hetzner](/self-hosting/terraform/hetzner) |
+| AWS | `infra/cp-aws` | `t3.large` | ≈ $72 | SSM Session Manager | [AWS](/self-hosting/terraform/aws) |
+| GCP | `infra/cp-gcp` | `e2-standard-2` | ≈ $57 | IAP tunnel | [GCP](/self-hosting/terraform/gcp) |
+| Azure | `infra/cp-azure` | `Standard_D2s_v5` | ≈ $90 | `az vm run-command` + Serial Console | [Azure](/self-hosting/terraform/azure) |
+| Alibaba | `infra/cp-alibaba` | `ecs.g7.large` | ≈ $75–95 | ECS Session Manager | [Alibaba](/self-hosting/terraform/alibaba) |
 
 > **x86 boxes.** The published app-bundle images are `linux/amd64`, so every module provisions an x86
 > host (the per-cloud *runner* images are arm64, but they run on the managed fleet, not this box).
@@ -83,5 +83,5 @@ Trivy; the **`apply`** job is **gated off** behind `vars.INFRA_<CLOUD>_APPLY` (p
 
 ## Not managed here
 
-Cloudflare **Email Routing** is zone-global and lives only in `cp-hetzner` (see [Email](../email)),
+Cloudflare **Email Routing** is zone-global and lives only in `cp-hetzner` (see [Email](/self-hosting/email)),
 so the stacks don't collide on the shared zone.

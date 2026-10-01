@@ -24,7 +24,7 @@ cloud account, no static key anywhere:**
 |---|---|
 | **AWS** | the customer's IAM role trusts the issuer as an **IAM OIDC provider** directly; the console/runner mint an assertion (audience `sts.amazonaws.com`) and call `AssumeRoleWithWebIdentity` straight into it. **No platform AWS account, no ExternalId.** |
 | **GCP** | the customer Workload-Identity pool trusts the issuer as an **OIDC provider** directly; the console/runner mint a fresh assertion (audience `alethia-gcp-wif`) and google-auth exchanges it for a GCP token. **No separate GCP secret.** |
-| **Azure** | the customer's [user-assigned managed identity](#azure-keyless-via-the-alethia-oidc-issuer) has a federated-identity credential trusting the issuer; the console/runner authenticate as it (`ClientAssertionCredential`) — no client secret, no platform Entra app. |
+| **Azure** | the customer's [user-assigned managed identity](#azure--keyless-via-the-alethia-oidc-issuer) has a federated-identity credential trusting the issuer; the console/runner authenticate as it (`ClientAssertionCredential`) — no client secret, no platform Entra app. |
 | **Alibaba** | anonymous [`AssumeRoleWithOIDC`](#alibaba--keyless--account-free) against the customer RAM OIDC provider that trusts the issuer — no Alibaba account. |
 
 The only load-bearing operator secret is the issuer's signing key (`ALETHIA_OIDC_SIGNING_KEY`, set by
