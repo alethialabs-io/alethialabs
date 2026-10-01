@@ -303,7 +303,7 @@ The order is enforced by the Console, not by timing: the DESTROY of `prod` stays
 Runner can start it, until no live environment is left on its cluster. If the destroy of `dev-1` or
 `staging` fails, `prod` keeps waiting. `--wait` stops at the failed job and names the two ways out:
 destroy the failed environment again, or cancel the waiting job with
-[`alethia jobs cancel`](/cli/commands/jobs).
+[`alethia jobs cancel`](/reference/cli/jobs).
 
 `--project` and `--project-id` name the same field, so passing both is an error rather than a
 precedence rule. The command they are being passed to is `destroy`: quietly preferring one of them
