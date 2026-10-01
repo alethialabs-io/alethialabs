@@ -99,7 +99,7 @@ drifted. The canvas picks one to show, in a fixed order:
 
 If the real cloud has diverged from what Alethia recorded, the resource is still **Live** — it just
 carries a `2 drifted` chip alongside. Drift never replaces the state, it rides on top of it. The
-resource's panel lists exactly which Terraform resources diverged.
+resource's panel lists exactly which OpenTofu resources diverged.
 
 Drift that can't confidently be traced back to a specific resource is reported **at the environment**
 rather than pinned to a card it might not belong to. An honest "2 resources drifted, unattributed" is
@@ -162,14 +162,14 @@ components to it.
 That doesn't make it a black box. Alethia inventories the module's resources and draws them, so a
 bring-your-own environment reads as an architecture like any other:
 
-- Resources are grouped into cards **by kind and by Terraform module** — the `aws_vpc` and its
+- Resources are grouped into cards **by kind and by OpenTofu module** — the `aws_vpc` and its
   subnets become one **Network** card; the `aws_eks_*` resources a **Cluster** card. A real module is
   fifty to two hundred resources, and drawn one per card they would bury the architecture, so the
   same collapsing rule that governs the Secrets vault applies here.
 - The cards sit in the **same VPC and cluster regions** as a template environment, because that is
   genuinely where they run.
 - They are drawn **dashed** — external. Alethia plans, prices, drifts and audits these resources; it
-  does not own their definition. Changing one means editing your Terraform, so the cards are
+  does not own their definition. Changing one means editing your OpenTofu module, so the cards are
   read-only. Open one to see every resource inside it: its address, what the last plan would do to
   it, what it costs, and whether it has drifted.
 - Resources whose type Alethia doesn't recognise — `random_password`, `null_resource`, a provider it

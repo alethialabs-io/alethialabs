@@ -5,7 +5,7 @@ description: List, stream logs, and cancel infrastructure jobs.
 
 # Job Commands
 
-Monitor and manage provision jobs from the terminal. For how jobs work internally, see [Job Queue Pattern](/concepts/job-queue).
+Monitor and manage provision jobs from the terminal. For how jobs work internally, see [Job queue](/concepts/job-queue).
 
 <Callout type="info">
 There is no `alethia jobs wait` command. To block until a job finishes, pass `-w/--wait` to the
@@ -82,21 +82,8 @@ Destroy  QUEUED      data-platform   —               just now      —
 **DURATION** is how long the job ran. A trailing `…` means it is still running. Anything over an
 hour rolls into hours — `2h 5m`, never `125m 5s` — and the console shows the same job the same way.
 
-The **TYPE** column is one of the full job-type set the Runner executes — not just the three above:
-
-| Type | What the Runner does |
-|------|----------------------|
-| `PLAN` | `tofu plan` + the [verify](/reference/glossary) gate over the plan JSON — no mutation. |
-| `DEPLOY` | `tofu plan` → verify gate → `tofu apply` → ArgoCD scaffold. |
-| `DESTROY` | `tofu destroy` — tears the project's infrastructure down. |
-| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | Provision, upgrade, or tear down a self-deployed Runner. |
-| `ANALYZE_REPO` | Inspect a connected git repository (repo-onboarding analysis). |
-| `DETECT_DRIFT` | `tofu plan -refresh-only` → a per-environment drift posture. |
-| `AUDIT` | Re-run the verify controls against current state for evidence. |
-| `CHART_SCAN` / `IAC_SCAN` | Scan Helm charts / IaC for policy + security findings. |
-| `PROBE_CLUSTER` | Live cluster-alive probe — checks a provisioned cluster's reachability and records its per-environment posture. |
-| `BUILD` | Build and push a service's container image (schedules kaniko Jobs in the customer's cluster; reports the per-service digest map). |
-| `STATE_SURGERY` | Privileged state repair (queued via `alethia ops state-surgery`; ships INERT). |
+The **TYPE** column is one of the full job-type set the Runner executes — not just the three above.
+Each type is described in [Job types](/guides/jobs/job-types).
 
 The **STATUS** lifecycle is `QUEUED → CLAIMED → PROCESSING → SUCCESS | FAILED | CANCELLED`.
 
@@ -112,7 +99,7 @@ alethia jobs get --latest --type PLAN   # the newest plan — works in a script
 The job id is an optional positional. See [Choosing the job](#choosing-the-job) for the three ways
 to name one.
 
-Shows: type, status, assigned Runner, all timestamps, the elench `verify_result` summary on
+Shows: type, status, assigned Runner, all timestamps, the Elench `verify_result` summary on
 PLAN/DEPLOY jobs, the monthly cost estimate, and the error message (if failed). Add `-o json` for
 the full execution metadata (OpenTofu outputs, cost data).
 

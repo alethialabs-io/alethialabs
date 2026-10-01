@@ -54,7 +54,8 @@ column is what the product, the schema, and the CLI actually call it.
 | The web control plane | **Console** (`apps/console`) | calling the web app "Alethia" |
 | The command-line tool | **`alethia`** (CLI) | — |
 | The company | **Alethia Labs** | — |
-| Apply a project's plan from the CLI | **`alethia project apply`** | ~~`alethia apply`~~ (no such top-level command) |
+| Create or update a project from `alethia.yaml` and deploy every environment | **`alethia apply`** | calling it "project apply" |
+| Apply one queued plan job of an existing project | **`alethia project apply`** | using it to apply `alethia.yaml` |
 
 ## Assistant (Elench)
 
@@ -71,20 +72,6 @@ for the user surface and [Elench internals](/concepts/elench) for the engine.
 
 ## Job types at a glance
 
-Jobs are the unit of work a runner claims. The full set (see [Job Queue](/concepts/job-queue) and
-[Runner → Job execution](/concepts/runner/job-execution)):
-
-| Type | Purpose |
-|---|---|
-| `PLAN` | `tofu plan` (+ optional Infracost) |
-| `DEPLOY` | `tofu plan` → verify gate → `tofu apply` → ArgoCD install |
-| `DESTROY` | `tofu destroy` with graceful cleanup |
-| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | Lifecycle of a self-operated runner |
-| `ANALYZE_REPO` | Clone + statically scan a repo into a `RepoDigest` |
-| `DETECT_DRIFT` | `tofu plan -refresh-only` → drift `Posture` |
-| `AUDIT` | Run the Elench verify engine over bring-your-own plan/manifests (provisions nothing) |
-| `CHART_SCAN` | Render + scan a bring-your-own Helm chart (zero secrets, deny-all egress) |
-| `IAC_SCAN` | Scan a bring-your-own IaC module; gates the environment's PLAN/DEPLOY/DESTROY |
-| `STATE_SURGERY` | Two-person-approved, audited repair of a corrupt tofu state (ships inert / fail-closed) |
-| `PROBE_CLUSTER` | Dial the environment's cluster API server and write one honest probe row (unreachable is a successful probe with `reachable=false`) |
-| `BUILD` | Build + push each repo-sourced service's image via an in-cluster kaniko Job; reports a per-service digest map |
+Jobs are the unit of work a runner claims. Every type, with its console label and what it does, is in
+[Job types](/guides/jobs/job-types); how the runner executes each one is in
+[Runner → Job execution](/concepts/runner/job-execution).

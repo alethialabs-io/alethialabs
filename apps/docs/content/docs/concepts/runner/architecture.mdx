@@ -36,20 +36,9 @@ and [Security Architecture → Execution isolation](/concepts/security#execution
 
 ### Job types
 
-The dispatch switch (`internal/agent/runner.go`) routes each claimed job to its handler:
-
-| Job type | Handler | Does |
-|---|---|---|
-| `PLAN` / `DEPLOY` / `DESTROY` | `executePlan` / `executeDeploy` / … | OpenTofu plan/apply/destroy (+ the verify gate, ArgoCD, and manifest scaffold on deploy). Routed through the **sandbox seam**. |
-| `CHART_SCAN` | `executeChartScan` | Render a bring-your-own Helm chart to manifests + scan it (zero secrets, deny-all egress) — always sandboxed. |
-| `ANALYZE_REPO` | `executeAnalyzeRepo` | Clone + statically scan a repo into a `RepoDigest`. |
-| `DETECT_DRIFT` | `executeDriftDetection` | `tofu plan -refresh-only` → `drift.Analyze` → post a `Posture`. |
-| `AUDIT` | `executeAudit` | Run the elench verify engine over a **bring-your-own** plan or k8s manifests → post `verify_result`. Provisions nothing. |
-| `IAC_SCAN` | `executeIacScan` | Static scan of bring-your-own IaC — always sandboxed. |
-| `STATE_SURGERY` | `executeStateSurgery` | Operator-driven tofu state repair (ships **inert** / fail-closed). |
-| `PROBE_CLUSTER` | `executeProbeCluster` | Live cluster-alive probe → writes `environment_probes`. |
-| `BUILD` | `executeBuild` | Image build & push — schedules kaniko Jobs in the customer's cluster → `execution_metadata.build_result`. |
-| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | `executeDeployRunner` / … | Provision, update, or tear down a self-deployed runner. |
+The dispatch switch (`internal/agent/runner.go`) routes each claimed job to its handler. The handler
+for each type, and how it runs, is in [Job execution](/concepts/runner/job-execution#dispatch); what
+each type does is in [Job types](/guides/jobs/job-types).
 
 ## Configuration
 

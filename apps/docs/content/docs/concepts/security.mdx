@@ -1,9 +1,9 @@
 ---
-title: Security Architecture
-description: Zero-credential model, cloud provider authentication, CLI auth, and data isolation.
+title: Security architecture
+description: The zero-credential model — Alethia's own OIDC issuer, how each cloud federates against it and what it may do there, execution isolation, and data isolation.
 ---
 
-# Security Architecture
+# Security architecture
 
 The platform's security model is built on one principle: **never store static cloud credentials**. Every cloud access is temporary, scoped, and revocable.
 
@@ -31,17 +31,18 @@ single-purpose **workload-identity OIDC issuer** at `${APP_URL}/api/oidc` (`lib/
 the trust root every managed cloud federates against:
 
 - **Mint.** `mintWorkloadToken({ audience })` signs a short-lived (≤10 min) RS256 assertion with a fixed
-  subject (`alethia-connector`) and the cloud's expected **audience** (e.g. `api://AzureADTokenExchange`,
-  `sts.amazonaws.com`, `sts.aliyuncs.com`). The audience scopes the token so it can't be replayed at a
+  subject (`alethia-connector`) and the cloud's expected **audience** (`sts.amazonaws.com`,
+  `alethia-gcp-wif`, `api://AzureADTokenExchange`, `sts.aliyuncs.com` — one per cloud, from
+  `packages/workload-identity`). The audience scopes the token so it can't be replayed at a
   different cloud.
 - **Publish.** The public half is served as a JWKS at `${APP_URL}/api/oidc/jwks` (plus an OIDC discovery
   document). The customer's cloud fetches it to verify signatures — the private key never leaves the vault.
 - **Verify.** Each cloud validates the assertion (issuer + subject + audience + signature) and exchanges it
   for its own ~1 hour credential. A successful exchange **is** the proof of access.
 
-Because the exchanged credential is short-lived, the runner keeps a live assertion available for the whole
-job — it re-mints into a token **file** (or self-refreshing recipe) that the provider re-reads, so a
-`tofu apply` longer than the ~1 hour session keeps authenticating without any static key. Key material is
+Because the exchanged credential is short-lived, the runner re-mints the assertion into a token **file**
+that the provider re-reads, so a `tofu apply` longer than the ~1 hour session keeps authenticating — the
+per-cloud runner mechanics are in [Cloud credentials](/concepts/runner/cloud-credentials). Key material is
 rotatable with zero downtime — see [Key rotation](#key-rotation).
 
 **This one model powers all four managed clouds.** The sections below are per-cloud deep dives — they differ
@@ -77,10 +78,8 @@ sequenceDiagram
   Note over R: tofu runs; the assertion auto-refreshes from the re-read token file
 `} />
 
-A managed runner has no ambient AWS identity, so it writes the assertion to a web-identity token file and an
-AWS profile (`AWS_CONFIG_FILE`/`AWS_PROFILE`); the SDK re-reads the file and re-assumes on expiry, so an apply
-past the ~1 hour session survives. (Self-operated runners run in the customer's own cloud with their own
-credentials and assume the customer role directly.)
+How a managed runner hands the assertion to OpenTofu, and how a self-operated runner differs, is in
+[Cloud credentials → AWS](/concepts/runner/cloud-credentials#aws-keyless-assumerolewithwebidentity).
 
 ### Permissions scope
 
@@ -184,7 +183,7 @@ The customer pastes back their **tenant id**, **subscription id**, and the **man
 sequenceDiagram
   participant R as Console / Runner
   participant AZ as Azure (Entra / ARM)
-  R->>AZ: Present minted OIDC assertion as a client assertion (ARM_OIDC_TOKEN)
+  R->>AZ: Present minted OIDC assertion as a client assertion
   AZ-->>R: Access token for Azure Resource Manager (~1h)
   Note over R: tofu runs; the runner re-mints into the token file so long applies refresh
 `} />
@@ -253,16 +252,10 @@ can't escalate). See the [Alibaba connector guide](/guides/connectors/alibaba).
 ## Key rotation
 
 The issuer's signing key is the trust root for all four clouds, so it rotates with **zero downtime** via an
-overlap: the JWKS can publish two keys at once, and each assertion's `kid` header selects the right one.
-
-1. `scripts/rotate-oidc-key.sh` mints a new primary key and parks the outgoing key in a published-but-not-
-   signing slot (`ALETHIA_OIDC_SIGNING_KEY_PREVIOUS`); redeploy. New assertions are signed by the new key;
-   in-flight assertions signed by the old key still verify (both are published).
-2. Wait ≥24 h — long enough for every cloud's cached JWKS to refresh and all ≤10-min old assertions to
-   expire.
-3. `scripts/rotate-oidc-key.sh --finalize` drops the old key; redeploy.
-
-See the [rotation runbook](/guides/self-hosting/managed-cloud-connectors#rotating-the-issuer-signing-key).
+overlap: the JWKS publishes the outgoing and the new key at once, and each assertion's `kid` header selects
+the right one. New assertions are signed by the new key while in-flight ones still verify; the old key is
+retired once every cloud's cached JWKS has refreshed. The operator steps are in the
+[rotation runbook](/guides/self-hosting/managed-cloud-connectors#rotating-the-issuer-signing-key).
 
 ## Execution isolation (managed untrusted BYO)
 
@@ -299,35 +292,11 @@ the [managed provisioning runbook](/guides/self-hosting/managed-provisioning#unt
 [Isolated Execution](/concepts/isolated-execution) for the full picture; the engineering detail lives in the
 `packages/core/sandbox` package README.
 
-## CLI Authentication (RFC 8628)
+## Signing in
 
-The alethia CLI uses the **Device Authorization Grant** flow (RFC 8628), the same pattern used by GitHub CLI, Azure CLI, and AWS SSO:
-
-<Mermaid chart={`
-sequenceDiagram
-  participant CLI as alethia CLI
-  participant B as Browser (Console)
-  participant API as Console API
-  CLI->>CLI: generate device_code
-  CLI->>B: open {console}/cli/login?device_code=...
-  B->>B: user signs in, approves the device_code
-  CLI->>API: poll POST /api/auth/cli/exchange (device_code)
-  API-->>CLI: 404 while pending, then JWT pair once approved
-  CLI->>CLI: store ~/.config/alethia/credentials.json
-`} />
-
-The user never types a password in the terminal. The refresh token is stored locally and used to obtain short-lived access tokens for API calls. Automatic refresh happens transparently via `POST /api/auth/cli/refresh`.
-
-## Web Authentication
-
-The web application uses **Better Auth** with OAuth providers (GitHub and Google native; GitLab and Bitbucket via genericOAuth) plus email sign-in via 6-digit OTP:
-
-- GitHub
-- GitLab
-- Bitbucket
-- Google
-
-The user clicks a provider button, is redirected to the OAuth flow, and returns with a session JWT stored in an HTTP-only cookie. Sessions are managed entirely by Better Auth.
+People sign in to the console with Better Auth (OAuth or email OTP, a cookie-backed session) and to the
+CLI with a device grant or a service-account token. Runners authenticate with a per-runner token stored
+only as a hash. Each is explained in [Authentication flows](/concepts/authentication).
 
 ## Row Level Security (RLS)
 

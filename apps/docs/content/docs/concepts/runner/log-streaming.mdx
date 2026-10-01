@@ -1,9 +1,9 @@
 ---
-title: Real-Time Log Streaming
+title: Real-time log streaming
 description: How the runner streams OpenTofu output to the browser in real-time.
 ---
 
-# Real-Time Log Streaming
+# Real-time log streaming
 
 The runner streams all `tofu` output back to Alethia in real time. Users see `tofu plan` and
 `tofu apply` output in the browser as it happens.
@@ -58,28 +58,30 @@ VALUES ($1, $2, $3, $4);
 
 ## LISTEN/NOTIFY → SSE
 
-The `insert_job_log` RPC fires a Postgres `NOTIFY` on the `job_logs` channel carrying only `{jobId, logId}` (an 8 KB payload cap rules out the chunk itself). The console holds a single `LISTEN` connection per app instance, and on each notification fetches the new rows since its last seen id and relays them to the browser over an SSE stream scoped to the `job_id`. The browser consumes that stream with an `EventSource`:
+The `insert_job_log` RPC fires a Postgres `NOTIFY` on the `job_logs` channel carrying only
+`{jobId, logId}` (an 8 KB payload cap rules out the chunk itself). The console relays it to the
+browser over an SSE stream scoped to the `job_id` — the shared mechanism is described in
+[Real-time updates](/concepts/realtime). On each notification the stream route fetches the rows newer
+than the last id it sent and writes each one as an SSE message whose `id:` is the log row id. The
+browser consumes the stream with an `EventSource` (`hooks/use-job-log-stream.ts`):
 
 ```typescript
 const events = new EventSource(`/api/stream/jobs/${jobId}`);
 
 events.onmessage = (event) => {
-  const { log_chunk, stream_type } = JSON.parse(event.data);
-  appendLogChunk(log_chunk, stream_type);
+  const row = JSON.parse(event.data); // { id, log_chunk, stream_type, created_at }
+  appendLog(row);
 };
 ```
 
-Each new batch appears in the log viewer within milliseconds of being written by the Runner. (For multi-instance deployments, an optional Redis transport relays notifications between console instances — enterprise.)
+A dropped connection reconnects on its own and resumes from the last row through `Last-Event-ID`,
+so no chunk is lost or shown twice.
 
-## Log Display
+## Log display
 
-The job detail page renders logs in a terminal-like viewer:
-
-- **STDOUT** lines in default color (white/light gray)
-- **STDERR** lines in red
-- **SYSTEM** lines in blue (platform messages like "Minting keyless credentials..." or "Starting tofu plan...")
-- Auto-scroll to bottom as new lines arrive
-- Manual scroll lock when the user scrolls up
+The job detail page renders logs in a terminal-like viewer, one row per chunk with a line number and
+a timestamp. **STDERR** chunks render in the destructive (error) color; STDOUT and SYSTEM chunks
+render in the muted text color. The viewer scrolls to the bottom as new chunks arrive.
 
 ## Local Echo
 

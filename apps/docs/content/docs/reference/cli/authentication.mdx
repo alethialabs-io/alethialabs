@@ -10,7 +10,9 @@ alethia authenticates two ways, for two different callers:
 - **You, at a terminal** — the **Device Authorization Grant** (RFC 8628). You never type a password.
 - **A pipeline** — a **service-account token**, supplied through `$ALETHIA_TOKEN`. No browser, no prompt.
 
-For the full technical details, see [Authentication Flows](/concepts/authentication).
+For why the CLI authenticates this way, see [Authentication flows](/concepts/authentication); for
+the protocol, its endpoints and its deviations from RFC 8628, see
+[Device Authorization Grant](/reference/standards/device-code).
 
 ## Login
 
@@ -18,32 +20,14 @@ For the full technical details, see [Authentication Flows](/concepts/authenticat
 alethia login
 ```
 
-<Steps>
-
-### CLI generates two codes
-A UUID `device_code` identifying this login attempt, and a short `user_code` printed to your terminal.
-
-### CLI registers the request
-It sends both codes, its own name and version to `POST /api/auth/cli/start`. Console stores them with the
-IP and browser agent it saw, so the approval page can tell you who is asking.
-
-### Browser opens
-Navigates to `{console_url}/cli/login?device_code={code}&user_code={user_code}`.
-
-### Approve in browser
-Sign in with any OAuth provider (GitHub, GitLab, Bitbucket, Google) or email OTP. The page names the
-account that is about to be bound, what approval hands over, who is asking and how long is left. Check
-that the code on screen is the one your terminal printed, then approve — nothing is typed back into the
-terminal.
-
-### CLI polls for the token
-While you approve in the browser, the CLI shows a spinner and polls `POST /api/auth/cli/exchange` with the
-`device_code`. Console returns HTTP 404 while pending; once approved it returns a JWT pair (access + refresh).
-
-### Tokens stored
-Saved to `~/.config/alethia/credentials.json`.
-
-</Steps>
+1. The CLI prints a short `user_code` and opens your browser at the Console's `/cli/login` page.
+2. Sign in there with any OAuth provider (GitHub, GitLab, Bitbucket, Google) or email OTP, if you are
+   not already. The page names the account that is about to be bound, what approval hands over, who
+   is asking and how long is left.
+3. Check that the code on screen is the one your terminal printed, then approve. Nothing is typed
+   back into the terminal.
+4. The CLI, which has been waiting with a spinner, receives an access and refresh token pair and
+   saves it to `~/.config/alethia/credentials.json`.
 
 ## Refusing a login you did not start
 
@@ -90,7 +74,9 @@ Removes `~/.config/alethia/credentials.json`.
 | Access token | 1 hour | `Authorization: Bearer` header on API calls |
 | Refresh token | 90 days | Obtain new access tokens transparently |
 
-Before each API call, alethia decodes the access token's `exp` claim. If it has expired (or expires within a minute), the CLI refreshes automatically via `POST /api/auth/cli/refresh` and rewrites the stored access token. The user never notices.
+Before each API call, alethia checks the access token's expiry and refreshes it automatically when it
+is within a minute of expiring — see [Refresh](/reference/standards/device-code#refresh). You never
+notice it.
 
 ## Identity & Active Org
 

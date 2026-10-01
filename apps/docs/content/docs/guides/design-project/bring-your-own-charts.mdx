@@ -1,9 +1,9 @@
 ---
-title: Bring Your Own Helm Charts
+title: Bring your own Helm charts
 description: Attach your own Helm chart, scan it for safety, and describe the workloads it deploys as first-class canvas nodes you can bind to provisioned infrastructure.
 ---
 
-# Bring Your Own Helm Charts
+# Bring your own Helm charts
 
 Not every workload starts as a Dockerfile in a repo. When you already package an application (or a
 third-party one) as a **Helm chart**, you can bring it straight onto the canvas: Alethia deploys the
@@ -17,7 +17,14 @@ about *understanding* and *connecting* that chart, not re-authoring it.
 
 ## Attaching a chart
 
-A chart comes from one of two places: a Git repository, or an OCI registry.
+Open the canvas command menu (⌘K) and choose **Bring your own Helm chart** from the **Sources**
+group. The first step, **Source**, picks where the chart comes from: a Git repository, or an OCI
+registry. The remaining steps follow that choice — **Repository → Chart path → Ref → Review** for Git,
+**Registry → Version → Review** for OCI. On **Review** you set the target namespace; left blank, it is
+`default`.
+
+For what the deployed chart may create, how it syncs, and how to remove it, see
+[Bring-your-own charts](/concepts/bring-your-own-charts).
 
 ### From a Git repository
 
@@ -170,4 +177,4 @@ roll out behind the same gate. Ask your operator whether it's enabled on your in
    (credentials as keyless secret references) at the inferred or overridden value-paths.
 5. **Deploy** — your chart, unchanged, syncs as a single ArgoCD Application with the bound values applied.
 
-See also: [The Canvas](/guides/design-project/the-canvas) · [Repositories](/guides/design-project/repositories) · [Bring Your Own IaC](/concepts/bring-your-own-iac).
+See also: [The Canvas](/guides/design-project/the-canvas) · [Repositories](/guides/design-project/repositories) · [Bring-your-own charts](/concepts/bring-your-own-charts) · [Bring-your-own IaC](/concepts/bring-your-own-iac).

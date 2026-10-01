@@ -107,7 +107,7 @@ For each cloud, end to end:
    verifies server-side (no runner needed).
 2. **Create a project** targeting that cloud and a small cluster.
 3. **Plan** — a VM spins up in that cloud's pool, claims the job, and returns a plan + a `verify.Report`
-   (elench) in the console Plan tab. Confirm:
+   (Elench) in the console Plan tab. Confirm:
    - a `fleet-<cloud>-…` server appears in Hetzner and self-registers as a runner,
    - the plan streams logs and completes,
    - no `ALETHIA_STORAGE_*` / bootstrap secret is in the job env (they're not injected).

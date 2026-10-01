@@ -74,7 +74,7 @@ export const JOB_TYPES: Record<
 	AUDIT: {
 		label: "Audit",
 		icon: FileSearch,
-		description: "Audit bring-your-own IaC (terraform plan or k8s manifests) with elench",
+		description: "Audit bring-your-own IaC (an OpenTofu/Terraform plan or Kubernetes manifests) with elench",
 	},
 	CHART_SCAN: {
 		label: "Chart Scan",

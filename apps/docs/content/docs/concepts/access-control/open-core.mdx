@@ -1,9 +1,9 @@
 ---
-title: Open-Core Model
-description: What's free in the AGPL Community edition vs the commercial Enterprise edition, how entitlements work, and the architectural boundary that keeps the Community build complete and self-contained.
+title: Open-core model
+description: The architectural boundary that keeps the AGPL Community build complete and self-contained, and the CI guards that enforce it.
 ---
 
-# Open-Core Model
+# Open-core model
 
 Alethia is **open-core**. The entire product — including the authorization engine, roles, grants, hierarchy, and tenant isolation — is free and open source under the **AGPL-3.0**. A separate **Enterprise edition** adds organization-scale features under a commercial license. This page explains the **engineering** that keeps the split honest.
 
@@ -13,32 +13,13 @@ Alethia is **open-core**. The entire product — including the authorization eng
   contributor-facing view: the dependency boundary and the CI guards that enforce it.
 </Callout>
 
-## What's free vs licensed
+## Where the line is
 
-The summary below is a quick reference; the [Editions feature matrix](/editions/feature-matrix) is authoritative.
-
-| Capability | Community (AGPL) | Enterprise (commercial) |
-|---|:--:|:--:|
-| Policy Decision Point + `enforce` / `listAccessible` | ✅ | ✅ |
-| Built-in roles (owner / admin / operator / viewer) | ✅ | ✅ |
-| Per-resource grants + Org → Project inheritance | ✅ | ✅ |
-| Explicit deny + single-permission grants | ✅ | ✅ |
-| Row-Level Security tenant isolation | ✅ | ✅ |
-| Activity log of authorization decisions | ✅ | ✅ |
-| Single-user personal organization | ✅ | ✅ |
-| **Multi-member organizations, teams, invitations** | — | ✅ |
-| **SSO (SAML / OIDC)** | — | ✅ |
-| **Custom roles + the access portal** | — | ✅ |
-| **Activity export** | — | ✅ |
-| **OpenFGA-backed policy engine at scale** | — | ✅ (optional) |
-
-<Callout type="info">
-The dividing line is **"single tenant vs many tenants."** Everything needed to run Alethia for yourself or your team-as-one-account is free. The Enterprise edition is about *organizations with multiple members and identities* — the things larger teams and companies need.
-</Callout>
-
-## Entitlements
-
-The Enterprise edition gates its features behind **entitlements** derived from a license. The core has **no `if (licensed)` checks scattered through it** — it simply asks the enterprise layer "is this feature on?" and the enterprise layer answers from the license. When no license is present (the Community build), every entitlement is off and the corresponding features are simply absent.
+The dividing line is **"single tenant vs many tenants."** Everything needed to run Alethia for yourself is
+free; the Enterprise edition is about *organizations with multiple members and identities*. The
+capability-by-capability list is the [feature matrix](/editions/feature-matrix), and how a license turns
+those capabilities on — entitlements, activation, graceful degradation — is [Licensing](/editions/licensing).
+This page does not repeat either.
 
 ## The boundary that makes it work
 
@@ -50,8 +31,8 @@ Open-core only stays maintainable if the free edition is genuinely complete on i
 
 How it's enforced:
 
-- **Seams, not branches.** The core exposes a handful of extension points (the policy engine, the tenancy resolver, the auth plugins, the entitlement gate). In the Community build they return community defaults; the Enterprise package fills them in.
-- **One integration file.** Exactly one core file is allowed to load the Enterprise package, and it does so *tolerantly* — if the package isn't installed, it quietly falls back to community behavior.
+- **Seams, not branches.** The core has no `if (licensed)` checks scattered through it. It exposes a handful of extension points (the policy engine, the tenancy resolver, the auth plugins, the entitlement gate). In the Community build they return community defaults; the Enterprise package fills them in.
+- **One integration file.** Exactly one core file (`lib/enterprise.ts`) is allowed to load the Enterprise package, and it does so *tolerantly* — if the package isn't installed, it quietly falls back to community behavior.
 - **CI guards.** Three lint checks run on every build:
   - **boundary guard** — fails if any file outside the allowed integration point imports the Enterprise package;
   - **authz-scope guard** — fails if any code does ad-hoc ownership checks instead of going through the decision point;
@@ -61,7 +42,5 @@ How it's enforced:
 The payoff: the Enterprise edition can evolve independently, and the open-source edition is never a hollow shell — it's the real product.
 
 ## For self-hosters
-
-If you self-host the Community edition you get the full single-tenant product: roles, grants, hierarchy, the Activity log, and database-level tenant isolation, all under the AGPL. You can run it indefinitely with no license. Adding the Enterprise edition is what unlocks shared organizations and the features in the table above.
 
 See [Self-Hosting](/guides/self-hosting) for deployment, and [Architecture](/concepts/access-control/architecture) for exactly how the seams and the loader work.

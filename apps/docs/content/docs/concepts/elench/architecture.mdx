@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: The full system — repos to a verified GitOps Kubernetes cluster on your cloud. The "A" (infer-and-generate) and "B" (bring-your-own + audit) flows, stage by stage, and where the elench proof layer sits.
+description: The full system — repos to a verified GitOps Kubernetes cluster on your cloud. The "A" (infer-and-generate) and "B" (bring-your-own + audit) flows, stage by stage, and where the Elench proof layer sits.
 ---
 
 # Architecture
@@ -19,7 +19,7 @@ proof layer:
 
 <Callout type="info">
   **Core vs Enterprise.** The generate/provision **"A" flow is core** (open-source, self-hostable). The
-  **elench proof layer — verify · audit · drift · agent · MCP — is Enterprise.** This page is the map;
+  **Elench proof layer — verify · audit · drift · agent · MCP — is Enterprise.** This page is the map;
   the proof-layer pages carry the <Enterprise /> badge.
 </Callout>
 
@@ -73,7 +73,7 @@ flowchart LR
 `} />
 
 - **OpenTofu / Terraform plan:** `verify.ParseCustomerPlan(planJSON)` → `Evaluate` — the same AWS/GCP/Azure controls.
-- **Kubernetes:** `verify.EvaluateManifests(yaml)` → the k8s [control set](/reference/control-catalog).
+- **Kubernetes:** `verify.EvaluateManifests(yaml)` → the Kubernetes [control set](/reference/control-catalog).
 - The `AUDIT` job (migration `0052`) runs on the runner (`executeAudit`) and posts the report to
   `jobs.execution_metadata.verify_result`, surfaced by the existing `get_plan_result` tool + the
   `VerifyBlock`. Queue it from the assistant (`audit_infrastructure` tool) or `queueAudit`.
