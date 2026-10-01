@@ -17,6 +17,7 @@ import {
 	Container,
 	FileSearch,
 	GitBranch,
+	KeyRound,
 	RefreshCw,
 	Rocket,
 	ShieldCheck,
@@ -100,5 +101,10 @@ export const JOB_TYPES: Record<
 		label: "Build",
 		icon: Container,
 		description: "Build & push service images in-cluster (kaniko → registry, keyless)",
+	},
+	MINT_KUBECONFIG: {
+		label: "Mint Kubeconfig",
+		icon: KeyRound,
+		description: "Mint a short-lived kubeconfig on the runner, sealed to the requesting client's key",
 	},
 };

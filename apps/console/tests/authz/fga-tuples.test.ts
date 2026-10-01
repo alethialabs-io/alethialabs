@@ -90,6 +90,23 @@ describe("expandGrant (role → permission tuples)", () => {
 		).toBe(true);
 	});
 
+	// #5280: the cluster credential tiers are ORG capabilities. An org-wide operator grant carries
+	// the read-only tier and never the admin one; a PROJECT-scoped grant carries neither, because the
+	// cluster resolves at the org (fga-mapping ORG_LEVEL) — a project grant cannot mint a kubeconfig.
+	it("cluster access tiers expand as org capabilities, and only from an org-wide grant", () => {
+		const operator = BUILT_IN_ROLES.operator;
+		if (operator === "*") throw new Error("operator should be an explicit set");
+		const orgWide = expandGrant({ ...base, effect: "allow", resourceType: "org" }, operator);
+		expect(orgWide).toContainEqual({ user: "user:U", relation: "cluster_access_readonly", object: "org:O" });
+		expect(orgWide.some((t) => t.relation === "cluster_access_admin")).toBe(false);
+
+		const projectScoped = expandGrant(
+			{ ...base, effect: "allow", resourceType: "project", resourceId: "S" },
+			["cluster:access_readonly", "cluster:access_admin"],
+		);
+		expect(projectScoped).toEqual([]);
+	});
+
 	it("a DENY grant writes deny_ relations (the exclusion)", () => {
 		// deny a single permission on a specific project → perm_deny_ on that project
 		const projectDeny = expandGrant(

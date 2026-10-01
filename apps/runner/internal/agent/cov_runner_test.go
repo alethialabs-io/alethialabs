@@ -1003,6 +1003,7 @@ func TestRun_ExecuteJob_DispatchesEveryJobType(t *testing.T) {
 		{types.JobTypeStateSurgery, map[string]any{}},
 		{types.JobTypeProbeCluster, covRunBadSnapshot()},
 		{types.JobTypeBuild, covRunBadSnapshot()},
+		{types.JobTypeMintKubeconfig, map[string]any{}},
 	}
 
 	for _, tc := range cases {
@@ -1024,6 +1025,24 @@ func TestRun_ExecuteJob_DispatchesEveryJobType(t *testing.T) {
 				t.Errorf("%s: expected a FAILED terminal status, got %+v", tc.jobType, u)
 			}
 		})
+	}
+}
+
+// TestRun_ExecuteJob_RefusesMintKubeconfigByName pins the seams-only state of MINT_KUBECONFIG
+// (#5280): the dispatcher refuses it with its OWN error and posts FAILED, so a mint enqueued before
+// the executor lands can neither mint a credential nor be mistaken for an unknown job type.
+func TestRun_ExecuteJob_RefusesMintKubeconfigByName(t *testing.T) {
+	api := newCovRunAPI()
+	w := NewWithAPI(Config{Operator: "managed", RunnerID: "r-mint"}, api)
+
+	err := w.executeJob(t.Context(), &ClaimResponse{
+		Job: &Job{ID: "covrun-mint", JobType: string(types.JobTypeMintKubeconfig), ConfigSnapshot: map[string]any{}},
+	})
+	if !errors.Is(err, errMintKubeconfigNotImplemented) {
+		t.Fatalf("expected the named MINT_KUBECONFIG refusal, got %v", err)
+	}
+	if u, ok := covRunTerminal(api, "covrun-mint"); !ok || u.status != "FAILED" {
+		t.Errorf("expected a FAILED terminal status, got %+v", u)
 	}
 }
 

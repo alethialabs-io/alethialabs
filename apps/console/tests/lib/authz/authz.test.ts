@@ -91,6 +91,34 @@ describe("built-in role templates", () => {
 		]);
 	});
 
+	// #5250 §2 / #5280: who may mint a kubeconfig. Pinned as literals, per role, in both directions —
+	// a kubeconfig is a credential, so a role gaining a tier silently is the failure this guards.
+	it("cluster:access_readonly falls to owner, admin and operator; cluster:access_admin to owner and admin only", () => {
+		const { admin, operator, viewer } = BUILT_IN_ROLES;
+		if (admin === "*" || operator === "*" || viewer === "*") {
+			throw new Error("admin/operator/viewer should be explicit sets");
+		}
+		expect(BUILT_IN_ROLES.owner).toBe("*");
+		expect(admin.filter((k) => k.startsWith("cluster:")).sort()).toEqual([
+			"cluster:access_admin",
+			"cluster:access_readonly",
+		]);
+		expect(operator.filter((k) => k.startsWith("cluster:"))).toEqual([
+			"cluster:access_readonly",
+		]);
+		expect(viewer.filter((k) => k.startsWith("cluster:"))).toEqual([]);
+	});
+
+	it("the cluster access tiers are real permission keys, and the cluster has no other action", () => {
+		expect(isPermissionKey("cluster:access_readonly")).toBe(true);
+		expect(isPermissionKey("cluster:access_admin")).toBe(true);
+		expect(
+			PERMISSIONS.filter((p) => p.resource === "cluster")
+				.map((p) => p.key)
+				.sort(),
+		).toEqual(["cluster:access_admin", "cluster:access_readonly"]);
+	});
+
 	it("viewer reads the Activity log but does not export it", () => {
 		const viewer = BUILT_IN_ROLES.viewer;
 		if (viewer === "*") throw new Error("viewer should be an explicit set");
