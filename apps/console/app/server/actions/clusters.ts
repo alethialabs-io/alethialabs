@@ -4,6 +4,10 @@
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { currentActor } from "@/lib/authz/guard";
+import {
+	type KubeconfigAccess,
+	readKubeconfigAccess,
+} from "@/lib/clusters/kubeconfig-access";
 import { withActorScope } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -32,6 +36,9 @@ export interface ClusterData {
 		cluster_version: string | null;
 		argocd_url: string | null;
 		status: string;
+		/** How to get a kubeconfig with the user's own cloud CLI — the same object `alethia
+		 *  cluster get` prints (lib/clusters/kubeconfig-access.ts, #5250). */
+		kubeconfig: KubeconfigAccess;
 	} | null;
 	project_databases: {
 		name: string;
@@ -74,6 +81,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 				status: projectEnvironments.status,
 				provider: cloudIdentities.provider,
 				cluster_id: projectCluster.id,
+				cluster_environment_id: projectCluster.environment_id,
 				cluster_name: projectCluster.cluster_name,
 				cluster_endpoint: projectCluster.cluster_endpoint,
 				cluster_outputs: projectCluster.provider_outputs,
@@ -150,6 +158,23 @@ export async function getClusters(): Promise<ClusterData[]> {
 				.where(inArray(projectCaches.environment_id, envIds)),
 		]);
 
+		// The kubeconfig command per cluster, from the same builder the CLI route serves. One small
+		// indexed read per provisioned cluster, inside this RLS-scoped transaction.
+		const kubeconfigs = new Map<string, KubeconfigAccess>();
+		for (const r of baseRows) {
+			if (!r.cluster_id || !r.cluster_status) continue;
+			kubeconfigs.set(
+				r.cluster_id,
+				await readKubeconfigAccess(tx, {
+					projectId: r.id,
+					environmentId: r.cluster_environment_id,
+					clusterName: r.cluster_name,
+					provider: r.provider,
+					region: r.region,
+				}),
+			);
+		}
+
 		return baseRows.map((r) => ({
 			id: r.id,
 			project_name: r.project_name,
@@ -166,6 +191,10 @@ export async function getClusters(): Promise<ClusterData[]> {
 						cluster_version: r.cluster_version,
 						argocd_url: r.argocd_url,
 						status: r.cluster_status,
+						kubeconfig: kubeconfigs.get(r.cluster_id ?? "") ?? {
+							command: null,
+							note: null,
+						},
 					}
 				: null,
 			project_databases: dbRows

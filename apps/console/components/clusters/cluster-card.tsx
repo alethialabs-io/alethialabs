@@ -194,11 +194,11 @@ export function ClusterCard({
 		...caches.map((c) => c.status),
 	]);
 
-	// kubeconfig is an AWS-specific command; only show it where it's actually correct.
-	const kubeconfigCmd =
-		provider === "aws" && cluster?.cluster_name
-			? `aws eks update-kubeconfig --name ${cluster.cluster_name} --region ${data.region}`
-			: null;
+	// How to get a kubeconfig with the user's own cloud CLI, for every cloud — built on the server
+	// by the same module `alethia cluster get` prints from (lib/clusters/kubeconfig-access.ts), so
+	// the card never composes a command of its own. A note replaces the command where there is none.
+	const kubeconfigCmd = cluster?.kubeconfig.command ?? null;
+	const kubeconfigNote = cluster?.kubeconfig.note ?? null;
 
 	// The ArgoCD admin password is never stored (it would be plaintext in our DB); it is
 	// retrieved on demand from the cluster's argocd-initial-admin-secret. Show the command.
@@ -314,11 +314,17 @@ export function ClusterCard({
 					</div>
 					{kubeconfigCmd && (
 						<div className="flex items-center gap-2">
-							<code className="flex-1 truncate rounded-sm border bg-surface-sunken px-2 py-1 font-mono text-ui-xs text-text-secondary">
+							<code
+								title={kubeconfigCmd}
+								className="flex-1 truncate rounded-sm border bg-surface-sunken px-2 py-1 font-mono text-ui-xs text-text-secondary"
+							>
 								{kubeconfigCmd}
 							</code>
 							<CopyButton value={kubeconfigCmd} label="Copy kubeconfig command" />
 						</div>
+					)}
+					{!kubeconfigCmd && kubeconfigNote && (
+						<p className="text-ui-2xs text-text-tertiary">{kubeconfigNote}</p>
 					)}
 				</div>
 			)}
@@ -346,7 +352,9 @@ export function ClusterCard({
 						</a>
 					</div>
 					<p className="text-ui-2xs text-text-tertiary">
-						Admin password (retrieve from the cluster):
+						{kubeconfigCmd
+							? "Admin password — after the kubeconfig command above, run:"
+							: "Admin password — with a kubeconfig for this cluster, run:"}
 					</p>
 					<div className="flex items-center gap-2">
 						<code className="flex-1 truncate rounded-sm border bg-surface-sunken px-2 py-1 font-mono text-ui-xs text-text-secondary">
