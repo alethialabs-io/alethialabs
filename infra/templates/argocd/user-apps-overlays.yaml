@@ -19,9 +19,11 @@
 #
 # Multi-environment apps delivery (decoupled env-model, #838). An ApplicationSet whose Git
 # directories generator discovers every overlays/ENV directory in the apps repo and renders one
-# ArgoCD Application per overlay — the standard Kustomize GitOps layout (base + overlays/ENV), and
-# exactly what the enterprise-demo uses (overlays/dev to ns boutique-dev, overlays/staging to ns
-# boutique-staging). This is ADDITIVE to the single root Application in user-apps.yaml: a flat apps
+# ArgoCD Application per overlay — the standard Kustomize GitOps layout (base + overlays/ENV), which
+# alethia-examples' Online Boutique also uses (overlays/dev-1 to ns boutique-dev-1, overlays/staging
+# to ns boutique-staging). That example sits under examples/online-boutique/, not at the repo root,
+# so this root-anchored glob does not discover it: each of its environments names an apps_path
+# instead. This is ADDITIVE to the single root Application in user-apps.yaml: a flat apps
 # repo (no overlays) yields ZERO generated Applications here (harmless); an overlays repo gets one
 # Application per environment. The generated apps run under the same "apps" AppProject.
 #
