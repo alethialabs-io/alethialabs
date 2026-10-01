@@ -131,12 +131,32 @@ the tree passes `--no-manifest`.
 | `--stage` | No | Initial environment stage: `development` (default), `staging`, `production` |
 | `--iac-version` | No | OpenTofu version to pin (defaults server-side) |
 | `--placement-mode` | No | Placement of the default environment: `namespace`, `vcluster`, `dedicated` (default `dedicated`) |
+| `--instance-type` | No | Machine type for the cluster nodes, for example `t3.xlarge`. Needs `--cloud-account`, because a machine type belongs to one cloud. Not with `--node-size`. |
+| `--node-size` | No | Node size as vCPU and GiB, for example `4x16`. It is mapped to the nearest machine type of the project's cloud when the cluster deploys. Not with `--instance-type`. |
 | `--file` | No | `alethia.yaml` to take the values and the environment matrix from. The file in the current directory is read when present, and the command says so. |
 | `--no-manifest` | No | Read no manifest, not even the one in this directory. Refused together with `--file`. |
 
 Every value resolves in one order — the flag, then `ALETHIA_REGION` and the other environment
 variables, then the manifest, then the form, then the default — so a checked-in file supplies what
 the command line leaves out, and a flag overrides the file for one run.
+
+### Node shape
+
+Without `--instance-type` or `--node-size`, the project's cluster gets the catalog's default machine
+type for its cloud: `t3.large` on AWS, `e2-standard-2` on Google Cloud, `Standard_D2s_v5` on Azure,
+`cpx22` on Hetzner and `ecs.g6.large` on Alibaba Cloud. Pass one of the two flags to choose the node
+yourself:
+
+```bash
+alethia project create boutique --region eu-west-1 --cloud-account prod-account --instance-type t3.xlarge
+alethia project create boutique --region eu-west-1 --cloud-account prod-account --node-size 4x16
+```
+
+The shape applies to every `dedicated` environment, because only a dedicated environment provisions
+a cluster. A `namespace` or `vcluster` environment runs on the cluster of the environment it is
+placed on. The two flags are mutually exclusive, and a create where no environment is `dedicated`
+refuses them. To change the shape later, set the cluster's `instance_types` with
+`alethia project component add --kind cluster`, which updates the existing cluster.
 
 The created project prints as a card (or the typed object with `--output json`), followed —
 when anything was asked for — by the `alethia project create` line that would produce the same
@@ -399,7 +419,7 @@ alethia project component add --project boutique --kind databases --name main \
 
 # Configure the cluster singleton (--name ignored; upserts)
 alethia project component add --project boutique --kind cluster \
-  --set 'cluster_version="1.31"' --set node_min_size=2 --set 'instance_types=["t3.medium"]'
+  --set 'cluster_version="1.35"' --set node_min_size=2 --set 'instance_types=["t3.medium"]'
 
 # Remove components (destructive → confirms)
 alethia project component remove --project boutique --kind databases --name main

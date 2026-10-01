@@ -23,6 +23,7 @@ import {
 	kubeconfigMintShape,
 	kubeconfigMintTier,
 } from "@/lib/db/schema/enums";
+import type { NodeSize } from "@/types/jsonb.types";
 
 /**
  * The CLI wire contract — the single source of truth for every JSON shape the
@@ -646,6 +647,29 @@ export const cliFleetPoolsResponse = z.object({ pools: z.array(fleetPoolWire) })
 export const cliFleetPoolResponse = z.object({ pool: fleetPoolWire });
 /** POST /api/cli/projects result. */
 export const cliProjectResponse = z.object({ project: projectWire });
+
+/** A cloud-indifferent node size on the wire — the same `{ vcpu, memory_gb }` shape as
+ * `project_cluster.node_size` ({@link NodeSize}), which the Go resolver maps to the nearest catalog
+ * machine type at provision time. Typed against the interface so the two cannot drift apart.
+ * The bounds are the canvas inspector's ("vCPU per node" 1–96, "Memory per node" 1–768 GB), so the
+ * terminal accepts exactly what the canvas does; strict, because the object is stored verbatim in a
+ * jsonb column and a stray key would ride along onto the snapshot. */
+const nodeSizeWire: z.ZodType<NodeSize> = z
+	.object({
+		vcpu: z.number().min(1).max(96),
+		memory_gb: z.number().min(1).max(768),
+	})
+	.strict();
+
+/** The node shape POST /api/cli/projects may carry (#5266) — `alethia project create
+ * --instance-type` / `--node-size`. Both optional; omitting both writes no cluster row and the
+ * template default (which equals the catalog default) applies. Giving BOTH is refused by the route,
+ * not here: the fixture sampled from this schema carries every field, and it must still parse. Go
+ * mirror: `api.ProjectNodeShape`, strict-decoded from `create_project_node_shape.json`. */
+export const cliProjectNodeShapeRequest = z.object({
+	instance_type: z.string().min(1).max(64).optional(),
+	node_size: nodeSizeWire.optional(),
+});
 /** GET /api/cli/projects/:id/environments result. */
 export const cliEnvironmentsResponse = z.object({
 	environments: z.array(environmentWire),
@@ -1180,6 +1204,7 @@ export const cliContract = {
 	FleetPoolsResponse: cliFleetPoolsResponse,
 	FleetPoolResponse: cliFleetPoolResponse,
 	ProjectResponse: cliProjectResponse,
+	ProjectNodeShapeRequest: cliProjectNodeShapeRequest,
 	EnvironmentsResponse: cliEnvironmentsResponse,
 	EnvironmentResponse: cliEnvironmentResponse,
 	DestroyTreeResponse: cliDestroyTreeResponse,

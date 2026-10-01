@@ -94,6 +94,7 @@ variable "control_plane_count" {
 }
 
 variable "control_plane_server_type" {
+  # Equal to the catalog default, like worker_server_type: the provider moves both pools together.
   description = "Hetzner server type for control-plane nodes (cax* = arm64, cx*/cpx*/ccx* = amd64). Default cpx22 (2 vCPU / 4 GB, amd64) is a currently-orderable shared type; cax11 (ARM) is capacity-unreliable and cpx11 is retired."
   type        = string
   default     = "cpx22"
@@ -117,6 +118,8 @@ variable "worker_count" {
 }
 
 variable "worker_server_type" {
+  # Equal to the catalog default (packages/core/catalog/catalog.json compute.hetzner.default_instance)
+  # by rule: TestTemplateNodeDefaultsEqualTheCatalog fails when they differ (#5266).
   description = "Hetzner server type for worker nodes (cax* = arm64, cx*/cpx*/ccx* = amd64). Default cpx22 (2 vCPU / 4 GB, amd64) is a currently-orderable shared type; cax11 (ARM) is capacity-unreliable and cpx11 is retired."
   type        = string
   default     = "cpx22"

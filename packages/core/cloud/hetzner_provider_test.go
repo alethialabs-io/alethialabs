@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -109,6 +110,11 @@ func TestHetznerProvider_ProviderTfvars_NodeTypes(t *testing.T) {
 	if def["worker_server_type"] != "cpx22" || def["control_plane_server_type"] != "cpx22" {
 		t.Errorf("default node types = worker %v / cp %v, want cpx22 / cpx22",
 			def["worker_server_type"], def["control_plane_server_type"])
+	}
+	// And it is the catalog's default, read from the catalog rather than restated (#5266): the
+	// literal above pins today's value, this pins where it comes from.
+	if want := catalog.MustLoad().Compute["hetzner"].DefaultInstance; def["worker_server_type"] != want {
+		t.Errorf("default worker type = %v, want the catalog default %q", def["worker_server_type"], want)
 	}
 	if def["worker_arch"] != "amd64" || def["control_plane_arch"] != "amd64" {
 		t.Errorf("default arch = worker %v / cp %v, want amd64 / amd64",

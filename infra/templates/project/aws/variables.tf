@@ -204,9 +204,11 @@ variable "eks_disk_size" {
 }
 
 variable "eks_instance_types" {
+  # Equal to the catalog default (packages/core/catalog/catalog.json compute.aws.default_instance)
+  # by rule: TestTemplateNodeDefaultsEqualTheCatalog fails when they differ (#5266).
   description = "EC2 instance types for the EKS worker nodes"
   type        = list(string)
-  default     = ["m5a.4xlarge"]
+  default     = ["t3.large"]
 
   validation {
     condition     = length(var.eks_instance_types) > 0

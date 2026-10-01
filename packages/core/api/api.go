@@ -1856,6 +1856,22 @@ type CreateProjectParams struct {
 	// environment plus ONE shared Fabric for the `namespace`/`vcluster` ones — which is the difference
 	// between a two-tier project costing two clusters and costing one.
 	Environments []EnvironmentSpec
+	// The node shape for the project's clusters (#5266). Zero value ⇒ nothing is sent, no cluster row
+	// is written, and the template default (which equals the catalog default) applies. When set, the
+	// server writes it as an explicit cluster row on every `dedicated` environment.
+	NodeShape ProjectNodeShape
+}
+
+// ProjectNodeShape is the node shape a project create may carry: a concrete machine type for the
+// project's cloud, OR a cloud-indifferent size. At most one — the server refuses both, because the
+// resolver prefers the machine type and would silently ignore the size.
+//
+// Mirrors cliProjectNodeShapeRequest in apps/console/lib/validations/cli-contract.ts, and is
+// strict-decoded from testdata/create_project_node_shape.json (TestContract_ProjectNodeShape), so a
+// renamed key on either side fails a test instead of being dropped on the wire.
+type ProjectNodeShape struct {
+	InstanceType string          `json:"instance_type,omitempty"`
+	NodeSize     *types.NodeSize `json:"node_size,omitempty"`
 }
 
 // EnvironmentSpec is one row of the environment matrix: an environment and how it is PLACED onto a
@@ -1872,27 +1888,36 @@ type EnvironmentSpec struct {
 	IsDefault bool   `json:"is_default,omitempty"`
 }
 
+// createProjectPayload is the body of POST /api/cli/projects. Every optional key is omitempty, so
+// a create that sets nothing optional sends exactly `project_name` and `region`, and the server's
+// own defaults apply.
+//
+// ProjectNodeShape is EMBEDDED, so its keys are inlined at the top level under its own struct tags
+// — the ones TestContract_ProjectNodeShape strict-decodes against the zod schema. The bytes this
+// sends for the shape are therefore the bytes the contract test locks, not keys restated here.
+type createProjectPayload struct {
+	ProjectName     string            `json:"project_name"`
+	Region          string            `json:"region"`
+	CloudIdentityID string            `json:"cloud_identity_id,omitempty"`
+	Stage           string            `json:"stage,omitempty"`
+	IacVersion      string            `json:"iac_version,omitempty"`
+	PlacementMode   string            `json:"placement_mode,omitempty"`
+	Environments    []EnvironmentSpec `json:"environments,omitempty"`
+	ProjectNodeShape
+}
+
 // CreateProject creates a new project and returns it.
 func (c *Client) CreateProject(params CreateProjectParams) (*Project, error) {
 	endpoint := fmt.Sprintf("%s/cli/projects", c.baseURL)
-	payload := map[string]interface{}{
-		"project_name": params.ProjectName,
-		"region":       params.Region,
-	}
-	if params.CloudIdentityID != "" {
-		payload["cloud_identity_id"] = params.CloudIdentityID
-	}
-	if params.Stage != "" {
-		payload["stage"] = params.Stage
-	}
-	if params.IacVersion != "" {
-		payload["iac_version"] = params.IacVersion
-	}
-	if params.Placement != "" {
-		payload["placement_mode"] = params.Placement
-	}
-	if len(params.Environments) > 0 {
-		payload["environments"] = params.Environments
+	payload := createProjectPayload{
+		ProjectName:      params.ProjectName,
+		Region:           params.Region,
+		CloudIdentityID:  params.CloudIdentityID,
+		Stage:            params.Stage,
+		IacVersion:       params.IacVersion,
+		PlacementMode:    params.Placement,
+		Environments:     params.Environments,
+		ProjectNodeShape: params.NodeShape,
 	}
 	var successResp struct {
 		Project *Project `json:"project"`

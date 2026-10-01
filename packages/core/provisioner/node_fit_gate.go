@@ -98,9 +98,11 @@ func nodeFitBlock(provider string, config *types.ProjectConfig, dryRun bool) nod
 	// left every abstract project unguarded, which is most of them.
 	//
 	// An empty result means the project pins nothing AND has no node_size, so the deploy takes the
-	// TEMPLATE's own default (gcp: `e2-standard-4`). That default is not this gate's to check: it
-	// lives in the .tf files, not the catalog, and checking a catalog value the deploy will not use
-	// would be worse than checking nothing.
+	// TEMPLATE's own default. Since #5266 that default EQUALS the catalog's `default_instance`
+	// (catalog/template_defaults_test.go fails when they differ), and the catalog default is itself
+	// held to a shape that fits the control plane (TestNoProviderDefaultsToAShapeThatCannotHostTheControlPlane
+	// in catalog/nodefit_test.go). Both halves are proven in CI, so there is nothing left for this
+	// gate to check at deploy time.
 	instanceTypes := cloud.ResolveInstanceTypes(provider, config.Cluster)
 	if len(instanceTypes) == 0 {
 		return nodeFitFinding{}
