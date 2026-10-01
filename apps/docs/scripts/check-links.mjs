@@ -18,6 +18,14 @@
  *     flake source; this guard answers "does the link point at something this site serves".
  *   - A link through one of next.config.mjs's redirects is reported as broken: a redirect keeps old
  *     URLs alive for readers, it is not where new links should point.
+ *   - redirects.mjs (the moved-pages list) is checked too: every destination must be a live page or
+ *     an external URL, no source may also be a live page (it would shadow it), and no destination
+ *     may be another entry's source (a chain — point it at the final page). The older hand-written
+ *     redirects inside next.config.mjs are not read.
+ *   - Product → docs links: string literals `"/docs/…"` and `alethialabs.io/docs/…` in apps/* and
+ *     packages/* (not apps/docs, not tests, not node_modules or build output). A docs move is what
+ *     breaks these, and this job runs on every docs change — so the move is caught, though a
+ *     console-only PR that ADDS a bad link is not (this job does not run on it).
  *
  * Refused forms, each with a reason:
  *   - `/docs/...`  — the site's basePath is `/docs`, so this renders as /docs/docs/...
@@ -176,15 +184,72 @@ export function checkMeta(contentDir, files) {
 	return findings;
 }
 
+/** Checks the moved-pages redirect list against the live routes: real destinations, no shadowing, no chains. */
+export function checkRedirects(redirects, pages) {
+	const findings = [];
+	const sources = new Set(redirects.map((r) => r.source));
+	for (const { source, destination } of redirects) {
+		const at = { file: "../../redirects.mjs", line: 0 };
+		if (pages.has(source)) findings.push({ ...at, msg: `redirect source ${source} is a live page — the redirect would hide it` });
+		if (/^https?:\/\//.test(destination)) continue;
+		const dest = destination.split("#")[0];
+		if (sources.has(dest)) findings.push({ ...at, msg: `redirect ${source} → ${dest} lands on another redirect — point it at the final page` });
+		else if (!pages.has(dest)) findings.push({ ...at, msg: `redirect ${source} → ${dest}: no page at ${dest}` });
+	}
+	return findings;
+}
+
+const PRODUCT_DIRS = ["apps", "packages"];
+const PRODUCT_EXT = /\.(tsx?|mjs|js|go|mdx?|json|ya?ml)$/;
+const PRODUCT_SKIP = /(^|\/)(node_modules|\.next|\.turbo|dist|testdata|e2e|tests?|__tests__)(\/|$)|_test\.go$|\.test\.|\.spec\.|\.generated\.|CHANGELOG\.md$|^apps\/docs\//;
+
+/** Finds docs links in product code under `repoRoot` and checks each against the live routes. */
+export function checkProductLinks(repoRoot, pages, redirects) {
+	const moved = new Map(redirects.map((r) => [r.source, r.destination]));
+	const findings = [];
+	let links = 0;
+	for (const top of PRODUCT_DIRS) {
+		if (!fs.existsSync(path.join(repoRoot, top))) continue;
+		for (const rel of walkSkipping(path.join(repoRoot, top), "", (r) => PRODUCT_SKIP.test(`${top}/${r}`))) {
+			const file = `${top}/${rel}`;
+			if (!PRODUCT_EXT.test(file)) continue;
+			fs.readFileSync(path.join(repoRoot, file), "utf8").split("\n").forEach((line, i) => {
+				for (const m of line.matchAll(/(?:["'`(]|alethialabs\.io)\/docs((?:\/[A-Za-z0-9_-]+)*)\/?(?:#([A-Za-z0-9_-]+))?(?=["'`)?])/g)) {
+					links++;
+					const route = m[1] || "/";
+					const at = { file: `../../../${file}`, line: i + 1 };
+					if (moved.has(route)) findings.push({ ...at, msg: `"/docs${route}" moved — link to "/docs${moved.get(route)}"` });
+					else if (!pages.has(route)) findings.push({ ...at, msg: `"/docs${route}" — no docs page at ${route}` });
+					else if (m[2] && !pages.get(route).has(m[2])) findings.push({ ...at, msg: `"/docs${route}#${m[2]}" — no heading with that anchor` });
+				}
+			});
+		}
+	}
+	findings.productLinks = links;
+	return findings;
+}
+
+/** Like walk(), but never descends into a path `skip` rejects. */
+function walkSkipping(dir, rel, skip) {
+	const out = [];
+	for (const entry of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
+		const r = rel ? `${rel}/${entry.name}` : entry.name;
+		if (skip(r)) continue;
+		if (entry.isDirectory()) out.push(...walkSkipping(dir, r, skip));
+		else out.push(r);
+	}
+	return out;
+}
+
 /** Runs every check over one content directory and returns the findings. */
-export function check(contentDir, publicDir = path.join(DOCS_ROOT, "public")) {
+export function check(contentDir, publicDir = path.join(DOCS_ROOT, "public"), redirects = [], repoRoot = null) {
 	const files = walk(contentDir);
 	const mdx = files.filter((f) => /\.mdx?$/.test(f));
 	const sources = new Map(mdx.map((f) => [f, fs.readFileSync(path.join(contentDir, f), "utf8")]));
 	const pages = new Map(mdx.map((f) => [routeOf(f), anchorsOf(sources.get(f))]));
 	const publicFiles = new Set(fs.existsSync(publicDir) ? walk(publicDir).map((f) => `/${f}`) : []);
 
-	const findings = checkMeta(contentDir, files);
+	const findings = [...checkMeta(contentDir, files), ...checkRedirects(redirects, pages)];
 	let links = 0;
 	for (const f of mdx) {
 		const fromRoute = routeOf(f);
@@ -194,7 +259,13 @@ export function check(contentDir, publicDir = path.join(DOCS_ROOT, "public")) {
 			if (msg) findings.push({ file: f, line, msg });
 		}
 	}
-	findings.stats = { pages: mdx.length, links };
+	let productLinks = 0;
+	if (repoRoot) {
+		const product = checkProductLinks(repoRoot, pages, redirects);
+		productLinks = product.productLinks;
+		findings.push(...product);
+	}
+	findings.stats = { pages: mdx.length, links, productLinks };
 	return findings;
 }
 
@@ -204,6 +275,11 @@ function selfTest() {
 	const put = (rel, body) => {
 		fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true });
 		fs.writeFileSync(path.join(tmp, rel), body);
+	};
+	const repo = `${tmp}-repo`;
+	const putRepo = (rel, body) => {
+		fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+		fs.writeFileSync(path.join(repo, rel), body);
 	};
 	put("meta.json", JSON.stringify({ pages: ["index", "a", "ghost"] }));
 	put("index.mdx", "---\ntitle: x\n---\n\n## Step 1 — Create the `project`\n\n[ok](/a#second)\n[ok2](#step-1--create-the-project)\n");
@@ -217,8 +293,23 @@ function selfTest() {
 		'<Card href="/also-nowhere" />',
 		"[self-anchor](#nope)",
 	].join("\n"));
-	const got = check(tmp, path.join(tmp, "no-public"));
+	const redirects = [
+		{ source: "/old", destination: "/a" }, // fine
+		{ source: "/", destination: "/a" }, // shadows a live page (the root)
+		{ source: "/gone", destination: "/missing" }, // dead destination
+		{ source: "/hop", destination: "/old" }, // chain
+		{ source: "/moved-out", destination: "https://example.com/x.md" }, // external: fine
+	];
+	putRepo("apps/web/page.tsx", [
+		'const ok = "/docs/a#second";',
+		'const gone = "/docs/nope";',
+		'const old = "https://alethialabs.io/docs/old";',
+		'const bad = "/docs/a#zzz";',
+	].join("\n"));
+	putRepo("apps/web/page.test.tsx", 'const ignored = "/docs/nope";');
+	const got = check(tmp, path.join(tmp, "no-public"), redirects, repo);
 	fs.rmSync(tmp, { recursive: true, force: true });
+	fs.rmSync(repo, { recursive: true, force: true });
 	const want = [
 		/entry "ghost" names no file/,
 		/"unlisted" exists but is not listed/,
@@ -228,6 +319,12 @@ function selfTest() {
 		/relative link/,
 		/no page at \/also-nowhere/,
 		/anchor "#nope"/,
+		/redirect source \/ is a live page/,
+		/redirect \/gone → \/missing: no page/,
+		/redirect \/hop → \/old lands on another redirect/,
+		/"\/docs\/nope" — no docs page/,
+		/"\/docs\/old" moved — link to "\/docs\/a"/,
+		/"\/docs\/a#zzz" — no heading/,
 	];
 	const missed = want.filter((re) => !got.some((f) => re.test(f.msg)));
 	const extra = got.length - want.length;
@@ -241,10 +338,11 @@ function selfTest() {
 }
 
 /** Entry point: --self-test, or check the content tree and exit 1 on any finding. */
-function main() {
+async function main() {
 	if (process.argv.includes("--self-test")) return selfTest();
 	const contentDir = process.argv[2] ?? path.join(DOCS_ROOT, "content", "docs");
-	const findings = check(contentDir);
+	const { movedPages } = await import(path.join(DOCS_ROOT, "redirects.mjs"));
+	const findings = check(contentDir, undefined, movedPages, path.join(DOCS_ROOT, "..", ".."));
 	for (const f of findings) console.error(`${path.posix.join("content/docs", f.file)}${f.line ? `:${f.line}` : ""}  ${f.msg}`);
 	if (findings.length) {
 		console.error(`\n${findings.length} broken link(s) or navigation entries.`);
@@ -252,12 +350,12 @@ function main() {
 	}
 	// The counts are part of the verdict: a parser that silently stopped matching links would
 	// otherwise print the same green line over zero links.
-	const { pages, links } = findings.stats;
-	if (pages === 0 || links === 0) {
-		console.error(`check-links: read ${pages} pages and ${links} links — nothing was checked, refusing to pass.`);
+	const { pages, links, productLinks } = findings.stats;
+	if (pages === 0 || links === 0 || productLinks === 0) {
+		console.error(`check-links: read ${pages} pages, ${links} links, ${productLinks} product links — nothing was checked, refusing to pass.`);
 		process.exit(1);
 	}
-	console.log(`check-links: ${links} links across ${pages} pages — every internal link and anchor resolves; every page is in navigation.`);
+	console.log(`check-links: ${links} links across ${pages} pages and ${productLinks} product → docs links — every one resolves; every page is in navigation.`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main();

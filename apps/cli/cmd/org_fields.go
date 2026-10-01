@@ -62,8 +62,8 @@ const (
 
 // Docs pages, relative to the repository root.
 const (
-	docsOrganizationsPage = "apps/docs/content/docs/cli/commands/organizations.mdx"
-	docsAccessPage        = "apps/docs/content/docs/cli/commands/access.mdx"
+	docsOrganizationsPage = "apps/docs/content/docs/reference/cli/organizations.mdx"
+	docsAccessPage        = "apps/docs/content/docs/reference/cli/access.mdx"
 )
 
 // orgFields is the spec. One entry per value a command in this group takes from a person.

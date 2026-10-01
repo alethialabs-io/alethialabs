@@ -30,7 +30,7 @@ import { cn } from "@repo/ui/utils";
 type Mode = "duplicate" | "empty";
 
 /** Docs entry for the "Learn More" link in the dialog header. */
-const ENV_DOCS_HREF = "/docs/concepts/environments";
+const ENV_DOCS_HREF = "/docs/concepts/domain-model#environments";
 
 /**
  * The "New Environment" dialog, hosted by the env switcher. Collects a name and a creation mode:

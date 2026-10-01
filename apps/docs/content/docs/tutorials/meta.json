@@ -1,5 +1,7 @@
 {
 	"title": "Tutorials",
+	"icon": "GraduationCap",
+	"root": true,
 	"pages": [
 		"index",
 		"enterprise-demo",

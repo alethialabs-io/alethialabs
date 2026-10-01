@@ -1,0 +1,179 @@
+---
+title: Organizations, Members & Teams
+description: Switch the active organization and manage its members and teams from the CLI.
+---
+
+# Organizations, Members & Teams
+
+alethia scopes everything you do — projects, runners, jobs, connectors — to an **active
+organization**. The active org is persisted locally (in `~/.config/alethia/config.json`) and sent as
+the `X-Alethia-Org` header on every request.
+
+`--org <id>` targets a different organization for a single invocation, on every command in the CLI
+and not only the ones on this page. It sets the `X-Alethia-Org` header, and for `members` and
+`teams` — the two commands that address the org in their request path — it sets the org in the path
+as well, from the same value. Naming an organization you are not a member of is refused with `403`.
+Under a service token the flag must name the token's own organization: a different one is refused
+with `403` rather than quietly ignored, so a pipeline cannot believe it is acting on one org while
+every write lands in another.
+
+Every command here also accepts the global `--org <id>`,
+[`-o, --output <table|json|csv>`](/reference/cli/identity#output-formats) and `--no-input` flags.
+
+<Callout type="info">
+Nothing on this page asks you to copy an id out of a previous command. `members remove` takes
+`--email`, `teams delete` takes `--name`, and both offer a picker when you name nothing — so
+`--no-input` always has a flag to reach for, and a terminal never needs one.
+</Callout>
+
+## `alethia org list`
+
+List the organizations you belong to. The active org is marked in the `Active` column.
+
+```bash
+alethia org list
+```
+
+Output:
+
+```
+NAME      SLUG     ROLE    PLAN  ACTIVE
+Acme      acme     owner   pro   ◆
+Personal  you      owner   free
+```
+
+## `alethia org switch`
+
+Set the active organization. Pass an org **id, slug, or name**; with no argument, pick one
+interactively.
+
+```bash
+alethia org switch acme
+alethia org switch
+```
+
+{/* fieldspec: alethia org switch */}
+
+| Field | What it is | Flag or argument | Name it by |
+| ----- | ---------- | ---------------- | ---------- |
+| Organization | The organization to make active; its id, slug, or name | `[org]` | — |
+
+The selection is persisted locally and sent as `X-Alethia-Org` on subsequent commands. Clear it with
+[`alethia config clear-context`](/reference/cli/configuration#alethia-config).
+
+## `alethia org settings`
+
+Show the active organization's general settings.
+
+```bash
+alethia org settings
+alethia org settings -o json
+```
+
+Renders a field/value card: **name**, **slug**, **description**, **region** (the org's default
+provisioning region), **default env**, and **terraform** (the default OpenTofu version). Prints
+`Not in an organization (community mode).` when the caller has no real org (personal scope). Backing
+call: `GET /cli/org-settings`.
+
+## `alethia members list`
+
+List the members of the active organization: id, email, name, role, and invitation status. The `ID`
+column is there for `-o json` and `-o csv` consumers — you never need to copy it by hand.
+
+```bash
+alethia members list
+alethia members list -o json
+alethia members list --org org_456
+```
+
+## `alethia members add`
+
+Invite someone to the active organization. Pass their email and `--role` to run without a terminal;
+with neither, the form asks for both and offers the org's own roles — including any custom role.
+
+```bash
+alethia members add teammate@example.com --role operator
+alethia members add
+```
+
+{/* fieldspec: alethia members add */}
+
+| Field | What it is | Flag or argument | Name it by |
+| ----- | ---------- | ---------------- | ---------- |
+| Email | Who to invite; they get an invitation at this address | `[email]` | — |
+| Role | What the invited member may do, from the org's roles | `--role` | — |
+
+`--role` defaults to `member`. A scripted `alethia members add ada@example.com --no-input` keeps
+that default; on a terminal the form asks, because the default is rarely what the inviter meant.
+
+## `alethia members remove`
+
+Remove a member. Name them by email, or pick from the org's members; the member id still works if
+you have one.
+
+```bash
+alethia members remove --email teammate@example.com --yes
+alethia members remove
+```
+
+{/* fieldspec: alethia members remove */}
+
+| Field | What it is | Flag or argument | Name it by |
+| ----- | ---------- | ---------------- | ---------- |
+| Member | Who to remove; name them by email rather than copying a member id | `[member_id]` | `--email` |
+
+This is destructive, so it confirms first. `--yes` (or `-y`) skips the prompt and is **required**
+with `--no-input` — a scripted removal without it exits non-zero rather than silently doing nothing.
+When the CLI picks the member for you, it prints which one on stderr before it asks.
+
+## `alethia teams list`
+
+List the teams in the active organization, with a member count.
+
+```bash
+alethia teams list
+alethia teams list --org org_456
+```
+
+## `alethia teams create`
+
+Create a team. Pass the name to run without a terminal; with no name, the form asks for one.
+
+```bash
+alethia teams create platform
+alethia teams create
+```
+
+{/* fieldspec: alethia teams create */}
+
+| Field | What it is | Flag or argument | Name it by |
+| ----- | ---------- | ---------------- | ---------- |
+| Name | What the team is called, so a list of teams is a list of purposes | `[name]` | — |
+
+## `alethia teams delete`
+
+Delete a team. Name it with `--name`, or pick from the org's teams.
+
+```bash
+alethia teams delete --name platform --yes
+alethia teams delete
+```
+
+{/* fieldspec: alethia teams delete */}
+
+| Field | What it is | Flag or argument | Name it by |
+| ----- | ---------- | ---------------- | ---------- |
+| Team | Which team to delete; name it rather than copying a team id | `[team_id]` | `--name` |
+
+Members keep their org membership but lose the grants the team carried. Destructive, so it confirms;
+`--yes` skips the prompt and is required with `--no-input`.
+
+## Flags
+
+| Flag | Where | Description |
+|------|-------|-------------|
+| `--org <id>` | every command (global) | Operate on this org instead of the active one, for one invocation. |
+| `--role <role>` | `members add` | Role for the invited member. Default `member`. |
+| `--email <email>` | `members remove` | Name the member by address instead of a member id. |
+| `--name <name>` | `teams delete` | Name the team instead of a team id. |
+| `-y, --yes` | `members remove`, `teams delete` | Skip the confirmation prompt. Required with `--no-input`. |

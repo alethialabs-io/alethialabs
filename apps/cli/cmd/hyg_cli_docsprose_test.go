@@ -54,8 +54,8 @@ import (
 //
 // ── WHAT IT CANNOT CHECK, stated rather than left to be discovered ──────────────────────────────
 //
-//  1. A page with NO command heading has nothing to scope its bare flags to. `commands/index.mdx` is
-//     the whole-tree reference and `commands/init.mdx` is a narrative walkthrough; both name flags
+//  1. A page with NO command heading has nothing to scope its bare flags to. `reference/cli/index.mdx` is
+//     the whole-tree reference and `reference/cli/init.mdx` is a narrative walkthrough; both name flags
 //     of commands they have no section for. Their bare flags fall back to EXISTENCE — registered
 //     somewhere in the tree — and both are named in docsProseUnscopedPages, so a page cannot
 //     quietly drop into that weaker tier by losing its headings.
@@ -76,12 +76,33 @@ import (
 // invocation — command, arity and flags together — and re-checking them here would report one defect
 // twice with the weaker of the two messages.
 
-// docsProseDir is the CLI docs tree, as seen from apps/cli/cmd.
+// docsProseDir is the docs content root, as seen from apps/cli/cmd. The CLI's pages are the ones
+// under docsProseRoots within it.
 func docsProseDir() string {
-	return filepath.Join(docsRepoRoot(), "apps", "docs", "content", "docs", "cli")
+	return filepath.Join(docsRepoRoot(), "apps", "docs", "content", "docs")
 }
 
-// docsProseUnscopedPages are the pages under commands/ with no `alethia …` command heading, and why
+// docsProseRoots are where the CLI's pages live since the docs restructure (#5240): the reference,
+// and Get started (install + quick start).
+var docsProseRoots = []string{"reference/cli/", "get-started/"}
+
+// docsProseGeneralPages are the reference/cli pages that are NOT per-command pages — they moved in
+// beside the command pages from the old cli/ root, and are checked as that root's pages were.
+var docsProseGeneralPages = map[string]bool{
+	"reference/cli/authentication.mdx": true,
+	"reference/cli/configuration.mdx":  true,
+	"reference/cli/identity.mdx":       true,
+}
+
+// docsProseCommandPage reports whether page is a per-command reference page, and its basename.
+func docsProseCommandPage(page string) (string, bool) {
+	if !strings.HasPrefix(page, "reference/cli/") || docsProseGeneralPages[page] {
+		return "", false
+	}
+	return strings.TrimPrefix(page, "reference/cli/"), true
+}
+
+// docsProseUnscopedPages are the per-command pages (reference/cli/) with no `alethia …` command heading, and why
 // each has none. Their bare flag mentions are checked for EXISTENCE only.
 //
 // Recorded rather than skipped, and checked in BOTH directions below: an entry naming a page that
@@ -106,7 +127,7 @@ var docsProseUnscopedPages = map[string]string{
 // otherwise be listed here are checked properly instead. An entry is the last resort, for a
 // paragraph that discusses a flag without ever showing the command it is on.
 var docsProseForeignFlags = map[string]map[string]string{
-	"commands/jobs.mdx": {
+	"reference/cli/jobs.mdx": {
 		"--wait": "the `project plan`/`apply`/`destroy` flag. This page opens by saying there is no " +
 			"`alethia jobs wait` command and that you pass `-w/--wait` to the command that QUEUES " +
 			"the job instead — an answer to a jobs question that is deliberately about another " +
@@ -265,7 +286,13 @@ func docsProsePages(t *testing.T, dir string) []string {
 		if relErr != nil {
 			return relErr
 		}
-		out = append(out, filepath.ToSlash(rel))
+		rel = filepath.ToSlash(rel)
+		for _, root := range docsProseRoots {
+			if strings.HasPrefix(rel, root) {
+				out = append(out, rel)
+				break
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -311,7 +338,8 @@ func TestHygCliDocsProse_EveryFlagNamedInProseExists(t *testing.T) {
 		scannedPages++
 
 		cmds := docsProseCommands(body)
-		pageScoped := strings.HasPrefix(page, "commands/") && len(cmds) > 0
+		cmdPage, isCmdPage := docsProseCommandPage(page)
+		pageScoped := isCmdPage && len(cmds) > 0
 		pageAllowed := tree
 		if pageScoped {
 			pageAllowed = docsProseScope(cmds)
@@ -341,8 +369,8 @@ func TestHygCliDocsProse_EveryFlagNamedInProseExists(t *testing.T) {
 				total.bare++
 				if pageScoped {
 					scopedMentions++
-				} else if strings.HasPrefix(page, "commands/") {
-					unscoped[strings.TrimPrefix(page, "commands/")] = true
+				} else if isCmdPage {
+					unscoped[cmdPage] = true
 				}
 			}
 
@@ -376,12 +404,12 @@ func TestHygCliDocsProse_EveryFlagNamedInProseExists(t *testing.T) {
 			scannedPages, total.spans, total.bare, total.invocations, scopedMentions)
 	}
 
-	// The unscoped ledger, both directions. A commands/ page that loses its headings drops into the
+	// The unscoped ledger, both directions. A per-command page that loses its headings drops into the
 	// existence tier, which is a real weakening and has to be a decision; an entry for a page that
 	// has since grown headings is a stale exemption sitting where nobody will look at it.
 	for page := range unscoped {
 		if docsProseUnscopedPages[page] == "" {
-			t.Errorf("commands/%s has no `alethia …` command heading, so the flags it names outside an "+
+			t.Errorf("reference/cli/%s has no `alethia …` command heading, so the flags it names outside an "+
 				"invocation are only checked for EXISTENCE. If that is right, record it in "+
 				"docsProseUnscopedPages with the reason; a page must not stop being scoped "+
 				"silently.", page)
@@ -393,7 +421,7 @@ func TestHygCliDocsProse_EveryFlagNamedInProseExists(t *testing.T) {
 				"the reason", page)
 		}
 		if !unscoped[page] {
-			t.Errorf("docsProseUnscopedPages names commands/%s, which is now scoped, names no bare "+
+			t.Errorf("docsProseUnscopedPages names reference/cli/%s, which is now scoped, names no bare "+
 				"flag, or is gone. A stale exemption is how a page leaves the strong tier without "+
 				"anyone deciding it should — remove the entry.", page)
 		}

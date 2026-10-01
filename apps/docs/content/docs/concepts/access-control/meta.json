@@ -1,0 +1,10 @@
+{
+	"title": "Access control",
+	"pages": [
+		"index",
+		"roles-and-permissions",
+		"open-core",
+		"architecture",
+		"openfga"
+	]
+}

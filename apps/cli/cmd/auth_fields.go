@@ -49,9 +49,9 @@ const (
 
 // Docs pages, relative to the repository root.
 const (
-	docsAuthenticationPage = "apps/docs/content/docs/cli/authentication.mdx"
-	docsConfigurationPage  = "apps/docs/content/docs/cli/configuration.mdx"
-	docsInitPage           = "apps/docs/content/docs/cli/commands/init.mdx"
+	docsAuthenticationPage = "apps/docs/content/docs/reference/cli/authentication.mdx"
+	docsConfigurationPage  = "apps/docs/content/docs/reference/cli/configuration.mdx"
+	docsInitPage           = "apps/docs/content/docs/reference/cli/init.mdx"
 )
 
 // authFields is the spec. One entry per value a command in this group takes from

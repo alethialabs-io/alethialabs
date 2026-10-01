@@ -54,7 +54,7 @@ function Hero({ stars }: { stars: number | null }) {
 					<Command>curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh | sh</Command>
 				</div>
 				<div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-					<Button nativeButton={false} render={<Link href="/docs/self-hosting" />}><Icon k="book" size={15} /> Read the self-host docs</Button>
+					<Button nativeButton={false} render={<Link href="/docs/guides/self-hosting" />}><Icon k="book" size={15} /> Read the self-host docs</Button>
 					<Button variant="outline" nativeButton={false} render={<a href="https://github.com/alethialabs-io/alethialabs" target="_blank" rel="noreferrer" />}><Icon k="git" size={15} /> Star on GitHub{fmtStars(stars)}</Button>
 				</div>
 			</Wrap>
@@ -87,7 +87,7 @@ function Proof() {
 							so no web port is ever exposed. Admin access is the cloud’s own no-open-port channel,
 							never a public SSH port. Pick a cloud; the OpenTofu is version-controlled and CI-checked.
 						</p>
-						<Link href="/docs/self-hosting/terraform" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, color: "var(--text-primary)", borderBottom: "1px solid var(--border-strong)", paddingBottom: 3, textDecoration: "none" }}>
+						<Link href="/docs/guides/self-hosting/terraform" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, color: "var(--text-primary)", borderBottom: "1px solid var(--border-strong)", paddingBottom: 3, textDecoration: "none" }}>
 							Per-cloud deploy guide <Icon k="arrow" size={14} />
 						</Link>
 					</div>
@@ -196,10 +196,10 @@ function Ops() {
 /* ---------- 04 · Ways to run it ---------- */
 
 const PATHS: { ic: IconKey; name: string; body: string; href: string }[] = [
-	{ ic: "terminal", name: "Docker Compose", body: "One command on a fresh VM. The whole bundle behind Caddy.", href: "/docs/self-hosting" },
-	{ ic: "layers", name: "Terraform (per-cloud)", body: "Version-controlled OpenTofu, closed-origin behind a tunnel.", href: "/docs/self-hosting/terraform" },
-	{ ic: "node", name: "Helm", body: "The same bundle on an existing Kubernetes cluster.", href: "/docs/self-hosting/helm" },
-	{ ic: "zap", name: "One-click", body: "Launch on AWS or Azure from a prefilled template.", href: "/docs/self-hosting/one-click" },
+	{ ic: "terminal", name: "Docker Compose", body: "One command on a fresh VM. The whole bundle behind Caddy.", href: "/docs/guides/self-hosting" },
+	{ ic: "layers", name: "Terraform (per-cloud)", body: "Version-controlled OpenTofu, closed-origin behind a tunnel.", href: "/docs/guides/self-hosting/terraform" },
+	{ ic: "node", name: "Helm", body: "The same bundle on an existing Kubernetes cluster.", href: "/docs/guides/self-hosting/helm" },
+	{ ic: "zap", name: "One-click", body: "Launch on AWS or Azure from a prefilled template.", href: "/docs/guides/self-hosting/one-click" },
 ];
 
 function DeployPaths() {
@@ -236,7 +236,7 @@ function Close({ stars }: { stars: number | null }) {
 					Clone it, read the source, deploy it on your own cloud. Open the docs or star the repo.
 				</p>
 				<div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-					<Button nativeButton={false} render={<Link href="/docs/self-hosting" />}><Icon k="book" size={15} /> Self-host docs</Button>
+					<Button nativeButton={false} render={<Link href="/docs/guides/self-hosting" />}><Icon k="book" size={15} /> Self-host docs</Button>
 					<Button variant="outline" nativeButton={false} render={<a href="https://github.com/alethialabs-io/alethialabs" target="_blank" rel="noreferrer" />}><Icon k="git" size={15} /> Star on GitHub{fmtStars(stars)}</Button>
 				</div>
 			</Wrap>

@@ -1,0 +1,137 @@
+<!-- Moved out of the user docs (apps/docs, /console/api-reference/runner-apis) by #5240: contributor material. -->
+
+_API endpoints used by Runner agents for job claiming, heartbeat, and log streaming._
+
+# Runner APIs
+
+These endpoints are called by Runner agents. Authentication is via `X-Runner-ID` and `X-Runner-Token` headers. The token is hashed with SHA-256 and compared against the stored `runners.token_hash`.
+
+## Job Claiming
+
+### `POST /api/jobs/claim`
+
+Claims the next available job. Uses the `claim_next_job()` PostgreSQL function with `FOR UPDATE SKIP LOCKED` for atomic claiming. See [Job Queue Pattern](https://alethialabs.io/docs/concepts/job-queue).
+
+**Response** (if job available):
+```json
+{
+  "job": {
+    "id": "uuid",
+    "job_type": "PLAN",
+    "config_snapshot": { ... },
+    "project_id": "uuid"
+  },
+  "cloud_identity": {
+    "provider": "aws",
+    "role_arn": "arn:aws:iam::123456789012:role/AlethiaProvisionerRole",
+    "external_id": "uuid"
+  },
+  "connector_credentials": []
+}
+```
+
+`connector_credentials` carries decrypted `api_key` credentials for any pluggable providers (DNS, secrets, container registry, observability) the job's config references — attached only at claim time, never stored in the snapshot.
+
+**Response** (no jobs): `200 OK` with `{ "job": null }`
+
+## Heartbeat
+
+### `POST /api/runners/heartbeat`
+
+Updates `runners.last_heartbeat`, `runners.version`, and `runners.supported_providers`, and marks the runner ONLINE.
+
+**Body:**
+```json
+{
+  "version": "0.1.0",
+  "providers": ["aws"]
+}
+```
+
+`providers` lists the clouds the runner's image can execute (validated against the `cloud_provider` enum). Omit it or send `null` for a full "any provider" image, which leaves `supported_providers` unchanged.
+
+If a heartbeat is not received for 45 seconds, Alethia marks the Runner OFFLINE.
+
+## Job Status
+
+### `PUT /api/jobs/{id}/status`
+
+Updates job status. Valid transitions: PROCESSING, SUCCESS, FAILED, CANCELLED.
+
+**Body:**
+```json
+{
+  "status": "SUCCESS",
+  "execution_metadata": {
+    "cluster_name": "api-backend-production",
+    "cluster_endpoint": "https://...",
+    "argocd_url": "https://...",
+    "outputs": { ... }
+  }
+}
+```
+
+On SUCCESS for DEPLOY jobs, the server automatically calls `finalizeDeployment()` to extract OpenTofu outputs and update project component tables.
+
+On FAILED, the targeted environment's status is set to FAILED with the error message.
+
+## Log Streaming
+
+### `POST /api/jobs/{id}/logs`
+
+Receives log chunks from the Runner. See [Real-time Architecture](https://alethialabs.io/docs/concepts/realtime) for how these are delivered to the browser.
+
+**Body:**
+```json
+{
+  "log_chunk": "Creating VPC...\nVPC created: vpc-12345\n",
+  "stream_type": "STDOUT"
+}
+```
+
+Stream types: `STDOUT`, `STDERR`, `SYSTEM`.
+
+### `GET /api/jobs/{id}/logs`
+
+Retrieves all logs for a job, ordered by ID. Supports `?after={id}` pagination.
+
+## Plan Artifacts
+
+### `POST /api/jobs/{id}/plan-artifact`
+
+Uploads the binary `tofu.plan.out` file to S3-compatible storage (the `plan-artifacts` bucket, max 50MB).
+
+### `GET /api/jobs/{id}/plan-artifact`
+
+Downloads the plan artifact for apply execution.
+
+## Runner Registration
+
+### `POST /api/runners/register`
+
+Registers a new Runner. Returns the plaintext runner token (shown once). Used by OpenTofu during deployment; always creates an `operator=managed` runner — the request no longer takes a `mode` field.
+
+**Body:**
+```json
+{
+  "name": "eu-west-1-runner"
+}
+```
+
+**Response:**
+```json
+{
+  "runner_id": "uuid",
+  "runner_token": "plaintext-token"
+}
+```
+
+### `POST /api/runners/heartbeat`
+
+Also used for initial heartbeat after registration.
+
+## Runner Metadata
+
+### `PATCH /api/runners/{id}/metadata`
+
+Updates runner metadata (used for tracking deployment state).

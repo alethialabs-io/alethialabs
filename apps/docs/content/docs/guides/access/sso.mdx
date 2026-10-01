@@ -1,0 +1,64 @@
+---
+title: Single Sign-On (SSO)
+description: Let your team sign in through your own identity provider over OIDC or SAML — Alethia as the service provider.
+---
+
+# Single Sign-On
+
+<Enterprise />
+
+SSO lets members sign in through **your** identity provider (IdP) instead of (or alongside) email and social
+login. Alethia is the **Service Provider** that *consumes* your IdP — it never runs an identity provider of its
+own.
+
+You bring the IdP. Supported via standard protocols (see [OIDC](/reference/standards/oidc) and [SAML & SCIM](/reference/standards/scim-saml) for the protocol details):
+
+- **[OIDC](/reference/standards/oidc)** — Okta · Microsoft Entra ID · Google Workspace · **AWS IAM Identity Center** · OneLogin · Ping · …
+- **[SAML 2.0](/reference/standards/scim-saml)** — the same IdPs over SAML.
+
+Under the hood SSO is the Better Auth `@better-auth/sso` plugin (shipped in the enterprise package); a provider stores either an `oidcConfig` or a `samlConfig` and can be scoped per organization (`sso_provider.organizationId`) or left instance-wide.
+
+<Callout type="info">
+  There's nothing to run on Alethia's side — no Hydra, no Alethia-as-IdP. Each organization registers its own
+  provider, so different orgs can use different IdPs.
+</Callout>
+
+## Registering a provider
+
+In **Settings → Single Sign-On → Register provider**, choose the protocol and fill in the IdP's details:
+
+<Tabs items={["OIDC", "SAML"]}>
+<Tab value="OIDC">
+
+| Field | What it is |
+|---|---|
+| Provider ID | A short slug for the provider (e.g. `okta`) |
+| Email domain | The domain whose users route to this provider (e.g. `company.com`) |
+| Issuer URL | Your IdP's issuer / discovery URL |
+| Client ID / Client secret | The OIDC application credentials from your IdP |
+
+</Tab>
+<Tab value="SAML">
+
+| Field | What it is |
+|---|---|
+| Provider ID | A short slug (e.g. `entra`) |
+| Email domain | The domain whose users route to this provider |
+| IdP Entity ID | Your IdP's SAML entity / issuer ID |
+| SSO URL (entry point) | The IdP's SAML sign-in endpoint |
+| X.509 certificate | The IdP's signing certificate |
+
+</Tab>
+</Tabs>
+
+## Provisioning into the organization
+
+When a member signs in through SSO for the first time, Alethia **provisions** them into the organization with the
+least-privileged role. From that point they're a
+normal [member](/guides/access/members-and-invitations) — the [PDP](/concepts/access-control/architecture) authorizes
+them exactly as it would anyone else.
+
+## Next
+
+- How members are authorized once they're in: [**grants & scopes**](/guides/access/grants-and-scopes).
+- Turning SSO on for a deployment: the [**Enterprise setup runbook**](/guides/self-hosting/enterprise-setup).

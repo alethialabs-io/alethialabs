@@ -8,7 +8,7 @@
 // # What it proves
 //
 // Each of the three PUBLIC starter templates deploys once, on hetzner, through the path
-// apps/docs/content/docs/console/design-project/starter-templates.mdx tells a user to follow:
+// apps/docs/content/docs/guides/design-project/starter-templates.mdx tells a user to follow:
 //
 //   - alethia-starter-ai    — the environment's ArgoCD apps repository, overlay path EMPTY, on a
 //     project carrying the AI Workloads template's webhook-CA marker (`webhook_ca_consumers:

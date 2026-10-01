@@ -20,8 +20,8 @@ import (
 // that is wrong. A guard whose question is "is this string here" can never answer "does this page
 // display correctly", so the question has to be asked structurally, over cells rather than bytes.
 //
-// The rule the sibling pages already follow is `<table\|json\|csv>` (cli/index.mdx,
-// cli/configuration.mdx). This makes that convention enforced rather than remembered.
+// The rule the sibling pages already follow is `<table\|json\|csv>` (get-started/the-cli.mdx,
+// reference/cli/configuration.mdx). This makes that convention enforced rather than remembered.
 
 var docsTableDelimiter = regexp.MustCompile(`^\|[\s:\-|]+\|$`)
 
@@ -64,44 +64,49 @@ func docsTableCells(line string) int {
 // TestHygCliDocs_EveryTableRowHasItsHeadersColumns fails when a row's cell count differs from its
 // header's — which is what an unescaped pipe produces.
 func TestHygCliDocs_EveryTableRowHasItsHeadersColumns(t *testing.T) {
-	root := filepath.Join("..", "..", "docs", "content", "docs", "cli")
+	// The CLI's pages live in two places since the docs restructure (#5240): the reference, and Get
+	// started (install + quick start).
+	content := filepath.Join("..", "..", "docs", "content", "docs")
+	roots := []string{filepath.Join(content, "reference", "cli"), filepath.Join(content, "get-started")}
 	var pages, tables, rows int
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() || !strings.HasSuffix(path, ".mdx") {
-			return nil
-		}
-		pages++
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		lines := strings.Split(string(raw), "\n")
-		for i := 0; i+1 < len(lines); i++ {
-			header := strings.TrimSpace(lines[i])
-			if !strings.HasPrefix(header, "|") || !docsTableDelimiter.MatchString(strings.TrimSpace(lines[i+1])) {
-				continue
+	for _, root := range roots {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
 			}
-			tables++
-			want := docsTableCells(header)
-			for j := i + 2; j < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[j]), "|"); j++ {
-				rows++
-				if got := docsTableCells(lines[j]); got != want {
-					t.Errorf("%s:%d has %d cells against a %d-column header — an unescaped `|` "+
-						"inside a cell splits the row and the page drops the excess. Write it `\\|`, "+
-						"as cli/index.mdx does for `<table\\|json\\|csv>`.\n  %s",
-						path, j+1, got, want, strings.TrimSpace(lines[j]))
+			if info.IsDir() || !strings.HasSuffix(path, ".mdx") {
+				return nil
+			}
+			pages++
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			lines := strings.Split(string(raw), "\n")
+			for i := 0; i+1 < len(lines); i++ {
+				header := strings.TrimSpace(lines[i])
+				if !strings.HasPrefix(header, "|") || !docsTableDelimiter.MatchString(strings.TrimSpace(lines[i+1])) {
+					continue
 				}
+				tables++
+				want := docsTableCells(header)
+				for j := i + 2; j < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[j]), "|"); j++ {
+					rows++
+					if got := docsTableCells(lines[j]); got != want {
+						t.Errorf("%s:%d has %d cells against a %d-column header — an unescaped `|` "+
+							"inside a cell splits the row and the page drops the excess. Write it `\\|`, "+
+							"as get-started/the-cli.mdx does for `<table\\|json\\|csv>`.\n  %s",
+							path, j+1, got, want, strings.TrimSpace(lines[j]))
+					}
+				}
+				i = i + 1
 			}
-			i = i + 1
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", root, err)
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking %s: %v", root, err)
 	}
 
 	// A ZERO CENSUS IS A FAILURE, not a pass. If the docs move, or the walk stops matching, this
@@ -109,6 +114,6 @@ func TestHygCliDocs_EveryTableRowHasItsHeadersColumns(t *testing.T) {
 	// was written in response to.
 	if pages == 0 || tables == 0 || rows == 0 {
 		t.Fatalf("scanned %d pages, %d tables, %d rows under %s — the guard found nothing to check, "+
-			"so its silence means nothing", pages, tables, rows, root)
+			"so its silence means nothing", pages, tables, rows, strings.Join(roots, " and "))
 	}
 }

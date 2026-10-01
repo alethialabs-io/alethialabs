@@ -30,7 +30,7 @@ echo "$HCLOUD_TOKEN" | alethia connector hetzner --token-stdin
   A Hetzner token is scoped to **one Hetzner project**, and that project is the entire isolation
   boundary — the token can do anything inside it. Create a project just for this demo. Hetzner is also
   the one cloud Alethia cannot connect keylessly: it exposes no OIDC provider and no role assumption,
-  so a token is the only mechanism available. See [connector commands](/cli/commands/connector).
+  so a token is the only mechanism available. See [connector commands](/reference/cli/connector).
 </Callout>
 
 Get the identity id for the tutorial's `--cloud-identity-id`:

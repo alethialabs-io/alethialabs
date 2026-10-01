@@ -78,7 +78,7 @@ var tableHeaderTextStyle = lipgloss.NewStyle().Foreground(InkMuted).Bold(true)
 // question they ask.
 //
 // It is already the DOCUMENTED contract for one command:
-// `apps/docs/content/docs/cli/configuration.mdx` says an unset key "prints as `—`
+// `apps/docs/content/docs/reference/cli/configuration.mdx` says an unset key "prints as `—`
 // in the table and as an empty string under `-o json` and `-o csv`. The dash is
 // for a person reading a column; a script tests the machine formats for
 // emptiness." That is this rule, and it was true of `config get` alone.

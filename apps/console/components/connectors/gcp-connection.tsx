@@ -184,7 +184,7 @@ export function GcpConnection({
 								Download module
 							</Button>
 							<a
-								href="/docs/console/connectors/gcp"
+								href="/docs/guides/connectors/gcp"
 								target="_blank"
 								rel="noopener noreferrer"
 								className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"

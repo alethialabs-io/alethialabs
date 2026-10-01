@@ -45,9 +45,9 @@ const (
 
 // Docs pages, relative to the repository root.
 const (
-	docsCliIndexPage    = "apps/docs/content/docs/cli/index.mdx"
-	docsCliConfigPage   = "apps/docs/content/docs/cli/configuration.mdx"
-	docsCliIdentityPage = "apps/docs/content/docs/cli/identity.mdx"
+	docsCliIndexPage    = "apps/docs/content/docs/get-started/the-cli.mdx"
+	docsCliConfigPage   = "apps/docs/content/docs/reference/cli/configuration.mdx"
+	docsCliIdentityPage = "apps/docs/content/docs/reference/cli/identity.mdx"
 )
 
 // shellGlobalFlagPages are the pages carrying a global-flags table.

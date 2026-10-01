@@ -135,7 +135,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 					title={sectionTitle(ShieldAlert, "Policies")}
 					description="A policy watches a set of events and routes them to channels."
 					count={policiesView.count}
-					actions={<DocsLink href="/docs/console/alerts#policies" />}
+					actions={<DocsLink href="/docs/guides/alerts#policies" />}
 				/>
 				<PoliciesPanel
 					bootstrap={bootstrap}
@@ -151,7 +151,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 					title={sectionTitle(Webhook, "Channels")}
 					description="Channels are where alerts go — webhooks, Slack, Rocket.Chat or email."
 					count={channelsView.count}
-					actions={<DocsLink href="/docs/console/alerts#channels" />}
+					actions={<DocsLink href="/docs/guides/alerts#channels" />}
 				/>
 				<ChannelsPanel
 					bootstrap={bootstrap}
@@ -167,7 +167,7 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 					title={sectionTitle(Activity, "Activity")}
 					description="The delivery ledger — every notification routed, with retry status."
 					count={activityView.count}
-					actions={<DocsLink href="/docs/console/alerts#activity" />}
+					actions={<DocsLink href="/docs/guides/alerts#activity" />}
 				/>
 				<ActivityPanel view={activityView} />
 			</section>
