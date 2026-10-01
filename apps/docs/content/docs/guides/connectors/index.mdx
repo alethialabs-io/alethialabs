@@ -51,8 +51,9 @@ assertion. **No static keys are stored.**
 </Cards>
 
 The **token clouds** (Hetzner, DigitalOcean, Civo) instead use the customer's own API token — there is no
-account to federate into. The token is encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`) and only decrypted
-on the runner at provision time.
+account to federate into. The token is encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`). Only the console holds that key: it
+decrypts the token when a runner claims a job and hands it to that runner, so no runner can read a
+stored credential.
 
 After connecting, Alethia verifies the credentials **instantly, server-side** (an auth + provisioning-permission probe — no runner, no job) and marks the cloud identity `Connected`, `Degraded`, or `Disconnected`. Existing resources (VPCs, subnets, DNS zones) are discovered + kept fresh by the server-side, event-driven asset inventory. See [Connection health & inventory](/guides/connectors/health-and-inventory).
 
@@ -62,7 +63,7 @@ Git connections use standard OAuth. See [Git Providers](/guides/connectors/git-p
 
 ## Pluggable Connectors
 
-DNS, secrets, registry, chart repository, and observability providers authenticate with an **API key / token**. Secret fields are encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`) and only decrypted on the runner at provision time — never stored in a Project snapshot. After connecting, a verification ping confirms the credential works.
+DNS, secrets, registry, chart repository, and observability providers authenticate with an **API key / token**. Secret fields are encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`). The console decrypts them only to hand them to the runner running the job that needs them, and they are never stored in a Project snapshot. After connecting, a verification ping confirms the credential works.
 
 <Cards>
   <Card title="Pluggable Connectors" href="/guides/connectors/pluggable">Cloudflare · Vault · Docker Hub · Datadog · Grafana Cloud</Card>

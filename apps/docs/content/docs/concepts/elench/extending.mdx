@@ -3,7 +3,7 @@ title: Extending & running
 description: Adding a control, the injection seams that keep AI advisory, the elench-verify CLI for CI, and the gated live exercises.
 ---
 
-# Extending & running elench
+# Extending & running Elench
 
 <Enterprise />
 
@@ -78,7 +78,7 @@ elench-verify -manifests deploy.yaml             # audit Kubernetes manifests in
 ```
 
 The default mode accepts a **bring-your-own** plan (via `ParseCustomerPlan`), not just an Alethia-generated
-one — the same controls run either way. `-manifests` runs the k8s control set. Exit codes: `0`
+one — the same controls run either way. `-manifests` runs the Kubernetes control set. Exit codes: `0`
 pass/warn/not_evaluable · `2` blocking (fail) · `1` usage/parse error — so it drops straight into a CI step.
 
 ## Gated live exercises

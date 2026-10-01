@@ -1,17 +1,18 @@
 ---
-title: Bring Your Own IaC
+title: Bring your own IaC
 description: Point a project environment at your own OpenTofu root module so Alethia provisions from it instead of the built-in template, behind a static safety scan.
 ---
 
-# Bring Your Own IaC
+# Bring your own IaC
 
 Alethia normally provisions an environment from its built-in per-cloud template. **Bring-your-own IaC**
 lets you point that environment at a git repo holding your **own OpenTofu root module** — Alethia
 plans, scans, and applies *your* module instead. This is a **replace-mode** capability: the module
 takes over the environment, and the built-in template no longer applies.
 
-This guide covers attaching a module, reading its safety scan, and detaching it. For the design behind
-the safety gate and the module contract, see [Bring Your Own IaC (concepts)](/concepts/bring-your-own-iac).
+This guide covers writing a minimal module, attaching it, reading its safety scan, and detaching it.
+For why the safety gate exists, what it blocks, the variable and cluster-output contracts, and who
+may run a module, see [bring-your-own IaC](/concepts/bring-your-own-iac).
 
 <Callout type="warn">
 Bring-your-own IaC is **opt-in**, enabled per instance with `ALETHIA_BYO_IAC_ENABLED=true`. With the
@@ -27,6 +28,45 @@ enabled on your instance.
 - Use an environment with **no deployed (or in-flight) template infrastructure**. A replace-mode
   module would orphan existing template state, so attaching is rejected until you destroy that
   environment first.
+
+## Write a minimal module
+
+The smallest valid module needs no cluster and no cloud. A `random`/`null` module exercises the whole
+path (attach → scan → plan → deploy → destroy) at zero spend. Put it in a repo directory, for example
+`envs/dev/`:
+
+```hcl
+# main.tf — a minimal bring-your-own IaC module
+terraform {
+  required_providers {
+    random = { source = "hashicorp/random" } # on the default allowlist
+  }
+  # No backend block needed — Alethia overrides it with its state proxy.
+}
+
+# Platform context from the frozen Alethia contract (declare only what you use).
+variable "alethia_project"     { type = string }
+variable "alethia_environment" { type = string }
+
+# Your own variables (any name NOT starting with alethia_).
+variable "greeting" {
+  type    = string
+  default = "hello"
+}
+
+resource "random_pet" "name" {
+  prefix = "${var.alethia_project}-${var.alethia_environment}"
+}
+
+output "pet"      { value = random_pet.name.id }
+output "greeting" { value = var.greeting }
+```
+
+To provision a real cluster instead, emit the outputs in
+[the cluster-output contract](/concepts/bring-your-own-iac#the-cluster-output-contract) and grant the
+runner identity cluster-admin, as
+[Required: your module must self-admin the cluster](/concepts/bring-your-own-iac#required-your-module-must-self-admin-the-cluster)
+describes.
 
 ## Attach a module
 
@@ -67,12 +107,12 @@ Once attached, the module appears on the canvas as an **External IaC** card carr
 repo, ref, path, the commit the scan pinned, and a scan-status chip. Select the chip to open the
 **IaC safety scan** sheet.
 
-The scan clones the repo, pins the commit it checked out, inventories the module's providers and module
-sources, and runs `tofu validate` plus the static `iacsafety` checks. The sheet shows:
+The scan runs the [static safety gate](/concepts/bring-your-own-iac#the-static-safety-gate) and
+`tofu validate` against the commit it pinned. The sheet shows:
 
 - A **verdict** — "No blocking issues found", or "Issues found — resolve before deploying".
-- A **`tofu validate`** status pill and a per-severity summary (`critical`, `high`, `medium`, `low`,
-  `info`).
+- A **`tofu validate`** status pill and a count per severity. A finding is `error` (blocks the
+  deploy) or `warning` (surfaced, not blocking).
 - **Finding cards**, worst-first — each with a rule id, a `file:line` coordinate, and a detail message.
 - The **providers** and **modules** the scan discovered.
 
@@ -109,24 +149,10 @@ environment is in an active or in-flight status), detaching would drop the only 
 infrastructure — destroy the environment first, then detach.
 </Callout>
 
-## Bring your own Helm chart
-
-Alongside a full OpenTofu module, you can attach a single **Helm chart** from a git repo. Open the
-command menu (⌘K), choose **Bring your own Helm chart** from **Sources**, and step through
-**Repository → Chart path → Ref → Review**:
-
-- **Chart path** — the directory inside the repo that contains `Chart.yaml`.
-- **Ref** — the branch, tag, or commit ArgoCD tracks (blank for `HEAD`).
-- **Review** — set the chart **name**, target **namespace** (defaults to `default`), and optional Helm
-  **values**.
-
-The chart is deployed and governed on the cluster through ArgoCD, and it syncs on the next deploy. For
-scanning the chart, describing the workloads it deploys, and binding them to your infrastructure, see
-[Bring Your Own Helm Charts](/guides/design-project/bring-your-own-charts).
-
 ## See also
 
-- [Bring Your Own IaC (concepts)](/concepts/bring-your-own-iac) — the safety gate and module contract.
-- [Bring Your Own Helm Charts](/guides/design-project/bring-your-own-charts) — the chart workflow.
+- [Bring-your-own IaC](/concepts/bring-your-own-iac) — the safety gate and module contract.
+- [Bring your own Helm charts](/guides/design-project/bring-your-own-charts) — attach a single Helm
+  chart instead of a whole module.
 - [The Canvas](/guides/design-project/the-canvas) — where sources and their cards live.
 - [Git providers](/guides/connectors/git-providers) — connecting the repo host.

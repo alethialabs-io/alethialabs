@@ -67,7 +67,7 @@ canonical.
 ### Picks up jobs
 A push wake stream (SSE) signals when a job is claimable; the runner calls `POST /api/jobs/claim` on
 each wake, with a 30-second safety poll as the fallback if the stream drops. See
-[Job Queue Pattern](/concepts/job-queue).
+[Job queue](/concepts/job-queue).
 
 ### Claims atomically
 PostgreSQL `claim_next_job()` with `FOR UPDATE SKIP LOCKED` prevents double-execution.

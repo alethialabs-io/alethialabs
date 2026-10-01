@@ -45,7 +45,7 @@ Both templates are `tofu validate`-clean.
 
 `packages/core/manifests` renders a hardened Deployment/Service/Ingress per detected service
 (`FromServices` → `WriteManifests`): non-root, `drop: [ALL]`, read-only rootfs, resource limits, no
-privilege escalation — so the generated manifests **pass the k8s [audit](/reference/control-catalog) by
+privilege escalation — so the generated manifests **pass the Kubernetes [audit](/reference/control-catalog) by
 construction**. At deploy, `RunDeployV2` commits them to the GitOps repo **only when the repo has no
 manifests yet** (`hasManifests` guard):
 

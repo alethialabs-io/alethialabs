@@ -78,12 +78,7 @@ over, who is asking, and how long is left — every field from the registration 
 link, so nothing it returns is under the sender's control except the codes, which must match what
 was registered.
 
-<Callout type="warn">
-  **The page does not read that route yet.** The endpoint and the columns behind it ship ahead of
-  the screen that displays them; the richer consent screen is the page rebuild tracked in #3889 and
-  #3631. Until then the browser shows the `user_code` and a generic prompt, and this section
-  describes the route's contract rather than what a user currently sees.
-</Callout>
+The page's consent screen (`cli-request.tsx`) reads this route to show those fields.
 
 ### Approve in the browser
 The page `POST`s to `/api/auth/cli/generate`. That route binds the `device_code` to

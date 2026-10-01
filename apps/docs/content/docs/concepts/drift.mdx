@@ -1,9 +1,9 @@
 ---
-title: Drift Detection
-description: How Alethia runs scheduled refresh-only OpenTofu plans to detect when live cloud infrastructure diverges from its provisioned state, and records a per-environment drift posture.
+title: Drift detection
+description: How Alethia runs scheduled refresh-only OpenTofu plans to detect when live cloud infrastructure diverges from its provisioned state, records a per-environment drift posture, and what that posture means on the Evidence page.
 ---
 
-# Drift Detection
+# Drift detection
 
 Provisioning proves an environment matches its configuration at one moment — the moment of apply. Drift
 detection is the other half: it **keeps proving it**. On a recurring schedule, Alethia reconciles each
@@ -50,7 +50,7 @@ The posture the runner produces carries:
 
 - `in_sync` — `true` when no managed resource has drifted.
 - `drifted` — the count of diverged managed resources.
-- `details` — one entry per drifted resource: its Terraform `address`, its `type`, and its `kind`.
+- `details` — one entry per drifted resource: its OpenTofu `address`, its `type`, and its `kind`.
 - `unmanaged` / `unmanaged_known` — the honest-coverage fields described above.
 - `scanned_at` — an RFC3339 timestamp for when the refresh-only plan was taken.
 
@@ -74,6 +74,9 @@ by environment criticality so provider-API cost stays bounded, with production r
 
 An environment's stage maps onto a tier via `tierForStage`, and an environment that has never been
 checked is always due. The selection itself is the unit-tested, deterministic `selectDueForDrift`.
+
+The sweep runs **in-process**, driven by the reconcile loop (`lib/reconcile/loop.ts`).
+`/api/internal/drift/sweep` exposes the same sweep to an external scheduler; nothing calls it today.
 
 ### 2. Enqueue — one job per due environment
 
@@ -105,10 +108,10 @@ It reconstructs the project config from the snapshot, then runs `RunDriftDetecti
 The runner posts the posture back on the job's `execution_metadata.drift_posture`.
 
 <Callout type="warn">
-  A bring-your-own-IaC drift run executes **untrusted customer OpenTofu** — a refresh-only plan still
+  A bring-your-own IaC drift run executes **untrusted customer OpenTofu** — a refresh-only plan still
   runs provider plugins. On a managed runner this is fail-closed: `byoManagedGate` refuses the job unless
   the egress-enforced container sandbox is active, and the customer module runs inside that sandbox. See
-  [Bring Your Own IaC](/concepts/bring-your-own-iac) and
+  [bring-your-own IaC](/concepts/bring-your-own-iac) and
   [Security → Execution isolation](/concepts/security#execution-isolation-managed-untrusted-byo).
 </Callout>
 
@@ -125,18 +128,34 @@ The `environment_drift` schema (`apps/console/lib/db/schema/drift.ts`) stores:
 |--------|---------|
 | `in_sync` | `true` when no managed resource has drifted. |
 | `drifted` | Count of diverged resources. |
-| `details` | Per-resource drift list (Terraform address, type, kind). |
+| `details` | Per-resource drift list (OpenTofu address, type, kind). |
 | `scanned_at` | When the refresh-only plan was taken (runner-supplied). |
 
 If the environment drifted, the status route may also consider auto-healing it. Auto-heal is opt-in, and
 production stays approval-gated.
+
+### Running a check on demand
+
+Besides the schedule, you can queue a `DETECT_DRIFT` job for one environment from the canvas **Run**
+menu with **Detect drift**. It runs the same refresh-only plan and records the posture the same way.
+
+## What the Evidence page shows
+
+The Evidence page and the drawer's **Drift** tab render the stored posture as one mark per environment:
+
+| Mark | Meaning |
+| --- | --- |
+| **In sync** | The last refresh-only plan found no managed resource had drifted. |
+| **N drifted** | That many managed resources diverged from the provisioned state. |
+| **Not scanned** | No drift check has run for this environment yet — an honest unknown, never a green pass. |
 
 ## Reading the posture
 
 The stored posture is the single source consumers read. The latest posture for a project (optionally
 scoped to one environment) is available through `getLatestDriftPosture`, which is authorization-gated and
 returns `null` when no `DETECT_DRIFT` job has run yet. This is the read behind the assistant's
-`get_drift_posture` tool; the CLI's drift endpoint and other server-side reads query the same
+[`get_drift_posture`](/concepts/elench/agent-runtime) tool, which external agents can also call over
+MCP; the CLI's drift endpoint and other server-side reads query the same
 `environment_drift` table directly through their own authorization-scoped queries rather than calling
 that function.
 
@@ -148,11 +167,11 @@ that function.
 
 ## Where it fits
 
-Drift detection is the continuous companion to the apply-time verification gate. The provisioning gate
-proves an environment is correct when it is built; drift detection proves it stays correct afterward, and
-feeds the same evidence timeline. Together they back the claim that Alethia does not just stand
+Drift detection is the continuous companion to the apply-time [Elench](/concepts/elench) verification
+gate: verification checks the **plan** before apply; drift checks the **live cloud** after. Both feed the same evidence
+timeline. Together they back the claim that Alethia does not just stand
 infrastructure up — it keeps proving the infrastructure still matches what was declared.
 
 - The plan itself: [Provisioning Pipeline](/concepts/provisioning-pipeline).
 - Where state comes from: [OpenTofu State Management](/concepts/terraform-state).
-- How untrusted modules are isolated during a drift run: [Bring Your Own IaC](/concepts/bring-your-own-iac).
+- How untrusted modules are isolated during a drift run: [bring-your-own IaC](/concepts/bring-your-own-iac).

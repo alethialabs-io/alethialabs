@@ -35,7 +35,7 @@ The engine is plan-agnostic, so the same `Report` (and receipt) shape serves thr
 |---|---|---|
 | `Evaluate(plan)` | An Alethia-generated OpenTofu plan | The apply-time gate. |
 | `ParseCustomerPlan(json)` → `Evaluate` | A **bring-your-own** `tofu show -json` plan | Audit infrastructure Alethia didn't generate — **zero control changes**. |
-| `EvaluateManifests(yaml)` | Kubernetes manifests (multi-doc) | The k8s [control set](/reference/control-catalog); `Provider` = `k8s`. |
+| `EvaluateManifests(yaml)` | Kubernetes manifests (multi-doc) | The Kubernetes [control set](/reference/control-catalog); `Provider` = `k8s`. |
 
 The **"B" flow** (bring-your-own + audit) rides the latter two: an `AUDIT` job (migration `0052`) runs on
 the runner (`executeAudit`) — parsing the customer's plan or manifests, evaluating them, and posting the
@@ -125,33 +125,7 @@ key is loaded from `ALETHIA_RECEIPT_SIGNING_KEY`; with none configured the recei
 
 ## Continuous drift — "keep proving it"
 
-`packages/core/drift` turns a `tofu plan -refresh-only -json` into a per-environment **`Posture`**
-(`in_sync`, `drifted` count, per-resource `kind` ∈ modified/deleted/other) via `Analyze(plan)`. The full
-loop is closed end-to-end:
-
-<Mermaid chart={`
-flowchart LR
-  A[sweep cron<br/>schedule] --> B[DETECT_DRIFT job<br/>migration 0044]
-  B --> C[runner<br/>refresh-only → Analyze]
-  C --> D[persist<br/>job-status route]
-  D --> E[environment_drift<br/>0051 · latest per env]
-  E --> F[read<br/>get_drift_posture + MCP]
-`} />
-
-1. A tiered scheduler (`lib/drift/schedule` + `dispatch`) enqueues checks per environment on a cadence
-   (production most often). `sweepDriftSchedule()` is driven **in-process** by the reconcile loop
-   (`lib/reconcile/loop.ts`); `/api/internal/drift/sweep` exposes the same sweep to an external
-   scheduler and is currently unwired.
-2. `DETECT_DRIFT` (migration `0044`) runs on the runner (`executeDriftDetection`) and posts the `Posture`.
-3. The job-status route persists it to **`environment_drift`** (migration `0051`, latest per environment)
-   via `recordDriftPosture`.
-4. `getLatestDriftPosture` reads it back for the UI, the assistant, and — via the
-   [`get_drift_posture`](/concepts/elench/agent-runtime) tool (audience `both`) — external agents over MCP.
-
-<Callout type="warn">
-  **Coverage is stated, not hidden.** A refresh-only plan only sees resources in state, so it detects
-  *modified* and *deleted-out-of-band* managed resources. It **cannot** see **unmanaged** resources (in
-  the cloud, not in state) — that needs a cloud inventory source (AWS Config / Cloud Asset Inventory).
-  `Posture.unmanaged_known` is `false` so a consumer never implies we checked for unmanaged resources
-  when we did not.
-</Callout>
+`packages/core/drift` turns a refresh-only plan into a per-environment **`Posture`** via
+`Analyze(plan)` — the after-apply half of the same evidence. The scheduler, the `DETECT_DRIFT` job,
+the stored posture and its honest-coverage fields are described once, in
+[Drift detection](/concepts/drift).
