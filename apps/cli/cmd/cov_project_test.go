@@ -83,6 +83,13 @@ type projServer struct {
 	jobIdx      int
 	jobErrMsg   string
 	jobMeta     map[string]any
+	// destroyTree answers GET .../destroy-tree (#5249); nil means the target alone.
+	destroyTree []map[string]any
+	// destroyRefusal makes a DESTROY without cascade answer 409 with this message, the way the
+	// control plane refuses a Fabric owner that still has live tenants.
+	destroyRefusal string
+	// cascadeJobs is returned as `cascade_jobs` when a DESTROY is queued with cascade: true.
+	cascadeJobs []map[string]any
 }
 
 // jobBody returns the next polled job document, advancing through jobStatuses and
@@ -111,6 +118,42 @@ func (s *projServer) jobBody() map[string]any {
 		body["execution_metadata"] = s.jobMeta
 	}
 	return body
+}
+
+// destroyResponse answers a DESTROY the way the #5249 control plane does — a 409 refusal without
+// cascade when destroyRefusal is set, and the cascade's job list with cascade — and reports whether
+// it answered. Reads the body the recorder already stored, since a request body reads once.
+func (s *projServer) destroyResponse(w http.ResponseWriter, r *http.Request, enc *json.Encoder) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	s.mu.Lock()
+	var body map[string]any
+	if n := len(s.posts); n > 0 {
+		body = s.posts[n-1].Body
+	}
+	refusal, cascadeJobs := s.destroyRefusal, s.cascadeJobs
+	s.mu.Unlock()
+	if body["job_type"] != "DESTROY" {
+		return false
+	}
+	cascade := body["cascade"] == true
+	if refusal != "" && !cascade {
+		w.WriteHeader(http.StatusConflict)
+		_ = enc.Encode(map[string]any{"error": refusal})
+		return true
+	}
+	if !cascade || cascadeJobs == nil {
+		return false
+	}
+	_ = enc.Encode(map[string]any{
+		"job": map[string]any{
+			"id": "j-owner", "job_type": "DESTROY", "status": "QUEUED",
+			"created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+		},
+		"cascade_jobs": cascadeJobs,
+	})
+	return true
 }
 
 // shouldFail reports whether this path is one the test asked to 500.
@@ -335,6 +378,16 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 			_ = enc.Encode(map[string]any{"components": comps})
 		}
+	case strings.HasSuffix(p, "/destroy-tree"):
+		s.mu.Lock()
+		tree := s.destroyTree
+		s.mu.Unlock()
+		if tree == nil {
+			tree = []map[string]any{{"environment_id": "e1", "name": "production", "placement_mode": "dedicated",
+				"status": "ACTIVE", "owns_fabric": true, "waiting_on": []any{}}}
+		}
+		_ = enc.Encode(map[string]any{"tree": tree})
+	case p == "/api/jobs" && s.destroyResponse(w, r, enc):
 	case p == "/api/jobs":
 		_ = enc.Encode(map[string]any{"job": map[string]any{
 			"id": "j1", "job_type": "PLAN", "status": "QUEUED",
@@ -409,6 +462,7 @@ func projResetFlags() {
 	designApplyFile = ""
 	designApplyDryRun, designApplyStage, designApplyYes = false, false, false
 	componentRemoveYes, projectDestroyYes = false, false
+	projectDestroyCascade = false
 	channelType, channelURL, channelSigningSecret, channelRoutingKey = "", "", "", ""
 	channelRecipients = nil
 	_ = projectComponentCmd.PersistentFlags().Set("project", "")

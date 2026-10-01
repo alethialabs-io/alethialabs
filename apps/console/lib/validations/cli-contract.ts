@@ -525,7 +525,20 @@ export const cliJobsPageResponse = z.object({
 	offset: z.number().int(),
 	page: pageInfoSchema,
 });
-export const cliJobResponse = z.object({ job: jobWire });
+/**
+ * One DESTROY job a cascade queued (#5249), in destroy order. Carried next to `job` — which is the
+ * TARGET's job, so a pre-cascade client reading only `job` still waits on the right thing — and
+ * present only when the destroy queued more than one job.
+ */
+export const cascadeJobWire = z.object({
+	job_id: z.uuid(),
+	environment_id: z.uuid(),
+	name: z.string(),
+});
+export const cliJobResponse = z.object({
+	job: jobWire,
+	cascade_jobs: z.array(cascadeJobWire).optional(),
+});
 /**
  * The `page` object every cursor-paged list response carries. Registered here — rather than
  * only inside the envelopes that embed it — so the shape is fixture-locked against
@@ -618,6 +631,25 @@ export const cliProjectResponse = z.object({ project: projectWire });
 export const cliEnvironmentsResponse = z.object({
 	environments: z.array(environmentWire),
 	page: pageInfoSchema,
+});
+/**
+ * One environment in a destroy tree (GET /api/cli/projects/:id/destroy-tree, #5249). The tree is the
+ * target plus every LIVE environment placed on the Fabric it owns, tenants first and the owner last —
+ * the order a cascade destroys them in. `waiting_on` is non-empty only on the owner: the tenants its
+ * DESTROY will not start before, by name and status, so a tenant whose destroy FAILED is visible
+ * rather than the owner's job waiting silently.
+ */
+export const destroyTreeNodeWire = z.object({
+	environment_id: z.uuid(),
+	name: z.string(),
+	placement_mode: z.string(),
+	status: z.string(),
+	owns_fabric: z.boolean(),
+	waiting_on: z.array(z.object({ name: z.string(), status: z.string() })),
+});
+/** GET /api/cli/projects/:id/destroy-tree result. */
+export const cliDestroyTreeResponse = z.object({
+	tree: z.array(destroyTreeNodeWire),
 });
 /** POST /api/cli/projects/:id/environments result. */
 export const cliEnvironmentResponse = z.object({ environment: environmentWire });
@@ -940,6 +972,7 @@ export const cliContract = {
 	ProjectResponse: cliProjectResponse,
 	EnvironmentsResponse: cliEnvironmentsResponse,
 	EnvironmentResponse: cliEnvironmentResponse,
+	DestroyTreeResponse: cliDestroyTreeResponse,
 	ComponentsResponse: cliComponentsResponse,
 	ComponentResponse: cliComponentResponse,
 	DriftResponse: cliDriftResponse,

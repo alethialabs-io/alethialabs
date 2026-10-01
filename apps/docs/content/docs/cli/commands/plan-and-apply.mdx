@@ -262,6 +262,7 @@ Destroy a Project's provisioned infrastructure.
 ```bash
 alethia project destroy                                                  # asks which project, then confirms
 alethia project destroy --project boutique --env prod --wait --yes       # scripted: no confirmation prompt
+alethia project destroy --project boutique --env prod --cascade --wait   # prod and every environment on its cluster
 ```
 
 | Flag | Required | Description |
@@ -271,9 +272,38 @@ alethia project destroy --project boutique --env prod --wait --yes       # scrip
 | `--env` | No | Environment name to destroy. Omitted, the project's default environment. |
 | `--runner-id` | No | Runner to execute the job, **by id only** — `destroy` has no `--runner` sibling yet. Omitted, a picker asks on a terminal; under `--no-input` the server places the job. |
 | `-y`, `--yes` | No | Skip the confirmation prompt. Required with `--no-input`. |
-| `-w`, `--wait` | No | Block until the job completes |
+| `--cascade` | No | Also destroy every environment placed on this environment's cluster, those environments first. Prints the full list, in order, and confirms before it queues anything. |
+| `-w`, `--wait` | No | Block until the job completes. With `--cascade`, until every job completes. |
 
 Queues a DESTROY job. The Runner runs `tofu destroy` to tear down all resources. OpenTofu state is preserved (it lives behind the Console state proxy, not on the Runner), so accidental destroys can be recovered by re-applying.
+
+### Destroying an environment that other environments run on
+
+A `dedicated` environment owns its cluster. `namespace` and `vcluster` environments placed on that
+cluster run inside it, and their own teardown needs the cluster to still exist. So while any of them
+is live, destroying the `dedicated` environment is **refused**, and the error names each one:
+
+```text
+Environment "prod" owns the cluster that 2 other environments are still placed on:
+dev-1 (namespace, ACTIVE), staging (vcluster, FAILED). ...
+Re-run with --cascade to see every environment it would destroy and confirm
+```
+
+An environment that was never applied (`DRAFT`) or is already `DESTROYED` does not count. Destroying
+a `namespace` or `vcluster` environment is never refused for this reason.
+
+Either destroy the listed environments first, or pass `--cascade`. It prints what it will destroy,
+then asks:
+
+```text
+Will destroy, in order: dev-1 (namespace), staging (vcluster, failed), prod (dedicated, owns the cluster)
+```
+
+The order is enforced by the Console, not by timing: the DESTROY of `prod` stays `QUEUED`, and no
+Runner can start it, until no live environment is left on its cluster. If the destroy of `dev-1` or
+`staging` fails, `prod` keeps waiting. `--wait` stops at the failed job and names the two ways out:
+destroy the failed environment again, or cancel the waiting job with
+[`alethia jobs cancel`](/cli/commands/jobs).
 
 `--project` and `--project-id` name the same field, so passing both is an error rather than a
 precedence rule. The command they are being passed to is `destroy`: quietly preferring one of them
