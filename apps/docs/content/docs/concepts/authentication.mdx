@@ -41,7 +41,7 @@ The provider redirects back to `/api/auth/[...all]` with an authorization code. 
 Better Auth creates a **server-side session** (a row in the `session` table) and sets a signed,
 HTTP-only session cookie. The web session is a cookie-backed Better Auth session — **not** a JWT (the
 `jwt()` plugin is not enabled); JWTs are used only for the CLI and workload identity (see
-[**Standards → JOSE**](/standards/jose)).
+[**Standards → JOSE**](/reference/standards/jose)).
 
 </Steps>
 
@@ -57,7 +57,7 @@ For password-less email sign-in, the user enters their email, receives a **6-dig
 - Coarse Postgres RLS keyed on `org_id` enforces per-organization data isolation (not `auth.uid()`)
 
 Authentication is *who you are*; **authorization** is *what you can do*. Once you're signed in, the PDP decides
-every action — see [**Access Control**](/access-control) for roles, permissions, grants (allow/deny), and the
+every action — see [**Access Control**](/concepts/access-control) for roles, permissions, grants (allow/deny), and the
 org/team model.
 
 ## CLI Authentication (alethia)
@@ -66,7 +66,7 @@ alethia uses a **Device Authorization Grant** flow ([RFC 8628](https://www.rfc-e
 — the same browser-hands-off-to-terminal pattern as GitHub CLI, Azure CLI, and AWS SSO. Alethia's flow
 is a **simplified variant**: the CLI generates both the `device_code` and the `user_code` and carries
 them in the browser URL, so the `user_code` is compared rather than typed. See
-[**Standards → Device Code**](/standards/device-code) for the full protocol mapping.
+[**Standards → Device Code**](/reference/standards/device-code) for the full protocol mapping.
 
 ### Why Device Code?
 

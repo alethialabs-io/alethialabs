@@ -1801,7 +1801,7 @@ func TestProj_PickerOptionsAreTheGeneratedVocabulary(t *testing.T) {
 	if got := placementModes(); !equalStrings(got, wantModes) {
 		t.Errorf("the placement vocabulary changed: %v (was %v).\n"+
 			"      That is allowed — update this literal, placementDescriptions, and the docs table\n"+
-			"      in apps/docs/content/docs/cli/commands/project.mdx together.", got, wantModes)
+			"      in apps/docs/content/docs/reference/cli/project.mdx together.", got, wantModes)
 	}
 	if got := environmentStages(); !equalStrings(got, wantStages) {
 		t.Errorf("the stage vocabulary changed: %v (was %v). Update this literal and the docs table.", got, wantStages)
@@ -2431,7 +2431,7 @@ func TestHygCliProject_EveryLeafThatAsksCanBeScripted(t *testing.T) {
 // projectDocsPath is the group's docs page, which the issue puts in this lane's scope
 // deliberately: a group whose commands change and whose page does not is how the
 // `<placeholder>` handoffs survive.
-const projectDocsPath = "../../../apps/docs/content/docs/cli/commands/project.mdx"
+const projectDocsPath = "../../../apps/docs/content/docs/reference/cli/project.mdx"
 
 // readProjectDocs loads the page, failing loudly rather than treating an unreadable file as
 // an empty one — a guard whose "nothing found" branch is the same as its "nothing wrong"

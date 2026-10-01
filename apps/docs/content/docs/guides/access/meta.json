@@ -1,0 +1,13 @@
+{
+	"title": "Organizations & access",
+	"pages": [
+		"organizations",
+		"members-and-invitations",
+		"teams",
+		"custom-roles",
+		"grants-and-scopes",
+		"access-portal",
+		"sso",
+		"activity-log"
+	]
+}

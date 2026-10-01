@@ -551,7 +551,7 @@ func TestWriteFindingsRendersTheWaiverExpiryThroughTheSharedRule(t *testing.T) {
 // --- the docs page --------------------------------------------------------------------------
 
 // verifyDocsPath is the group's docs page, resolved from this package.
-const verifyDocsPath = "../../../apps/docs/content/docs/cli/commands/verify.mdx"
+const verifyDocsPath = "../../../apps/docs/content/docs/reference/cli/verify.mdx"
 
 // TestVerifyDocs_SelectorTableMatchesTheSpec compares the flags the page documents against the
 // flags the spec produces, in both directions. The docs are a SEPARATE artifact — nothing

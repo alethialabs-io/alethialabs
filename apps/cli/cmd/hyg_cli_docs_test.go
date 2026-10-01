@@ -44,7 +44,7 @@ import (
 // Without that, a `alethia members list` example on the org group's page fails as foreign to `org`,
 // and the only way to register the group would be to split the docs.
 var docsGroups = map[string]string{
-	// group command → docs page basename under apps/docs/content/docs/cli/commands
+	// group command → docs page basename under apps/docs/content/docs/reference/cli
 	"cluster": "clusters",
 	"addon":   "addons",
 	"agent":   "agents",
@@ -91,7 +91,7 @@ func docsRepoRoot() string { return filepath.Join("..", "..", "..") }
 
 // docsPagePath resolves a page basename to its file.
 func docsPagePath(page string) string {
-	return filepath.Join(docsRepoRoot(), "apps", "docs", "content", "docs", "cli", "commands", page+".mdx")
+	return filepath.Join(docsRepoRoot(), "apps", "docs", "content", "docs", "reference", "cli", page+".mdx")
 }
 
 // docsRead reads a file that the guard's verdict depends on. An unreadable one is a FAILURE and

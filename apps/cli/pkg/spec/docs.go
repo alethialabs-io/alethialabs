@@ -13,7 +13,7 @@ import (
 //
 // # The marker convention already exists, and this generates into it
 //
-// `apps/docs/content/docs/cli/**` carries fifty `{/* fieldspec: <command> */}` markers, each
+// `apps/docs/content/docs/reference/cli/**` (and `get-started/`) carries fifty `{/* fieldspec: <command> */}` markers, each
 // followed by a GFM table whose rows five near-identical Go tests assert cell-for-cell:
 // hyg_cli_authform_test.go, hyg_cli_byoform_test.go, hyg_cli_govform_test.go,
 // hyg_cli_orgform_test.go and ops_form_test.go, plus jobs_select_test.go and

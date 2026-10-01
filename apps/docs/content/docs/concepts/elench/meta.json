@@ -1,0 +1,15 @@
+{
+	"title": "Elench",
+	"icon": "BadgeCheck",
+	"pages": [
+		"index",
+		"architecture",
+		"engine-internals",
+		"drift",
+		"security-scanning",
+		"receipts",
+		"agent-runtime",
+		"multi-cloud",
+		"extending"
+	]
+}

@@ -19,7 +19,7 @@ import "github.com/spf13/cobra"
 //	           at a terminal. It never asks something the argument cannot answer.
 //	manifest   none, and deliberately: a cluster is not declared, it is the OUTPUT of a project's
 //	           environment. `alethia.yaml` has no cluster key to keep in step with this one.
-//	docs       apps/docs/content/docs/cli/commands/clusters.mdx, whose examples are executed
+//	docs       apps/docs/content/docs/reference/cli/clusters.mdx, whose examples are executed
 //	           against this tree by TestHygCliDocs_EveryDocumentedExampleResolves.
 //
 // `cluster list` takes no input beyond the global flags, so it has no form — there is nothing to

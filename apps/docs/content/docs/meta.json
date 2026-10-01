@@ -3,17 +3,11 @@
 	"root": true,
 	"pages": [
 		"index",
+		"get-started",
 		"tutorials",
-		"editions",
-		"compare",
-		"console",
-		"cli",
-		"elench",
-		"isolated-execution",
-		"runner",
-		"access-control",
-		"standards",
-		"self-hosting",
-		"concepts"
+		"guides",
+		"reference",
+		"concepts",
+		"editions"
 	]
 }

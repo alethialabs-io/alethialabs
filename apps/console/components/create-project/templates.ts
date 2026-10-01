@@ -41,7 +41,7 @@ export interface TemplateOption {
 
 /**
  * The picker's catalogue, keyed on {@link TemplateId}. STATIC ON PURPOSE: the three starter
- * repositories are public and fixed (`apps/docs/content/docs/console/design-project/starter-templates.mdx`),
+ * repositories are public and fixed (`apps/docs/content/docs/guides/design-project/starter-templates.mdx`),
  * so the screen never asks GitHub anything at render time.
  *
  * WHAT A TEMPLATE DOES NOT CHANGE: the cluster. All three create the same CPU node pool —

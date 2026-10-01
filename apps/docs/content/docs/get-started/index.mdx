@@ -1,0 +1,106 @@
+---
+title: Getting Started
+description: Quick start guide — sign up, connect a cloud provider, design a Project, and deploy.
+---
+
+# Getting Started
+
+This guide walks through the complete flow from sign-up to a running Kubernetes cluster with ArgoCD.
+
+## Prerequisites
+
+- An AWS, GCP, or Azure account with admin-level access
+- A GitHub, GitLab, or Bitbucket account
+
+## The Flow
+
+<Steps>
+
+### Sign Up
+
+Open the Console and sign in with a supported social provider (GitHub, GitLab, Bitbucket, or Google) or with a 6-digit email OTP. Your account is created automatically on first login.
+
+After sign-in, you'll land on the dashboard — empty, with no projects or jobs.
+
+### Connect a Cloud Provider
+
+Go to **Connectors** in the sidebar. Connect your cloud account:
+
+<Tabs items={["AWS", "GCP", "Azure"]}>
+  <Tab value="AWS">
+    1. Click **Connect** on the AWS card
+    2. Run the setup script in **AWS CloudShell** (or apply the OpenTofu module) — it creates an IAM OIDC provider trusting the Alethia issuer + a role (no access keys, no external id)
+    3. Paste the resulting **Role ARN** back into Alethia
+    4. Alethia verifies the new cloud identity by assuming the role via `AssumeRoleWithWebIdentity`
+  </Tab>
+  <Tab value="GCP">
+    1. Click **Connect** on the GCP card
+    2. Run the provided setup script (or OpenTofu module) — it creates the **Workload Identity Pool** + OIDC provider + provisioner service account in your project
+    3. Enter the two values it prints — **Project ID** and **Project Number** (Alethia assembles the WIF config; there is no JSON to copy)
+    4. Alethia verifies the new cloud identity via Workload Identity Federation
+  </Tab>
+  <Tab value="Azure">
+    1. Click **Connect** on the Azure card
+    2. Run the setup script in **Azure Cloud Shell** — it creates a **User-Assigned Managed Identity** in your own subscription with a federated credential trusting the Alethia issuer, and a least-privilege provisioning role (you register no app, store no secret)
+    3. Enter the three values it prints — **Tenant ID**, **Subscription ID**, and the identity's **Client ID**
+    4. Alethia verifies by authenticating **as that identity** via a federated token exchange (no client secret)
+  </Tab>
+</Tabs>
+
+See [Connectors](/guides/connectors) for detailed setup guides per provider.
+
+### Connect a Git Provider
+
+On the same Connectors page, click **Connect** on GitHub (or GitLab/Bitbucket). This uses standard OAuth — authorize the app, and you're connected.
+
+### Design a Project
+
+Start a new project — there's no persistent "Design a Project" sidebar item; use a **Create a project**
+CTA (e.g. from the Jobs or Clusters empty state), which opens the design workbench at `~/new`. It's a
+node-graph canvas where each infrastructure domain is a configurable node:
+
+- **Project Basics** — name your project, select environment (production/staging/dev)
+- **Network** — create a new VPC or select an existing one
+- **Cluster** — choose Kubernetes version, instance types, node scaling
+- **Database** — add Aurora/Cloud SQL/Azure Database instances
+- **Cache** — add Redis/Valkey instances
+- Additional nodes for NoSQL, messaging, DNS, secrets, container registries, and repositories
+
+The **cost sidebar** shows estimated monthly costs as you configure. Click **Create project** when ready.
+
+### Plan
+
+From the project detail page, click **Plan**. Select a Runner (or "Any available") to execute. The Runner runs `tofu plan` and streams the output in real-time.
+
+Review the plan: how many resources will be created, what they'll cost.
+
+### Apply
+
+Click **Apply** to provision the infrastructure. The Runner runs the [verify gate](/guides/jobs/plan-and-apply#verify-gate) then `tofu apply`, provisions all resources, installs ArgoCD, and reports back with cluster credentials.
+
+### Access Your Cluster
+
+Go to **Clusters** in the sidebar. Your new cluster shows:
+- Cluster endpoint
+- ArgoCD URL, plus a command to retrieve the admin password
+- kubeconfig command (generated for AWS clusters)
+
+### Ask Elench
+
+Click **Ask AI** (top-right) to open [Elench](/guides/assistant), the in-console assistant. Ask it
+*"Build a dashboard of my infrastructure"* or *"Are my connectors healthy?"* — it answers from your real
+state as stat cards and charts, and can propose changes for you to approve.
+
+</Steps>
+
+<Callout type="info">
+Full cluster provisioning takes ~20 minutes (EKS) due to AWS control plane creation time. The Alethia UI shows real-time progress via log streaming.
+</Callout>
+
+## What's Next?
+
+- **[Dashboard](/guides/dashboard)** — manage projects
+- **[Assistant (Elench)](/guides/assistant)** — the in-console AI: workspaces, a knowledge base, dashboards, artifacts
+- **[Design a Project](/guides/design-project)** — deep dive into each form section
+- **[Jobs](/guides/jobs)** — understand job types and monitoring
+- **[Concepts](/concepts)** — technical deep dives on security, job queues, real-time, etc.

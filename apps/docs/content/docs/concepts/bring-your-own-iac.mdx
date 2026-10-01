@@ -37,7 +37,7 @@ fetched at `init` time; an `external` data source executes a program during `pla
    expressions, never runs `tofu`, never fetches remote modules — and blocks anything dangerous before a
    single `tofu` command runs.
 2. The **execution sandbox** (on the managed fleet) that contains a hostile provider even if it slips the
-   gate. See [Isolated Execution](/isolated-execution).
+   gate. See [Isolated Execution](/concepts/isolated-execution).
 
 The gate is the first line; the sandbox is the backstop. Neither is trusted alone.
 
@@ -136,7 +136,7 @@ proxy**. So:
   authoritative state and no object-storage credential — one job's token can only touch its own state.
 
 See [OpenTofu State Management](/concepts/terraform-state) for the state model, and
-[Isolated Execution](/isolated-execution) for how the state-proxy source-drop is part of the sandbox.
+[Isolated Execution](/concepts/isolated-execution) for how the state-proxy source-drop is part of the sandbox.
 
 ## Cluster wiring is opportunistic
 
@@ -201,7 +201,7 @@ install **401s** and the deploy fails at the GitOps step. Grant it in-module, at
 
 ## Verification: the same gate as templates
 
-A BYO plan flows through the **same fail-closed [elench](/elench) verify gate** as template
+A BYO plan flows through the **same fail-closed [elench](/concepts/elench) verify gate** as template
 provisioning — the deterministic controls (keyless / least-privilege / OIDC-sub, with honest
 `not_evaluable` for what the plan can't show) run between `tofu plan` and `tofu apply`, and a hard
 control failure blocks the apply unless an authorized override waives it. Every plan/apply also produces
@@ -258,8 +258,8 @@ determines whether it is available:
 <Callout type="warn">
   **Managed BYO IaC is trusted-only / gated until the isolation canary passes.** Do not assume managed
   availability. The container sandbox and its turn-on sequence are documented in
-  [Isolated Execution → Architecture](/isolated-execution/architecture) and the
-  [Managed provisioning runbook](/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b).
+  [Isolated Execution → Architecture](/concepts/isolated-execution/architecture) and the
+  [Managed provisioning runbook](/guides/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b).
   Self-hosted BYO IaC is available today under the flag.
 </Callout>
 
@@ -323,11 +323,11 @@ auto-queues the `IAC_SCAN`; once it lands `done`, the commit is pinned and Plan/
 ## Where to go next
 
 <Cards>
-  <Card title="Isolated Execution" href="/isolated-execution">
+  <Card title="Isolated Execution" href="/concepts/isolated-execution">
     The per-job container sandbox that contains untrusted BYO code on the managed fleet — the runtime
     backstop behind the static gate.
   </Card>
-  <Card title="Elench (verification)" href="/elench">
+  <Card title="Elench (verification)" href="/concepts/elench">
     The fail-closed verify gate and signed evidence receipt every plan/apply flows through.
   </Card>
   <Card title="OpenTofu State" href="/concepts/terraform-state">

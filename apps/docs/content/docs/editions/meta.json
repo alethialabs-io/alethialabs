@@ -1,6 +1,11 @@
 {
-  "title": "Editions",
-  "icon": "Gem",
-  "root": true,
-  "pages": ["index", "feature-matrix", "licensing", "enterprise-setup"]
+	"title": "Editions",
+	"icon": "Gem",
+	"root": true,
+	"pages": [
+		"index",
+		"feature-matrix",
+		"licensing",
+		"compare"
+	]
 }

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The template catalogue behind the Configure screen's picker (#4110). The starter repositories are
-// written down in `apps/docs/content/docs/console/design-project/starter-templates.mdx`; these pin
+// written down in `apps/docs/content/docs/guides/design-project/starter-templates.mdx`; these pin
 // the catalogue to the same three names and to the one decision it must not drift from — no
 // template provisions a GPU.
 

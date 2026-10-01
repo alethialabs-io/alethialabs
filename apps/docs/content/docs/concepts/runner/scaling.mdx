@@ -1,0 +1,143 @@
+---
+title: Warm-pool scaling
+description: How the managed fleet sizes itself — the in-app scaler's 60s warm-pool loop over cheap Hetzner VMs.
+---
+
+# Warm-pool scaling
+
+The managed fleet has no standing capacity to pay for when idle. Instead of a fixed set of
+always-on runners, an **in-app scaler** sizes a per-provider warm pool by queue depth: it creates
+cheap VMs when jobs back up and destroys them when the backlog clears. There is no separate
+scaling service — the loop runs inside the Console process (`apps/console/lib/fleet/`).
+
+<Callout type="warn">
+  **The old mechanism is retired.** The managed fleet used to be AWS ECS Fargate services scaled by
+  a Python Lambda on an EventBridge schedule (`infra/fleet-aws`). That is gone. There is no Lambda,
+  no EventBridge rule, and no `ecs:UpdateService` desired-count toggle in the managed path. ECS
+  Fargate survives only in the **self-deployed** runner template (`infra/templates/runner/aws/`) —
+  see [Self-operated runners](/guides/runners/self-operated). For the conceptual overview see
+  [Runner scaling](/concepts/runner-scaling); for the managed-fleet operator's guide see
+  [Managed provisioning](/guides/self-hosting/managed-provisioning).
+</Callout>
+
+## The loop
+
+`startFleetScaler()` (`apps/console/lib/fleet/scaler.ts`) arms a `setInterval` on a **60-second**
+tick (`TICK_INTERVAL_MS = 60_000`) whenever `ALETHIA_DATABASE_URL` is set. Pools live in the
+database and are read fresh each tick, so a tick with zero enabled pools is a cheap no-op and a
+newly-created pool converges without a restart. On top of the interval, every job enqueue calls
+`wakeFleetScaler()` (≈15 call sites), so a fresh `QUEUED` job doesn't wait up to a minute for the
+next tick.
+
+<Mermaid chart={`
+sequenceDiagram
+  participant T as 60s tick / enqueue wake
+  participant S as scheduleTick (serializer)
+  participant C as reconcileAll (controller)
+  participant P as plan (pure planner)
+  participant H as FleetProvider (hcloud)
+  T->>S: request a pass
+  S->>C: run exactly one pass (coalesce concurrent wakes)
+  C->>C: observe reality (runners, backlog, peak)
+  C->>P: plan(target, observed)
+  P-->>C: create / drain / destroy actions
+  C->>H: apply actions
+  C->>C: append fleet_actions ledger row
+`} />
+
+`scheduleTick()` guarantees **at most one pass is ever in flight** per process: a wake that arrives
+mid-pass coalesces into a single follow-up rather than launching a second concurrent read → plan →
+act (two overlapping passes would each read the same stale VM list and both create for the same
+backlog, over-provisioning past the pool max). This serializer is per-process; true multi-replica
+safety needs a Postgres advisory lock, and today prod is a single box (see the `scaler.ts` header).
+
+## Sizing: `targetCount`
+
+The desired healthy-instance count is a pure function (`plan.ts`, `targetCount`):
+
+```ts
+demand = max(recentPeak, ceil(backlog / slotsPerRunner))
+target = clamp(max(warmMin, demand + buffer), 0, max)
+```
+
+| Input | Source | Meaning |
+|-------|--------|---------|
+| `backlog` | `deps.backlog(provider)` | `QUEUED` jobs targeting this provider |
+| `recentPeak` | `deps.recentPeak(provider)` | in-flight (`CLAIMED`/`PROCESSING`) jobs — auto-grows the floor |
+| `slotsPerRunner` | pool config | concurrent jobs per runner (`ALETHIA_RUNNER_SLOTS`) |
+| `warmMin` | pool config | warm floor — never plan the online count below this |
+| `buffer` | pool config | N+1 headroom above demand |
+| `max` / `surge` | pool config | hard ceiling; `surge` is transient headroom for rollouts |
+
+Scale-down is not a desired-count decrement. A surplus online VM is **drained** (marked `DRAINING`
+so it stops claiming but finishes its in-flight job); once it goes idle the next tick **destroys**
+it, and `deps.retire()` closes its `runner_usage_sessions` billing row. Dead instances (no
+registration past the boot grace) are reaped directly. Placement is location-aware: below-min
+locations fill first, then least-loaded (`minPerLocation`).
+
+## Provider seam
+
+`getFleetProvider()` (`provider.ts`) selects the `FleetProvider` implementation. Default is
+`manual` (a no-op — nothing is provisioned); **`FLEET_PROVIDER=hcloud`** selects the Hetzner
+provider (`hcloud.ts`). The provider is a thin `list` / `create` / `destroy` over the Hetzner REST
+API (`https://api.hetzner.cloud/v1`, plain `fetch`, no SDK) — all diff logic lives in the pure
+planner, so the whole reconcile is unit-testable against a fake world (`fake-provider.ts`).
+
+### VM shape and self-registration
+
+`create` boots a Hetzner VM (default `HCLOUD_SERVER_TYPE=cax21`, an ARM instance;
+`HCLOUD_IMAGE=ubuntu-24.04`) whose **cloud-init** does a single `docker run` of the per-cloud
+runner image from GHCR:
+
+```
+ghcr.io/alethialabs-io/runner-${provider}:${tag}
+```
+
+The VM carries **no long-lived credential**. It self-registers with a per-VM, short-TTL
+**`ALETHIA_RUNNER_BOOTSTRAP_TOKEN`** (minted per `create`, swept by `sweepBootstrapTokens`), and
+once registered the runner mints cloud auth per job via keyless OIDC and reaches tofu state through
+the Console state proxy. There is no static cloud key baked into the image or the cloud-init. (An
+`INSTANCE_ID` override lets several runners on one host register distinctly.)
+
+<Callout type="info">
+  The E0 container-sandbox knobs on the cloud-init (`ALETHIA_SANDBOX_BACKEND=container`,
+  egress-enforced proxy) are **inert** until enabled — trusted provisioning boots a byte-identical
+  cloud-init. See [Architecture → sandbox seam](/concepts/runner/architecture).
+</Callout>
+
+## The `fleet_actions` ledger
+
+Every applied action appends a durable row via `deps.recordAction()` — the audit trail behind each
+VM lifecycle event. Each `FleetActionRecord` (`controller.ts`) carries:
+
+| Field | Meaning |
+|-------|---------|
+| `action` | `create` \| `drain` \| `destroy` |
+| `reason` | `scale-up-demand`, `min-per-location`, `teardown`, `reap-dead`, `reap-drained`, version-rollout, … |
+| `runnerId` | correlated runner (drain/destroy); `null` for a create (the runner self-registers later) |
+| `queueDepth` | `QUEUED` backlog for the provider at decision time |
+| `poolSize` | observed online (claimable) pool size at decision time |
+
+A ledger write is best-effort and must never break a reconcile. Actual `create`/`drain`/`destroy`
+application is additionally guarded so **only one replica** applies a given provider's actions per
+tick (a `withScaleGuard` around the per-pool span), bounding cross-replica over-provisioning until
+a real DB advisory lock lands.
+
+## Cold start
+
+When the pool scales `0 → 1` for a fresh backlog:
+
+1. **Hetzner VM boot + image pull** — cloud-init pulls `runner-<provider>` from GHCR
+2. **Runner boot + self-register** — a few seconds (`POST /api/runners/bootstrap` with the bootstrap token)
+3. **First heartbeat** — `POST /api/runners/heartbeat` (30s cadence)
+4. **First job claim** — the runner drains the backlog on startup (`POST /api/jobs/claim`), then reacts to push wakes
+
+During this window the job stays `QUEUED`. The `wakeFleetScaler()` on enqueue is what starts the
+VM immediately rather than waiting for the next 60s tick.
+
+## Cost model
+
+You pay for Hetzner VM-hours only while the pool is above its warm floor, plus whatever `warmMin`
+you choose to keep hot for latency. Managed runner cost is billed by provisioned hours through the
+`runner_usage_sessions` ledger — a session opens when a managed runner comes online and closes when
+`retire()` reaps it. There is no Lambda invocation cost and no idle Fargate task.
