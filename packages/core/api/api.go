@@ -254,11 +254,25 @@ type ClusterGitops struct {
 	FailureMessage   *string `json:"failure_message"`
 }
 
-// ClusterDetail is a single cluster plus its GitOps posture (GET /api/cli/clusters/:id).
-// Mirrors cliClusterDetailResponse in cli-contract.ts.
+// ClusterKubeconfig is how to get a kubeconfig for the cluster with the caller's OWN cloud CLI
+// (#5250): Command to run, or Note saying why there is none, or both nil while the cluster has no
+// name yet. The console builds it (apps/console/lib/clusters/kubeconfig-access.ts) — the CLI only
+// renders it, so the terminal and the cluster card cannot disagree. Mirrors clusterKubeconfig in
+// cli-contract.ts.
+type ClusterKubeconfig struct {
+	Command *string `json:"command"`
+	Note    *string `json:"note"`
+}
+
+// ClusterDetail is a single cluster plus its GitOps posture and kubeconfig command
+// (GET /api/cli/clusters/:id). Mirrors cliClusterDetailResponse in cli-contract.ts.
+//
+// Kubeconfig is a pointer because a server older than #5250 does not send it; nil there means
+// "this server cannot say", not "this cloud has no command".
 type ClusterDetail struct {
-	Cluster ClusterSummary `json:"cluster"`
-	Gitops  *ClusterGitops `json:"gitops"`
+	Cluster    ClusterSummary     `json:"cluster"`
+	Gitops     *ClusterGitops     `json:"gitops"`
+	Kubeconfig *ClusterKubeconfig `json:"kubeconfig"`
 }
 
 type CloudIdentity struct {

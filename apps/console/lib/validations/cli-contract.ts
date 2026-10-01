@@ -94,10 +94,19 @@ export const clusterGitops = z.object({
 	failure_message: z.string().nullable(),
 });
 
-/** A single cluster + its GitOps posture (GET /api/cli/clusters/:id). */
+/** How to get a kubeconfig for the cluster with the caller's own cloud CLI (#5250). Built by
+ *  lib/clusters/kubeconfig-access.ts: `command` to run, or `note` saying why there is none, or
+ *  both null while the cluster has no name yet. */
+export const clusterKubeconfig = z.object({
+	command: z.string().nullable(),
+	note: z.string().nullable(),
+});
+
+/** A single cluster + its GitOps posture + its kubeconfig command (GET /api/cli/clusters/:id). */
 export const cliClusterDetailResponse = z.object({
 	cluster: clusterWire,
 	gitops: clusterGitops.nullable(),
+	kubeconfig: clusterKubeconfig,
 });
 
 /** A cloud identity (GET /api/cli/cloud-identities). `label` is computed. */
