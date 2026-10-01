@@ -184,4 +184,9 @@ export const movedPages = [
 	{ source: "/standards/scim-saml", destination: "/reference/standards/scim-saml", permanent: true },
 	{ source: "/standards/security-and-compliance", destination: "/reference/standards/security-and-compliance", permanent: true },
 	{ source: "/standards/workload-identity", destination: "/reference/standards/workload-identity", permanent: true },
+	{ source: "/tutorials/enterprise-demo", destination: "/tutorials/online-boutique", permanent: true },
+	{ source: "/tutorials/enterprise-demo-aws", destination: "/tutorials/online-boutique#step-1--connect-your-cloud-account", permanent: true },
+	{ source: "/tutorials/enterprise-demo-azure", destination: "/tutorials/online-boutique#step-1--connect-your-cloud-account", permanent: true },
+	{ source: "/tutorials/enterprise-demo-gcp", destination: "/tutorials/online-boutique#step-1--connect-your-cloud-account", permanent: true },
+	{ source: "/tutorials/enterprise-demo-hetzner", destination: "/tutorials/online-boutique#step-1--connect-your-cloud-account", permanent: true },
 ];
