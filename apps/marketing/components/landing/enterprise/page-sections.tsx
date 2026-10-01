@@ -171,10 +171,10 @@ function Organizations() {
 				},
 				label: "Access",
 				links: [
-					{ label: "Organizations", href: "/docs/access-control/organizations" },
-					{ label: "Teams", href: "/docs/access-control/teams" },
-					{ label: "Grants and scopes", href: "/docs/access-control/grants-and-scopes" },
-					{ label: "The access portal", href: "/docs/access-control/access-portal" },
+					{ label: "Organizations", href: "/docs/guides/access/organizations" },
+					{ label: "Teams", href: "/docs/guides/access/teams" },
+					{ label: "Grants and scopes", href: "/docs/guides/access/grants-and-scopes" },
+					{ label: "The access portal", href: "/docs/guides/access/access-portal" },
 				],
 			}}
 		/>
@@ -318,9 +318,9 @@ function Deployment() {
 				},
 				label: "Security",
 				links: [
-					{ label: "How credentials work", href: "/docs/runner/cloud-credentials" },
-					{ label: "Self-hosted runners", href: "/docs/runner/self-hosted" },
-					{ label: "SSO and SAML", href: "/docs/standards/scim-saml" },
+					{ label: "How credentials work", href: "/docs/concepts/runner/cloud-credentials" },
+					{ label: "Self-hosted runners", href: "/docs/guides/runners/self-operated" },
+					{ label: "SSO and SAML", href: "/docs/reference/standards/scim-saml" },
 					{ label: "Open core, honestly", href: "/open-source" },
 				],
 			}}

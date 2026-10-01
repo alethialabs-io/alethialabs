@@ -515,7 +515,7 @@ func TestJobsSelector_SpecIsRenderedOnEveryJobCommand(t *testing.T) {
 }
 
 // jobsDocsPath is the group's docs page, resolved from this package.
-const jobsDocsPath = "../../../apps/docs/content/docs/cli/commands/jobs.mdx"
+const jobsDocsPath = "../../../apps/docs/content/docs/reference/cli/jobs.mdx"
 
 // jobsDocsFlagRow matches the first cell of a markdown table row that names a flag.
 var jobsDocsFlagRow = regexp.MustCompile(`(?m)^\|\s*` + "`" + `(--[a-z-]+)` + "`")

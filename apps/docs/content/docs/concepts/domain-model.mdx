@@ -8,7 +8,7 @@ description: The entity graph — organization, project, environment, component 
 Every object in Alethia maps to one row in one Postgres table under `apps/console/lib/db/schema/`.
 This page describes that graph and the state machines its rows move through. For the canonical name
 of each concept — and the words the product deliberately avoids — start with the
-[Glossary](/concepts/glossary); this page assumes those terms.
+[Glossary](/reference/glossary); this page assumes those terms.
 
 <img src="/docs/diagrams/concepts/domain-model.svg" alt="Domain Model" />
 
@@ -29,7 +29,7 @@ flowchart TD
 - An **organization** (`org_id`) is the tenancy boundary. Coarse Postgres RLS keyed on `org_id`
   filters every org-scoped table (see [Security](/concepts/security#row-level-security-rls)).
 - A **project** (`projects`) is a declarative infrastructure *app*. It links to **exactly one**
-  [cloud identity](/concepts/glossary#connectivity) (`projects.cloud_identity_id`) and carries the
+  [cloud identity](/reference/glossary#connectivity) (`projects.cloud_identity_id`) and carries the
   `region` and `iac_version`. It owns **N** environments.
 - An **environment** (`project_environments`) is an independently-provisionable deployment target.
   This is the level most other tools collapse to 1:1 — here it is **1:N**: `staging` and `production`

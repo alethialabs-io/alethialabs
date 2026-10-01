@@ -30,7 +30,7 @@ import (
 // docsProjectPage is the reference page `project create`'s field table lives on. It is the one big
 // command that had NO fieldspec marker at all — its flag table on project.mdx was hand-written and
 // outside every guard.
-const docsProjectPage = "apps/docs/content/docs/cli/commands/project.mdx"
+const docsProjectPage = "apps/docs/content/docs/reference/cli/project.mdx"
 
 var projectCreateSpec = spec.Spec{
 	Command: "alethia project create",

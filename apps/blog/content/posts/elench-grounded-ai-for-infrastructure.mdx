@@ -57,7 +57,7 @@ Here's the part we won't compromise on:
 > **The deterministic engine is the verdict. The model only proposes.**
 
 Elench can draft a change, but it has **no write path of its own**. A proposed change is re-run through
-[Alethia's verification gate](/docs/elench) between `tofu plan` and `tofu apply`, and a real apply is
+[Alethia's verification gate](/docs/concepts/elench) between `tofu plan` and `tofu apply`, and a real apply is
 human-gated. The model is never the thing that decides your infrastructure is safe to
 change — a pure, reproducible engine is, and a person clicks the button. Turning on "Auto" mode removes
 the per-change confirmation *inside the chat*; it does not, and cannot, bypass that gate.

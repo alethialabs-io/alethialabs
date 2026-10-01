@@ -59,11 +59,11 @@ const (
 
 // Docs pages, relative to the repository root.
 const (
-	docsChartsPage = "apps/docs/content/docs/cli/commands/charts.mdx"
-	docsIacPage    = "apps/docs/content/docs/cli/commands/iac.mdx"
-	docsReposPage  = "apps/docs/content/docs/cli/commands/repositories.mdx"
-	docsDriftPage  = "apps/docs/content/docs/cli/commands/drift.mdx"
-	docsStagedPage = "apps/docs/content/docs/cli/commands/staged.mdx"
+	docsChartsPage = "apps/docs/content/docs/reference/cli/charts.mdx"
+	docsIacPage    = "apps/docs/content/docs/reference/cli/iac.mdx"
+	docsReposPage  = "apps/docs/content/docs/reference/cli/repositories.mdx"
+	docsDriftPage  = "apps/docs/content/docs/reference/cli/drift.mdx"
+	docsStagedPage = "apps/docs/content/docs/reference/cli/staged.mdx"
 )
 
 // byoFields is the spec. One entry per value a command in this group takes from a person.

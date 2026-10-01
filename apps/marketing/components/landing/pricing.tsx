@@ -94,7 +94,7 @@ function PricingOpen() {
  *
  * The `(coming soon)` filter is load-bearing, not cosmetic. The catalog's only
  * such entry is "SCIM provisioning (coming soon)", and it sits at index 4 of
- * Enterprise — inside the slice. `apps/docs/content/docs/standards/scim-saml.mdx`
+ * Enterprise — inside the slice. `apps/docs/content/docs/reference/standards/scim-saml.mdx`
  * carries an explicit "Do not represent SCIM as available" callout: there is no
  * `/scim/v2` endpoint. Without this filter the page ships it as a feature.
  */

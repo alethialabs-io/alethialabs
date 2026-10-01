@@ -38,4 +38,4 @@ export const ALETHIA_ISSUER_URL = `${(
 // other managed clouds — parity with AWS/GCP/Alibaba, no `ALETHIA_AZURE_CLIENT_ID`.
 
 /** Docs base for the connectors guides (per-cloud Terraform/CLI walk-throughs). */
-export const CONNECTOR_DOCS_BASE = "/docs/console/connectors";
+export const CONNECTOR_DOCS_BASE = "/docs/guides/connectors";

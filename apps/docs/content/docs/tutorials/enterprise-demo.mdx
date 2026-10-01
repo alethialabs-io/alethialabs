@@ -36,10 +36,10 @@ overlays, one per environment, so the two tiers differ in a way you can see.
 
 ## Before you start
 
-- **The CLI**, logged in: [installation](/cli/installation), then `alethia login`.
+- **The CLI**, logged in: [installation](/get-started/install-the-cli), then `alethia login`.
 - **A cloud account**, connected. The per-cloud page for your choice covers this.
 - **A runner.** `alethia runner register my-box` prints credentials for one you run yourself, which
-  works on any cloud — see [self-hosted runners](/runner/self-hosted).
+  works on any cloud — see [self-hosted runners](/guides/runners/self-operated).
 
 Pick your cloud now, follow its page for the connector step, then come back here:
 
@@ -152,7 +152,7 @@ alethia project plan --project-id boutique --wait
 The plan ends at a **verify gate**: Alethia reads the OpenTofu plan JSON and refuses the apply if it
 violates a control — a public database, an unencrypted volume, a security group open to the world.
 The verdict is signed, so it is evidence rather than a log line. See
-[the verification gate](/elench).
+[the verification gate](/concepts/elench).
 
 Then apply:
 
@@ -233,9 +233,9 @@ to look.
 **Proved:** that one Fabric can carry environments at different isolation levels; that each
 environment delivers its own application version through GitOps; that the apply is gated by a signed
 verify receipt — one you can check yourself with
-[`alethia verify receipt --job <id>`](/cli/commands/verify), which exits non-zero if the signature
+[`alethia verify receipt --job <id>`](/reference/cli/verify), which exits non-zero if the signature
 does not hold; and that the whole path is drivable from a terminal, so it is drivable from CI.
 
 **Did not prove:** anything about scale, failure behaviour, or day-2 operations. You built a demo on
 two nodes. Drift detection, promotion between environments, cost ceilings and the add-on marketplace
-are all real and all untouched here — see [Day-2 operations](/console) when you want them.
+are all real and all untouched here — see [Day-2 operations](/get-started/the-console) when you want them.

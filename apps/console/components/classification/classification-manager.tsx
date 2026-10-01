@@ -207,7 +207,7 @@ export function ClassificationManager() {
 				)}
 				<div className="flex-1" />
 				<a
-					href="/docs/console/classification"
+					href="/docs/guides/classification"
 					target="_blank"
 					rel="noopener noreferrer"
 					title="What is classification?"

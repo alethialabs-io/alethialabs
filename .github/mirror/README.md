@@ -28,7 +28,7 @@ docker run --rm ghcr.io/alethialabs-io/alethia --version
 
 Linux `.deb`/`.rpm`/`.apk` packages and prebuilt binaries are attached to each
 [release](https://github.com/alethialabs-io/alethialabs/releases). See the full install matrix in
-the [docs](https://alethialabs.io/docs/cli/installation).
+the [docs](https://alethialabs.io/docs/get-started/install-the-cli).
 
 ## Build from source
 
@@ -40,7 +40,7 @@ go build -o alethia .
 
 ## Documentation
 
-https://alethialabs.io/docs/cli
+https://alethialabs.io/docs/get-started/the-cli
 
 ## License
 

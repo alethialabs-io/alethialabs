@@ -818,8 +818,8 @@ func TestAddonDisable_PickerTargetsWhatItResolved(t *testing.T) {
 
 // addonDocsPages maps each group in this lane to its page.
 var addonDocsPages = map[string]string{
-	"addon": "../../docs/content/docs/cli/commands/addons.mdx",
-	"agent": "../../docs/content/docs/cli/commands/agents.mdx",
+	"addon": "../../docs/content/docs/reference/cli/addons.mdx",
+	"agent": "../../docs/content/docs/reference/cli/agents.mdx",
 }
 
 // TestAddonAgentDocs_FlagTablesMatchTheRegisteredFlags compares both directions, per command

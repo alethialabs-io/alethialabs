@@ -221,7 +221,7 @@ export function AwsConnection({ onComplete }: AwsConnectionProps) {
 								Download module
 							</Button>
 							<a
-								href="/docs/console/connectors/aws"
+								href="/docs/guides/connectors/aws"
 								target="_blank"
 								rel="noopener noreferrer"
 								className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"

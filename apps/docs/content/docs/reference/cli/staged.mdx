@@ -1,0 +1,53 @@
+---
+title: Staged Change Commands
+description: Inspect an environment's staged (pending) canvas changes — the diff an apply would push.
+---
+
+# Staged Change Commands
+
+The `staged` group reads an environment's **staged (pending) canvas changes** — the durable diff
+between the edited canvas and the environment's live config, i.e. the Pending Changes an apply would
+push.
+
+<Callout type="info">
+The CLI is a client of the same Console API. `staged list` calls `/cli/projects/PROJECT/staged`
+with your [CLI token](/reference/cli/authentication) and operates on the **active organization**. Staging,
+discarding, or applying changes stays in the console/canvas.
+</Callout>
+
+## `alethia staged list`
+
+List an environment's staged changes.
+
+```bash
+alethia staged list --project my-project
+alethia staged list -p my-project -e staging
+alethia staged list -p my-project -o json
+```
+
+{/* fieldspec: alethia staged */}
+
+| Field | What it is | How to set it |
+|---|---|---|
+| Project | The project, by name or id; omit it on a terminal and you are asked | `--project` |
+| Environment | The environment, by name, stage or id; empty means the project's default | `--env` |
+
+`--project` has the short form `-p` and `--env` has `-e`. On a terminal, omitting `--project` opens
+the project picker; with `--no-input`, with `-o json`, or with the output redirected to a file, it
+is required — a form drawn into a redirected stream would corrupt the document you are piping.
+
+Columns: **Op** (`create` | `update` | `delete`), **Component** (the canvas node kind), **Component
+ID** (the target row for update/delete; `—` for create), **Created** (rendered the way the console
+writes a date, `9 Mar 2026, 15:04` in UTC, rather than the raw wire timestamp). The per-change payload delta
+stays console-only. Prints `No staged changes.` when the environment is in sync. Backing call:
+`GET /cli/projects/PROJECT/staged`.
+
+Both of those renderings are for a person reading a column. Under `-o csv` a script gets the wire
+values instead: **Created** is the RFC3339 stamp the API returned, which sorts and parses and still
+carries the seconds and the zone, and a create's absent **Component ID** is an empty cell rather
+than `—`. This is the same split `alethia config get` makes.
+
+## See also
+
+- [Promotion Commands](/reference/cli/promotions) — moving a proven design between environments.
+- [Command Reference](/reference/cli) — the full command tree and global flags.

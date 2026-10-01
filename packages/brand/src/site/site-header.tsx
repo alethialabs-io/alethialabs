@@ -44,19 +44,19 @@ const PRODUCT_MENU: MenuLink[] = [
     ic: "grid",
     name: "Console",
     desc: "The control plane — configure infrastructure visually, watch it apply",
-    href: "/docs/console",
+    href: "/docs/get-started/the-console",
   },
   {
     ic: "terminal",
     name: "alethia CLI",
     desc: "Plan, apply, and operate from your shell",
-    href: "/docs/cli",
+    href: "/docs/get-started/the-cli",
   },
   {
     ic: "shield",
     name: "Elench",
     desc: "The gate between plan and apply — every apply leaves a signed receipt",
-    href: "/docs/elench",
+    href: "/docs/concepts/elench",
   },
 ];
 
@@ -415,7 +415,7 @@ export function Header({
               }}
             >
               <a
-                href="/docs/console/getting-started"
+                href="/docs/get-started"
                 className="vx-clamp vx-clamp--tight"
                 style={{
                   display: "inline-flex",

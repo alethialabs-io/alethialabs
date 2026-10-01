@@ -1,0 +1,23 @@
+{
+	"title": "How-to guides",
+	"icon": "Wrench",
+	"root": true,
+	"pages": [
+		"index",
+		"---Set up---",
+		"connectors",
+		"design-project",
+		"runners",
+		"---Operate---",
+		"jobs",
+		"dashboard",
+		"clusters",
+		"fleet-pools",
+		"alerts",
+		"classification",
+		"assistant",
+		"---Administer---",
+		"access",
+		"self-hosting"
+	]
+}

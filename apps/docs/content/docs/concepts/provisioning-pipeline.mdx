@@ -12,7 +12,7 @@ When a user plans or applies an environment, the platform transforms the project
 <Callout type="info">
   The Project config can be authored by hand **or inferred from repos** — the "A" flow scans one or more
   repos (monorepo-aware), infers the stack, and produces the same `ProjectFormData` this pipeline
-  consumes. See the [elench Architecture](/elench/architecture) page for the full repos → verified cluster
+  consumes. See the [elench Architecture](/concepts/elench/architecture) page for the full repos → verified cluster
   loop.
 </Callout>
 
@@ -119,9 +119,9 @@ OpenTofu state is stored in S3-compatible storage. The backend key follows the p
 For DEPLOY jobs, `tofu apply` runs the plan. If a `plan_job_id` is linked, the cached plan artifact is downloaded and applied directly.
 
 ### Post-Apply
-After apply, the runner extracts `tofu` outputs (cluster endpoint, database endpoints, ARNs), writes an exec-plugin kubeconfig in-process (CLI-free — see [GitOps & ArgoCD](/concepts/gitops-argocd)), installs ArgoCD, and renders application templates (per cloud — see [Multi-cloud](/elench/multi-cloud)). It then **generates app manifests** for the detected services and scaffolds them into the GitOps repo — only when that repo has no manifests yet, so a bring-your-own repo is never overwritten. See [GitOps & ArgoCD](/concepts/gitops-argocd).
+After apply, the runner extracts `tofu` outputs (cluster endpoint, database endpoints, ARNs), writes an exec-plugin kubeconfig in-process (CLI-free — see [GitOps & ArgoCD](/concepts/gitops-argocd)), installs ArgoCD, and renders application templates (per cloud — see [Multi-cloud](/concepts/elench/multi-cloud)). It then **generates app manifests** for the detected services and scaffolds them into the GitOps repo — only when that repo has no manifests yet, so a bring-your-own repo is never overwritten. See [GitOps & ArgoCD](/concepts/gitops-argocd).
 
-Between `plan` and `apply` the [elench verification gate](/elench/engine-internals) runs (fail-closed) and seals a signed receipt.
+Between `plan` and `apply` the [elench verification gate](/concepts/elench/engine-internals) runs (fail-closed) and seals a signed receipt.
 
 </Steps>
 
