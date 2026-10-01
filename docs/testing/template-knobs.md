@@ -63,9 +63,9 @@ Each cell is **settable / declared**. A `—` means the cloud declares nothing t
 
 | Cloud | Component | Knob | Declared at |
 |---|---|---|---|
-| alibaba | dns | `alidns_managed_certificate` | infra/templates/project/alibaba/variables.tf:240 |
-| azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:482 |
-| hetzner | dns | `dns_hosted_zone` | infra/templates/project/hetzner/variables.tf:244 |
+| alibaba | dns | `alidns_managed_certificate` | infra/templates/project/alibaba/variables.tf:242 |
+| azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:484 |
+| hetzner | dns | `dns_hosted_zone` | infra/templates/project/hetzner/variables.tf:247 |
 
 ## Provider ceilings
 
