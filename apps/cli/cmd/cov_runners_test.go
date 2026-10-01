@@ -985,7 +985,7 @@ func TestRunnerField_RegisterRefusesTwoDifferentNames(t *testing.T) {
 // the runnability of every fenced example are asserted by hyg_cli_docs_test.go, which this lane
 // registers the group with; what is left, and what that guard does not ask, is whether each
 // command's own FLAG TABLE matches the flags that command registers.
-const runnerDocsPage = "../../docs/content/docs/cli/commands/runners.mdx"
+const runnerDocsPage = "../../docs/content/docs/reference/cli/runners.mdx"
 
 // TestRunnerDocs_FlagTableMatchesTheRegisteredFlags compares both directions, per SECTION.
 //

@@ -135,7 +135,7 @@ var initManifestSpec = spec.Spec{
 }
 
 // docsCliInitPage is the page `init`'s field table lives on.
-const docsCliInitPage = "apps/docs/content/docs/cli/commands/init.mdx"
+const docsCliInitPage = "apps/docs/content/docs/reference/cli/init.mdx"
 
 // initBinder holds the flag targets initManifestSpec generated. Set in init().
 var initBinder *spec.Binder

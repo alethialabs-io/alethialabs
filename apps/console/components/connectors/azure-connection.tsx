@@ -272,7 +272,7 @@ export function AzureConnection({ onComplete }: AzureConnectionProps) {
 								Download module
 							</Button>
 							<a
-								href="/docs/console/connectors/azure"
+								href="/docs/guides/connectors/azure"
 								target="_blank"
 								rel="noopener noreferrer"
 								className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"

@@ -197,7 +197,7 @@ func runConfigShow(out io.Writer, format, webOrigin string, source types.WebOrig
 // One spec, four renderings: `config get` reads through it, `config set` writes
 // through it, `config set`'s interactive form builds its picker and its validator
 // from it, and the "Config keys" table in
-// apps/docs/content/docs/cli/configuration.mdx carries the same rows. The docs
+// apps/docs/content/docs/reference/cli/configuration.mdx carries the same rows. The docs
 // half is not a convention — TestHygCliAuthForm_ConfigKeyDocsTableMirrorsTheSpec
 // fails if the table and this slice disagree in either direction.
 //

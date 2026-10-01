@@ -105,7 +105,7 @@ admin-grade managed policies (`AdministratorAccess`/`PowerUserAccess`/`IAMFullAc
 to the provisioned services, and denies `organizations:*`/`account:*`/billing — so the connector **cannot
 escalate to admin**. (Reads stay `Describe*`/`Get*`/`List*` so a template/module bump doesn't break a real
 apply.) A permissions boundary on the created roles is the next hardening increment. See the
-[AWS connector guide](/console/connectors/aws).
+[AWS connector guide](/guides/connectors/aws).
 </Callout>
 
 ## GCP: Workload Identity Federation
@@ -154,7 +154,7 @@ publish/consume*, add-on SA mgmt (dropping undelete/enable/disable), and a proje
 (zone-scoped external-dns; per-secret accessor; per-GSA workloadIdentityUser), so the provisioner needs **no
 project `setIamPolicy`**. `secretmanager.admin` is kept predefined on purpose — dropping
 `secretmanager.versions.access` breaks the provider's secret-version refresh. See the
-[GCP connector guide](/console/connectors/gcp).
+[GCP connector guide](/guides/connectors/gcp).
 </Callout>
 
 ## Azure: Federated Identity
@@ -207,7 +207,7 @@ also *fixes* a gap: pure `Contributor` cannot create the external-dns role assig
 The one escalation-grade permission it needs — `roleAssignments/write` — is **constrained by an ABAC
 condition** to a single built-in role (*DNS Zone Contributor*), so the connector can grant that to the
 external-dns identity and **nothing else** (no path to Owner). See the
-[Azure connector guide](/console/connectors/azure).
+[Azure connector guide](/guides/connectors/azure).
 </Callout>
 
 ## Alibaba: RAM Role via OIDC (account-free)
@@ -247,7 +247,7 @@ enumerated custom policies** (replacing the per-service `*FullAccess` System pol
 so a provider bump doesn't break a real apply) — never `service:*`, `AliyunRAMFullAccess`, or an admin
 policy. The service-linked roles ACK/NAT need are covered by a **narrow custom policy granting only
 `ram:CreateServiceLinkedRole`** (service-linked roles are cloud-managed with fixed permissions, so this
-can't escalate). See the [Alibaba connector guide](/console/connectors/alibaba).
+can't escalate). See the [Alibaba connector guide](/guides/connectors/alibaba).
 </Callout>
 
 ## Key rotation
@@ -262,7 +262,7 @@ overlap: the JWKS can publish two keys at once, and each assertion's `kid` heade
    expire.
 3. `scripts/rotate-oidc-key.sh --finalize` drops the old key; redeploy.
 
-See the [rotation runbook](/self-hosting/managed-cloud-connectors#rotating-the-issuer-signing-key).
+See the [rotation runbook](/guides/self-hosting/managed-cloud-connectors#rotating-the-issuer-signing-key).
 
 ## Execution isolation (managed untrusted BYO)
 
@@ -295,8 +295,8 @@ Three properties keep the blast radius of a single job to that one job:
 The container boundary is what actually contains a hostile provider (env-scrubbing alone doesn't — a child
 sharing the worker's PID namespace can read the parent's `/proc`). Until it is enabled and verified on the
 fleet, managed **untrusted** BYO stays gated off; trusted provisioning is unaffected. Operators turn it on per
-the [managed provisioning runbook](/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b). See
-[Isolated Execution](/isolated-execution) for the full picture; the engineering detail lives in the
+the [managed provisioning runbook](/guides/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b). See
+[Isolated Execution](/concepts/isolated-execution) for the full picture; the engineering detail lives in the
 `packages/core/sandbox` package README.
 
 ## CLI Authentication (RFC 8628)
@@ -341,7 +341,7 @@ CREATE POLICY "Org members can only access own org data"
 
 This means even if there is a bug in application code that constructs a query without a `WHERE org_id = ?` clause, PostgreSQL will filter the results to only the current org's data. A raw `SELECT * FROM projects` returns only the current org's Projects.
 
-RLS is the coarse, unbypassable backstop; fine-grained role/permission decisions are made by the PDP. See [Access Control](/access-control) for the full authorization model (roles, permissions, grants, and the org/tenancy model).
+RLS is the coarse, unbypassable backstop; fine-grained role/permission decisions are made by the PDP. See [Access Control](/concepts/access-control) for the full authorization model (roles, permissions, grants, and the org/tenancy model).
 
 Cloud identities are additionally filtered by provider — an AWS identity will not appear in a GCP context.
 

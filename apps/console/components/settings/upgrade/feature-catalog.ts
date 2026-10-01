@@ -47,7 +47,7 @@ export const FEATURE_UPSELLS: Record<GatedFeature, FeatureUpsellMeta> = {
 		title: "Create and manage teams",
 		blurb:
 			"Group members into teams and grant access to the whole group at once, instead of one member at a time.",
-		learnMoreHref: "/docs/access-control/teams",
+		learnMoreHref: "/docs/guides/access/teams",
 	},
 	access: {
 		requiredPlan: "enterprise",
@@ -55,7 +55,7 @@ export const FEATURE_UPSELLS: Record<GatedFeature, FeatureUpsellMeta> = {
 		title: "Fine-grained access",
 		blurb:
 			"Grant scoped access to projects, runners and cloud identities with custom roles — least privilege by default.",
-		learnMoreHref: "/docs/access-control/access-portal",
+		learnMoreHref: "/docs/guides/access/access-portal",
 	},
 	roles: {
 		requiredPlan: "enterprise",
@@ -63,7 +63,7 @@ export const FEATURE_UPSELLS: Record<GatedFeature, FeatureUpsellMeta> = {
 		title: "Custom roles",
 		blurb:
 			"Define your own roles with precise permission sets, beyond the built-in owner / admin / operator / viewer.",
-		learnMoreHref: "/docs/access-control/roles-and-permissions",
+		learnMoreHref: "/docs/concepts/access-control/roles-and-permissions",
 	},
 	sso: {
 		requiredPlan: "enterprise",
@@ -71,7 +71,7 @@ export const FEATURE_UPSELLS: Record<GatedFeature, FeatureUpsellMeta> = {
 		title: "Single Sign-On",
 		blurb:
 			"Connect your identity provider (Okta, Entra ID, …) over SAML or OIDC and provision members automatically.",
-		learnMoreHref: "/docs/access-control/sso",
+		learnMoreHref: "/docs/guides/access/sso",
 	},
 	invite: {
 		requiredPlan: "team",
@@ -79,7 +79,7 @@ export const FEATURE_UPSELLS: Record<GatedFeature, FeatureUpsellMeta> = {
 		title: "Invite team members",
 		blurb:
 			"Collaborate with your team — invite teammates and assign them roles in this organization.",
-		learnMoreHref: "/docs/access-control/members-and-invitations",
+		learnMoreHref: "/docs/guides/access/members-and-invitations",
 	},
 	alerting: {
 		requiredPlan: "team",
@@ -87,7 +87,7 @@ export const FEATURE_UPSELLS: Record<GatedFeature, FeatureUpsellMeta> = {
 		title: "Alerts & notifications",
 		blurb:
 			"Route deploys, drift, access changes and identity events to Slack, email or webhooks with granular, per-event policies.",
-		learnMoreHref: "/docs/console/alerts",
+		learnMoreHref: "/docs/guides/alerts",
 	},
 	byoRunners: {
 		requiredPlan: "team",
@@ -95,6 +95,6 @@ export const FEATURE_UPSELLS: Record<GatedFeature, FeatureUpsellMeta> = {
 		title: "Bring your own runners",
 		blurb:
 			"Run provisioning jobs on runners you control — deploy one into your own cloud account or register an existing one, instead of the shared managed fleet.",
-		learnMoreHref: "/docs/runner/self-hosted",
+		learnMoreHref: "/docs/guides/runners/self-operated",
 	},
 };

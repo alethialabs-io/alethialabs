@@ -32,9 +32,9 @@ import (
 // assumed a noun group, and these three are verbs hanging off the root.
 var docsLeafPages = map[string]string{
 	// command → docs page, relative to the repository root
-	"open":    "apps/docs/content/docs/cli/identity.mdx",
-	"version": "apps/docs/content/docs/cli/identity.mdx",
-	"update":  "apps/docs/content/docs/cli/installation.mdx",
+	"open":    "apps/docs/content/docs/reference/cli/identity.mdx",
+	"version": "apps/docs/content/docs/reference/cli/identity.mdx",
+	"update":  "apps/docs/content/docs/get-started/install-the-cli.mdx",
 }
 
 // docsTreeArgSpec is the argument shape of one command line, as brackets alone.

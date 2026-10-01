@@ -1,0 +1,14 @@
+{
+	"title": "Reference",
+	"icon": "BookMarked",
+	"root": true,
+	"pages": [
+		"index",
+		"cli",
+		"api",
+		"sandbox-configuration",
+		"control-catalog",
+		"standards",
+		"glossary"
+	]
+}

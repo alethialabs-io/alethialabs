@@ -326,7 +326,7 @@ export function AlibabaConnection({
 								Download module
 							</Button>
 							<a
-								href="/docs/console/connectors/alibaba"
+								href="/docs/guides/connectors/alibaba"
 								target="_blank"
 								rel="noopener noreferrer"
 								className="inline-flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"

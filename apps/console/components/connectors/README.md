@@ -51,7 +51,7 @@ short-lived minted assertion; the token clouds have no federation, so a scoped t
 | `{aws,gcp,azure,hetzner,extra-cloud,api-key}-connection.tsx` | **Per-cloud sheets.** Each composes the scaffold, renders its own fields, and calls an injected `onComplete`/`onSave`/`onCompleteFromIds` handler. `extra-cloud-connection.tsx` exports both `AlibabaConnection` (RAM role ARN) and `TokenCloudConnection` (generic token cloud). |
 | `use-connection-test.ts` | The instant server-side verify hook. `useConnectionTest()` runs a save+verify round trip and exposes `state` (`idle`/`saving`/`success`/`failed`) → drives the shared status UI. Handlers return a `VerifyOutcome` (`verified`, `status`, `error`, `missingPermissions`). |
 | `provider-config-fields.tsx` | The generic `provider_config` field renderer (also used by the canvas inspector). |
-| `connector-assets.ts` | `connectorAssetUrl()` (setup script / template URLs), `CONNECTOR_DOCS_BASE`, `connectorDocsHref()` (maps a connector → its `/docs/console/connectors/*` page), and the pre-filled issuer/client-id env constants. |
+| `connector-assets.ts` | `connectorAssetUrl()` (setup script / template URLs), `CONNECTOR_DOCS_BASE`, `connectorDocsHref()` (maps a connector → its `/docs/guides/connectors/*` page), and the pre-filled issuer/client-id env constants. |
 | `../cloud-connect/use-cloud-connect.tsx` | **The host hook.** Owns the sheet open/close state, seeds/inits a pending identity, wires the per-provider save handlers to the server actions, and renders every `<Sheet>` + `ConnectSheetHeader`. Callers use `openConnect(integration)` + render `sheets`. |
 | `../../lib/cloud-providers/gcp-wif.ts` | Pure WIF helper — `buildWifConfig(projectId, projectNumber)` + the fixed pool/provider/SA constants + `GCP_PROJECT_ID_REGEX`. No server deps, so the server verify **and** the client sheet import the same builder. |
 
@@ -124,7 +124,7 @@ sync:connector-assets`** — never hand-edit the `public/` copy.
 ## Product docs
 
 Each sheet's "Docs" link resolves through `connectorDocsHref` → `CONNECTOR_DOCS_BASE`
-(`/docs/console/connectors`) → the per-cloud MDX in `apps/docs/content/docs/console/connectors/`.
+(`/docs/guides/connectors`) → the per-cloud MDX in `apps/docs/content/docs/guides/connectors/`.
 Keep those in sync when a flow changes (e.g. the GCP two-field flow lives in `gcp.mdx`).
 
 ## Adding a new cloud connect sheet
@@ -136,5 +136,5 @@ Keep those in sync when a flow changes (e.g. the GCP two-field flow lives in `gc
 3. Add `initXIdentity` + `saveX` server actions and a `saveXIdentity` builder in `connections.ts`
    that ends in `verifyConnectionInline`. Filter every query by `provider`.
 4. Wire it into `use-cloud-connect.tsx` (open state, handler, `<Sheet>` + `ConnectSheetHeader`).
-5. Add the docs page under `apps/docs/content/docs/console/connectors/` and list it in that
+5. Add the docs page under `apps/docs/content/docs/guides/connectors/` and list it in that
    directory's `meta.json`; the `RESERVED_SLUGS`/docs mapping follow automatically.

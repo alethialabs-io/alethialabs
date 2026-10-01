@@ -12,7 +12,7 @@ export interface EvidenceHelp {
 	docsHref: string;
 }
 
-const DOCS = "/docs/elench";
+const DOCS = "/docs/concepts/elench";
 
 export const EVIDENCE_HELP: Record<
 	"verify" | "drift" | "security" | "receipt" | "waiver",
