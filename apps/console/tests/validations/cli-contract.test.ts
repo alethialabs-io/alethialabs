@@ -21,6 +21,7 @@ import {
   cliByoScanResponse,
   cliRunnerRegistrationResponse,
   cliDesignApplyResponse,
+  cliDestroyTreeResponse,
   cliRunnersResponse,
   cliSigningKeysResponse,
   cliUsageResponse,
@@ -69,6 +70,8 @@ const cases: ReadonlyArray<[string, z.ZodType]> = [
   ["deploy_runner.json", deployRunnerWire],
   ["latest_release.json", cliLatestReleaseWire],
   ["job_response.json", cliJobResponse],
+  // #5249: the destroy tree `alethia project destroy --cascade` prints before it confirms.
+  ["destroy_tree.json", cliDestroyTreeResponse],
   ["init_identity.json", initIdentityWire],
   ["connect_identity.json", connectIdentityWire],
   ["usage.json", cliUsageResponse],

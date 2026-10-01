@@ -160,6 +160,7 @@ const FIXTURES: Record<keyof typeof cliContract, string> = {
 	ProjectResponse: "project.json",
 	EnvironmentsResponse: "environments.json",
 	EnvironmentResponse: "environment.json",
+	DestroyTreeResponse: "destroy_tree.json",
 	ComponentsResponse: "components.json",
 	ComponentResponse: "component.json",
 	DriftResponse: "drift.json",

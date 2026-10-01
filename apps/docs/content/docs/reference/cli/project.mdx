@@ -204,6 +204,7 @@ asked which one (or "Any available"). `destroy` takes the runner by id only, for
 | `--latest-plan` | | ✓ | | Apply the project's most recent `PLAN` job |
 | `-w`, `--wait` | ✓ | ✓ | ✓ | Wait for job completion |
 | `-y`, `--yes` | | | ✓ | Skip the confirmation prompt (required with `--no-input`) |
+| `--cascade` | | | ✓ | Also destroy the environments placed on this environment's cluster, first. Prints them and confirms |
 
 `--project` and `--project-id` name the same thing, so passing **both** is refused rather than
 resolved by precedence. A project name that two projects share is also refused, naming both ids —
@@ -213,6 +214,10 @@ a runner name shared by two runners is refused naming both ids.
 
 `destroy` is destructive: on a terminal it confirms, and with `--no-input` it requires `--yes`
 rather than silently doing nothing.
+
+Destroying a `dedicated` environment while `namespace` or `vcluster` environments are still placed
+on its cluster is refused, naming them. Destroy them first, or pass `--cascade` — see
+[`alethia project destroy`](/reference/cli/plan-and-apply#alethia-project-destroy).
 
 ### Applying the plan you just reviewed
 
