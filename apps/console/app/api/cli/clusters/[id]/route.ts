@@ -1,13 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import type { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
+import { readKubeconfigAccess } from "@/lib/clusters/kubeconfig-access";
 import { getServiceDb } from "@/lib/db";
-import { projectCluster, projectEnvironments, projects } from "@/lib/db/schema";
+import {
+	cloudIdentities,
+	projectCluster,
+	projectEnvironments,
+	projects,
+} from "@/lib/db/schema";
 import { readGitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import {
 	cliClusterDetailResponse,
@@ -19,6 +25,10 @@ import {
  * the backing route for `alethia cluster get`. GitOps is best-effort: a read failure yields
  * `null` (the CLI renders "unknown") rather than failing the whole request. Wire-locked to
  * `cliClusterDetailResponse`; org-scoped like the list route.
+ *
+ * `kubeconfig` is the command that fetches a kubeconfig with the caller's OWN cloud CLI, or a note
+ * saying why there is none (#5250). It is built by `lib/clusters/kubeconfig-access.ts`, the same
+ * module the console's cluster card renders, so the two surfaces cannot disagree.
  */
 export async function GET(
 	req: Request,
@@ -52,9 +62,19 @@ export async function GET(
 				// Internal — used for the gitops read, stripped from the response.
 				project_id: projectCluster.project_id,
 				environment_id: projectCluster.environment_id,
+				// Internal — the fallback cloud for the kubeconfig command when no deploy recorded one.
+				// A cluster's own placement wins over the project's (NULL inherits).
+				provider: cloudIdentities.provider,
 			})
 			.from(projectCluster)
 			.innerJoin(projects, eq(projectCluster.project_id, projects.id))
+			.leftJoin(
+				cloudIdentities,
+				eq(
+					cloudIdentities.id,
+					sql`coalesce(${projectCluster.cloud_identity_id}, ${projects.cloud_identity_id})`,
+				),
+			)
 			.leftJoin(
 				projectEnvironments,
 				and(
@@ -69,7 +89,7 @@ export async function GET(
 			return NextResponse.json({ error: "Cluster not found" }, { status: 404 });
 		}
 
-		const { project_id, environment_id, ...clusterRow } = row;
+		const { project_id, environment_id, provider, ...clusterRow } = row;
 		const cluster = {
 			...clusterRow,
 			environment: clusterRow.environment ?? "development",
@@ -98,7 +118,17 @@ export async function GET(
 			gitops = null;
 		}
 
-		return cliJson(cliClusterDetailResponse, { cluster, gitops });
+		// Not best-effort, unlike gitops: it is one indexed read in the same database as the row
+		// above, and a silently-absent command would read as "this cloud has none".
+		const kubeconfig = await readKubeconfigAccess(getServiceDb(), {
+			projectId: project_id,
+			environmentId: environment_id,
+			clusterName: cluster.cluster_name,
+			provider,
+			region: cluster.region,
+		});
+
+		return cliJson(cliClusterDetailResponse, { cluster, gitops, kubeconfig });
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

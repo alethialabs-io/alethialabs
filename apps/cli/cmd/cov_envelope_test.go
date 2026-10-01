@@ -167,6 +167,9 @@ func miscEnvelope(mode miscMode) map[string]any {
 			"id": "c1", "cluster_name": "prod-eks", "cluster_version": "1.30", "status": "ACTIVE",
 			"project_name": "web", "environment": envName, "region": "eu-west-1",
 		},
+		"kubeconfig": map[string]any{
+			"command": "aws eks update-kubeconfig --name prod-eks --region eu-west-1", "note": nil,
+		},
 		"gitops": map[string]any{
 			"mode": "argocd", "apps_repo": repoURL, "revision": rev,
 			"total": 4, "synced": 4, "healthy": 4, "status_available": true,

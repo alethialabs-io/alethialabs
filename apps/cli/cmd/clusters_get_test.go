@@ -339,7 +339,7 @@ func TestClusterFieldRows(t *testing.T) {
 		Region: "eu-central-1", NodeMinSize: 1, NodeDesiredSize: 3, NodeMaxSize: 5,
 		EstimatedMonthlyCost: &cost, ArgocdURL: "https://argo.example",
 	}
-	rows := clusterFieldRows(full, nil, ui.FormatTable)
+	rows := clusterFieldRows(full, nil, nil, ui.FormatTable)
 	got := map[string]string{}
 	for _, r := range rows {
 		got[r[0]] = r[1]
@@ -358,7 +358,7 @@ func TestClusterFieldRows(t *testing.T) {
 	}
 
 	// Un-provisioned (no cluster name): no ArgoCD block, no optional fields.
-	bare := clusterFieldRows(&api.ClusterSummary{ProjectName: "x", Status: "QUEUED"}, nil, ui.FormatTable)
+	bare := clusterFieldRows(&api.ClusterSummary{ProjectName: "x", Status: "QUEUED"}, nil, nil, ui.FormatTable)
 	for _, r := range bare {
 		if r[0] == "ArgoCD" || r[0] == "ArgoCD admin" || r[0] == "Message" || r[0] == "Cluster" {
 			t.Errorf("un-provisioned cluster should not emit %q", r[0])
@@ -366,7 +366,7 @@ func TestClusterFieldRows(t *testing.T) {
 	}
 
 	// Provisioned but no managed ingress ⇒ port-forward note.
-	pf := clusterFieldRows(&api.ClusterSummary{ProjectName: "y", ClusterName: "y-eks", Status: "ACTIVE"}, nil, ui.FormatTable)
+	pf := clusterFieldRows(&api.ClusterSummary{ProjectName: "y", ClusterName: "y-eks", Status: "ACTIVE"}, nil, nil, ui.FormatTable)
 	var argocd string
 	for _, r := range pf {
 		if r[0] == "ArgoCD" {
@@ -375,6 +375,62 @@ func TestClusterFieldRows(t *testing.T) {
 	}
 	if !strings.Contains(argocd, "port-forward") {
 		t.Errorf("no-ingress ArgoCD row should mention port-forward, got %q", argocd)
+	}
+}
+
+// TestClusterKubeconfigRows pins #5250's CLI half: the server's kubeconfig answer renders as ONE
+// row placed BEFORE the ArgoCD admin command that needs it, the command when there is one and the
+// note when there is not, and nothing at all when the server sent neither.
+func TestClusterKubeconfigRows(t *testing.T) {
+	str := func(s string) *string { return &s }
+	c := &api.ClusterSummary{ProjectName: "web", ClusterName: "web-eks", Status: "ACTIVE", Region: "eu-west-1"}
+	keys := func(rows [][]string) map[string]int {
+		at := map[string]int{}
+		for i, r := range rows {
+			at[r[0]] = i
+		}
+		return at
+	}
+	value := func(rows [][]string, key string) string {
+		for _, r := range rows {
+			if r[0] == key {
+				return r[1]
+			}
+		}
+		return ""
+	}
+
+	const cmd = "aws eks update-kubeconfig --name web-eks --region eu-west-1"
+	withCmd := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Command: str(cmd)}, ui.FormatTable)
+	at := keys(withCmd)
+	if value(withCmd, "Kubeconfig") != cmd {
+		t.Errorf("Kubeconfig row = %q, want the server's command verbatim", value(withCmd, "Kubeconfig"))
+	}
+	if at["Kubeconfig"] >= at["ArgoCD admin"] {
+		t.Errorf("Kubeconfig (row %d) must come before ArgoCD admin (row %d)", at["Kubeconfig"], at["ArgoCD admin"])
+	}
+	if admin := value(withCmd, "ArgoCD admin"); !strings.HasPrefix(admin, "after the kubeconfig command above: ") ||
+		!strings.HasSuffix(admin, argocdAdminPasswordCmd) {
+		t.Errorf("ArgoCD admin row should point at the kubeconfig first, got %q", admin)
+	}
+	// CSV keeps the bare command — a script wants the value, not the sentence.
+	if csv := value(clusterFieldRows(c, nil, &api.ClusterKubeconfig{Command: str(cmd)}, ui.FormatCSV), "ArgoCD admin"); csv != argocdAdminPasswordCmd {
+		t.Errorf("csv ArgoCD admin = %q, want the bare command", csv)
+	}
+
+	const note = "Alethia does not hand out a kubeconfig for Hetzner clusters yet"
+	withNote := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Note: str(note)}, ui.FormatTable)
+	if value(withNote, "Kubeconfig") != note {
+		t.Errorf("Kubeconfig row should carry the note when there is no command, got %q", value(withNote, "Kubeconfig"))
+	}
+	if admin := value(withNote, "ArgoCD admin"); !strings.HasPrefix(admin, "once you have a kubeconfig: ") {
+		t.Errorf("with no command, the ArgoCD hint must not point at a command above, got %q", admin)
+	}
+
+	for name, k := range map[string]*api.ClusterKubeconfig{"older server": nil, "both null": {}} {
+		if _, ok := keys(clusterFieldRows(c, nil, k, ui.FormatTable))["Kubeconfig"]; ok {
+			t.Errorf("%s: no Kubeconfig row expected", name)
+		}
 	}
 }
 
@@ -475,7 +531,7 @@ func TestRenderCluster(t *testing.T) {
 
 	for _, outFormat := range []string{"table", "json", "csv"} {
 		var buf bytes.Buffer
-		if err := renderCluster(&buf, outFormat, c, g); err != nil {
+		if err := renderCluster(&buf, outFormat, c, g, nil); err != nil {
 			t.Fatalf("renderCluster(%s) error: %v", outFormat, err)
 		}
 		if buf.Len() == 0 {
@@ -487,7 +543,7 @@ func TestRenderCluster(t *testing.T) {
 	// RenderCard upper-cases and letter-spaces its title, so the comparison drops the spacing
 	// rather than pinning a presentation the card owns.
 	var card bytes.Buffer
-	if err := renderCluster(&card, "table", c, g); err != nil {
+	if err := renderCluster(&card, "table", c, g, nil); err != nil {
 		t.Fatalf("renderCluster(table): %v", err)
 	}
 	squashed := strings.ReplaceAll(card.String(), " ", "")
@@ -497,7 +553,7 @@ func TestRenderCluster(t *testing.T) {
 
 	// Without gitops the plain cluster is still rendered.
 	var buf bytes.Buffer
-	if err := renderCluster(&buf, "json", c, nil); err != nil {
+	if err := renderCluster(&buf, "json", c, nil, nil); err != nil {
 		t.Fatalf("renderCluster(json, no gitops) error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "web-eks") {

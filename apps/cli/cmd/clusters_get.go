@@ -21,13 +21,20 @@ import (
 // control-plane DB); it is retrieved on demand from the cluster's initial-admin secret.
 // The console surfaces this same command — the CLI mirrors it so access is keyless from
 // either surface.
+//
+// It is a kubectl command, so it needs a kubeconfig FIRST — which is why the card prints the
+// Kubeconfig row above it and the table cell says so (see argocdAdminCell).
 const argocdAdminPasswordCmd = "kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
 
 var clusterGetCmd = &cobra.Command{
 	Use:   "get [selector]",
-	Short: "Get a project's cluster, including ArgoCD access",
-	Long: `Show a single project's cluster: status, node sizing, region, cost, and its
-ArgoCD (cluster-side GitOps) endpoint plus the command to retrieve the admin password.
+	Short: "Get a project's cluster, including kubeconfig and ArgoCD access",
+	Long: `Show a single project's cluster: status, node sizing, region, cost, the command that
+fetches a kubeconfig with your own cloud CLI, and its ArgoCD (cluster-side GitOps) endpoint plus
+the command to retrieve the admin password.
+
+The kubeconfig command runs under your own cloud login (aws, gcloud, az); Alethia hands out no
+credential. Where a cloud has no such command yet, the Kubeconfig row says why instead.
 
 The selector matches by project name, cluster name, or id. Omit it at a terminal and the CLI
 asks which cluster; pass it (or --no-input) and nothing is asked. A selector that names no
@@ -61,14 +68,16 @@ cluster is an error, not an empty screen.`,
 			return
 		}
 
-		// Best-effort GitOps posture — legibility, not fail-closed: if the detail read
-		// fails we still render the cluster (without the GitOps line).
+		// Best-effort detail — legibility, not fail-closed: if the detail read fails we still
+		// render the cluster (without the GitOps and Kubeconfig lines).
 		var gitops *api.ClusterGitops
+		var kubeconfig *api.ClusterKubeconfig
 		if detail, derr := apiClient.GetCluster(c.ID); derr == nil && detail != nil {
 			gitops = detail.Gitops
+			kubeconfig = detail.Kubeconfig
 		}
 
-		if err := renderCluster(os.Stdout, outputFormat(cmd), c, gitops); err != nil {
+		if err := renderCluster(os.Stdout, outputFormat(cmd), c, gitops, kubeconfig); err != nil {
 			fail(err)
 		}
 	},
@@ -226,21 +235,25 @@ func pickCluster(clusters []api.ClusterSummary, title string) (*api.ClusterSumma
 // the typed object for json, Field/Value rows for csv.
 // The parameter is `outFormat`, not `format`: this file imports packages/core/format, and a
 // parameter of that name shadows the package for the whole body.
-func renderCluster(out io.Writer, outFormat string, c *api.ClusterSummary, g *api.ClusterGitops) error {
-	// json/csv emit the cluster fields inline plus the gitops object; table gets the card.
+func renderCluster(out io.Writer, outFormat string, c *api.ClusterSummary, g *api.ClusterGitops, k *api.ClusterKubeconfig) error {
+	// json/csv emit the cluster fields inline plus the gitops and kubeconfig objects; table gets
+	// the card. The objects are emitted only when present, so a server that sent neither gives
+	// the plain cluster exactly as before.
 	record := any(c)
-	if g != nil {
+	if g != nil || k != nil {
 		record = struct {
 			*api.ClusterSummary
-			Gitops *api.ClusterGitops `json:"gitops"`
-		}{c, g}
+			Gitops     *api.ClusterGitops     `json:"gitops,omitempty"`
+			Kubeconfig *api.ClusterKubeconfig `json:"kubeconfig,omitempty"`
+		}{c, g, k}
 	}
-	return ui.RenderCard(out, outFormat, clusterLabel(*c), clusterFieldRows(c, g, outFormat), record)
+	return ui.RenderCard(out, outFormat, clusterLabel(*c), clusterFieldRows(c, g, k, outFormat), record)
 }
 
 // clusterFieldRows returns the present-only key/value fields of a cluster, ending with
-// the ArgoCD access block + GitOps posture when the cluster is provisioned.
-func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops, outFmt string) [][]string {
+// the kubeconfig command, the ArgoCD access block and the GitOps posture when the cluster is
+// provisioned.
+func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops, k *api.ClusterKubeconfig, outFmt string) [][]string {
 	rows := [][]string{
 		{"Status", ui.Cell(outFmt, c.Status, ui.StatusCell(c.Status))},
 	}
@@ -261,21 +274,57 @@ func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops, outFmt string
 		rows = append(rows, []string{"Est. cost", clusterCost(*c.EstimatedMonthlyCost)})
 	}
 
-	// ArgoCD — the cluster-side GitOps CD, installed on every provisioned cluster. The URL
-	// only materialises where a managed ingress exists (AWS ALB+ACM today); elsewhere access
-	// is via port-forward. The admin password is retrieved on demand (never stored).
 	if c.ClusterName != "" {
+		// Kubeconfig FIRST: every kubectl command below it needs one. The server builds the
+		// command (or the note saying there is none); the CLI never composes it, so it cannot
+		// disagree with the console's cluster card.
+		hasCommand := false
+		if row, ok := kubeconfigRow(k); ok {
+			rows = append(rows, row)
+			hasCommand = k.Command != nil && *k.Command != ""
+		}
+
+		// ArgoCD — the cluster-side GitOps CD, installed on every provisioned cluster. The URL
+		// only materialises where a managed ingress exists (AWS ALB+ACM today); elsewhere access
+		// is via port-forward. The admin password is retrieved on demand (never stored).
 		if c.ArgocdURL != "" {
 			rows = append(rows, []string{"ArgoCD", c.ArgocdURL})
 		} else {
 			rows = append(rows, []string{"ArgoCD", "installed — port-forward (no managed ingress on this cloud yet)"})
 		}
-		rows = append(rows, []string{"ArgoCD admin", argocdAdminPasswordCmd})
+		rows = append(rows, []string{"ArgoCD admin", argocdAdminCell(outFmt, hasCommand)})
 		if g != nil {
 			rows = append(rows, gitopsRows(g)...)
 		}
 	}
 	return rows
+}
+
+// kubeconfigRow renders the server's kubeconfig answer as one row: the command when there is one,
+// otherwise the note saying why not. No row at all when the server sent neither (an older server,
+// or a cluster with no name yet) — an empty "Kubeconfig" row would read as "there is no way".
+func kubeconfigRow(k *api.ClusterKubeconfig) ([]string, bool) {
+	if k == nil {
+		return nil, false
+	}
+	if k.Command != nil && *k.Command != "" {
+		return []string{"Kubeconfig", *k.Command}, true
+	}
+	if k.Note != nil && *k.Note != "" {
+		return []string{"Kubeconfig", *k.Note}, true
+	}
+	return nil, false
+}
+
+// argocdAdminCell is the ArgoCD admin-password command, said in the order it can be run: it is a
+// kubectl command, so the kubeconfig comes first. The table names that dependency; CSV keeps the
+// bare command, because a script wants the value, not the sentence.
+func argocdAdminCell(outFmt string, kubeconfigAbove bool) string {
+	lead := "once you have a kubeconfig: "
+	if kubeconfigAbove {
+		lead = "after the kubeconfig command above: "
+	}
+	return ui.Cell(outFmt, argocdAdminPasswordCmd, lead+argocdAdminPasswordCmd)
 }
 
 // clusterCost renders an estimated monthly cost the way the console's billing surfaces do.

@@ -22,9 +22,15 @@ Each cluster displays:
 
 ### kubeconfig Commands
 
-The Console generates the ready-to-copy command for **AWS** clusters. For GCP and Azure, use the equivalent CLI command below:
+You get a kubeconfig with **your own cloud CLI**, under your own cloud login. Alethia does not issue
+a kubeconfig or any credential.
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
+`alethia cluster get` prints the exact command for a cluster in its **Kubeconfig** row, built from
+the values the cluster's last successful deploy recorded — see
+[Accessing a cluster with kubectl](/reference/cli/clusters#accessing-a-cluster-with-kubectl). The
+command per cloud:
+
+<Tabs items={["AWS", "GCP", "Azure", "Alibaba Cloud", "Hetzner"]}>
   <Tab value="AWS">
     ```bash
     aws eks update-kubeconfig --name {cluster-name} --region {region}
@@ -32,15 +38,27 @@ The Console generates the ready-to-copy command for **AWS** clusters. For GCP an
   </Tab>
   <Tab value="GCP">
     ```bash
-    gcloud container clusters get-credentials {cluster-name} --region {region}
+    gcloud container clusters get-credentials {cluster-name} --region {region} --project {gcp-project-id}
     ```
+
+    A zonal cluster gets `--zone {zone}` instead of `--region {region}`.
   </Tab>
   <Tab value="Azure">
     ```bash
-    az aks get-credentials --name {cluster-name} --resource-group {resource-group}
+    az aks get-credentials --resource-group {resource-group} --name {cluster-name}
     ```
   </Tab>
+  <Tab value="Alibaba Cloud">
+    Alethia does not record the ACK cluster ID yet. Find it in the ACK console, then call
+    `DescribeClusterUserKubeconfig` with the `aliyun` CLI. Its `config` field is the kubeconfig.
+  </Tab>
+  <Tab value="Hetzner">
+    Alethia does not hand out a kubeconfig for Hetzner clusters yet. Track
+    [issue #5250](https://github.com/alethialabs-io/alethialabs/issues/5250).
+  </Tab>
 </Tabs>
+
+The ArgoCD admin-password command is a `kubectl` command, so it needs this kubeconfig first.
 
 ## Pre-Installed Components
 
