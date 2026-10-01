@@ -219,6 +219,52 @@ export const provisionJobType = pgEnum("provision_job_type", [
 	// enter execution_metadata. Runs AFTER infra-up (the cluster hosts the build), BEFORE the
 	// app-workload manifest commit (which substitutes resolved_image).
 	"BUILD",
+	// Short-lived kubeconfig mint (#5250 decisions 7–8, seams #5280). The runner, in-network, mints a
+	// credential for ONE project_cluster at ONE tier (read-only = a bound ServiceAccount
+	// TokenRequest; admin = the cloud-native credential) and SEALS it with HPKE to the client's
+	// ephemeral public key (packages/core/kubeaccess/seal.go). The plaintext exists only on the
+	// runner and the client: it never enters execution_metadata, job_logs, or Postgres at rest —
+	// only the ciphertext transits the console, into kubeconfig_mint_requests.sealed_result.
+	//
+	// Declared ahead of its executor. Until the runner unit lands, the dispatcher REFUSES it by
+	// name (apps/runner/internal/agent/runner.go), and nothing enqueues it.
+	"MINT_KUBECONFIG",
+]);
+
+/**
+ * Which in-cluster privilege a minted kubeconfig carries (#5250 §2, decision 7).
+ *
+ * `readonly` binds a ServiceAccount to the `alethia:view` ClusterRole and mints it with
+ * TokenRequest, on every cloud; gated by `cluster:access_readonly`. `admin` is the cloud-native
+ * credential; gated by the stricter `cluster:access_admin`. No cloud may silently upgrade a
+ * `readonly` request to `admin` — a minter that cannot honour the tier FAILS the request.
+ */
+export const kubeconfigMintTier = pgEnum("kubeconfig_mint_tier", [
+	"readonly",
+	"admin",
+]);
+
+/**
+ * The shape of the minted kubeconfig (#5250 decision 4). `exec` runs `alethia cluster token <id>`
+ * on every kubectl call (AWS/GCP/Azure CLI default); `static` embeds a TTL-capped credential in the
+ * file (Hetzner and Alibaba always, and the console's 1h download).
+ */
+export const kubeconfigMintShape = pgEnum("kubeconfig_mint_shape", [
+	"exec",
+	"static",
+]);
+
+/**
+ * Lifecycle of one kubeconfig mint request row. `pending` until the runner posts; `ready` once it
+ * posted the SEALED result (the only state in which `sealed_result` may be non-null); `failed` with
+ * a non-secret reason; `expired` once the sweep passes `expires_at` without a read. A `ready` row is
+ * DELETED on its first successful read, so there is no "consumed" state to hold a used ciphertext.
+ */
+export const kubeconfigMintStatus = pgEnum("kubeconfig_mint_status", [
+	"pending",
+	"ready",
+	"failed",
+	"expired",
 ]);
 
 // Who/what enqueued a job (and, for consistency, a metered AI action). `user` = a person's
@@ -481,6 +527,9 @@ export * from "@repo/support/enums";
 export type CloudProvider = (typeof cloudProvider.enumValues)[number];
 export type GitProvider = (typeof gitProvider.enumValues)[number];
 export type ProvisionJobType = (typeof provisionJobType.enumValues)[number];
+export type KubeconfigMintTier = (typeof kubeconfigMintTier.enumValues)[number];
+export type KubeconfigMintShape = (typeof kubeconfigMintShape.enumValues)[number];
+export type KubeconfigMintStatus = (typeof kubeconfigMintStatus.enumValues)[number];
 export type ProvisionJobStatus = (typeof provisionJobStatus.enumValues)[number];
 export type JobInitiator = (typeof jobInitiator.enumValues)[number];
 export type RunnerMode = (typeof runnerMode.enumValues)[number];

@@ -103,7 +103,6 @@ export const TIER_GLYPHS: Record<StatusTier, TierProjection> = {
  * rather than the schema.
  */
 export const WIRE_ORIGINS: Record<string, string> = {
-	ready: "the wire status of an add-on, an IaC source and a chart source (api.Addon, api.IacSource, api.ChartSource) — a text column, not a pgEnum, so nothing constrains it",
 	running: "the agent panes' local phase union (components/agent/approval-card.tsx) and the ordinary Kubernetes word for a workload that is up; no column holds it",
 	idle: "the tier's own name, reused as a word: the runner widget reports a runner as `idle` (components/widgets) where runner_status has only ONLINE/OFFLINE/DRAINING",
 	errored: "NOTHING EMITS THIS. A past-tense alias of `failed`, kept because it is a word a hand-written wire status reaches for; it appears in packages/ui/tests/status-badge.test.tsx and nowhere else in the product. Delete it if a census ever proves it unreachable",

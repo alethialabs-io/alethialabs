@@ -27,6 +27,7 @@ const RESOURCE_LABEL: Record<Resource, string> = {
   alert: "Alerts",
   fleet: "Fleet",
   support_case: "Support",
+  cluster: "Cluster access",
 };
 
 const GROUPS = RESOURCES.map((resource) => ({
