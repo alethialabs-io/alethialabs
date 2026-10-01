@@ -81,7 +81,10 @@ beforeEach(() => {
 	vi.mocked(ensureCliOrgAccess).mockResolvedValue(null);
 	vi.mocked(planProject).mockResolvedValue({ jobId: "job-1" } as never);
 	vi.mocked(provisionProject).mockResolvedValue({ jobId: "job-1" } as never);
-	vi.mocked(destroyProject).mockResolvedValue({ jobId: "job-1" } as never);
+	vi.mocked(destroyProject).mockResolvedValue({
+		jobId: "job-1",
+		jobs: [{ jobId: "job-1", environmentId: ENV_ID, name: "prod" }],
+	});
 	mockServiceDb();
 });
 
@@ -117,8 +120,10 @@ describe("POST /api/jobs — environment_id threading (#837)", () => {
 			environment_id: ENV_ID,
 		});
 		expect(res.status).toBe(201);
-		// destroyProject(projectId, environmentId, runnerId)
-		expect(destroyProject).toHaveBeenCalledWith(PROJECT_ID, ENV_ID, null);
+		// destroyProject(projectId, environmentId, runnerId, options) — no cascade unless asked (#5249)
+		expect(destroyProject).toHaveBeenCalledWith(PROJECT_ID, ENV_ID, null, {
+			cascade: false,
+		});
 	});
 
 	it("passes null when environment_id is omitted, so the action falls back to the default env", async () => {
