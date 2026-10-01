@@ -96,7 +96,7 @@ After the candidate plan completes, the pure gate engine (`lib/promotions/gates.
 | Gate | Turned on by | Passes when |
 |------|-------------|-------------|
 | **Predecessor healthy** | `require_predecessor` | The predecessor environment exists, is in sync (no drift), and has already deployed *this* design (its deployed hash matches the candidate hash). |
-| **Verify** | `require_verify_pass` | The plan's elench verify report has no unwaived hard control failures. A missing report leaves the gate **pending**. |
+| **Verify** | `require_verify_pass` | The plan's Elench verify report has no unwaived hard control failures. A missing report leaves the gate **pending**. |
 | **Soak timer** | `soak_minutes` | At least that many minutes have elapsed since the predecessor's last deploy. Before then the gate is **pending**; if there is no predecessor deploy to soak from, it **fails** (blocks). |
 | **Cost delta** | `cost_delta_threshold` | The candidate plan's monthly cost minus the target's prior cost does not exceed the threshold. If there is no prior cost to compare, the gate is **skipped**. |
 | **Manual approval** | `require_approval` | The recorded approvals reach the required count. Otherwise the gate is **pending**. |

@@ -1,12 +1,13 @@
 ---
-title: Job Execution Overview
+title: Job execution
 description: How the runner claims and executes each job type.
 ---
 
 # Job Execution
 
 All jobs share the same claiming mechanism and keyless credential handling, but differ in what they
-execute. For the queue mechanics, see [Job Queue Pattern](/concepts/job-queue).
+execute. For the queue mechanics, see [Job queue](/concepts/job-queue); for what each job type does, see
+[Job types](/guides/jobs/job-types).
 
 ## Claiming
 
@@ -22,24 +23,24 @@ When a job is returned, the runner:
 4. Dispatches on `types.JobType` (the switch in `internal/agent/runner.go`) to the handler.
 5. Sets status to `SUCCESS` or `FAILED`.
 
-## Job types
+## Dispatch
 
-The dispatch switch routes each of these `provisionJobType` values:
+The switch in `internal/agent/runner.go` routes each `provisionJobType` to its handler. What each type
+does is in the [Job types](/guides/jobs/job-types) catalog; this table adds only how the runner
+executes it.
 
-| Job type | Handler | Does |
-|----------|---------|------|
-| `PLAN` | `executePlan` | `tofu plan` + verify gate + Infracost → plan artifact. [Details](/concepts/runner/job-execution/plan-jobs) |
-| `DEPLOY` | `executeDeploy` | verify gate (fail-closed) → `tofu apply` → keyless kubeconfig → ArgoCD. [Details](/concepts/runner/job-execution/deploy-jobs) |
-| `DESTROY` | `executeDestroy` | `tofu destroy`. [Details](/concepts/runner/job-execution/destroy-jobs) |
-| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | `executeDeployRunner` / … | Provision, update, or tear down a self-deployed runner. [Details](/concepts/runner/job-execution/runner-jobs) |
-| `ANALYZE_REPO` | `executeAnalyzeRepo` | Clone + statically scan a repo into a `RepoDigest`. |
-| `DETECT_DRIFT` | `executeDriftDetection` | `tofu plan -refresh-only` → `drift.Analyze` → post a `Posture`. |
-| `AUDIT` | `executeAudit` | Run the Elench verify engine over a bring-your-own plan or k8s manifests → post `verify_result`. Provisions nothing. |
-| `CHART_SCAN` | `executeChartScan` | Render a BYO Helm chart to manifests + scan it (zero secrets, deny-all egress) — always sandboxed. |
-| `IAC_SCAN` | `executeIacScan` | Static scan of bring-your-own IaC. |
-| `STATE_SURGERY` | `executeStateSurgery` | Operator-driven tofu state repair (ships **inert** / fail-closed). |
-| `PROBE_CLUSTER` | `executeProbeCluster` | Live cluster-alive probe → writes `environment_probes`. |
-| `BUILD` | `executeBuild` | Image build & push — schedules kaniko Jobs in the customer's cluster; reports the per-service digest map on `execution_metadata.build_result`. |
+| Job type | Handler | Execution |
+|----------|---------|-----------|
+| `PLAN` / `DEPLOY` / `DESTROY` | `executePlan` / `executeDeploy` / `executeDestroy` | Through the **sandbox seam**. [Plan](/concepts/runner/job-execution/plan-jobs) · [Deploy](/concepts/runner/job-execution/deploy-jobs) · [Destroy](/concepts/runner/job-execution/destroy-jobs) |
+| `DEPLOY_RUNNER` / `UPDATE_RUNNER` / `DESTROY_RUNNER` | `executeDeployRunner` / … | [Runner lifecycle jobs](/concepts/runner/job-execution/runner-jobs) |
+| `ANALYZE_REPO` | `executeAnalyzeRepo` | Posts the `RepoDigest`. |
+| `DETECT_DRIFT` | `executeDriftDetection` | Posts the posture on `execution_metadata.drift_posture`. Bring-your-own modules need the container sandbox on a managed runner. |
+| `AUDIT` | `executeAudit` | Posts `execution_metadata.verify_result`; a verdict that cannot be persisted fails the job. |
+| `CHART_SCAN` | `executeChartScan` | Always runs inside the sandbox. |
+| `IAC_SCAN` | `executeIacScan` | On a managed runner, refuses unless the container sandbox is enforced. |
+| `STATE_SURGERY` | `executeStateSurgery` | Ships **inert**: refuses unless `ALETHIA_BREAKGLASS_STATE_SURGERY_ENABLED` opts the runner in. |
+| `PROBE_CLUSTER` | `executeProbeCluster` | Writes `environment_probes`. |
+| `BUILD` | `executeBuild` | Schedules kaniko Jobs in the customer's cluster; posts `execution_metadata.build_result`. |
 
 <Cards>
   <Card title="Plan Jobs" href="/concepts/runner/job-execution/plan-jobs">

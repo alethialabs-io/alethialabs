@@ -1,140 +1,57 @@
 ---
-title: Real-time Architecture
-description: How Postgres LISTEN/NOTIFY fanned out over SSE powers live log streaming, job status updates, and store synchronization.
+title: Real-time updates
+description: How the console pushes live job logs and support messages over Postgres LISTEN/NOTIFY and SSE, and why everything else refreshes by polling.
 ---
 
-# Real-time Architecture
+# Real-time updates
 
-The platform uses **Postgres LISTEN/NOTIFY fanned out to the browser over SSE** (Server-Sent Events) to push live updates. Three features depend on this: log streaming, job status updates, and Runner status tracking.
+The console has two ways to keep a page current. A stream that must feel instant — a job's log, a
+support thread — is **pushed**: Postgres `LISTEN/NOTIFY` fanned out to the browser over SSE
+(Server-Sent Events). Everything else — job status, the runner list, an environment's status — is
+**polled**, and polls fast only while something is in flight.
 
-<img src="/docs/diagrams/concepts/realtime.svg" alt="Realtime Architecture" />
+## Push: LISTEN/NOTIFY → SSE
 
-## How LISTEN/NOTIFY → SSE Works
-
-When a row changes, a Postgres trigger emits a `NOTIFY` on a named channel with a small JSON payload. The console holds a single `LISTEN` connection per app instance and receives every notification. It fans those notifications out to connected browsers over an SSE stream, filtering each event to the subscriber that should see it.
+When a row is inserted, the database emits `pg_notify` on a named channel with a small JSON payload
+that names the row, not its contents. Each console instance holds **one** dedicated `LISTEN`
+connection per channel and dispatches each notification to the SSE subscribers for that key. Because
+every instance listens for itself, this scales to several console instances without a message
+broker. The implementation lives in `apps/console/lib/realtime/index.ts`.
 
 <Mermaid chart={`
 flowchart LR
-  N["Postgres NOTIFY"] --> L["Console LISTEN<br/>(1 per instance)"]
-  L --> S["SSE stream"]
-  S --> B["Browser"]
+  I["INSERT row"] --> N["pg_notify(channel, {key, id})"]
+  N --> L["Console LISTEN<br/>(1 per channel per instance)"]
+  L --> S["SSE stream for that key"]
+  S --> B["Browser EventSource"]
 `} />
 
-The implementation lives in `apps/console/lib/realtime/index.ts`. A single LISTEN connection avoids one connection per browser tab. For multi-instance scale-out, an optional Redis transport relays notifications between console instances (enterprise).
+Two channels are wired:
 
-## Log Streaming
+| Channel | Emitted by | Payload | SSE route |
+|---|---|---|---|
+| `job_logs` | the `insert_job_log` RPC | `{jobId, logId}` | `/api/stream/jobs/{id}` |
+| `support_messages` | `notify_support_message()` | `{caseId, messageId}` | `/api/stream/support/cases/{id}` |
 
-The most latency-sensitive use case. When a runner executes `tofu`, stdout/stderr are streamed to the browser in near real-time.
+The payload carries only ids because `NOTIFY` caps a payload at 8 KB. On each notification the SSE
+route reads the rows newer than the last one it sent and writes them to the stream. Each route
+checks that the caller may see the job or case before it opens the stream.
 
-### Data Flow
+For the log path end to end — the runner's buffered writer, the flush cadence, and how the viewer
+renders the chunks — see [Real-time log streaming](/concepts/runner/log-streaming).
 
-<Steps>
+## Poll: everything else
 
-### Runner writes logs
-The `JobLogger` buffers `tofu` output and flushes every 2 seconds (or when the buffer exceeds 10KB) via `POST /api/jobs/{id}/logs`.
+Lists and statuses refresh through TanStack Query, which dedupes every component that asks for the
+same data into one request:
 
-### Console inserts into database
-The API route inserts the log chunk into `job_logs` with a stream type (STDOUT, STDERR, or SYSTEM).
+| Data | Refresh |
+|---|---|
+| Jobs page (`useJobsPageQuery`) | every 5 seconds while a listed job is in flight; every 30 seconds otherwise |
+| Shared jobs cache (`useJobsQuery`) — palette, overview, notifications | every 5 seconds while any job is in flight; idle otherwise |
+| One job (`useJobQuery`) | every 3 seconds while it is `QUEUED`, `CLAIMED` or `PROCESSING`; idle once terminal |
+| Runners (`useRunnersQuery`) | every 10 seconds while the tab is focused |
+| Environment status (canvas) | every 4 seconds while a job is active on the environment; every 30 seconds once settled |
 
-### Postgres emits NOTIFY
-An `AFTER INSERT` trigger on `job_logs` fires `NOTIFY` on the log channel. The console's LISTEN connection receives it immediately.
-
-### Browser receives chunk
-The job detail page holds an SSE connection scoped to its `job_id`. The console relays the matching notification down the stream and the chunk appears in the log viewer within milliseconds.
-
-</Steps>
-
-### Client Subscription
-
-```typescript
-const events = new EventSource(`/api/jobs/${jobId}/logs/stream`);
-
-events.addEventListener('log', (event) => {
-  const { log_chunk, stream_type } = JSON.parse(event.data);
-  appendLog(log_chunk, stream_type);
-});
-```
-
-### End-to-End Latency
-
-| Step | Latency |
-|------|---------|
-| `tofu` → JobLogger buffer | ≤ 2 seconds |
-| POST to Console API | ~50ms |
-| Database INSERT | ~5ms |
-| NOTIFY → SSE delivery | ~50ms |
-| **Total** | **~2–3 seconds** |
-
-## Job Status Updates
-
-The dashboard layout opens an SSE stream for job changes to update the jobs store in real-time.
-
-### Subscription (Dashboard Layout)
-
-```typescript
-const events = new EventSource('/api/jobs/stream');
-
-events.addEventListener('job', (event) => {
-  jobsStore.addOrUpdateJob(JSON.parse(event.data));
-});
-```
-
-<Callout type="info">
-Events are scoped server-side by the caller's `org_id` (the same org the SSE handler resolves from the session) — each browser only receives events for jobs in its own organization, so multi-tenant isolation is enforced before anything reaches the stream.
-</Callout>
-
-### What triggers updates:
-- Job created (INSERT) → new row appears in job list
-- Runner claims job (UPDATE: QUEUED → CLAIMED)
-- Execution starts (UPDATE: CLAIMED → PROCESSING)
-- Job completes (UPDATE: PROCESSING → SUCCESS/FAILED)
-
-## Runner Status Tracking
-
-The Runners page opens an SSE stream for `runners` changes:
-
-```typescript
-const events = new EventSource('/api/runners/stream');
-
-events.addEventListener('runner', (event) => {
-  const payload = JSON.parse(event.data);
-  if (payload.op === 'DELETE') {
-    runnersStore.removeRunner(payload.old.id);
-  } else {
-    runnersStore.addOrUpdateRunner(payload.new);
-  }
-});
-```
-
-This enables live status indicators:
-- **Green** (ONLINE) — heartbeat received within 60 seconds
-- **Yellow** (DRAINING) — finishing current job, not accepting new ones
-- **Red** (OFFLINE) — heartbeat missed
-
-## Environment Status Updates
-
-The projects store listens for **environment** provisioning-status changes (e.g. DRAFT →
-PROVISIONING → ACTIVE). Provisioning `status` lives on `project_environments`, not `projects` (see
-[Domain Model](/concepts/domain-model#environment-lifecycle)); the console relays each change over
-SSE keyed by the environment's representative project:
-
-```typescript
-events.addEventListener('project', (event) => {
-  const project = JSON.parse(event.data);
-  projectsStore.updateProjectInPlace(project.id, {
-    status: project.status,
-    estimated_monthly_cost: project.estimated_monthly_cost
-  });
-});
-```
-
-## Store Synchronization Pattern
-
-All Zustand stores follow the same pattern for real-time updates:
-
-1. **Initial fetch** on page mount (with 30-second stale threshold to avoid redundant API calls)
-2. **SSE subscription** on dashboard layout mount
-3. **Optimistic updates** via `addOrUpdate` methods that upsert by ID
-4. **Session persistence** for filters and pagination state (via `sessionStorage`)
-
-This means the UI stays current without polling. Job status changes, Runner heartbeats, and Project provisioning progress all appear instantly.
+There is no SSE stream for job status, runners, or environments. A status change shows up on the
+next poll, not instantly.

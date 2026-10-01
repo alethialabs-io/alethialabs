@@ -34,9 +34,9 @@ const TOPICS: { title: string; items: { label: string; href: string }[] }[] = [
 		items: [
 			{ label: "GitOps with ArgoCD", href: "/docs/concepts/gitops-argocd" },
 			{ label: "Provisioning pipeline", href: "/docs/concepts/provisioning-pipeline" },
-			{ label: "Terraform state", href: "/docs/concepts/terraform-state" },
+			{ label: "OpenTofu state", href: "/docs/concepts/terraform-state" },
 			{ label: "Job queue", href: "/docs/concepts/job-queue" },
-			{ label: "Runner scaling", href: "/docs/concepts/runner-scaling" },
+			{ label: "Warm-pool scaling", href: "/docs/concepts/runner/scaling" },
 		],
 	},
 	{

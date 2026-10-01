@@ -50,8 +50,9 @@ If a page is trying to do two of these, split it.
 
 ### Canonical terminology (the enforced floor)
 
-These are the only **error-level** rules — a wrong product name blocks CI. Broader guidance is
-just guidance:
+These are the only **error-level** rules — a wrong product name blocks CI (`Alethia.Terminology`,
+`Alethia.BringYourOwnIaC`). Broader guidance is just guidance — `Alethia.Connector` ("connector", the
+console's word for the provider catalog, over "provider integration") is a warning:
 
 | Write            | Not                        |
 | ---------------- | -------------------------- |
@@ -59,6 +60,7 @@ just guidance:
 | OpenTofu         | Open Tofu                  |
 | ArgoCD           | Argo CD                    |
 | GitHub / GitLab  | Github / Gitlab            |
+| bring-your-own IaC, BYO IaC | Bring Your Own IaC, BYO-IaC, "Bring-your-own IaC" mid-sentence |
 
 Source of truth for spelling + case is `apps/docs/styles/Alethia/` (the Vale style) and
 `apps/docs/styles/config/vocabularies/Alethia/accept.txt` (the vocab). Add new product terms

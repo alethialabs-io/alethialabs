@@ -1,11 +1,15 @@
 ---
-title: Plan & Apply
-description: The Plan-Review-Apply workflow for infrastructure provisioning.
+title: Plan and apply in the console
+description: Plan an environment, review the plan and its verify report, apply that exact plan, or destroy the environment — from the console.
 ---
 
-# Plan & Apply
+# Plan and apply in the console
 
 Infrastructure provisioning follows a strict **Plan-Review-Apply** workflow. Nothing is provisioned without explicit user confirmation.
+
+This guide covers the console. To run the same workflow from a terminal, see the CLI reference
+[Plan & Apply](/reference/cli/plan-and-apply). For what the runner does inside each job, see
+[Plan jobs](/concepts/runner/job-execution/plan-jobs) and [Deploy jobs](/concepts/runner/job-execution/deploy-jobs).
 
 ## The Workflow
 
@@ -14,15 +18,9 @@ Infrastructure provisioning follows a strict **Plan-Review-Apply** workflow. Not
 ### Generate Plan
 From the [project detail page](/guides/dashboard/project-detail), click **Plan**. Select a Runner to execute. A `PLAN` job is queued.
 
-The Runner:
-1. Mints short-lived cloud credentials via keyless OIDC ([how](/concepts/authentication))
-2. Generates OpenTofu variable files (`tofu.OverrideTfvarsFromMap`) from the project's config snapshot
-3. Runs `tofu init` — state goes through the Console **state proxy** (`backend "http"` → `/api/jobs/{id}/state`), so the runner holds no object-storage credentials
-4. Runs `tofu plan -out=plan.tfplan`
-5. Runs `tofu show -json` for structured output
-6. Evaluates the [verify gate](#verify-gate) over the plan JSON and attaches the `verify_result` report
-7. Optionally runs Infracost for cost breakdown ([cost estimation](/concepts/cost-estimation))
-8. Uploads the plan artifact and reports resource change counts and costs
+The runner plans the environment against its config snapshot, evaluates the
+[verify gate](#verify-gate) over the plan JSON, optionally prices it with Infracost
+([cost estimation](/concepts/cost-estimation)), and uploads the plan artifact.
 
 ### Review Plan
 The Plan tab in project detail shows:
@@ -46,52 +44,38 @@ The Plan tab renders the [verify gate](#verify-gate) result (`execution_metadata
 Total estimated monthly cost with per-resource itemization.
 
 ### Apply
-Click **Apply** to provision. Select a Runner. A `DEPLOY` job is queued. `DEPLOY` runs through `provisioner.RunDeployV2`.
-
-The Runner:
-1. Validates the config hash against the referenced PLAN job — if the project was modified after planning, the apply fails with a hash mismatch error
-2. Runs `tofu plan -out` and `tofu show -json` from the config snapshot
-3. **Verify gate** — evaluates `packages/core/verify` over the plan JSON; this is **fail-closed** (see [below](#verify-gate))
-4. Runs `tofu apply` (only if the gate passes or an authorized override waives it)
-5. Installs ArgoCD via Helm / scaffolds its manifests ([GitOps](/concepts/gitops-argocd))
-6. Reports cluster metadata back to the Console
+Click **Apply** to provision. Select a Runner. A `DEPLOY` job is queued, bound to the plan you
+reviewed: the runner applies that plan's saved artifact (see [Applying the reviewed plan](#config-hash-validation)).
+The verify gate runs again before `tofu apply` and is **fail-closed**. After the apply, the runner
+installs ArgoCD ([GitOps](/concepts/gitops-argocd)) and reports cluster metadata back to the Console.
 
 ### Finalization
-On DEPLOY success, Alethia's `finalizeDeployment()` server action:
-- Updates `project_cluster` with cluster name, endpoint, ARN, ArgoCD URL and password
-- Updates `project_databases` with writer/reader endpoints, credentials ARNs
-- Updates `project_caches` with primary/reader endpoints
-- Sets the environment's provisioning `status` (on `project_environments`) to `ACTIVE`
+When the `DEPLOY` job succeeds, the Console records the cluster, database and cache endpoints on the
+environment and sets its status to `ACTIVE`. See
+[Deploy jobs → Finalization](/concepts/runner/job-execution/deploy-jobs#finalization).
 
 </Steps>
 
 ## Verify gate
 
 Between `tofu plan` and `tofu apply`, the runner runs the [Elench](/concepts/elench) verification gate
-(`packages/core/verify`, invoked from `provisioner.RunDeployV2`) over the OpenTofu **plan JSON**. It
-evaluates the plan against a catalog of security controls (keyless auth, least-privilege, OIDC-subject
-pinning) and produces a structured `verify.Report` — per-control `pass`, `fail`, or an honest
-`not_evaluable` for anything the plan JSON can't prove.
+over the OpenTofu **plan JSON**: per-control `pass`, `fail`, or an honest `not_evaluable` for anything
+the plan cannot prove. A hard control failure **blocks before `tofu apply`** unless an authorized
+override waives it — see [Verify override](/guides/jobs/verify-override). `PLAN` jobs attach the
+report too, so you see the outcome in the **Plan** tab before you apply. For the control catalog and
+the signed evidence receipt, see [Engine internals](/concepts/elench/engine-internals).
 
-The gate is **fail-closed**: a hard control failure **blocks before `tofu apply`** unless an authorized
-`verify.Override` waives the specific failing controls (audited, expiry-bounded). PLAN jobs evaluate and
-attach the report too, so you see the outcome before ever applying.
+## Config hash validation
 
-The report rides back on `execution_metadata["verify_result"]` and the Console renders it in the **Plan
-tab**. For the control catalog, the `not_evaluable` honesty rule, and the signed evidence receipt, see
-[Engine internals](/concepts/elench/engine-internals).
+An apply bound to a plan applies **that plan**, not a fresh one:
 
-## Config Hash Validation
-
-The DEPLOY job references a specific PLAN job. Before applying, the Runner compares:
-- The project's current configuration hash
-- The plan's configuration hash (captured at plan time)
-
-If they differ (user modified the project after planning), the job fails with:
-
-> "Configuration has changed since the plan was generated. Please re-plan."
-
-This prevents applying a stale plan that doesn't match the current desired state.
+- The `PLAN` job must have finished with `SUCCESS`, or the `DEPLOY` job fails.
+- The runner downloads the plan's saved artifact and applies it. If the artifact cannot be fetched,
+  the runner logs a warning and plans again from the `DEPLOY` job's own snapshot.
+- When both jobs carry a configuration hash, the runner compares them and fails on a mismatch with
+  `configuration changed since plan was generated`. Jobs queued through the jobs API — which the CLI
+  uses — carry that hash; jobs queued from the console do not, so the saved artifact is what binds a
+  console apply to its plan.
 
 ## Destroy Workflow
 
@@ -109,13 +93,13 @@ Destroy permanently removes all cloud resources (VPC, cluster, databases, etc.).
 
 ## Free plan limits
 
-Community (free) organizations have two limits on provisioning jobs. Paid plans are unbounded on both.
+Community (free) organizations have two limits on provisioning jobs:
 
-- **Concurrency** — at most **2 jobs** run at once (enforced when a runner claims a job). Extra jobs wait in the queue rather than being rejected.
-- **Daily volume** — at most **25 provisioning jobs you start** in any rolling 24-hour window. Reaching it blocks the next plan/apply/destroy/scan with an upgrade prompt; the limit clears as older jobs age out of the window.
+- **Concurrency** — at most **2 jobs** run at once (enforced when a runner claims a job). Extra jobs wait in the queue rather than being rejected. Team raises this to 8; Enterprise has no concurrency cap.
+- **Daily volume** — at most **25 provisioning jobs you start** in any rolling 24-hour window (an operator can change the number with `ALETHIA_FREE_DAILY_JOB_QUOTA`). Reaching it blocks the next plan/apply/destroy/scan with an upgrade prompt; the limit clears as older jobs age out of the window. Paid plans have no daily cap.
 
 Only jobs **you** start count toward the daily limit. Background jobs the platform runs on your behalf — drift detection, cluster probes, reconciliation, and ephemeral-environment cleanup — are never counted and never blocked, so day-2 automation keeps running regardless of the cap.
 
 <Callout>
-Upgrading to a paid plan removes both limits. See the [billing commands](/reference/cli/billing) or the **Billing** page in the console.
+Upgrading to a paid plan removes the daily cap and raises (Team) or removes (Enterprise) the concurrency cap. See the [billing commands](/reference/cli/billing) or the **Billing** page in the console.
 </Callout>

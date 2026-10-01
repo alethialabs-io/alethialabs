@@ -1,13 +1,15 @@
 ---
-title: Job Types
+title: Job types
 description: Reference for every provisioning job type Alethia runs, with its Console label and what it does.
 ---
 
-# Job Types
+# Job types
 
 Every infrastructure operation is modeled as a [job](/guides/jobs). Each job has a **type** drawn from the `provision_job_type` enum. The Console renders each type with a label, an icon, and a short description from a single catalog (`lib/jobs/format.ts`), shared by the jobs data table and the overview's recent-jobs card.
 
-The table below lists every job type.
+The table below lists every job type. It is the one catalog in these docs: other pages link here
+rather than repeat it. For which runner handler executes each type, see
+[Job execution](/concepts/runner/job-execution).
 
 | Type | Label | Description |
 |------|-------|-------------|
@@ -19,8 +21,8 @@ The table below lists every job type.
 | `DESTROY_RUNNER` | Destroy Runner | Tear down a provisioned runner |
 | `ANALYZE_REPO` | Analyze Repo | Scan a repository for infrastructure config |
 | `DETECT_DRIFT` | Detect Drift | Refresh-only check for drift between state and live cloud |
-| `AUDIT` | Audit | Audit bring-your-own IaC (terraform plan or k8s manifests) with elench |
-| `CHART_SCAN` | Chart Scan | Scan a bring-your-own Helm chart for security issues (elench verify) |
+| `AUDIT` | Audit | Audit bring-your-own IaC (an OpenTofu/Terraform plan or Kubernetes manifests) with Elench |
+| `CHART_SCAN` | Chart Scan | Scan a bring-your-own Helm chart for security issues (Elench verify) |
 | `IAC_SCAN` | IaC Scan | Validate a bring-your-own IaC module and pin the commit it deploys from |
 | `STATE_SURGERY` | State Surgery | Break-glass privileged tofu-state repair (executor ships inert / fail-closed) |
 | `PROBE_CLUSTER` | Probe Cluster | Live cluster-alive probe — dials the cluster API server to record reachability |
@@ -42,17 +44,28 @@ An environment promotion does not add a new type — it reuses `PLAN`, then `DEP
 
 ## Scan jobs
 
-These jobs inspect code or configuration before it is deployed.
+These jobs inspect code or configuration and provision nothing.
 
-- `ANALYZE_REPO` scans a repository for infrastructure config.
-- `CHART_SCAN` clones a bring-your-own Helm chart, runs `helm template`, and evaluates the rendered manifests with elench verify.
-- `IAC_SCAN` scans a bring-your-own IaC module: it clones the repo, pins the commit, inventories providers and modules, and runs `tofu validate`. Its result gates the environment's `PLAN` and `DEPLOY` jobs (both require a fresh scan that pinned the commit to apply). `DESTROY` is not gated on the scan — it gates on the commit that created the deployed state, so a failed re-scan never traps live infrastructure.
-- `AUDIT` audits bring-your-own IaC (an OpenTofu plan or Kubernetes manifests) with elench.
+- `ANALYZE_REPO` clones the repository and scans it statically into a `RepoDigest`, which drives
+  repo-first onboarding.
+- `CHART_SCAN` clones (or pulls) the chart, runs `helm template` in the sandbox with no secrets and no
+  egress, and evaluates the rendered manifests with Elench verify.
+- `IAC_SCAN` clones the module, pins the commit, inventories providers and modules, and runs
+  `tofu validate` plus the static safety gate. Its result gates the environment's `PLAN` and `DEPLOY`
+  jobs (both require a fresh scan that pinned the commit to apply). `DESTROY` is not gated on the
+  scan — it runs the commit that created the deployed state, so a failed re-scan never traps live
+  infrastructure.
+- `AUDIT` evaluates input carried on the job — an existing `show -json` plan or a set of Kubernetes
+  manifests — and posts the Elench verify report to `execution_metadata.verify_result`, exactly like a
+  `PLAN` job's gate.
 
 ## Reconciliation jobs
 
-- `DETECT_DRIFT` runs a refresh-only check for drift between the recorded state and the live cloud.
-- `PROBE_CLUSTER` dials the cluster's Kubernetes API server and records reachability. An unreachable cluster is a **successful** probe with `reachable=false`; the job only fails when the probe itself could not run.
+- `DETECT_DRIFT` runs `tofu plan -refresh-only` and records a per-environment drift posture — see
+  [Drift detection](/concepts/drift).
+- `PROBE_CLUSTER` dials the cluster's Kubernetes API server and records reachability in
+  `environment_probes`. An unreachable cluster is a **successful** probe with `reachable=false`; the
+  job only fails when the probe itself could not run.
 
 ## Build jobs
 

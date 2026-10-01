@@ -45,11 +45,11 @@ reach an external agent. A single endpoint serves Claude Code, ChatGPT, Codex, a
 
 ### The proof surface over MCP
 
-The evidence half of elench is readable by an external agent, not just the dashboard:
+The evidence half of Elench is readable by an external agent, not just the dashboard:
 
 | Tool | Audience | Returns |
 |---|---|---|
-| `get_plan_result` | `both` | A job's status + the elench `verify_verdict` / `verify_result` (the signed gate report). |
+| `get_plan_result` | `both` | A job's status + the Elench `verify_verdict` / `verify_result` (the signed gate report). |
 | `get_drift_posture` | `both` | The latest day-2 [drift `Posture`](/concepts/elench/engine-internals) for a project environment. |
 | `audit_infrastructure` | `in-app` | Queues an `AUDIT` job over a bring-your-own plan / manifests (a job-queuing write → stays in-app). |
 

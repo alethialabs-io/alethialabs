@@ -1,9 +1,9 @@
 ---
-title: Job Queue Pattern
+title: Job queue
 description: How infrastructure operations are queued, claimed atomically, and executed by Runners.
 ---
 
-# Job Queue Pattern
+# Job queue
 
 Every provisioning operation in the platform — planning, deploying, destroying, drift detection,
 bring-your-own scans — is modeled as a **job** in a PostgreSQL queue. Runners poll for jobs, claim
@@ -21,21 +21,11 @@ Infrastructure provisioning is slow (minutes to hours) and must be reliable. A j
 - **Resumability** — if a runner dies, the job can be retried from persisted OpenTofu state
 - **Auditability** — every operation is logged with timestamps, status, and metadata
 
-## Job Types
+## Job types
 
-The common provisioning jobs are below; the full `provision_job_type` catalog (including
-`ANALYZE_REPO`, `DETECT_DRIFT`, `AUDIT`, `CHART_SCAN`, `IAC_SCAN`, `STATE_SURGERY`, `PROBE_CLUSTER`,
-and `BUILD`) is documented in the [Domain Model](/concepts/domain-model#job-types) and the
-[Glossary](/reference/glossary#job-types-at-a-glance).
-
-| Type | Purpose | Triggered By |
-|------|---------|-------------|
-| `PLAN` | `tofu plan` + optional Infracost analysis | Planning an environment |
-| `DEPLOY` | `tofu plan` → verify gate → `tofu apply` → install ArgoCD | Applying an environment |
-| `DESTROY` | `tofu destroy` with graceful cleanup | Destroying an environment |
-| `DEPLOY_RUNNER` | Provision a self-operated runner's infrastructure | Deploying a self-operated runner |
-| `UPDATE_RUNNER` | Roll a self-operated runner to the latest release | Updating a runner |
-| `DESTROY_RUNNER` | Tear down a self-operated runner's infrastructure | Removing a deployed runner |
+Plan, deploy and destroy are the common jobs, but the `provision_job_type` enum also covers runner
+lifecycle, scans, drift, probes, builds and break-glass state repair. The full catalog is
+[Job types](/guides/jobs/job-types).
 
 ## Job Lifecycle
 
@@ -111,7 +101,7 @@ User plans / applies / destroys an environment in the Console (or runs `alethia 
 `alethia project apply` / `alethia project destroy` in the CLI). A `jobs` row is inserted with status `QUEUED`.
 
 ### Runner Claims Job
-A runner's poll loop calls `POST /api/jobs/claim`. The server executes `claim_next_job()`. If a job is returned, the runner proceeds.
+The runner's wake stream (SSE) signals that a job is claimable — or, while that stream is down, a 30-second fallback poll fires — and the runner calls `POST /api/jobs/claim`. The server executes `claim_next_job()`. If a job is returned, the runner proceeds.
 
 ### Credential Assumption
 The runner reads the `cloud_identity` from the job and assumes temporary, **keyless** credentials — `AssumeRoleWithWebIdentity` (AWS), Workload Identity Federation token exchange (GCP), or federated identity (Azure) — using a minted OIDC assertion, no static key. See [Security](/concepts/security).
@@ -137,6 +127,6 @@ When a Runner dies mid-job:
 4. Each recovery increments `attempts`; below `max_attempts` (5) the job is requeued (back to `QUEUED`, runner cleared) so another Runner picks it up — at the cap it is failed **terminally** to protect the queue
 5. OpenTofu state is preserved in S3-compatible storage, so the requeued run continues from the last successful state
 
-## Real-time Status Updates
+## Status in the UI
 
-Job status changes are broadcast via [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). The UI subscribes to `jobs` UPDATE events and updates the jobs store in real-time. The job detail page also subscribes to `job_logs` INSERT events for live log streaming.
+The job detail page streams a job's **logs** live over [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). Job **status** is not pushed: the jobs list and the job detail page poll, fast while a job is in flight — see [Real-time updates](/concepts/realtime#poll-everything-else).
