@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/names"
 )
 
 // Rendering (#5250 §4 and decision 4): the two kubeconfig shapes a mint produces, and the
@@ -49,33 +51,16 @@ type Target struct {
 	CAData string
 }
 
-// ContextName returns `alethia-<project>-<env>`, each part folded to lowercase letters, digits and
-// single hyphens, so a project called "Web Shop" and env "prod" file as alethia-web-shop-prod. The
-// same name is used for the kubeconfig's cluster, user and context entries.
+// ContextName returns `alethia-<project>-<env>`, each part slugified by the platform's one
+// slugifier (packages/core/names, the twin of the console's slugify), so a project called
+// "Web Shop" and env "prod" file as alethia-web-shop-prod. The same name is used for the
+// kubeconfig's cluster, user and context entries.
 func (t Target) ContextName() (string, error) {
-	p, e := slug(t.Project), slug(t.Env)
+	p, e := names.SlugifyOrEmpty(t.Project, 0), names.SlugifyOrEmpty(t.Env, 0)
 	if p == "" || e == "" {
 		return "", fmt.Errorf("%w: a context name needs a project and an env (got %q, %q)", ErrRender, t.Project, t.Env)
 	}
 	return "alethia-" + p + "-" + e, nil
-}
-
-// slug folds s to [a-z0-9] runs joined by single hyphens.
-func slug(s string) string {
-	var b strings.Builder
-	dash := false
-	for _, r := range strings.ToLower(s) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			if dash && b.Len() > 0 {
-				b.WriteByte('-')
-			}
-			b.WriteRune(r)
-			dash = false
-			continue
-		}
-		dash = true
-	}
-	return b.String()
 }
 
 // pinned validates the target's endpoint and CA and returns the context name.

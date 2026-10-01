@@ -179,7 +179,7 @@ func TestContextName(t *testing.T) {
 		{"Web Shop", "prod"}:        "alethia-web-shop-prod",
 		{"api", "staging-eu"}:       "alethia-api-staging-eu",
 		{"  --My_App--  ", "Dev.1"}: "alethia-my-app-dev-1",
-		{"Ünïcode", "prod"}:         "alethia-n-code-prod",
+		{"Ünïcode", "prod"}:         "alethia-unicode-prod",
 	}
 	for in, want := range cases {
 		got, err := Target{Project: in[0], Env: in[1]}.ContextName()
