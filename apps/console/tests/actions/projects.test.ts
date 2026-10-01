@@ -1379,6 +1379,94 @@ describe("buildConfigSnapshot — DNS switches (#1810)", () => {
 	});
 });
 
+// #5267: node_size was dead config end to end — the canvas edited it, the card showed it, and the
+// snapshot never carried it, so the Go resolver (resolve.go) never saw it. Emitted only when set,
+// like the DNS switches above, so the byte-locked t2_config_snapshot fixtures do not move.
+describe("buildConfigSnapshot — node_size (#5267)", () => {
+	/** Run planProject against a single cluster row and return the frozen `cluster` snapshot. */
+	async function clusterSnapshot(row: Record<string, unknown>) {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([[projectCluster, [row]]]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await planProject("p1");
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
+		return snapshot.cluster as Record<string, unknown>;
+	}
+
+	it("carries node_size beside an empty instance_types, the shape Go resolves", async () => {
+		const cluster = await clusterSnapshot({
+			instance_types: [],
+			node_size: { vcpu: 4, memory_gb: 16 },
+		});
+		expect(cluster.node_size).toEqual({ vcpu: 4, memory_gb: 16 });
+		expect(cluster.instance_types).toEqual([]);
+	});
+
+	it("omits the key when the row has no size, so the snapshot bytes do not move", async () => {
+		const cluster = await clusterSnapshot({
+			instance_types: ["t3.large"],
+			node_size: null,
+		});
+		expect(cluster).not.toHaveProperty("node_size");
+		expect(cluster.instance_types).toEqual(["t3.large"]);
+	});
+});
+
+describe("getProjectAsFormData — node_size round-trip (#5267)", () => {
+	const clusterSelect = (clusterRow: Record<string, unknown>) =>
+		new Map<unknown, RowsResolver>([
+			[
+				projects,
+				[
+					{
+						id: "p1",
+						org_id: "org-1",
+						cloud_identity_id: "ci-1",
+						region: "us-east-1",
+						iac_version: "1.9.5",
+						project_name: "My App",
+						slug: "my-app",
+					},
+				],
+			],
+			[
+				projectEnvironments,
+				[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+			],
+			[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+			[projectCluster, [clusterRow]],
+		]);
+
+	// REGRESSION: the load dropped node_size, and updateProjectDesign reconciles delete-then-insert —
+	// so the first canvas save after a reload re-inserted the cluster WITHOUT the size the user set.
+	it("carries node_size so a canvas save cannot wipe it", async () => {
+		setupDb({
+			select: clusterSelect({
+				cluster_version: "1.33",
+				instance_types: [],
+				node_size: { vcpu: 2, memory_gb: 8 },
+			}),
+		});
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.cluster.node_size).toEqual({ vcpu: 2, memory_gb: 8 });
+		expect(formData.cluster.instance_types).toEqual([]);
+	});
+
+	it("leaves node_size absent for a row that has none", async () => {
+		setupDb({
+			select: clusterSelect({ cluster_version: "1.33", instance_types: ["t3.large"], node_size: null }),
+		});
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.cluster.node_size).toBeUndefined();
+	});
+});
+
 // #2568: the cluster cloud's own DNS may refuse the TLD outright — hetzner answers a `.io` zone
 // create with "unsupported tld" (422). #2570 added the gate; these are the two conditions it has
 // to get right, neither of which had a test.

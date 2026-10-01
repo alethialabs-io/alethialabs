@@ -462,12 +462,17 @@ literally — so numbers, booleans, and arrays are typed correctly:
 --set port=5432                       # number
 --set iam_auth=true                   # boolean
 --set instance_types='["t3.medium"]'  # array
+--set 'node_size={"vcpu":4,"memory_gb":16}'  # object
 --set engine=postgres                 # string
 --set 'cluster_version="1.31"'        # string that would otherwise parse as a number
 ```
 
 Quote a value that looks like a number but is a string field — `cluster_version=1.31` coerces to the
 number `1.31`, which the server refuses.
+
+A cluster is sized one of two ways. `node_size` is a size that works on any cloud: the deploy picks
+the closest machine type in the catalog for the cluster's cloud. `instance_types` pins a machine type.
+Setting one clears the other in the same write, and a single `add` that sets both fails.
 
 Fields are **validated server-side** against the component's schema: an unknown or mistyped field
 fails with a clear `400`, naming the offending field and the allowed set. Singleton kinds ignore

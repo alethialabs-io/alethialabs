@@ -44,6 +44,9 @@ func (p *gcpProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
+	if err := validateInstanceTypes("gcp", config); err != nil {
+		return err
+	}
 	return validateNodeDiskSize(config, "gke_disk_size_gb", gcpNodeDiskFloorGB)
 }
 
@@ -329,7 +332,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		mergeProviderConfig(tfvars, t.ProviderConfig, gcpRootReserved...)
 	}
 
-	if inst := ResolveInstanceTypes("gcp", config.Cluster); len(inst) > 0 {
+	if inst := resolveNodeTypes("gcp", config.Cluster.InstanceTypes, config.Cluster.NodeSize); len(inst) > 0 {
 		tfvars["gke_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {

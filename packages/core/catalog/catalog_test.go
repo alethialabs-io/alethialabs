@@ -4,6 +4,7 @@
 package catalog
 
 import (
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -151,5 +152,24 @@ func TestNearestCacheTier(t *testing.T) {
 	got, ok := c.NearestCacheTier("gcp", 4)
 	if !ok || got.Value != "M2" {
 		t.Errorf("gcp cache ~4GB = %q (ok=%v), want M2", got.Value, ok)
+	}
+}
+
+// TestInstanceOwners: a catalog SKU names the one cloud that lists it, and an SKU the catalog has
+// never heard of names none — which validate.go reads as "no evidence", never as "invalid" (#5269).
+func TestInstanceOwners(t *testing.T) {
+	c := MustLoad()
+	cases := map[string][]string{
+		"t3.large":        {"aws"},
+		"e2-standard-2":   {"gcp"},
+		"Standard_D2s_v5": {"azure"},
+		"cpx22":           {"hetzner"},
+		"ecs.g6.large":    {"alibaba"},
+		"m6i.large":       nil,
+	}
+	for sku, want := range cases {
+		if got := c.InstanceOwners(sku); !reflect.DeepEqual(got, want) {
+			t.Errorf("InstanceOwners(%q) = %v, want %v", sku, got, want)
+		}
 	}
 }

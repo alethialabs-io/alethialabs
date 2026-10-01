@@ -9,6 +9,7 @@
 
 import { z } from "zod";
 import { serviceBindingSchema } from "@/lib/validations/project-form.schema";
+import type { NodeSize } from "@/types/jsonb.types";
 import {
 	CACHE_NODE_TYPES,
 	DB_CAPACITY,
@@ -392,6 +393,17 @@ function engineLabel(config: {
 }
 
 // ── per-kind config ─────────────────────────────────────────────────────────
+
+/**
+ * The cluster's portable-size write, under the one-writer rule (#5267): setting `node_size` clears
+ * `instance_types` in the same patch. Go prefers a non-empty instance_types, and every new cluster
+ * is stamped with a default one (#5270), so a size written beside it would be ignored by the deploy.
+ * `[]` rather than undefined so the snapshot carries an explicit empty list. The CLI applies the
+ * same rule through applySizingOneWriter (lib/cloud-providers/node-sizing.ts).
+ */
+function nodeSizeWrite(size: NodeSize): { node_size: NodeSize; instance_types: string[] } {
+	return { node_size: size, instance_types: [] };
+}
 
 export const CONFIG_SCHEMA: ConfigSchemaMap = {
 	project: {
@@ -913,8 +925,13 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Instance type",
 						requiresProvider: true,
 						capabilityAxis: "instance_type",
+						description:
+							"Pins one machine type on this cloud. Choosing one clears the portable size under Node sizing.",
 						get: (c) => c.instance_types?.[0] ?? "",
-						set: (v) => ({ instance_types: [String(v)] }),
+						// One writer (#5267): pinning a type clears node_size in the same patch. Go
+						// prefers a non-empty instance_types, so a size left beside it would be shown
+						// on the card and ignored by the deploy.
+						set: (v) => ({ instance_types: [String(v)], node_size: undefined }),
 						options: instanceTypeOptions,
 					},
 				],
@@ -936,14 +953,13 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						max: 96,
 						optional: true,
 						placeholder: "2",
-						description: "Portable sizing — mapped to the nearest instance type on any cloud.",
+						description:
+							"Portable sizing — mapped to the nearest instance type on any cloud. Setting it clears the pinned instance type.",
 						get: (c) => c.node_size?.vcpu ?? null,
-						set: (v, c) => ({
-							node_size:
-								v == null
-									? undefined
-									: { vcpu: Number(v), memory_gb: c.node_size?.memory_gb ?? 8 },
-						}),
+						set: (v, c) =>
+							v == null
+								? { node_size: undefined }
+								: nodeSizeWrite({ vcpu: Number(v), memory_gb: c.node_size?.memory_gb ?? 8 }),
 					},
 					{
 						key: "node_size_memory",
@@ -955,12 +971,10 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						optional: true,
 						placeholder: "8",
 						get: (c) => c.node_size?.memory_gb ?? null,
-						set: (v, c) => ({
-							node_size:
-								v == null
-									? undefined
-									: { vcpu: c.node_size?.vcpu ?? 2, memory_gb: Number(v) },
-						}),
+						set: (v, c) =>
+							v == null
+								? { node_size: undefined }
+								: nodeSizeWrite({ vcpu: c.node_size?.vcpu ?? 2, memory_gb: Number(v) }),
 					},
 					{ key: "node_min_size", type: "number", label: "Min nodes", min: 1, max: 100 },
 					{

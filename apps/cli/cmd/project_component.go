@@ -281,7 +281,10 @@ Values are parsed as JSON when possible, else taken literally:
   --set port=5432            (number)
   --set iam_auth=true        (boolean)
   --set instance_types='["t3.medium"]'  (array)
-  --set engine=postgres      (string)`,
+  --set node_size='{"vcpu":4,"memory_gb":16}'  (object)
+  --set engine=postgres      (string)
+
+A cluster takes node_size OR instance_types: setting one clears the other.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
