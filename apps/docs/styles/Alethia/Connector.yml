@@ -6,10 +6,7 @@ link: https://github.com/alethialabs-io/alethialabs/blob/dev/apps/docs/content/d
 # catalog type. Only phrases that can mean nothing else are matched: bare "integration" is a
 # third-party term the console itself uses (a PagerDuty integration key, Discord → Integrations),
 # so it is never flagged.
-#
-# WARNING, not error, for one reason: the only remaining hit is in guides/connectors/git-providers.mdx,
-# which another lane owns. Raise this to `error` once that line says "connectors".
-level: warning
+level: error
 ignorecase: true
 action:
   name: replace

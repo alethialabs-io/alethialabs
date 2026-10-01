@@ -51,8 +51,8 @@ If a page is trying to do two of these, split it.
 ### Canonical terminology (the enforced floor)
 
 These are the only **error-level** rules — a wrong product name blocks CI (`Alethia.Terminology`,
-`Alethia.BringYourOwnIaC`). Broader guidance is just guidance — `Alethia.Connector` ("connector", the
-console's word for the provider catalog, over "provider integration") is a warning:
+`Alethia.BringYourOwnIaC`, and `Alethia.Connector`: "connector", the console's word for the provider
+catalog, over "provider integration"). Broader guidance is just guidance:
 
 | Write            | Not                        |
 | ---------------- | -------------------------- |

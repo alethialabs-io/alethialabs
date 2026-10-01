@@ -54,7 +54,8 @@ pnpm -F docs lint:prose    # runs `vale content`
 The `docs-prose` CI job runs the same lint on any `apps/docs/**` change. It **fails only on
 error-level alerts** — a wrong product name (the `Alethia.Terminology` rule, which includes
 `k8s`/`K8s` in prose) or a drifted spelling of "bring-your-own IaC" (`Alethia.BringYourOwnIaC`).
-`Alethia.Connector` (provider-catalog synonyms for "connector") is a warning for now. Plain-language
+It also fails on `Alethia.Connector` ("provider integration" or "integrations page" for what the
+console calls Connectors). Plain-language
 swaps and "avoid *will*/*we*" surface as non-blocking warnings; long-sentence nudges are
 suggestions (hidden by default — see them with `vale --minAlertLevel=suggestion content`).
 
