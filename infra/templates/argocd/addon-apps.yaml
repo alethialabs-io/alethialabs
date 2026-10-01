@@ -38,6 +38,17 @@ spec:
     automated:
       prune: true
       selfHeal: true
+      # An EMPTY addons/ is a state this Application must be able to reach, not only start in.
+      # Without allowEmpty, ArgoCD's auto-sync refuses any sync in which EVERY live resource would
+      # be pruned ("Skipping sync attempt to <rev>: auto-sync will wipe out all resources",
+      # controller/appcontroller.go autoSync) and parks the Application Healthy + OutOfSync with
+      # a SyncError condition, forever — no retry or backoff reaches that branch. Two real paths
+      # empty this directory on a live cluster: re-pointing the environment at a repo whose
+      # addons/ holds only a README (alethia-starter-apps, #5210), and writeAddOnGitOps pruning
+      # the last gitops-mode add-on a customer disabled (provisioner/addons_gitops.go). Both are
+      # the customer's declared intent. A MISSING addons/ path is unaffected: it is a
+      # ComparisonError, never an empty target, so this cannot wipe add-ons on a broken repo.
+      allowEmpty: true
     syncOptions:
       - CreateNamespace=true
 {{- end }}
