@@ -488,7 +488,10 @@ func TestHcloudServerCostsRefusesUnscopedReads(t *testing.T) {
 // Application converged, and `addons` Healthy + OutOfSync at the new commit, still holding the three
 // child Applications starter-ai's addons/ created. Its status carries the cause — a last operation
 // that Succeeded at the OLD commit, a SyncError condition, and three resources marked for pruning —
-// and the shape is ArgoCD's own (.status.operationState / .conditions / .resources[].requiresPruning).
+// and the shape is ArgoCD's own (.status.operationState / .conditions / .resources[].requiresPruning),
+// checked field by field against the `addons` Application CAPTURED on the kind + pinned argo-cd rig
+// that reproduced #5210 (actions run 36908058283, phaseB-apps.json): the condition message below is
+// that capture's, with the commits swapped for this file's test SHAs.
 func phaseBAddonsRefusedJSON(t *testing.T) []byte {
 	t.Helper()
 	green := func(name string) map[string]any {
