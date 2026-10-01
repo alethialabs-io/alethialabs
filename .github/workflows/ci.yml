@@ -2988,6 +2988,17 @@ jobs:
         if: needs.detect-changes.outputs.docs == 'true'
         with:
           node-version: 22
+      # #5239: 34 broken internal links and anchors sat in the docs with nothing to notice them —
+      # eight to a page that never existed, two that doubled the /docs basePath, one per per-cloud
+      # tutorial to a heading that had been renamed. Dependency-free node, so it runs before Vale's
+      # installs. The self-test plants one of each defect first, so a parser that stopped matching
+      # cannot pass green over nothing; the real run also refuses a zero-link count.
+      - name: Every internal link and anchor resolves
+        if: needs.detect-changes.outputs.docs == 'true'
+        working-directory: apps/docs
+        run: |
+          node scripts/check-links.mjs --self-test
+          node scripts/check-links.mjs
       # Vale shells out to `mdx2vast` to parse .mdx (prose only — it drops fenced code,
       # code spans, URLs, JSX/ESM); it must be on $PATH.
       - name: Install the MDX preprocessor
