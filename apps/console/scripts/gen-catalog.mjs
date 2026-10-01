@@ -171,6 +171,26 @@ for (const [source, targets] of Object.entries(live.cacheNodeMap)) {
 	}
 }
 
+// The default node shape is held twice — `compute.<p>.default_instance` (the Go resolver's half,
+// which the Go node-fit guards range over) and `live.defaultInstanceType` (what the console stamps
+// on every new cluster). Only the second reaches a user, so a default moved in one half alone would
+// pass the Go guards while the product kept shipping the old shape (#5251). It must also be a value
+// the instance picker OFFERS, or a fresh cluster renders a select with nothing selected.
+for (const [provider, cp] of Object.entries(catalogCore.compute)) {
+	const live_default = live.defaultInstanceType[provider];
+	if (live_default !== cp.default_instance) {
+		throw new Error(
+			`catalog.json live.defaultInstanceType.${provider} = ${JSON.stringify(live_default)} but compute.${provider}.default_instance = ${JSON.stringify(cp.default_instance)} — the console and the resolver disagree on the default node (#5251)`,
+		);
+	}
+	const offered = (live.instanceTypes[provider] ?? []).map((i) => i.value);
+	if (!offered.includes(live_default)) {
+		throw new Error(
+			`catalog.json live.defaultInstanceType.${provider} = ${JSON.stringify(live_default)} is not offered by live.instanceTypes.${provider} ${JSON.stringify(offered)} (#5251)`,
+		);
+	}
+}
+
 // The PROVISIONING slug set - the clouds with per-cloud sizing/pricing catalogs - derived from the
 // live data's own coverage (the `instanceTypes` keys) so it can't drift from it. Still gated through
 // `Extract<CloudProvider, ...>` so an off-enum slug surfaces instead of being invented.
