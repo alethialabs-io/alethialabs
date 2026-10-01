@@ -4,10 +4,6 @@
 	"root": true,
 	"pages": [
 		"index",
-		"enterprise-demo",
-		"enterprise-demo-hetzner",
-		"enterprise-demo-aws",
-		"enterprise-demo-gcp",
-		"enterprise-demo-azure"
+		"online-boutique"
 	]
 }

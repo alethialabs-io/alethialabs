@@ -5,30 +5,27 @@ description: Learn Alethia by building something real, start to finish, on a clo
 
 # Tutorials
 
-A tutorial is a **lesson**, not a reference. It has one path, it says what to type, and it ends with
-something running that you can look at. Where the [how-to guides](/get-started/the-console) answer "how do I do X"
-and the [concepts](/concepts/fabrics-and-placement) explain why the product is shaped the way it is,
-a tutorial is for the first time you use Alethia at all.
+A tutorial is a lesson. It has one path, tells you exactly what to type, and ends with something
+running that you can look at. Use a tutorial the first time you use Alethia. To do a specific task,
+use the [how-to guides](/guides). To understand why the product works the way it does, read the
+[concepts](/concepts).
 
-Each one is written to be followed exactly. If a step does not produce what the page says it
-produces, that is a bug in the page — the commands here are the ones our own acceptance tests run.
+Follow each step exactly. If a step does not give the result the page says it gives, the page has a
+bug. Please report it.
 
 ## Available tutorials
 
-**[Deploy the enterprise demo](/tutorials/enterprise-demo)** — one cluster hosting two independently
-delivered environments, a real application in each, and a signed receipt proving what was built.
-About 40 minutes, most of it waiting for a cluster. Pick a cloud when you get there; Hetzner is the
-cheapest by a wide margin.
+**[Deploy Online Boutique to three environments](/tutorials/online-boutique)**: build one cluster
+that hosts three environments at three isolation levels, and deliver a twelve-service shop into two
+of them. About 40 minutes, most of it waiting for the cluster. Tested on Hetzner Cloud, AWS, and
+Google Cloud.
 
-## Before any of them
+## Before you start any of them
 
-- The [CLI installed](/get-started/install-the-cli) and `alethia login` done.
-- An account on one cloud, with permission to create clusters and networks in it.
-- A [runner](/concepts/runner) — `alethia runner register` if you will run one yourself, which works on any
-  cloud, or `alethia fleet set` for a managed one.
+- [Install the CLI](/get-started/install-the-cli) and run `alethia login`.
+- Have an account on a supported cloud, with permission to create clusters and networks.
 
 <Callout type="warn">
-  These tutorials **provision real infrastructure and cost real money.** Every one ends with a
-  teardown step, and none of them is finished until you have run it. The per-cloud pages give a
-  cost-per-hour figure so you can decide before you start rather than after.
+  Tutorials **create real infrastructure that costs money.** Each one ends with a teardown step, and
+  you are not finished until you run it.
 </Callout>

@@ -1,0 +1,429 @@
+---
+title: Deploy Online Boutique to three environments
+description: Build one Kubernetes cluster with three environments at three isolation levels, and deliver a twelve-service shop into two of them — all from the terminal.
+---
+
+# Deploy Online Boutique to three environments
+
+In this tutorial you build **one Kubernetes cluster** that hosts **three environments**. Two of them
+run their own copy of Online Boutique, a twelve-service shop, delivered by ArgoCD. You do it all
+from the terminal, with one file and one command.
+
+Watch for the second and third environments. They cost no new cluster and no new network. They are
+placed onto the cluster that the first environment owns.
+
+It takes about 40 minutes. Most of that is waiting for the cluster.
+
+<Callout type="warn">
+  This tutorial creates **real infrastructure that costs money** while it runs. The last step tears
+  it down. You are not finished until you run it.
+</Callout>
+
+## What you will build
+
+<Mermaid chart={`
+flowchart TB
+  F["Fabric: one cluster, its network and DNS"]
+  F --> P["prod · dedicated<br/>owns the Fabric"]
+  F --> D["dev-1 · namespace<br/>namespace boutique-dev-1"]
+  F --> S["staging · vcluster<br/>its own Kubernetes API server"]
+  D --> DA["overlays/dev-1<br/>12 services"]
+  S --> SA["overlays/staging<br/>12 services, 2 frontends"]
+`} />
+
+A **Fabric** is the infrastructure: the cluster, its network, and its DNS. An **environment** is
+placed onto a Fabric, and its **placement** sets how isolated it is:
+
+| Placement | What the environment gets |
+|---|---|
+| `dedicated` | Its own Fabric. This is the placement that creates a cluster. |
+| `namespace` | A namespace on a cluster that already exists. |
+| `vcluster` | Its own Kubernetes API server, running inside a cluster that already exists. |
+
+In this tutorial, `prod` owns the Fabric and runs no application. `dev-1` and `staging` are placed
+onto it, and each one deploys an overlay of the shop from the public
+[alethia-examples](https://github.com/alethialabs-io/alethia-examples) repository. For the model
+behind this, see [Fabrics and placement](/concepts/fabrics-and-placement).
+
+## Before you start
+
+You need:
+
+- The `alethia` CLI, [installed](/get-started/install-the-cli) and signed in with `alethia login`.
+- An account on Hetzner Cloud, AWS, or Google Cloud, with permission to create a cluster and a
+  network.
+- A runner to execute the jobs. Check with:
+
+  ```bash
+  alethia runner list
+  ```
+
+  If no runner is online, [register one you run yourself](/guides/runners/self-operated).
+
+This tutorial is tested on Hetzner Cloud, AWS, and Google Cloud. If you only want to learn the
+product, use **Hetzner**. It is the cheapest, and you connect it with one token.
+
+## Step 1 — Connect your cloud account
+
+<Tabs groupId="cloud" items={["Hetzner", "AWS", "Google Cloud"]} persist>
+  <Tab value="Hetzner">
+    In the Hetzner Cloud Console, create a **new project** for this tutorial. In that project, go to
+    **Security → API tokens** and generate a token with **Read & Write** access.
+
+    Then connect it. The command asks for the token and hides what you type:
+
+    ```bash
+    alethia connector hetzner
+    ```
+
+    A Hetzner token can do anything inside its project, so the project is the only boundary you get.
+    That is why you use a new, empty one. Hetzner has no keyless option, because it has no OIDC
+    provider. See [Connect Hetzner](/guides/connectors/hetzner).
+  </Tab>
+  <Tab value="AWS">
+    With the `aws` CLI signed in to the account you want to use, run:
+
+    ```bash
+    alethia connector aws
+    ```
+
+    This deploys a CloudFormation stack. The stack creates an IAM OIDC provider that trusts Alethia,
+    and a role that Alethia assumes. No access keys are created. See [Connect AWS](/guides/connectors/aws).
+  </Tab>
+  <Tab value="Google Cloud">
+    Alethia cannot turn on Google Cloud APIs for you. Turn on the two that this tutorial needs. Use
+    your own project ID in place of `my-gcp-project`:
+
+    ```bash
+    gcloud services enable container.googleapis.com cloudkms.googleapis.com --project my-gcp-project
+    ```
+
+    Then connect the project:
+
+    ```bash
+    alethia connector gcp --project my-gcp-project
+    ```
+
+    This creates a service account and a workload identity pool that trusts Alethia. No
+    service-account keys are created. See [Connect Google Cloud](/guides/connectors/gcp).
+  </Tab>
+</Tabs>
+
+Now find the name of the account you connected:
+
+```bash
+alethia connector list
+```
+
+Note the value in the **Account** column. You use it in the next step.
+
+## Step 2 — Describe the project in one file
+
+Create a file named `alethia.yaml`. It declares the project, its three environments, the size of the
+cluster, and which overlay each environment deploys. Replace `my-account` with the value from the
+**Account** column.
+
+<Tabs groupId="cloud" items={["Hetzner", "AWS", "Google Cloud"]} persist>
+  <Tab value="Hetzner">
+    ```yaml title="alethia.yaml"
+    project: boutique
+    cloud:
+      account: my-account
+      region: nbg1
+    environments:
+      - name: prod
+        stage: production
+        placement: dedicated
+        components:
+          cluster:
+            instance_types: [cpx32]
+            node_min_size: 3
+            node_desired_size: 3
+            node_max_size: 3
+      - name: dev-1
+        stage: development
+        placement: namespace
+        namespace: boutique-dev-1
+        components:
+          repositories:
+            apps_destination_repo: https://github.com/alethialabs-io/alethia-examples
+            apps_path: examples/online-boutique/overlays/dev-1
+      - name: staging
+        stage: staging
+        placement: vcluster
+        namespace: boutique-staging
+        components:
+          repositories:
+            apps_destination_repo: https://github.com/alethialabs-io/alethia-examples
+            apps_path: examples/online-boutique/overlays/staging
+    ```
+
+    Three `cpx32` nodes have 4 vCPU and 8 GB each, at about €35 a month per node. You can also use
+    the region `fsn1` or `hel1`.
+  </Tab>
+  <Tab value="AWS">
+    ```yaml title="alethia.yaml"
+    project: boutique
+    cloud:
+      account: my-account
+      region: us-east-1
+    environments:
+      - name: prod
+        stage: production
+        placement: dedicated
+        components:
+          cluster:
+            instance_types: [t3.xlarge]
+            node_min_size: 2
+            node_desired_size: 2
+            node_max_size: 3
+      - name: dev-1
+        stage: development
+        placement: namespace
+        namespace: boutique-dev-1
+        components:
+          repositories:
+            apps_destination_repo: https://github.com/alethialabs-io/alethia-examples
+            apps_path: examples/online-boutique/overlays/dev-1
+      - name: staging
+        stage: staging
+        placement: vcluster
+        namespace: boutique-staging
+        components:
+          repositories:
+            apps_destination_repo: https://github.com/alethialabs-io/alethia-examples
+            apps_path: examples/online-boutique/overlays/staging
+    ```
+
+    Two `t3.xlarge` nodes have 4 vCPU and 16 GB each, at about $121 a month per node. EKS also
+    charges for its control plane, and the NAT gateway bills every hour it exists.
+  </Tab>
+  <Tab value="Google Cloud">
+    ```yaml title="alethia.yaml"
+    project: boutique
+    cloud:
+      account: my-account
+      region: europe-west3
+    environments:
+      - name: prod
+        stage: production
+        placement: dedicated
+        components:
+          cluster:
+            instance_types: [e2-standard-4]
+            node_min_size: 3
+            node_desired_size: 3
+            node_max_size: 4
+      - name: dev-1
+        stage: development
+        placement: namespace
+        namespace: boutique-dev-1
+        components:
+          repositories:
+            apps_destination_repo: https://github.com/alethialabs-io/alethia-examples
+            apps_path: examples/online-boutique/overlays/dev-1
+      - name: staging
+        stage: staging
+        placement: vcluster
+        namespace: boutique-staging
+        components:
+          repositories:
+            apps_destination_repo: https://github.com/alethialabs-io/alethia-examples
+            apps_path: examples/online-boutique/overlays/staging
+    ```
+
+    Three `e2-standard-4` nodes have 4 vCPU and 16 GB each, at about $98 a month per node. GKE also
+    charges a cluster management fee.
+
+    A new Google Cloud project often has a low CPU quota. If the deploy fails with
+    `Insufficient project quota`, request more quota from Google. That can take days, so check
+    before you start.
+  </Tab>
+</Tabs>
+
+Four things in this file matter:
+
+- **The first environment is the default, and it must be `dedicated`.** A `dedicated` environment is
+  the only kind that creates a cluster. `dev-1` and `staging` are placed onto the cluster that `prod`
+  creates. If no environment is `dedicated`, the CLI refuses the file before it sends anything.
+- **The cluster is set on `prod`,** because `prod` owns the Fabric. The environments placed onto it do
+  not get a cluster of their own.
+- **Each `namespace` must match its overlay.** The `dev-1` overlay puts every object in
+  `boutique-dev-1`, and the `staging` overlay uses `boutique-staging`. If they do not match, the
+  overlay does not sync.
+- **The cluster is sized for two copies of the shop.** Each copy requests about 1.7 vCPU. The
+  `staging` copy runs inside its vcluster, but its pods still run on the cluster's nodes. A smaller
+  node size than the one shown leaves pods that cannot be scheduled.
+
+<Callout type="warn">
+  Placement decides the bill. If you set `dedicated` on every environment, you create three
+  clusters.
+</Callout>
+
+## Step 3 — Preview what will be created
+
+```bash
+alethia plan
+```
+
+This compares the file with what already exists in your organization. It lists the project, the
+three environments, and their components. It changes nothing and starts no job.
+
+## Step 4 — Apply it
+
+```bash
+alethia apply
+```
+
+The CLI shows the same plan and asks you to confirm. Then it deploys each environment in the order
+the file lists them, and waits for each one:
+
+1. `prod` creates the network and the cluster, then installs ArgoCD and the platform add-ons.
+2. `dev-1` creates its namespace on that cluster and deploys its overlay.
+3. `staging` creates its vcluster on that cluster and deploys its overlay.
+
+The `prod` deploy runs an OpenTofu plan and then a **verify gate** before it builds anything. The
+gate refuses the deploy if the plan breaks a control, for example a database open to the internet.
+Its verdict is a signed receipt. See [the verification gate](/concepts/elench).
+
+To watch the current job from a second terminal:
+
+```bash
+alethia jobs logs --latest --follow
+```
+
+When every environment is deployed, the CLI prints `boutique is up.`
+
+## Step 5 — Check the result
+
+List the environments:
+
+```bash
+alethia project env list --project boutique
+```
+
+You see three environments in one project.
+
+Look at the cluster:
+
+```bash
+alethia cluster get boutique
+```
+
+The **GitOps** row counts the ArgoCD Applications on the cluster, and how many are synced and
+healthy. If a deploy failed, the row names the step that failed instead.
+
+Check the signed receipt from the deploy that built the cluster:
+
+```bash
+alethia verify receipt --project boutique
+```
+
+A list of jobs opens. Select the `prod` deploy. The command checks the receipt's signature against a
+key the control plane trusts, and exits with a non-zero status if the check fails. You can use the
+same command to gate a CI pipeline. See [`alethia verify`](/reference/cli/verify).
+
+<Callout type="info">
+  To use `kubectl`, you need a kubeconfig for the cluster. On AWS and Google Cloud, get one with your
+  cloud's CLI, as [Clusters](/guides/clusters) shows. Alethia cannot give you a kubeconfig for a
+  Hetzner cluster yet.
+</Callout>
+
+## Step 6 — Add a fourth environment
+
+Run this:
+
+```bash
+alethia cluster list
+```
+
+There is **one** cluster. Three environments run on it. Each has its own application and its own
+namespace, and `staging` also has its own Kubernetes API server.
+
+To add another environment, add another entry to `alethia.yaml`. The repository has a `dev-2`
+overlay that uses the namespace `boutique-dev-2`:
+
+```yaml
+  - name: dev-2
+    stage: development
+    placement: namespace
+    namespace: boutique-dev-2
+    components:
+      repositories:
+        apps_destination_repo: https://github.com/alethialabs-io/alethia-examples
+        apps_path: examples/online-boutique/overlays/dev-2
+```
+
+Then deploy only that environment:
+
+```bash
+alethia apply --env dev-2
+```
+
+No new cluster is created. The node sizes in Step 2 are tested with three copies of the shop
+running, so `dev-2` fits. To add more environments than that, first raise `node_desired_size` and
+`node_max_size` on `prod`.
+
+## Step 7 — Tear it down
+
+Destroy the environments that are placed on the cluster **first**, and the environment that owns
+the cluster **last**. If you add `dev-2`, destroy it first too.
+
+```bash
+alethia project destroy --project boutique --env dev-1 --yes --wait
+alethia project destroy --project boutique --env staging --yes --wait
+alethia project destroy --project boutique --env prod --yes --wait
+```
+
+<Callout type="warn">
+  Do not destroy `prod` first. Destroying `prod` removes the cluster, and Alethia does not stop
+  you while other environments are still placed on it. After that, the other environments can no
+  longer be torn down cleanly, and the cloud identities created for their namespaces can be left
+  behind.
+</Callout>
+
+Then make sure nothing is left. Your cloud provider's console has the final answer. Load balancers,
+volumes, and NAT gateways are the resources that most often survive a failed teardown, and they bill
+by the hour.
+
+<Tabs groupId="cloud" items={["Hetzner", "AWS", "Google Cloud"]} persist>
+  <Tab value="Hetzner">
+    ```bash
+    hcloud server list
+    hcloud load-balancer list
+    hcloud volume list
+    hcloud network list
+    ```
+  </Tab>
+  <Tab value="AWS">
+    Every resource Alethia creates on AWS carries the tag `Application=alethia`:
+
+    ```bash
+    aws resourcegroupstaggingapi get-resources --tag-filters Key=Application,Values=alethia --region us-east-1
+    aws ec2 describe-nat-gateways --filter Name=state,Values=available --region us-east-1
+    ```
+
+    Each region allows five VPCs by default, so a VPC left behind also blocks a future cluster.
+  </Tab>
+  <Tab value="Google Cloud">
+    ```bash
+    gcloud container clusters list --project my-gcp-project
+    gcloud compute forwarding-rules list --project my-gcp-project
+    gcloud compute disks list --project my-gcp-project
+    ```
+  </Tab>
+</Tabs>
+
+## What you did
+
+You:
+
+- Built one Fabric that carries environments at three isolation levels.
+- Delivered a different version of the same application to two environments, through GitOps.
+- Had the deploy that built the cluster checked by a signed verify receipt, which you checked
+  yourself.
+- Did all of it from a terminal, so you can also do it from CI.
+
+This tutorial did not cover scale, failure behavior, or day-2 operations. Next, read about
+[promoting changes between environments](/concepts/promotions) and
+[drift detection](/concepts/drift).
