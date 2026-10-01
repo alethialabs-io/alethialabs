@@ -47,6 +47,9 @@ func (p *gcpProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateInstanceTypes("gcp", config); err != nil {
 		return err
 	}
+	if err := validateCapacityType(config, "gcp", false); err != nil {
+		return err
+	}
 	return validateNodeDiskSize(config, "gke_disk_size_gb", gcpNodeDiskFloorGB)
 }
 

@@ -42,6 +42,9 @@ func (p *alibabaProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateInstanceTypes("alibaba", config); err != nil {
 		return err
 	}
+	if err := validateCapacityType(config, "alibaba", false); err != nil {
+		return err
+	}
 	if err := validateNodeDiskSize(config, "ack_disk_size_gb", alibabaNodeDiskFloorGB); err != nil {
 		return err
 	}

@@ -97,6 +97,9 @@ func (p *hetznerProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateInstanceTypes("hetzner", config); err != nil {
 		return err
 	}
+	if err := validateCapacityType(config, "hetzner", false); err != nil {
+		return err
+	}
 	return validateNetworkCIDR(config, "network_cidr", hetznerMaxNetworkPrefix)
 }
 

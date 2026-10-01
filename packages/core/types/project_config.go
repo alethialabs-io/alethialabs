@@ -201,14 +201,25 @@ type ProjectClusterConfig struct {
 	// Concrete provider SKUs (legacy / explicit override). When empty, NodeSize resolves.
 	InstanceTypes []string `json:"instance_types"`
 	// Cloud-indifferent node capability (preferred); resolved to InstanceTypes per provider.
-	NodeSize        *NodeSize      `json:"node_size"`
-	NodeMinSize     int            `json:"node_min_size"`
-	NodeMaxSize     int            `json:"node_max_size"`
-	NodeDesiredSize int            `json:"node_desired_size"`
-	NodeDiskSizeGB  *int           `json:"node_disk_size_gb"`
-	ClusterAdmins   []any          `json:"cluster_admins"`
-	ProviderConfig  map[string]any `json:"provider_config"`
+	NodeSize        *NodeSize `json:"node_size"`
+	NodeMinSize     int       `json:"node_min_size"`
+	NodeMaxSize     int       `json:"node_max_size"`
+	NodeDesiredSize int       `json:"node_desired_size"`
+	NodeDiskSizeGB  *int      `json:"node_disk_size_gb"`
+	// CapacityType is the node pool's purchase option: "on_demand", "spot", or "" (unset = the
+	// template default, ON_DEMAND since #5266). Only aws honours "spot" today — ValidateConfig
+	// refuses it on the other clouds rather than accepting a value that would change nothing.
+	// omitempty: absent when unset, so snapshots that never set it stay byte-identical.
+	CapacityType   string         `json:"capacity_type,omitempty"`
+	ClusterAdmins  []any          `json:"cluster_admins"`
+	ProviderConfig map[string]any `json:"provider_config"`
 }
+
+// Node capacity types — the values of project_cluster.capacity_type.
+const (
+	CapacityTypeOnDemand = "on_demand"
+	CapacityTypeSpot     = "spot"
+)
 
 type ProjectDNSConfig struct {
 	Placement

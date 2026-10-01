@@ -68,6 +68,9 @@ func (p *awsProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateInstanceTypes("aws", config); err != nil {
 		return err
 	}
+	if err := validateCapacityType(config, "aws", true); err != nil {
+		return err
+	}
 	if err := validateNodeDiskSize(config, "eks_disk_size", awsNodeDiskFloorGB); err != nil {
 		return err
 	}
@@ -377,6 +380,15 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	if config.Cluster.NodeDiskSizeGB != nil {
 		tfvars["eks_disk_size"] = *config.Cluster.NodeDiskSizeGB
 	}
+	// The node group's purchase option (#5266). Unset leaves the template default (ON_DEMAND);
+	// clusters provisioned while that default was SPOT carry an explicit "spot" (pinned by migration),
+	// so their node groups are not replaced by the default's change.
+	switch config.Cluster.CapacityType {
+	case types.CapacityTypeSpot:
+		tfvars["eks_ng_capacity_type"] = "SPOT"
+	case types.CapacityTypeOnDemand:
+		tfvars["eks_ng_capacity_type"] = "ON_DEMAND"
+	}
 
 	// Generic passthrough: any provider_config key that names a template variable
 	// flows through verbatim (e.g. eks_volume_iops, a CMEK key id, WAF rule list)
@@ -449,7 +461,7 @@ var (
 		"dns_hosted_zone", "dns_main_domain", "ecr_names_map", "ecr_repo_settings",
 		"ecr_repository_image_scan_on_push", "ecr_repository_image_tag_mutability",
 		"eks_cluster_admins", "eks_cluster_version", "eks_disk_size", "eks_instance_types",
-		"eks_ng_desired_size", "eks_ng_max_size", "eks_ng_min_size", "enable_karpenter", "environment",
+		"eks_ng_capacity_type", "eks_ng_desired_size", "eks_ng_max_size", "eks_ng_min_size", "enable_karpenter", "environment",
 		"project_name", "provision_ecr", "provision_sqs", "provision_vpc",
 		"rds_backup_retention_period", "rds_config", "rds_iam_auth_enabled", "rds_iam_irsa",
 		"rds_instance_type", "rds_logs_exports", "rds_scaling_config", "redis_allowed_cidr_blocks",
