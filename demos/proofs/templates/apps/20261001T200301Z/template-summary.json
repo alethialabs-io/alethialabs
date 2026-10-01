@@ -1,0 +1,73 @@
+{
+  "issue": "#4113",
+  "provider": "hetzner",
+  "cluster": "alethia-nl-36916156426-1",
+  "run_bundle": "demos/proofs/hetzner/20261001T200301Z",
+  "run_verdict": "PASS",
+  "template": "apps",
+  "repo": "https://github.com/alethialabs-io/alethia-starter-apps",
+  "ref": "HEAD",
+  "commit": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+  "phase": "B — the same environment redeployed with the apps repo re-pointed at starter-apps",
+  "path_followed": "environment → Repositories → ArgoCD apps repository = the template, Overlay path empty → Deploy (phase B: a redeploy of the same environment)",
+  "asserted_at": "2026-10-01T19:58:22Z",
+  "verdict": "PASS",
+  "applications": [
+    {
+      "application": "apps",
+      "template": "apps",
+      "source": "git",
+      "repo_url": "https://github.com/alethialabs-io/alethia-starter-apps",
+      "sync_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+      "expected_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+      "sync": "Synced",
+      "health": "Healthy",
+      "resources": 3,
+      "min_resources": 1,
+      "ok": true,
+      "provenance": "the root Application: kustomization.yaml → the starter namespace + base/"
+    },
+    {
+      "application": "apps-dev",
+      "template": "apps",
+      "source": "git",
+      "repo_url": "https://github.com/alethialabs-io/alethia-starter-apps",
+      "sync_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+      "expected_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+      "sync": "Synced",
+      "health": "Healthy",
+      "resources": 3,
+      "min_resources": 1,
+      "ok": true,
+      "provenance": "overlays/dev, discovered by the apps-overlays ApplicationSet because the overlay path is empty"
+    },
+    {
+      "application": "apps-staging",
+      "template": "apps",
+      "source": "git",
+      "repo_url": "https://github.com/alethialabs-io/alethia-starter-apps",
+      "sync_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+      "expected_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+      "sync": "Synced",
+      "health": "Healthy",
+      "resources": 3,
+      "min_resources": 1,
+      "ok": true,
+      "provenance": "overlays/staging, discovered the same way"
+    },
+    {
+      "application": "addons",
+      "template": "apps",
+      "source": "git",
+      "repo_url": "https://github.com/alethialabs-io/alethia-starter-apps",
+      "sync_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+      "expected_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+      "sync": "Synced",
+      "health": "Healthy",
+      "resources": 0,
+      "min_resources": 0,
+      "ok": true,
+      "provenance": "addons/ holds only a README — it exists so the rendered `addons` Application is Synced rather than in ComparisonError"
+    }
+  ]
+}
