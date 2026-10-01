@@ -1,0 +1,245 @@
+{
+  "issue": "#4113",
+  "provider": "hetzner",
+  "cluster": "alethia-nl-36916156426-1",
+  "updated_at": "2026-10-01T19:58:22Z",
+  "verdict": "PASS",
+  "templates": [
+    {
+      "template": "apps",
+      "repo": "https://github.com/alethialabs-io/alethia-starter-apps",
+      "ref": "HEAD",
+      "commit": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+      "phase": "B — the same environment redeployed with the apps repo re-pointed at starter-apps",
+      "path_followed": "environment → Repositories → ArgoCD apps repository = the template, Overlay path empty → Deploy (phase B: a redeploy of the same environment)",
+      "asserted_at": "2026-10-01T19:58:22Z",
+      "verdict": "PASS",
+      "applications": [
+        {
+          "application": "apps",
+          "template": "apps",
+          "source": "git",
+          "repo_url": "https://github.com/alethialabs-io/alethia-starter-apps",
+          "sync_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+          "expected_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 3,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "the root Application: kustomization.yaml → the starter namespace + base/"
+        },
+        {
+          "application": "apps-dev",
+          "template": "apps",
+          "source": "git",
+          "repo_url": "https://github.com/alethialabs-io/alethia-starter-apps",
+          "sync_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+          "expected_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 3,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "overlays/dev, discovered by the apps-overlays ApplicationSet because the overlay path is empty"
+        },
+        {
+          "application": "apps-staging",
+          "template": "apps",
+          "source": "git",
+          "repo_url": "https://github.com/alethialabs-io/alethia-starter-apps",
+          "sync_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+          "expected_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 3,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "overlays/staging, discovered the same way"
+        },
+        {
+          "application": "addons",
+          "template": "apps",
+          "source": "git",
+          "repo_url": "https://github.com/alethialabs-io/alethia-starter-apps",
+          "sync_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+          "expected_revision": "7a946a2dddcd4474b4f1199fdc54966e322e7412",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 0,
+          "min_resources": 0,
+          "ok": true,
+          "provenance": "addons/ holds only a README — it exists so the rendered `addons` Application is Synced rather than in ComparisonError"
+        }
+      ]
+    },
+    {
+      "template": "chart",
+      "repo": "https://github.com/alethialabs-io/alethia-starter-chart",
+      "ref": "HEAD",
+      "commit": "8f68bec84928698a44673da9eee279ece13a7430",
+      "phase": "A — starter-ai apps repo + both BYO charts",
+      "path_followed": "Add-ons → Bring your own chart: Chart repository = the template, Chart path = chart, Ref = HEAD → Deploy",
+      "asserted_at": "2026-10-01T19:55:06Z",
+      "verdict": "PASS",
+      "applications": [
+        {
+          "application": "addon-starter-chart",
+          "template": "chart",
+          "source": "git",
+          "repo_url": "https://github.com/alethialabs-io/alethia-starter-chart",
+          "sync_revision": "8f68bec84928698a44673da9eee279ece13a7430",
+          "expected_revision": "8f68bec84928698a44673da9eee279ece13a7430",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 3,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "chart/ as a bring-your-own chart: a Deployment, a Service and a ConfigMap"
+        }
+      ]
+    },
+    {
+      "template": "ai",
+      "repo": "https://github.com/alethialabs-io/alethia-starter-ai",
+      "ref": "HEAD",
+      "commit": "c8d4d13301f9d6ba94be8795359ef2b20c931e03",
+      "phase": "A — starter-ai apps repo + both BYO charts",
+      "path_followed": "project from the AI Workloads template (webhook_ca_consumers=[kserve]); ArgoCD apps repository = the template, Overlay path empty; Bring your own chart = the template, path chart, ref HEAD → Deploy",
+      "asserted_at": "2026-10-01T19:55:06Z",
+      "verdict": "PASS",
+      "applications": [
+        {
+          "application": "apps",
+          "template": "ai",
+          "source": "git",
+          "repo_url": "https://github.com/alethialabs-io/alethia-starter-ai",
+          "sync_revision": "c8d4d13301f9d6ba94be8795359ef2b20c931e03",
+          "expected_revision": "c8d4d13301f9d6ba94be8795359ef2b20c931e03",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 2,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "the root Application syncing the template's kustomization.yaml (the ai-platform namespace + template-info)"
+        },
+        {
+          "application": "addons",
+          "template": "ai",
+          "source": "git",
+          "repo_url": "https://github.com/alethialabs-io/alethia-starter-ai",
+          "sync_revision": "c8d4d13301f9d6ba94be8795359ef2b20c931e03",
+          "expected_revision": "c8d4d13301f9d6ba94be8795359ef2b20c931e03",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 3,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "the app-of-apps over addons/, which creates kserve-crd, kserve and kueue"
+        },
+        {
+          "application": "kserve-crd",
+          "template": "ai",
+          "source": "oci",
+          "repo_url": "oci://ghcr.io/kserve/charts/kserve-crd",
+          "sync_revision": "sha256:d78ee8127353921f443a2c644335b8d45cacd1234fff81eb6a62c8eb73d55933",
+          "expected_revision": "v0.15.2",
+          "expected_digest": "sha256:d78ee8127353921f443a2c644335b8d45cacd1234fff81eb6a62c8eb73d55933",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 9,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "addons/kserve-crd.yaml — KServe's CRDs, sync wave -1"
+        },
+        {
+          "application": "kserve",
+          "template": "ai",
+          "source": "oci",
+          "repo_url": "oci://ghcr.io/kserve/charts/kserve",
+          "sync_revision": "sha256:3f4e61bb603dd70c51fd6f352eb9bb1f40b06a2b29c138acccb8896d09b94fdd",
+          "expected_revision": "v0.15.2",
+          "expected_digest": "sha256:3f4e61bb603dd70c51fd6f352eb9bb1f40b06a2b29c138acccb8896d09b94fdd",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 32,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "addons/kserve.yaml — the KServe controller in RawDeployment mode; needs cert-manager"
+        },
+        {
+          "application": "kueue",
+          "template": "ai",
+          "source": "oci",
+          "repo_url": "oci://registry.k8s.io/kueue/charts/kueue",
+          "sync_revision": "sha256:570cdfce9f9928a8cf36ea814278e2e56651d2e7f2dac3363ebf3e0cda303bc2",
+          "expected_revision": "0.19.5",
+          "expected_digest": "sha256:570cdfce9f9928a8cf36ea814278e2e56651d2e7f2dac3363ebf3e0cda303bc2",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 78,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "addons/kueue.yaml — Kueue"
+        },
+        {
+          "application": "cert-manager",
+          "template": "ai",
+          "source": "platform",
+          "repo_url": "https://charts.jetstack.io",
+          "chart": "cert-manager",
+          "sync_revision": "v1.15.3",
+          "expected_revision": "(platform — not a template revision)",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 45,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "installed issuer-free by the platform BECAUSE the AI Workloads template marks KServe as a webhook-CA consumer (#4990) — KServe does not start without it"
+        },
+        {
+          "application": "addon-starter-ai",
+          "template": "ai",
+          "source": "git",
+          "repo_url": "https://github.com/alethialabs-io/alethia-starter-ai",
+          "sync_revision": "c8d4d13301f9d6ba94be8795359ef2b20c931e03",
+          "expected_revision": "c8d4d13301f9d6ba94be8795359ef2b20c931e03",
+          "sync": "Synced",
+          "health": "Healthy",
+          "resources": 10,
+          "min_resources": 1,
+          "ok": true,
+          "provenance": "chart/ as a bring-your-own chart: Qdrant, TEI embeddings, llama.cpp gemma-3-1b, open-webui"
+        }
+      ],
+      "cost": {
+        "source": "hcloud GET /v1/servers?label_selector=cluster=alethia-nl-36916156426-1 — each server's own server_type.prices for its location",
+        "servers": [
+          {
+            "name": "alethia-nl-36916156426-1-cp-1",
+            "server_type": "cpx32",
+            "location": "nbg1",
+            "hourly_net_eur": "0.0569000000",
+            "hourly_gross_eur": "0.0569000000000000"
+          },
+          {
+            "name": "alethia-nl-36916156426-1-worker-1",
+            "server_type": "cpx32",
+            "location": "nbg1",
+            "hourly_net_eur": "0.0569000000",
+            "hourly_gross_eur": "0.0569000000000000"
+          },
+          {
+            "name": "alethia-nl-36916156426-1-worker-2",
+            "server_type": "cpx32",
+            "location": "nbg1",
+            "hourly_net_eur": "0.0569000000",
+            "hourly_gross_eur": "0.0569000000000000"
+          }
+        ],
+        "total_hourly_net_eur": "0.1707",
+        "total_hourly_gross_eur": "0.1707"
+      }
+    }
+  ]
+}
