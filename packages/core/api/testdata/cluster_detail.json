@@ -30,5 +30,9 @@
 		"last_deploy_failed": false,
 		"failed_step": "string",
 		"failure_message": "string"
+	},
+	"kubeconfig": {
+		"command": "string",
+		"note": "string"
 	}
 }

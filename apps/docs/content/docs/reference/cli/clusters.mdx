@@ -1,6 +1,6 @@
 ---
 title: Cluster Commands
-description: List the Kubernetes clusters your projects run on, and inspect one — status, sizing, cost and ArgoCD access.
+description: List the Kubernetes clusters your projects run on, and inspect one — status, sizing, cost, the kubeconfig command and ArgoCD access.
 ---
 
 # Cluster Commands
@@ -51,7 +51,7 @@ it prints statically. Backing call: `GET /cli/clusters`.
 
 ## `alethia cluster get`
 
-Show one cluster in full, including how to reach its ArgoCD.
+Show one cluster in full, including the command that gets you a kubeconfig and how to reach its ArgoCD.
 
 ```bash
 alethia cluster get
@@ -80,27 +80,29 @@ refuses and names the candidates, so you can re-run with the cluster name or id,
 unique.
 
 ```
-╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│  A P I - B A C K E N D   ( P R O D U C T I O N )                                                                    │
-│                                                                                                                     │
-│  Status        ● active                                                                                             │
-│  Cluster       api-backend-production                                                                               │
-│  Version       K8s 1.30                                                                                             │
-│  Region        eu-west-1                                                                                            │
-│  Nodes         1 / 3 / 5  (min/desired/max)                                                                         │
-│  Est. cost     $210.00/mo                                                                                           │
-│  ArgoCD        https://argocd.api-backend.example.com                                                               │
-│  ArgoCD admin  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d  │
-│  GitOps        6/6 synced · 5/6 healthy · rev 9c1f0a3                                                               │
-│  Apps repo     github.com/acme/api-backend-apps                                                                     │
-╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  A P I - B A C K E N D   ( P R O D U C T I O N )                                                                                                        │
+│                                                                                                                                                         │
+│  Status        ● active                                                                                                                                 │
+│  Cluster       api-backend-production                                                                                                                   │
+│  Version       K8s 1.30                                                                                                                                 │
+│  Region        eu-west-1                                                                                                                                │
+│  Nodes         1 / 3 / 5  (min/desired/max)                                                                                                             │
+│  Est. cost     $210.00/mo                                                                                                                               │
+│  Kubeconfig    aws eks update-kubeconfig --name api-backend-production --region eu-west-1                                                               │
+│  ArgoCD        https://argocd.api-backend.example.com                                                                                                   │
+│  ArgoCD admin  after the kubeconfig command above: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d  │
+│  GitOps        6/6 synced · 5/6 healthy · rev 9c1f0a3                                                                                                   │
+│  Apps repo     github.com/acme/api-backend-apps                                                                                                         │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 Only the fields a cluster actually has are shown: a cluster that is still provisioning has no name,
-no version and no ArgoCD block.
+no version, no kubeconfig row and no ArgoCD block.
 
-Backing calls: `GET /cli/clusters`, then `GET /cli/clusters/{id}` for the GitOps posture. The
-second one is best-effort — if it fails you still get the cluster, without the GitOps lines.
+Backing calls: `GET /cli/clusters`, then `GET /cli/clusters/{id}` for the kubeconfig command and the
+GitOps posture. The second one is best-effort — if it fails you still get the cluster, without the
+Kubeconfig and GitOps lines.
 
 ### ArgoCD access
 
@@ -109,7 +111,8 @@ ingress exists, and a note to port-forward where the cloud does not have one yet
 
 The admin password is **never stored by Alethia** — it would be plaintext in the control-plane
 database — so the card prints the command that reads it from the cluster's own initial-admin
-secret. Copy that line and run it against the cluster:
+secret. It is a `kubectl` command, so get a kubeconfig first (the **Kubeconfig** row, above it),
+then run:
 
 ```bash
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
@@ -130,10 +133,15 @@ different statement from "nothing is deployed", and deliberately not rendered as
 
 ## Accessing a cluster with kubectl
 
-`cluster get` prints the two things a kubeconfig command needs — the cluster name and the region —
-so the credentials command is assembled from one screen rather than several:
+The **Kubeconfig** row is the command that writes a kubeconfig with **your own cloud CLI**, under
+your own cloud login. Alethia does not issue a kubeconfig or any credential here: whether the
+command works is your cloud account's decision. In `-o json` output the same answer is the
+`kubeconfig` object, with `command` and `note` fields.
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
+Alethia builds the command from values the cluster's last successful deploy recorded, so it is
+the same command the console's cluster card shows. Run it, then use `kubectl`:
+
+<Tabs items={["AWS", "GCP", "Azure", "Alibaba Cloud", "Hetzner"]}>
   <Tab value="AWS">
     ```bash
     aws eks update-kubeconfig --name api-backend-production --region eu-west-1
@@ -142,17 +150,34 @@ so the credentials command is assembled from one screen rather than several:
   </Tab>
   <Tab value="GCP">
     ```bash
-    gcloud container clusters get-credentials data-pipeline-staging --region us-east4
+    gcloud container clusters get-credentials data-pipeline-staging --region us-east4 --project acme-data-prod
     kubectl get nodes
     ```
+
+    For a zonal cluster, one deployed to a zone such as `us-east4-a`, the command names the zone
+    instead of the region.
   </Tab>
   <Tab value="Azure">
     ```bash
-    az aks get-credentials --name api-backend-production --resource-group api-backend-production
+    az aks get-credentials --resource-group rg-api-backend-production --name api-backend-production
     kubectl get nodes
     ```
   </Tab>
+  <Tab value="Alibaba Cloud">
+    Alethia does not record the ACK cluster ID yet, and ACK's kubeconfig API needs it. The
+    **Kubeconfig** row names the cluster and its region instead. Find the cluster's ID in the ACK
+    console, then call `DescribeClusterUserKubeconfig` with the `aliyun` CLI. Its `config` field
+    is the kubeconfig.
+  </Tab>
+  <Tab value="Hetzner">
+    Alethia does not hand out a kubeconfig for Hetzner clusters yet. The cluster's Talos admin
+    configuration stays encrypted on the platform, and no command reaches it. Track
+    [issue #5250](https://github.com/alethialabs-io/alethialabs/issues/5250).
+  </Tab>
 </Tabs>
+
+When a value the command needs was not recorded, the row names the missing value instead of
+printing a command with a guess in it. Redeploying the environment records it.
 
 ## See also
 
