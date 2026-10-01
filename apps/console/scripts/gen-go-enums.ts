@@ -23,6 +23,9 @@ import {
 	chartWorkloadKind,
 	cloudProvider,
 	environmentStage,
+	kubeconfigMintShape,
+	kubeconfigMintStatus,
+	kubeconfigMintTier,
 	nosqlCapacityMode,
 	nosqlKeyType,
 	nosqlTableType,
@@ -78,6 +81,11 @@ const ENUMS: EnumSpec[] = [
 	{ typeName: "AddonMode", dbName: "addon_mode", values: addonMode.enumValues },
 	{ typeName: "AlertChannelType", dbName: "alert_channel_type", values: alertChannelType.enumValues },
 	{ typeName: "AlertSeverity", dbName: "alert_severity", values: alertSeverity.enumValues },
+	// The short-lived kubeconfig mint channel (#5280): the runner, the CLI and packages/core/types/
+	// kubeconfig_mint.go read these, so a value the console adds cannot reach the wire unmirrored.
+	{ typeName: "KubeconfigMintTier", dbName: "kubeconfig_mint_tier", values: kubeconfigMintTier.enumValues },
+	{ typeName: "KubeconfigMintShape", dbName: "kubeconfig_mint_shape", values: kubeconfigMintShape.enumValues },
+	{ typeName: "KubeconfigMintStatus", dbName: "kubeconfig_mint_status", values: kubeconfigMintStatus.enumValues },
 ];
 
 function renderEnum(e: EnumSpec): string {
