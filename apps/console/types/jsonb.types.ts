@@ -445,6 +445,14 @@ export interface ClusterProviderConfig {
 	enable_karpenter?: boolean;
 	enable_autopilot?: boolean;
 	enable_cluster_autoscaler?: boolean;
+	// Each cloud's own Spot knob, from before `capacity_type` owned it (#5315). The console never
+	// writes these any more; a value set by hand still applies while `capacity_type` is unset, so it
+	// is read (lib/cloud-providers/node-capacity.ts) to show the capacity the cluster really has.
+	gke_spot?: boolean;
+	gke_preemptible?: boolean;
+	aks_spot_enabled?: boolean;
+	/** ACK `spot_strategy`: "NoSpot" | "SpotAsPriceGo" | "SpotWithPriceLimit". */
+	ack_node_capacity_type?: string;
 }
 
 export interface DnsProviderConfig {

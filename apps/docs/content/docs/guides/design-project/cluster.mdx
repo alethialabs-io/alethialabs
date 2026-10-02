@@ -16,7 +16,7 @@ The cluster section configures the Kubernetes control plane and worker nodes.
 | **Min Nodes** | Number | Minimum node count (default: 2) |
 | **Desired Nodes** | Number | Target node count (default: 2) |
 | **Max Nodes** | Number | Maximum node count for autoscaling (default: 5) |
-| **Capacity** | Select | AWS only. **On-demand** (the default) or **Spot**. Spot nodes cost less, but AWS can take a node back with two minutes' notice |
+| **Capacity** | Select | **On-demand** (the default) or **Spot**. Spot nodes cost less, but the cloud can take a node back at short notice. On Azure, Spot adds a separate Spot worker pool and the system pool stays on-demand. Not available on Hetzner or on a GKE Autopilot cluster |
 | **Autoscaler** | Provider default | Provider-specific autoscaler (Karpenter on AWS, Autopilot on GKE, Cluster Autoscaler on AKS), enabled at cluster creation |
 | **Cluster Admins** | Array | IAM users/emails with admin access |
 
