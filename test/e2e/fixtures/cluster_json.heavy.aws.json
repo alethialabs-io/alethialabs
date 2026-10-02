@@ -1,5 +1,6 @@
 {
   "instance_types": ["t3.xlarge"],
+  "capacity_type": "spot",
   "node_size": { "vcpu": 4, "memory_gb": 16 },
   "node_min_size": 3,
   "node_max_size": 4,
