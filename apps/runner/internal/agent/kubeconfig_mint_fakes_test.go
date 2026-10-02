@@ -219,6 +219,7 @@ const (
 
 // mintFixture is one configured mint: the client key, the API fake, the kube fake and the seams.
 type mintFixture struct {
+	t        *testing.T
 	key      *kubeaccess.ClientKey
 	api      *mintTestAPI
 	kube     *fakeKube
@@ -240,9 +241,12 @@ func newMintFixture(t *testing.T, tier types.KubeconfigMintTier, shape types.Kub
 		t.Fatal(err)
 	}
 	f := &mintFixture{
-		key:         key,
-		kube:        &fakeKube{token: "sa-" + secret},
-		pki:         newTestPKI(t, 24*time.Hour),
+		t:    t,
+		key:  key,
+		kube: &fakeKube{token: "sa-" + secret},
+		// Inside the 8h admin cap, so the success paths mint. A cert that outlives the cap (the managed
+		// hetzner template's 24h) is TestMintKubeconfig_AdminLifetimeCap's subject.
+		pki:         newTestPKI(t, time.Hour),
 		cloudToken:  "cloud-" + secret,
 		cloudExpiry: time.Now().Add(14 * time.Minute).Truncate(time.Second),
 	}

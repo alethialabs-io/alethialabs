@@ -34,6 +34,10 @@ export const KUBECONFIG_MINT_FAILURE_REASONS: readonly string[] = [
 	// A namespace/vcluster environment's cluster row names the SHARED Fabric cluster; the runner
 	// refuses to mint the whole shared cluster's credential for one tenant of it (#5283).
 	"Kubeconfig mints are not available for an environment placed on a shared cluster.",
+	// An admin credential's lifetime is the cloud's, not the requested TTL. A Talos admin certificate
+	// lives for the cluster's adminKubeconfig.certLifetime (24h on the managed hetzner template) and
+	// cannot be revoked, so the runner refuses one that would outlive the 8h TTL ceiling.
+	"The cluster's admin credential would outlive the 8-hour kubeconfig limit, so it was not issued.",
 ];
 
 const ALLOWED: ReadonlySet<string> = new Set(KUBECONFIG_MINT_FAILURE_REASONS);
