@@ -234,7 +234,7 @@ export function ClusterCard({
 						</div>
 						<p className="mt-0.5 font-mono text-ui-xs text-text-tertiary">
 							{meta.shortName} · {data.region} · {data.environment_stage}
-							{cluster?.cluster_version ? ` · K8s ${cluster.cluster_version}` : ""}
+							{cluster?.k8s_version ? ` · K8s ${cluster.k8s_version}` : ""}
 						</p>
 						{cluster?.id && (
 							<ClassificationControl

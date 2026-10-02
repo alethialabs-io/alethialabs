@@ -13,6 +13,7 @@ import {
 	type ZoneNodeData,
 } from "@/lib/canvas/zones";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { displayedK8sVersion } from "@/lib/cloud-providers/hetzner-k8s-pin";
 
 const ZONE_META = {
 	network: { label: "VPC", Icon: Network },
@@ -43,11 +44,14 @@ export function ZoneNode({ id, data, selected }: NodeProps<Node<ZoneNodeData>>) 
 	const anchor = useCanvasStore((s) =>
 		anchorKind ? s.nodes.find((n) => n.data.kind === anchorKind) : undefined,
 	);
+	const anchorProvider = useCanvasStore((s) =>
+		anchor ? s.getEffectiveProvider(anchor.id) : null,
+	);
 	const meta =
 		data.zone === "external"
 			? `${data.memberCount} ${data.memberCount === 1 ? "resource" : "resources"}`
 			: anchor
-				? summarize(data.zone, anchor.data.config)
+				? summarize(data.zone, anchor.data.config, anchorProvider)
 				: null;
 
 	return (
@@ -109,8 +113,15 @@ export function ZoneNode({ id, data, selected }: NodeProps<Node<ZoneNodeData>>) 
 	);
 }
 
-/** The one-line summary a region header shows, read from its anchor card's config. */
-function summarize(zone: "network" | "cluster", config: unknown): string | null {
+/**
+ * The one-line summary a region header shows, read from its anchor card's config. The cluster's
+ * version is the one that installs: on Hetzner that is the Talos pin, whatever the row holds.
+ */
+function summarize(
+	zone: "network" | "cluster",
+	config: unknown,
+	provider: string | null,
+): string | null {
 	const c = asRecord(config);
 	if (zone === "network") {
 		if (c.provision_network === false) {
@@ -118,7 +129,10 @@ function summarize(zone: "network" | "cluster", config: unknown): string | null 
 		}
 		return typeof c.cidr_block === "string" ? c.cidr_block : null;
 	}
-	const version = typeof c.cluster_version === "string" ? c.cluster_version : null;
+	const version = displayedK8sVersion(
+		provider,
+		typeof c.cluster_version === "string" ? c.cluster_version : null,
+	);
 	const min = c.node_min_size;
 	const max = c.node_max_size;
 	const nodes =

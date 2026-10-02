@@ -9,6 +9,7 @@ import {
 	readKubeconfigAccess,
 } from "@/lib/clusters/kubeconfig-access";
 import { withActorScope } from "@/lib/db";
+import { displayedK8sVersion } from "@/lib/cloud-providers/hetzner-k8s-pin";
 import {
 	cloudIdentities,
 	projectCaches,
@@ -34,6 +35,10 @@ export interface ClusterData {
 		cluster_endpoint: string | null;
 		cluster_arn: string | null;
 		cluster_version: string | null;
+		/** The Kubernetes version the cluster installs, for display. On Hetzner this is the Talos
+		 *  pin whatever `cluster_version` holds, because Hetzner never reads that field (#5366);
+		 *  elsewhere it is `cluster_version`. Null when unset. */
+		k8s_version: string | null;
 		argocd_url: string | null;
 		status: string;
 		/** How to get a kubeconfig — `alethia cluster kubeconfig`, and the cloud-CLI alternative where
@@ -190,6 +195,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 						cluster_endpoint: r.cluster_endpoint,
 						cluster_arn: r.cluster_outputs?.arn ?? null,
 						cluster_version: r.cluster_version,
+						k8s_version: displayedK8sVersion(r.provider, r.cluster_version),
 						argocd_url: r.argocd_url,
 						status: r.cluster_status,
 						kubeconfig: kubeconfigs.get(r.cluster_id ?? "") ?? {
