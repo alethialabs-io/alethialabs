@@ -144,19 +144,26 @@ With the manifest already present and an account connected, `alethia up` **is** 
 
 {/* fieldspec: alethia up */}
 
-| Field         | What it is                                                                                    | Set without the form |
-| ------------- | --------------------------------------------------------------------------------------------- | -------------------- |
-| Manifest      | The alethia.yaml to apply, written when it does not exist yet                                 | `--file`             |
-| Project name  | Name for a project this authors (asked for on a terminal when the file is missing)            | `--project`          |
-| Region        | Cloud region for a project this authors                                                       | `--region`           |
-| Cloud account | Cloud account to link, by its LABEL or its id                                                 | `--cloud-account`    |
-| Stage         | Stage for the environment this authors                                                        | `--stage`            |
-| Runner        | Runner to deploy with, by NAME or id. Omitted: the only online runner, or asked on a terminal | `--runner`           |
-| Confirm       | Apply without asking (required with --no-input)                                               | `--yes`              |
-| Wait          | Queue the deploys and return instead of waiting for them                                      | `--no-wait`          |
+| Field         | What it is                                                                                       | Set without the form |
+| ------------- | ------------------------------------------------------------------------------------------------ | -------------------- |
+| Manifest      | The alethia.yaml to apply, written when it does not exist yet                                    | `--file`             |
+| Project name  | Name for a project this authors (asked for on a terminal when the file is missing)               | `--project`          |
+| Region        | Cloud region for a project this authors                                                          | `--region`           |
+| Cloud account | Cloud account to link, by its LABEL or its id                                                    | `--cloud-account`    |
+| Stage         | Stage for the environment this authors                                                           | `--stage`            |
+| Machine type  | Machine type for the cluster nodes, e.g. t3.xlarge (needs a cloud account; not with --node-size) | `--instance-type`    |
+| Node size     | Node size as vCPUxGiB, e.g. 4x16, mapped to the nearest machine type (not with --instance-type)  | `--node-size`        |
+| Runner        | Runner to deploy with, by NAME or id. Omitted: the only online runner, or asked on a terminal    | `--runner`           |
+| Confirm       | Apply without asking (required with --no-input)                                                  | `--yes`              |
+| Wait          | Queue the deploys and return instead of waiting for them                                         | `--no-wait`          |
 
 Scripted, `up` writes a single environment at `--stage`; on a terminal it asks for the whole matrix.
 [`alethia project env add`](/reference/cli/project) is how a second environment arrives later.
+
+`--instance-type` and `--node-size` choose the cluster's node shape. `up` writes it into the file
+as a `cluster` component on each `dedicated` environment, so the file shows it and `apply` creates
+the cluster with it. Without either flag the file has no `cluster` component, and the cluster gets
+the catalog's default machine type for its cloud. The two flags are mutually exclusive.
 
 ## `alethia plan`
 

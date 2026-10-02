@@ -1668,6 +1668,10 @@ async function buildConfigSnapshot(
 				// when set, like network.subnet_ids: Go reads a pointer, so an absent key means unset
 				// and the byte-locked snapshot fixtures stay green.
 				...(cluster?.node_size ? { node_size: cluster.node_size } : {}),
+				// The node pool's purchase option (#5266). Emitted ONLY when set, like node_size: Go reads
+				// it `omitempty`, an absent key means "the template default" (ON_DEMAND), and the
+				// byte-locked snapshot fixtures stay green for every cluster that never set it.
+				...(cluster?.capacity_type ? { capacity_type: cluster.capacity_type } : {}),
 				node_min_size: cluster?.node_min_size ?? 2,
 				node_max_size: cluster?.node_max_size ?? 5,
 				node_desired_size: cluster?.node_desired_size ?? 2,
@@ -2735,6 +2739,9 @@ export async function getProjectAsFormData(
 					// Carried, or a canvas save — delete-then-insert — wipes the size it never loaded
 					// (#5267).
 					node_size: source.components.cluster.node_size ?? undefined,
+					// Carried for the same reason (#5266): the migration pinned `spot` onto running aws
+					// clusters, and a save that dropped it would replace their node groups.
+					capacity_type: source.components.cluster.capacity_type ?? undefined,
 					node_min_size: source.components.cluster.node_min_size ?? 2,
 					node_max_size: source.components.cluster.node_max_size ?? 5,
 					node_desired_size: source.components.cluster.node_desired_size ?? 2,

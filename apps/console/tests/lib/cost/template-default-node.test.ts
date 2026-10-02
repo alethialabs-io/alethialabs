@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// TEMPLATE_DEFAULT_NODE restates, by hand, what each cloud's project template buys for a cluster
-// with no instance types (#5251). Nothing generates it, so this test is the only thing that notices
-// when a template moves: it reads each named `variables.tf` and fails if the default there is not
+// TEMPLATE_DEFAULT_NODE names what each cloud's project template buys for a cluster with no
+// instance types (#5251) — the catalog default since #5266. This test notices when a template moves: it reads each named `variables.tf` and fails if the default there is not
 // the one the cost estimate prices. It ranges over the TABLE, and separately requires the table to
 // cover every provisioning cloud, so a cloud cannot be dropped from both at once and pass.
 
@@ -42,12 +41,12 @@ describe("TEMPLATE_DEFAULT_NODE matches the templates it restates", () => {
 		},
 	);
 
-	it("hetzner: the provider's hard-coded fallback is the same node", () => {
-		// hetzner_provider.go does not leave an empty list to the template: it substitutes its own
-		// literal, so that is the default that actually provisions and it must agree too.
+	it("hetzner: the provider's fallback is read from the catalog, not a literal", () => {
+		// hetzner_provider.go does not leave an empty list to the template: it substitutes the
+		// catalog default (#5266). A literal back in its place would be a copy nothing compares.
 		const go = readFileSync(resolve(REPO_ROOT, "packages/core/cloud/hetzner_provider.go"), "utf8");
-		const m = go.match(/workerType := "([^"]+)"/);
-		expect(m?.[1]).toBe(TEMPLATE_DEFAULT_NODE.hetzner.instanceType);
+		expect(go).toMatch(/workerType := hetznerDefaultServerType\(\)/);
+		expect(go).not.toMatch(/workerType := "[^"]+"/);
 	});
 
 	it.each(Object.entries(TEMPLATE_DEFAULT_NODE).filter(([p]) => p !== "aws"))(

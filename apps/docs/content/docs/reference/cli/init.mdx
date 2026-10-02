@@ -51,14 +51,20 @@ What the manifest declares:
 
 {/* fieldspec: alethia init manifest */}
 
-| Field              | What it is                                                                        | Set without the form |
-| ------------------ | --------------------------------------------------------------------------------- | -------------------- |
-| Manifest           | Where to write the manifest (default: ./alethia.yaml)                             | `--file`             |
-| Project name       | Name for the project the manifest declares (asked for on a terminal when omitted) | `--project`          |
-| Region             | Cloud region to provision into                                                    | `--region`           |
-| Cloud account      | Cloud account to link, by its LABEL or its id                                     | `--cloud-account`    |
-| Stage              | Stage for the environment it declares                                             | `--stage`            |
-| Machine setup only | Set up the CLI without writing a manifest                                         | `--skip-manifest`    |
+| Field              | What it is                                                                                       | Set without the form |
+| ------------------ | ------------------------------------------------------------------------------------------------ | -------------------- |
+| Manifest           | Where to write the manifest (default: ./alethia.yaml)                                            | `--file`             |
+| Project name       | Name for the project the manifest declares (asked for on a terminal when omitted)                | `--project`          |
+| Region             | Cloud region to provision into                                                                   | `--region`           |
+| Cloud account      | Cloud account to link, by its LABEL or its id                                                    | `--cloud-account`    |
+| Stage              | Stage for the environment it declares                                                            | `--stage`            |
+| Machine type       | Machine type for the cluster nodes, e.g. t3.xlarge (needs a cloud account; not with --node-size) | `--instance-type`    |
+| Node size          | Node size as vCPUxGiB, e.g. 4x16, mapped to the nearest machine type (not with --instance-type)  | `--node-size`        |
+| Machine setup only | Set up the CLI without writing a manifest                                                        | `--skip-manifest`    |
+
+`--instance-type` or `--node-size` (one of the two) writes the node shape into the file as a
+`cluster` component on each `dedicated` environment. Without either, the file has no `cluster`
+component, and the cluster gets the catalog's default machine type for its cloud.
 
 And the control-plane URL:
 

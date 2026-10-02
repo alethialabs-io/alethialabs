@@ -233,6 +233,13 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 		return !field?.visibleWhen || field.visibleWhen(config, ctx);
 	};
 
+	it("shows the cluster capacity type on aws, and elsewhere only while it still says spot (#5266)", () => {
+		expect(visible("cluster", "capacity_type", "aws")).toBe(true);
+		expect(visible("cluster", "capacity_type", "gcp")).toBe(false);
+		// A cluster moved off aws keeps the control, so the refusal ValidateConfig raises can be fixed here.
+		expect(visible("cluster", "capacity_type", "gcp", { capacity_type: "spot" })).toBe(true);
+	});
+
 	it("shows storage_gb/replicas only on hetzner", () => {
 		expect(visible("database", "storage_gb", "hetzner")).toBe(true);
 		expect(visible("database", "replicas", "hetzner")).toBe(true);

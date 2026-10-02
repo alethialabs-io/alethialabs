@@ -174,6 +174,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 
 Their canvas gate is a predicate this guard cannot evaluate, so which clouds OFFER them is not established and no per-cloud verdict is honest. They are still measured against the contract. The fix is to generate the field surface the way `gen:offer-surface` generates the switch surface — by CALLING the predicate — not to widen the guesswork here.
 
+- `cluster.capacity_type` — `provider === "aws" || c.capacity_type === "spot"`
 - `nosql_tables.sort_key` — `!provider || NOSQL[provider].supportsRangeKey !== false`
 - `nosql_tables.sort_key_type` — `!!c.sort_key && (!provider || NOSQL[provider].supportsRangeKey !== false)`
 
@@ -246,4 +247,4 @@ Decisions, not silence: this cloud will not honor the setting, and here is what 
 
 ---
 
-Measured this run: 392 schema columns examined, 73 of them user-settable, 173 cloud verdicts. Regenerate with `pnpm -C apps/console run gen:config-carriage`. CI runs the guard on every PR.
+Measured this run: 393 schema columns examined, 74 of them user-settable, 173 cloud verdicts. Regenerate with `pnpm -C apps/console run gen:config-carriage`. CI runs the guard on every PR.

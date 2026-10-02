@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -96,6 +97,9 @@ func (p *hetznerProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateInstanceTypes("hetzner", config); err != nil {
 		return err
 	}
+	if err := validateCapacityType(config, "hetzner", false); err != nil {
+		return err
+	}
 	return validateNetworkCIDR(config, "network_cidr", hetznerMaxNetworkPrefix)
 }
 
@@ -119,11 +123,25 @@ var hetznerRootReserved = []string{
 	"worker_server_type",
 }
 
+// hetznerDefaultServerType is the server type a hetzner cluster gets when it pins nothing: the
+// catalog's default. "cpx22" is only the fallback for a catalog with no hetzner default, which the
+// embedded catalog cannot be (TestTemplateNodeDefaultsEqualTheCatalog fails on it first).
+func hetznerDefaultServerType() string {
+	if cp, ok := catalog.MustLoad().Compute["hetzner"]; ok && cp.DefaultInstance != "" {
+		return cp.DefaultInstance
+	}
+	return "cpx22"
+}
+
 func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
-	// Node sizing: prefer an explicit/ resolved instance type, else a cheap, orderable
-	// amd64 default (cpx22 = 2 vCPU / 4 GB). cax11 (ARM) is capacity-unreliable and
-	// cpx11 is retired, so an amd64 shared-vCPU type is the reliably-provisionable default.
-	workerType := "cpx22"
+	// Node sizing: prefer an explicit/ resolved instance type, else the CATALOG's default for
+	// hetzner (compute.hetzner.default_instance — cpx22, 2 vCPU / 4 GB amd64, at the time of
+	// writing). The catalog is the single source of truth for defaults (#5266): this used to be a
+	// literal here, a second copy that nothing compared with the catalog or the template's own
+	// worker_server_type default. TestTemplateNodeDefaultsEqualTheCatalog pins the template half.
+	// cax11 (ARM) is capacity-unreliable and cpx11 is retired, which is why the default is an
+	// amd64 shared-vCPU type — catalog/nodefit_test.go holds the default to a shape that fits.
+	workerType := hetznerDefaultServerType()
 	if inst := resolveNodeTypes("hetzner", config.Cluster.InstanceTypes, config.Cluster.NodeSize); len(inst) > 0 {
 		workerType = inst[0]
 	}

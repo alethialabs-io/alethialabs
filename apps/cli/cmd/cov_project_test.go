@@ -312,7 +312,7 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// The published component registry, as `alethia apply` validates a manifest against it.
 		// Two singletons and one multi kind are enough to reach every branch of the reader.
 		_ = enc.Encode(map[string]any{"version": "v-test", "kinds": []map[string]any{
-			{"kind": "cluster", "singleton": true, "fields": []string{"cluster_version", "node_min_size", "node_max_size"}, "schema": map[string]any{}},
+			{"kind": "cluster", "singleton": true, "fields": []string{"cluster_version", "instance_types", "node_min_size", "node_max_size"}, "schema": map[string]any{}},
 			{"kind": "repositories", "singleton": true, "fields": []string{"apps_destination_repo", "apps_path"}, "schema": map[string]any{}},
 			{"kind": "databases", "singleton": false, "fields": []string{"engine", "engine_version"}, "schema": map[string]any{}},
 		}})

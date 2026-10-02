@@ -55,6 +55,10 @@ var upSpec = spec.Spec{
 			Description: "Stage for the environment this authors", Flag: "stage",
 			Default: string(stageDevelopment), Options: "stages",
 			ManifestKey: "stage", Page: docsPlanApplyPage},
+		{Command: "alethia up", Key: fieldKeyInstanceType, Title: "Machine type",
+			Description: instanceTypeDescription, Flag: fieldKeyInstanceType, Page: docsPlanApplyPage},
+		{Command: "alethia up", Key: fieldKeyNodeSize, Title: "Node size",
+			Description: nodeSizeDescription, Flag: fieldKeyNodeSize, Page: docsPlanApplyPage},
 		{Command: "alethia up", Key: "runner", Title: "Runner",
 			Description: "Runner to deploy with, by NAME or id. Omitted: the only online runner, or asked on a terminal",
 			Flag:        "runner", Selector: "name", Page: docsPlanApplyPage},
@@ -134,7 +138,7 @@ With alethia.yaml already present and an account connected, "alethia up" is "ale
 
 // authoringFlags are the `up` flags that only ever reach `authorManifest`. Each is read solely to
 // WRITE the manifest, so once a manifest exists none of them can change anything.
-var authoringFlags = []string{"project", "region", "stage", "cloud-account"}
+var authoringFlags = []string{"project", "region", "stage", "cloud-account", fieldKeyInstanceType, fieldKeyNodeSize}
 
 // refuseAuthoringFlags stops `up` when a manifest-authoring flag was passed for a manifest that
 // already exists.
@@ -255,8 +259,13 @@ func authorManifest(
 	values spec.Values,
 ) error {
 	name, region, account := values.Get("project"), values.Get("region"), values.Get("account")
+	// The node shape is checked FIRST, before any question: a malformed or doubled shape is a
+	// mistake in the command line, and finding out after five answers is worse than before them.
+	shape, err := nodeShapeFrom(values.Get(fieldKeyInstanceType), values.Get(fieldKeyNodeSize))
+	if err != nil {
+		return err
+	}
 	if canPromptForm() {
-		var err error
 		if name == "" {
 			if name, err = promptProjectName(); err != nil {
 				return err
@@ -306,7 +315,7 @@ func authorManifest(
 	}
 
 	m := manifestFromCreate(api.CreateProjectParams{
-		ProjectName: name, Region: region, Environments: environments,
+		ProjectName: name, Region: region, Environments: environments, NodeShape: shape,
 	}, account)
 	if err := manifest.Write(path, m, false); err != nil {
 		return err

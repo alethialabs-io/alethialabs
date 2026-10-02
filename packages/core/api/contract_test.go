@@ -366,6 +366,18 @@ func TestContract_Project(t *testing.T) {
 	assertNoExtraStructKeys(t, "project.json", resp)
 }
 
+// TestContract_ProjectNodeShape locks the REQUEST half of `project create --instance-type /
+// --node-size` (#5266): the fixture is sampled from the zod schema the route parses with, and the
+// struct is what CreateProject puts on the wire.
+func TestContract_ProjectNodeShape(t *testing.T) {
+	var req ProjectNodeShape
+	strictDecode(t, "create_project_node_shape.json", &req)
+	assertNoExtraStructKeys(t, "create_project_node_shape.json", req)
+	if req.InstanceType == "" || req.NodeSize == nil || req.NodeSize.VCPU == 0 || req.NodeSize.MemoryGB == 0 {
+		t.Errorf("a field decoded to its zero value — renamed on one side? %+v", req)
+	}
+}
+
 func TestContract_Environments(t *testing.T) {
 	var resp struct {
 		Environments []Environment `json:"environments"`

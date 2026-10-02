@@ -552,3 +552,30 @@ describe("convertProjectConfig — NoSQL capacity mode (#4320)", () => {
 		expect(byComponent(warnings, "NoSQL").some((w) => /capacity/.test(w.message))).toBe(false);
 	});
 });
+
+// #5266: Spot through capacity_type is honoured on aws only, and the target cloud's ValidateConfig
+// refuses it — so a converted cluster returns to the default instead of carrying a refusal along.
+describe("convertProjectConfig — capacity type", () => {
+	it("drops spot when converting off aws, with a notice", () => {
+		const { data, warnings } = convertProjectConfig(
+			makeConfig({
+				cluster: { instance_types: ["t3.large"], cluster_version: "1.35", provider_config: {}, capacity_type: "spot" },
+			}),
+			"aws",
+			"gcp",
+		);
+		expect(data.cluster.capacity_type).toBeUndefined();
+		expect(byComponent(warnings, "Cluster").some((w) => w.message.includes("Spot"))).toBe(true);
+	});
+
+	it("keeps on_demand, which every cloud honours", () => {
+		const { data } = convertProjectConfig(
+			makeConfig({
+				cluster: { instance_types: ["t3.large"], cluster_version: "1.35", provider_config: {}, capacity_type: "on_demand" },
+			}),
+			"aws",
+			"azure",
+		);
+		expect(data.cluster.capacity_type).toBe("on_demand");
+	});
+});

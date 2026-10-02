@@ -152,6 +152,20 @@ var AllPlacementModes = []PlacementMode{
 	PlacementModeDedicated,
 }
 
+// NodeCapacityType mirrors the node_capacity_type enum (lib/db/schema/enums.ts).
+type NodeCapacityType string
+
+const (
+	NodeCapacityTypeOnDemand NodeCapacityType = "on_demand"
+	NodeCapacityTypeSpot     NodeCapacityType = "spot"
+)
+
+// AllNodeCapacityTypes is every node_capacity_type value, in schema order.
+var AllNodeCapacityTypes = []NodeCapacityType{
+	NodeCapacityTypeOnDemand,
+	NodeCapacityTypeSpot,
+}
+
 // ServiceWorkloadType mirrors the service_workload_type enum (lib/db/schema/enums.ts).
 type ServiceWorkloadType string
 
