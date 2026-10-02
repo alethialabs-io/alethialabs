@@ -76,26 +76,44 @@ func runT2KubeconfigMint(t *testing.T, ctx context.Context, cp *ControlPlane, p 
 	suffix := t2ShortHex(t)
 	t.Logf("kubeconfig-mint: minting read-only and admin kubeconfigs via %s (ttl %s)…", driver, kubeconfigMintTTL)
 
-	var mint func(tier string) (mintedTier, error)
-	switch driver {
-	case kubeconfigMintDriverCLI:
-		mint = func(tier string) (mintedTier, error) {
-			return mintViaCLI(ctx, cp, p.cliDemo, tier, filepath.Join(dir, tier+".kubeconfig"))
+	// Each tier is minted by tierMintDriver(driver, tier): on cli-demo the read-only tier by the CLI
+	// and the admin tier by the runner channel, because the CLI holds a service token and a service
+	// token never mints admin (#5310). The runner-channel target is prepared once, if any tier needs it.
+	var target runnerChannelTarget
+	for _, tier := range requiredStaticTiers {
+		if tierMintDriver(driver, tier) != kubeconfigMintDriverRunner {
+			continue
 		}
-	default:
-		target, err := prepareRunnerChannelTarget(ctx, cp, p)
-		if err != nil {
+		var err error
+		if target, err = prepareRunnerChannelTarget(ctx, cp, p); err != nil {
 			failAt(mintStageSetup, err.Error())
 			finishKubeconfigMint(t, &s, secrets, started)
 			return
 		}
-		mint = func(tier string) (mintedTier, error) {
-			return mintViaRunnerChannel(ctx, cp, target, tier, filepath.Join(dir, tier+".kubeconfig"))
+		break
+	}
+	mint := func(tier string) (mintedTier, error) {
+		file := filepath.Join(dir, tier+".kubeconfig")
+		if tierMintDriver(driver, tier) == kubeconfigMintDriverCLI {
+			return mintViaCLI(ctx, cp, p.cliDemo, tier, file)
 		}
+		return mintViaRunnerChannel(ctx, cp, target, tier, file)
 	}
 
 	for _, tier := range requiredStaticTiers {
 		res := KubeconfigMintTier{Tier: tier, Shape: mintShapeStatic, TTLSeconds: int(kubeconfigMintTTL.Seconds())}
+		if td := tierMintDriver(driver, tier); td != driver {
+			res.Driver = td
+		}
+		if driver == kubeconfigMintDriverCLI && tier == mintTierAdmin {
+			// What the CLI proves for admin: the service-token refusal. Asked BEFORE the runner-channel
+			// admin mint, so the row check cannot see that mint's row.
+			refusal := cliAdminRefusal(ctx, cp, p.cliDemo, filepath.Join(dir, "cli-admin-refused.kubeconfig"))
+			res.Checks = append(res.Checks, refusal)
+			if !refusal.Pass {
+				failAt(mintStageAssert, tier+": "+refusal.Name+" want refused, got "+refusal.Outcome+" "+refusal.Error)
+			}
+		}
 		requested := time.Now()
 		m, err := mint(tier)
 		secrets = append(secrets, m.kc.secrets()...)
@@ -147,7 +165,7 @@ func runT2KubeconfigMint(t *testing.T, ctx context.Context, cp *ControlPlane, p 
 				checks = adminChecks(suffix)
 			}
 			awaitFirstRead(ctx, kube, "/api/v1/nodes", 30*time.Second, 2*time.Second)
-			res.Checks = runKubeChecks(ctx, kube, checks)
+			res.Checks = append(res.Checks, runKubeChecks(ctx, kube, checks)...)
 			res.Checks = append(res.Checks, kubectlUsable(ctx, m.file))
 		}
 		finishTier(&res)
@@ -257,7 +275,16 @@ type runnerChannelTarget struct {
 // profile) and reads the deploy's snapshot, which every mint job carries verbatim.
 func prepareRunnerChannelTarget(ctx context.Context, cp *ControlPlane, p kubeconfigMintParams) (runnerChannelTarget, error) {
 	tgt := runnerChannelTarget{owner: p.owner, deployJobID: p.deployJobID}
-	if p.graph != nil {
+	switch {
+	case p.cliDemo != nil:
+		// The CLI created the project, the environment and the DEPLOY in the token's org (= owner);
+		// the A0.5 graph belongs to another person, so it is never the target here.
+		pid, eid, err := cp.JobProjectEnv(ctx, p.deployJobID)
+		if err != nil {
+			return tgt, err
+		}
+		tgt.projectID, tgt.envID = pid, eid
+	case p.graph != nil:
 		tgt.projectID, tgt.envID = p.graph.projectID, p.graph.envID
 	}
 	clusterID, projectID, err := cp.ensureMintCluster(ctx, p.owner, tgt.projectID, tgt.envID, p.clusterName, p.region)
@@ -380,6 +407,30 @@ func mintViaCLI(ctx context.Context, cp *ControlPlane, run *CLIDemoRun, tier, fi
 	}
 	m.kc, m.file = kc, file
 	return m, nil
+}
+
+// cliAdminRefusal runs `alethia cluster kubeconfig <project> --static --admin` with the run's service
+// token and judges it with cliAdminRefusalCheck: the CLI must fail, the console must have written no
+// admin request row, and no kubeconfig may be on disk. The CLI's output is kept only, redacted and
+// truncated, when the policy did NOT hold.
+func cliAdminRefusal(ctx context.Context, cp *ControlPlane, run *CLIDemoRun, file string) KubeCheckResult {
+	args := []string{"cluster", "kubeconfig", run.Project, "--static", "--admin", "--ttl", kubeconfigMintTTL.String(), "--output", file, "--no-input"}
+	since := time.Now().Add(-30 * time.Second)
+	out, runErr := runAlethia(ctx, run, nil, args...)
+	row, rowErr := cp.LatestKubeconfigMint(ctx, run.OrgID, mintTierAdmin, mintShapeStatic, since)
+	_, statErr := os.Stat(file)
+	r := cliAdminRefusalCheck(runErr, row != nil, rowErr, statErr == nil)
+	if !r.Pass {
+		var secrets []string
+		if raw, err := os.ReadFile(file); err == nil {
+			if kc, perr := parseStaticKubeconfig(raw); perr == nil {
+				secrets = kc.secrets()
+			}
+		}
+		_ = os.Remove(file)
+		r.Error += "\n" + t2Truncate(redactSecrets(out, secrets), 800)
+	}
+	return r
 }
 
 // runAlethia runs the binary under test with the cli-demo environment (plus extra), returning its
