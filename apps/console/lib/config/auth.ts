@@ -44,9 +44,9 @@ function provider(idKey: string, secretKey: string): ProviderCredentials | null 
 /**
  * Rate-limit policy for the Better Auth HTTP surface (/api/auth/* — sign-in,
  * email-OTP send+verify, OAuth callbacks, session). DB-backed (storage:"database")
- * so counters are consistent across replicas and survive restarts — unlike the
- * per-process in-memory limiter in lib/rate-limit.ts, which a second replica or a
- * restart defeats.
+ * so counters are consistent across replicas and survive restarts. (lib/rate-limit.ts,
+ * the console's own limiter for its non-Better-Auth routes, is Postgres-backed too since
+ * #5309, in its own table.)
  *
  * Enabled by default in EVERY environment: Better Auth otherwise only enforces rate
  * limiting in production, so we force it on. Set ALETHIA_AUTH_RATE_LIMIT=0 to disable

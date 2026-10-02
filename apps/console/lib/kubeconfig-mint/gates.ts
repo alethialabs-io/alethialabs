@@ -19,16 +19,22 @@ import { actionForTier } from "./clouds";
  *  An exec-credential kubeconfig re-mints once per TTL (15 min at the shortest), so honest use is a
  *  handful per hour; this bounds a loop, not a person. */
 const MINT_RATE_LIMIT = 20;
-/** The sliding window {@link MINT_RATE_LIMIT} is counted over. */
+/** The fixed window {@link MINT_RATE_LIMIT} is counted over (lib/rate-limit.ts: shared by every replica). */
 export const MINT_RATE_WINDOW_MS = 10 * 60_000;
 
-/** Counts one mint request against the actor's budget. False when over it (the caller answers 429). */
-export function takeMintRateLimit(actor: { orgId: string; userId: string }): boolean {
-	return checkRateLimit(
+/**
+ * Counts one mint request against the actor's budget. False when over it (the caller answers 429) —
+ * and also when the shared bucket store cannot answer: a mint hands out a cluster credential, so the
+ * limiter fails CLOSED here, never open.
+ */
+export async function takeMintRateLimit(actor: { orgId: string; userId: string }): Promise<boolean> {
+	const result = await checkRateLimit(
 		`kubeconfig-mint:${actor.orgId}:${actor.userId}`,
 		MINT_RATE_LIMIT,
 		MINT_RATE_WINDOW_MS,
-	).ok;
+		{ failOpen: false },
+	);
+	return result.ok;
 }
 
 /**

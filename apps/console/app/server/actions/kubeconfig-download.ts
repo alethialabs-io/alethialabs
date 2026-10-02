@@ -124,7 +124,7 @@ export async function requestKubeconfigDownload(input: {
 		throw e;
 	}
 
-	if (!takeMintRateLimit(actor)) return { ok: false, status: 429 };
+	if (!(await takeMintRateLimit(actor))) return { ok: false, status: 429 };
 
 	try {
 		const outcome = await requestKubeconfigMint({

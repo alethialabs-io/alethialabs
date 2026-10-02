@@ -64,7 +64,7 @@ beforeEach(() => {
 	vi.mocked(authorize).mockResolvedValue(actor() as never);
 	vi.mocked(getPdp).mockReturnValue({ enforce: pdpEnforce } as never);
 	pdpEnforce.mockResolvedValue(undefined);
-	vi.mocked(checkRateLimit).mockReturnValue({ ok: true } as never);
+	vi.mocked(checkRateLimit).mockResolvedValue({ ok: true, remaining: 1 });
 	vi.mocked(isCredEncryptionConfigured).mockReturnValue(true);
 	vi.mocked(encryptSecret).mockReturnValue({ enc: "sealed" } as never);
 	vi.mocked(getChannelSender).mockReturnValue({ verify: senderVerify } as never);
@@ -358,7 +358,7 @@ describe("channel toggles", () => {
 
 describe("verifyChannel", () => {
 	it("short-circuits when rate-limited", async () => {
-		vi.mocked(checkRateLimit).mockReturnValue({ ok: false } as never);
+		vi.mocked(checkRateLimit).mockResolvedValue({ ok: false, remaining: 0 });
 		mockDb();
 		const r = await verifyChannel("ch-1");
 		expect(r.ok).toBe(false);
