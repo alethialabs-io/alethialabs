@@ -30,7 +30,7 @@ import {
 } from "@/components/billing/billing-checkout-form";
 import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
-import { authClient } from "@/lib/auth/client";
+import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
 import type { PaidAiTier } from "@/lib/billing/config";
 import { billingIntentErrorMessage } from "@/lib/billing/intent-error";
@@ -75,8 +75,8 @@ function paidTierOf(entry: AiPlanCatalogEntry): PaidAiTier | null {
  */
 export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiSheetProps) {
 	const router = useRouter();
-	const { data: session } = authClient.useSession();
-	const ownerEmail = session?.user?.email ?? "";
+	const { viewer } = useViewer();
+	const ownerEmail = viewer?.email ?? "";
 
 	const [summary, setSummary] = useState<AiUsageSummary | null>(null);
 	const [view, setView] = useState<View>("choose");

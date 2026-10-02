@@ -86,6 +86,42 @@ const eslintConfig = defineConfig([
 		},
 	},
 	{
+		// Session-hydration guard (#5382): product code reads the signed-in person through
+		// `useViewer()` (components/providers/viewer-provider.tsx), never better-auth's `useSession`.
+		// That hook hands the LIVE client session to `useSyncExternalStore` as its SERVER snapshot,
+		// so anything rendered from it hydrates against the browser's session fetch rather than the
+		// server's HTML — an intermittent React #418 (#5377, #5380).
+		//
+		// What is matched is the NAME `useSession` reached through any object, in each form that
+		// reaches it: `x.useSession`, `x["useSession"]`, and destructuring `{ useSession } = x`.
+		// The object is deliberately not read, so an alias of `authClient` or a second
+		// `createAuthClient()` is caught too. Out of scope, stated: tests and e2e (they mock the
+		// session the hook reads); a dynamically computed key (`x[name]`), which no lint can see.
+		// lib/auth/client.ts no longer re-exports `useSession`, so importing it is a type error.
+		files: ["**/*.{ts,tsx}"],
+		ignores: ["tests/**", "e2e/**", "components/providers/viewer-provider.tsx"],
+		rules: {
+			"no-restricted-syntax": [
+				"error",
+				{
+					selector: "MemberExpression[property.name='useSession']",
+					message:
+						"Read the signed-in person with useViewer() from @/components/providers/viewer-provider — better-auth's useSession is not hydration-safe (#5382).",
+				},
+				{
+					selector: "MemberExpression[computed=true][property.value='useSession']",
+					message:
+						"Read the signed-in person with useViewer() from @/components/providers/viewer-provider — better-auth's useSession is not hydration-safe (#5382).",
+				},
+				{
+					selector: "ObjectPattern > Property[key.name='useSession']",
+					message:
+						"Read the signed-in person with useViewer() from @/components/providers/viewer-provider — better-auth's useSession is not hydration-safe (#5382).",
+				},
+			],
+		},
+	},
+	{
 		// Playwright fixtures use a `use` callback the rules-of-hooks rule misreads
 		// as a React hook.
 		files: ["e2e/**"],
