@@ -294,6 +294,47 @@ describe("composeTools.estimate_cost prices the machine the card names (#5291)",
 	});
 });
 
+describe("composeTools.estimate_cost prices the cluster on ITS OWN cloud (#5361)", () => {
+	const sized = {
+		instance_types: [],
+		node_size: { vcpu: 4, memory_gb: 16 },
+		node_desired_size: 1,
+	};
+	/** The node line of an estimate_cost answer. */
+	const nodesOf = async (ctx: CanvasContext) => {
+		const out = await run(composeTools(ctx).estimate_cost, {});
+		const items = typeof out === "object" && out && "items" in out && Array.isArray(out.items) ? out.items : [];
+		return items.find((i: { label?: string }) => /Nodes$/.test(i.label ?? ""));
+	};
+
+	it("a gcp-identity cluster in an aws project is priced at gcp rates with a gcp SKU", async () => {
+		const nodes = await nodesOf({
+			provider: "aws",
+			clusterProvider: "gcp",
+			form: { cluster: sized, secrets: [{ name: "s" }] },
+		});
+		expect(nodes?.label).toBe("GKE Nodes");
+		expect(nodes?.detail).toBe("1x 4 vCPU / 16 GB → e2-standard-4");
+		expect(nodes?.monthly).toBe(98);
+	});
+
+	it("a cluster without its own cloud is priced on the project's", async () => {
+		const nodes = await nodesOf({ provider: "aws", form: { cluster: sized } });
+		expect(nodes?.label).toBe("EKS Nodes");
+		expect(nodes?.detail).toBe("1x 4 vCPU / 16 GB → t3.xlarge");
+	});
+
+	it("an unknown clusterProvider off the wire is read as the project's cloud, not trusted", async () => {
+		// The body is z.custom (unvalidated), so the context is built the way the route receives it.
+		const wire: CanvasContext = JSON.parse(
+			JSON.stringify({ provider: "aws", clusterProvider: "oracle", form: { cluster: sized } }),
+		);
+		const nodes = await nodesOf(wire);
+		expect(nodes?.label).toBe("EKS Nodes");
+		expect(nodes?.detail).toBe("1x 4 vCPU / 16 GB → t3.xlarge");
+	});
+});
+
 describe("composeTools.propose_changes", () => {
 	it("is a HITL tool with NO execute (the user accepts client-side)", () => {
 		// Removing execute makes the model's turn pause on the proposal until the user

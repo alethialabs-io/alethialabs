@@ -99,6 +99,10 @@ import {
 } from "@/lib/cloud-providers/hetzner-services";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import {
+	type PlacementRow,
+	resolveComponentPlacement,
+} from "@/lib/cloud-providers/placement";
+import {
 	type CloudProviderSlug,
 	type ConversionWarning,
 	convertProjectConfig,
@@ -960,6 +964,31 @@ export async function getProject(
 			if (ci) cloudProvider = ci.provider;
 		}
 
+		// The cluster's OWN cloud (#5361): coalesce(project_cluster.cloud_identity_id,
+		// projects.cloud_identity_id) → provider, through the same resolver the config snapshot
+		// places it with. Only a cluster that carries a DIFFERENT identity costs a second read.
+		const providerById = new Map<string, string>();
+		if (project.cloud_identity_id)
+			providerById.set(project.cloud_identity_id, cloudProvider);
+		const clusterIdentityId = components.cluster?.cloud_identity_id ?? null;
+		if (clusterIdentityId && clusterIdentityId !== project.cloud_identity_id) {
+			const [own] = await tx
+				.select({ provider: cloudIdentities.provider })
+				.from(cloudIdentities)
+				.where(eq(cloudIdentities.id, clusterIdentityId))
+				.limit(1);
+			if (own) providerById.set(clusterIdentityId, own.provider);
+		}
+		const clusterCloudProvider = resolveComponentPlacement(
+			{
+				cloud_provider: cloudProvider,
+				cloud_identity_id: project.cloud_identity_id,
+				region: project.region,
+			},
+			providerById,
+			components.cluster,
+		).cloud_provider;
+
 		return {
 			project: {
 				...project,
@@ -972,6 +1001,8 @@ export async function getProject(
 			},
 			environments,
 			cloudProvider,
+			/** The cloud the env's cluster deploys to: its own identity's, else `cloudProvider`. */
+			clusterCloudProvider,
 			components,
 		};
 	});
@@ -1505,18 +1536,9 @@ async function buildConfigSnapshot(
 			for (const r of rows) providerById.set(r.id, r.provider);
 		}
 
-		/** Concrete { cloud_provider, cloud_identity_id, region } for a component row. */
-		const resolvePlacement = (row?: {
-			cloud_identity_id?: string | null;
-			region?: string | null;
-		}) => {
-			const cid = row?.cloud_identity_id ?? core.cloud_identity_id;
-			return {
-				cloud_provider: providerById.get(cid) ?? core.cloud_provider,
-				cloud_identity_id: cid,
-				region: row?.region ?? core.region,
-			};
-		};
+		/** Concrete { cloud_provider, cloud_identity_id, region } for a component row (placement.ts). */
+		const resolvePlacement = (row?: PlacementRow) =>
+			resolveComponentPlacement(core, providerById, row);
 
 		// Gate: CORE resources must stay on the primary cloud identity.
 		const coreChecks: Array<{
