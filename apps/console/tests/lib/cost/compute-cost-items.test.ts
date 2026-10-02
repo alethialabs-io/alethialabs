@@ -205,3 +205,57 @@ describe("computeCostItems — an empty instance list is priced at the cloud's t
 		expect(items.find((i) => i.label === "EKS Nodes")?.cost).toBeCloseTo(0.0912 * HOURS, 5);
 	});
 });
+
+// #5291: a node_size cluster used to be priced from instance_types alone, so `instance_types: []`
+// plus a size was priced at the template default while the card named the resolved SKU. The SKUs
+// and rates are written out BY DECISION from catalog.json (an expectation recomputed with
+// nearestInstance would pass on any answer): aws 4×16 → t3.xlarge (0.1824/h, the fallback table),
+// gcp 4×16 → e2-standard-4 (catalog hint ~$98/mo).
+describe("computeCostItems — a node_size cluster is priced at the SKU it resolves to (#5291)", () => {
+	const size = { vcpu: 4, memory_gb: 16 };
+	const nodes = (r: ReturnType<typeof computeCostItems>) =>
+		r.items.find((i) => i.label.endsWith(" Nodes"));
+
+	it("aws: 4 vCPU / 16 GB is priced as a t3.xlarge, not the t3.large default", () => {
+		const r = computeCostItems(input({ nodeSize: size, nodeDesiredSize: 2 }), null, META);
+		expect(nodes(r)?.cost).toBeCloseTo(0.1824 * 2 * HOURS, 5);
+		expect(nodes(r)?.detail).toBe("2x 4 vCPU / 16 GB → t3.xlarge");
+	});
+
+	it("gcp: 4 vCPU / 16 GB is priced as an e2-standard-4 at the catalog's rate", () => {
+		const r = computeCostItems(input({ nodeSize: size, nodeDesiredSize: 3 }), null, {
+			...META,
+			provider: "gcp",
+		});
+		expect(nodes(r)?.cost).toBeCloseTo((98 / HOURS) * 3 * HOURS, 5);
+		expect(nodes(r)?.detail).toBe("3x 4 vCPU / 16 GB → e2-standard-4");
+	});
+
+	it("a pinned type still wins over a size the row also holds (Go's precedence)", () => {
+		const r = computeCostItems(
+			input({ instanceTypes: ["m5a.large"], nodeSize: size, nodeDesiredSize: 1 }),
+			null,
+			META,
+		);
+		expect(nodes(r)?.cost).toBeCloseTo(0.096 * HOURS, 5);
+		expect(nodes(r)?.detail).toBe("1x m5a.large");
+	});
+
+	it("a Spot pool is said to be estimated on-demand, at the on-demand rate", () => {
+		const r = computeCostItems(
+			input({ nodeSize: size, nodeDesiredSize: 1, capacityType: "spot" }),
+			null,
+			META,
+		);
+		expect(nodes(r)?.cost).toBeCloseTo(0.1824 * HOURS, 5);
+		expect(nodes(r)?.detail).toBe(
+			"1x 4 vCPU / 16 GB → t3.xlarge · Spot, estimated at on-demand rates",
+		);
+		const onDemand = computeCostItems(
+			input({ nodeSize: size, nodeDesiredSize: 1, capacityType: "on_demand" }),
+			null,
+			META,
+		);
+		expect(nodes(onDemand)?.detail).toBe("1x 4 vCPU / 16 GB → t3.xlarge");
+	});
+});

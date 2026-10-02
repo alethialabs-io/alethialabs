@@ -29,6 +29,8 @@ import {
 import { cidrForHosts } from "@/lib/cloud-providers/cidr";
 import { CLOUD_PROVIDER_SLUGS } from "@/lib/cloud-providers/provider-slug";
 import { computeCostItems } from "@/lib/cost/compute-cost-items";
+import { nodeCapacityType } from "@/lib/db/schema/enums";
+import { nodeSizeSchema } from "@/lib/validations/project-form.schema";
 import {
 	ADDABLE_KINDS,
 	addableKindsFor,
@@ -193,6 +195,10 @@ export function composeTools(ctx: CanvasContext | undefined) {
 				const { items, total } = computeCostItems(
 					{
 						instanceTypes: toStrArray(cluster.instance_types),
+						// Priced at the SKU the card resolves it to (#5291); a malformed size is no size.
+						nodeSize: nodeSizeSchema.safeParse(cluster.node_size).data ?? null,
+						capacityType:
+							z.enum(nodeCapacityType.enumValues).safeParse(cluster.capacity_type).data ?? null,
 						nodeDesiredSize: numOr(cluster.node_desired_size, 2),
 						singleNatGateway: boolOr(network.single_nat_gateway, true),
 						databases: toRecordArray(f.databases),

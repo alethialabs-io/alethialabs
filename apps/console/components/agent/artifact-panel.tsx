@@ -109,6 +109,8 @@ export function ArtifactPanel() {
 				computeCostItems(
 					{
 						instanceTypes: c?.instance_types ?? [],
+						nodeSize: c?.node_size ?? null,
+						capacityType: c?.capacity_type ?? null,
 						nodeDesiredSize: c?.node_desired_size ?? 2,
 						singleNatGateway: n?.single_nat_gateway ?? true,
 						databases: (detail.components.databases ?? []).map((d) => ({
