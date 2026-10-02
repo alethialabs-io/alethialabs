@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { notFound } from "next/navigation";
-import { evaluate } from "@/lib/compat";
+import { evaluate, resolveK8sVersion } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import {
 	PROJECT_NAME_MAX_LENGTH,
@@ -1452,11 +1452,18 @@ async function buildConfigSnapshot(
 		// resolved add-on set (incl. Hetzner data-service + BYO charts). The report
 		// rides the config snapshot for the UI to surface at design time (#1221/#1222);
 		// it NEVER blocks saving — the fail-closed block is the apply gate (#1215).
-		// An unset K8s version or an add-on id absent from the matrix → honest
-		// `not_evaluable` (non-blocking), so this is safe before a cluster resolves.
+		// The version judged is the one that will DEPLOY (#5314): an unset cluster_version
+		// resolves to the catalog default, exactly as the Go apply gate resolves it — but only
+		// on the template path; a BYO-IaC module decides its own version, so there the raw
+		// value is kept. The resolved value is judged, never written into the snapshot.
+		// An add-on id absent from the matrix → honest `not_evaluable` (non-blocking).
 		const compat = evaluate({
 			providers: [identity.provider],
-			k8sVersion: cluster?.cluster_version ?? undefined,
+			k8sVersion: iacSource
+				? (cluster?.cluster_version ?? undefined)
+				: cluster
+					? resolveK8sVersion(identity.provider, cluster.cluster_version)
+					: undefined,
 			addons: addons.map((a) => ({ id: a.id })),
 		});
 

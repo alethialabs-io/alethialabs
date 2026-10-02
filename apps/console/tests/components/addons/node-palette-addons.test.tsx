@@ -151,6 +151,25 @@ describe("NodePalette — Add-ons group", () => {
 		expect(screen.getAllByText("Unverified").length).toBeGreaterThan(0);
 	});
 
+	// #5314 — an UNSET version deploys the catalog default, so that is what the badge judges. It
+	// used to read the raw "" and mark every add-on Unverified on exactly the clusters that pin
+	// nothing (CLI-created and blank projects).
+	it("judges an unset cluster version as the catalog default, not as unverifiable", () => {
+		useCanvasStore.setState({ nodes: [clusterNode("")] });
+		render(
+			<NodePalette
+				open
+				onOpenChange={vi.fn()}
+				identities={[]}
+				addonItems={[kyverno]}
+				onConfigureAddon={vi.fn()}
+			/>,
+		);
+		// kyverno is 1.25+ and the aws default is newer: a pass, which shows nothing.
+		expect(screen.queryByText("Unverified")).not.toBeInTheDocument();
+		expect(screen.queryByText(/^K8s /)).not.toBeInTheDocument();
+	});
+
 	it("marks everything unverified when there is no cluster to judge against", () => {
 		useCanvasStore.setState({ nodes: [] });
 		render(

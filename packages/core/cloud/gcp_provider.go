@@ -161,7 +161,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 		// GKE
 		"provision_gke":        true,
-		"gke_cluster_version":  resolveK8sVersion("gcp", config.Cluster.ClusterVersion),
+		"gke_cluster_version":  ResolveK8sVersion("gcp", config.Cluster.ClusterVersion),
 		"gke_enable_autopilot": enableAutopilot,
 
 		// DNS. `cloud_dns_enabled` is the CREATE gate, not "is DNS in play" — bringing a zone you
