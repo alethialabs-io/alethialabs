@@ -19,9 +19,13 @@ import { configName } from "@/components/design-project/canvas/graph/node-config
 export function snapshotCanvas(): CanvasContext | undefined {
 	const store = useCanvasStore.getState();
 	if (store.nodes.length === 0) return undefined;
+	const clusterNode = store.nodes.find((n) => n.data.kind === "cluster");
 	return {
 		provider:
 			store.getEffectiveProvider(PROJECT_NODE_ID) ?? "aws",
+		// The cluster's own cloud, from the resolver its card renders with (#5361), so
+		// `estimate_cost` prices the machine the card shows.
+		clusterProvider: clusterNode ? store.getEffectiveProvider(clusterNode.id) : null,
 		form: graphToForm(store.nodes),
 		nodes: store.nodes.map((n) => ({
 			id: n.id,
