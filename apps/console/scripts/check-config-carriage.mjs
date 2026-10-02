@@ -330,6 +330,13 @@ const INSPECTOR_FIELDS = readInspectorFields();
  */
 function gateClouds(gate, clouds) {
 	if (!gate) return clouds;
+	// `<provider gate> || c.<field> === "<value>"` — the cloud gate, widened by a REPAIR clause: the
+	// control also stays visible on other clouds while it still holds a value they refuse, so the
+	// refusal can be fixed there (`capacity_type` on hetzner while it says `spot`). That clause offers
+	// nothing new — it shows a stored value, not a choice — so the clouds OFFERING the field are the
+	// provider half's, and it is read exactly that far. Any other `||` stays unreadable.
+	const repair = gate.match(/^(provider\s*[!=]==\s*"\w+")\s*\|\|\s*c\.\w+\s*===\s*"[^"]*"$/);
+	if (repair) return gateClouds(repair[1], clouds);
 	const ne = gate.match(/^provider\s*!==\s*"(\w+)"$/);
 	if (ne) return clouds.filter((c) => c !== ne[1]);
 	const eq = gate.match(/^provider\s*===\s*"(\w+)"$/);
@@ -812,6 +819,12 @@ function selfCheck() {
 	if (gateClouds(null, clouds).length !== 5) fail("an ungated field must be offered on every cloud");
 	if (gateClouds('provider !== "hetzner"', clouds).join() !== "alibaba,aws,azure,gcp") fail("misread a `!==` gate");
 	if (gateClouds('provider === "hetzner"', clouds).join() !== "hetzner") fail("misread an `===` gate");
+	if (gateClouds('provider !== "hetzner" || c.capacity_type === "spot"', clouds).join() !== "alibaba,aws,azure,gcp") {
+		fail("misread a repair-clause gate");
+	}
+	if (gateClouds('provider !== "hetzner" || c.capacity_type !== "spot"', clouds) !== null) {
+		fail("evaluated a `||` clause that is not a repair clause");
+	}
 	// The unreadable shape must come back NULL rather than being guessed either way. Guessing
 	// "everywhere" manufactures gaps on clouds whose table model has no range key; guessing "nowhere"
 	// deletes the field from the surface.

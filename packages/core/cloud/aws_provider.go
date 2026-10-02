@@ -68,7 +68,7 @@ func (p *awsProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateInstanceTypes("aws", config); err != nil {
 		return err
 	}
-	if err := validateCapacityType(config, "aws", true); err != nil {
+	if err := validateCapacityType(config, ""); err != nil {
 		return err
 	}
 	if err := validateNodeDiskSize(config, "eks_disk_size", awsNodeDiskFloorGB); err != nil {

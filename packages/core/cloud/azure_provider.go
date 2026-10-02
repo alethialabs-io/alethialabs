@@ -39,7 +39,7 @@ func (p *azureProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateInstanceTypes("azure", config); err != nil {
 		return err
 	}
-	if err := validateCapacityType(config, "azure", false); err != nil {
+	if err := validateCapacityType(config, ""); err != nil {
 		return err
 	}
 	if err := validateNodeDiskSize(config, "aks_disk_size_gb", azureNodeDiskFloorGB); err != nil {
@@ -79,7 +79,7 @@ var (
 	// assignment fails the suite until it is listed here.
 	azureTypedTfvars = []string{
 		"aks_admin_group_object_ids", "aks_cluster_version", "aks_disk_size_gb", "aks_instance_types",
-		"aks_node_desired_size", "aks_node_max_size", "aks_node_min_size", "azure_cache_multi_az",
+		"aks_node_desired_size", "aks_node_max_size", "aks_node_min_size", "aks_spot_enabled", "azure_cache_multi_az",
 		"azure_cache_sku_name", "azure_db_backup_retention_days", "azure_db_engine",
 		"azure_db_engine_version", "azure_db_iam_auth", "azure_db_port", "azure_db_sku_name",
 		"azure_dns_domain", "azure_dns_enabled", "azure_dns_zone_name", "azure_waf_enabled",
@@ -276,6 +276,19 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 	}
 	if config.Cluster.NodeDiskSizeGB != nil {
 		tfvars["aks_disk_size_gb"] = *config.Cluster.NodeDiskSizeGB
+	}
+	// The node pool's purchase option (#5315). AKS refuses a Spot SYSTEM (default) pool, so spot
+	// cannot flip the pool the cluster already runs on; it turns on the template's separate Spot
+	// WORKER pool (`aks_spot_enabled`, scaling from aks_spot_node_min_size to aks_spot_node_max_size)
+	// beside the on-demand system pool, which keeps running. The pool's price ceiling, eviction policy
+	// and bounds stay ordinary passthrough knobs. Unset leaves a hand-set `aks_spot_enabled` in force.
+	if enabled := azureSpotPool(config.Cluster.CapacityType); enabled != nil {
+		tfvars["aks_spot_enabled"] = *enabled
+	} else {
+		// A legacy hand-set passthrough (the legacy capacity passthrough, validate.go).
+		if legacy, isSet := config.Cluster.ProviderConfig["aks_spot_enabled"]; isSet {
+			tfvars["aks_spot_enabled"] = legacy
+		}
 	}
 
 	// B4.1 + A2.2: cluster_admins → AKS admin_group_object_ids, UNIONed with an explicit
@@ -592,3 +605,18 @@ func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[stri
 }
 
 var _ CloudProvider = (*azureProvider)(nil)
+
+// azureSpotPool maps the cloud-indifferent node capacity type onto the AKS template's Spot worker
+// pool switch. nil for "" (unset, or a value ValidateConfig has already refused).
+func azureSpotPool(capacity types.NodeCapacityType) *bool {
+	var on bool
+	switch capacity {
+	case types.NodeCapacityTypeSpot:
+		on = true
+	case types.NodeCapacityTypeOnDemand:
+		on = false
+	default:
+		return nil
+	}
+	return &on
+}
