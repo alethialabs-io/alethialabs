@@ -25,7 +25,12 @@
 //
 //	cli             the `cli-demo` dimension, where a real console and the real `alethia` binary
 //	                exist: `alethia cluster kubeconfig <project> --static --output <file> --no-input`
-//	                (and `--admin`). This proves the whole path a person runs.
+//	                for the READ-ONLY tiers. This proves the whole path a person runs. The ADMIN tier
+//	                cannot be minted this way, by policy: the CLI here authenticates with a seeded
+//	                SERVICE TOKEN (there is no person to sign in), and a service token never mints
+//	                admin (#5310). So on cli-demo the CLI's `--admin` request is asserted REFUSED —
+//	                exit non-zero, no request row, no file — and the admin tier itself is minted
+//	                through the runner channel below. Each tier records the driver that minted it.
 //	runner-channel  every other dimension, the scheduled floor among them. There is no console and no
 //	                CLI on those legs (building the console costs ~3 minutes per leg and the CLI talks to
 //	                nothing else), so the harness writes the mint request exactly as the console's
@@ -512,6 +517,7 @@ type KubeconfigMintTier struct {
 	ExpiresInSec    *int64            `json:"expires_in_seconds,omitempty"`
 	ExpiryWithinTTL *bool             `json:"expiry_within_ttl,omitempty"`
 	ExpiryError     string            `json:"expiry_error,omitempty"`
+	Driver          string            `json:"driver,omitempty"` // who minted THIS tier, when not the summary's driver (tierMintDriver)
 	Checks          []KubeCheckResult `json:"checks"`
 	Error           string            `json:"error,omitempty"`
 	Verdict         string            `json:"verdict"`
@@ -556,6 +562,42 @@ type KubeconfigMintSummary struct {
 	CanaryClean     bool                 `json:"canary_clean"`
 	DurationSeconds float64              `json:"duration_seconds"`
 	Verdict         string               `json:"verdict"`
+}
+
+// tierMintDriver is the driver that mints one static tier under the run's driver. It is the run's
+// driver for every tier but one: under the CLI driver the ADMIN tier goes through the runner
+// channel, because the CLI on cli-demo holds a service token and a service token is refused an admin
+// mint by policy (#5310, credentialMayMintTier). What the CLI proves for admin is that refusal
+// (cliAdminRefusalCheck), not a mint.
+func tierMintDriver(runDriver, tier string) string {
+	if runDriver == kubeconfigMintDriverCLI && tier == mintTierAdmin {
+		return kubeconfigMintDriverRunner
+	}
+	return runDriver
+}
+
+// cliAdminRefusalCheckName names the check that holds the CLI to the service-token admin policy.
+const cliAdminRefusalCheckName = "cli-admin-mint-refused-for-service-token"
+
+// cliAdminRefusalCheck judges `alethia cluster kubeconfig --static --admin` run with a service token.
+// It passes only when the CLI FAILED and nothing was produced: no request row (the console refuses
+// before writing one) and no kubeconfig file. Exit 0, a row, or a file is the policy not holding —
+// outcome "allowed". A row-read error means the absence could not be established — outcome "error",
+// never a pass. The CLI's text is not read: the status-to-sentence mapping is the CLI's to change.
+func cliAdminRefusalCheck(runErr error, rowWritten bool, rowReadErr error, fileWritten bool) KubeCheckResult {
+	r := KubeCheckResult{Name: cliAdminRefusalCheckName, Want: string(kubeRefused)}
+	switch {
+	case runErr == nil || rowWritten || fileWritten:
+		r.Outcome = string(kubeAllowed)
+		r.Error = fmt.Sprintf("a service token was not refused an admin mint (cli exit ok=%t, request row=%t, file=%t)",
+			runErr == nil, rowWritten, fileWritten)
+	case rowReadErr != nil:
+		r.Outcome = string(kubeError)
+		r.Error = "could not read the mint rows to confirm none was written: " + rowReadErr.Error()
+	default:
+		r.Outcome, r.Pass = string(kubeRefused), true
+	}
+	return r
 }
 
 // requiredStaticTiers are the two tiers every proof must carry, both static.
@@ -609,6 +651,9 @@ func summarizeKubeconfigMint(s KubeconfigMintSummary) string {
 	parts := make([]string, 0, len(s.Tiers))
 	for _, t := range s.Tiers {
 		p := fmt.Sprintf("%s/%s %s", t.Tier, t.Shape, t.Verdict)
+		if t.Driver != "" && t.Driver != s.Driver {
+			p += " [" + t.Driver + "]"
+		}
 		if t.ExpiresAt != "" {
 			p += fmt.Sprintf(" (expires %s via %s)", t.ExpiresAt, t.ExpirySource)
 		}
