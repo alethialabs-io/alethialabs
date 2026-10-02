@@ -109,11 +109,6 @@ func (w *Runner) stateBackend(jobID string) (*cloud.HTTPBackendConfig, error) {
 	}, nil
 }
 
-// errMintKubeconfigNotImplemented is the dispatcher's named, fail-closed refusal of a
-// MINT_KUBECONFIG job (#5280). The seams contract landed ahead of the executor; until the executor
-// ships, a mint job FAILS with this error rather than with the generic "unknown job type".
-var errMintKubeconfigNotImplemented = errors.New("MINT_KUBECONFIG is not implemented on this runner yet (#5280 landed the contract only); the job fails closed and mints no credential")
-
 // Timing constants of the runner's background loops. They are package vars rather than
 // consts purely so a test can shorten them; production never reassigns them, and the
 // values are the ones the loops have always used.
@@ -535,11 +530,9 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 		// reports the per-service digest map on execution_metadata.build_result. See build.go.
 		execErr = w.executeBuild(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	case types.JobTypeMintKubeconfig:
-		// Short-lived kubeconfig mint (#5250, seams #5280). The contract — the job type, the sealed
-		// request row, the wire types and the HPKE seal (packages/core/kubeaccess) — has landed; the
-		// executor has not. Refuse BY NAME, fail-closed, so a mint enqueued before the executor ships
-		// fails loudly instead of reading as an "unknown" type. Nothing in the console enqueues it yet.
-		execErr = errMintKubeconfigNotImplemented
+		// Short-lived kubeconfig mint (#5250, #5283) — see kubeconfig_mint.go. The result goes back
+		// over its own one-shot channel, sealed to the client's key; never execution_metadata.
+		execErr = w.executeMintKubeconfig(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}

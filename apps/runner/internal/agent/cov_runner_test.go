@@ -1028,18 +1028,19 @@ func TestRun_ExecuteJob_DispatchesEveryJobType(t *testing.T) {
 	}
 }
 
-// TestRun_ExecuteJob_RefusesMintKubeconfigByName pins the seams-only state of MINT_KUBECONFIG
-// (#5280): the dispatcher refuses it with its OWN error and posts FAILED, so a mint enqueued before
-// the executor lands can neither mint a credential nor be mistaken for an unknown job type.
-func TestRun_ExecuteJob_RefusesMintKubeconfigByName(t *testing.T) {
+// TestRun_ExecuteJob_MintKubeconfigFailsClosedWithoutTheChannel pins the dispatcher's routing of
+// MINT_KUBECONFIG (#5283) to its executor, and the executor's fail-closed default: a JobAPI with no
+// kubeconfig mint channel (this fake) mints nothing and posts FAILED with a fixed sentence, never
+// "unknown job type".
+func TestRun_ExecuteJob_MintKubeconfigFailsClosedWithoutTheChannel(t *testing.T) {
 	api := newCovRunAPI()
 	w := NewWithAPI(Config{Operator: "managed", RunnerID: "r-mint"}, api)
 
 	err := w.executeJob(t.Context(), &ClaimResponse{
 		Job: &Job{ID: "covrun-mint", JobType: string(types.JobTypeMintKubeconfig), ConfigSnapshot: map[string]any{}},
 	})
-	if !errors.Is(err, errMintKubeconfigNotImplemented) {
-		t.Fatalf("expected the named MINT_KUBECONFIG refusal, got %v", err)
+	if !errors.Is(err, errMintChannelUnavailable) {
+		t.Fatalf("expected the fail-closed MINT_KUBECONFIG refusal, got %v", err)
 	}
 	if u, ok := covRunTerminal(api, "covrun-mint"); !ok || u.status != "FAILED" {
 		t.Errorf("expected a FAILED terminal status, got %+v", u)

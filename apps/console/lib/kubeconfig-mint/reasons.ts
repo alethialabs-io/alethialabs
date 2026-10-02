@@ -31,6 +31,9 @@ export const KUBECONFIG_MINT_FAILURE_REASONS: readonly string[] = [
 	"The read-only identity could not be prepared in the cluster.",
 	"This cloud cannot issue the requested kubeconfig shape.",
 	"The runner could not seal the credential to the client key.",
+	// A namespace/vcluster environment's cluster row names the SHARED Fabric cluster; the runner
+	// refuses to mint the whole shared cluster's credential for one tenant of it (#5283).
+	"Kubeconfig mints are not available for an environment placed on a shared cluster.",
 ];
 
 const ALLOWED: ReadonlySet<string> = new Set(KUBECONFIG_MINT_FAILURE_REASONS);
