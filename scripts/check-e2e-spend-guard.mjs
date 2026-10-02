@@ -48,6 +48,9 @@
 //   R4  the hetzner cap's DEFAULT admits every server type the e2e itself provisions, re-derived
 //       from the files that choose them (HETZNER_TYPE_SOURCES). Without this the cap and a fixture
 //       can drift apart, and the first anyone hears of it is a red paid dispatch.
+//   R5  aws capacity type (#5316): every aws shape pins `capacity_type: spot` except ONE default
+//       cell, and each shape's worst-case monthly cost fits under the ceiling default its leg is
+//       priced against. The rules and the per-case cost assumption are stated at analyseAwsCapacity.
 //
 // Dispatches are NOT out of scope any more: a dispatched leg reads the same env, so a control is in
 // force for a human-started run as well — the alibaba waiver is the only hatch, and it is per-run.
@@ -367,6 +370,156 @@ function readHetznerTypes() {
 	return out;
 }
 
+// ───────────────────────────── R5: aws capacity type and its cost (#5316) ─────────────────────────────
+//
+// #5266 moved the aws node group's template default from SPOT to ON_DEMAND. The e2e pins
+// `capacity_type: spot` on every aws shape except ONE default cell (the workflow's
+// AWS_DEFAULT_CAPACITY_DIMENSION, on its cheapest shape), which states none so the default path stays
+// proven. R5 holds that decision and states the cost assumption per case:
+//
+//   R5a every aws shape states capacity_type "spot", except the default cell, which states NONE.
+//   R5b every aws instance type the e2e provisions has a price below, so the math is never skipped.
+//   R5c each shape's WORST-CASE monthly estimate fits under the ceiling default its leg is priced
+//       against (the lower aws default for the cheapest shape, the higher for the heavy and demo
+//       fixtures — the same split the ALETHIA_COST_CEILING_MONTHLY_USD expression makes).
+//
+// THE COST ASSUMPTION, PER CASE. Infracost prices an aws_eks_node_group at the purchase option its
+// capacity_type names (eks_node_group.go: PurchaseOption = lower(capacity_type)), so the estimate
+// cost_ceiling.go compares is the on-demand price for the default cell and a spot price for the rest.
+// A spot price is not a constant, so R5c does not use one: an EKS managed node group's spot max price
+// defaults to the on-demand price, so on-demand is the most a spot node can bill. R5c prices EVERY
+// cell at on-demand. That is exact for the default cell and an upper bound for the spot cells, so a
+// pass holds whatever the spot market does. What R5c does NOT include: the add-ons, databases and
+// other managed resources a max-config run adds on top of the nodes — the ceiling's headroom above
+// these figures is what is left for them, and the note prints that headroom.
+//
+// us-east-1 (the nightly's aws default region) on-demand list prices, USD per hour, Linux.
+export const AWS_ON_DEMAND_USD_PER_HOUR = { "t3.large": 0.0832, "t3.xlarge": 0.1664 };
+// Always-on per-cluster costs: the EKS control plane, and the ONE NAT gateway the nightly asks for
+// (single_nat_gateway, the workflow's aws NET override).
+export const AWS_FIXED_USD_PER_HOUR = { eks_control_plane: 0.1, nat_gateway: 0.045 };
+// Infracost's month.
+export const HOURS_PER_MONTH = 730;
+
+// Every aws shape fixture. Each one is loaded only by a heavy-shape or fabric-demo leg, which the
+// ceiling expression prices against the HIGHER default — so every fixture is a "high" cell.
+const AWS_FIXTURE_DIR = "test/e2e/fixtures";
+const AWS_FIXTURE_RE = /^cluster_json\..+\.aws\.json$/;
+
+/**
+ * The aws cheapest shape and the default-capacity dimension, from the `Compute cluster shape` step.
+ * @param {string} workflowText
+ * @returns {{shape: Record<string, unknown> | undefined, defaultDimension: string | undefined}}
+ */
+export function extractAwsWorkflowShape(workflowText) {
+	const lines = workflowText.split("\n").filter((l) => !/^\s*#/.test(l));
+	const shapeLine = lines.map((l) => l.match(/^\s*aws\)\s+SHAPE='(\{.*?\})'/)).find((m) => m !== null);
+	const dimLine = lines.map((l) => l.match(/^\s*AWS_DEFAULT_CAPACITY_DIMENSION=([a-z0-9-]+)\s*$/)).find((m) => m !== null);
+	return { shape: shapeLine ? JSON.parse(shapeLine[1]) : undefined, defaultDimension: dimLine?.[1] };
+}
+
+/**
+ * The aws shapes the e2e provisions, as R5 cells: the cheapest shape twice (its default cell with
+ * capacity_type removed, as the workflow's jq does, and every other dimension as written), plus the
+ * heavy and demo fixtures.
+ * @param {string} workflowText
+ * @param {{file: string, shape: Record<string, unknown>, ceiling: "low" | "high"}[]} fixtures
+ * @returns {{cell: string, shape: Record<string, unknown>, ceiling: "low" | "high", isDefault: boolean}[]}
+ */
+export function awsCells(workflowText, fixtures) {
+	const { shape, defaultDimension } = extractAwsWorkflowShape(workflowText);
+	if (shape === undefined) {
+		throw new Error(`${WORKFLOW}: no \`aws) SHAPE='{…}'\` line — R5 has lost its subject; fix the extractor rather than let it check less`);
+	}
+	if (defaultDimension === undefined) {
+		throw new Error(`${WORKFLOW}: no AWS_DEFAULT_CAPACITY_DIMENSION=<dimension> line — R5 cannot tell which cell stays on the default`);
+	}
+	const { capacity_type: _dropped, ...asDefault } = shape;
+	return [
+		{ cell: `cheapest shape, ${defaultDimension} (default cell)`, shape: asDefault, ceiling: "low", isDefault: true },
+		{ cell: `cheapest shape, every other dimension`, shape, ceiling: "low", isDefault: false },
+		...fixtures.map((f) => ({ cell: f.file, shape: f.shape, ceiling: f.ceiling, isDefault: false })),
+	];
+}
+
+/**
+ * R5 over already-read inputs. Pure, so `--self-test` drives it with fixtures.
+ * @param {{workflowText: string, cells: {cell: string, shape: Record<string, unknown>, ceiling: "low" | "high", isDefault: boolean}[]}} input
+ * @returns {{failures: string[], notes: string[]}}
+ */
+export function analyseAwsCapacity({ workflowText, cells }) {
+	const failures = [];
+	const notes = [];
+	const ceilingExpr = envValue(workflowText, CEILING_ENV);
+	const awsBranch = ceilingExpr === undefined ? undefined : providerBranches(ceilingExpr).get("aws");
+	const defaults = awsBranch === undefined ? [] : literals(awsBranch).filter((s) => /^\d+(\.\d+)?$/.test(s)).map(Number).filter((n) => n > 0);
+	if (defaults.length < 2) {
+		failures.push(`R5 aws: the ${CEILING_ENV} aws branch must carry two numeric defaults (cheapest and heavy), found [${defaults.join(", ")}] — R5c has nothing to compare against.`);
+		return { failures, notes };
+	}
+	const ceilingFor = { low: Math.min(...defaults), high: Math.max(...defaults) };
+
+	if (cells.filter((c) => c.isDefault).length !== 1) {
+		failures.push(`R5a aws: exactly ONE aws cell must stay on the default capacity type, found ${cells.filter((c) => c.isDefault).length}.`);
+	}
+	for (const { cell, shape, ceiling, isDefault } of cells) {
+		const capacity = shape.capacity_type;
+		if (isDefault && capacity !== undefined) {
+			failures.push(`R5a aws: ${cell} is the default cell and must state NO capacity_type (it states "${capacity}"), so the template default decides.`);
+		}
+		if (!isDefault && capacity !== "spot") {
+			failures.push(
+				`R5a aws: ${cell} states capacity_type ${capacity === undefined ? "nothing" : `"${capacity}"`} — every aws e2e shape except the default cell pins "spot" (#5316); ` +
+					`without it the run inherits ON_DEMAND.`,
+			);
+		}
+		const types = Array.isArray(shape.instance_types) ? shape.instance_types : [];
+		const nodes = Number(shape.node_desired_size ?? shape.node_min_size);
+		if (types.length === 0 || !Number.isFinite(nodes) || nodes < 1) {
+			failures.push(`R5b aws: ${cell} names no instance type or no node count — R5c cannot price it.`);
+			continue;
+		}
+		// The node group may run any type in the list; price the dearest.
+		const prices = types.map((t) => AWS_ON_DEMAND_USD_PER_HOUR[t]);
+		if (prices.some((p) => p === undefined)) {
+			failures.push(`R5b aws: ${cell} provisions ${types.filter((_, i) => prices[i] === undefined).join(", ")}, which has no price in AWS_ON_DEMAND_USD_PER_HOUR — add its us-east-1 on-demand list price.`);
+			continue;
+		}
+		const fixed = AWS_FIXED_USD_PER_HOUR.eks_control_plane + AWS_FIXED_USD_PER_HOUR.nat_gateway;
+		const perHour = fixed + nodes * Math.max(...prices);
+		const monthly = perHour * HOURS_PER_MONTH;
+		const limit = ceilingFor[ceiling];
+		if (monthly > limit) {
+			failures.push(
+				`R5c aws: ${cell} — ${nodes} x ${types.join("/")} + EKS + NAT is $${monthly.toFixed(0)}/mo at on-demand, over the $${limit}/mo ceiling default its leg is priced against; ` +
+					`the run would be refused before it starts.`,
+			);
+			continue;
+		}
+		const basis = isDefault ? "ON_DEMAND (template default), exact" : "SPOT, bounded above by on-demand";
+		notes.push(
+			`aws ${cell}: ${nodes} x ${types.join("/")} ${basis} — ≤ $${perHour.toFixed(3)}/h, ≤ $${monthly.toFixed(0)}/mo against a $${limit}/mo ceiling ($${(limit - monthly).toFixed(0)} headroom for everything else)`,
+		);
+	}
+	return { failures, notes };
+}
+
+/**
+ * Read the aws fixtures R5 prices. Throws when one is missing — a deleted fixture must not shrink
+ * the domain silently.
+ * @returns {{file: string, shape: Record<string, unknown>, ceiling: "low" | "high"}[]}
+ */
+function readAwsFixtures() {
+	const files = fs.readdirSync(AWS_FIXTURE_DIR).filter((f) => AWS_FIXTURE_RE.test(f));
+	if (files.length === 0) {
+		throw new Error(`${AWS_FIXTURE_DIR}: no cluster_json.*.aws.json fixture found — R5 would price nothing but the cheapest shape`);
+	}
+	return files.map((f) => {
+		const file = path.join(AWS_FIXTURE_DIR, f);
+		return { file, ceiling: /** @type {const} */ ("high"), shape: JSON.parse(fs.readFileSync(file, "utf8")) };
+	});
+}
+
 // ───────────────────────────── self-test ─────────────────────────────
 
 const FIXTURE_RESOLVER = 'FULL_BAR_CRON="17 5 * * 0"\n';
@@ -514,6 +667,48 @@ function runSelfTest() {
 	assert("vacuity: a wholly broken input reports many failures", allWrong.failures.length >= 6, `only ${allWrong.failures.length}: ${JSON.stringify(allWrong.failures)}`);
 	assert("vacuity: and it spans all four rules", ["R1", "R2", "R3", "R4"].every((r) => has(allWrong, r)), JSON.stringify(allWrong.failures));
 
+	// R5 — aws capacity type and its cost (#5316).
+	const AWS_SHAPE = '{"instance_types":["t3.large"],"capacity_type":"spot","node_min_size":1,"node_max_size":2,"node_desired_size":1}';
+	const AWS_CEILING = "matrix.provider == 'aws' && (env.E2E_HEAVY_SHAPE == 'true' && (vars.F || '600') || (vars.L || '300')) || ''";
+	/** @param {{shape?: string | null, dim?: string | null, ceiling?: string}} o */
+	const awsWorkflow = ({ shape = AWS_SHAPE, dim = "floor", ceiling = AWS_CEILING } = {}) =>
+		[
+			`          ${CEILING_ENV}: \${{ ${ceiling} }}`,
+			...(dim === null ? [] : [`          AWS_DEFAULT_CAPACITY_DIMENSION=${dim}`]),
+			"          # aws) SHAPE='{\"instance_types\":[\"m5.24xlarge\"]}' a comment is not the shape",
+			...(shape === null ? [] : [`            aws)     SHAPE='${shape}'; NET='{"single_nat_gateway":true}'`]),
+		].join("\n");
+	const HEAVY = { file: "heavy.aws.json", ceiling: /** @type {const} */ ("high"), shape: { instance_types: ["t3.xlarge"], capacity_type: "spot", node_desired_size: 3 } };
+	/** @param {string} wf @param {typeof HEAVY[]} [fx] */
+	const r5 = (wf, fx = [HEAVY]) => analyseAwsCapacity({ workflowText: wf, cells: awsCells(wf, fx) });
+	const r5today = r5(awsWorkflow());
+	assert("R5: today's aws shapes pass", r5today.failures.length === 0, JSON.stringify(r5today.failures));
+	// The math, by hand: (0.10 EKS + 0.045 NAT + 1 x 0.0832) x 730 = 166.586; (0.145 + 3 x 0.1664) x 730 = 470.27.
+	assert("R5: the floor cell is priced at $167/mo, exact on-demand", r5today.notes.some((n) => n.includes("(default cell)") && n.includes("ON_DEMAND") && n.includes("$167/mo") && n.includes("$300/mo")));
+	assert("R5: a spot cell is priced at the on-demand bound and says so", r5today.notes.some((n) => n.includes("every other dimension") && n.includes("SPOT, bounded above by on-demand") && n.includes("$167/mo")));
+	assert("R5: the heavy fixture is priced against the HIGH default, 3 x t3.xlarge = $470/mo", r5today.notes.some((n) => n.startsWith("aws heavy.aws.json") && n.includes("$470/mo") && n.includes("$600/mo")));
+	const noPin = r5(awsWorkflow({ shape: AWS_SHAPE.replace('"capacity_type":"spot",', "") }));
+	assert("R5a: a cheapest shape that drops the spot pin FAILS", noPin.failures.some((f) => f.startsWith("R5a aws: cheapest shape, every other dimension")), JSON.stringify(noPin.failures));
+	const onDemandPin = r5(awsWorkflow(), [{ ...HEAVY, shape: { ...HEAVY.shape, capacity_type: "on_demand" } }]);
+	assert("R5a: a fixture pinning on_demand FAILS", onDemandPin.failures.some((f) => f.startsWith("R5a aws: heavy.aws.json")), JSON.stringify(onDemandPin.failures));
+	const unpricedType = r5(awsWorkflow(), [{ ...HEAVY, shape: { ...HEAVY.shape, instance_types: ["m5a.4xlarge"] } }]);
+	assert("R5b: an instance type with no price FAILS rather than going unpriced", unpricedType.failures.some((f) => f.startsWith("R5b aws:") && f.includes("m5a.4xlarge")), JSON.stringify(unpricedType.failures));
+	const tooBig = r5(awsWorkflow(), [{ ...HEAVY, shape: { ...HEAVY.shape, node_desired_size: 5 } }]);
+	assert("R5c: 5 x t3.xlarge ($713/mo) over the $600 default FAILS", tooBig.failures.some((f) => f.startsWith("R5c aws: heavy.aws.json") && f.includes("$713/mo")), JSON.stringify(tooBig.failures));
+	const lowCeiling = r5(awsWorkflow({ ceiling: AWS_CEILING.replace("'300'", "'150'") }));
+	assert("R5c: the floor shape ($167/mo) against a $150 default FAILS", lowCeiling.failures.some((f) => f.startsWith("R5c aws: cheapest shape")), JSON.stringify(lowCeiling.failures));
+	const oneDefault = r5(awsWorkflow({ ceiling: "matrix.provider == 'aws' && (vars.L || '300') || ''" }));
+	assert("R5: an aws ceiling with ONE default cannot say which leg is which, and FAILS", oneDefault.failures.some((f) => f.startsWith("R5 aws:")), JSON.stringify(oneDefault.failures));
+	for (const [what, wf] of [["the aws SHAPE line", awsWorkflow({ shape: null })], ["AWS_DEFAULT_CAPACITY_DIMENSION", awsWorkflow({ dim: null })]]) {
+		let lost = false;
+		try {
+			r5(wf);
+		} catch {
+			lost = true;
+		}
+		assert(`R5: a workflow with no ${what} throws rather than checking less`, lost);
+	}
+
 	// A resolver with no FULL_BAR_CRON must throw, never default.
 	let threw = false;
 	try {
@@ -542,11 +737,15 @@ if (!executedDirectly) {
 } else if (process.argv.includes("--self-test")) {
 	runSelfTest();
 } else {
-	const { failures, notes } = analyse({
-		workflowText: fs.readFileSync(WORKFLOW, "utf8"),
+	const workflowText = fs.readFileSync(WORKFLOW, "utf8");
+	const base = analyse({
+		workflowText,
 		resolverText: fs.readFileSync(RESOLVER, "utf8"),
 		hetznerTypes: readHetznerTypes(),
 	});
+	const r5 = analyseAwsCapacity({ workflowText, cells: awsCells(workflowText, readAwsFixtures()) });
+	const failures = [...base.failures, ...r5.failures];
+	const notes = [...base.notes, ...r5.notes];
 	for (const n of notes) {
 		console.log(`note: ${n}`);
 	}
