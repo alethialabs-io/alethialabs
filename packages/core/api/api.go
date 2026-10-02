@@ -380,6 +380,9 @@ func (c *Client) getProviderToken() string {
 type APIError struct {
 	StatusCode int
 	Message    string
+	// RetryAfter is the wait a 429 named in its Retry-After header, or zero when it named none. Only
+	// the verbs that read the header set it (kubeconfig_mint.go); it never changes Error().
+	RetryAfter time.Duration
 }
 
 // Error renders the failure. It NEVER renders empty: the control plane's own explanation when there
