@@ -135,7 +135,8 @@ different statement from "nothing is deployed", and deliberately not rendered as
 
 Get a short-lived kubeconfig for a cluster without a cloud login of your own. A runner in the
 cluster's network mints the credential and seals it to a one-time key that this command makes.
-Only this machine can open the result.
+Only this machine can open the result. For the task, with the tiers, lifetimes and revocation, see
+[Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
 
 ```bash
 alethia cluster kubeconfig
@@ -143,58 +144,144 @@ alethia cluster kubeconfig api-backend
 alethia cluster kubeconfig api-backend --admin --ttl 4h
 alethia cluster kubeconfig api-backend --output api-backend.kubeconfig
 alethia cluster kubeconfig api-backend --static --output -
+alethia cluster kubeconfig api-backend-production --no-input
 ```
 
-| Input | Required | Description |
-|-------|----------|-------------|
-| `[selector]` | No — at a terminal | The same selector as `cluster get`. Omit it and the CLI asks which cluster. |
-| `--admin` | No | Get the admin tier. Owners and admins only. The default is read-only. |
-| `--ttl` | No | How long the credential lasts, from `15m` to `8h`. The default is `1h`. |
-| `--static` | No | Write a file that holds the credential and stops working at its TTL. |
-| `--merge` | No | Merge into `$KUBECONFIG` or `~/.kube/config`. This is the default. |
-| `--output` | No | Write a separate file instead of merging. `-` prints the kubeconfig. |
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `[selector]` | No — at a terminal | The picker | The same selector as `cluster get`: a project name, a cluster name or a cluster id. Omit it at a terminal and the CLI asks which cluster. |
+| `--admin` | No | Off (read-only) | Get the admin tier. Needs the `cluster:access_admin` permission, which owners and admins hold. Without it, the tier is read-only, which needs `cluster:access_readonly` (owners, admins and operators). |
+| `--ttl` | No | `1h` | The credential's lifetime, from `15m` to `8h`, in whole seconds (`90m` and `2h30m` work). An admin credential's real lifetime is set by the cloud. See [the lifetime table](/guides/get-a-kubeconfig#choose-how-long-the-credential-lasts). |
+| `--static` | No | Off (exec) | Write a kubeconfig that holds the credential itself and stops working when it expires. Hetzner and Alibaba Cloud always get this shape. |
+| `--merge` | No | On | Merge into the first file in `$KUBECONFIG`, or into `~/.kube/config`, and make the context current. |
+| `--output` | No | None | Write a standalone kubeconfig to this file instead of merging. `-` writes it to stdout. |
 
-By default the command merges the context `alethia-<project>-<env>` into your kubeconfig and makes
-it the current context. It replaces an older entry with the same name and leaves all other entries
-as they are. The file gets mode `0600`. In this command, `--output` takes a file path, not the
-`table`/`json`/`csv` format, and `--output -` is the only way the credential goes to stdout. All
-other messages go to stderr.
+The selector is required where a prompt cannot work: with `--no-input`, with a piped stdin, and
+with a redirected stdout. Every flag has a default, so a selector with `--no-input` is a complete
+call.
 
-On AWS, GCP and Azure the kubeconfig runs `alethia cluster token` to get each token, so `kubectl`
-keeps working after a token expires. Hetzner and Alibaba Cloud issue certificates, so their
-kubeconfig is always static and stops working at its TTL. If the cluster's API endpoint is private,
-the command tells you that `kubectl` needs network access to it, for example through a VPN or a
-bastion host.
+### Where the kubeconfig goes
 
-The mint runs as a job on your organization's runner, so a runner must be online. Backing calls:
-`POST /cli/clusters/{id}/kubeconfig`, then `GET /cli/clusters/{id}/kubeconfig/{mint}` until the
-credential is ready.
+| Flags | Result |
+|-------|--------|
+| None, or `--merge` | The CLI merges the context `alethia-<project>-<env>` into the first file in `$KUBECONFIG`, or into `~/.kube/config`, and makes it the current context. It replaces the cluster, user and context entries with that name, and keeps every other entry, unknown key and comment. It takes kubectl's `<file>.lock` lock while it writes, and follows a symlinked kubeconfig. |
+| `--output FILE` | The CLI writes a standalone kubeconfig to that file. |
+| `--output -` | The CLI writes the kubeconfig to stdout. This is the only way the credential goes to stdout. |
+
+Every file the command writes gets mode `0600`, and the write is atomic. All other messages go to
+stderr, so stdout is empty unless you pass `--output -`.
+
+**The `--output` rules.** In this command `--output` takes a file path, not the global
+`table`/`json`/`csv` format, and it has no `-o` short form. `--output table`, `--output json` and
+`--output csv` are refused, so a habit cannot write a credential to a file called `json`. To write a
+file with one of those names, pass `./json`. `--output` replaces the merge, so do not pass
+`--merge` with it, not even as `--merge=false`: the two flags together are an error. Turning off
+`--merge` without an `--output` is refused too, because the kubeconfig would go nowhere.
+
+### Exec and static
+
+| Shape | Clouds | What the kubeconfig holds |
+|-------|--------|---------------------------|
+| Exec (the default) | AWS, GCP, Azure | No credential. It runs `alethia cluster token` with the cluster id, so `kubectl` gets a new token whenever one expires. The command also caches the token it just minted, so the first `kubectl` call does not wait for a runner. |
+| Static (`--static`) | All five, and always on Hetzner and Alibaba Cloud | The credential itself: a bearer token, or a client certificate and key. It stops working at its expiry. |
+
+The cluster list does not tell the CLI which cloud a cluster is on. So without `--static`, the CLI
+asks for exec. If the cloud refuses (`422`), it asks again for static. A second `422` means the cloud
+cannot mint either shape.
+
+The exec kubeconfig pins the cluster's API server and certificate authority, and it never turns off
+TLS verification. It needs the `alethia` command on the `PATH` of every machine that runs `kubectl`
+with it.
+
+### What the command prints
+
+On stderr, after the kubeconfig is written:
+
+- the context name and the file it went to;
+- the tier, and for an exec kubeconfig the TTL of each token, or for a static one its real expiry;
+- a `kubectl --context` command to try;
+- if the cluster's API endpoint is private, a note that `kubectl` needs network access to it, for
+  example through a VPN or a bastion host.
+
+A spinner shows while the runner works, but only at a terminal with prompts turned on. With
+`--no-input`, nothing is drawn.
+
+### Exit codes and refusals
+
+The command exits `0` when it wrote the kubeconfig, and `1` for every error. It prints the error on
+stderr after `Error:`. These are the refusals from the control plane, and what the CLI prints:
+
+| Status | Cause | The CLI prints |
+|--------|-------|----------------|
+| `401` | The session is not valid. | Run `alethia login`. |
+| `402` | A usage limit of the organization's plan. The mint runs on a runner and uses runner minutes. | The server's reason, and a pointer to `alethia usage`. |
+| `403` | Your role does not hold the tier's permission. | Which roles can mint that tier. For `--admin`, a hint to drop it. |
+| `404` | No such cluster in the active organization. | A pointer to `alethia org switch` and `--org`. |
+| `409` | The environment is a draft, is being destroyed, or has no successful deploy. | The server's reason, and a pointer to `alethia project apply`. |
+| `422` | The cluster's cloud cannot mint a kubeconfig (it is not AWS, GCP, Azure, Alibaba Cloud or Hetzner, or it has no cloud identity). | The server's reason. |
+| `429` | More than 20 requests in 10 minutes, per person, per organization. | How long to wait, from the `Retry-After` header. |
+
+After the request is accepted, the CLI polls until the mint is ready, failed or expired. It waits
+up to 10 minutes, the server's window, and gives up a minute after that on its own clock. A failed
+mint prints the runner's reason, which is always one of a fixed set of sentences. For each message
+and what to do, see [Troubleshoot](/guides/get-a-kubeconfig#troubleshoot).
+
+The command refuses a credential that is not the tier and shape it asked for, one sealed for
+another request or cluster, and one that has already expired.
+
+Backing calls: `POST /cli/clusters/{id}/kubeconfig`, then `GET /cli/clusters/{id}/kubeconfig/{mint}`
+until the credential is ready. A ready credential is served once.
 
 ## `alethia cluster token`
 
-Print a credential for `kubectl`. This is the command that the kubeconfig from
+Print a credential for `kubectl`. This is the exec plugin that the kubeconfig from
 `alethia cluster kubeconfig` runs. You do not usually run it yourself.
 
 ```bash
 alethia cluster token
 ```
 
-| Input | Required | Description |
-|-------|----------|-------------|
-| `[cluster-id]` | No — at a terminal | The cluster id. `kubectl` always passes it. Omit it at a terminal and the CLI asks which cluster. |
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `[cluster-id]` | No — at a terminal | The picker | The cluster id, a lowercase UUID as `cluster get` shows it. `kubectl` always passes it. Omit it at a terminal and the CLI asks which cluster, which is a way to check that your session can still mint. Without a terminal, it is required. |
 
-The command prints one `ExecCredential` document on stdout. It keeps the credential in a cache
-under the CLI's configuration directory (directory mode `0700`, file mode `0600`) until 60 seconds
-before the credential expires. Thus only the first `kubectl` call in each credential's lifetime
-waits for a new mint. If several `kubectl` calls start at the same time, they share one mint. The
-command refuses a cache file that other users can read. It never prompts: if your session expired,
-it fails and tells you to run `alethia login`.
+The command takes no flags of its own. The global `--org` and `--token` flags apply.
+
+**Stdout** carries one `client.authentication.k8s.io/v1` `ExecCredential` document and nothing
+else: the token and its expiry. **Stderr** carries every error, after `alethia cluster token:`,
+and `kubectl` shows that line. The command exits `0` when it printed a credential and `1`
+otherwise. It never prompts: if your session expired, it fails and tells you to run
+`alethia login`. It never prints the update notice.
+
+### The cache
+
+The command keeps each credential in a cache until 60 seconds before the credential expires. So
+only the first `kubectl` call in each credential's lifetime waits for a new mint.
+
+| Property | Value |
+|----------|-------|
+| Directory | `alethia/kubecache` in the user configuration directory: `~/.config` on Linux (or `$XDG_CONFIG_HOME`), `~/Library/Application Support` on macOS, `%AppData%` on Windows |
+| Modes | Directory `0700`, files `0600`. A directory that others can read is tightened. A cache file that is a symlink, is owned by another user, or that others can read is refused, not replaced. On Windows the user profile's access control applies instead. |
+| Files per cluster | The token and its expiry for each tier, the re-mint profile, and a lock file |
+| Locking | One lock per cluster. If several `kubectl` calls start on an empty cache, the first one mints and the others wait for it, so there is one mint. |
+
+### Re-minting
+
+When the cache has no fresh credential, the command mints a new one, in the exec shape, with the
+profile that `alethia cluster kubeconfig` recorded: the tier, the TTL and the organization. It
+uses that organization even if your active organization changed since, unless you pass `--org`.
+A cluster with no profile, for example a kubeconfig copied from another machine, gets the
+read-only tier with a 1-hour TTL in the active organization, never the admin tier.
+
+Each mint checks your permission again. So a person whose role changes, or who leaves the
+organization, stops getting tokens when the current one expires.
 
 ## Accessing a cluster with kubectl
 
 The **Kubeconfig** row is the command that writes a kubeconfig with **your own cloud CLI**, under
-your own cloud login. Alethia does not issue a kubeconfig or any credential here: whether the
-command works is your cloud account's decision. In `-o json` output the same answer is the
+your own cloud login. Alethia does not issue a credential through this row: whether the command
+works is your cloud account's decision. To get a kubeconfig through Alethia instead, use
+[`alethia cluster kubeconfig`](#alethia-cluster-kubeconfig). In `-o json` output the same answer is the
 `kubeconfig` object, with `command` and `note` fields.
 
 Alethia builds the command from values the cluster's last successful deploy recorded, so it is
@@ -244,4 +331,5 @@ printing a command with a guess in it. Redeploying the environment records it.
 
 - [Project Commands](/reference/cli/project) — creating the environments that create clusters.
 - [Probe Commands](/reference/cli/probes) — the "is it still up?" signal per environment.
+- [Get a kubeconfig for your cluster](/guides/get-a-kubeconfig) — tiers, lifetimes, revocation and troubleshooting.
 - [Command Reference](/reference/cli) — the full command tree and global flags.
