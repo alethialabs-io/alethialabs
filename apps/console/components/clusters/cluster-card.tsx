@@ -4,6 +4,7 @@
 
 import type { ClusterData } from "@/app/server/actions/clusters";
 import { ClassificationControl } from "@/components/classification/classification-control";
+import { KubeconfigDownload } from "@/components/clusters/kubeconfig-download/kubeconfig-download";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { getProvider } from "@/lib/cloud-providers";
 import { SectionHeading } from "@repo/ui/section-heading";
@@ -326,6 +327,13 @@ export function ClusterCard({
 					{!kubeconfigCmd && kubeconfigNote && (
 						<p className="text-ui-2xs text-text-tertiary">{kubeconfigNote}</p>
 					)}
+					{/* Stage 2 (#5285): a short-lived read-only kubeconfig minted by the runner and
+					    opened in this browser. Renders nothing without cluster:access_readonly. */}
+					<KubeconfigDownload
+						clusterId={cluster.id}
+						projectName={data.project_name}
+						environment={data.environment_stage}
+					/>
 				</div>
 			)}
 
