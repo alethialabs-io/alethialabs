@@ -3,12 +3,10 @@
 
 import { z } from "zod";
 import { trustedClientIp } from "@/lib/auth/trusted-ip";
-import { getPdp } from "@/lib/authz";
 import { authorizeCli } from "@/lib/authz/guard";
-import { ForbiddenError } from "@/lib/authz/types";
 import { cliJson } from "@/lib/cli/respond";
 import { errorName } from "@/lib/errors";
-import { actionForTier } from "@/lib/kubeconfig-mint/clouds";
+import { mayCollectTier } from "@/lib/kubeconfig-mint/gates";
 import { mintError, noStore } from "@/lib/kubeconfig-mint/http";
 import { pollKubeconfigMint } from "@/lib/kubeconfig-mint/poll";
 import { log } from "@/lib/observability/log";
@@ -54,16 +52,7 @@ export async function GET(
 			client: "cli",
 			credentialKind: credential,
 			sourceIp: trustedClientIp(req.headers),
-			mayCollect: async (tier) => {
-				if (tier === "readonly") return true; // checked above, by authorizeCli
-				try {
-					await getPdp().enforce(actor, actionForTier(tier), { type: "cluster", id });
-					return true;
-				} catch (e) {
-					if (e instanceof ForbiddenError) return false;
-					throw e;
-				}
-			},
+			mayCollect: (tier) => mayCollectTier(actor, id, tier),
 		});
 		if (!outcome.ok) {
 			return outcome.refusal === "forbidden"
