@@ -10,6 +10,8 @@
 //     #845 run 36646962419 a placement DESTROY was refused here, so no namespace or vcluster placement on
 //     Hetzner could ever be deregistered.
 //   - A dedicated DESTROY runs tofu against its own state and never reads it.
+//   - GET also serves the owning runner of an executing MINT_KUBECONFIG job (#5283), for a DEDICATED
+//     environment only: a placement's cluster is the shared Fabric.
 //   - PUT stays the Fabric-owning dedicated DEPLOY's alone.
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -135,6 +137,20 @@ describe("GET /api/jobs/[id]/talosconfig", () => {
 		expect(decryptSecret).not.toHaveBeenCalled();
 	});
 
+	it("serves a dedicated environment's MINT_KUBECONFIG its Fabric's talosconfig", async () => {
+		mockDb(job("MINT_KUBECONFIG"), env("dedicated"), { talos_admin_config: "sealed" });
+		const res = await get();
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ talosconfig: TALOS });
+	});
+
+	it.each(["namespace", "vcluster"])("refuses a %s placement's MINT_KUBECONFIG", async (mode) => {
+		mockDb(job("MINT_KUBECONFIG"), env(mode), { talos_admin_config: "sealed" });
+		const res = await get();
+		expect(res.status).toBe(403);
+		expect(decryptSecret).not.toHaveBeenCalled();
+	});
+
 	it.each([
 		["another runner's DESTROY", job("DESTROY", { runner_id: "22222222-2222-2222-2222-222222222222" }), 403],
 		["an unclaimed DESTROY", job("DESTROY", { runner_id: null, status: "QUEUED" }), 403],
@@ -142,6 +158,9 @@ describe("GET /api/jobs/[id]/talosconfig", () => {
 		["a non-hetzner DESTROY", job("DESTROY", { provider: "aws" }), 403],
 		["a drift job", job("DETECT_DRIFT"), 403],
 		["a DESTROY with no environment", job("DESTROY", { environment_id: null }), 409],
+		["another runner's MINT_KUBECONFIG", job("MINT_KUBECONFIG", { runner_id: "22222222-2222-2222-2222-222222222222" }), 403],
+		["a finished MINT_KUBECONFIG", job("MINT_KUBECONFIG", { status: "SUCCESS" }), 403],
+		["a non-hetzner MINT_KUBECONFIG", job("MINT_KUBECONFIG", { provider: "aws" }), 403],
 	] as const)("refuses %s", async (_name, row, status) => {
 		mockDb(row, env("vcluster"), { talos_admin_config: "sealed" });
 		const res = await get();
@@ -165,6 +184,13 @@ describe("PUT /api/jobs/[id]/talosconfig", () => {
 		expect(res.status).toBe(403);
 		expect(writes).toHaveLength(0);
 		expect(encryptSecret).not.toHaveBeenCalled();
+	});
+
+	it("never lets a MINT_KUBECONFIG write, even for a dedicated environment", async () => {
+		const { writes } = mockDb(job("MINT_KUBECONFIG"), env("dedicated"));
+		const res = await put();
+		expect(res.status).toBe(403);
+		expect(writes).toHaveLength(0);
 	});
 
 	it("never lets a placement DEPLOY write", async () => {

@@ -64,6 +64,11 @@ const (
 	// with this validity; range 15–4320). A placement deploy is minutes, so a bounded cert keeps the
 	// written credential short-lived — the ACK analog of the other clouds' short-TTL exec-plugin tokens.
 	ackTempKubeconfigMinutes = 60
+	// ACKTempKubeconfigMinMinutes / ACKTempKubeconfigMaxMinutes are the bounds ACK accepts for
+	// TemporaryDurationMinutes. A value outside them is refused here rather than sent, so the caller
+	// never receives a certificate whose lifetime is something other than what it asked for.
+	ACKTempKubeconfigMinMinutes = 15
+	ACKTempKubeconfigMaxMinutes = 4320
 )
 
 // ACKClusterConn is the connection detail needed to build a kubeconfig for a ready ACK cluster — the
@@ -100,7 +105,7 @@ func ResolveACKClusterConn(
 	client *http.Client,
 	regionID, clusterID string,
 ) (ACKClusterConn, error) {
-	config, err := fetchACKUserKubeconfig(ctx, client, regionID, clusterID)
+	config, err := fetchACKUserKubeconfig(ctx, client, regionID, clusterID, ackTempKubeconfigMinutes)
 	if err != nil {
 		return ACKClusterConn{}, err
 	}
@@ -121,14 +126,46 @@ func ResolveACKClusterConn(
 // config authenticates kubectl directly. `client` is the request-SIGNING http.Client (RRSA-derived STS
 // signature). Returns ErrACKClusterNotReady when no config is returned.
 func ResolveACKUserKubeconfig(ctx context.Context, client *http.Client, regionID, clusterID string) (string, error) {
-	return fetchACKUserKubeconfig(ctx, client, regionID, clusterID)
+	return fetchACKUserKubeconfig(ctx, client, regionID, clusterID, ackTempKubeconfigMinutes)
+}
+
+// ResolveACKTemporaryKubeconfig is the short-lived kubeconfig mint's ACK path (#5283): it resolves an
+// EXISTING ACK cluster BY NAME (fail-closed on a duplicate name) and returns a complete user kubeconfig
+// whose x509 client certificate ACK issues for exactly `minutes` (TemporaryDurationMinutes, 15–4320).
+// `region` is the config snapshot's region; it is resolved to ACK's region id as
+// alibabaProvider.ConfigureKubeconfig does. The request is signed keylessly (RRSA-derived STS) by the
+// same transport ConfigureKubeconfig uses. The kubeconfig carries a private key: the caller holds it in
+// memory only.
+func ResolveACKTemporaryKubeconfig(ctx context.Context, region, clusterName string, minutes int) (string, error) {
+	regionID := resolveRegion("alibaba", region)
+	if regionID == "" {
+		return "", fmt.Errorf("ack mint: no region on the config snapshot — cannot resolve cluster %q", clusterName)
+	}
+	client, err := newAlibabaSigningClient(ctx, regionID)
+	if err != nil {
+		return "", fmt.Errorf("ack mint: build keyless signing client: %w", err)
+	}
+	return resolveACKTemporaryKubeconfig(ctx, client, regionID, clusterName, minutes)
+}
+
+// resolveACKTemporaryKubeconfig is ResolveACKTemporaryKubeconfig over an injected (signing) client, so
+// the name → id → user_config sequence and the duration bounds are unit-testable against a stub.
+func resolveACKTemporaryKubeconfig(ctx context.Context, client *http.Client, regionID, clusterName string, minutes int) (string, error) {
+	if minutes < ACKTempKubeconfigMinMinutes || minutes > ACKTempKubeconfigMaxMinutes {
+		return "", fmt.Errorf("ack mint: TemporaryDurationMinutes %d is outside ACK's [%d, %d]", minutes, ACKTempKubeconfigMinMinutes, ACKTempKubeconfigMaxMinutes)
+	}
+	clusterID, err := ResolveACKClusterID(ctx, client, regionID, clusterName)
+	if err != nil {
+		return "", err
+	}
+	return fetchACKUserKubeconfig(ctx, client, regionID, clusterID, minutes)
 }
 
 // fetchACKUserKubeconfig calls DescribeClusterUserKubeconfig (GET /k8s/<id>/user_config) for the PUBLIC
 // API-server endpoint (PrivateIpAddress=false) and a SHORT-LIVED cert (TemporaryDurationMinutes), and
 // returns the raw `config` kubeconfig. Sets the x-acs-action / x-acs-version the signing transport folds
 // into the signature. Fail-closed (ErrACKClusterNotReady) on an empty config.
-func fetchACKUserKubeconfig(ctx context.Context, client *http.Client, regionID, clusterID string) (string, error) {
+func fetchACKUserKubeconfig(ctx context.Context, client *http.Client, regionID, clusterID string, minutes int) (string, error) {
 	if regionID == "" || clusterID == "" {
 		return "", fmt.Errorf("ack mint: region and cluster id must both be set (got %q / %q)", regionID, clusterID)
 	}
@@ -137,7 +174,7 @@ func fetchACKUserKubeconfig(ctx context.Context, client *http.Client, regionID, 
 	}
 	q := url.Values{}
 	q.Set("PrivateIpAddress", "false")
-	q.Set("TemporaryDurationMinutes", strconv.Itoa(ackTempKubeconfigMinutes))
+	q.Set("TemporaryDurationMinutes", strconv.Itoa(minutes))
 	rawURL := fmt.Sprintf(ackAPIHostFmt, url.PathEscape(regionID)) +
 		"/k8s/" + url.PathEscape(clusterID) + "/user_config?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
