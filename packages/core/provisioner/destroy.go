@@ -56,6 +56,13 @@ type DestroyParams struct {
 	// vcluster teardown that must reach the HOST to deregister the virtual cluster (same seam as
 	// DeployParams.TalosKubeconfig — runner-injected). Nil for every non-hetzner cloud and dedicated destroys.
 	TalosKubeconfig TalosKubeconfigMinter
+	// TalosMint mints a fresh admin kubeconfig from the state's `talosconfig` output for a DEDICATED
+	// hetzner destroy's load-balancer release. The stored `kubeconfig` output is one certificate from
+	// the last apply; once it has expired the release could not reach the cluster and hcloud CCM load
+	// balancers were left billing (#5330). Runner-injected (MintTalosKubeconfig, with its SSRF guard).
+	// A failed mint fails the destroy (see releaseOutcome.MintFailed). Nil only for an in-process
+	// caller with no runner (the e2e harness's teardown), which keeps the pre-#5330 behaviour and says so.
+	TalosMint TalosconfigMinter
 	// DryRun asks for the teardown to be PLANNED and never applied — the read-only form
 	// destroy otherwise lacks (see tofu.PlanDestroy). It is honored by RunDestroyPlan and
 	// REJECTED by RunDestroy: a flag whose whole purpose is "do not touch anything" must
@@ -163,7 +170,7 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	// workflow's (`scripts/e2e/*-cleanup.sh`); nothing here sweeps cloud load balancers after a
 	// failed destroy, so on a customer's teardown the warning below is the only signal that
 	// something is still billing.
-	rel := releaseLoadBalancersBeforeDestroy(ctx, provider, vc, wd, out)
+	rel := releaseLoadBalancersBeforeDestroy(ctx, provider, vc, params.Provider, params.TalosMint, wd, out)
 
 	fmt.Fprintln(out, "   Destroying Cloud Resources (this may take 10-15 mins)...")
 	err = wd.tf.Destroy(ctx, wd.varFile)
@@ -180,14 +187,33 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	// `len(rel.Remaining) > 0` after the condition had been widened past it — a signed rationale at
 	// the call site for undoing the change the function had just made.
 	rel, err = retryReleaseAndDestroy(ctx, out, rel, err,
-		func() releaseOutcome { return releaseLoadBalancersBeforeDestroy(ctx, provider, vc, wd, out) },
+		func() releaseOutcome {
+			return releaseLoadBalancersBeforeDestroy(ctx, provider, vc, params.Provider, params.TalosMint, wd, out)
+		},
 		func() error { return wd.tf.Destroy(ctx, wd.varFile) })
-	if err != nil {
-		return fmt.Errorf("tofu destroy failed: %w%s", err, rel.billingWarning())
+	if err := destroyOutcomeError(rel, err); err != nil {
+		return err
 	}
 
 	for _, line := range destroySuccessLines(rel) {
 		fmt.Fprintln(out, line)
+	}
+	return nil
+}
+
+// destroyOutcomeError decides whether a finished teardown is a failure: the destroy's own error, or
+// a destroy that succeeded WITHOUT its load-balancer release because the kubeconfig mint failed.
+//
+// The second is a failed job, not a green one with a note (#5330). The cluster was there to release
+// from — the state still carried its talosconfig — so this is not the already-gone case the quiet note
+// is for, and anything it exposed through a LoadBalancer Service may still be billing.
+func destroyOutcomeError(rel releaseOutcome, destroyErr error) error {
+	if destroyErr != nil {
+		return fmt.Errorf("tofu destroy failed: %w%s", destroyErr, rel.billingWarning())
+	}
+	if rel.MintFailed != "" {
+		return fmt.Errorf("the environment's cloud resources were destroyed, but its load balancers were not released: %s%s",
+			rel.MintFailed, rel.billingWarning())
 	}
 	return nil
 }
@@ -536,6 +562,8 @@ func releaseLoadBalancersBeforeDestroy(
 	ctx context.Context,
 	provider cloud.CloudProvider,
 	vc *types.ProjectConfig,
+	providerSlug string,
+	mint TalosconfigMinter,
 	wd *destroyWorkdir,
 	out io.Writer,
 ) releaseOutcome {
@@ -571,7 +599,52 @@ func releaseLoadBalancersBeforeDestroy(
 		fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
 		return releaseOutcome{Skipped: fmt.Sprintf("the state outputs could not be read (%v)", err)}
 	}
+	return releaseLoadBalancersWithOutputs(ctx, provider, vc, providerSlug, mint, outputs, out)
+}
+
+// releaseLoadBalancersWithOutputs is releaseLoadBalancersBeforeDestroy after the outputs are read,
+// split out because the workdir's *tofu.TofuCLI cannot be faked and every branch below needs a test.
+//
+// A hetzner state carrying a talosconfig takes its own path first (#5330): the stored `kubeconfig`
+// output is one certificate from the last apply, so it is never used — neither directly nor through
+// the ambient-KUBECONFIG probe, which on a runner may be the same expired file. A fresh admin
+// kubeconfig is minted from the talosconfig, and a failed mint is recorded as MintFailed, which fails
+// the destroy rather than leaving a load balancer billing behind a warning.
+func releaseLoadBalancersWithOutputs(
+	ctx context.Context,
+	provider cloud.CloudProvider,
+	vc *types.ProjectConfig,
+	providerSlug string,
+	mint TalosconfigMinter,
+	outputs map[string]interface{},
+	out io.Writer,
+) releaseOutcome {
 	endpoint := cloud.ExtractClusterEndpoint(outputs)
+	fresh, minted, mintErr := talosAdminOutputs(ctx, providerSlug, mint, outputs)
+	switch {
+	case errors.Is(mintErr, errNoTalosMinter):
+		// Only an in-process caller with no runner gets here (the e2e harness's teardown); the
+		// runner always wires a minter. Said out loud, because what follows uses a certificate that
+		// may have expired.
+		fmt.Fprintln(out, "   No Talos kubeconfig minter is wired for this destroy, so the release uses the "+
+			"kubeconfig already in hand or the one stored at the last apply, which expires.")
+	case mintErr != nil:
+		reason := fmt.Sprintf("a fresh kubeconfig could not be minted from the state's talosconfig (%v)", mintErr)
+		fmt.Fprintf(out, "   ERROR — the load-balancer release cannot run: %s.\n", reason)
+		return releaseOutcome{Skipped: reason, MintFailed: reason}
+	case minted:
+		fmt.Fprintln(out, "   Minted a fresh Talos admin kubeconfig from the state's talosconfig for the release.")
+		if err := provider.ConfigureKubeconfig(ctx, vc, fresh, out); err != nil {
+			reason := fmt.Sprintf("the minted kubeconfig could not be written (%v)", err)
+			fmt.Fprintf(out, "   ERROR — the load-balancer release cannot run: %s.\n", reason)
+			return releaseOutcome{Skipped: reason, MintFailed: reason}
+		}
+		if ok, why := clusterReachable(ctx, endpoint); !ok {
+			fmt.Fprint(out, postConfigureFailureLine(why))
+			return releaseOutcome{Skipped: "a freshly minted kubeconfig did not answer for this cluster (" + why + ")"}
+		}
+		return finishRelease(ctx, out)
+	}
 	reachable, why := clusterReachable(ctx, endpoint)
 	fmt.Fprint(out, kubeconfigDecisionLine(reachable, why))
 	if !reachable {
@@ -613,6 +686,11 @@ func releaseLoadBalancersBeforeDestroy(
 			return releaseOutcome{Skipped: "a kubeconfig was written but the cluster did not answer with it (" + why2 + ")"}
 		}
 	}
+	return finishRelease(ctx, out)
+}
+
+// finishRelease releases the cloud-backed objects through the kubeconfig now in place and reports.
+func finishRelease(ctx context.Context, out io.Writer) releaseOutcome {
 	rel, err := releaseCloudLoadBalancers(ctx, out)
 	if err != nil {
 		fmt.Fprintf(out, "   WARNING — cloud load balancers may still exist and still bill: %v\n", err)

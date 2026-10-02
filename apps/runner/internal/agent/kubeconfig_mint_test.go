@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -368,7 +371,7 @@ func TestMintKubeconfig_AdminLifetimeCap(t *testing.T) {
 		{"talos 1h", "hetzner", adm, types.KubeconfigMintShapeStatic, time.Hour, 0, false},
 		{"talos exactly 8h", "hetzner", adm, types.KubeconfigMintShapeStatic, 8 * time.Hour, 0, false},
 		{"talos 8h1m", "hetzner", adm, types.KubeconfigMintShapeStatic, 8*time.Hour + time.Minute, 0, true},
-		{"talos 24h (the template default)", "hetzner", adm, types.KubeconfigMintShapeStatic, 24 * time.Hour, 0, true},
+		{"talos 24h (the template default before #5330)", "hetzner", adm, types.KubeconfigMintShapeStatic, 24 * time.Hour, 0, true},
 		{"talos 24h read-only setup cert", "hetzner", ro, types.KubeconfigMintShapeStatic, 24 * time.Hour, 0, false},
 		{"gcp token 1h", "gcp", adm, types.KubeconfigMintShapeExec, time.Hour, time.Hour, false},
 		{"azure token 9h", "azure", adm, types.KubeconfigMintShapeExec, time.Hour, 9 * time.Hour, true},
@@ -394,6 +397,52 @@ func TestMintKubeconfig_AdminLifetimeCap(t *testing.T) {
 			f.open(t, res[0])
 		})
 	}
+}
+
+// TestMintKubeconfig_TemplateDefaultPassesTheAdminCap reads the managed hetzner template's
+// admin_kubeconfig_cert_lifetime default — not a number copied from it — and mints an admin
+// kubeconfig on a cluster whose certificate lasts exactly that long. #5330 lowered the default to 1h
+// so Hetzner admin mints are handed out again; raising it past the 8h cap would refuse every one, and
+// that must fail here rather than in a customer's terminal.
+func TestMintKubeconfig_TemplateDefaultPassesTheAdminCap(t *testing.T) {
+	life := hetznerTemplateAdminCertLifetime(t)
+	if life > mintAdminLifetimeCap {
+		t.Fatalf("the hetzner template's admin certificate lifetime %s exceeds the %s admin cap", life, mintAdminLifetimeCap)
+	}
+	f := newMintFixture(t, types.KubeconfigMintTierAdmin, types.KubeconfigMintShapeStatic, "x")
+	f.pki = newTestPKI(t, life)
+	if err := runMint(t, f, mintSnapshot("hetzner")); err != nil {
+		t.Fatalf("an admin mint at the template default (%s) was refused: %v", life, err)
+	}
+	res := f.api.results()
+	if len(res) != 1 {
+		t.Fatalf("want one result, got %d", len(res))
+	}
+	f.open(t, res[0])
+}
+
+// hetznerTemplateAdminCertLifetime parses the `default` of admin_kubeconfig_cert_lifetime out of the
+// hetzner template's variables.tf.
+func hetznerTemplateAdminCertLifetime(t *testing.T) time.Duration {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "infra", "templates", "project", "hetzner", "variables.tf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := string(src)
+	start := strings.Index(block, `variable "admin_kubeconfig_cert_lifetime"`)
+	if start < 0 {
+		t.Fatal("variables.tf no longer declares admin_kubeconfig_cert_lifetime")
+	}
+	m := regexp.MustCompile(`(?m)^\s*default\s*=\s*"([^"]+)"`).FindStringSubmatch(block[start:])
+	if m == nil {
+		t.Fatal("admin_kubeconfig_cert_lifetime has no string default")
+	}
+	d, err := time.ParseDuration(m[1])
+	if err != nil {
+		t.Fatalf("the default %q is not a Go duration: %v", m[1], err)
+	}
+	return d
 }
 
 // TestMintKubeconfig_PrivateEndpointIsReported checks decision 6 end to end: a private API server is

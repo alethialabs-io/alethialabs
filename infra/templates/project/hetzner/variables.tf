@@ -310,14 +310,19 @@ variable "hetzner_s3_secret_key" {
 }
 
 variable "admin_kubeconfig_cert_lifetime" {
-  description = "TTL for the Talos admin kubeconfig client cert (.cluster.adminKubeconfig.certLifetime). Pinned LOW (default 24h) so placement-minted kubeconfigs are short-lived; the Talos default is 1 year. Go time.Duration format."
+  description = "TTL for the Talos admin kubeconfig client cert (.cluster.adminKubeconfig.certLifetime). Pinned LOW (default 1h) so every minted admin kubeconfig is short-lived; the Talos default is 1 year. Go time.Duration format."
   type        = string
-  # The runner refuses to hand a user an admin kubeconfig whose certificate outlives 8h (#5326,
-  # mintAdminLifetimeCap in apps/runner/internal/agent/kubeconfig_mint.go), so at 24h every admin
-  # mint on this cluster is refused; read-only mints are unaffected. Lowering this is held back because
-  # a dedicated deploy holds ONE cert from talos_cluster_kubeconfig through every post-apply stage,
-  # whose timeouts sum past 1h, and probe/drift/destroy read that same stored cert (#5330).
-  default = "24h0m0s"
+  # 1h, the same order as the GCP/Azure admin tokens (#5326). A system:masters certificate cannot be
+  # revoked short of a CA rotation, and the runner refuses to hand a user an admin kubeconfig whose
+  # certificate outlives 8h (mintAdminLifetimeCap in apps/runner/internal/agent/kubeconfig_mint.go),
+  # so a cluster still at the old 24h refuses admin mints until its next deploy applies this.
+  # Nothing in the platform holds one certificate for longer than a step: the dedicated deploy
+  # re-mints from the state's talosconfig before each post-apply step, and probe, drift and destroy
+  # mint per use (#5330, packages/core/provisioner/talos_remint.go). The `kubeconfig` output's
+  # stored certificate is therefore stale an hour after each apply, by design; nothing reads it.
+  # Changing this on an existing cluster is a no-reboot apply on Talos v1.13.6: the whole `.cluster`
+  # section is CanApplyImmediate (see #5331 for the sources).
+  default = "1h0m0s"
   validation {
     # A parseable, non-trivial duration — reject an empty/garbage value that would silently fall back
     # to Talos's 1-year default and defeat the short-lived posture.

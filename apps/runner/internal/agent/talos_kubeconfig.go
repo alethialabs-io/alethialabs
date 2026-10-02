@@ -134,3 +134,17 @@ func newTalosKubeconfigMinter(talosconfigYAML string) provisioner.TalosKubeconfi
 		return string(kubeconfig), nil
 	}
 }
+
+// mintFromTalosconfig is the provisioner.TalosconfigMinter for a DEDICATED hetzner job (#5330): the
+// deploy, PROBE_CLUSTER, drift's cluster inspection and the destroy's load-balancer release. Unlike a
+// placement, which mints from the Fabric's persisted talosconfig, a dedicated job reads the talosconfig
+// from its own state outputs and hands it here, so the job never uses the `kubeconfig` output's stored
+// certificate, which expires after the cluster's admin_kubeconfig_cert_lifetime. It is
+// MintTalosKubeconfig, so the same SSRF guard and timeout apply; the kubeconfig stays in this process.
+func mintFromTalosconfig(ctx context.Context, talosconfigYAML string) (string, error) {
+	kubeconfig, err := MintTalosKubeconfig(ctx, talosconfigYAML)
+	if err != nil {
+		return "", err
+	}
+	return string(kubeconfig), nil
+}
