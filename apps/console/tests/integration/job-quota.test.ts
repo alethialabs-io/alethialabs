@@ -7,7 +7,9 @@
 //   2. SYSTEM-initiated jobs (reconcile/drift/probe/...) NEVER count — the guarantee that the
 //      quota can't throttle auto-reconcile;
 //   3. the window is a trailing 24h (jobs older than 24h drop out of the count);
-//   4. a paid (team) org is never capped.
+//   4. a paid (team) org is never capped;
+//   5. MINT_KUBECONFIG jobs never count (#5313) — a mint does not move the count, and a DEPLOY at the
+//      limit is still refused however many mints sit beside it.
 
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
@@ -15,7 +17,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { getServiceDb } from "@/lib/db";
-import type { JobInitiator } from "@/lib/db/schema";
+import type { JobInitiator, ProvisionJobType } from "@/lib/db/schema";
 import { jobs, organization, organizationBilling } from "@/lib/db/schema";
 import { describeIfDb } from "./db";
 
@@ -23,11 +25,12 @@ const FREE_ORG = randomUUID(); // no billing row → community (free)
 const PAID_ORG = randomUUID(); // team plan → unbounded
 const ORG_IDS = [FREE_ORG, PAID_ORG];
 
-/** Insert one job for an org with a given origin, optionally aged into the past. */
+/** Insert one job for an org with a given origin and type, optionally aged into the past. */
 async function insertJob(
 	orgId: string,
 	initiated_by: JobInitiator,
 	agoMs = 0,
+	job_type: ProvisionJobType = "PLAN",
 ): Promise<void> {
 	await getServiceDb()
 		.insert(jobs)
@@ -35,7 +38,7 @@ async function insertJob(
 			// community org_id == user_id, so keeping them equal keeps the paid case consistent too.
 			user_id: orgId,
 			org_id: orgId,
-			job_type: "PLAN",
+			job_type,
 			status: "QUEUED",
 			config_snapshot: {},
 			initiated_by,
@@ -105,5 +108,17 @@ describeIfDb("free-tier daily job quota", () => {
 		vi.stubEnv("ALETHIA_FREE_DAILY_JOB_QUOTA", "1");
 		for (let i = 0; i < 5; i++) await insertJob(PAID_ORG, "user"); // well past a free cap
 		await expect(assertJobQuotaAllowed(PAID_ORG)).resolves.toBeUndefined();
+	});
+
+	it("a user's kubeconfig mints never count: a mint does not move the count, a DEPLOY at the limit is still refused (#5313)", async () => {
+		vi.stubEnv("ALETHIA_FREE_DAILY_JOB_QUOTA", "3");
+		await insertJob(FREE_ORG, "user", 0, "DEPLOY");
+		await insertJob(FREE_ORG, "user", 0, "DEPLOY");
+		// Two DEPLOYs, one under the cap — and ten user mints beside them, far past it.
+		for (let i = 0; i < 10; i++) await insertJob(FREE_ORG, "user", 0, "MINT_KUBECONFIG");
+		await expect(assertJobQuotaAllowed(FREE_ORG)).resolves.toBeUndefined();
+		// The third DEPLOY reaches the cap: the next enqueue is refused, mints or no mints.
+		await insertJob(FREE_ORG, "user", 0, "DEPLOY");
+		await expect(assertJobQuotaAllowed(FREE_ORG)).rejects.toBeInstanceOf(UsageLimitError);
 	});
 });
