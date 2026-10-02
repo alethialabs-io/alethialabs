@@ -53,6 +53,15 @@ describe("estimateProjectCost prices the cluster on its own cloud (#5361)", () =
 		expect(nodes?.detail).toBe("1x 4 vCPU / 16 GB → t3.xlarge");
 	});
 
+	it("prices the project's databases and caches alongside the cluster", () => {
+		const d = detail("aws", "gcp");
+		d.components.databases = [{ name: "primary", min_capacity: 1, max_capacity: 8 }];
+		d.components.caches = [{ name: "sessions", node_type: "cache.t3.small", num_cache_nodes: 2 }];
+		const r = estimateProjectCost(d, null);
+		expect(r.items.find((i) => i.label === "DB: primary")?.detail).toBe("1-8 ACU");
+		expect(r.items.find((i) => i.label === "Cache: sessions")?.detail).toBe("2x t3.small");
+	});
+
 	it("the estimate names the machine the cluster card shows on the cluster's cloud", () => {
 		const facts = NODE_REGISTRY.cluster.card.facts({
 			config: { ...NODE_REGISTRY.cluster.defaultData("gcp"), instance_types: [], node_size: SIZE },
