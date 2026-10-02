@@ -92,8 +92,10 @@ describe("getClusters — kubeconfig (#5250)", () => {
 			[], // caches
 			[
 				{
+					placementMode: "dedicated",
 					provider: "gcp",
 					region: "europe-west3-a",
+					snapshotPlacement: null,
 					gcpProjectId: { value: "acme-prod-123" },
 					azureResourceGroup: null,
 				},
@@ -101,7 +103,8 @@ describe("getClusters — kubeconfig (#5250)", () => {
 		];
 		const clusters = await getClusters();
 		expect(clusters[0].project_cluster?.kubeconfig).toEqual({
-			command:
+			command: "alethia cluster kubeconfig gke-euw3-prod-web",
+			alternative:
 				"gcloud container clusters get-credentials gke-euw3-prod-web --zone europe-west3-a --project acme-prod-123",
 			note: null,
 		});
@@ -110,12 +113,37 @@ describe("getClusters — kubeconfig (#5250)", () => {
 		expect(selects).toBe(4);
 	});
 
-	it("carries the note where a cloud has no command", async () => {
+	it("gives Hetzner the mint, with no cloud alternative (#5322)", async () => {
 		results = [[baseRow({ provider: "hetzner", cluster_name: "web-prod" })], [], [], []];
 		const [c] = await getClusters();
-		expect(c.project_cluster?.kubeconfig.command).toBeNull();
-		expect(c.project_cluster?.kubeconfig.note).toMatch(
-			/^Alethia does not hand out a kubeconfig for Hetzner clusters yet/,
-		);
+		expect(c.project_cluster?.kubeconfig).toEqual({
+			command: "alethia cluster kubeconfig web-prod",
+			alternative: null,
+			note: null,
+		});
+	});
+
+	it("carries the shared-cluster sentence for a vcluster environment, and no command (#5322)", async () => {
+		results = [
+			[baseRow({})],
+			[],
+			[],
+			[
+				{
+					placementMode: "vcluster",
+					provider: "gcp",
+					region: "europe-west3",
+					snapshotPlacement: "vcluster",
+					gcpProjectId: { value: "acme-prod-123" },
+					azureResourceGroup: null,
+				},
+			],
+		];
+		const [c] = await getClusters();
+		expect(c.project_cluster?.kubeconfig).toEqual({
+			command: null,
+			alternative: null,
+			note: "Kubeconfig mints are not available for an environment placed on a shared cluster.",
+		});
 	});
 });

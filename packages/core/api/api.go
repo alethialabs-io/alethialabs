@@ -254,14 +254,17 @@ type ClusterGitops struct {
 	FailureMessage   *string `json:"failure_message"`
 }
 
-// ClusterKubeconfig is how to get a kubeconfig for the cluster with the caller's OWN cloud CLI
-// (#5250): Command to run, or Note saying why there is none, or both nil while the cluster has no
-// name yet. The console builds it (apps/console/lib/clusters/kubeconfig-access.ts) — the CLI only
+// ClusterKubeconfig is how to get a kubeconfig for the cluster (#5250, #5322): Command
+// (`alethia cluster kubeconfig <selector>`) to run, with Alternative the cloud-CLI command for people
+// with cloud-console access (aws/gcp/azure) — or Note saying why there is no command, or all nil
+// while the cluster has no name yet. Alternative is nil from a server older than #5322. The console
+// builds it (apps/console/lib/clusters/kubeconfig-access.ts) — the CLI only
 // renders it, so the terminal and the cluster card cannot disagree. Mirrors clusterKubeconfig in
 // cli-contract.ts.
 type ClusterKubeconfig struct {
-	Command *string `json:"command"`
-	Note    *string `json:"note"`
+	Command     *string `json:"command"`
+	Alternative *string `json:"alternative"`
+	Note        *string `json:"note"`
 }
 
 // ClusterDetail is a single cluster plus its GitOps posture and kubeconfig command

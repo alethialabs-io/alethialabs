@@ -748,7 +748,7 @@
 		{
 			"route": "/[org]/[project]/architecture",
 			"redirectOnly": false,
-			"surfaceFiles": 421,
+			"surfaceFiles": 422,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -807,7 +807,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"redirectOnly": false,
-			"surfaceFiles": 246,
+			"surfaceFiles": 247,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1397,7 +1397,7 @@
 		{
 			"route": "/[org]/~/clusters",
 			"redirectOnly": false,
-			"surfaceFiles": 245,
+			"surfaceFiles": 246,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1692,7 +1692,7 @@
 		{
 			"route": "/[org]/~/new",
 			"redirectOnly": false,
-			"surfaceFiles": 383,
+			"surfaceFiles": 384,
 			"families": {
 				"S": {
 					"instrumented": 4,

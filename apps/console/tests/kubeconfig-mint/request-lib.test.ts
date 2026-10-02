@@ -106,6 +106,7 @@ function cluster(over: Record<string, unknown> = {}) {
 		projectId: PROJECT,
 		environmentId: ENV,
 		environmentStatus: "ACTIVE",
+		placementMode: "dedicated",
 		cloudIdentityId: IDENTITY,
 		provider: "aws",
 		...over,
@@ -161,6 +162,38 @@ describe("refusals", () => {
 			expect(events).not.toContain("begin");
 		},
 	);
+
+	it.each(["namespace", "vcluster"])(
+		"a %s environment is a shared cluster: refused after ONE read, before any guard or write (#5327)",
+		async (placementMode) => {
+			target = cluster({ placementMode });
+			expect(await run()).toEqual({ ok: false, refusal: "shared-cluster" });
+			// Not even the deploy read: the refusal needs nothing but the cluster's own environment.
+			expect(events).toEqual(["read"]);
+			expect(inserted).toEqual([]);
+		},
+	);
+
+	it("the shared-cluster refusal outranks the shape and provisioning refusals", async () => {
+		target = cluster({ placementMode: "vcluster", provider: "hetzner", environmentStatus: "DRAFT" });
+		expect(await run("exec")).toEqual({ ok: false, refusal: "shared-cluster" });
+	});
+
+	it.each(["namespace", "vcluster"])(
+		"a deploy snapshot placed on %s is refused too, though the column says dedicated — the runner reads the snapshot",
+		async (placement_mode) => {
+			deploy = { config_snapshot: { provider: "aws", placement_mode } };
+			expect(await run()).toEqual({ ok: false, refusal: "shared-cluster" });
+			expect(events).toEqual(["read", "read"]);
+			expect(inserted).toEqual([]);
+		},
+	);
+
+	it("a dedicated environment with a dedicated snapshot is queued", async () => {
+		deploy = { config_snapshot: { provider: "aws", placement_mode: "dedicated" } };
+		expect((await run()).ok).toBe(true);
+		expect(events).toContain("insert:job");
+	});
 
 	it("an environment that never deployed successfully is not provisioned", async () => {
 		deploy = null;
