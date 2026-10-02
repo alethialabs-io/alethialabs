@@ -8,10 +8,10 @@ import {
 	DEFAULT_CACHE_NODE,
 	DEFAULT_INSTANCE_TYPE,
 	DEFAULT_REGION,
-	getProvider,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import { type CostItem, computeCostItems } from "@/lib/cost/compute-cost-items";
+import { clusterCostMeta } from "@/lib/cost/project-cost";
 import type { InferredStack } from "./schema";
 
 export interface ProviderCost {
@@ -59,11 +59,11 @@ export async function compareProviders(
 		PROVIDERS.map(async (provider) => {
 			const region = DEFAULT_REGION[provider];
 			const prices = await getRegionPrices(region).catch(() => null);
-			const meta = getProvider(provider);
+			// A hypothetical stack placed wholly on `provider`: the cluster and the project share it.
 			const { items, total } = computeCostItems(
 				costInputForProvider(stack, provider),
 				prices,
-				{ clusterService: meta.clusterService, secretsService: meta.secretsService, provider },
+				clusterCostMeta(provider, provider),
 			);
 			return { provider, region, monthly: Math.round(total), items };
 		}),

@@ -15,7 +15,6 @@ import {
 	DEFAULT_CACHE_NODE,
 	DEFAULT_K8S_VERSION,
 	DEFAULT_REGION,
-	getProvider,
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
 	MESSAGING,
@@ -29,6 +28,7 @@ import {
 import { cidrForHosts } from "@/lib/cloud-providers/cidr";
 import { CLOUD_PROVIDER_SLUGS } from "@/lib/cloud-providers/provider-slug";
 import { computeCostItems } from "@/lib/cost/compute-cost-items";
+import { clusterCostMeta } from "@/lib/cost/project-cost";
 import { nodeCapacityType } from "@/lib/db/schema/enums";
 import { nodeSizeSchema } from "@/lib/validations/project-form.schema";
 import {
@@ -191,7 +191,10 @@ export function composeTools(ctx: CanvasContext | undefined) {
 				const project = asRecord(f.project);
 				const region = toStr(project.region);
 				const prices = region ? await getRegionPrices(region) : null;
-				const meta = getProvider(ctx.provider);
+				// The cluster is priced on ITS OWN cloud (#5361); a missing or unknown value is the
+				// project's cloud, which is what an older client's context means.
+				const clusterProvider =
+					z.enum(CLOUD_PROVIDER_SLUGS).safeParse(ctx.clusterProvider).data ?? ctx.provider;
 				const { items, total } = computeCostItems(
 					{
 						instanceTypes: toStrArray(cluster.instance_types),
@@ -209,11 +212,7 @@ export function composeTools(ctx: CanvasContext | undefined) {
 						secretsCount: toArray(f.secrets).length,
 					},
 					prices,
-					{
-						clusterService: meta.clusterService,
-						secretsService: meta.secretsService,
-						provider: ctx.provider,
-					},
+					clusterCostMeta(clusterProvider, ctx.provider),
 				);
 				return {
 					region: region || "(none selected)",
