@@ -15,6 +15,7 @@ import { decryptSecret } from "@/lib/crypto/secrets";
 import { recordClaimLatency } from "@/lib/observability/metrics";
 import { markJobSpan } from "@/lib/observability/trace";
 import { verifyRunnerToken } from "@/lib/runners/auth";
+import { claimGrantFor } from "@/lib/runners/claim-grants";
 import { verifySnapshot } from "@/lib/runners/snapshot-sig";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -49,6 +50,11 @@ function referencedConnectorSlugs(snapshot: unknown): string[] {
 	return [...slugs];
 }
 
+/**
+ * Claims the next job for the calling runner and returns it with the secrets its job type is
+ * GRANTED (lib/runners/claim-grants.ts): the decrypted cloud identity and connector credentials are
+ * attached only where that type's allow-list row says so, and an unknown type gets the row alone.
+ */
 export async function POST(req: Request) {
 	const { runnerId, tokenHash, error: authError } =
 		await verifyRunnerToken(req);
@@ -121,8 +127,14 @@ export async function POST(req: Request) {
 			provider: job.provider ?? "unknown",
 		});
 
+		// Least privilege (#5308): what rides along with the row is decided per job type by an
+		// allow-list, not by what the snapshot happens to reference. A MINT_KUBECONFIG job carries
+		// the latest DEPLOY's snapshot but is granted no connector credential; a job type this build
+		// does not know is granted nothing at all.
+		const grant = claimGrantFor(job.job_type);
+
 		let cloud_identity = null;
-		if (job.cloud_identity_id) {
+		if (grant.cloudIdentity && job.cloud_identity_id) {
 			const [identity] = await db
 				.select({
 					credentials: cloudIdentities.credentials,
@@ -152,7 +164,7 @@ export async function POST(req: Request) {
 				// HETZNER_S3_ACCESS_KEY / HETZNER_S3_SECRET_KEY for the minio provider.
 				let s3AccessKey = "";
 				let s3SecretKey = "";
-				if (c.s3_access_key) {
+				if (grant.objectStorageKeys && c.s3_access_key) {
 					try {
 						s3AccessKey = decryptSecret(c.s3_access_key).access_key ?? "";
 					} catch (e) {
@@ -162,7 +174,7 @@ export async function POST(req: Request) {
 						);
 					}
 				}
-				if (c.s3_secret_key) {
+				if (grant.objectStorageKeys && c.s3_secret_key) {
 					try {
 						s3SecretKey = decryptSecret(c.s3_secret_key).secret_key ?? "";
 					} catch (e) {
@@ -205,7 +217,9 @@ export async function POST(req: Request) {
 			slug: string;
 			credentials: Record<string, string>;
 		}> = [];
-		const slugs = referencedConnectorSlugs(job.config_snapshot);
+		const slugs = grant.connectorCredentials
+			? referencedConnectorSlugs(job.config_snapshot)
+			: [];
 		if (slugs.length > 0 && job.user_id) {
 			// The runner may use the job creator's PERSONAL credential or one shared with
 			// the job's ORG. Fetch both; dedupe per slug preferring the creator's personal.
