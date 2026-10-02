@@ -2406,6 +2406,27 @@ jobs:
           echo "::warning::job CANCELLED — sweeping ${E2E_ENV} now, ahead of proof capture, because the window is shared and short."
           "$SCRIPT" "$E2E_CLUSTER"
 
+      # ── GCP: name the GKE operation's own error on a red leg (#5273). ────────────────────────
+      #
+      #    The gcp floor went red on 2026-10-01 and 2026-10-02 with the SAME line in every artefact —
+      #    tofu's `Error waiting for creating GKE cluster: Failed to create cluster` — over two
+      #    different causes (a master-CIDR conflict with a GKE-reserved range, then a code-13
+      #    INTERNAL). The provider reports the wait, not the reason; the reason lives only on the GKE
+      #    operation, and was read by hand afterwards. This reads it here, while the credentials still
+      #    exist, and raises each failed operation's message as an `::error::` annotation.
+      #
+      #    Read-only (one `container operations list`), scoped to this run's `-<ENV>-` cluster name,
+      #    and it ALWAYS exits 0: the leg is already red and a diagnostic must not add a second red
+      #    reason. Failure path only, and `!cancelled()` so it never spends the cancellation window
+      #    the teardown above needs. Hermetic self-test: `scripts/e2e/gke-op-errors.sh --self-test`
+      #    (ci.yml). ──
+      - name: GCP — print this run's failed GKE operations (failure only, read-only)
+        if: failure() && !cancelled() && steps.gate.outputs.run == 'true' && matrix.provider == 'gcp'
+        timeout-minutes: 2
+        env:
+          ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
+        run: bash scripts/e2e/gke-op-errors.sh
+
       - name: Capture proof (scrubbed bundle + step-summary verdict)
         id: capture
         if: steps.gate.outputs.run == 'true' && always()
