@@ -60,8 +60,9 @@ type DestroyParams struct {
 	// hetzner destroy's load-balancer release. The stored `kubeconfig` output is one certificate from
 	// the last apply; once it has expired the release could not reach the cluster and hcloud CCM load
 	// balancers were left billing (#5330). Runner-injected (MintTalosKubeconfig, with its SSRF guard).
-	// A failed mint fails the destroy (see releaseOutcome.MintFailed). Nil only for an in-process
-	// caller with no runner (the e2e harness's teardown), which keeps the pre-#5330 behaviour and says so.
+	// A failed mint fails the destroy (see releaseOutcome.MintFailed). Nil keeps the pre-#5330
+	// fallback and says so; no caller in this repo passes nil — the e2e harness's teardown wires the
+	// runner binary's `talos-kubeconfig` subcommand since #5339 (test/e2e/t2_talos_remint.go).
 	TalosMint TalosconfigMinter
 	// DryRun asks for the teardown to be PLANNED and never applied — the read-only form
 	// destroy otherwise lacks (see tofu.PlanDestroy). It is honored by RunDestroyPlan and
@@ -623,9 +624,9 @@ func releaseLoadBalancersWithOutputs(
 	fresh, minted, mintErr := talosAdminOutputs(ctx, providerSlug, mint, outputs)
 	switch {
 	case errors.Is(mintErr, errNoTalosMinter):
-		// Only an in-process caller with no runner gets here (the e2e harness's teardown); the
-		// runner always wires a minter. Said out loud, because what follows uses a certificate that
-		// may have expired.
+		// Only an in-process caller that passed no minter gets here; the runner and, since #5339,
+		// the e2e harness's teardown both wire one. Said out loud, because what follows uses a
+		// certificate that may have expired.
 		fmt.Fprintln(out, "   No Talos kubeconfig minter is wired for this destroy, so the release uses the "+
 			"kubeconfig already in hand or the one stored at the last apply, which expires.")
 	case mintErr != nil:
