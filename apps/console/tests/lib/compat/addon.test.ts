@@ -145,3 +145,23 @@ describe("rangeLabel — the string the chip shows", () => {
 		expect(rangeLabel("", "")).toBe("any");
 	});
 });
+
+// #5365 — a BYO-IaC module owns the version, and the note says so. But only where the version is
+// what stopped the check: an add-on with no recorded window is unknown whatever the cluster runs.
+describe("addonCompat versionUnknownReason", () => {
+	const reason = "Your IaC module decides the Kubernetes version.";
+
+	it("replaces the engine's generic note when the version is missing", () => {
+		const c = addonCompat("kyverno", undefined, reason);
+		expect(c.status).toBe("not_evaluable");
+		expect(c.note).toBe(reason);
+	});
+
+	it("does not mask a missing window", () => {
+		expect(addonCompat("loki", undefined, reason).note).not.toBe(reason);
+	});
+
+	it("is ignored when there is a version to judge", () => {
+		expect(addonCompat("kyverno", "1.35", reason).status).toBe("pass");
+	});
+});

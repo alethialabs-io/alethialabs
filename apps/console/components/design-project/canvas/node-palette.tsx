@@ -129,7 +129,8 @@ export function NodePalette({
 	// second, parallel notion of "which tab is this card on" that could disagree with it.
 	const setInspectorTab = useInspectorPrefsStore((s) => s.setTab);
 	// The env's Kubernetes version as it will deploy, for the add-on compat badges: an unset
-	// version resolves to the catalog default (#5314); no cluster yet is an honest `not_evaluable`.
+	// version resolves to the catalog default (#5314) — except on BYO-IaC, where the module decides
+	// it and the badge says so (#5365); no cluster yet is an honest `not_evaluable`.
 	const clusterK8s = useClusterK8sVersion();
 	// The project root's effective provider gates which kinds are addable (e.g. Hetzner
 	// has no topic/nosql) — same filter as the ⌘K menu and the canvas controls.
@@ -304,7 +305,11 @@ export function NodePalette({
 										</div>
 										{/* Compat sits BEFORE the install slot and only when it wants attention — an add-on
 										    whose recorded window fits this cluster shows nothing at all. */}
-										<AddonCompatBadge addonId={a.id} k8sVersion={clusterK8s} />
+										<AddonCompatBadge
+											addonId={a.id}
+											k8sVersion={clusterK8s.version}
+											versionUnknownReason={clusterK8s.reason}
+										/>
 										{a.install ? (
 											<AddonStatusBadge
 												status={a.install.status}
