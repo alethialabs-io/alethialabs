@@ -18,7 +18,6 @@
 // credential can exist at all (write-before; lib/kubeconfig-mint/audit.ts).
 
 import { and, desc, eq, sql } from "drizzle-orm";
-import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import {
@@ -164,10 +163,10 @@ async function latestDeploySnapshot(
 
 /**
  * Queues one kubeconfig mint: checks the cluster is in the actor's org, is provisioned, and can
- * mint the requested shape; applies the same usage and job-quota guards as every user enqueue; then
- * writes the MINT_KUBECONFIG job, the mint request row and the audit row in one transaction.
+ * mint the requested shape; applies the runner-minute usage guard (but not the daily job quota, which
+ * exempts mints — #5313); then writes the MINT_KUBECONFIG job, the mint request row and the audit row in one transaction.
  *
- * Throws `UsageLimitError` from the billing guards (the route maps it to 402). Any other throw is a
+ * Throws `UsageLimitError` from the usage guard (the route maps it to 402). Any other throw is a
  * server error and has written nothing.
  */
 export async function requestKubeconfigMint(
@@ -191,9 +190,11 @@ export async function requestKubeconfigMint(
 	const deploy = await latestDeploySnapshot(target.environmentId, actor.orgId);
 	if (!deploy) return { ok: false, refusal: "not-provisioned" };
 
-	// A mint runs on a runner like any other job, so it is metered like one.
+	// A mint runs on a runner like any other job, so its runner minutes are metered like one. It is
+	// NOT checked against the community daily job quota, and does not count toward it (#5313):
+	// access to your own cluster must never be what stops you deploying. It is bounded instead by the
+	// route's per-user mint rate limit. See QUOTA_EXEMPT_JOB_TYPES in lib/billing/job-quota.ts.
 	await assertUsageAllowed(actor.orgId);
-	await assertJobQuotaAllowed(actor.orgId);
 
 	const environmentId = target.environmentId;
 	const mint = await withActorScope(actor, async (tx) => {

@@ -17,9 +17,11 @@
 //      teammate in the same org cannot read — or consume — it.
 //   5. FIXED REASONS. A runner's raw error text never reaches the row, the job or the poll.
 //   6. EXPIRY. The sweep nulls an uncollected ciphertext, cancels a never-claimed job, and later deletes.
+//   7. THE DAILY JOB QUOTA EXEMPTS MINTS (#5313). The REAL quota guard runs here: a community org at
+//      its limit still gets a 202, the mint does not move the count, and a DEPLOY is still refused.
 //
 // The CLI guard is stubbed (`authorizeCli` is the authz suite's subject; here it hands the handler an
-// actor) and so are the billing guards and the scaler poke. The runner's credentials are REAL: two
+// actor) and so are the runner-minute usage guard and the scaler poke; the daily job quota is real. The runner's credentials are REAL: two
 // runners with hashed tokens, so `verifyRunnerToken` and `update_job_status` run as they do in
 // production.
 
@@ -31,7 +33,6 @@ import { describeIfDb } from "./db";
 
 vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
 vi.mock("@/lib/auth/trusted-ip", () => ({ trustedClientIp: vi.fn(() => "203.0.113.9") }));
-vi.mock("@/lib/billing/job-quota", () => ({ assertJobQuotaAllowed: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", async (orig) => ({
 	...(await orig<typeof import("@/lib/billing/usage-guard")>()),
 	assertUsageAllowed: vi.fn(),
@@ -46,6 +47,8 @@ import {
 	POST as resultPost,
 } from "@/app/api/jobs/[id]/kubeconfig-mint/route";
 import { authorizeCli } from "@/lib/authz/guard";
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
+import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { getServiceDb } from "@/lib/db";
 import {
 	auditLog,
@@ -416,5 +419,29 @@ describeIfDb("kubeconfig mint routes — request, runner, poll, sweep", () => {
 		expect(await mintRow(m.mintId)).toMatchObject({ status: "expired", sealed_result: null });
 		// A job a runner held is left alone by the sweep.
 		expect(await jobRow(m.jobId)).toMatchObject({ status: "SUCCESS" });
+	});
+
+	it("a community org at its daily job quota still mints, the mint does not count, and a DEPLOY is still refused (#5313)", async () => {
+		// ORG_A has no billing row, so it is community. Every mint the tests above made is a
+		// user-initiated job inside the window; none of them may count.
+		vi.stubEnv("ALETHIA_FREE_DAILY_JOB_QUOTA", "3");
+		try {
+			// FAILED, so latestDeploySnapshot still reads the seeded SUCCESS deploy.
+			const deploy: typeof jobs.$inferInsert = { user_id: USER_A, org_id: ORG_A, project_id: PROJ_A, environment_id: ENV_A, job_type: "DEPLOY", status: "FAILED", config_snapshot: {}, initiated_by: "user" };
+			await getServiceDb().insert(jobs).values([deploy, deploy]);
+			// Two user DEPLOYs: one under the cap of three.
+			await expect(assertJobQuotaAllowed(ORG_A)).resolves.toBeUndefined();
+
+			// The mint is queued — and leaves the count where it was, still one under the cap.
+			await requestA();
+			await expect(assertJobQuotaAllowed(ORG_A)).resolves.toBeUndefined();
+
+			// A third DEPLOY reaches the cap: the next one is refused, and a mint is still served.
+			await getServiceDb().insert(jobs).values(deploy);
+			await expect(assertJobQuotaAllowed(ORG_A)).rejects.toBeInstanceOf(UsageLimitError);
+			await requestA();
+		} finally {
+			vi.unstubAllEnvs();
+		}
 	});
 });
