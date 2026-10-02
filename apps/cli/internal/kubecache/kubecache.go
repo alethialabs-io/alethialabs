@@ -31,6 +31,24 @@
 //
 // A file that is merely unreadable as an entry — truncated, from an older format, naming another
 // cluster — is a MISS: the next Put replaces it atomically.
+//
+// # Lifetime and logout
+//
+// A credential is served until MinRemaining (60s) before its expiry, so an entry lives at most its
+// TTL: 1h by default, 8h at the outside (--ttl). The re-mint profile has no expiry of its own; it
+// is only a recipe, and a re-mint still needs a CLI session.
+//
+// `alethia logout` deletes the whole directory, for every org (Clear), because a cached credential
+// is access obtained through the CLI and logging out ends it (#5323). The next `cluster token` then
+// has nothing to serve and must re-mint, which fails until the user logs in again. A logout that
+// cannot delete the directory says so on stderr and exits non-zero: a credential left behind
+// silently is the defect this exists to prevent. There is no org-scoped logout, so there is no
+// per-org clear either.
+//
+// Clear refuses a cache directory that is a symlink, is not a directory, or is owned by another
+// user, the same way Open does: the CLI never wrote a credential there, and deleting through a link
+// would delete something it does not own. It deletes nothing outside the directory; os.RemoveAll
+// removes a symlink inside it, never what the link points at.
 package kubecache
 
 import (
@@ -136,6 +154,33 @@ func Open(dir string) (*Cache, error) {
 		}
 	}
 	return &Cache{dir: dir}, nil
+}
+
+// Clear deletes the cache directory dir and everything in it, and reports whether there was one to
+// delete. A missing directory is (false, nil). A directory that is a symlink, is not a directory,
+// or is owned by another user is refused with an error wrapping ErrInsecure and left untouched. Any
+// other failure is an error naming dir.
+func Clear(dir string) (bool, error) {
+	fi, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("kubecache: stat %s: %w", dir, err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("%w: %s is a symlink; refusing to delete through it — delete it yourself", ErrInsecure, dir)
+	}
+	if !fi.IsDir() {
+		return false, fmt.Errorf("%w: %s is not a directory; delete it yourself", ErrInsecure, dir)
+	}
+	if err := checkOwner(fi); err != nil {
+		return false, fmt.Errorf("%w: %s %v; delete it yourself", ErrInsecure, dir, err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return false, fmt.Errorf("kubecache: delete %s: %w", dir, err)
+	}
+	return true, nil
 }
 
 // Dir is the directory the cache lives in.
