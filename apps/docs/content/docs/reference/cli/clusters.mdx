@@ -131,6 +131,65 @@ healthy, and the short revision they are deployed at. It reads `failed at <step>
 deploy failed, and `unknown (no snapshot yet)` when there is no trustworthy reading — which is a
 different statement from "nothing is deployed", and deliberately not rendered as one.
 
+## `alethia cluster kubeconfig`
+
+Get a short-lived kubeconfig for a cluster without a cloud login of your own. A runner in the
+cluster's network mints the credential and seals it to a one-time key that this command makes.
+Only this machine can open the result.
+
+```bash
+alethia cluster kubeconfig
+alethia cluster kubeconfig api-backend
+alethia cluster kubeconfig api-backend --admin --ttl 4h
+alethia cluster kubeconfig api-backend --output api-backend.kubeconfig
+alethia cluster kubeconfig api-backend --static --output -
+```
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `[selector]` | No — at a terminal | The same selector as `cluster get`. Omit it and the CLI asks which cluster. |
+| `--admin` | No | Get the admin tier. Owners and admins only. The default is read-only. |
+| `--ttl` | No | How long the credential lasts, from `15m` to `8h`. The default is `1h`. |
+| `--static` | No | Write a file that holds the credential and stops working at its TTL. |
+| `--merge` | No | Merge into `$KUBECONFIG` or `~/.kube/config`. This is the default. |
+| `--output` | No | Write a separate file instead of merging. `-` prints the kubeconfig. |
+
+By default the command merges the context `alethia-<project>-<env>` into your kubeconfig and makes
+it the current context. It replaces an older entry with the same name and leaves all other entries
+as they are. The file gets mode `0600`. In this command, `--output` takes a file path, not the
+`table`/`json`/`csv` format, and `--output -` is the only way the credential goes to stdout. All
+other messages go to stderr.
+
+On AWS, GCP and Azure the kubeconfig runs `alethia cluster token` to get each token, so `kubectl`
+keeps working after a token expires. Hetzner and Alibaba Cloud issue certificates, so their
+kubeconfig is always static and stops working at its TTL. If the cluster's API endpoint is private,
+the command tells you that `kubectl` needs network access to it, for example through a VPN or a
+bastion host.
+
+The mint runs as a job on your organization's runner, so a runner must be online. Backing calls:
+`POST /cli/clusters/{id}/kubeconfig`, then `GET /cli/clusters/{id}/kubeconfig/{mint}` until the
+credential is ready.
+
+## `alethia cluster token`
+
+Print a credential for `kubectl`. This is the command that the kubeconfig from
+`alethia cluster kubeconfig` runs. You do not usually run it yourself.
+
+```bash
+alethia cluster token
+```
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `[cluster-id]` | No — at a terminal | The cluster id. `kubectl` always passes it. Omit it at a terminal and the CLI asks which cluster. |
+
+The command prints one `ExecCredential` document on stdout. It keeps the credential in a cache
+under the CLI's configuration directory (directory mode `0700`, file mode `0600`) until 60 seconds
+before the credential expires. Thus only the first `kubectl` call in each credential's lifetime
+waits for a new mint. If several `kubectl` calls start at the same time, they share one mint. The
+command refuses a cache file that other users can read. It never prompts: if your session expired,
+it fails and tells you to run `alethia login`.
+
 ## Accessing a cluster with kubectl
 
 The **Kubeconfig** row is the command that writes a kubeconfig with **your own cloud CLI**, under
@@ -167,12 +226,14 @@ the same command the console's cluster card shows. Run it, then use `kubectl`:
     Alethia does not record the ACK cluster ID yet, and ACK's kubeconfig API needs it. The
     **Kubeconfig** row names the cluster and its region instead. Find the cluster's ID in the ACK
     console, then call `DescribeClusterUserKubeconfig` with the `aliyun` CLI. Its `config` field
-    is the kubeconfig.
+    is the kubeconfig. Or use [`alethia cluster kubeconfig`](#alethia-cluster-kubeconfig), which
+    needs no ACK cluster ID.
   </Tab>
   <Tab value="Hetzner">
-    Alethia does not hand out a kubeconfig for Hetzner clusters yet. The cluster's Talos admin
-    configuration stays encrypted on the platform, and no command reaches it. Track
-    [issue #5250](https://github.com/alethialabs-io/alethialabs/issues/5250).
+    Hetzner has no cloud CLI command for a kubeconfig, so the **Kubeconfig** row has none. The
+    cluster's Talos admin configuration stays encrypted on the platform. Use
+    [`alethia cluster kubeconfig`](#alethia-cluster-kubeconfig) instead: your runner mints a
+    short-lived certificate for you.
   </Tab>
 </Tabs>
 
