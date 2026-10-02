@@ -11,6 +11,7 @@
 // through both and fails if they disagree on a static credential, so the two cannot drift silently.
 
 import { z } from "zod";
+import { slugify } from "@/lib/utils/slugify";
 
 /** The plaintext the card accepts: the contract's `static` arm, tier pinned to `readonly`. A runner
  *  that sealed an `exec` or an `admin` credential to a read-only request is refused, not saved. */
@@ -48,17 +49,8 @@ export function readOpenedCredential(plaintext: Uint8Array): OpenedKubeconfig | 
 	return { kubeconfig: parsed.data.kubeconfig, expiresAt: parsed.data.expires_at };
 }
 
-/** Lowercases `s` and keeps only `[a-z0-9-]`, collapsing every other run to one hyphen. */
-function slug(s: string): string {
-	const out = s
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-	return out || "cluster";
-}
-
 /** `alethia-<project>-<env>.kubeconfig` — the file name, and the same `alethia-<project>-<env>` the CLI
- *  names its context (#5250 §4), made safe for a file system. */
+ *  names its context (#5250 §4), each part through THE console slugifier. */
 export function kubeconfigFileName(projectName: string, environment: string): string {
-	return `alethia-${slug(projectName)}-${slug(environment)}.kubeconfig`;
+	return `alethia-${slugify(projectName, "cluster")}-${slugify(environment, "cluster")}.kubeconfig`;
 }
