@@ -26,6 +26,7 @@ import {
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import { coerceEnum } from "@/lib/coerce";
+import { SPOT_NOTE, effectiveCapacityType } from "@/lib/cloud-providers/node-capacity";
 import { toStrArray } from "@/lib/coerce";
 import {
 	cacheTierOptions,
@@ -985,19 +986,29 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						max: 100,
 					},
 					{ key: "node_max_size", type: "number", label: "Max nodes", min: 1, max: 100 },
-					// The node pool's purchase option (#5266): on-demand by default, Spot an explicit
-					// opt-in. Only aws honours Spot through this field (ValidateConfig refuses it
-					// elsewhere), so it is shown on aws — and on any other cloud ONLY while it still
-					// says `spot`, e.g. after a cluster moved off aws, so the refusal can be fixed here.
+					// The node pool's purchase option (#5266, #5315): on-demand by default, Spot an
+					// explicit opt-in. Every cloud but hetzner maps Spot onto its template's own knob
+					// (lib/cloud-providers/node-capacity.ts has the table); hetzner sells no interruptible
+					// servers, so the control shows there ONLY while it still says `spot`, e.g. after a
+					// cluster moved onto hetzner, so ValidateConfig's refusal can be fixed here.
 					{
 						key: "capacity_type",
 						type: "select",
 						label: "Capacity",
 						requiresProvider: true,
-						visibleWhen: (c, { provider }) => provider === "aws" || c.capacity_type === "spot",
-						get: (c) => c.capacity_type ?? "on_demand",
+						visibleWhen: (c, { provider }) => provider !== "hetzner" || c.capacity_type === "spot",
+						// GKE Autopilot has no node pool for `gke_spot` to land on, so the gcp provider
+						// refuses Spot there. Not disabled while the field says `spot`: that is the value
+						// the user has to be able to change.
+						unavailableWhen: (c, { provider }) =>
+							provider === "gcp" &&
+							c.provider_config?.enable_autopilot === true &&
+							c.capacity_type !== "spot"
+								? "Autopilot chooses Spot per workload, so there is no node pool to put on Spot. Turn Autopilot off to choose here."
+								: null,
+						get: (c) => effectiveCapacityType(c),
 						set: (v) => ({ capacity_type: v === "spot" ? "spot" : "on_demand" }),
-						options: [
+						options: ({ provider }) => [
 							{
 								value: "on_demand",
 								label: "On-demand",
@@ -1006,7 +1017,9 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 							{
 								value: "spot",
 								label: "Spot",
-								description: "Cheaper, but AWS can reclaim a node with two minutes' notice.",
+								description:
+									(provider && SPOT_NOTE[provider]) ??
+									"Hetzner Cloud sells no Spot servers. Choose On-demand to deploy.",
 							},
 						],
 					},

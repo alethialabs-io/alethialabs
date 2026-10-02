@@ -11,7 +11,7 @@
 		"alibaba": {
 			"declared": 63,
 			"reachable": 45,
-			"settable": 11,
+			"settable": 10,
 			"dead": 1
 		},
 		"aws": {
@@ -23,13 +23,13 @@
 		"azure": {
 			"declared": 87,
 			"reachable": 61,
-			"settable": 22,
+			"settable": 21,
 			"dead": 1
 		},
 		"gcp": {
 			"declared": 103,
 			"reachable": 83,
-			"settable": 33,
+			"settable": 31,
 			"dead": 0
 		},
 		"hetzner": {
@@ -369,7 +369,7 @@
 			"ceiling": false,
 			"reachable": true,
 			"ownedByProvider": false,
-			"typed": false,
+			"typed": true,
 			"default": "NoSpot"
 		},
 		{
@@ -5117,7 +5117,7 @@
 			"ceiling": false,
 			"reachable": true,
 			"ownedByProvider": false,
-			"typed": false,
+			"typed": true,
 			"default": false
 		},
 		{
@@ -7198,7 +7198,7 @@
 			"ceiling": false,
 			"reachable": true,
 			"ownedByProvider": false,
-			"typed": false,
+			"typed": true,
 			"default": false
 		},
 		{
@@ -7259,7 +7259,7 @@
 			"ceiling": false,
 			"reachable": true,
 			"ownedByProvider": false,
-			"typed": false,
+			"typed": true,
 			"default": false
 		},
 		{

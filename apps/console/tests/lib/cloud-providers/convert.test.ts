@@ -553,29 +553,46 @@ describe("convertProjectConfig — NoSQL capacity mode (#4320)", () => {
 	});
 });
 
-// #5266: Spot through capacity_type is honoured on aws only, and the target cloud's ValidateConfig
-// refuses it — so a converted cluster returns to the default instead of carrying a refusal along.
+// #5315: Spot through capacity_type maps onto every cloud but hetzner, so a conversion keeps it where
+// the target honours it and drops it, with a notice, where the target's ValidateConfig would refuse it.
 describe("convertProjectConfig — capacity type", () => {
-	it("drops spot when converting off aws, with a notice", () => {
-		const { data, warnings } = convertProjectConfig(
-			makeConfig({
-				cluster: { instance_types: ["t3.large"], cluster_version: "1.35", provider_config: {}, capacity_type: "spot" },
-			}),
-			"aws",
-			"gcp",
-		);
+	const spotCluster = (provider_config: Record<string, unknown> = {}, capacity_type?: "spot" | "on_demand") =>
+		makeConfig({
+			cluster: { instance_types: ["t3.large"], cluster_version: "1.35", provider_config, capacity_type },
+		});
+
+	it.each(["gcp", "azure", "alibaba"] as const)("keeps spot when converting aws → %s", (target) => {
+		const { data } = convertProjectConfig(spotCluster({}, "spot"), "aws", target);
+		expect(data.cluster.capacity_type).toBe("spot");
+	});
+
+	it("drops spot when converting to hetzner, with a notice", () => {
+		const { data, warnings } = convertProjectConfig(spotCluster({}, "spot"), "aws", "hetzner");
 		expect(data.cluster.capacity_type).toBeUndefined();
-		expect(byComponent(warnings, "Cluster").some((w) => w.message.includes("Spot"))).toBe(true);
+		expect(byComponent(warnings, "Cluster").some((w) => w.severity === "warning" && w.message.includes("Spot"))).toBe(true);
+	});
+
+	it("drops spot when the conversion lands on GKE Autopilot, with a notice", () => {
+		// Karpenter on aws carries over as Autopilot on gcp, which has no node pool to put on Spot.
+		const { data, warnings } = convertProjectConfig(spotCluster({ enable_karpenter: true }, "spot"), "aws", "gcp");
+		expect(data.cluster.provider_config?.enable_autopilot).toBe(true);
+		expect(data.cluster.capacity_type).toBeUndefined();
+		expect(byComponent(warnings, "Cluster").some((w) => w.message.includes("Autopilot"))).toBe(true);
+	});
+
+	it("tells the user what Spot means on azure", () => {
+		const { warnings } = convertProjectConfig(spotCluster({}, "spot"), "aws", "azure");
+		expect(byComponent(warnings, "Cluster").some((w) => w.message.includes("separate Spot worker pool"))).toBe(true);
+	});
+
+	it("carries a hand-set Spot knob across as the field, since the knob itself does not survive", () => {
+		const { data } = convertProjectConfig(spotCluster({ gke_spot: true }), "gcp", "alibaba");
+		expect(data.cluster.provider_config?.gke_spot).toBeUndefined();
+		expect(data.cluster.capacity_type).toBe("spot");
 	});
 
 	it("keeps on_demand, which every cloud honours", () => {
-		const { data } = convertProjectConfig(
-			makeConfig({
-				cluster: { instance_types: ["t3.large"], cluster_version: "1.35", provider_config: {}, capacity_type: "on_demand" },
-			}),
-			"aws",
-			"azure",
-		);
+		const { data } = convertProjectConfig(spotCluster({}, "on_demand"), "aws", "hetzner");
 		expect(data.cluster.capacity_type).toBe("on_demand");
 	});
 });

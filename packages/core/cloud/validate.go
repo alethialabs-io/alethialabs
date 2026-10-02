@@ -98,28 +98,45 @@ func validateNodeSizing(config *types.ProjectConfig) error {
 	return nil
 }
 
-// validateCapacityType refuses a node capacity type the cloud cannot honour (#5266).
+// validateCapacityType refuses a node capacity type the cloud cannot honour (#5266, #5315).
 //
 // "" (unset) and "on_demand" are valid everywhere: every cloud's node pool is on-demand unless asked
-// otherwise. "spot" is honoured on aws only, where it becomes `eks_ng_capacity_type = "SPOT"`. The
-// other clouds model interruptible capacity differently (azure adds a SEPARATE spot pool, gcp and
-// alibaba flip a per-pool switch) and none of those knobs reads this field — so accepting "spot"
-// there would store a choice the deploy silently ignores. It is refused instead, naming the cloud.
-func validateCapacityType(config *types.ProjectConfig, provider string, supportsSpot bool) error {
+// otherwise. "spot" is valid on every cloud whose provider maps it onto the template's own
+// interruptible-capacity knob — aws `eks_ng_capacity_type`, gcp `gke_spot`, azure `aks_spot_enabled`
+// (a separate Spot WORKER pool; AKS keeps its system pool on-demand), alibaba
+// `ack_node_capacity_type`. `spotRefusal` is "" on those clouds and, on a cloud with nothing to map
+// onto, the reason a user reads — accepting "spot" there would store a choice the deploy silently
+// ignores.
+func validateCapacityType(config *types.ProjectConfig, spotRefusal string) error {
 	switch config.Cluster.CapacityType {
 	case "", types.NodeCapacityTypeOnDemand:
 		return nil
 	case types.NodeCapacityTypeSpot:
-		if supportsSpot {
+		if spotRefusal == "" {
 			return nil
 		}
-		return configError("cluster.capacity_type", config.Cluster.CapacityType,
-			fmt.Sprintf("spot capacity is not supported on %s through this field yet; use on_demand or leave it unset", provider))
+		return configError("cluster.capacity_type", config.Cluster.CapacityType, spotRefusal)
 	default:
 		return configError("cluster.capacity_type", config.Cluster.CapacityType,
 			"it must be on_demand or spot")
 	}
 }
+
+// hetznerSpotRefusal is why hetzner refuses `capacity_type = spot`: the cloud has no interruptible
+// tier at all, so there is no knob to map it onto.
+const hetznerSpotRefusal = "Hetzner Cloud sells no spot or interruptible servers, so every node is on-demand; use on_demand or leave it unset"
+
+// The legacy capacity passthrough (#5315) — written down once here, applied at each provider.
+//
+// gcp `gke_spot`/`gke_preemptible`, azure `aks_spot_enabled` and alibaba `ack_node_capacity_type`
+// are reserved: `capacity_type` owns them, so the generic merge never writes them. But before #5315
+// they were ordinary passthrough knobs the inspector offered, and a cluster may run on Spot because
+// one was set by hand. Rows are never rewritten to move that value onto the column, so dropping it
+// would turn the next apply into a node-pool replacement onto on-demand capacity. Each provider
+// therefore copies its own keys from the cluster's provider_config, verbatim, ONLY while
+// `capacity_type` is unset; once it is set, the typed mapping writes the keys and the passthrough is
+// ignored. The copy is inlined at each site because TestUnionCoversEveryKeyTheTypedMappingWrites
+// refuses a root-map write it cannot enumerate.
 
 // Worker-node root-disk floors. Each is the `>= N` in that cloud's own disk-size variable
 // validation block — the value the template would reject at plan time — so the rule can only
