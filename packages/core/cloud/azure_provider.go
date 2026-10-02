@@ -132,7 +132,7 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		// a version in Azure's STANDARD support window, since an AKS create rejects a version that has
 		// aged into LTS-only ("K8sVersionNotSupported"). Bump it in catalog.json, not here (#775).
 		"provision_aks":       true,
-		"aks_cluster_version": resolveK8sVersion("azure", config.Cluster.ClusterVersion),
+		"aks_cluster_version": ResolveK8sVersion("azure", config.Cluster.ClusterVersion),
 
 		// DNS
 		// CREATE the zone in-template only when DNS is on AND the caller brought no zone of their

@@ -131,7 +131,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"vpc_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// EKS
-		"eks_cluster_version": resolveK8sVersion("aws", config.Cluster.ClusterVersion),
+		"eks_cluster_version": ResolveK8sVersion("aws", config.Cluster.ClusterVersion),
 		"enable_karpenter":    enableKarpenter,
 		"eks_cluster_admins":  ensureSlice(config.Cluster.ClusterAdmins),
 

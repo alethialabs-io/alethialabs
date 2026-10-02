@@ -30,6 +30,7 @@ import {
 	variantOptionsFor,
 } from "./graph/node-registry";
 import type { NodeKind } from "./graph/types";
+import { useClusterK8sVersion } from "./use-cluster-k8s-version";
 
 interface NodePaletteProps {
 	open: boolean;
@@ -127,13 +128,9 @@ export function NodePalette({
 	// you intend to configure it. Written through the preference the tabs already keep, rather than a
 	// second, parallel notion of "which tab is this card on" that could disagree with it.
 	const setInspectorTab = useInspectorPrefsStore((s) => s.setTab);
-	// The env's Kubernetes minor, for the add-on compat badges. Read defensively: a design may
-	// have no cluster yet, and an unset version is an honest `not_evaluable`, never a pass.
-	const clusterK8s = useCanvasStore((s) => {
-		const c = s.nodes.find((n) => n.data.kind === "cluster")?.data.config;
-		const v = c && "cluster_version" in c ? c.cluster_version : null;
-		return typeof v === "string" && v ? v : undefined;
-	});
+	// The env's Kubernetes version as it will deploy, for the add-on compat badges: an unset
+	// version resolves to the catalog default (#5314); no cluster yet is an honest `not_evaluable`.
+	const clusterK8s = useClusterK8sVersion();
 	// The project root's effective provider gates which kinds are addable (e.g. Hetzner
 	// has no topic/nosql) — same filter as the ⌘K menu and the canvas controls.
 	const coreProvider = useCanvasStore((s) =>

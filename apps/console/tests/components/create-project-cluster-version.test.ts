@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // #5268: every path that CREATES a cluster in the console either leaves `cluster_version` unset — so
-// the Go resolver (`resolveK8sVersion`) picks the catalog default for the cloud it is deployed on —
+// the Go resolver (`ResolveK8sVersion`) picks the catalog default for the cloud it is deployed on —
 // or writes a version the catalog lists for that cloud. The blank-project path hard-coded "1.31", a
 // minor in no cloud's `k8s_versions`, and the resolver passes an explicit version through untouched.
 

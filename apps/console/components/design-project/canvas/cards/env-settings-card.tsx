@@ -22,6 +22,7 @@ import { ConnectorSelect } from "../inspector/connector-select";
 import { useNodeCapabilities } from "../inspector/use-node-capabilities";
 import { CompatAlert } from "../inspector/compat-alert";
 import { SheetCard } from "./sheet-card";
+import { useClusterK8sVersion } from "../use-cluster-k8s-version";
 import { DestroyEnvironmentDialog, type DestroyTreeState } from "./destroy-environment-dialog";
 import { DestroyHoldNotice, useDestroyHold } from "./destroy-hold";
 import {
@@ -93,11 +94,8 @@ export function EnvSettingsCard({
 	// The compat subject, assembled from the store — no new query. `addon` nodes are the environment's
 	// enabled marketplace installs; the config-time resolver also sees Hetzner data services and BYO
 	// charts, which is why CompatAlert never claims a clean bill of health.
-	const clusterK8s =
-		cluster && "cluster_version" in cluster.data.config &&
-		typeof cluster.data.config.cluster_version === "string"
-			? cluster.data.config.cluster_version || undefined
-			: undefined;
+	// As it will DEPLOY: an unset version resolves to the catalog default (#5314).
+	const clusterK8s = useClusterK8sVersion();
 	const addonIds = useMemo(
 		() =>
 			nodes
