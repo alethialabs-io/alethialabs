@@ -94,7 +94,8 @@ export function EnvSettingsCard({
 	// The compat subject, assembled from the store — no new query. `addon` nodes are the environment's
 	// enabled marketplace installs; the config-time resolver also sees Hetzner data services and BYO
 	// charts, which is why CompatAlert never claims a clean bill of health.
-	// As it will DEPLOY: an unset version resolves to the catalog default (#5314).
+	// As it will DEPLOY: an unset version resolves to the catalog default (#5314) — but not on
+	// BYO-IaC, where the module decides it and an unset one stays `not_evaluable` (#5365).
 	const clusterK8s = useClusterK8sVersion();
 	const addonIds = useMemo(
 		() =>
@@ -140,7 +141,7 @@ export function EnvSettingsCard({
 						    something actually fails — see CompatAlert's two honesty rules. */}
 						<CompatAlert
 							provider={provider}
-							k8sVersion={clusterK8s}
+							k8sVersion={clusterK8s.version}
 							addonIds={addonIds}
 						/>
 						<ConfigFields

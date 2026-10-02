@@ -34,3 +34,43 @@ export function resolveK8sVersion(
 	if (provider && isCloudProviderSlug(provider)) return DEFAULT_K8S_VERSION[provider];
 	return undefined;
 }
+
+/**
+ * Why a BYO-IaC cluster with no explicit version cannot be judged. Shown wherever the canvas would
+ * otherwise say "Unverified" with the engine's generic "version is unset" note.
+ */
+export const BYO_IAC_K8S_VERSION_REASON = "Your IaC module decides the Kubernetes version.";
+
+/** The version a compat check judges, and — when there is none — why, if the engine cannot say. */
+export interface JudgedK8sVersion {
+	/** The version to judge. `undefined` → the engine answers `not_evaluable`. */
+	version: string | undefined;
+	/**
+	 * Set only when `version` is undefined for a reason the engine cannot know (today: a BYO-IaC
+	 * module owns the version). Surfaces show it in place of the engine's generic coverage note.
+	 */
+	reason: string | undefined;
+}
+
+/**
+ * The Kubernetes version a compat check must judge, given how the environment is provisioned.
+ *
+ * Template path: `resolveK8sVersion` — explicit wins, unset → the catalog default it deploys as.
+ * BYO-IaC path: the customer's module decides the version and the catalog default is never applied,
+ * so an explicit value is judged as written and an unset one stays `not_evaluable` with
+ * BYO_IAC_K8S_VERSION_REASON. Same split as the config-time report (`buildConfigSnapshot` in
+ * app/server/actions/projects.ts) and the apply gate (`compatK8sVersion` in
+ * packages/core/provisioner/deploy.go), so the canvas cannot judge a version nobody deploys.
+ */
+export function judgedK8sVersion(
+	provider: string | null | undefined,
+	configVersion: string | null | undefined,
+	byoIac: boolean,
+): JudgedK8sVersion {
+	if (byoIac) {
+		return configVersion
+			? { version: configVersion, reason: undefined }
+			: { version: undefined, reason: BYO_IAC_K8S_VERSION_REASON };
+	}
+	return { version: resolveK8sVersion(provider, configVersion), reason: undefined };
+}
