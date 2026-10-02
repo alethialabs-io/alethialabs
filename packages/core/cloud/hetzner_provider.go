@@ -100,7 +100,58 @@ func (p *hetznerProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateCapacityType(config, hetznerSpotRefusal); err != nil {
 		return err
 	}
+	if err := validateHetznerClusterVersion(config); err != nil {
+		return err
+	}
 	return validateNetworkCIDR(config, "network_cidr", hetznerMaxNetworkPrefix)
+}
+
+// HetznerKubernetesVersion is the Kubernetes version a Hetzner cluster installs: Talos v1.13.6's
+// coupled patch. It is the default of `kubernetes_version` in
+// infra/templates/project/hetzner/variables.tf. That file is the source; this is its Go copy, and
+// TestHetznerKubernetesPinMatchesTemplate re-reads the template (plus the cilium.tf render
+// fallback and the console's generated template-knobs manifest) on every run, so a change to
+// one copy that leaves the others behind fails the build.
+const HetznerKubernetesVersion = "1.35.6"
+
+// hetznerKubernetesVersion returns the version tofu receives as `kubernetes_version`: an
+// explicit provider_config pin, else HetznerKubernetesVersion. ProviderTfvars and
+// validateHetznerClusterVersion both call it, so the version the gate admits and the version
+// Talos installs are one value.
+func hetznerKubernetesVersion(config *types.ProjectConfig) string {
+	return orDefault(providerString(config.Cluster.ProviderConfig, "kubernetes_version"), HetznerKubernetesVersion)
+}
+
+// validateHetznerClusterVersion refuses a `cluster_version` that is neither unset nor the minor
+// Hetzner installs (#5366). ProviderTfvars never forwards `cluster_version` on Hetzner (Talos
+// installs a concrete patch, see hetznerKubernetesVersion), so any other value is a version the
+// cluster does not run. The compat gate and the console card would still read it, and would judge
+// and show a version that is not installed. Existing rows are not rewritten: a row that holds
+// another value gets this error on its next apply, and the error names the fix.
+func validateHetznerClusterVersion(config *types.ProjectConfig) error {
+	set := strings.TrimSpace(config.Cluster.ClusterVersion)
+	if set == "" {
+		return nil
+	}
+	installed := hetznerKubernetesVersion(config)
+	if k8sMinor(set) == k8sMinor(installed) {
+		return nil
+	}
+	return configError("cluster.cluster_version", set, fmt.Sprintf(
+		"Hetzner installs Kubernetes %s, pinned by its Talos release, and does not read "+
+			"cluster_version. Clear cluster_version (or set it to %s)",
+		installed, k8sMinor(installed)))
+}
+
+// k8sMinor trims a Kubernetes version to "MAJOR.MINOR" ("v1.35.6" -> "1.35"). A value with no
+// minor part is returned as written, so it never equals a real minor.
+func k8sMinor(v string) string {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 2 {
+		return v
+	}
+	return parts[0] + "." + parts[1]
 }
 
 // Every key this file assigns to root tfvars. Hetzner has ONE root-level component — the database,
@@ -218,7 +269,7 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		// ClusterVersion (a bare minor from the console) is deliberately NOT forwarded here — it would
 		// resolve to an unpullable image tag.
 		"talos_version":      orDefault(providerString(config.Cluster.ProviderConfig, "talos_version"), "v1.13.6"),
-		"kubernetes_version": orDefault(providerString(config.Cluster.ProviderConfig, "kubernetes_version"), "1.35.6"),
+		"kubernetes_version": hetznerKubernetesVersion(config),
 
 		// Control plane (single-node, cheapest).
 		"control_plane_count":       controlPlaneCount,

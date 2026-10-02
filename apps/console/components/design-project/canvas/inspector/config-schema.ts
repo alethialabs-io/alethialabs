@@ -25,6 +25,12 @@ import {
 	wafUnavailableReason,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import {
+	displayedK8sVersion,
+	HETZNER_K8S_MINOR,
+	HETZNER_K8S_VERSION,
+	hetznerVersionConflicts,
+} from "@/lib/cloud-providers/hetzner-k8s-pin";
 import { coerceEnum } from "@/lib/coerce";
 import { SPOT_NOTE, effectiveCapacityType } from "@/lib/cloud-providers/node-capacity";
 import { toStrArray } from "@/lib/coerce";
@@ -404,6 +410,33 @@ function engineLabel(config: {
  */
 function nodeSizeWrite(size: NodeSize): { node_size: NodeSize; instance_types: string[] } {
 	return { node_size: size, instance_types: [] };
+}
+
+/**
+ * The Kubernetes version options for the cluster card. Every cloud but Hetzner offers its account's
+ * versions (`k8sVersionOptions`). Hetzner installs one pinned version (#5366), so its list is the
+ * pinned minor alone, plus — only for a row that already holds another minor — that stored value,
+ * marked unavailable with the reason, so the select shows what is stored and offers the fix.
+ */
+function clusterVersionOptions(ctx: FieldCtx): FieldOption[] {
+	if (ctx.provider !== "hetzner") return k8sVersionOptions(ctx);
+	const pinned: FieldOption = {
+		value: HETZNER_K8S_MINOR,
+		label: `${HETZNER_K8S_MINOR} (installs ${HETZNER_K8S_VERSION})`,
+	};
+	const stored = ctx.config.cluster_version;
+	if (typeof stored !== "string" || !hetznerVersionConflicts(stored)) return [pinned];
+	return [
+		pinned,
+		{
+			value: stored,
+			label: stored,
+			advisory: {
+				level: "unavailable",
+				note: `Hetzner installs Kubernetes ${HETZNER_K8S_VERSION}, pinned by its Talos release. The next deploy refuses ${stored}: choose ${HETZNER_K8S_MINOR}.`,
+			},
+		},
+	];
 }
 
 export const CONFIG_SCHEMA: ConfigSchemaMap = {
@@ -918,7 +951,15 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Kubernetes version",
 						requiresProvider: true,
 						capabilityAxis: "k8s_version",
-						options: k8sVersionOptions,
+						options: clusterVersionOptions,
+						// Hetzner installs one version, pinned by its Talos release, and never reads this
+						// field (#5366), so it is read-only there and names the pin. The one exception is a
+						// row that already holds another minor: the apply refuses it, so the select stays
+						// open with the pinned minor as the way out (see clusterVersionOptions).
+						unavailableWhen: (c, { provider }) =>
+							provider === "hetzner" && !hetznerVersionConflicts(c.cluster_version)
+								? `Hetzner installs Kubernetes ${HETZNER_K8S_VERSION}, pinned by its Talos release. It cannot be changed here.`
+								: null,
 					},
 					{
 						key: "instance_types",
@@ -1087,8 +1128,8 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 				],
 			},
 		],
-		summary: (c) =>
-			`k8s ${c.cluster_version ?? "—"} · ${c.node_min_size ?? 1}–${
+		summary: (c, provider) =>
+			`k8s ${displayedK8sVersion(provider, c.cluster_version) ?? "—"} · ${c.node_min_size ?? 1}–${
 				c.node_max_size ?? 1
 			} nodes`,
 	},
