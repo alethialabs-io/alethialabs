@@ -174,7 +174,7 @@ self_test() {
 	}
 
 	echo "gke-op-errors self-test"
-	out="$(run_main e2e-run1 europe-west3-a itgix-test ok)"
+	out="$(run_main e2e-run1 europe-west3-a e2e-test-project ok)"
 	grep -q "^::error title=GKE CREATE_CLUSTER failed (gke-euw3-e2e-run1-alethia)::code 3: Conflicting IP cidr range" <<<"$out"
 	check "a failed CREATE_CLUSTER is annotated with its code and GKE's own message" $?
 	grep -q "reserved IP range '172.16.0.0/16'. second line" <<<"$out"
@@ -189,7 +189,7 @@ self_test() {
 	first_create="$(grep -n 'CREATE_CLUSTER  DONE' <<<"$out" | head -1 | cut -d: -f1)"
 	first_delete="$(grep -n 'DELETE_CLUSTER  DONE' <<<"$out" | head -1 | cut -d: -f1)"
 	check "operations are listed oldest first" "$([ "${first_create:-0}" -gt 0 ] && [ "$first_create" -lt "${first_delete:-0}" ] && echo 0 || echo 1)"
-	grep -q -- "--project itgix-test container operations list --zone europe-west3-a --format=json" "$STUB_LOG"
+	grep -q -- "--project e2e-test-project container operations list --zone europe-west3-a --format=json" "$STUB_LOG"
 	check "the list is scoped to the run's project and zone" $?
 	! grep -qv "operations list" "$STUB_LOG"
 	check "the only gcloud verb issued is a read (operations list)" $?
