@@ -312,7 +312,12 @@ variable "hetzner_s3_secret_key" {
 variable "admin_kubeconfig_cert_lifetime" {
   description = "TTL for the Talos admin kubeconfig client cert (.cluster.adminKubeconfig.certLifetime). Pinned LOW (default 24h) so placement-minted kubeconfigs are short-lived; the Talos default is 1 year. Go time.Duration format."
   type        = string
-  default     = "24h0m0s"
+  # The runner refuses to hand a user an admin kubeconfig whose certificate outlives 8h (#5326,
+  # mintAdminLifetimeCap in apps/runner/internal/agent/kubeconfig_mint.go), so at 24h every admin
+  # mint on this cluster is refused; read-only mints are unaffected. Lowering this is held back because
+  # a dedicated deploy holds ONE cert from talos_cluster_kubeconfig through every post-apply stage,
+  # whose timeouts sum past 1h, and probe/drift/destroy read that same stored cert (#5330).
+  default = "24h0m0s"
   validation {
     # A parseable, non-trivial duration — reject an empty/garbage value that would silently fall back
     # to Talos's 1-year default and defeat the short-lived posture.

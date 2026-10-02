@@ -8883,7 +8883,7 @@
 			"required": false,
 			"description": "In-cluster registry hosts (registry-<name>.registries.svc.cluster.local) to trust over plain HTTP via a containerd mirror. Empty on a cluster with no registry node.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:334",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:339",
 			"readBy": [
 				"hetzner"
 			],

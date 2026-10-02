@@ -63,6 +63,7 @@ const (
 	mintReasonShape         = "This cloud cannot issue the requested kubeconfig shape."
 	mintReasonSeal          = "The runner could not seal the credential to the client key."
 	mintReasonSharedCluster = "Kubeconfig mints are not available for an environment placed on a shared cluster."
+	mintReasonAdminLifetime = "The cluster's admin credential would outlive the 8-hour kubeconfig limit, so it was not issued."
 )
 
 // mintFailureReasons is every sentence above, in the TS file's order.
@@ -76,7 +77,17 @@ var mintFailureReasons = []string{
 	mintReasonShape,
 	mintReasonSeal,
 	mintReasonSharedCluster,
+	mintReasonAdminLifetime,
 }
+
+// mintAdminLifetimeCap is the longest an admin credential may REALLY live (#5326): the request TTL's
+// own ceiling (8h). An admin credential's lifetime is the cloud's, not the TTL — a Talos admin
+// certificate lives for the cluster's adminKubeconfig.certLifetime (24h on the managed hetzner
+// template, infra/templates/project/hetzner/variables.tf) and the Talos API cannot shorten it per request. A
+// system:masters certificate cannot be revoked short of a CA rotation, so one that would outlive the
+// cap is never handed out. The read-only tier is unaffected: its credential is a TokenRequest for the
+// TTL, and the admin certificate it uses for setup stays in this process's memory.
+const mintAdminLifetimeCap = time.Duration(types.KubeconfigMintTTLMaxSeconds) * time.Second
 
 // Errors the handler returns WITHOUT a mint failure to post. Their text is fixed: the dispatcher puts
 // a returned error into the job's error_message, the job's STDERR log and Sentry.
@@ -364,7 +375,8 @@ func (w *Runner) mintCredential(ctx context.Context, job *Job, provider string, 
 		// The cloud's own credential, with its REAL expiry — which may be shorter than the TTL (an EKS
 		// token lives 14 minutes) or longer (a Talos admin certificate's lifetime is the cluster's
 		// adminKubeconfig.certLifetime, which the Talos API does not let a caller shorten). Claiming a
-		// shorter one than the credential really has would be a lie the user acts on.
+		// shorter one than the credential really has would be a lie the user acts on. A longer one is
+		// refused below when it would outlive mintAdminLifetimeCap.
 		if admin.cert != nil {
 			cred.ExpiresAt = admin.cert.NotAfter
 			if failure := fillCredential(&cred, target, kubeaccess.StaticCredential{
@@ -380,6 +392,9 @@ func (w *Runner) mintCredential(ctx context.Context, job *Job, provider string, 
 		}
 	default:
 		return none, private, failMint(mintReasonUnknown, "tier", nil)
+	}
+	if spec.Tier == types.KubeconfigMintTierAdmin && time.Until(cred.ExpiresAt) > mintAdminLifetimeCap {
+		return none, private, failMint(mintReasonAdminLifetime, "admin lifetime", nil)
 	}
 	if err := cred.Validate(); err != nil {
 		return none, private, failMint(mintReasonUnknown, "validate credential", err)
