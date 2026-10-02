@@ -1195,13 +1195,22 @@ BEGIN
     RAISE EXCEPTION 'kubeconfig_mint_requests: job % is not a MINT_KUBECONFIG job in org %', NEW.job_id, NEW.org_id
       USING ERRCODE = '42501';
   END IF;
+  -- The credential binding (#5310). A row bound to a service token must name a token that is THIS
+  -- requester's, pinned to THIS org: otherwise a writer could bind a mint to somebody else's token
+  -- (or another org's), and that token — not the requester — would be the one allowed to collect it.
+  IF NEW.service_token_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.cli_service_tokens t
+                  WHERE t.id = NEW.service_token_id AND t.organization_id = NEW.org_id
+                    AND t.created_by = NEW.actor_user_id) THEN
+    RAISE EXCEPTION 'kubeconfig_mint_requests: service token % is not the requester''s token in org %', NEW.service_token_id, NEW.org_id
+      USING ERRCODE = '42501';
+  END IF;
   RETURN NEW;
 END;
 $$;
 
 DROP TRIGGER IF EXISTS kubeconfig_mint_requests_bind_org ON public.kubeconfig_mint_requests;
 CREATE TRIGGER kubeconfig_mint_requests_bind_org
-  BEFORE INSERT OR UPDATE OF org_id, cluster_id, job_id ON public.kubeconfig_mint_requests
+  BEFORE INSERT OR UPDATE OF org_id, cluster_id, job_id, actor_user_id, service_token_id ON public.kubeconfig_mint_requests
   FOR EACH ROW EXECUTE FUNCTION public.kubeconfig_mint_requests_bind_org();
 
 -- Credential tables (scope-aware): a `personal` row is visible only to its author

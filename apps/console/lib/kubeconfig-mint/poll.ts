@@ -8,6 +8,12 @@
 // row, so cannot consume it either. The WHERE clauses name the org, the actor, the cluster and the id
 // as well, so the query means the same thing on a database whose RLS was somehow off.
 //
+// WHICH CREDENTIAL (#5310). The person is not enough: every service token a person mints acts AS that
+// person, so person-scoping let one of their tokens consume another's mint. The WHERE clause also
+// names the credential the row is bound to — the token's id, or "a session" (service_token_id IS
+// NULL). That predicate is the binding; RLS stays person-scoped, because the session GUCs carry no
+// credential to compare against.
+//
 // READ ONCE. A `ready` row is served by `DELETE … RETURNING sealed_result` — the statement that reads
 // the ciphertext is the statement that removes it, so two concurrent polls cannot both get it: one
 // DELETE wins the row lock, and the other finds nothing and answers `consumed` (a 404). The delivery
@@ -22,7 +28,7 @@
 // does exactly that). It is answered `failed` with the generic reason at once, rather than leaving the
 // client to poll out the rest of the window.
 
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { withActorScope } from "@/lib/db";
 import { jobs, kubeconfigMintRequests, projectCluster } from "@/lib/db/schema";
 import type {
@@ -30,8 +36,7 @@ import type {
 	KubeconfigMintTier,
 } from "@/lib/db/schema/enums";
 import type { CliKubeconfigMintPollResponse } from "@/lib/validations/cli-contract";
-import type { KubeconfigMintAuditChanges } from "@/types/jsonb.types";
-import { type MintClient, writeMintAudit } from "./audit";
+import { type MintClient, type MintCredential, writeMintAudit } from "./audit";
 import { KUBECONFIG_MINT_UNKNOWN_FAILURE } from "./reasons";
 import type { MintActor } from "./request";
 
@@ -41,7 +46,8 @@ export interface MintPollInput {
 	clusterId: string;
 	mintId: string;
 	client: MintClient;
-	credentialKind: KubeconfigMintAuditChanges["credential_kind"];
+	/** The credential polling. It must be the one the mint is bound to, or the mint is not found. */
+	credential: MintCredential;
 	sourceIp: string | null;
 	/**
 	 * Re-checks the actor's authority for the row's tier BEFORE anything is consumed. Returns false
@@ -75,8 +81,8 @@ interface MintRowHead {
 const TERMINAL_JOB: ReadonlySet<string> = new Set(["SUCCESS", "FAILED", "CANCELLED"]);
 
 /**
- * Answers one poll. `not-found` covers a mint that never existed, belongs to someone else, names a
- * different cluster, or was already swept; `consumed` is a `ready` mint another poll took first.
+ * Answers one poll. `not-found` covers a mint that never existed, belongs to someone else or to
+ * another of the same person's credentials, names a different cluster, or was already swept; `consumed` is a `ready` mint another poll took first.
  * Both reach the client as a 404 — neither says whose mint it was.
  */
 export async function pollKubeconfigMint(
@@ -88,6 +94,12 @@ export async function pollKubeconfigMint(
 		eq(kubeconfigMintRequests.cluster_id, clusterId),
 		eq(kubeconfigMintRequests.org_id, actor.orgId),
 		eq(kubeconfigMintRequests.actor_user_id, actor.userId),
+		// THE CREDENTIAL BINDING (#5310). actor_user_id is the person, and every service token that
+		// person minted acts as them — so without this a sibling token could consume the mint and
+		// deny the real requester. A token sees only its own mints; a session only a session's.
+		input.credential.kind === "service_token"
+			? eq(kubeconfigMintRequests.service_token_id, input.credential.tokenId)
+			: isNull(kubeconfigMintRequests.service_token_id),
 	);
 
 	return withActorScope(actor, async (tx): Promise<MintPollOutcome> => {
@@ -186,7 +198,7 @@ export async function pollKubeconfigMint(
 			ttlSeconds: row.ttl_seconds,
 			requestExpiresAt: row.expires_at,
 			client: input.client,
-			credentialKind: input.credentialKind,
+			credential: input.credential,
 			sourceIp: input.sourceIp,
 		});
 

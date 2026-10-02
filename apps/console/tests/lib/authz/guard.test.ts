@@ -649,6 +649,7 @@ describe("authorizeCli with a service-account token", () => {
 		expect(result).toEqual({
 			actor: SERVICE_ACTOR,
 			credential: "service_token",
+			serviceTokenId: "tok-1",
 			orgScope: [SERVICE_ACTOR.orgId],
 		});
 	});
@@ -662,8 +663,26 @@ describe("authorizeCli with a service-account token", () => {
 		expect(result).toEqual({
 			actor: SERVICE_ACTOR,
 			credential: "service_token",
+			serviceTokenId: "tok-1",
 			orgScope: [SERVICE_ACTOR.orgId],
 		});
+	});
+
+	// #5310: a route that binds state to the calling credential reads the token's OWN id. A payload
+	// carrying the org pin with no id is not one verifyCliToken produces, so it is refused rather than
+	// handed on as an anonymous token every other token of that profile would be indistinguishable from.
+	it("hands the route the token's own id, and refuses a pinned payload that has none", async () => {
+		const ok = await authorizeCli(serviceReq(), "manage_tokens", { type: "org" });
+		expect(ok).toMatchObject({ credential: "service_token", serviceTokenId: "tok-1" });
+		enforce.mockClear();
+
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "u-minter", type: "access", service_token_org_id: "org-A" },
+			error: undefined,
+		} as never);
+		const refused = await authorizeCli(serviceReq(), "manage_tokens", { type: "org" });
+		expect("error" in refused && refused.error.status).toBe(403);
+		expect(enforce).not.toHaveBeenCalled();
 	});
 
 	// THE ONE THAT MATTERS. Refused, never ignored: ignoring it would let a pipeline believe it is

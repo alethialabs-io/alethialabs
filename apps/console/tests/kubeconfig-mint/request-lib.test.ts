@@ -97,7 +97,12 @@ vi.mock("@/lib/runners/snapshot-sig", () => ({ signSnapshot: () => "sig" }));
 
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
+import type { MintCredential } from "@/lib/kubeconfig-mint/audit";
 import { requestKubeconfigMint } from "@/lib/kubeconfig-mint/request";
+
+const TOKEN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const SESSION: MintCredential = { kind: "session" };
+const TOKEN: MintCredential = { kind: "service_token", tokenId: TOKEN_ID };
 
 /** The resolved cluster row, with `over` applied. */
 function cluster(over: Record<string, unknown> = {}) {
@@ -122,15 +127,19 @@ beforeEach(() => {
 	deploy = { config_snapshot: { provider: "aws", cluster: { name: "eks-prod" } } };
 });
 
-/** Runs one request for `shape`/`tier` with the current fixtures. */
-async function run(shape: "exec" | "static" = "exec", tier: "readonly" | "admin" = "readonly") {
+/** Runs one request for `shape`/`tier`, as `credential`, with the current fixtures. */
+async function run(
+	shape: "exec" | "static" = "exec",
+	tier: "readonly" | "admin" = "readonly",
+	credential: MintCredential = SESSION,
+) {
 	queue = [target, deploy];
 	return requestKubeconfigMint({
 		actor: { userId: USER, orgId: ORG },
 		clusterId: CLUSTER,
 		request: { tier, ttl_seconds: 3600, shape, client_public_key: KEY },
 		client: "cli",
-		credentialKind: "service_token",
+		credential,
 		sourceIp: "203.0.113.7",
 	});
 }
@@ -193,6 +202,14 @@ describe("refusals", () => {
 		deploy = { config_snapshot: { provider: "aws", placement_mode: "dedicated" } };
 		expect((await run()).ok).toBe(true);
 		expect(events).toContain("insert:job");
+	});
+
+	// #5310: admin cluster credentials are for people. Refused FIRST — before the cluster is even
+	// read — so a token learns nothing about the cluster from the answer, and nothing is written.
+	it("a service token asking for ADMIN is refused before anything is read or written", async () => {
+		expect(await run("exec", "admin", TOKEN)).toEqual({ ok: false, refusal: "admin-needs-a-person" });
+		expect(events).toEqual([]);
+		expect(inserted).toEqual([]);
 	});
 
 	it("an environment that never deployed successfully is not provisioned", async () => {
@@ -273,6 +290,8 @@ describe("the write", () => {
 			shape: "exec",
 			client_public_key: KEY,
 		});
+		// A session's mint is bound to "a session": no token id.
+		expect(inserted[1]).toMatchObject({ service_token_id: null });
 		expect(inserted[1]).not.toHaveProperty("sealed_result");
 		expect(inserted[1]).not.toHaveProperty("status");
 	});
@@ -296,11 +315,21 @@ describe("the write", () => {
 				request_expires_at: EXPIRES.toISOString(),
 				credential_expires_by: new Date(EXPIRES.getTime() + 3_600_000).toISOString(),
 				client: "cli",
-				credential_kind: "service_token",
+				credential_kind: "session",
+				credential_id: null,
 				source_ip: "203.0.113.7",
 			},
 		});
 		expect(JSON.stringify(inserted[2])).not.toContain(KEY);
+	});
+
+	it("a service token's READ-ONLY mint is written, bound to that token, and audited with its id", async () => {
+		const out = await run("exec", "readonly", TOKEN);
+		expect(out.ok).toBe(true);
+		expect(inserted[1]).toMatchObject({ actor_user_id: USER, tier: "readonly", service_token_id: TOKEN_ID });
+		expect(inserted[2]).toMatchObject({
+			changes: { credential_kind: "service_token", credential_id: TOKEN_ID },
+		});
 	});
 
 	it("a failed audit insert fails the whole request — nothing commits, nothing is returned", async () => {

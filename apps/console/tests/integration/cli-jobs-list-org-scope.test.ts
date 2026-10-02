@@ -92,14 +92,18 @@ async function readJob(id: string) {
  * same `{ sub, org }` pair and differs only in which arm produced it.
  */
 function actingAs(userId: string, orgId: string, credential: CliCredential): void {
-	vi.mocked(authorizeCli).mockResolvedValue({
-		actor: { userId, orgId },
-		credential,
-		// Literal, with the credential→values mapping proven in tests/lib/authz/guard.ts. This
-		// file's subject is which ROWS a given scope reaches; that one's is which values a
-		// credential gets.
-		orgScope: credential === "service_token" || orgId === userId ? [orgId] : [orgId, userId],
-	});
+	// Literal, with the credential→values mapping proven in tests/lib/authz/guard.ts. This
+	// file's subject is which ROWS a given scope reaches; that one's is which values a
+	// credential gets.
+	vi.mocked(authorizeCli).mockResolvedValue(
+		credential === "service_token"
+			? { actor: { userId, orgId }, credential, serviceTokenId: "tok-1", orgScope: [orgId] }
+			: {
+					actor: { userId, orgId },
+					credential,
+					orgScope: orgId === userId ? [orgId] : [orgId, userId],
+				},
+	);
 }
 
 /** Drives the route and parses a 200 body. Fails loudly on any other status. */

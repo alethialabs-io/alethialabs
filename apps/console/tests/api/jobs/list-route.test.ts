@@ -267,6 +267,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { userId: USER, orgId: ORG },
 			credential: "service_token",
+			serviceTokenId: "tok-1",
 			orgScope: [ORG],
 		});
 		await drive("");
@@ -291,6 +292,7 @@ describe("GET /api/jobs — org scope, ?mine and the paging vocabulary (#3672)",
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { userId: USER, orgId: ORG },
 			credential: "service_token",
+			serviceTokenId: "tok-1",
 			orgScope: [ORG],
 		});
 		const res = await GET(
