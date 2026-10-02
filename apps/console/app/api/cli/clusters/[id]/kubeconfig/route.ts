@@ -8,24 +8,17 @@ import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { cliJson } from "@/lib/cli/respond";
 import { errorName } from "@/lib/errors";
 import { actionForTier } from "@/lib/kubeconfig-mint/clouds";
+import { MINT_RATE_WINDOW_MS, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
 import { mintError, noStore, readBoundedJson } from "@/lib/kubeconfig-mint/http";
 import {
 	type MintRequestRefusal,
 	requestKubeconfigMint,
 } from "@/lib/kubeconfig-mint/request";
 import { log } from "@/lib/observability/log";
-import { checkRateLimit } from "@/lib/rate-limit";
 import {
 	cliKubeconfigMintRequest,
 	cliKubeconfigMintResponse,
 } from "@/lib/validations/cli-contract";
-
-/** Mint requests one person may make in {@link MINT_RATE_WINDOW_MS}, per org. An exec-credential
- *  kubeconfig re-mints once per TTL (15 min at the shortest), so honest use is a handful per hour;
- *  this bounds a loop, not a person. */
-const MINT_RATE_LIMIT = 20;
-/** The sliding window {@link MINT_RATE_LIMIT} is counted over. */
-const MINT_RATE_WINDOW_MS = 10 * 60_000;
 
 /** The largest request body read. A valid one is under 200 bytes; this is read before authentication. */
 const MAX_BODY_BYTES = 4096;
@@ -86,12 +79,8 @@ export async function POST(
 	// A malformed id cannot name a cluster; answering 404 here keeps it out of a uuid cast below.
 	if (!z.uuid().safeParse(id).success) return mintError(404, "Cluster not found");
 
-	const limit = checkRateLimit(
-		`kubeconfig-mint:${actor.orgId}:${actor.userId}`,
-		MINT_RATE_LIMIT,
-		MINT_RATE_WINDOW_MS,
-	);
-	if (!limit.ok) {
+	// The budget is shared with the console's download (lib/kubeconfig-mint/gates.ts).
+	if (!takeMintRateLimit(actor)) {
 		const res = mintError(429, "Too many kubeconfig mint requests; try again in a few minutes");
 		res.headers.set("Retry-After", String(Math.ceil(MINT_RATE_WINDOW_MS / 1000)));
 		return res;

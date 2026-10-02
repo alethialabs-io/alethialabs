@@ -92,7 +92,7 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
  * (#5250 §5 "ReBAC": "No AI tool may call the mint"). A person runs `alethia cluster kubeconfig`;
  * a model does not.
  *
- * Paths are console-root-relative prefixes. `tests/kubeconfig-mint/ai-tool-denylist.test.ts` walks
+ * Paths are console-root-relative prefixes — a directory (ending in `/`) or one file. `tests/kubeconfig-mint/ai-tool-denylist.test.ts` walks
  * the import graph of every agent entry point (lib/ai, lib/agent, the agent and MCP routes) and fails
  * if any file reaches one of them, and fails if one of them stops existing — a prefix that matches
  * nothing denies nothing. Add the module here BEFORE adding the capability anywhere else.
@@ -102,6 +102,10 @@ export const AI_TOOL_DENIED_MODULES: readonly string[] = [
 	"lib/kubeconfig-mint/",
 	"app/api/cli/clusters/[id]/kubeconfig/",
 	"app/api/jobs/[id]/kubeconfig-mint/",
+	// The console's download (#5285): the server actions that request and collect a mint for the
+	// session, and the browser code that opens the seal and saves the file.
+	"app/server/actions/kubeconfig-download.ts",
+	"components/clusters/kubeconfig-download/",
 ];
 
 /** Tool names no tool may be registered under, for the same reason (#5281). Matched as a substring,

@@ -136,15 +136,24 @@ describe("AI tool-scope denylist — the import graph", () => {
 	});
 
 	it("every denied prefix still names real files (a prefix that matches nothing denies nothing)", () => {
-		const empty = AI_TOOL_DENIED_MODULES.filter(
-			(prefix) => filesUnder(prefix.replace(/\/$/, "")).length === 0,
-		);
+		// A directory prefix ends in `/`; a file prefix is matched among its directory's files.
+		const empty = AI_TOOL_DENIED_MODULES.filter((prefix) => {
+			const dir = prefix.endsWith("/") ? prefix.replace(/\/$/, "") : dirname(prefix);
+			return !filesUnder(dir).some((f) => f.startsWith(prefix));
+		});
 		expect(empty).toEqual([]);
 	});
 
 	it("the walker finds a denied module when one IS reachable", () => {
 		const { hits } = walk(["app/api/cli/clusters/[id]/kubeconfig/route.ts"]);
 		expect(hits.some((chain) => chain.at(-1)?.startsWith("lib/kubeconfig-mint/"))).toBe(true);
+	});
+
+	it("the walker finds the console download from the cluster card (#5285)", () => {
+		const { hits } = walk(["components/clusters/cluster-card.tsx"]);
+		expect(
+			hits.some((chain) => chain.at(-1)?.startsWith("components/clusters/kubeconfig-download/")),
+		).toBe(true);
 	});
 });
 
