@@ -135,6 +135,29 @@ How you get cert-manager depends on how you created the project:
 A managed certificate installs cert-manager and also gives it a public issuer for your domain.
 KServe does not need that issuer. KServe creates its own self-signed issuer in its own namespace.
 
+### What it costs per hour
+
+The cluster this template was last proven on cost **EUR 0.1707 an hour**, for servers only.
+
+| | |
+|---|---|
+| Measured | 2026-10-01, in run [36916156426](https://github.com/alethialabs-io/alethialabs/actions/runs/36916156426) |
+| Shape | 3 × cpx32 in nbg1: one control plane and two workers |
+| Price per server | EUR 0.0569 an hour |
+| Source | The Hetzner API, read during the run. Each server is priced from its own server type's price for its location |
+
+Read the figure as a lower bound, not as the bill:
+
+- It covers servers only. It does not price the public IPv4 addresses or any volumes.
+- It holds for that date and that shape. Hetzner can change its prices, and another cloud or node
+  size costs a different amount.
+- It is the whole cluster's cost. The run deployed all three templates on that cluster, so it is
+  not the AI workload's share.
+
+The measurement and the run's other evidence are in the
+[proof bundle](https://github.com/alethialabs-io/alethialabs/tree/main/demos/proofs/templates/ai/20261001T200301Z),
+under `cost` in `template-summary.json`.
+
 <Callout type="warn">
   **This template provisions no GPU.** It runs CPU-only by default. A GPU node pool is the most
   expensive thing you can provision by accident, so enabling one is a deliberate change you commit

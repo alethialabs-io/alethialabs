@@ -118,7 +118,10 @@ jobs:
           fi
           # `docs` — the Vale prose lint. Gate on the whole docs app so a change to the
           # .vale.ini / Alethia style / vocab re-runs the lint too, not just content edits.
-          if echo "$changed" | grep -qE '^apps/docs/'; then
+          # demos/proofs/templates/ai/ too: a new AI-template proof bundle changes the cost figure
+          # the starter-templates page must quote (#5302), and a PR that only adds the bundle would
+          # otherwise never run the check that notices the page is now stale.
+          if echo "$changed" | grep -qE '^(apps/docs/|demos/proofs/templates/ai/)'; then
             echo "docs=true" >> "$GITHUB_OUTPUT"
           else
             echo "docs=false" >> "$GITHUB_OUTPUT"
@@ -2999,6 +3002,16 @@ jobs:
         run: |
           node scripts/check-links.mjs --self-test
           node scripts/check-links.mjs
+      # #5302: the AI template's hourly cost on the starter-templates page is derived from the
+      # newest proof bundle's `cost` block, not typed and forgotten. Fails when the page and the
+      # bundle disagree in either direction (a missing fact, or a stray figure beside it). The
+      # self-test plants each defect class first.
+      - name: The AI template's published cost matches its newest proof bundle
+        if: needs.detect-changes.outputs.docs == 'true'
+        working-directory: apps/docs
+        run: |
+          node scripts/check-template-cost.mjs --self-test
+          node scripts/check-template-cost.mjs
       # Vale shells out to `mdx2vast` to parse .mdx (prose only — it drops fenced code,
       # code spans, URLs, JSX/ESM); it must be on $PATH.
       - name: Install the MDX preprocessor
