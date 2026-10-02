@@ -124,7 +124,7 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 
 		// ACK (managed Kubernetes)
 		"provision_ack":       true,
-		"ack_cluster_version": resolveK8sVersion("alibaba", config.Cluster.ClusterVersion),
+		"ack_cluster_version": ResolveK8sVersion("alibaba", config.Cluster.ClusterVersion),
 
 		// DNS (Alibaba Cloud DNS) — no WAF term, the offer is withdrawn (#1841).
 		// Same rule as aws and azure: CREATE the domain only when the caller brought none of their

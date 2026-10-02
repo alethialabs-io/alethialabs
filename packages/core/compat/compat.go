@@ -23,7 +23,14 @@ import (
 // The cardinal rule (from verify): a version the matrix has no data for yields
 // not_evaluable with a plain-language Coverage note — NEVER a silent pass.
 func Evaluate(s Subject) *Report {
-	m := MustLoad()
+	return EvaluateMatrix(MustLoad(), s)
+}
+
+// EvaluateMatrix is Evaluate against an explicit matrix rather than the embedded one. It exists so a
+// caller can prove what its gate does with a coupling the shipped matrix does not record today — the
+// embedded matrix has no add-on window that excludes the current catalog default, so "an unset
+// version is refused when the default is incompatible" (#5314) could otherwise not be shown at all.
+func EvaluateMatrix(m *Matrix, s Subject) *Report {
 	rep := &Report{CatalogVersion: m.CatalogVersion}
 
 	for _, provider := range s.Providers {

@@ -5,6 +5,7 @@
 // units (config-time warn resolver #1218, apply gate render #1219) import from here.
 export { evalAddOn, evaluate, isBlocking, rangeLabel, unwaived } from "./engine";
 export { addonCompat } from "./addon";
+export { resolveK8sVersion } from "./resolve";
 export type { AddOnCompat } from "./addon";
 export { MATRIX } from "./generated/matrix";
 export type {

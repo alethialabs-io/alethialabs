@@ -50,12 +50,26 @@ func resolveCacheNodeType(provider string, c types.ProjectCacheConfig) string {
 	return c.NodeType
 }
 
-// resolveK8sVersion returns the cluster's Kubernetes version: the caller's explicit value
+// ResolveK8sVersion returns the cluster's Kubernetes version: the caller's explicit value
 // when set, otherwise the catalog's per-provider default. Keeping this in the catalog SSOT
 // (rather than an inline literal per provider) is why the managed-cloud defaults no longer
 // drift — bump packages/core/catalog/catalog.json to change them. Returns "" only when the
-// provider has no catalog default (e.g. Hetzner, whose version is picked by Talos).
-func resolveK8sVersion(provider, configVersion string) string {
+// provider has no catalog default.
+//
+// EXPORTED because the version-compatibility gate (provisioner/deploy.go) must judge the version
+// that will actually deploy, not the raw config value. A cluster with cluster_version unset deploys
+// this default, and a gate that read the raw "" answered not_evaluable and skipped every
+// compatibility check for exactly the clusters that pin nothing (#5314). One resolver, two callers:
+// the managed clouds' ProviderTfvars and the gate both call this, so the two cannot disagree.
+// The resolved value is never written back to the config or the snapshot — unset keeps meaning
+// "follow the catalog". The console mirrors this in apps/console/lib/compat/resolve.ts, held equal
+// by testdata/k8s_version_resolution.json.
+//
+// Hetzner is the one cloud whose tfvars do NOT forward this value: Talos needs a concrete patch, so
+// hetzner_provider.go pins kubernetes_version itself. For an unset version the catalog default here
+// and that pin share a minor, which is all the gate reads (provisioner/compat_resolved_version_test.go
+// holds that).
+func ResolveK8sVersion(provider, configVersion string) string {
 	if configVersion != "" {
 		return configVersion
 	}

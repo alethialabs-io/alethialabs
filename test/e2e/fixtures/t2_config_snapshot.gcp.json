@@ -93,8 +93,7 @@
 				"id": "COMPAT-K8S-CLOUD-GCP",
 				"title": "Kubernetes availability on gcp",
 				"severity": "high",
-				"status": "not_evaluable",
-				"coverage": "cluster Kubernetes version is unset or unparseable"
+				"status": "pass"
 			},
 			{
 				"id": "COMPAT-ADDON-RELOADER",
@@ -105,10 +104,10 @@
 			}
 		],
 		"summary": {
-			"pass": 0,
+			"pass": 1,
 			"fail": 0,
 			"warn": 0,
-			"not_evaluable": 2
+			"not_evaluable": 1
 		}
 	},
 	"git_access_token": ""

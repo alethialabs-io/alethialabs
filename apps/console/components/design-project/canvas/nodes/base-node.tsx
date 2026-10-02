@@ -11,6 +11,7 @@ import { NODE_REGISTRY, type NodeFact } from "../graph/node-registry";
 import { configName } from "../graph/node-config";
 import type { NodeConfig } from "../graph/types";
 import { nodeAccessibleName } from "./node-name";
+import { useClusterK8sVersion } from "../use-cluster-k8s-version";
 import { NODE_STATUS_META, gitopsBadge, useNodeStatus } from "@/lib/canvas/node-status";
 import { useCanvasLod } from "@/lib/canvas/use-canvas-lod";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
@@ -60,14 +61,10 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	const provider = useCanvasStore((s) => s.getEffectiveProvider(id));
 	const resolved = useNodeStatus(id);
 	const lod = useCanvasLod();
-	// The env's Kubernetes minor, for the add-on compat overlay. Above the early return — hooks must
-	// run in the same order on every render. Defensive: no cluster / unset version → undefined → the
-	// engine answers `not_evaluable` rather than a false pass.
-	const clusterK8s = useCanvasStore((s) => {
-		const c = s.nodes.find((n) => n.data.kind === "cluster")?.data.config;
-		const v = c && "cluster_version" in c ? c.cluster_version : null;
-		return typeof v === "string" && v ? v : undefined;
-	});
+	// The env's Kubernetes version as it will deploy, for the add-on compat overlay. Above the early
+	// return — hooks must run in the same order on every render. An unset version resolves to the
+	// catalog default (#5314); no cluster → undefined → `not_evaluable`, never a false pass.
+	const clusterK8s = useClusterK8sVersion();
 	if (!node) return null;
 
 	const def = NODE_REGISTRY[node.data.kind];
