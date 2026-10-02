@@ -65,7 +65,11 @@ use `alethia init` for the guided first-run setup.
 alethia logout
 ```
 
-Removes `~/.config/alethia/credentials.json`.
+Removes `~/.config/alethia/credentials.json` and the kubeconfig credential cache, for every
+organization. After that, an exec kubeconfig from `alethia cluster kubeconfig` fails until you run
+`alethia login` again. If the CLI cannot delete the cache, `alethia logout` prints the reason and
+exits with a non-zero status. See
+[Revoke access](/guides/get-a-kubeconfig#revoke-access).
 
 ## Token Lifecycle
 
