@@ -233,11 +233,13 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 		return !field?.visibleWhen || field.visibleWhen(config, ctx);
 	};
 
-	it("shows the cluster capacity type on aws, and elsewhere only while it still says spot (#5266)", () => {
-		expect(visible("cluster", "capacity_type", "aws")).toBe(true);
-		expect(visible("cluster", "capacity_type", "gcp")).toBe(false);
-		// A cluster moved off aws keeps the control, so the refusal ValidateConfig raises can be fixed here.
-		expect(visible("cluster", "capacity_type", "gcp", { capacity_type: "spot" })).toBe(true);
+	it("shows the cluster capacity type on every cloud that maps Spot, and on hetzner only while it still says spot (#5315)", () => {
+		for (const provider of ["aws", "gcp", "azure", "alibaba"] as const) {
+			expect(visible("cluster", "capacity_type", provider)).toBe(true);
+		}
+		expect(visible("cluster", "capacity_type", "hetzner")).toBe(false);
+		// A cluster moved onto hetzner keeps the control, so the refusal ValidateConfig raises can be fixed here.
+		expect(visible("cluster", "capacity_type", "hetzner", { capacity_type: "spot" })).toBe(true);
 	});
 
 	it("shows storage_gb/replicas only on hetzner", () => {
@@ -589,5 +591,46 @@ describe("dns connector selection", () => {
 
 	it("keeps the column-backed zone field", () => {
 		expect(dnsFields.map((f) => f.key)).toContain("zone_id");
+	});
+});
+
+describe("cluster capacity type (#5315)", () => {
+	const field = getKindConfig("cluster")
+		?.sections.flatMap((s) => s.fields)
+		.find((f) => f.key === "capacity_type");
+	const ctx = (provider: CloudProviderSlug, config: Record<string, unknown> = {}): FieldCtx => ({
+		provider,
+		config,
+		caps: NO_CAPABILITIES,
+	});
+	const spotNote = (provider: CloudProviderSlug): string | undefined => {
+		const options = field?.options;
+		const resolved = typeof options === "function" ? options(ctx(provider)) : options;
+		return resolved?.find((o) => o.value === "spot")?.description;
+	};
+
+	it("says on azure that Spot is a separate worker pool and the system pool stays on-demand", () => {
+		expect(spotNote("azure")).toMatch(/separate Spot worker pool/);
+		expect(spotNote("azure")).toMatch(/system pool on Spot/);
+		expect(spotNote("aws")).not.toMatch(/worker pool/);
+		expect(spotNote("gcp")).toMatch(/Google Cloud/);
+		expect(spotNote("alibaba")).toMatch(/Alibaba Cloud/);
+	});
+
+	it("is unavailable on GKE Autopilot, except while it says spot so it can be changed", () => {
+		const autopilot = { provider_config: { enable_autopilot: true } };
+		expect(field?.unavailableWhen?.(autopilot, ctx("gcp", autopilot))).toMatch(/Autopilot/);
+		const stuck = { ...autopilot, capacity_type: "spot" };
+		expect(field?.unavailableWhen?.(stuck, ctx("gcp", stuck))).toBeNull();
+		expect(field?.unavailableWhen?.({}, ctx("gcp"))).toBeNull();
+	});
+
+	it("reads a Spot knob set by hand before the field owned it, rather than showing On-demand", () => {
+		expect(field?.get?.({ provider_config: { gke_spot: true } })).toBe("spot");
+		expect(field?.get?.({ provider_config: { aks_spot_enabled: true } })).toBe("spot");
+		expect(field?.get?.({ provider_config: { ack_node_capacity_type: "SpotAsPriceGo" } })).toBe("spot");
+		expect(field?.get?.({ provider_config: { ack_node_capacity_type: "NoSpot" } })).toBe("on_demand");
+		// The column wins once set.
+		expect(field?.get?.({ capacity_type: "on_demand", provider_config: { gke_spot: true } })).toBe("on_demand");
 	});
 });

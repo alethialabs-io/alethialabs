@@ -191,6 +191,32 @@ for (const [provider, cp] of Object.entries(catalogCore.compute)) {
 	}
 }
 
+// Control-plane pricing (#5371). The cost estimate reads `control_plane.<cloud>` for every cluster,
+// so a provider without an entry would be estimated with no control plane at all. Every catalog
+// provider must have one, its default tier must exist, and a fee is either null (no fee: the
+// estimate shows NO line) or positive — a zero would render as a billed line costing nothing.
+// The Go side checks the same in TestControlPlaneTiersAreSourced; each consumer fails on its own.
+for (const p of data.providers) {
+	const cp = catalogCore.control_plane?.[p.slug];
+	if (!cp) throw new Error(`catalog.json control_plane has no entry for provider '${p.slug}' (#5371)`);
+	const tiers = (cp.tiers ?? []).map((t) => t.tier);
+	if (!tiers.includes(cp.default_tier)) {
+		throw new Error(
+			`catalog.json control_plane.${p.slug}.default_tier ${JSON.stringify(cp.default_tier)} is not one of its tiers ${JSON.stringify(tiers)} (#5371)`,
+		);
+	}
+	for (const t of cp.tiers) {
+		if (t.hourly_usd !== null && !(typeof t.hourly_usd === "number" && t.hourly_usd > 0)) {
+			throw new Error(
+				`catalog.json control_plane.${p.slug}.${t.tier}.hourly_usd must be a positive number or null, got ${JSON.stringify(t.hourly_usd)} (#5371)`,
+			);
+		}
+		if (!/^https:\/\//.test(t.source ?? "") || !/^\d{4}-\d{2}-\d{2}$/.test(t.as_of ?? "")) {
+			throw new Error(`catalog.json control_plane.${p.slug}.${t.tier} needs an https source and an as_of date (#5371)`);
+		}
+	}
+}
+
 // The PROVISIONING slug set - the clouds with per-cloud sizing/pricing catalogs - derived from the
 // live data's own coverage (the `instanceTypes` keys) so it can't drift from it. Still gated through
 // `Extract<CloudProvider, ...>` so an off-enum slug surfaces instead of being invented.
@@ -305,6 +331,26 @@ export interface CacheProvider {
 	tiers: CacheTier[];
 }
 
+export interface ControlPlaneTier {
+	tier: string;
+	label: string;
+	/** USD per cluster-hour, as the provider's pricing page states it; null when the tier has no fee. */
+	hourly_usd: number | null;
+	/** Shown on the estimate's line, e.g. a free-tier credit that is NOT deducted. */
+	note?: string;
+	/** The provider page the fee was read from, and the date it was read. */
+	source: string;
+	as_of: string;
+}
+
+export interface ControlPlanePricing {
+	/** The tier the provisioning template deploys. */
+	default_tier: string;
+	/** Ordinary servers that run a self-hosted control plane (Hetzner/Talos), billed as servers. */
+	self_hosted_servers: number;
+	tiers: ControlPlaneTier[];
+}
+
 export interface Catalog {
 	version: number;
 	providers: ProviderMeta[];
@@ -312,6 +358,7 @@ export interface Catalog {
 	compute: Record<string, ComputeProvider>;
 	database: Record<string, DatabaseProvider>;
 	cache: Record<string, CacheProvider>;
+	control_plane: Record<ProviderSlug, ControlPlanePricing>;
 }
 
 export const CATALOG: Catalog = ${json};

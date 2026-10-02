@@ -26,8 +26,8 @@ import {
  * `null` (the CLI renders "unknown") rather than failing the whole request. Wire-locked to
  * `cliClusterDetailResponse`; org-scoped like the list route.
  *
- * `kubeconfig` is the command that fetches a kubeconfig with the caller's OWN cloud CLI, or a note
- * saying why there is none (#5250). It is built by `lib/clusters/kubeconfig-access.ts`, the same
+ * `kubeconfig` is `alethia cluster kubeconfig <selector>` plus, on aws/gcp/azure, the cloud-CLI
+ * alternative — or a note saying why there is no command (#5250, #5322). It is built by `lib/clusters/kubeconfig-access.ts`, the same
  * module the console's cluster card renders, so the two surfaces cannot disagree.
  */
 export async function GET(
@@ -121,6 +121,7 @@ export async function GET(
 		// Not best-effort, unlike gitops: it is one indexed read in the same database as the row
 		// above, and a silently-absent command would read as "this cloud has none".
 		const kubeconfig = await readKubeconfigAccess(getServiceDb(), {
+			clusterId: cluster.id,
 			projectId: project_id,
 			environmentId: environment_id,
 			clusterName: cluster.cluster_name,

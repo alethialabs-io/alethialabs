@@ -19,6 +19,7 @@
 
 import { and, desc, eq, sql } from "drizzle-orm";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
+import { isSharedClusterPlacement } from "@/lib/clusters/mint-eligibility";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -33,9 +34,9 @@ import { signedJob } from "@/lib/db/signed-job";
 import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import type { CliKubeconfigMintRequest } from "@/lib/validations/cli-contract";
-import type { KubeconfigMintAuditChanges } from "@/types/jsonb.types";
-import { type MintClient, writeMintAudit } from "./audit";
+import { type MintClient, type MintCredential, writeMintAudit } from "./audit";
 import { mintShapeRefusal } from "./clouds";
+import { credentialMayMintTier } from "./gates";
 
 /** Environment statuses with no cluster to mint against. */
 const UNPROVISIONED_ENV: ReadonlySet<string> = new Set([
@@ -56,7 +57,8 @@ export interface MintRequestInput {
 	clusterId: string;
 	request: CliKubeconfigMintRequest;
 	client: MintClient;
-	credentialKind: KubeconfigMintAuditChanges["credential_kind"];
+	/** The credential that asked. The row is bound to it: only it may collect the mint (#5310). */
+	credential: MintCredential;
 	sourceIp: string | null;
 }
 
@@ -74,10 +76,12 @@ interface QueuedMint {
 
 /** Why a mint was not queued. Each maps to one HTTP status in the route. */
 export type MintRequestRefusal =
+	| "admin-needs-a-person"
 	| "not-found"
 	| "not-provisioned"
 	| "unsupported-cloud"
-	| "static-only";
+	| "static-only"
+	| "shared-cluster";
 
 /** The outcome of {@link requestKubeconfigMint}. */
 export type MintRequestOutcome =
@@ -90,6 +94,8 @@ interface MintTarget {
 	projectId: string;
 	environmentId: string | null;
 	environmentStatus: string | null;
+	/** The OWNING environment's placement (`project_environments.placement_mode`); null without one. */
+	placementMode: (typeof projectEnvironments.$inferSelect)["placement_mode"] | null;
 	cloudIdentityId: string | null;
 	provider: (typeof cloudIdentities.$inferSelect)["provider"] | null;
 }
@@ -110,6 +116,7 @@ async function resolveMintTarget(
 			projectId: projectCluster.project_id,
 			environmentId: projectCluster.environment_id,
 			environmentStatus: projectEnvironments.status,
+			placementMode: projectEnvironments.placement_mode,
 			cloudIdentityId: cloudIdentities.id,
 			provider: cloudIdentities.provider,
 		})
@@ -162,8 +169,9 @@ async function latestDeploySnapshot(
 }
 
 /**
- * Queues one kubeconfig mint: checks the cluster is in the actor's org, is provisioned, and can
- * mint the requested shape; applies the runner-minute usage guard (but not the daily job quota, which
+ * Queues one kubeconfig mint: refuses an admin mint from a service token, checks the cluster is in the
+ * actor's org, is not a shared cluster, is provisioned, and can mint the requested shape; applies the
+ * runner-minute usage guard (but not the daily job quota, which
  * exempts mints — #5313); then writes the MINT_KUBECONFIG job, the mint request row and the audit row in one transaction.
  *
  * Throws `UsageLimitError` from the usage guard (the route maps it to 402). Any other throw is a
@@ -174,8 +182,20 @@ export async function requestKubeconfigMint(
 ): Promise<MintRequestOutcome> {
 	const { actor, clusterId, request } = input;
 
+	// Before anything is read: a service token never mints admin (#5310; gates.ts states why).
+	if (!credentialMayMintTier(input.credential, request.tier)) {
+		return { ok: false, refusal: "admin-needs-a-person" };
+	}
+
 	const target = await resolveMintTarget(clusterId, actor.orgId);
 	if (!target) return { ok: false, refusal: "not-found" };
+
+	// A namespace/vcluster environment's cluster row names the SHARED Fabric cluster, and a mint of
+	// it would hand one tenant the whole cluster (#5327). The runner refuses this too (#5283) and
+	// keeps doing so as defence in depth; refusing here means no job is ever queued to learn it.
+	if (isSharedClusterPlacement(target.placementMode)) {
+		return { ok: false, refusal: "shared-cluster" };
+	}
 
 	const refusal = mintShapeRefusal(target.provider, request.shape);
 	if (refusal) return { ok: false, refusal };
@@ -189,6 +209,12 @@ export async function requestKubeconfigMint(
 	}
 	const deploy = await latestDeploySnapshot(target.environmentId, actor.orgId);
 	if (!deploy) return { ok: false, refusal: "not-provisioned" };
+	// The runner decides from the SNAPSHOT this job would carry, not from the column above. An
+	// environment re-placed since its last deploy can disagree with it; refuse on either, so a job
+	// is never queued that the runner is certain to refuse.
+	if (isSharedClusterPlacement(deploy.config_snapshot.placement_mode)) {
+		return { ok: false, refusal: "shared-cluster" };
+	}
 
 	// A mint runs on a runner like any other job, so its runner minutes are metered like one. It is
 	// NOT checked against the community daily job quota, and does not count toward it (#5313):
@@ -224,6 +250,10 @@ export async function requestKubeconfigMint(
 				cluster_id: target.clusterId,
 				job_id: job.id,
 				actor_user_id: actor.userId,
+				// The binding (#5310). Null for a session; the token's id for a service token, so the
+				// person's OTHER tokens — which act as the same actor_user_id — cannot collect it.
+				service_token_id:
+					input.credential.kind === "service_token" ? input.credential.tokenId : null,
 				tier: request.tier,
 				ttl_seconds: request.ttl_seconds,
 				shape: request.shape,
@@ -249,7 +279,7 @@ export async function requestKubeconfigMint(
 			ttlSeconds: request.ttl_seconds,
 			requestExpiresAt: row.expires_at,
 			client: input.client,
-			credentialKind: input.credentialKind,
+			credential: input.credential,
 			sourceIp: input.sourceIp,
 		});
 

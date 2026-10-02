@@ -195,10 +195,12 @@ export function ClusterCard({
 		...caches.map((c) => c.status),
 	]);
 
-	// How to get a kubeconfig with the user's own cloud CLI, for every cloud — built on the server
-	// by the same module `alethia cluster get` prints from (lib/clusters/kubeconfig-access.ts), so
-	// the card never composes a command of its own. A note replaces the command where there is none.
+	// How to get a kubeconfig — `alethia cluster kubeconfig` on every cloud it can mint on, and the
+	// cloud's own CLI command as the alternative on aws/gcp/azure — built on the server by the same
+	// module `alethia cluster get` prints from (lib/clusters/kubeconfig-access.ts), so the card never
+	// composes a command of its own. A note replaces the command where there is none.
 	const kubeconfigCmd = cluster?.kubeconfig.command ?? null;
+	const kubeconfigAlt = cluster?.kubeconfig.alternative ?? null;
 	const kubeconfigNote = cluster?.kubeconfig.note ?? null;
 
 	// The ArgoCD admin password is never stored (it would be plaintext in our DB); it is
@@ -232,7 +234,7 @@ export function ClusterCard({
 						</div>
 						<p className="mt-0.5 font-mono text-ui-xs text-text-tertiary">
 							{meta.shortName} · {data.region} · {data.environment_stage}
-							{cluster?.cluster_version ? ` · K8s ${cluster.cluster_version}` : ""}
+							{cluster?.k8s_version ? ` · K8s ${cluster.k8s_version}` : ""}
 						</p>
 						{cluster?.id && (
 							<ClassificationControl
@@ -323,6 +325,22 @@ export function ClusterCard({
 							</code>
 							<CopyButton value={kubeconfigCmd} label="Copy kubeconfig command" />
 						</div>
+					)}
+					{kubeconfigCmd && kubeconfigAlt && (
+						<>
+							<p className="text-ui-2xs text-text-tertiary">
+								Or, with access to the cloud account:
+							</p>
+							<div className="flex items-center gap-2">
+								<code
+									title={kubeconfigAlt}
+									className="flex-1 truncate rounded-sm border bg-surface-sunken px-2 py-1 font-mono text-ui-xs text-text-secondary"
+								>
+									{kubeconfigAlt}
+								</code>
+								<CopyButton value={kubeconfigAlt} label="Copy cloud CLI kubeconfig command" />
+							</div>
+						</>
 					)}
 					{!kubeconfigCmd && kubeconfigNote && (
 						<p className="text-ui-2xs text-text-tertiary">{kubeconfigNote}</p>

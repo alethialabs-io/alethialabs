@@ -8,6 +8,7 @@
 // refusal maps to the status the CLI route answers, the audit is stamped `console`/`session`, and a
 // failure logs the error's NAME only — never its message, which could quote the ciphertext.
 
+import { KUBECONFIG_MINT_SHARED_CLUSTER_REASON } from "@/lib/clusters/mint-eligibility";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/headers", () => ({
@@ -22,7 +23,7 @@ vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/kubeconfig-mint/request", () => ({ requestKubeconfigMint: vi.fn() }));
 vi.mock("@/lib/kubeconfig-mint/poll", () => ({ pollKubeconfigMint: vi.fn() }));
 vi.mock("@/lib/kubeconfig-mint/gates", () => ({
-	takeMintRateLimit: vi.fn(() => true),
+	takeMintRateLimit: vi.fn(async () => true),
 	mayCollectTier: vi.fn(async () => true),
 }));
 vi.mock("@/lib/observability/log", () => {
@@ -60,7 +61,7 @@ beforeEach(() => {
 	vi.mocked(authorize).mockResolvedValue(ACTOR as never);
 	vi.mocked(authorizeQuiet).mockResolvedValue(ACTOR as never);
 	vi.mocked(currentActor).mockResolvedValue(ACTOR as never);
-	vi.mocked(takeMintRateLimit).mockReturnValue(true);
+	vi.mocked(takeMintRateLimit).mockResolvedValue(true);
 });
 
 describe("canDownloadKubeconfig", () => {
@@ -104,7 +105,7 @@ describe("requestKubeconfigDownload", () => {
 				clusterId: CLUSTER,
 				request: { tier: "readonly", shape: "static", ttl_seconds: 3600, client_public_key: PUB },
 				client: "console",
-				credentialKind: "session",
+				credential: { kind: "session" },
 			}),
 		);
 	});
@@ -121,7 +122,7 @@ describe("requestKubeconfigDownload", () => {
 	});
 
 	it("answers 429 over the shared rate limit, before queuing", async () => {
-		vi.mocked(takeMintRateLimit).mockReturnValue(false);
+		vi.mocked(takeMintRateLimit).mockResolvedValue(false);
 		expect(await requestKubeconfigDownload({ clusterId: CLUSTER, clientPublicKey: PUB })).toEqual({
 			ok: false,
 			status: 429,
@@ -130,6 +131,7 @@ describe("requestKubeconfigDownload", () => {
 	});
 
 	it.each([
+		["admin-needs-a-person", 403],
 		["not-found", 404],
 		["not-provisioned", 409],
 		["unsupported-cloud", 422],
@@ -139,6 +141,15 @@ describe("requestKubeconfigDownload", () => {
 		expect(await requestKubeconfigDownload({ clusterId: CLUSTER, clientPublicKey: PUB })).toEqual({
 			ok: false,
 			status,
+		});
+	});
+
+	it("maps the shared-cluster refusal to 422 with the reason sentence, as the CLI route does", async () => {
+		vi.mocked(requestKubeconfigMint).mockResolvedValue({ ok: false, refusal: "shared-cluster" });
+		expect(await requestKubeconfigDownload({ clusterId: CLUSTER, clientPublicKey: PUB })).toEqual({
+			ok: false,
+			status: 422,
+			message: KUBECONFIG_MINT_SHARED_CLUSTER_REASON,
 		});
 	});
 
@@ -186,7 +197,7 @@ describe("pollKubeconfigDownload", () => {
 		expect(authorizeQuiet).toHaveBeenCalledWith("access_readonly", { type: "cluster", id: CLUSTER });
 		expect(mayCollectTier).toHaveBeenCalledWith(ACTOR, CLUSTER, "admin");
 		expect(pollKubeconfigMint).toHaveBeenCalledWith(
-			expect.objectContaining({ mintId: MINT, client: "console", credentialKind: "session" }),
+			expect.objectContaining({ mintId: MINT, client: "console", credential: { kind: "session" } }),
 		);
 	});
 

@@ -8,31 +8,32 @@ import { Suspense, useEffect, useState } from "react";
 import { AuthCard, AuthShell } from "@/components/auth/auth-shell";
 import { Button } from "@repo/ui/button";
 import { authClient } from "@/lib/auth/client";
+import { useViewer } from "@/components/providers/viewer-provider";
 
 function AcceptInvite() {
 	const router = useRouter();
 	const params = useSearchParams();
 	const token = params.get("token");
 	const invitedEmail = params.get("email");
-	const { data: session, isPending } = authClient.useSession();
+	const { viewer, isPending } = useViewer();
 	const [busy, setBusy] = useState<"accept" | "decline" | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	// Not signed in → send them to sign-in, returning here afterwards (?next=).
 	// OTP sign-in doubles as sign-up, so this also covers "no account yet".
 	useEffect(() => {
-		if (isPending || session?.user || !token) return;
+		if (isPending || viewer || !token) return;
 		const next = `/invites/accept?token=${encodeURIComponent(token)}`;
 		const qs = new URLSearchParams({ next });
 		// Prefill the invitee's email on the sign-in/sign-up form.
 		if (invitedEmail && /.+@.+/.test(invitedEmail)) qs.set("email", invitedEmail);
 		router.replace(`/login?${qs.toString()}`);
-	}, [isPending, session, token, invitedEmail, router]);
+	}, [isPending, viewer, token, invitedEmail, router]);
 
 	if (!token) {
 		return <Message title="Invalid invitation" body="This invite link is missing its token." />;
 	}
-	if (isPending || !session?.user) {
+	if (isPending || !viewer) {
 		return <Centered>{<Loader2 className="h-5 w-5 animate-spin text-text-tertiary" />}</Centered>;
 	}
 
@@ -72,7 +73,7 @@ function AcceptInvite() {
 				</h1>
 				<p className="mt-1.5 text-sm text-text-secondary">
 					Accept to join and start collaborating, signed in as{" "}
-					<span className="font-medium text-text-primary">{session.user.email}</span>.
+					<span className="font-medium text-text-primary">{viewer.email}</span>.
 				</p>
 				{/* `role="alert"`: the refusal appears in place, with no navigation and no focus move —
 				    a sighted user sees a red box arrive under the heading, and without a live region a

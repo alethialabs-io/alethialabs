@@ -64,6 +64,7 @@ import {
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { authClient } from "@/lib/auth/client";
+import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { orgHost } from "@/lib/org-url";
@@ -99,8 +100,8 @@ interface CreateOrgSheetProps {
 export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const router = useRouter();
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
-	const { data: session } = authClient.useSession();
-	const ownerEmail = session?.user?.email ?? "";
+	const { viewer } = useViewer();
+	const ownerEmail = viewer?.email ?? "";
 
 	const form = useForm<FormData>({
 		resolver: zodResolver(schema),

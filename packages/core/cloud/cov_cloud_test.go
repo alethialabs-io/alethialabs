@@ -1228,13 +1228,13 @@ func TestCloud_Clip_StaysCollisionSafeAtADegenerateCap(t *testing.T) {
 // the catalog supplies the per-provider default, and that a provider the catalog does not
 // know yields "" rather than a made-up version.
 func TestCloud_ResolveK8sVersion_FallsBackToTheCatalog(t *testing.T) {
-	if got := resolveK8sVersion("aws", "1.31"); got != "1.31" {
+	if got := ResolveK8sVersion("aws", "1.31"); got != "1.31" {
 		t.Fatalf("explicit version: %q", got)
 	}
-	if got := resolveK8sVersion("no-such-cloud", ""); got != "" {
+	if got := ResolveK8sVersion("no-such-cloud", ""); got != "" {
 		t.Fatalf("an unknown provider must have no default, got %q", got)
 	}
-	if got := resolveK8sVersion("aws", ""); got == "" {
+	if got := ResolveK8sVersion("aws", ""); got == "" {
 		t.Fatal("aws must have a catalog default")
 	}
 }

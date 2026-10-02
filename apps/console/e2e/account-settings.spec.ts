@@ -7,7 +7,7 @@
 // Two things are asserted here that nothing else in the suite covers:
 //
 //   · the dialog reads the SESSION (email, provider badges, the dirty-gated Save), so a broken
-//     `authClient.useSession()` shows up as a dialog full of "Not set" rather than as a green
+//     session read (`useViewer()`) shows up as a dialog full of "Not set" rather than as a green
 //     render;
 //   · "Request deletion" OPENS AN ERASURE REQUEST AND DELETES NOTHING (#4273, ruled 2026-09-18) —
 //     see the note at its call site. So the spec proves both halves: the control asks first and

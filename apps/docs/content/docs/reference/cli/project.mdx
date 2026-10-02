@@ -495,8 +495,16 @@ the closest machine type in the catalog for the cluster's cloud. `instance_types
 Setting one clears the other in the same write, and a single `add` that sets both fails.
 
 `capacity_type` chooses how the nodes are bought: `on_demand` (the default) or `spot`. Spot nodes cost
-less, but the cloud can take a node back at short notice. Only AWS accepts `spot` through this field;
-on other clouds a deploy refuses it.
+less, but the cloud can take a node back at short notice. Each cloud applies `spot` to its own node
+pool setting:
+
+| Cloud | What `spot` changes |
+|---|---|
+| AWS | The managed node group runs on Spot. |
+| GCP | The node pool runs on Spot VMs. A deploy refuses `spot` on an Autopilot cluster, which has no node pool. |
+| Azure | A separate Spot worker pool is added, and it scales from zero. The system pool stays on-demand, because AKS can't run it on Spot. Only pods that tolerate the Spot taint run on the Spot pool. |
+| Alibaba Cloud | The worker node pool runs on Spot at the market price. If the cluster sets `ack_spot_price_limit`, the pool uses those price limits. |
+| Hetzner | Not available. Hetzner Cloud has no Spot servers, so a deploy refuses `spot`. |
 
 ```bash
 alethia project component add --project boutique --kind cluster --set capacity_type=spot

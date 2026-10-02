@@ -266,7 +266,7 @@
 //     check; it is read once, explicitly, by `--import-live`.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -2285,9 +2285,15 @@ export function renderScoreboard(view) {
 	L.push(
 		`S ${famRows[0].here + famRows[0].live}/${famRows[0].all}, T ${famRows[1].here + famRows[1].live}/${famRows[1].all}, ` +
 			`H ${famRows[2].here + famRows[2].live}/${famRows[2].all}, F ${famRows[3].here + famRows[3].live}/${famRows[3].all}, ` +
-			`R ${famRows[4].here + famRows[4].live}/${famRows[4].all}. \`surface\` is the number of console modules the`,
+			`R ${famRows[4].here + famRows[4].live}/${famRows[4].all}.`,
 	);
-	L.push("page's own import graph reaches, which is the denominator the H column was measured over.");
+	L.push("");
+	L.push("**The size of each page's module closure is deliberately not in this file.** It is the set the H");
+	L.push("column was measured over, but it is not a predicate and scores nothing, and it moves by one on");
+	L.push("every route that reaches a module somebody adds — so checked in, it made every console PR stale");
+	L.push("against every other one without a single score changing (#5296). It is computed on every run and");
+	L.push("printed in the CI step summary of the in-sync check, where it conflicts with nothing.");
+	L.push("");
 	L.push("A `· n withheld` suffix means n of that family's predicates were NOT MEASURED on this route: the");
 	L.push("score is over the rest, and the cell says so rather than letting a narrower measurement read wider.");
 	L.push("");
@@ -2297,11 +2303,11 @@ export function renderScoreboard(view) {
 	L.push("answer about 34 predicates wearing the shape of an answer about 38. The zero is printed rather than");
 	L.push("implied by a missing suffix, because a suffix that is usually absent is read as decoration.");
 	L.push("");
-	L.push("| route | surface | S | T | H | F | R | overall |");
-	L.push("|---|---:|---|---|---|---|---|---|");
+	L.push("| route | S | T | H | F | R | overall |");
+	L.push("|---|---|---|---|---|---|---|");
 	for (const r of [...view.routes].sort((a, b) => (a.overall.score ?? 1) - (b.overall.score ?? 1) || a.route.localeCompare(b.route))) {
 		L.push(
-			`| \`${r.route}\`${r.redirectOnly ? " ·" : ""} | ${r.surfaceFiles} | ${cell(r.families.S)} | ${cell(r.families.T)} | ` +
+			`| \`${r.route}\`${r.redirectOnly ? " ·" : ""} | ${cell(r.families.S)} | ${cell(r.families.T)} | ` +
 				`${cell(r.families.H)} | ${cell(r.families.F)} | ${cell(r.families.R)} | ${overallCell(r.overall, predicateCount)} |`,
 		);
 	}
@@ -2437,7 +2443,7 @@ export function renderJson(view) {
 		routes: view.routes.map((r) => ({
 			route: r.route,
 			redirectOnly: r.redirectOnly,
-			surfaceFiles: r.surfaceFiles,
+			// NO `surfaceFiles` here, on purpose (#5296): see `renderSurfaceSummary()`.
 			families: Object.fromEntries(
 				Object.entries(r.families).map(([k, f]) => [
 					k,
@@ -2450,6 +2456,34 @@ export function renderJson(view) {
 		reconciliation: view.reconciliation,
 	};
 	return `${JSON.stringify(body, null, "\t")}\n`;
+}
+
+/**
+ * The per-route module-closure sizes, for the CI step summary ONLY — never for a checked-in file.
+ *
+ * WHY THIS IS NOT IN EITHER GENERATED FILE (#5296). The count is the size of the set the H column
+ * was measured over. It is informative, but it is not a predicate and scores nothing, and it moves
+ * by one on every route that reaches a module somebody adds: one new schema module moved 35 rows
+ * at once. Checked in, that made every landing turn every other open console PR stale or DIRTY —
+ * five PRs on 2026-10-01/02, each forced through a rebase, a regenerate and a full CI cycle, with
+ * no score having changed. Nothing ever read it back: no ratchet, no "surface shrank" guard. The
+ * closure itself still drives every H verdict at run time; only its SIZE stopped being stored.
+ *
+ * `--self-test` proves the renderers cannot see it: a view whose closures grew renders byte-for-byte
+ * the same scoreboard and JSON, and a different summary.
+ *
+ * @param {ReturnType<typeof buildView>} view
+ * @returns {string} markdown
+ */
+export function renderSurfaceSummary(view) {
+	const L = ["### Console page module closures", ""];
+	L.push("How many console modules each page's own import graph reaches — the set its H column was");
+	L.push("measured over. Informational, and deliberately not checked in (#5296).");
+	L.push("");
+	L.push("| route | modules |");
+	L.push("|---|---:|");
+	for (const r of view.routes) L.push(`| \`${r.route}\`${r.redirectOnly ? " ·" : ""} | ${r.surfaceFiles} |`);
+	return `${L.join("\n")}\n`;
 }
 
 /** Replace the generated region. Hard-errors on a missing or duplicated marker. */
@@ -4186,6 +4220,28 @@ function selfTest() {
 		ok("...and MANY says the number", renderScoreboard(many).includes("The un-instrumented 3, each with the issue that owns it:"));
 	}
 	ok("rendering is deterministic", renderScoreboard(view) === md && renderJson(view) === renderJson(view));
+	// #5296. A PR that adds a module a page imports grows that page's closure and changes no
+	// verdict. Neither checked-in file may move when that happens, or every such landing makes
+	// every other open console PR stale again. The summary is where the size goes, so it MUST move.
+	{
+		const grown = buildView({
+			run: fixtureRun,
+			rubricPredicates: fixtureRubric,
+			filterVerdicts: fixtureFilter,
+			surface: fixtureSurface,
+			live: fixtureLive,
+			liveDebt: fixtureDebt,
+			pageClosures: new Map([
+				["/a", new Set(["apps/console/app/a/page.tsx", "apps/console/components/a.tsx", "apps/console/lib/new-module.ts"])],
+				["/b", new Set(["apps/console/app/b/page.tsx", "apps/console/components/b.tsx", "apps/console/lib/new-module.ts"])],
+				["/r", new Set(["apps/console/app/r/page.tsx"])],
+			]),
+			chromeClosure: new Set(["apps/console/components/shell/side.tsx"]),
+		});
+		ok("a closure that grows with no verdict change leaves the scoreboard byte-identical (#5296)", renderScoreboard(grown) === md);
+		ok("...and the baseline JSON byte-identical", renderJson(grown) === renderJson(view));
+		ok("...while the step summary DOES report the new size", renderSurfaceSummary(view).includes("| `/a` | 2 |") && renderSurfaceSummary(grown).includes("| `/a` | 3 |"));
+	}
 	ok(
 		"NO WALL CLOCK reaches the diff-gated region — a date there makes every PR stale on arrival",
 		!/\d{4}-\d{2}-\d{2}/.test(md) && !/\d{4}-\d{2}-\d{2}/.test(renderJson(view)),
@@ -4623,6 +4679,9 @@ if (invokedDirectly) {
 		console.log(`wrote ${SCOREBOARD} and ${BASELINE_JSON} — ${summary}`);
 		process.exit(0);
 	}
+
+	// The closure sizes go to the step summary and nowhere else — see `renderSurfaceSummary()`.
+	if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, renderSurfaceSummary(view));
 
 	const stale = [];
 	if (readFileSync(mdPath, "utf8") !== wantMd) stale.push(SCOREBOARD);

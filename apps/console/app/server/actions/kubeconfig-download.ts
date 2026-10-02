@@ -24,6 +24,7 @@ import { getPdp } from "@/lib/authz";
 import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
+import { KUBECONFIG_MINT_SHARED_CLUSTER_REASON } from "@/lib/clusters/mint-eligibility";
 import { errorName } from "@/lib/errors";
 import { mayCollectTier, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
 import { pollKubeconfigMint } from "@/lib/kubeconfig-mint/poll";
@@ -64,12 +65,17 @@ const pollInput = z.object({ clusterId: z.uuid(), mintId: z.uuid() });
 /** The status the CLI route answers for each refusal from lib/kubeconfig-mint/request.ts. */
 function refusalStatus(refusal: MintRequestRefusal): KubeconfigDownloadRefusal {
 	switch (refusal) {
+		case "admin-needs-a-person":
+			// Unreachable from here — the console mints read-only on a session — but the switch is
+			// exhaustive, and this is the status the CLI route answers.
+			return 403;
 		case "not-found":
 			return 404;
 		case "not-provisioned":
 			return 409;
 		case "unsupported-cloud":
 		case "static-only":
+		case "shared-cluster":
 			return 422;
 	}
 }
@@ -118,7 +124,7 @@ export async function requestKubeconfigDownload(input: {
 		throw e;
 	}
 
-	if (!takeMintRateLimit(actor)) return { ok: false, status: 429 };
+	if (!(await takeMintRateLimit(actor))) return { ok: false, status: 429 };
 
 	try {
 		const outcome = await requestKubeconfigMint({
@@ -126,10 +132,14 @@ export async function requestKubeconfigDownload(input: {
 			clusterId,
 			request: cliKubeconfigMintRequest.parse({ ...CONSOLE_MINT, client_public_key: clientPublicKey }),
 			client: "console",
-			credentialKind: "session",
+			credential: { kind: "session" },
 			sourceIp: await sourceIp(),
 		});
-		if (!outcome.ok) return { ok: false, status: refusalStatus(outcome.refusal) };
+		if (!outcome.ok) {
+			return outcome.refusal === "shared-cluster"
+				? { ok: false, status: 422, message: KUBECONFIG_MINT_SHARED_CLUSTER_REASON }
+				: { ok: false, status: refusalStatus(outcome.refusal) };
+		}
 		return {
 			ok: true,
 			mintId: outcome.mint.id,
@@ -171,7 +181,7 @@ export async function pollKubeconfigDownload(input: {
 			clusterId,
 			mintId,
 			client: "console",
-			credentialKind: "session",
+			credential: { kind: "session" },
 			sourceIp: await sourceIp(),
 			mayCollect: (tier) => mayCollectTier(actor, clusterId, tier),
 		});

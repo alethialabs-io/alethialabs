@@ -1,0 +1,3 @@
+ALTER TABLE "kubeconfig_mint_requests" ADD COLUMN "service_token_id" uuid;--> statement-breakpoint
+ALTER TABLE "kubeconfig_mint_requests" ADD CONSTRAINT "kubeconfig_mint_requests_service_token_id_cli_service_tokens_id_fk" FOREIGN KEY ("service_token_id") REFERENCES "public"."cli_service_tokens"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "kubeconfig_mint_requests" ADD CONSTRAINT "kubeconfig_mint_requests_token_readonly" CHECK ("kubeconfig_mint_requests"."service_token_id" IS NULL OR "kubeconfig_mint_requests"."tier" = 'readonly');

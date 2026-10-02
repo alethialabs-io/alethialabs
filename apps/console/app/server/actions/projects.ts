@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { notFound } from "next/navigation";
-import { evaluate } from "@/lib/compat";
+import { evaluate, resolveK8sVersion } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import {
 	PROJECT_NAME_MAX_LENGTH,
@@ -98,6 +98,10 @@ import {
 	type HetznerChartedKind,
 } from "@/lib/cloud-providers/hetzner-services";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
+import {
+	type PlacementRow,
+	resolveComponentPlacement,
+} from "@/lib/cloud-providers/placement";
 import {
 	type CloudProviderSlug,
 	type ConversionWarning,
@@ -960,6 +964,31 @@ export async function getProject(
 			if (ci) cloudProvider = ci.provider;
 		}
 
+		// The cluster's OWN cloud (#5361): coalesce(project_cluster.cloud_identity_id,
+		// projects.cloud_identity_id) → provider, through the same resolver the config snapshot
+		// places it with. Only a cluster that carries a DIFFERENT identity costs a second read.
+		const providerById = new Map<string, string>();
+		if (project.cloud_identity_id)
+			providerById.set(project.cloud_identity_id, cloudProvider);
+		const clusterIdentityId = components.cluster?.cloud_identity_id ?? null;
+		if (clusterIdentityId && clusterIdentityId !== project.cloud_identity_id) {
+			const [own] = await tx
+				.select({ provider: cloudIdentities.provider })
+				.from(cloudIdentities)
+				.where(eq(cloudIdentities.id, clusterIdentityId))
+				.limit(1);
+			if (own) providerById.set(clusterIdentityId, own.provider);
+		}
+		const clusterCloudProvider = resolveComponentPlacement(
+			{
+				cloud_provider: cloudProvider,
+				cloud_identity_id: project.cloud_identity_id,
+				region: project.region,
+			},
+			providerById,
+			components.cluster,
+		).cloud_provider;
+
 		return {
 			project: {
 				...project,
@@ -972,6 +1001,8 @@ export async function getProject(
 			},
 			environments,
 			cloudProvider,
+			/** The cloud the env's cluster deploys to: its own identity's, else `cloudProvider`. */
+			clusterCloudProvider,
 			components,
 		};
 	});
@@ -1452,11 +1483,18 @@ async function buildConfigSnapshot(
 		// resolved add-on set (incl. Hetzner data-service + BYO charts). The report
 		// rides the config snapshot for the UI to surface at design time (#1221/#1222);
 		// it NEVER blocks saving — the fail-closed block is the apply gate (#1215).
-		// An unset K8s version or an add-on id absent from the matrix → honest
-		// `not_evaluable` (non-blocking), so this is safe before a cluster resolves.
+		// The version judged is the one that will DEPLOY (#5314): an unset cluster_version
+		// resolves to the catalog default, exactly as the Go apply gate resolves it — but only
+		// on the template path; a BYO-IaC module decides its own version, so there the raw
+		// value is kept. The resolved value is judged, never written into the snapshot.
+		// An add-on id absent from the matrix → honest `not_evaluable` (non-blocking).
 		const compat = evaluate({
 			providers: [identity.provider],
-			k8sVersion: cluster?.cluster_version ?? undefined,
+			k8sVersion: iacSource
+				? (cluster?.cluster_version ?? undefined)
+				: cluster
+					? resolveK8sVersion(identity.provider, cluster.cluster_version)
+					: undefined,
 			addons: addons.map((a) => ({ id: a.id })),
 		});
 
@@ -1505,18 +1543,9 @@ async function buildConfigSnapshot(
 			for (const r of rows) providerById.set(r.id, r.provider);
 		}
 
-		/** Concrete { cloud_provider, cloud_identity_id, region } for a component row. */
-		const resolvePlacement = (row?: {
-			cloud_identity_id?: string | null;
-			region?: string | null;
-		}) => {
-			const cid = row?.cloud_identity_id ?? core.cloud_identity_id;
-			return {
-				cloud_provider: providerById.get(cid) ?? core.cloud_provider,
-				cloud_identity_id: cid,
-				region: row?.region ?? core.region,
-			};
-		};
+		/** Concrete { cloud_provider, cloud_identity_id, region } for a component row (placement.ts). */
+		const resolvePlacement = (row?: PlacementRow) =>
+			resolveComponentPlacement(core, providerById, row);
 
 		// Gate: CORE resources must stay on the primary cloud identity.
 		const coreChecks: Array<{

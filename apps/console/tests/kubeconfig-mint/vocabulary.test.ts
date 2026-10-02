@@ -6,6 +6,11 @@
 // which shapes, and which failure sentences may be stored.
 
 import { describe, expect, it } from "vitest";
+import {
+	isMintableCloud,
+	isSharedClusterPlacement,
+	KUBECONFIG_MINT_SHARED_CLUSTER_REASON,
+} from "@/lib/clusters/mint-eligibility";
 import { actionForTier, mintShapeRefusal } from "@/lib/kubeconfig-mint/clouds";
 import {
 	fixedFailureReason,
@@ -37,7 +42,35 @@ describe("mintShapeRefusal", () => {
 	});
 });
 
+describe("isMintableCloud", () => {
+	it("agrees with mintShapeRefusal on every cloud, and refuses a name it does not know", () => {
+		for (const p of ["aws", "gcp", "azure", "alibaba", "hetzner", "digitalocean", "civo"] as const) {
+			expect(isMintableCloud(p)).toBe(mintShapeRefusal(p, "static") === null);
+		}
+		expect(isMintableCloud(null)).toBe(false);
+		expect(isMintableCloud("AWS")).toBe(false);
+	});
+});
+
+describe("isSharedClusterPlacement", () => {
+	it("is namespace and vcluster, exactly — every other value, typed or not, is not shared", () => {
+		expect(isSharedClusterPlacement("namespace")).toBe(true);
+		expect(isSharedClusterPlacement("vcluster")).toBe(true);
+		for (const v of ["dedicated", "Namespace", "", null, undefined, 0, { value: "namespace" }]) {
+			expect(isSharedClusterPlacement(v)).toBe(false);
+		}
+	});
+});
+
 describe("the fixed failure reasons", () => {
+	it("the shared-cluster sentence the request route answers is the one in the list (#5327)", () => {
+		// The list keeps it as a literal for the runner's parity test; the constant must be that literal.
+		expect(KUBECONFIG_MINT_FAILURE_REASONS).toContain(KUBECONFIG_MINT_SHARED_CLUSTER_REASON);
+		expect(KUBECONFIG_MINT_SHARED_CLUSTER_REASON).toBe(
+			"Kubeconfig mints are not available for an environment placed on a shared cluster.",
+		);
+	});
+
 	it("every sentence fits the wire contract's bound, and the generic one is in the set", () => {
 		expect(KUBECONFIG_MINT_FAILURE_REASONS).toContain(KUBECONFIG_MINT_UNKNOWN_FAILURE);
 		for (const r of KUBECONFIG_MINT_FAILURE_REASONS) {

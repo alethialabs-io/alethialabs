@@ -33,6 +33,7 @@
 	},
 	"kubeconfig": {
 		"command": "string",
+		"alternative": "string",
 		"note": "string"
 	}
 }

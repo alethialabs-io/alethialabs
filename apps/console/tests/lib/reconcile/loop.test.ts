@@ -16,6 +16,9 @@ vi.mock("@/lib/reconcile/ai-holds", () => ({ releaseStrandedAiHolds: vi.fn(async
 vi.mock("@/lib/kubeconfig-mint/sweep", () => ({
 	sweepExpiredKubeconfigMints: vi.fn(async () => ({ expired: 0, cancelledJobs: 0, deleted: 0 })),
 }));
+vi.mock("@/lib/rate-limit", () => ({
+	sweepExpiredRateLimitBuckets: vi.fn(async () => ({ deleted: 0 })),
+}));
 vi.mock("@/lib/reconcile/gc", () => ({
 	gcJobLogs: vi.fn(async () => ({ deleted: 0 })),
 	gcFleetActions: vi.fn(async () => ({ deleted: 0 })),
@@ -30,6 +33,7 @@ import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
+import { sweepExpiredRateLimitBuckets } from "@/lib/rate-limit";
 import { releaseStrandedAiHolds } from "@/lib/reconcile/ai-holds";
 import { gcAuthzActivityLog, gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
 import { __resetHeartbeats, getHeartbeats } from "@/lib/reconcile/heartbeat";
@@ -84,6 +88,7 @@ describe("tick — fan-out", () => {
 		expect(gcAuthzActivityLog).toHaveBeenCalledTimes(1);
 		expect(releaseStrandedAiHolds).toHaveBeenCalledTimes(1);
 		expect(sweepExpiredKubeconfigMints).toHaveBeenCalledTimes(1);
+		expect(sweepExpiredRateLimitBuckets).toHaveBeenCalledTimes(1);
 		// Each ran under a heartbeat.
 		const tasks = getHeartbeats().map((h) => h.task).sort();
 		expect(tasks).toEqual([
@@ -95,6 +100,7 @@ describe("tick — fan-out", () => {
 			"gc-job-logs",
 			"kubeconfig-mint-sweep",
 			"probe-schedule",
+			"rate-limit-sweep",
 			"release-ai-holds",
 		]);
 	});
@@ -122,6 +128,8 @@ describe("tick — fan-out", () => {
 		expect(sweepExpiredKubeconfigMints).toHaveBeenCalledTimes(1);
 		expect(sweepProbeSchedule).not.toHaveBeenCalled();
 		expect(sweepDriftSchedule).not.toHaveBeenCalled();
+		// The rate-limit sweep (5m) only bounds dead rows, so it is not hot.
+		expect(sweepExpiredRateLimitBuckets).not.toHaveBeenCalled();
 		expect(gcJobLogs).not.toHaveBeenCalled();
 		expect(gcFleetActions).not.toHaveBeenCalled();
 	});

@@ -5,6 +5,9 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -69,5 +72,86 @@ func TestMintFromTalosconfigKeepsTheSSRFGuard(t *testing.T) {
 	}
 	if _, err := mintFromTalosconfig(context.Background(), "  "); err == nil || !strings.Contains(err.Error(), "empty talosconfig") {
 		t.Errorf("an empty talosconfig must be refused, got %v", err)
+	}
+}
+
+// TestRunTalosKubeconfigIsTheGuardedMint pins the `talos-kubeconfig` subcommand (#5339) end to end
+// through the exported entry point the table dispatches: the talosconfig is read from the process's
+// stdin and handed to MintTalosKubeconfig, so a talosconfig pointing at cloud metadata is refused by
+// the SSRF guard before any dial, and nothing is written to stdout.
+func TestRunTalosKubeconfigIsTheGuardedMint(t *testing.T) {
+	const metadata = "context: c\ncontexts:\n  c:\n    endpoints:\n      - 169.254.169.254\n"
+	dir := t.TempDir()
+	in, err := os.Create(filepath.Join(dir, "stdin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := in.WriteString(metadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := in.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.Create(filepath.Join(dir, "stdout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prevIn, prevOut := os.Stdin, os.Stdout
+	os.Stdin, os.Stdout = in, out
+	err = RunTalosKubeconfig(context.Background(), nil)
+	os.Stdin, os.Stdout = prevIn, prevOut
+	_ = in.Close()
+	_ = out.Close()
+
+	if err == nil || !strings.Contains(err.Error(), "SSRF guard") {
+		t.Fatalf("want the SSRF guard's refusal, got %v", err)
+	}
+	if written, _ := os.ReadFile(filepath.Join(dir, "stdout")); len(written) != 0 {
+		t.Fatalf("a refused mint wrote %d bytes to stdout", len(written))
+	}
+}
+
+// TestRunTalosKubeconfigReadsStdinAndWritesStdout pins the subcommand's contract with its caller:
+// stdin is the talosconfig, verbatim; stdout is the kubeconfig, verbatim; arguments and an oversize
+// input are refused before the minter is called; a mint error is returned and writes nothing.
+func TestRunTalosKubeconfigReadsStdinAndWritesStdout(t *testing.T) {
+	var got string
+	calls := 0
+	mint := func(_ context.Context, tc string) ([]byte, error) {
+		calls++
+		got = tc
+		return []byte("apiVersion: v1\nkind: Config\n"), nil
+	}
+
+	var out strings.Builder
+	if err := runTalosKubeconfig(context.Background(), nil, strings.NewReader("talosconfig-yaml"), &out, mint); err != nil {
+		t.Fatal(err)
+	}
+	if got != "talosconfig-yaml" {
+		t.Errorf("the minter was handed %q, want stdin verbatim", got)
+	}
+	if out.String() != "apiVersion: v1\nkind: Config\n" {
+		t.Errorf("stdout = %q, want the minted kubeconfig verbatim", out.String())
+	}
+
+	calls = 0
+	if err := runTalosKubeconfig(context.Background(), []string{"talosconfig-yaml"}, strings.NewReader(""), &out, mint); err == nil {
+		t.Error("an argument must be refused: a talosconfig on argv is visible in a process listing")
+	}
+	big := strings.Repeat("x", maxTalosconfigStdinBytes+1)
+	if err := runTalosKubeconfig(context.Background(), nil, strings.NewReader(big), &out, mint); err == nil {
+		t.Error("a talosconfig over the console's size cap must be refused")
+	}
+	if calls != 0 {
+		t.Errorf("the minter was called %d time(s) for a refused input", calls)
+	}
+
+	out.Reset()
+	failing := func(context.Context, string) ([]byte, error) { return nil, errors.New("apid unreachable") }
+	if err := runTalosKubeconfig(context.Background(), nil, strings.NewReader("x"), &out, failing); err == nil || !strings.Contains(err.Error(), "apid unreachable") {
+		t.Errorf("a mint error must be returned as it is, got %v", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("a failed mint wrote %q to stdout", out.String())
 	}
 }

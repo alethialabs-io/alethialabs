@@ -30,4 +30,6 @@ export const authClient = createAuthClient({
 	],
 });
 
-export const { signIn, signOut, signUp, useSession, getSession } = authClient;
+// `useSession` is deliberately NOT re-exported: render from `useViewer()`
+// (components/providers/viewer-provider.tsx), the one hydration-safe reader of the session (#5382).
+export const { signIn, signOut, signUp, getSession } = authClient;

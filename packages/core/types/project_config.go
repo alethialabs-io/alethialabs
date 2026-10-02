@@ -207,8 +207,10 @@ type ProjectClusterConfig struct {
 	NodeDesiredSize int       `json:"node_desired_size"`
 	NodeDiskSizeGB  *int      `json:"node_disk_size_gb"`
 	// CapacityType is the node pool's purchase option: "on_demand", "spot", or "" (unset = the
-	// template default, ON_DEMAND since #5266). Only aws honours "spot" today — ValidateConfig
-	// refuses it on the other clouds rather than accepting a value that would change nothing.
+	// template default, on-demand on every cloud). Each provider maps it onto its template's own
+	// knob (#5315): aws eks_ng_capacity_type, gcp gke_spot, azure aks_spot_enabled (a separate Spot
+	// worker pool — AKS keeps its system pool on-demand), alibaba ack_node_capacity_type. Hetzner
+	// has no interruptible tier, so its ValidateConfig refuses "spot".
 	// omitempty: absent when unset, so snapshots that never set it stay byte-identical.
 	CapacityType   NodeCapacityType `json:"capacity_type,omitempty"`
 	ClusterAdmins  []any            `json:"cluster_admins"`

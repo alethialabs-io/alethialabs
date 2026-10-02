@@ -42,7 +42,7 @@ func (p *alibabaProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateInstanceTypes("alibaba", config); err != nil {
 		return err
 	}
-	if err := validateCapacityType(config, "alibaba", false); err != nil {
+	if err := validateCapacityType(config, ""); err != nil {
 		return err
 	}
 	if err := validateNodeDiskSize(config, "ack_disk_size_gb", alibabaNodeDiskFloorGB); err != nil {
@@ -75,8 +75,8 @@ var (
 	// TestUnionCoversEveryKeyTheTypedMappingWrites, which re-reads them: a new `tfvars[...]`
 	// assignment fails the suite until it is listed here.
 	alibabaTypedTfvars = []string{
-		"ack_cluster_version", "ack_disk_size_gb", "ack_instance_types", "ack_node_desired_size",
-		"ack_node_max_size", "ack_node_min_size", "alibaba_account", "alidns_domain", "alidns_enabled",
+		"ack_cluster_version", "ack_disk_size_gb", "ack_instance_types", "ack_node_capacity_type",
+		"ack_node_desired_size", "ack_node_max_size", "ack_node_min_size", "alibaba_account", "alidns_domain", "alidns_enabled",
 		"alidns_managed_certificate", "alidns_zone_name", "classification_tags", "cr_repos",
 		"create_kvstore", "create_mns", "create_oss", "create_ots", "create_rds", "custom_secrets",
 		"environment", "kvstore_engine_version", "kvstore_instance_class", "kvstore_multi_az",
@@ -124,7 +124,7 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 
 		// ACK (managed Kubernetes)
 		"provision_ack":       true,
-		"ack_cluster_version": resolveK8sVersion("alibaba", config.Cluster.ClusterVersion),
+		"ack_cluster_version": ResolveK8sVersion("alibaba", config.Cluster.ClusterVersion),
 
 		// DNS (Alibaba Cloud DNS) — no WAF term, the offer is withdrawn (#1841).
 		// Same rule as aws and azure: CREATE the domain only when the caller brought none of their
@@ -264,6 +264,18 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	}
 	if config.Cluster.NodeDiskSizeGB != nil {
 		tfvars["ack_disk_size_gb"] = *config.Cluster.NodeDiskSizeGB
+	}
+	// The node pool's purchase option (#5315): the worker pool's `spot_strategy`. Spot bids the
+	// market rate (SpotAsPriceGo) unless the cluster's provider_config carries `ack_spot_price_limit`
+	// ceilings, which the template reads only under SpotWithPriceLimit — so a price-capped Spot pool
+	// stays reachable through the one field. Unset leaves a hand-set `ack_node_capacity_type` in force.
+	if strategy := alibabaSpotStrategy(config.Cluster.CapacityType, config.Cluster.ProviderConfig); strategy != "" {
+		tfvars["ack_node_capacity_type"] = strategy
+	} else {
+		// A legacy hand-set passthrough (the legacy capacity passthrough, validate.go).
+		if legacy, isSet := config.Cluster.ProviderConfig["ack_node_capacity_type"]; isSet {
+			tfvars["ack_node_capacity_type"] = legacy
+		}
 	}
 
 	if !provisionNetwork && config.Network.NetworkID != "" {
@@ -593,3 +605,19 @@ func buildAlibabaSecrets(secrets []types.ProjectSecretConfig) []map[string]inter
 }
 
 var _ CloudProvider = (*alibabaProvider)(nil)
+
+// alibabaSpotStrategy maps the cloud-indifferent node capacity type onto the ACK node pool's
+// `spot_strategy` (template variable `ack_node_capacity_type`). "" for unset, or a value
+// ValidateConfig has already refused.
+func alibabaSpotStrategy(capacity types.NodeCapacityType, pc map[string]any) string {
+	switch capacity {
+	case types.NodeCapacityTypeSpot:
+		if limits, ok := pc["ack_spot_price_limit"].([]any); ok && len(limits) > 0 {
+			return "SpotWithPriceLimit"
+		}
+		return "SpotAsPriceGo"
+	case types.NodeCapacityTypeOnDemand:
+		return "NoSpot"
+	}
+	return ""
+}

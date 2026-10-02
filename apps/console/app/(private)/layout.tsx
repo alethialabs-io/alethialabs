@@ -4,7 +4,8 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import type React from "react";
-import { getOwner } from "@/lib/auth/owner";
+import { ViewerProvider } from "@/components/providers/viewer-provider";
+import { getViewer } from "@/lib/auth/owner";
 import { hasAcceptedCurrentDocuments } from "@/lib/billing/eligibility";
 
 // Every route under (private) is behind authentication — crawlers only ever reach a login
@@ -39,9 +40,12 @@ export default async function PrivateLayout({
 	//
 	// Unauthenticated requests fall through untouched; the page-level guards already redirect those
 	// to /login, and duplicating that here would race them.
-	const userId = await getOwner();
-	if (userId && !(await hasAcceptedCurrentDocuments(userId))) {
+	const viewer = await getViewer();
+	if (viewer && !(await hasAcceptedCurrentDocuments(viewer.id))) {
 		redirect(ACCEPTANCE_ROUTE);
 	}
-	return children;
+	// The same session, handed to the client as the seed `useViewer()` renders with until it has
+	// hydrated — so the shell's avatar, name and email are the SERVER's answer on both sides of
+	// hydration, whenever the browser's own session fetch happens to resolve (#5382).
+	return <ViewerProvider viewer={viewer}>{children}</ViewerProvider>;
 }

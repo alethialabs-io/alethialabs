@@ -20,6 +20,7 @@ import {
 	dbEngines,
 } from "./generated/catalog";
 import { effectiveCapacityMode } from "./nosql-capacity";
+import { effectiveCapacityType, supportsSpot } from "./node-capacity";
 /**
  * Engines the TARGET cloud can back, from the catalog.
  *
@@ -124,16 +125,6 @@ export function convertProjectConfig(
 
 	data.cluster.cluster_version = DEFAULT_K8S_VERSION[targetProvider];
 
-	// Spot through `capacity_type` is honoured on aws only (#5266); the target cloud's ValidateConfig
-	// would refuse it, so a converted cluster goes back to the default with a notice.
-	if (data.cluster.capacity_type === "spot" && targetProvider !== "aws") {
-		data.cluster.capacity_type = undefined;
-		warnings.push({
-			severity: "warning",
-			component: "Cluster",
-			message: `Spot capacity is not offered on ${target.shortName} through this setting; the cluster uses on-demand nodes.`,
-		});
-	}
 	warnings.push({
 		severity: "info",
 		component: "Cluster",
@@ -144,9 +135,39 @@ export function convertProjectConfig(
 	const targetAutoscaler = AUTOSCALER[targetProvider];
 	const sourceAutoscalerEnabled =
 		data.cluster.provider_config?.[sourceAutoscaler.providerConfigKey];
+	// Read before provider_config is replaced below: a Spot knob set by hand there (before
+	// `capacity_type` owned it) is the source cluster's capacity too, and would otherwise vanish.
+	const sourceCapacity = effectiveCapacityType(data.cluster);
 	data.cluster.provider_config = {
 		[targetAutoscaler.providerConfigKey]: !!sourceAutoscalerEnabled,
 	};
+
+	// Spot through `capacity_type` (#5315) survives a move to any cloud that maps it, and is dropped
+	// with a notice where the target's ValidateConfig would refuse it: hetzner sells no Spot servers,
+	// and GKE Autopilot (which the autoscaler carry-over above may just have turned on) has no node
+	// pool to put on Spot. Azure keeps it, but it means a different shape there, so the user is told.
+	if (sourceCapacity === "spot") {
+		data.cluster.capacity_type = "spot";
+		const autopilot = targetProvider === "gcp" && data.cluster.provider_config.enable_autopilot === true;
+		if (!supportsSpot(targetProvider) || autopilot) {
+			data.cluster.capacity_type = undefined;
+			warnings.push({
+				severity: "warning",
+				component: "Cluster",
+				message: autopilot
+					? "Spot capacity is chosen per workload on GKE Autopilot, so the cluster uses on-demand nodes. Turn Autopilot off to put the node pool on Spot."
+					: `${target.shortName} sells no Spot servers, so the cluster uses on-demand nodes.`,
+			});
+		} else if (targetProvider === "azure") {
+			warnings.push({
+				severity: "info",
+				component: "Cluster",
+				message:
+					"Spot on AKS adds a separate Spot worker pool. The system pool stays on-demand, because AKS cannot run it on Spot.",
+			});
+		}
+	}
+
 	if (sourceAutoscalerEnabled) {
 		warnings.push({
 			severity: "info",
