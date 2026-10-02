@@ -8,13 +8,13 @@
 // internal ids and low-cardinality plan/role attributes.
 
 import { useEffect, useRef } from "react";
-import { useSession } from "@/lib/auth/client";
+import { useViewer } from "@/components/providers/viewer-provider";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { group, identify, reset } from "@/lib/analytics/track";
 
 /** Headless: identifies the user + active org to analytics, resets on sign-out. Renders nothing. */
 export function AnalyticsIdentity() {
-	const { data: session } = useSession();
+	const { viewer } = useViewer();
 	const activeOrgId = useWorkspaceStore((s) => s.activeOrgId);
 	const org = useWorkspaceStore((s) =>
 		s.organizations.find((o) => o.id === s.activeOrgId),
@@ -23,9 +23,8 @@ export function AnalyticsIdentity() {
 	const identified = useRef(false);
 
 	useEffect(() => {
-		const user = session?.user;
-		if (user?.id) {
-			identify(user.id);
+		if (viewer) {
+			identify(viewer.id);
 			identified.current = true;
 			if (activeOrgId) {
 				group(activeOrgId, {
@@ -38,7 +37,7 @@ export function AnalyticsIdentity() {
 			reset();
 			identified.current = false;
 		}
-	}, [session?.user, activeOrgId, org?.plan, org?.role]);
+	}, [viewer, activeOrgId, org?.plan, org?.role]);
 
 	return null;
 }

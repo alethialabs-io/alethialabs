@@ -5,6 +5,7 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { UnauthorizedError } from "./errors";
+import { toViewer, type Viewer } from "./viewer";
 
 /**
  * Reads the current Better Auth session, tolerating a failed lookup. A stale/expired token that the
@@ -40,6 +41,16 @@ export async function requireOwner(): Promise<string> {
 export async function getOwner(): Promise<string | null> {
 	const session = await safeGetSession();
 	return session?.user?.id ?? null;
+}
+
+/**
+ * The signed-in person as the console renders them, read from this request's session — or null when
+ * there is none (also on a failed lookup). The private layout hands this to `ViewerProvider` so the
+ * server render and the hydrating client render the same person (#5382).
+ */
+export async function getViewer(): Promise<Viewer | null> {
+	const session = await safeGetSession();
+	return session?.user ? toViewer(session.user) : null;
 }
 
 export interface OwnerScope {
