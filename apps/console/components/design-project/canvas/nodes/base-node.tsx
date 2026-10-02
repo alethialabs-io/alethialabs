@@ -63,7 +63,8 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 	const lod = useCanvasLod();
 	// The env's Kubernetes version as it will deploy, for the add-on compat overlay. Above the early
 	// return — hooks must run in the same order on every render. An unset version resolves to the
-	// catalog default (#5314); no cluster → undefined → `not_evaluable`, never a false pass.
+	// catalog default (#5314), except on BYO-IaC where the module decides it (#5365); no cluster →
+	// undefined → `not_evaluable`, never a false pass.
 	const clusterK8s = useClusterK8sVersion();
 	if (!node) return null;
 
@@ -109,7 +110,7 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 		node.data.kind === "addon" && typeof node.data.config.id === "string"
 			? node.data.config.id
 			: null;
-	const compat = addonId ? addonCompat(addonId, clusterK8s) : null;
+	const compat = addonId ? addonCompat(addonId, clusterK8s.version, clusterK8s.reason) : null;
 	const compatChip =
 		compat && compat.status !== "pass"
 			? { label: compat.status === "fail" ? `K8s ${compat.window}` : "Unverified", note: compat.note }
