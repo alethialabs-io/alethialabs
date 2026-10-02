@@ -41,7 +41,9 @@ const talosconfigOutputKey = "talosconfig"
 
 // errNoTalosMinter reports a hetzner state that carries a talosconfig with no minter wired to use it.
 // In the runner that is a wiring bug; the destroy path tells it apart from a failed mint because an
-// in-process caller with no runner (the e2e harness's teardown) legitimately has no minter.
+// in-process caller with no runner may pass none. No caller in this repo does: the runner wires
+// mintFromTalosconfig, and since #5339 the e2e harness's teardown wires the runner binary's
+// `talos-kubeconfig` subcommand (test/e2e/t2_talos_remint.go).
 var errNoTalosMinter = errors.New("this hetzner state carries a talosconfig but no Talos kubeconfig minter was wired to use it (a runner wiring bug)")
 
 // talosAdminOutputs returns outputs with `kubeconfig` replaced by an admin kubeconfig minted NOW from

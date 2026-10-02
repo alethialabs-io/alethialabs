@@ -6,7 +6,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -147,4 +149,47 @@ func mintFromTalosconfig(ctx context.Context, talosconfigYAML string) (string, e
 		return "", err
 	}
 	return string(kubeconfig), nil
+}
+
+// maxTalosconfigStdinBytes bounds what the `talos-kubeconfig` subcommand reads. It mirrors the
+// console's MAX_TALOSCONFIG_BYTES (apps/console/app/api/jobs/[id]/talosconfig/route.ts), the largest
+// talosconfig the platform accepts anywhere, so the subcommand takes nothing the runner would refuse.
+const maxTalosconfigStdinBytes = 128 * 1024
+
+// RunTalosKubeconfig is the `talos-kubeconfig` subcommand: it reads a Talos client configuration on
+// stdin and writes a freshly minted admin kubeconfig to stdout. It is MintTalosKubeconfig, unchanged,
+// behind a process boundary: the same SSRF guard, the same 45s timeout, the same refusals.
+//
+// It exists for the T2 e2e harness (#5339), which runs outside the runner and cannot import this
+// package (it is `internal`, and the harness module carries no Talos dependency). The harness execs
+// the runner binary it already builds, so its re-mints run the runner's code rather than a copy.
+//
+// It holds no runner credential and adds no capability: whoever can hand it a talosconfig can already
+// mint with `talosctl kubeconfig`. The talosconfig is read from stdin and never from argv, so it does
+// not appear in a process listing; any argument is refused for that reason.
+func RunTalosKubeconfig(ctx context.Context, args []string) error {
+	return runTalosKubeconfig(ctx, args, os.Stdin, os.Stdout, MintTalosKubeconfig)
+}
+
+// runTalosKubeconfig is RunTalosKubeconfig with its streams and minter injected, so the refusals are
+// testable without a Talos control plane.
+func runTalosKubeconfig(ctx context.Context, args []string, in io.Reader, out io.Writer, mint func(context.Context, string) ([]byte, error)) error {
+	if len(args) != 0 {
+		return fmt.Errorf("talos-kubeconfig takes no arguments (got %d): the talosconfig is read from stdin so it never appears in a process listing", len(args))
+	}
+	raw, err := io.ReadAll(io.LimitReader(in, maxTalosconfigStdinBytes+1))
+	if err != nil {
+		return fmt.Errorf("talos-kubeconfig: read the talosconfig from stdin: %w", err)
+	}
+	if len(raw) > maxTalosconfigStdinBytes {
+		return fmt.Errorf("talos-kubeconfig: the talosconfig on stdin exceeds %d bytes", maxTalosconfigStdinBytes)
+	}
+	kubeconfig, err := mint(ctx, string(raw))
+	if err != nil {
+		return err
+	}
+	if _, err := out.Write(kubeconfig); err != nil {
+		return fmt.Errorf("talos-kubeconfig: write the kubeconfig to stdout: %w", err)
+	}
+	return nil
 }

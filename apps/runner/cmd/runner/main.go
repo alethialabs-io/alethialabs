@@ -60,6 +60,10 @@ var subcommands = map[string]func(context.Context, []string) error{
 	"registry-token": agent.RunRegistryToken,
 	// The helm_registry analogue of registry-token, for OCI chart repos (#1185). Long-running.
 	"helm-repo-token": agent.RunHelmRepoToken,
+	// One-shot: talosconfig on stdin, a freshly minted admin kubeconfig on stdout — MintTalosKubeconfig
+	// with its SSRF guard (#5339). The T2 e2e harness runs outside the runner and re-mints the hetzner
+	// cluster's 1h admin certificate through this before each phase and before its teardown.
+	"talos-kubeconfig": agent.RunTalosKubeconfig,
 }
 
 // dispatchSubcommand runs the subcommand named by args[0], if there is one.
