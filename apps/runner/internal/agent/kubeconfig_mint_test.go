@@ -276,6 +276,9 @@ func mintFailureCases() []struct {
 		{"talos apid unreachable", "hetzner", adm, st, func(f *mintFixture, s string) {
 			f.seams.talosKubeconfig = func(context.Context, string) ([]byte, error) { return nil, leak(s) }
 		}, nil, mintReasonUnreachable},
+		{"talos admin cert outlives the 8h cap", "hetzner", adm, st, func(f *mintFixture, _ string) {
+			f.pki = newTestPKI(f.t, 24*time.Hour) // the managed hetzner template's certLifetime
+		}, nil, mintReasonAdminLifetime},
 		{"talos answers a token kubeconfig", "hetzner", adm, st, func(f *mintFixture, s string) {
 			f.seams.talosKubeconfig = func(context.Context, string) ([]byte, error) {
 				return []byte("clusters:\n- name: c\n  cluster:\n    server: https://203.0.113.10\n    certificate-authority-data: Q0E=\nusers:\n- name: u\n  user:\n    token: " + s + "\n"), nil
@@ -343,6 +346,52 @@ func TestMintKubeconfig_FailuresPostTheirFixedSentence(t *testing.T) {
 			if !allowed[tc.reason] {
 				t.Fatalf("%q is not a sentence the console stores", tc.reason)
 			}
+		})
+	}
+}
+
+// TestMintKubeconfig_AdminLifetimeCap pins #5326: an admin credential whose REAL lifetime would
+// exceed the 8h TTL ceiling is refused with its fixed sentence, whatever cloud issued it, and one at
+// or under the ceiling is handed out. The read-only tier only uses the admin certificate in memory to
+// prepare its identity, so a long-lived one does not stop a read-only mint.
+func TestMintKubeconfig_AdminLifetimeCap(t *testing.T) {
+	adm, ro := types.KubeconfigMintTierAdmin, types.KubeconfigMintTierReadonly
+	for _, tc := range []struct {
+		name     string
+		provider string
+		tier     types.KubeconfigMintTier
+		shape    types.KubeconfigMintShape
+		certLife time.Duration // the Talos/ACK admin certificate's lifetime
+		tokLife  time.Duration // the bearer clouds' admin token lifetime
+		refused  bool
+	}{
+		{"talos 1h", "hetzner", adm, types.KubeconfigMintShapeStatic, time.Hour, 0, false},
+		{"talos exactly 8h", "hetzner", adm, types.KubeconfigMintShapeStatic, 8 * time.Hour, 0, false},
+		{"talos 8h1m", "hetzner", adm, types.KubeconfigMintShapeStatic, 8*time.Hour + time.Minute, 0, true},
+		{"talos 24h (the template default)", "hetzner", adm, types.KubeconfigMintShapeStatic, 24 * time.Hour, 0, true},
+		{"talos 24h read-only setup cert", "hetzner", ro, types.KubeconfigMintShapeStatic, 24 * time.Hour, 0, false},
+		{"gcp token 1h", "gcp", adm, types.KubeconfigMintShapeExec, time.Hour, time.Hour, false},
+		{"azure token 9h", "azure", adm, types.KubeconfigMintShapeExec, time.Hour, 9 * time.Hour, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newMintFixture(t, tc.tier, tc.shape, "x")
+			f.pki = newTestPKI(t, tc.certLife)
+			if tc.tokLife > 0 {
+				f.cloudExpiry = time.Now().Add(tc.tokLife).Truncate(time.Second)
+			}
+			err := runMint(t, f, mintSnapshot(tc.provider))
+			if tc.refused {
+				assertMintFailed(t, f, err, mintReasonAdminLifetime)
+				return
+			}
+			if err != nil {
+				t.Fatalf("mint: %v", err)
+			}
+			res := f.api.results()
+			if len(res) != 1 {
+				t.Fatalf("want one result, got %d", len(res))
+			}
+			f.open(t, res[0])
 		})
 	}
 }
