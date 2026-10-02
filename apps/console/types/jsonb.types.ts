@@ -741,8 +741,16 @@ export interface KubeconfigMintAuditChanges extends AuditChanges {
 	credential_expires_by: string;
 	/** Which surface asked: the `alethia` CLI or the console. */
 	client: "cli" | "console";
-	/** Which kind of bearer the CLI call carried (a person's session or a service token). */
+	/** Which kind of bearer the call carried (a person's session or a service token). Null only on
+	 *  rows written before #5310, when the console did not record one. */
 	credential_kind: "session" | "service_token" | null;
+	/**
+	 * WHICH credential, when it was a service token: `cli_service_tokens.id` (#5310). An id, never the
+	 * token or its hash — it names the row an owner sees in the console's token list, nothing more.
+	 * Null for a session, which has no per-credential id the mint binds to. Absent on rows written
+	 * before #5310.
+	 */
+	credential_id?: string | null;
 	/** The caller's IP from the deployment's trusted proxy header, or null when it sent none. */
 	source_ip: string | null;
 }

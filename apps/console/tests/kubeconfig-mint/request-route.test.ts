@@ -193,8 +193,39 @@ describe("request validation", () => {
 			clusterId: CLUSTER,
 			request: { tier: "readonly", ttl_seconds: 900, shape: "exec", client_public_key: KEY },
 			client: "cli",
-			credentialKind: "session",
+			credential: { kind: "session" },
 			sourceIp: "203.0.113.7",
+		});
+	});
+});
+
+describe("a service token (#5310)", () => {
+	const TOKEN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+	beforeEach(() => {
+		role = "owner";
+		vi.mocked(authorizeCli).mockResolvedValue({
+			actor: { userId: user, orgId: ORG },
+			credential: "service_token",
+			serviceTokenId: TOKEN_ID,
+			orgScope: [ORG],
+		});
+	});
+
+	it("binds the mint to the token's own id, not only to the person who minted it", async () => {
+		await post(body("readonly"));
+		expect(requestKubeconfigMint).toHaveBeenCalledWith(
+			expect.objectContaining({ credential: { kind: "service_token", tokenId: TOKEN_ID } }),
+		);
+	});
+
+	it("answers an admin refusal with 403 and a sentence that says what to do instead", async () => {
+		vi.mocked(requestKubeconfigMint).mockResolvedValueOnce({ ok: false, refusal: "admin-needs-a-person" });
+		const res = await post(body("admin"));
+		expect(res.status).toBe(403);
+		expect(res.headers.get("Cache-Control")).toBe("no-store");
+		expect(await res.json()).toEqual({
+			error: "A service token can mint only a read-only kubeconfig. Admin kubeconfigs are for people: sign in with `alethia login` and request it as yourself",
 		});
 	});
 });
@@ -218,6 +249,7 @@ describe("outcomes", () => {
 	});
 
 	it.each([
+		["admin-needs-a-person", 403],
 		["not-found", 404],
 		["not-provisioned", 409],
 		["unsupported-cloud", 422],
