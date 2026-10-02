@@ -82,6 +82,8 @@ function pageOf(members: MemberRow[], invitations: InvitationRow[]): MembersPage
 		invitations,
 		resultCount: members.length + invitations.length,
 		total: 6,
+		viewerUserId: "u-a",
+		asOf: "2026-01-02T00:00:00.000Z",
 		facets: {
 			statuses: [
 				{ value: "active", label: "Active", count: 5 },

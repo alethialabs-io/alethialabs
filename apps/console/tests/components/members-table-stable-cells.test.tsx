@@ -75,6 +75,8 @@ function buildPage() {
     invitations: [],
     resultCount: 3,
     total: 3,
+    viewerUserId: "u_owner",
+    asOf: "2026-01-04T00:00:00.000Z",
     facets: { statuses: [], roles: [], teams: [] },
   };
 }
