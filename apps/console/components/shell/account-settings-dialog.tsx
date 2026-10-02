@@ -12,6 +12,7 @@ import { PRIVACY_RESPONSE_DAYS } from "@/app/server/actions/privacy/response-per
 import { requestMyErasure } from "@/app/server/actions/privacy/self-serve";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { authClient } from "@/lib/auth/client";
+import { useViewer } from "@/components/providers/viewer-provider";
 import { formatDate } from "@repo/format";
 import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/avatar";
 import { Badge } from "@repo/ui/badge";
@@ -58,8 +59,7 @@ export function AccountSettingsDialog({
 	open,
 	onOpenChange,
 }: AccountSettingsDialogProps) {
-	const { data: session } = authClient.useSession();
-	const user = session?.user ?? null;
+	const { viewer: user } = useViewer();
 	const [providers, setProviders] = useState<string[]>([]);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [requesting, setRequesting] = useState(false);

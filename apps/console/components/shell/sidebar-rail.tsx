@@ -12,7 +12,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { SHELL_HEADER } from "@/components/shell/shell-metrics";
-import { authClient } from "@/lib/auth/client";
+import { useViewer } from "@/components/providers/viewer-provider";
 import { orgHref } from "@/lib/routing";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
@@ -83,8 +83,7 @@ function RailLink({
 
 /** The user avatar — clicking it opens the account settings modal directly. */
 function RailAccount() {
-  const { data: session } = authClient.useSession();
-  const user = session?.user ?? null;
+  const { viewer: user } = useViewer();
   const [settingsOpen, setSettingsOpen] = useState(false);
   return (
     <>
