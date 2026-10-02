@@ -20,6 +20,10 @@
 // `expires_at` is the POLL WINDOW — how long the request may wait for and hold its sealed result —
 // not the credential's TTL, which is `ttl_seconds` and is enforced by the cloud / the cluster.
 //
+// CREDENTIAL. A row is bound to the credential that asked (#5310): `service_token_id` for a CLI service
+// token, NULL for a person's session. The poll matches it, so another token of the same person — which
+// carries the same actor_user_id — cannot collect (and so consume) the mint.
+//
 // TENANCY. `org_id` is the actor's active org, copied from the project_cluster row the route
 // resolved with `project_cluster.org_id = actor.orgId` (#5250 §2 "For which cluster"). It carries no
 // FK to `organization` for the reason cli_service_tokens records: a community user's personal org id
@@ -41,6 +45,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import { profiles } from "./accounts";
+import { cliServiceTokens } from "./cli-service-tokens";
 import {
 	kubeconfigMintShape,
 	kubeconfigMintStatus,
@@ -85,6 +90,12 @@ export const kubeconfigMintRequests = pgTable(
 		actor_user_id: uuid()
 			.notNull()
 			.references(() => profiles.id, { onDelete: "cascade" }),
+		// WHICH CREDENTIAL asked (#5310) — and so the only one that may poll and collect. NULL means a
+		// person's session (the console, or `alethia login`); otherwise the CLI service token's id.
+		// actor_user_id alone cannot tell them apart: a service token acts AS the profile that minted
+		// it, so every token one person mints shares their actor_user_id. The bind trigger
+		// (programmables.sql) requires the token to be that same person's, in this row's org.
+		service_token_id: uuid().references(() => cliServiceTokens.id, { onDelete: "cascade" }),
 		tier: kubeconfigMintTier().notNull(),
 		ttl_seconds: integer().notNull(),
 		shape: kubeconfigMintShape().notNull(),
@@ -127,6 +138,12 @@ export const kubeconfigMintRequests = pgTable(
 		check(
 			"kubeconfig_mint_requests_reason_only_when_failed",
 			sql`${t.failure_reason} IS NULL OR ${t.status} = 'failed'`,
+		),
+		// A service token never holds an admin mint (#5310): admin cluster credentials are for people,
+		// not unattended automation. lib/kubeconfig-mint/gates.ts is the policy; this is its backstop.
+		check(
+			"kubeconfig_mint_requests_token_readonly",
+			sql`${t.service_token_id} IS NULL OR ${t.tier} = 'readonly'`,
 		),
 		check(
 			"kubeconfig_mint_requests_window",

@@ -187,7 +187,9 @@ func kubeMintRefusal(err error, tier types.KubeconfigMintTier) error {
 		return fmt.Errorf("your organization's plan does not allow another kubeconfig right now: %s (see `alethia usage`)", apiErr.Message)
 	case http.StatusForbidden:
 		if tier == types.KubeconfigMintTierAdmin {
-			return errors.New("your role cannot mint an admin kubeconfig for this cluster (owners and admins can); drop --admin for read-only access")
+			// Two causes share this status, and the CLI cannot tell which credential it holds: a
+			// role without cluster:access_admin, or a service token, which never mints admin (#5310).
+			return errors.New("you cannot mint an admin kubeconfig for this cluster: your role lacks it (owners and admins can), or you are using a service token, which mints read-only only; drop --admin for read-only access")
 		}
 		return errors.New("your role cannot mint a kubeconfig for this cluster (owners, admins and operators can)")
 	case http.StatusNotFound:

@@ -4,12 +4,15 @@
 // The two gates every surface that mints a kubeconfig shares: the CLI routes
 // (app/api/cli/clusters/[id]/kubeconfig/**) and the console's download action
 // (app/server/actions/kubeconfig-download.ts, #5285). One definition, so a person cannot double their
-// mint budget by alternating surfaces, and the poll's tier re-check cannot differ between them.
+// mint budget by alternating surfaces, and the poll's tier re-check cannot differ between them. Also the
+// credential a mint binds to, and which credentials may ask for which tier (#5310).
 
 import { getPdp } from "@/lib/authz";
+import type { CliAuthorization } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import type { KubeconfigMintTier } from "@/lib/db/schema/enums";
 import { checkRateLimit } from "@/lib/rate-limit";
+import type { MintCredential } from "./audit";
 import { actionForTier } from "./clouds";
 
 /** Mint requests one person may make in {@link MINT_RATE_WINDOW_MS}, per org, across every surface.
@@ -46,5 +49,37 @@ export async function mayCollectTier(
 	} catch (e) {
 		if (e instanceof ForbiddenError) return false;
 		throw e;
+	}
+}
+
+/**
+ * The credential a CLI mint binds to, from what `authorizeCli` resolved: the token's own id for a
+ * service token, and the person for a session. Only that same credential may then collect the mint.
+ */
+export function mintCredentialOf(auth: CliAuthorization): MintCredential {
+	switch (auth.credential) {
+		case "service_token":
+			return { kind: "service_token", tokenId: auth.serviceTokenId };
+		case "session":
+			return { kind: "session" };
+	}
+}
+
+/**
+ * Whether `credential` may REQUEST a mint of `tier` at all (#5310). A service token may mint a
+ * read-only kubeconfig — CI and automation need kubectl — but never an admin one: an admin cluster
+ * credential handed to unattended automation is the riskier policy, so admin is for people. This is
+ * the policy; the database restates it as a CHECK on kubeconfig_mint_requests, so a writer that
+ * skipped this function still cannot store an admin mint bound to a token.
+ */
+export function credentialMayMintTier(
+	credential: MintCredential,
+	tier: KubeconfigMintTier,
+): boolean {
+	switch (credential.kind) {
+		case "session":
+			return true;
+		case "service_token":
+			return tier === "readonly";
 	}
 }

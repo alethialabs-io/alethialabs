@@ -9,7 +9,11 @@ import { cliJson } from "@/lib/cli/respond";
 import { KUBECONFIG_MINT_SHARED_CLUSTER_REASON } from "@/lib/clusters/mint-eligibility";
 import { errorName } from "@/lib/errors";
 import { actionForTier } from "@/lib/kubeconfig-mint/clouds";
-import { MINT_RATE_WINDOW_MS, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
+import {
+	MINT_RATE_WINDOW_MS,
+	mintCredentialOf,
+	takeMintRateLimit,
+} from "@/lib/kubeconfig-mint/gates";
 import { mintError, noStore, readBoundedJson } from "@/lib/kubeconfig-mint/http";
 
 import {
@@ -30,6 +34,11 @@ const mlog = log.child({ component: "kubeconfig-mint" });
 /** The HTTP status and message for each reason a mint was not queued. */
 function refusalResponse(refusal: MintRequestRefusal): Response {
 	switch (refusal) {
+		case "admin-needs-a-person":
+			return mintError(
+				403,
+				"A service token can mint only a read-only kubeconfig. Admin kubeconfigs are for people: sign in with `alethia login` and request it as yourself",
+			);
 		case "not-found":
 			return mintError(404, "Cluster not found");
 		case "not-provisioned":
@@ -56,8 +65,13 @@ function refusalResponse(refusal: MintRequestRefusal): Response {
  *      An unparseable body is checked against the lesser action and then refused, so an
  *      unauthenticated caller learns nothing about the body from the answer.
  *   3. The caller is rate-limited.
+ *   3½. A service token asking for ADMIN is refused with a 403 before anything is written: a service
+ *      token mints read-only only (#5310; lib/kubeconfig-mint/gates.ts says why).
  *   4. lib/kubeconfig-mint/request.ts resolves the cluster inside the actor's org (another org's
  *      cluster is a 404), refuses a namespace/vcluster environment (422) before any job exists, and writes the job, the request row and the audit row in one transaction.
+ *
+ * The mint is bound to the credential that asked — the service token's own id, or the person's session
+ * — and only that credential can collect it (#5310).
  *
  * Answers 202 with the queued mint; the client then polls `GET …/kubeconfig/:mintId`. Every response
  * is `Cache-Control: no-store`. The body carries only the client's PUBLIC key; nothing secret is
@@ -75,7 +89,7 @@ export async function POST(
 
 	const auth = await authorizeCli(req, action, { type: "cluster", id });
 	if ("error" in auth) return noStore(auth.error);
-	const { actor, credential } = auth;
+	const { actor } = auth;
 
 	if (!parsed.success) {
 		// The issue paths only — never the values, though the only value here is a public key.
@@ -98,7 +112,7 @@ export async function POST(
 			clusterId: id,
 			request: parsed.data,
 			client: "cli",
-			credentialKind: credential,
+			credential: mintCredentialOf(auth),
 			sourceIp: trustedClientIp(req.headers),
 		});
 		if (!outcome.ok) return refusalResponse(outcome.refusal);

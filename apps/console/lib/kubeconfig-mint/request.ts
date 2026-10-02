@@ -34,9 +34,9 @@ import { signedJob } from "@/lib/db/signed-job";
 import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import type { CliKubeconfigMintRequest } from "@/lib/validations/cli-contract";
-import type { KubeconfigMintAuditChanges } from "@/types/jsonb.types";
-import { type MintClient, writeMintAudit } from "./audit";
+import { type MintClient, type MintCredential, writeMintAudit } from "./audit";
 import { mintShapeRefusal } from "./clouds";
+import { credentialMayMintTier } from "./gates";
 
 /** Environment statuses with no cluster to mint against. */
 const UNPROVISIONED_ENV: ReadonlySet<string> = new Set([
@@ -57,7 +57,8 @@ export interface MintRequestInput {
 	clusterId: string;
 	request: CliKubeconfigMintRequest;
 	client: MintClient;
-	credentialKind: KubeconfigMintAuditChanges["credential_kind"];
+	/** The credential that asked. The row is bound to it: only it may collect the mint (#5310). */
+	credential: MintCredential;
 	sourceIp: string | null;
 }
 
@@ -75,6 +76,7 @@ interface QueuedMint {
 
 /** Why a mint was not queued. Each maps to one HTTP status in the route. */
 export type MintRequestRefusal =
+	| "admin-needs-a-person"
 	| "not-found"
 	| "not-provisioned"
 	| "unsupported-cloud"
@@ -167,8 +169,9 @@ async function latestDeploySnapshot(
 }
 
 /**
- * Queues one kubeconfig mint: checks the cluster is in the actor's org, is not a shared cluster, is
- * provisioned, and can mint the requested shape; applies the runner-minute usage guard (but not the daily job quota, which
+ * Queues one kubeconfig mint: refuses an admin mint from a service token, checks the cluster is in the
+ * actor's org, is not a shared cluster, is provisioned, and can mint the requested shape; applies the
+ * runner-minute usage guard (but not the daily job quota, which
  * exempts mints — #5313); then writes the MINT_KUBECONFIG job, the mint request row and the audit row in one transaction.
  *
  * Throws `UsageLimitError` from the usage guard (the route maps it to 402). Any other throw is a
@@ -178,6 +181,11 @@ export async function requestKubeconfigMint(
 	input: MintRequestInput,
 ): Promise<MintRequestOutcome> {
 	const { actor, clusterId, request } = input;
+
+	// Before anything is read: a service token never mints admin (#5310; gates.ts states why).
+	if (!credentialMayMintTier(input.credential, request.tier)) {
+		return { ok: false, refusal: "admin-needs-a-person" };
+	}
 
 	const target = await resolveMintTarget(clusterId, actor.orgId);
 	if (!target) return { ok: false, refusal: "not-found" };
@@ -242,6 +250,10 @@ export async function requestKubeconfigMint(
 				cluster_id: target.clusterId,
 				job_id: job.id,
 				actor_user_id: actor.userId,
+				// The binding (#5310). Null for a session; the token's id for a service token, so the
+				// person's OTHER tokens — which act as the same actor_user_id — cannot collect it.
+				service_token_id:
+					input.credential.kind === "service_token" ? input.credential.tokenId : null,
 				tier: request.tier,
 				ttl_seconds: request.ttl_seconds,
 				shape: request.shape,
@@ -267,7 +279,7 @@ export async function requestKubeconfigMint(
 			ttlSeconds: request.ttl_seconds,
 			requestExpiresAt: row.expires_at,
 			client: input.client,
-			credentialKind: input.credentialKind,
+			credential: input.credential,
 			sourceIp: input.sourceIp,
 		});
 

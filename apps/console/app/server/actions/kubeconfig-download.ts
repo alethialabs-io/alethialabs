@@ -65,6 +65,10 @@ const pollInput = z.object({ clusterId: z.uuid(), mintId: z.uuid() });
 /** The status the CLI route answers for each refusal from lib/kubeconfig-mint/request.ts. */
 function refusalStatus(refusal: MintRequestRefusal): KubeconfigDownloadRefusal {
 	switch (refusal) {
+		case "admin-needs-a-person":
+			// Unreachable from here — the console mints read-only on a session — but the switch is
+			// exhaustive, and this is the status the CLI route answers.
+			return 403;
 		case "not-found":
 			return 404;
 		case "not-provisioned":
@@ -128,7 +132,7 @@ export async function requestKubeconfigDownload(input: {
 			clusterId,
 			request: cliKubeconfigMintRequest.parse({ ...CONSOLE_MINT, client_public_key: clientPublicKey }),
 			client: "console",
-			credentialKind: "session",
+			credential: { kind: "session" },
 			sourceIp: await sourceIp(),
 		});
 		if (!outcome.ok) {
@@ -177,7 +181,7 @@ export async function pollKubeconfigDownload(input: {
 			clusterId,
 			mintId,
 			client: "console",
-			credentialKind: "session",
+			credential: { kind: "session" },
 			sourceIp: await sourceIp(),
 			mayCollect: (tier) => mayCollectTier(actor, clusterId, tier),
 		});
