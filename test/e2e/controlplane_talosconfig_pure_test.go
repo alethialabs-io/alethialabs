@@ -109,6 +109,7 @@ type fakeTalosStore struct {
 	token    string                  // the one runner's valid token hash
 	jobs     map[string]*talosJobRow // job id → row
 	clusters map[string]string       // job id → reported execution_metadata.cluster_name
+	envs     map[string]string       // job id → environment of a DEPLOY job
 	err      error                   // returned by every read when set
 }
 
@@ -130,6 +131,17 @@ func (f *fakeTalosStore) jobsReportingCluster(_ context.Context, jobIDs []string
 	out := map[string]bool{}
 	for _, id := range jobIDs {
 		if f.clusters[id] == cluster {
+			out[id] = true
+		}
+	}
+	return out, f.err
+}
+
+// jobsOfEnvironment filters jobIDs by their seeded environment.
+func (f *fakeTalosStore) jobsOfEnvironment(_ context.Context, jobIDs []string, env string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, id := range jobIDs {
+		if f.envs[id] == env {
 			out[id] = true
 		}
 	}

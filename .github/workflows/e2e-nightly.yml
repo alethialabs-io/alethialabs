@@ -422,7 +422,14 @@ jobs:
     # needs a job past GitHub's 360m hosted ceiling and is refused by t2budget before any spend
     # (TestExtendedCapRefusesTheHeavyFabricRiderStack). A standing rider variable therefore raises
     # this BACKSTOP on every scheduled night — the finer go-timeout the ladder derives still binds.
-    timeout-minutes: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 345 || 205 }}
+    #
+    # 190/205 → 195/210 and EXTENDED 330/345 → 335/350 (#5287): the kubeconfig-mint proof is ON by
+    # default and reserves a 4m ladder term. Neither cap had room for it: the widest ordinary ladder
+    # (aws|gcp|azure|alibaba `full`, max-config probe included) sat at exactly step 190 / job 205, and
+    # the widest extended one at step 329 / job 344. With the term they are step 194 / job 209 and
+    # step 333 / job 348, measured by TestArgoBudgetCeilingFitsTheWorkflowCaps. 350 is still inside
+    # GitHub's 360m hosted ceiling.
+    timeout-minutes: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 350 || 210 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -1660,7 +1667,7 @@ jobs:
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 330 || 190 }}
+        timeout-minutes: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 335 || 195 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -1766,6 +1773,15 @@ jobs:
           #    referenced by the nightly. Off unless E2E_DAY2_ACCESS is set. ──
           ALETHIA_E2E_DAY2_ACCESS: ${{ vars.E2E_DAY2_ACCESS }}
           ALETHIA_E2E_DAY2_ACCESS_SUMMARY: ${{ runner.temp }}/day2-access-summary.json
+          # ── KUBECONFIG MINT tiers (#5287). ON BY DEFAULT — an unset variable runs it, because it
+          #    costs seconds and no spend: a read-only and an admin kubeconfig are minted through the
+          #    real mint channel and held to their tiers against the live API server (read-only reads
+          #    and is REFUSED a write and a secrets read; admin writes). On cli-demo the real `alethia`
+          #    binary mints them through the console; elsewhere the real runner serves the channel and
+          #    the summary says `runner-channel`. Set E2E_KUBECONFIG_MINT=0 to switch it off. Its
+          #    ladder term is in ResolveT2Budget, so t2budget sees the same value this step does. ──
+          ALETHIA_E2E_KUBECONFIG_MINT: ${{ vars.E2E_KUBECONFIG_MINT }}
+          ALETHIA_E2E_KUBECONFIG_MINT_SUMMARY: ${{ runner.temp }}/kubeconfig-mint-summary.json
           # ── DAY-2 OFFER postures (#1440 classifier, #1495 harness). Where DAY2_ACCESS proves the
           #    CLUSTER is reachable, this proves the OFFERS on it survive day-2: it plans a tunable
           #    change, a resize and a teardown against live state and asserts tofu's own plan
@@ -2271,8 +2287,14 @@ jobs:
           # this offline on every PR, across every cloud x dimension, and additionally holds these
           # two to being the SAME expressions as the `timeout-minutes:` above — which the
           # "if you change one, change both" instruction asked for and nothing enforced.
-          T2_STEP_CAP_MINUTES: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 330 || 190 }}
-          T2_JOB_CAP_MINUTES: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 345 || 205 }}
+          #
+          # 190/205 -> 195/210 (extended 330/345 -> 335/350) for #5287: the kubeconfig-mint proof is
+          # on by default and reserves a 4m term. The arithmetic above had also gone stale — a `full`
+          # ladder carries the 10m max-config probe it does not list, so the ordinary cap was already
+          # at exactly step 190 / job 205 with no room. The measured widest is now 194/209 (see the
+          # job-level comment); the test named above is what says so, not this comment.
+          T2_STEP_CAP_MINUTES: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 335 || 195 }}
+          T2_JOB_CAP_MINUTES: ${{ (inputs.fabric_demo || vars.E2E_FABRIC_DEMO != '' || inputs.keyless_db != '' || inputs.secrets_xacct || inputs.xacct_registry || vars.E2E_KEYLESS_DB != '' || vars.E2E_SECRETS_XACCT != '' || vars.E2E_XACCT_REGISTRY != '') && 350 || 210 }}
           # Where the go-test stream is teed so capture-proof.sh can put the ASSERTIONS in the
           # committed bundle. ALETHIA_E2E_T2_RUNNER_LOG above is the RUNNER's deployment log — a
           # different stream, which carries no `--- PASS` and no A0.x decision lines.
@@ -2404,6 +2426,10 @@ jobs:
           # pass it through so the capture folds the access verdict into the bundle + step summary
           # (#1525 — it was written but never read). Absent ⇒ the capture is unchanged.
           ALETHIA_E2E_DAY2_ACCESS_SUMMARY: ${{ runner.temp }}/day2-access-summary.json
+          # Kubeconfig mint tiers (#5287), at the SAME path the t2 step set; folded into the bundle +
+          # step summary. It carries tiers, status codes, expiries and the endpoint's privacy — never a
+          # credential (the writer refuses one, and the T2 canary scans the bundle's sources for it).
+          ALETHIA_E2E_KUBECONFIG_MINT_SUMMARY: ${{ runner.temp }}/kubeconfig-mint-summary.json
           # Day-2 offer postures (#1495), written by the T2 test; folded into the bundle +
           # step-summary verdict exactly like the soak summary above (absent ⇒ unchanged).
           ALETHIA_E2E_DAY2_OFFER_SUMMARY: ${{ runner.temp }}/day2-offer-summary.json

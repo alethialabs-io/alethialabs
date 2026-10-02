@@ -919,6 +919,16 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//       ArgoCD URL resolves. Reuses the same kc + metaRaw; runs BEFORE the guaranteed teardown.
 	runT2Day2Access(t, ctx, kc, day2AccessParams{provider: provider, metaRaw: metaRaw})
 
+	// (7.7b) KUBECONFIG MINT tiers (#5287). ON by default (ALETHIA_E2E_KUBECONFIG_MINT=0 turns it
+	//        off): a read-only and an admin kubeconfig are minted through the real mint channel — by
+	//        the real CLI on cli-demo, by the real runner over the shim's runner channel elsewhere —
+	//        and each is held to its tier against the live API server. Seconds; its ladder term is in
+	//        ResolveT2Budget. Runs while the runner process is still serving, BEFORE the teardown.
+	runT2KubeconfigMint(t, ctx, cp, kubeconfigMintParams{
+		provider: provider, region: region, deployJobID: jobID, owner: owner,
+		graph: a05.jobGraph(), clusterName: meta.ClusterName, cliDemo: cliDemo,
+	})
+
 	// (7.8) DAY-2 OFFER postures (#1495, driving the #1440 classifier). Opt-in via
 	//       ALETHIA_E2E_DAY2_OFFER — unset ⇒ a clean skip. Where (7.7) proves the CLUSTER is
 	//       reachable, this proves the OFFERS on it survive day-2: it plans a tunable change, a

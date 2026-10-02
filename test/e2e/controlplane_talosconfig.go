@@ -32,6 +32,11 @@ import (
 //     environment, so a placement resolves its Fabric by the cluster name it targets
 //     (config_snapshot.cluster.cluster_name) against the cluster name the writing job reported
 //     (execution_metadata.cluster_name) — the same link the scenarios already assert on.
+//   - A kubeconfig MINT (#5287) of a DEDICATED environment reads its own Fabric's talosconfig, as the
+//     console route's isDedicatedMint admits. The console links the job to its Fabric through the
+//     environment; so does this: the talosconfig a mint reads is the latest one written by a DEPLOY of
+//     the SAME environment. A mint with no environment is refused 409, exactly as the console refuses
+//     it ("Job has no environment").
 //   - The value is held in memory, not encrypted: encryption at rest is the console's (encryptSecret,
 //     with its own unit tests) and no keyring exists here. It is never logged and never echoed in an
 //     error.
@@ -47,10 +52,11 @@ type heldTalosconfig struct {
 
 // talosJobRow is what the talosconfig gate reads for one job.
 type talosJobRow struct {
-	runnerID string // "" when the job is unclaimed
-	jobType  string
-	status   string
-	snapshot []byte
+	runnerID      string // "" when the job is unclaimed
+	jobType       string
+	status        string
+	snapshot      []byte
+	environmentID string // "" when the job carries no environment
 }
 
 // talosSnapshot is the slice of a job's config_snapshot the gate reads.
@@ -68,6 +74,9 @@ type talosGateResult struct {
 	message string
 	// placementCluster is the Fabric cluster a read resolves against (reads only).
 	placementCluster string
+	// mintEnvironment is set instead for a dedicated kubeconfig mint's read: the Fabric is the one the
+	// SAME environment's deploy wrote.
+	mintEnvironment string
 }
 
 // gateTalosconfigJob decides whether runnerID may read (write=false) or write (write=true) the Fabric
@@ -81,8 +90,10 @@ func gateTalosconfigJob(row *talosJobRow, runnerID string, write bool) talosGate
 		return talosGateResult{code: http.StatusForbidden, message: "Runner does not own this job"}
 	}
 	// A DEPLOY reads or writes; a DESTROY may only read, and only as a placement (checked below once the
-	// snapshot is decoded) — its teardown mints from the credential exactly as its deploy did.
-	if row.jobType != "DEPLOY" && (row.jobType != "DESTROY" || write) {
+	// snapshot is decoded) — its teardown mints from the credential exactly as its deploy did. A
+	// MINT_KUBECONFIG may only read, and only for a dedicated environment (#5287).
+	readOnlyKind := row.jobType == "DESTROY" || row.jobType == "MINT_KUBECONFIG"
+	if row.jobType != "DEPLOY" && (!readOnlyKind || write) {
 		return talosGateResult{code: http.StatusForbidden, message: "Job kind has no talosconfig"}
 	}
 	if row.status != "CLAIMED" && row.status != "PROCESSING" {
@@ -107,6 +118,17 @@ func gateTalosconfigJob(row *talosJobRow, runnerID string, write bool) talosGate
 	// 36646962419 — the vcluster deregister 404'd here, then failed for want of a minter).
 	if row.jobType == "DESTROY" && dedicated {
 		return talosGateResult{code: http.StatusForbidden, message: "Job kind has no talosconfig"}
+	}
+	// A mint reaches only its OWN dedicated cluster: a namespace/vcluster environment's cluster is the
+	// shared Fabric, and the console refuses the read for it just as the runner refuses the mint.
+	if row.jobType == "MINT_KUBECONFIG" {
+		if !dedicated {
+			return talosGateResult{code: http.StatusForbidden, message: "Job kind has no talosconfig"}
+		}
+		if row.environmentID == "" {
+			return talosGateResult{code: http.StatusConflict, message: "Job has no environment"}
+		}
+		return talosGateResult{mintEnvironment: row.environmentID}
 	}
 	cluster := strings.TrimSpace(snap.Cluster.ClusterName)
 	if cluster == "" {
@@ -134,6 +156,8 @@ type talosStore interface {
 	runnerAuthenticated(ctx context.Context, runnerID, tokenHash string) (bool, error)
 	job(ctx context.Context, jobID string) (*talosJobRow, error)
 	jobsReportingCluster(ctx context.Context, jobIDs []string, cluster string) (map[string]bool, error)
+	// jobsOfEnvironment returns which of jobIDs are DEPLOY jobs of the environment (a mint's link).
+	jobsOfEnvironment(ctx context.Context, jobIDs []string, environmentID string) (map[string]bool, error)
 }
 
 // pgTalosStore answers talosStore from the migrated Postgres the control plane runs over.
@@ -153,13 +177,13 @@ func (s pgTalosStore) runnerAuthenticated(ctx context.Context, runnerID, tokenHa
 // job reads the gate's view of a job; (nil, nil) when it does not exist.
 func (s pgTalosStore) job(ctx context.Context, jobID string) (*talosJobRow, error) {
 	var (
-		runnerID *string
-		row      talosJobRow
+		runnerID, envID *string
+		row             talosJobRow
 	)
 	err := s.pool.QueryRow(ctx, `
-		SELECT runner_id::text, job_type::text, status::text, config_snapshot
+		SELECT runner_id::text, job_type::text, status::text, config_snapshot, environment_id::text
 		FROM public.jobs WHERE id::text = $1`, jobID).
-		Scan(&runnerID, &row.jobType, &row.status, &row.snapshot)
+		Scan(&runnerID, &row.jobType, &row.status, &row.snapshot, &envID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -169,7 +193,31 @@ func (s pgTalosStore) job(ctx context.Context, jobID string) (*talosJobRow, erro
 	if runnerID != nil {
 		row.runnerID = *runnerID
 	}
+	if envID != nil {
+		row.environmentID = *envID
+	}
 	return &row, nil
+}
+
+// jobsOfEnvironment filters jobIDs to the DEPLOY jobs of environmentID — the writers a dedicated mint's
+// read may resolve to.
+func (s pgTalosStore) jobsOfEnvironment(ctx context.Context, jobIDs []string, environmentID string) (map[string]bool, error) {
+	out := map[string]bool{}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text FROM public.jobs
+		WHERE id::text = ANY($1) AND job_type = 'DEPLOY' AND environment_id::text = $2`, jobIDs, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 // jobsReportingCluster returns which of jobIDs reported `cluster` as their cluster_name.
@@ -289,7 +337,12 @@ func (cp *ControlPlane) handleGetTalosconfig(w http.ResponseWriter, r *http.Requ
 			ids = append(ids, h.fabricJobID)
 		}
 		var err error
-		if fabricJobs, err = cp.talosDB().jobsReportingCluster(r.Context(), ids, gate.placementCluster); err != nil {
+		if gate.mintEnvironment != "" {
+			fabricJobs, err = cp.talosDB().jobsOfEnvironment(r.Context(), ids, gate.mintEnvironment)
+		} else {
+			fabricJobs, err = cp.talosDB().jobsReportingCluster(r.Context(), ids, gate.placementCluster)
+		}
+		if err != nil {
 			http.Error(w, "could not resolve the Fabric", http.StatusInternalServerError)
 			return
 		}
