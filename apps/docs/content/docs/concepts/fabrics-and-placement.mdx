@@ -83,6 +83,12 @@ separately:
 A `dedicated` environment is the simple case of this model: it owns its Fabric, so its infrastructure
 and delivery collapse back to one cluster — the same behavior as before Fabrics existed.
 
+The split also decides who can get a kubeconfig. A `dedicated` environment's cluster is its own, so
+`alethia cluster kubeconfig` can mint a short-lived kubeconfig for it. A `namespace` or `vcluster`
+environment sits on a shared cluster, and a kubeconfig for that cluster would reach every
+environment on it, so the runner refuses to mint one. See
+[Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
+
 ## How it maps to the schema
 
 <Files>
@@ -112,3 +118,4 @@ placed on it.
 - [Promotions](/concepts/promotions) — moving a change `staging → production`, placement-agnostic.
 - [OpenTofu State](/concepts/terraform-state) — the per-Fabric state key.
 - [GitOps with ArgoCD](/concepts/gitops-argocd) — how delivery reaches each environment.
+- [Get a kubeconfig for your cluster](/guides/get-a-kubeconfig) — short-lived cluster access for a `dedicated` environment.
