@@ -96,6 +96,26 @@ export interface CacheProvider {
 	tiers: CacheTier[];
 }
 
+export interface ControlPlaneTier {
+	tier: string;
+	label: string;
+	/** USD per cluster-hour, as the provider's pricing page states it; null when the tier has no fee. */
+	hourly_usd: number | null;
+	/** Shown on the estimate's line, e.g. a free-tier credit that is NOT deducted. */
+	note?: string;
+	/** The provider page the fee was read from, and the date it was read. */
+	source: string;
+	as_of: string;
+}
+
+export interface ControlPlanePricing {
+	/** The tier the provisioning template deploys. */
+	default_tier: string;
+	/** Ordinary servers that run a self-hosted control plane (Hetzner/Talos), billed as servers. */
+	self_hosted_servers: number;
+	tiers: ControlPlaneTier[];
+}
+
 export interface Catalog {
 	version: number;
 	providers: ProviderMeta[];
@@ -103,6 +123,7 @@ export interface Catalog {
 	compute: Record<string, ComputeProvider>;
 	database: Record<string, DatabaseProvider>;
 	cache: Record<string, CacheProvider>;
+	control_plane: Record<ProviderSlug, ControlPlanePricing>;
 }
 
 export const CATALOG: Catalog = {
@@ -1067,6 +1088,117 @@ export const CATALOG: Catalog = {
 						"label": "16 GB",
 						"memory_gb": 16,
 						"cost": "~$300/mo"
+					}
+				]
+			}
+		},
+		"control_plane": {
+			"aws": {
+				"default_tier": "standard",
+				"self_hosted_servers": 0,
+				"tiers": [
+					{
+						"tier": "standard",
+						"label": "Standard support",
+						"hourly_usd": 0.1,
+						"source": "https://aws.amazon.com/eks/pricing/",
+						"as_of": "2026-10-02"
+					},
+					{
+						"tier": "extended",
+						"label": "Extended support",
+						"hourly_usd": 0.6,
+						"note": "standard plus $0.50/h while the Kubernetes minor is past standard support",
+						"source": "https://aws.amazon.com/eks/pricing/",
+						"as_of": "2026-10-02"
+					}
+				]
+			},
+			"gcp": {
+				"default_tier": "standard",
+				"self_hosted_servers": 0,
+				"tiers": [
+					{
+						"tier": "standard",
+						"label": "Cluster management fee",
+						"hourly_usd": 0.1,
+						"note": "free-tier credit of $74.40/mo per billing account covers one zonal or Autopilot cluster; not deducted here",
+						"source": "https://cloud.google.com/kubernetes-engine/pricing",
+						"as_of": "2026-10-02"
+					},
+					{
+						"tier": "extended",
+						"label": "Extended support period",
+						"hourly_usd": 0.6,
+						"note": "standard plus $0.50/h on the Extended channel past standard support",
+						"source": "https://cloud.google.com/kubernetes-engine/pricing",
+						"as_of": "2026-10-02"
+					}
+				]
+			},
+			"azure": {
+				"default_tier": "free",
+				"self_hosted_servers": 0,
+				"tiers": [
+					{
+						"tier": "free",
+						"label": "Free tier",
+						"hourly_usd": null,
+						"note": "no cluster management fee and no uptime SLA",
+						"source": "https://azure.microsoft.com/en-us/pricing/details/kubernetes-service/",
+						"as_of": "2026-10-02"
+					},
+					{
+						"tier": "standard",
+						"label": "Standard tier",
+						"hourly_usd": 0.1,
+						"note": "uptime SLA",
+						"source": "https://azure.microsoft.com/en-us/pricing/details/kubernetes-service/",
+						"as_of": "2026-10-02"
+					},
+					{
+						"tier": "premium",
+						"label": "Premium tier",
+						"hourly_usd": 0.6,
+						"note": "uptime SLA and long-term support",
+						"source": "https://azure.microsoft.com/en-us/pricing/details/kubernetes-service/",
+						"as_of": "2026-10-02"
+					}
+				]
+			},
+			"hetzner": {
+				"default_tier": "self-hosted",
+				"self_hosted_servers": 1,
+				"tiers": [
+					{
+						"tier": "self-hosted",
+						"label": "Talos on Hetzner servers",
+						"hourly_usd": null,
+						"note": "no managed control-plane fee; the control plane is ordinary Hetzner servers, priced as servers",
+						"source": "https://www.hetzner.com/cloud/",
+						"as_of": "2026-10-02"
+					}
+				]
+			},
+			"alibaba": {
+				"default_tier": "pro",
+				"self_hosted_servers": 0,
+				"tiers": [
+					{
+						"tier": "basic",
+						"label": "ACK managed Basic",
+						"hourly_usd": null,
+						"note": "no cluster management fee",
+						"source": "https://www.alibabacloud.com/help/en/ack/ack-managed-and-ack-dedicated/product-overview/ack-pro-cluster-billing",
+						"as_of": "2026-10-02"
+					},
+					{
+						"tier": "pro",
+						"label": "ACK managed Pro",
+						"hourly_usd": 0.09,
+						"note": "prices may vary by region",
+						"source": "https://www.alibabacloud.com/help/en/ack/ack-managed-and-ack-dedicated/product-overview/ack-pro-cluster-billing",
+						"as_of": "2026-10-02"
 					}
 				]
 			}

@@ -28,6 +28,8 @@ type Catalog struct {
 	Compute   map[string]ComputeProvider  `json:"compute"`
 	Database  map[string]DatabaseProvider `json:"database"`
 	Cache     map[string]CacheProvider    `json:"cache"`
+	// ControlPlane prices each cloud's managed control plane, one entry per catalog provider (#5371).
+	ControlPlane map[string]ControlPlanePricing `json:"control_plane"`
 }
 
 // ProviderMeta carries display + service-naming metadata for one cloud.
@@ -134,6 +136,30 @@ type CacheTier struct {
 	Label    string  `json:"label"`
 	MemoryGB float64 `json:"memory_gb"`
 	Cost     string  `json:"cost"`
+}
+
+// ControlPlanePricing is what one cloud charges for a cluster's control plane, per tier (#5371).
+//
+// It is read by the console's cost estimate, not by the resolver: nothing here decides what is
+// provisioned. DefaultTier names the tier the provisioning template deploys. A tier whose
+// HourlyUSD is nil has no fee, and the estimate shows no line for it rather than a zero.
+// SelfHostedServers is the number of ordinary servers that run the control plane on a cloud
+// without a managed one (Hetzner/Talos); those are billed as servers, not as a fee.
+type ControlPlanePricing struct {
+	DefaultTier       string             `json:"default_tier"`
+	SelfHostedServers int                `json:"self_hosted_servers"`
+	Tiers             []ControlPlaneTier `json:"tiers"`
+}
+
+// ControlPlaneTier is one control-plane tier with its hourly fee, the page it was read from and
+// the date it was read.
+type ControlPlaneTier struct {
+	Tier      string   `json:"tier"`
+	Label     string   `json:"label"`
+	HourlyUSD *float64 `json:"hourly_usd"`
+	Note      string   `json:"note,omitempty"`
+	Source    string   `json:"source"`
+	AsOf      string   `json:"as_of"`
 }
 
 var (
