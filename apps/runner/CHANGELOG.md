@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.7.0...runner-v0.8.0) (2026-10-02)
+
+
+### Features
+
+* **kubeaccess:** seams contract for short-lived kubeconfig mints ([#5292](https://github.com/alethialabs-io/alethialabs/issues/5292)) ([30b07f5](https://github.com/alethialabs-io/alethialabs/commit/30b07f524567e7626fd38837f12a97e572e0d3ed))
+* **runner:** MINT_KUBECONFIG executor for all five clouds, sealed to the client key ([#5321](https://github.com/alethialabs-io/alethialabs/issues/5321)) ([efa0797](https://github.com/alethialabs-io/alethialabs/commit/efa079740c77150b60ca834aba114336f04cd14b)), closes [#5283](https://github.com/alethialabs-io/alethialabs/issues/5283)
+
+
+### Bug Fixes
+
+* **drift:** dismiss a GKE cluster's node_pool/node_config back-reference to its managed node pools ([#5231](https://github.com/alethialabs-io/alethialabs/issues/5231)) ([2f1a403](https://github.com/alethialabs-io/alethialabs/commit/2f1a403d1a85decb0b411d06e6d90af47708302c))
+* **e2e:** serve the talosconfig channel in the harness, and name the cause when a placement cannot reach its Fabric ([#5137](https://github.com/alethialabs-io/alethialabs/issues/5137)) ([1e261a1](https://github.com/alethialabs-io/alethialabs/commit/1e261a1d3e7f20858bfa55eb4aa88c349be9ec0e))
+* **provisioner:** mint the hetzner admin kubeconfig per use; lower its lifetime to 1h ([#5340](https://github.com/alethialabs-io/alethialabs/issues/5340)) ([9547da3](https://github.com/alethialabs-io/alethialabs/commit/9547da303377bc50fb4f1eeeb7399c92b7f36949))
+* **runner,console:** a hetzner placement DESTROY gets the Fabric talosconfig ([#5150](https://github.com/alethialabs-io/alethialabs/issues/5150)) ([d763182](https://github.com/alethialabs-io/alethialabs/commit/d7631829799ef6b221d94511ccf9457c51cbd6fc))
+* **runner,sandbox:** carry per-job stage secrets to the container child on sandbox.Spec ([#5155](https://github.com/alethialabs-io/alethialabs/issues/5155)) ([6446c3a](https://github.com/alethialabs-io/alethialabs/commit/6446c3aa0427850ac046505d185bcddf55396b8e)), closes [#5151](https://github.com/alethialabs-io/alethialabs/issues/5151)
+* **runner:** never discard a refused status post, never requeue a DEPLOY whose apply started ([#5177](https://github.com/alethialabs-io/alethialabs/issues/5177)) ([1ebc975](https://github.com/alethialabs-io/alethialabs/commit/1ebc975b9cb28ad891576d34a5c1f77f902e3511))
+* **runner:** refuse an admin kubeconfig mint whose real lifetime exceeds the 8h TTL ceiling ([#5331](https://github.com/alethialabs-io/alethialabs/issues/5331)) ([a22f494](https://github.com/alethialabs-io/alethialabs/commit/a22f494459bcf391f78d24ad52f45738057aba6d))
+
 ## [0.7.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.6.0...runner-v0.7.0) (2026-09-23)
 
 
