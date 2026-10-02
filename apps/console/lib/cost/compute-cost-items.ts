@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
+	CATALOG,
 	INSTANCE_TYPES,
 	type CloudProviderSlug,
+	type ControlPlanePricing,
+	type ControlPlaneTier,
 } from "@/lib/cloud-providers/generated/catalog";
 import { describeNodeShape, resolveInstanceTypes } from "@/lib/cloud-providers/node-sizing";
 import type { NodeCapacityType } from "@/lib/db/schema/enums";
@@ -44,6 +47,21 @@ function nodeHourly(
 	return prices?.ec2[sku] ?? FALLBACK_EC2[sku] ?? catalogHourly(provider, sku) ?? 0.0456;
 }
 
+/**
+ * The control-plane tier to price: the named tier when `pricing` lists it, otherwise the tier the
+ * provisioning template deploys (`default_tier`). Throws on an entry whose default tier is missing,
+ * which gen-catalog.mjs and the Go catalog tests both refuse before it can ship.
+ */
+export function pickControlPlaneTier(
+	pricing: ControlPlanePricing,
+	tier?: string | null,
+): ControlPlaneTier {
+	const pick = (name: string) => pricing.tiers.find((t) => t.tier === name);
+	const chosen = (tier ? pick(tier) : undefined) ?? pick(pricing.default_tier);
+	if (!chosen) throw new Error(`control-plane default tier ${pricing.default_tier} is not one of its tiers`);
+	return chosen;
+}
+
 export interface CostItem {
 	label: string;
 	cost: number;
@@ -61,6 +79,11 @@ export interface CostInput {
 	nodeSize?: NodeSize | null;
 	/** The node pool's purchase option. The price table is on-demand only, so Spot is noted, not priced. */
 	capacityType?: NodeCapacityType | null;
+	/**
+	 * The control-plane tier (catalog `control_plane.<cloud>.tiers[].tier`). Unset or unknown, the
+	 * cluster is priced at the tier its cloud's template deploys.
+	 */
+	controlPlaneTier?: string | null;
 	nodeDesiredSize: number;
 	singleNatGateway: boolean;
 	databases: Array<{
@@ -100,11 +123,6 @@ export function computeCostItems(
 	const p = prices;
 	const result: CostItem[] = [];
 
-	result.push({
-		label: `${meta.clusterService} Control Plane`,
-		cost: (p?.eksControlPlane ?? 0.1) * HOURS_PER_MONTH,
-	});
-
 	const { nodeDesiredSize } = input;
 	// The machine the deploy buys, resolved exactly as the cluster card resolves it (#5291): a pinned
 	// type wins, otherwise node_size's nearest catalog SKU on this cloud. Both go through
@@ -114,13 +132,15 @@ export function computeCostItems(
 	// No machine at all means the template's own default, not a cheap guess (#5251). Since #5266 that
 	// default equals the catalog's (on AWS a t3.large), so this prices the node that is bought.
 	const templateDefault = TEMPLATE_DEFAULT_NODE[meta.provider];
+	const defaultHr =
+		p?.ec2[templateDefault.instanceType] ??
+		FALLBACK_EC2[templateDefault.instanceType] ??
+		templateDefault.fallbackHourly;
 	const avgHr =
 		machines.length > 0
 			? machines.reduce((sum, t) => sum + nodeHourly(t, meta.provider, p), 0) /
 				machines.length
-			: (p?.ec2[templateDefault.instanceType] ??
-				FALLBACK_EC2[templateDefault.instanceType] ??
-				templateDefault.fallbackHourly);
+			: defaultHr;
 	const shapeLabel =
 		machines.length > 0
 			? `${nodeDesiredSize}x ${describeNodeShape(meta.provider, sizing)}${machines.length > 1 ? ` +${machines.length - 1}` : ""}`
@@ -134,6 +154,38 @@ export function computeCostItems(
 		cost: avgHr * nodeDesiredSize * HOURS_PER_MONTH,
 		detail: nodeLabel,
 	});
+
+	// The control plane, from the catalog's entry for the cluster's cloud and tier (#5371). A tier
+	// with no fee gets NO line, not a zero one; a note such as GKE's free-tier credit is shown on
+	// the line and never deducted from it.
+	const cpPricing = CATALOG.control_plane[meta.provider];
+	const tier = pickControlPlaneTier(cpPricing, input.controlPlaneTier);
+	const controlPlane: CostItem[] = [];
+	if (tier.hourly_usd !== null) {
+		// AWS's standard rate is also in the live price table, which is read for the region.
+		const hourly =
+			meta.provider === "aws" && tier.tier === "standard"
+				? (p?.eksControlPlane ?? tier.hourly_usd)
+				: tier.hourly_usd;
+		controlPlane.push({
+			label: `${meta.clusterService} Control Plane`,
+			cost: hourly * HOURS_PER_MONTH,
+			detail: tier.note ? `${tier.label} · ${tier.note}` : tier.label,
+		});
+	}
+	// A self-hosted control plane (Hetzner/Talos) has no fee but runs on ordinary servers that the
+	// node line does not count: the template orders them beside the workers, of the worker type.
+	const servers = cpPricing.self_hosted_servers;
+	if (servers > 0) {
+		const machine = machines[0];
+		const hourly = machine ? nodeHourly(machine, meta.provider, p) : defaultHr;
+		controlPlane.push({
+			label: `${meta.clusterService} Control Plane`,
+			cost: hourly * servers * HOURS_PER_MONTH,
+			detail: `${servers}x ${machine ?? templateDefault.instanceType} · ${tier.label}, no managed fee`,
+		});
+	}
+	result.unshift(...controlPlane);
 
 	const natCount = input.singleNatGateway ? 1 : 3;
 	result.push({

@@ -434,3 +434,21 @@ func TestHetznerProvider_ProviderTfvars_InClusterRegistryHosts(t *testing.T) {
 		}
 	}
 }
+
+// TestHetznerControlPlaneServersMatchTheCatalog holds the cost estimate's Talos control-plane line
+// to what is deployed (#5371). The catalog says how many servers run the control plane, and the
+// estimate prices that many servers of the worker type; ProviderTfvars is what actually orders
+// them. If the two disagree, the estimate prices a different number of servers than are bought.
+func TestHetznerControlPlaneServersMatchTheCatalog(t *testing.T) {
+	want := catalog.MustLoad().ControlPlane["hetzner"].SelfHostedServers
+	cfg := &types.ProjectConfig{ProjectName: "p", Cluster: types.ProjectClusterConfig{InstanceTypes: []string{"cpx32"}}}
+	tfvars := (&hetznerProvider{}).ProviderTfvars(cfg)
+	if got := tfvars["control_plane_count"]; got != want {
+		t.Errorf("control_plane_count = %v, catalog control_plane.hetzner.self_hosted_servers = %d", got, want)
+	}
+	// The estimate prices those servers as the worker type, because that is what is ordered.
+	if tfvars["control_plane_server_type"] != tfvars["worker_server_type"] {
+		t.Errorf("control_plane_server_type %v != worker_server_type %v; the estimate prices the control plane at the worker rate",
+			tfvars["control_plane_server_type"], tfvars["worker_server_type"])
+	}
+}
