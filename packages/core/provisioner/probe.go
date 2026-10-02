@@ -82,9 +82,9 @@ type ReadStateOutputsParams struct {
 // the state proxy, and runs `tofu output -json` — which reads output values straight from
 // the remote state (outputs are stored in state, so no providers/resources are needed).
 //
-// This is the cheap read the PROBE_CLUSTER path needs: hetzner/alibaba's kubeconfig is a
-// (sensitive) tofu output that cannot be synthesized from a cluster name, so a liveness
-// probe must read it — but only in-process.
+// This is the cheap read the PROBE_CLUSTER path needs: alibaba's kubeconfig and hetzner's
+// talosconfig (which mints one, #5330) are (sensitive) tofu outputs that cannot be synthesized
+// from a cluster name, so a liveness probe must read them — but only in-process.
 //
 // SECURITY INVARIANT: the returned outputs (which can include the sensitive `kubeconfig`
 // output) stay IN-PROCESS ONLY. They are never written to the workdir (the http backend
@@ -158,9 +158,15 @@ type ProbeParams struct {
 	Provider string
 	// IacVersion is the OpenTofu version used to read state (optional; defaults).
 	IacVersion string
-	// StateBackend reads the environment's tofu outputs (incl. the kubeconfig for
-	// hetzner/alibaba) from the console http proxy. Required.
+	// StateBackend reads the environment's tofu outputs (incl. the kubeconfig for alibaba
+	// and the talosconfig for hetzner) from the console http proxy. Required.
 	StateBackend *cloud.HTTPBackendConfig
+	// TalosMint mints a fresh admin kubeconfig from the state's `talosconfig` output on hetzner. The
+	// stored `kubeconfig` output is one certificate from the last apply; once it expires every probe
+	// would report a healthy cluster unreachable and fire the outage alert (#5330). Runner-injected
+	// (MintTalosKubeconfig, with its SSRF guard). Nil off the runner: a hetzner state carrying a
+	// talosconfig is then reported unreachable with the wiring error, never probed with the old cert.
+	TalosMint TalosconfigMinter
 	// Timeout bounds the reachability check (defaults to defaultProbeTimeout).
 	Timeout time.Duration
 	Stdout  io.Writer
@@ -170,8 +176,8 @@ type ProbeParams struct {
 // RunProbe answers "is the customer's cluster actually reachable RIGHT NOW?" — the live
 // half of day-2, alongside drift. It reads the environment's tofu outputs in-process from
 // the state proxy (ReadStateOutputs), acquires the cluster kubeconfig via the provider
-// (hetzner/alibaba read the sensitive `kubeconfig` output; aws/gcp/azure synthesize an
-// exec-plugin kubeconfig from the cluster name), then does a bounded liveness dial of the
+// (alibaba reads the sensitive `kubeconfig` output; hetzner mints one now from the
+// `talosconfig` output; aws/gcp/azure synthesize an exec-plugin kubeconfig from the cluster name), then does a bounded liveness dial of the
 // API server (`/readyz`), enriching a reachable result with server version + node readiness.
 //
 // FAIL-CLOSED-TO-HONEST-DOWN: a cluster that cannot be reached — no kubeconfig output, a
@@ -224,6 +230,14 @@ func RunProbe(ctx context.Context, params ProbeParams) (*ProbeResult, error) {
 		return nil, fmt.Errorf("probe could not read environment state: %w", err)
 	}
 
+	return probeFromOutputs(ctx, params, provider, outputs, timeout, stdout, stderr), nil
+}
+
+// probeFromOutputs is RunProbe after the state is read: acquire kube access from the outputs, then
+// dial the API server. Split out so the kubeconfig decision can be tested without tofu or a state
+// proxy. It never returns an error — every failure from here on is an honest Reachable=false.
+func probeFromOutputs(ctx context.Context, params ProbeParams, provider cloud.CloudProvider, outputs map[string]interface{}, timeout time.Duration, stdout, stderr io.Writer) *ProbeResult {
+	vc := params.ProjectConfig
 	// The API-server endpoint is a non-secret detail we can report even when unreachable.
 	endpoint := cloud.ExtractClusterEndpoint(outputs)
 
@@ -238,21 +252,22 @@ func RunProbe(ctx context.Context, params ProbeParams) (*ProbeResult, error) {
 	if _, ok := merged[clusterNameOutputKey(params.Provider)]; !ok && vc.Cluster.ClusterName != "" {
 		merged[clusterNameOutputKey(params.Provider)] = vc.Cluster.ClusterName
 	}
-	if err := provider.ConfigureKubeconfig(ctx, vc, merged, stdout); err != nil {
-		// Sanitize: ConfigureKubeconfig errors describe the missing/invalid output, not
-		// secret material — but scrub to a short message and never echo the outputs.
+	// On hetzner the kubeconfig is minted now from the talosconfig, never the stored certificate.
+	if err := configureFreshKubeconfig(ctx, provider, vc, params.Provider, params.TalosMint, merged, stdout); err != nil {
+		// Sanitize: ConfigureKubeconfig errors describe the missing/invalid output, and a mint
+		// error names the talos endpoint — not secret material — but scrub to a short message and
+		// never echo the outputs.
 		reason := sanitizeProbeError(err.Error())
 		fmt.Fprintf(stderr, "Probe: cluster unreachable (kubeconfig unavailable): %s\n", reason)
 		return &ProbeResult{
 			Reachable: false,
 			Message:   "cluster unreachable: kubeconfig unavailable",
 			Detail:    ProbeDetail{Endpoint: endpoint, Method: probeMethod, Error: reason},
-		}, nil
+		}
 	}
 
 	// 3. Bounded liveness dial of the API server.
-	result := probeAPIServer(ctx, timeout, endpoint, stdout, stderr)
-	return result, nil
+	return probeAPIServer(ctx, timeout, endpoint, stdout, stderr)
 }
 
 // probeMethod names the liveness mechanism recorded on ProbeDetail.

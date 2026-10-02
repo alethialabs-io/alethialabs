@@ -15,14 +15,14 @@ import (
 func TestInspectClusterNoClusterName(t *testing.T) {
 	// No provisioned cluster name → nothing to inspect (returns all nil, never panics).
 	vc := &types.ProjectConfig{}
-	addon, sec, gitops := InspectCluster(context.Background(), vc, "aws", nil, io.Discard, io.Discard)
+	addon, sec, gitops := InspectCluster(context.Background(), vc, "aws", nil, nil, io.Discard, io.Discard)
 	if addon != nil || sec != nil || gitops != nil {
 		t.Errorf("expected (nil, nil, nil) without a cluster name, got (%v, %v, %v)", addon, sec, gitops)
 	}
 }
 
 func TestInspectClusterNilConfig(t *testing.T) {
-	addon, sec, gitops := InspectCluster(context.Background(), nil, "aws", nil, io.Discard, io.Discard)
+	addon, sec, gitops := InspectCluster(context.Background(), nil, "aws", nil, nil, io.Discard, io.Discard)
 	if addon != nil || sec != nil || gitops != nil {
 		t.Errorf("expected (nil, nil, nil) for a nil config, got (%v, %v, %v)", addon, sec, gitops)
 	}
@@ -40,7 +40,7 @@ func TestInspectClusterHetznerOutputsFedKubeconfig(t *testing.T) {
 	vc.Cluster.ClusterName = "talos-demo"
 
 	// No outputs → the synthesized cluster-name map has no kubeconfig → clean skip.
-	addon, sec, gitops := InspectCluster(context.Background(), vc, "hetzner", nil, io.Discard, io.Discard)
+	addon, sec, gitops := InspectCluster(context.Background(), vc, "hetzner", nil, nil, io.Discard, io.Discard)
 	if addon != nil || sec != nil || gitops != nil {
 		t.Errorf("expected (nil, nil, nil) on hetzner without outputs, got (%v, %v, %v)", addon, sec, gitops)
 	}
@@ -50,7 +50,7 @@ func TestInspectClusterHetznerOutputsFedKubeconfig(t *testing.T) {
 	outputs := map[string]interface{}{
 		"kubeconfig": "apiVersion: v1\nkind: Config\nclusters: []\ncontexts: []\nusers: []\n",
 	}
-	_, sec, gitops = InspectCluster(context.Background(), vc, "hetzner", outputs, io.Discard, io.Discard)
+	_, sec, gitops = InspectCluster(context.Background(), vc, "hetzner", outputs, nil, io.Discard, io.Discard)
 	if sec == nil {
 		t.Fatalf("expected inspection to proceed with an outputs-fed kubeconfig")
 	}

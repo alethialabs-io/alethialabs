@@ -146,6 +146,14 @@ type DeployParams struct {
 	// kubeconfig is handed to hetznerProvider.ConfigureKubeconfig under the `kubeconfig` output key (its
 	// existing path). See mintClusterOutputs.
 	TalosKubeconfig TalosKubeconfigMinter
+	// TalosMint mints a fresh admin kubeconfig from a talosconfig for a DEDICATED hetzner deploy, which
+	// reads the talosconfig from its own state outputs. The `kubeconfig` output holds one certificate
+	// minted during the apply and expires after the cluster's admin_kubeconfig_cert_lifetime, so the
+	// post-apply stages re-mint from the talosconfig before each step instead (#5330, see
+	// deployKubeRefresher). INJECTED by the runner (MintTalosKubeconfig, with its SSRF guard). Nil off
+	// the runner; a hetzner state carrying a talosconfig then fails the deploy rather than reading the
+	// stored certificate.
+	TalosMint TalosconfigMinter
 }
 
 // NamespaceIdentityProvisioner provisions a per-namespace tenant cloud identity (a zero-perm identity
@@ -976,11 +984,16 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	result.ClusterName = cloud.ExtractClusterName(outputs)
 	result.ClusterEndpoint = cloud.ExtractClusterEndpoint(outputs)
 
+	// One kubeconfig source for every post-apply step. On a hetzner state it mints from the state's
+	// talosconfig and re-mints before each long step, because the stored `kubeconfig` output is one
+	// certificate that can expire mid-deploy (#5330); on every other cloud refresh is a no-op.
+	kube := newDeployKubeRefresher(provider, vc, params.Provider, params.TalosMint, outputs, stdout)
+
 	if result.ClusterName != "" {
 		setStage("kube_configure")
 		// Kubeconfig is mandatory: without it the cluster is unreachable, ArgoCD can't
 		// install, and "SUCCESS" would be a lie. Fail the deploy loudly.
-		if err := provider.ConfigureKubeconfig(ctx, vc, outputs, stdout); err != nil {
+		if err := kube.configure(ctx); err != nil {
 			return nil, fmt.Errorf("kubeconfig configuration failed — the cluster was provisioned but is unreachable: %w", err)
 		}
 		if !params.DryRun {
@@ -1005,6 +1018,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// passes the checks above yet breaks every real workload. Only meaningful with a node
 			// to schedule on (skip Karpenter-only / node-less clusters).
 			if clusterReadyRequireNode() {
+				if err := kube.refresh(ctx, "the pod-network check"); err != nil {
+					return nil, err
+				}
 				if err := k8s.WaitPodToAPIServer(ctx, clusterReadyTimeout(), stdout); err != nil {
 					return nil, fmt.Errorf("cluster provisioned but its pod network is broken: %w", err)
 				}
@@ -1031,6 +1047,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		}
 
 		setStage("argocd")
+		if err := kube.refresh(ctx, "the ArgoCD install"); err != nil {
+			return nil, err
+		}
 		if err := installArgoCD(ctx, vc, result.Outputs, &result, stdout, stderr); err != nil {
 			result.GitopsStatus = gitopsFailed(argocd.GitopsStepArgocdInstall, err)
 			return &result, argocdInstallError(err)
@@ -1128,6 +1147,11 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				return nil, fmt.Errorf("failed to seed the %s external-secrets store credential: %w", facts.SecretsSaaS.Slug, err)
 			}
 		}
+		// The ArgoCD install (20m) and the two webhook waits below (15m each) together outlast a 1h
+		// certificate, so each wait starts on a fresh one.
+		if err := kube.refresh(ctx, "the external-secrets store"); err != nil {
+			return nil, err
+		}
 		if esErr := argocd.EnsureExternalSecretsStore(facts, stdout, stderr); esErr != nil {
 			fmt.Fprintf(stderr, "Warning: external-secrets ClusterSecretStore not applied yet "+
 				"(will reconcile once the operator webhook is ready): %v\n", esErr)
@@ -1137,6 +1161,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// installs asynchronously, so it is applied on its own with a bounded retry. No-op unless
 		// cert-manager actually renders for this deploy. NON-fatal: the issuer is idempotent and
 		// reconciles on the next deploy, so a slow webhook must not fail a healthy cluster.
+		if err := kube.refresh(ctx, "the cert-manager issuer"); err != nil {
+			return nil, err
+		}
 		if cmErr := argocd.EnsureCertManagerIssuer(facts, stdout, stderr); cmErr != nil {
 			fmt.Fprintf(stderr, "Warning: cert-manager ClusterIssuer not applied yet "+
 				"(will reconcile once the controller webhook is ready): %v\n", cmErr)
@@ -1149,6 +1176,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// cluster — the operator sees the warning and Karpenter still runs (it just can't scale
 		// until the CR lands). The apply retries because the CRDs sync in asynchronously.
 		setStage("karpenter")
+		if err := kube.refresh(ctx, "the post-install wiring"); err != nil {
+			return nil, err
+		}
 		if kErr := applyKarpenterNodeClass(ctx, result.Outputs, facts, stdout, stderr); kErr != nil {
 			fmt.Fprintf(stderr, "Warning: Karpenter EC2NodeClass/NodePool setup skipped: %v\n", kErr)
 		}
@@ -1232,6 +1262,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		}
 
 		setStage("addons")
+		if err := kube.refresh(ctx, "the add-on stage"); err != nil {
+			return nil, err
+		}
 		// Seed the ArgoCD repository credentials for any connected private Helm/OCI chart repos
 		// (helm_registry connectors) BEFORE the add-on / BYO Applications sync — ArgoCD matches these
 		// to an Application by repoURL, so the credential must pre-exist its first sync. Runner-seeded
@@ -1336,6 +1369,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				// top-level Applications, so a Helm operator (CloudNativePG) and an Application
 				// carrying a CR that needs its schema (a CNPG Cluster) would otherwise race — the
 				// CR's first sync failing with `no matches for kind`.
+				if err := kube.refresh(ctx, "the add-on Applications"); err != nil {
+					return nil, err
+				}
 				if applyErr := argocd.ApplyAddOnsInWaves(vc.AddOns, addonDir, stdout, stderr); applyErr != nil {
 					fmt.Fprintf(stderr, "Warning: marketplace add-ons apply failed: %v\n", applyErr)
 				}
@@ -1394,6 +1430,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// none). The wait is bounded and best-effort: an add-on that never converges is reported
 		// honestly rather than failing an otherwise-healthy cluster.
 		if len(vc.AddOns) > 0 {
+			if err := kube.refresh(ctx, "the add-on health wait"); err != nil {
+				return nil, err
+			}
 			result.AddOnStatus = argocd.WaitAddOnsHealthy(
 				ctx,
 				argocd.AllAddOnNames(vc.AddOns),
@@ -1428,6 +1467,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// add-on stage, for a hard ordering reason: the Vault is itself an add-on Application, so
 		// before this point there is no Vault for the bootstrap to reach and no Service for the
 		// ClusterSecretStore to name. A no-op on every other cloud, which has a real secret store.
+		if err := kube.refresh(ctx, "the in-cluster Vault bootstrap"); err != nil {
+			return nil, err
+		}
 		bootstrapInClusterVault(ctx, vc, facts, stdout, stderr)
 		// Read the cluster's Trivy-Operator vulnerability posture (L9). Best-effort +
 		// unconditional: `Scanned=false` when Trivy isn't installed, so the Evidence Security

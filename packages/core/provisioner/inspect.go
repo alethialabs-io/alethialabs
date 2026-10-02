@@ -33,11 +33,13 @@ func clusterNameOutputKey(providerSlug string) string {
 // InspectCluster reads the current ArgoCD add-on health, GitOps apps-Application status,
 // and Trivy security posture from an already-provisioned cluster WITHOUT a deploy — the
 // day-2 "keep proving it" refresh. It acquires kubeconfig via the cloud provider from the
-// given tofu outputs (the drift run's workspace outputs — alibaba/hetzner need the
-// sensitive `kubeconfig` output, which cannot be synthesized), falling back to a
+// given tofu outputs (the drift run's workspace outputs — alibaba needs the sensitive
+// `kubeconfig` output and hetzner the `talosconfig` one, neither synthesizable), falling back to a
 // synthesized cluster-name entry so aws/gcp/azure work with nil outputs. Then it runs the
 // same probes the deploy path uses (argocd.ReadAddOnHealth + readGitopsSnapshot +
-// argocd.ReadSecurityPosture). Best-effort by design: no cluster name, an unknown
+// argocd.ReadSecurityPosture). On hetzner, talosMint mints the kubeconfig from the
+// `talosconfig` output instead of reading the stored certificate (see talos_remint.go).
+// Best-effort by design: no cluster name, an unknown
 // provider, or a kubeconfig failure returns (nil, nil, nil) — a day-2 job (drift) must
 // never fail because the cluster is briefly unreachable. Cloud creds are assumed already
 // activated by the caller. Outputs must never be persisted by callers — they can contain
@@ -47,6 +49,7 @@ func InspectCluster(
 	vc *types.ProjectConfig,
 	providerSlug string,
 	outputs map[string]interface{},
+	talosMint TalosconfigMinter,
 	stdout, stderr io.Writer,
 ) (map[string]argocd.AddOnHealth, *argocd.SecurityPosture, *argocd.GitopsStatus) {
 	if vc == nil || vc.Cluster.ClusterName == "" {
@@ -58,7 +61,10 @@ func InspectCluster(
 		return nil, nil, nil
 	}
 	merged := clusterOutputs(vc, providerSlug, outputs)
-	if err := provider.ConfigureKubeconfig(ctx, vc, merged, stdout); err != nil {
+	// On hetzner the kubeconfig is minted now from the talosconfig (#5330). The stored certificate
+	// expires after the cluster's admin_kubeconfig_cert_lifetime, and every read below is best-effort,
+	// so inspecting with it skipped add-on health and posture with no error anyone would see.
+	if err := configureFreshKubeconfig(ctx, provider, vc, providerSlug, talosMint, merged, stdout); err != nil {
 		fmt.Fprintf(stderr, "Cluster inspection skipped (kubeconfig): %v\n", err)
 		return nil, nil, nil
 	}
