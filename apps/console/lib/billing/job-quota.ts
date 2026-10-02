@@ -7,13 +7,26 @@
 // assertUsageAllowed. SYSTEM enqueues (reconcile / drift / probe / ephemeral-reaper / auto-heal /
 // build-chain) run on getServiceDb() with no actor and never call this guard, so auto-reconcile is
 // never throttled — and, doubly, the count only tallies rows stamped `initiated_by = 'user'`.
+//
+// EXEMPT JOB TYPES (#5313). The count is every user-initiated job EXCEPT the types in
+// QUOTA_EXEMPT_JOB_TYPES — an exclusion, not a list of included types, so a job type added later
+// counts by default and exempting one is a decision someone writes down here. The one exemption is
+// MINT_KUBECONFIG: access to your own cluster must never be what stops you deploying, and an exec
+// kubeconfig re-mints once per TTL. A mint is still bounded by the per-user mint rate limit
+// (app/api/cli/clusters/[id]/kubeconfig/route.ts), still metered as runner minutes
+// (assertUsageAllowed), and still subject to the plan's concurrency cap at claim time
+// (programmables.sql org_managed_inflight) — this file exempts it from the daily COUNT only. Its
+// enqueue path (lib/kubeconfig-mint/request.ts) therefore does not call this guard.
 
 import "server-only";
-import { and, count, eq, gte } from "drizzle-orm";
+import { and, count, eq, gte, notInArray } from "drizzle-orm";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { getServiceDb } from "@/lib/db";
-import { jobs } from "@/lib/db/schema";
+import { jobs, type ProvisionJobType } from "@/lib/db/schema";
+
+/** Job types a user may enqueue without them counting toward the daily quota (#5313). */
+export const QUOTA_EXEMPT_JOB_TYPES: readonly ProvisionJobType[] = ["MINT_KUBECONFIG"];
 
 /** Default trailing-24h cap on USER-initiated job enqueues for free/community orgs. */
 export const DEFAULT_FREE_DAILY_JOB_QUOTA = 25;
@@ -32,7 +45,7 @@ export function freeDailyJobQuota(): number {
 
 /**
  * Blocks a new USER-initiated enqueue when a free/community org has already enqueued
- * {@link freeDailyJobQuota} jobs in the trailing 24 hours. Paid orgs (team/enterprise) are
+ * {@link freeDailyJobQuota} jobs in the trailing 24 hours, not counting {@link QUOTA_EXEMPT_JOB_TYPES}. Paid orgs (team/enterprise) are
  * unbounded here — their cost is bounded by the concurrency cap + global instance ceiling, and
  * overage bills. Fail-open: a billing- or count-query error must never wedge provisioning, so it
  * returns (allows) rather than throwing on infrastructure failure — this is a soft cost guard, not
@@ -59,6 +72,7 @@ export async function assertJobQuotaAllowed(orgId: string): Promise<void> {
 				and(
 					eq(jobs.org_id, orgId),
 					eq(jobs.initiated_by, "user"),
+					notInArray(jobs.job_type, [...QUOTA_EXEMPT_JOB_TYPES]),
 					gte(jobs.created_at, since),
 				),
 			);

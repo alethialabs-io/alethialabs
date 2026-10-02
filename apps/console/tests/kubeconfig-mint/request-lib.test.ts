@@ -81,14 +81,22 @@ vi.mock("@/lib/billing/usage-guard", async (orig) => ({
 		events.push("usage-guard");
 	}),
 }));
-vi.mock("@/lib/billing/job-quota", () => ({
-	assertJobQuotaAllowed: vi.fn(async () => {
-		events.push("quota-guard");
-	}),
-}));
+// The community daily job quota, AT its limit: every call refuses. A mint must never reach it (#5313),
+// so if request.ts ever calls it again the mint is refused and the quota tests below fail.
+vi.mock("@/lib/billing/job-quota", async () => {
+	const { UsageLimitError } = await import("@/lib/billing/usage-guard");
+	return {
+		assertJobQuotaAllowed: vi.fn(async () => {
+			events.push("quota-guard");
+			throw new UsageLimitError("Free plan allows 25 provisioning jobs per day.", true);
+		}),
+	};
+});
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/runners/snapshot-sig", () => ({ signSnapshot: () => "sig" }));
 
+import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
+import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
 import { requestKubeconfigMint } from "@/lib/kubeconfig-mint/request";
 
 /** The resolved cluster row, with `over` applied. */
@@ -168,7 +176,6 @@ describe("the write", () => {
 			"read",
 			"read",
 			"usage-guard",
-			"quota-guard",
 			"begin",
 			"insert:job",
 			"insert:mint",
@@ -188,6 +195,21 @@ describe("the write", () => {
 				expires_at: EXPIRES,
 			},
 		});
+	});
+
+	it("a community org at its daily job quota can still mint: the quota guard is never consulted (#5313)", async () => {
+		const out = await run();
+		expect(out.ok).toBe(true);
+		expect(assertJobQuotaAllowed).not.toHaveBeenCalled();
+		expect(events).not.toContain("quota-guard");
+	});
+
+	it("runner minutes still gate a mint: a usage-limit refusal propagates and nothing is written", async () => {
+		vi.mocked(assertUsageAllowed).mockRejectedValueOnce(
+			new UsageLimitError("You've used your included provisioning minutes this month.", true),
+		);
+		await expect(run()).rejects.toBeInstanceOf(UsageLimitError);
+		expect(events).not.toContain("begin");
 	});
 
 	it("enqueues a user-initiated MINT_KUBECONFIG job in the actor's org, on the cluster's identity", async () => {

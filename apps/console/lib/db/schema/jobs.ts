@@ -139,8 +139,9 @@ export const jobs = pgTable(
 		// scan. It pins neither index over the other, because neither is a defect.
 		index("idx_jobs_org_cursor").on(t.org_id, t.created_at.desc(), t.id.desc()),
 		// Serves the free-tier daily job quota's trailing-24h COUNT (lib/billing/job-quota.ts):
-		// WHERE org_id=? AND initiated_by='user' AND created_at >= now()-interval '24h'. Partial on
-		// the only value the quota counts, so the index stays small and the count is a single probe.
+		// WHERE org_id=? AND initiated_by='user' AND job_type NOT IN (exempt) AND created_at >= now()-interval '24h'.
+		// Partial on the only origin the quota counts, so the index stays small; the job_type exemption
+		// (QUOTA_EXEMPT_JOB_TYPES, #5313) is a filter over the rows that probe finds.
 		index("idx_jobs_user_initiated")
 			.on(t.org_id, t.created_at)
 			.where(sql`initiated_by = 'user'`),
