@@ -97,7 +97,8 @@ export const verification = pgTable("verification", {
 // Better Auth's built-in rate limiter (rateLimit: { storage: "database" }). One row
 // per limit bucket — the adapter keys on `key` (client-IP + normalized path), bumps
 // `count`, and stamps `lastRequest` (epoch ms). DB-backed so the counters are shared
-// across replicas / survive restarts (unlike the per-process lib/rate-limit.ts). Column
+// across replicas / survive restarts (lib/rate-limit.ts has its own table,
+// rate_limit_buckets — schema/rate-limit-buckets.ts). Column
 // names/types mirror @better-auth/core's rateLimit model EXACTLY: key (unique string),
 // count (integer), lastRequest (bigint, ms epoch). Property keys are the camelCase
 // Better Auth field names; the drizzle instance's casing:"snake_case" maps lastRequest →

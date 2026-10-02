@@ -296,7 +296,10 @@ export async function addChannel(
 		};
 	}
 
-	const limit = checkRateLimit(`verify:${actor.orgId}:new`, 5, 60_000);
+	// failOpen: this limit is a courtesy — it damps repeat test deliveries to an endpoint the org itself
+	// configured, behind manage_alerts. During a database outage it admits the hit, so the person is told
+	// the save failed (the insert below needs the database) rather than "too many attempts".
+	const limit = await checkRateLimit(`verify:${actor.orgId}:new`, 5, 60_000, { failOpen: true });
 	if (!limit.ok) {
 		return { ok: false, error: "Too many attempts — wait a minute and try again." };
 	}
@@ -417,8 +420,10 @@ export async function verifyChannel(
 	assertAlertingEntitled(actor);
 
 	// Verification sends a real delivery (Slack/email/webhook) — throttle repeats so the
-	// button can't be used to spam an endpoint. Best-effort, in-memory (per-instance).
-	const limit = checkRateLimit(`verify:${actor.orgId}:${id}`, 3, 60_000);
+	// button can't be used to spam an endpoint. Shared across replicas (lib/rate-limit.ts). failOpen for
+	// addChannel's reason: a courtesy limit, and the channel read below needs the database anyway, so an
+	// outage surfaces as that failure rather than as "too many attempts".
+	const limit = await checkRateLimit(`verify:${actor.orgId}:${id}`, 3, 60_000, { failOpen: true });
 	if (!limit.ok) {
 		return {
 			ok: false,

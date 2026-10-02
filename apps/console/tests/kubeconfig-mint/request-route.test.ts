@@ -17,6 +17,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type BuiltInRole, BUILT_IN_ROLES } from "@/lib/authz/registry";
 
 vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
+// The real limiter counts in Postgres (#5309); see the fixture for what this stand-in keeps.
+vi.mock("@/lib/rate-limit", async () =>
+	(await import("@/tests/fixtures/memory-rate-limit")).memoryRateLimitModule(),
+);
 vi.mock("@/lib/kubeconfig-mint/request", () => ({ requestKubeconfigMint: vi.fn() }));
 vi.mock("@/lib/auth/trusted-ip", () => ({ trustedClientIp: vi.fn(() => "203.0.113.7") }));
 
