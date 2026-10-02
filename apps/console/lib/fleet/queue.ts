@@ -67,7 +67,8 @@ export async function backlogByProvider(): Promise<Map<string, number>> {
  * queueing on two providers at once can double-count its headroom (bounded, and rare — an org usually
  * targets one cloud per burst). That errs toward slightly OVER-provisioning, never under — the opposite
  * of, and far smaller than, the raw-backlog over-count it replaces. Mirrors the managed-claim
- * eligibility filters in claim_next_job (unassigned, not self-required).
+ * eligibility filters in claim_next_job (unassigned, not self-required, not an owner DESTROY still
+ * waiting on its Fabric's tenants).
  */
 export async function dispatchableBacklogByProvider(): Promise<
 	Map<string, number>
@@ -86,6 +87,10 @@ export async function dispatchableBacklogByProvider(): Promise<
 			where status = 'QUEUED'
 			  and assigned_runner_id is null
 			  and requires_self_runner = false
+			  -- An owner DESTROY held behind its Fabric's live tenants (#5249) is not claimable, and if a
+			  -- tenant's destroy FAILED it can stay held indefinitely — counting it would keep a billable
+			  -- managed VM up for a job no runner is allowed to start.
+			  and not public.destroy_waits_on_tenants(job_type, environment_id)
 			group by org_id, provider
 		)
 		select q.provider,

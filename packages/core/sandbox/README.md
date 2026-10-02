@@ -108,7 +108,7 @@ carries. So on the managed fleet the child gets **no route of its own**:
 
 The nested-podman runtime + this egress net can't be reproduced in CI (userns, `/dev/fuse`, link-local IMDS),
 so they are **verified on a real Hetzner VM** — see the 3b canary in the
-[managed-provisioning runbook](../../../apps/docs/content/docs/self-hosting/managed-provisioning.mdx).
+[managed-provisioning runbook](../../../apps/docs/content/docs/guides/self-hosting/managed-provisioning.mdx).
 
 ## What shipped (the dependency chain)
 

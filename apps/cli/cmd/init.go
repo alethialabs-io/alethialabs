@@ -127,6 +127,10 @@ var initManifestSpec = spec.Spec{
 			Description: "Stage for the environment it declares", Flag: "stage",
 			Default: string(stageDevelopment), Options: "stages",
 			ManifestKey: "stage", Page: docsCliInitPage},
+		{Command: "alethia init manifest", Key: fieldKeyInstanceType, Title: "Machine type",
+			Description: instanceTypeDescription, Flag: fieldKeyInstanceType, Page: docsCliInitPage},
+		{Command: "alethia init manifest", Key: fieldKeyNodeSize, Title: "Node size",
+			Description: nodeSizeDescription, Flag: fieldKeyNodeSize, Page: docsCliInitPage},
 		{Command: "alethia init manifest", Key: "skip-manifest", Title: "Machine setup only",
 			Description: "Set up the CLI without writing a manifest",
 			Flag:        "skip-manifest", Bool: true, Page: docsCliInitPage},
@@ -135,7 +139,7 @@ var initManifestSpec = spec.Spec{
 }
 
 // docsCliInitPage is the page `init`'s field table lives on.
-const docsCliInitPage = "apps/docs/content/docs/cli/commands/init.mdx"
+const docsCliInitPage = "apps/docs/content/docs/reference/cli/init.mdx"
 
 // initBinder holds the flag targets initManifestSpec generated. Set in init().
 var initBinder *spec.Binder

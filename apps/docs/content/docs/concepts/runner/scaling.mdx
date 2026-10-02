@@ -1,0 +1,196 @@
+---
+title: Warm-pool scaling
+description: How the managed fleet sizes itself — the in-app scaler's 60-second loop that keeps a warm pool of runners per provider, lifts it with queue depth, and destroys the idle surplus.
+---
+
+# Warm-pool scaling
+
+The managed fleet runs as a **warm pool** per provider. A pool keeps a small floor of runners ready
+even when the queue is empty — one by default — so the common job starts without a VM boot. When
+jobs back up, an **in-app scaler** creates more VMs; when the backlog clears, it destroys the idle
+surplus down to the floor again. There is no separate scaling service: the loop runs inside the
+Console process (`apps/console/lib/fleet/`).
+
+<Callout type="warn">
+  **The old mechanism is retired.** The managed fleet used to be AWS ECS Fargate services scaled by
+  a Python Lambda on an EventBridge schedule (`infra/fleet-aws`). That is gone. There is no Lambda,
+  no EventBridge rule, and no `ecs:UpdateService` desired-count toggle in the managed path. ECS
+  Fargate survives only in the **self-deployed** runner template (`infra/templates/runner/aws/`) —
+  see [Self-operated runners](/guides/runners/self-operated). For the managed-fleet operator's guide
+  see [Managed provisioning](/guides/self-hosting/managed-provisioning).
+</Callout>
+
+## The control loop
+
+`apps/console/lib/fleet/` splits into a pure planner and an impure driver:
+
+| File | Role |
+|---|---|
+| `scaler.ts` | Hosts the 60-second tick and the fire-on-enqueue `wakeFleetScaler`. Serializes passes within a process, and lets only the fleet leader reconcile. |
+| `plan.ts` | **Pure** `plan(project, observed)` — diffs a pool target against observed reality and returns the minimal, safe create/drain/destroy actions. Reconciles four axes in priority order: **health → count → placement → version**. |
+| `controller.ts` | Applies the planned actions idempotently through the provider and records each to the `fleet_actions` ledger. |
+| `provider.ts` | Selects the `FleetProvider`. |
+| `hcloud.ts` | The Hetzner `FleetProvider` — `list`/`create`/`destroy` over the Hetzner REST API (`fetch`, no SDK). |
+| `pools-db.ts` | Loads the enabled `fleet_pools` rows each tick. |
+
+`startFleetScaler()` arms a `setInterval` on a **60-second** tick (`TICK_INTERVAL_MS = 60_000`)
+whenever `ALETHIA_DATABASE_URL` is set. On top of the interval, every job enqueue calls
+`wakeFleetScaler()`, so a fresh `QUEUED` job does not wait up to a minute for the next tick.
+
+<Mermaid chart={`
+flowchart TD
+  Job["job enqueued (QUEUED)"] -->|wakeFleetScaler| Tick
+  Timer["60s tick"] --> Tick["scaler.ts (serialized pass, leader only)"]
+  Tick --> Plan["plan.ts — pure diff<br/>health → count → placement → version"]
+  Plan --> Ctl["controller.ts — apply actions"]
+  Ctl -->|create / drain / destroy| Prov["FleetProvider (hcloud)"]
+  Ctl --> Ledger["fleet_actions ledger"]
+  Prov -->|cloud-init boots GHCR image| VM["fleet VM"]
+  VM -->|self-register (bootstrap token)| Reg["POST /api/runners/bootstrap"]
+  VM -->|poll loop| Claim["POST /api/jobs/claim"]
+`} />
+
+### Concurrency
+
+Two layers keep overlapping passes from over-provisioning:
+
+- **Within a process**, `scheduleTick()` allows at most one pass in flight. A wake that arrives
+  mid-pass coalesces into a single follow-up, so a burst of enqueues cannot fan out into parallel
+  read → plan → act passes that each read the same stale VM list.
+- **Across replicas**, every replica runs the interval, but a tick first tries to hold the
+  fleet-controller **leader lease** (`tryBecomeFleetLeader`). Only the holder reconciles. The lease
+  is time-bounded, so a crashed leader is replaced once its lease expires. A per-provider apply lock
+  (`tryFleetScaleLock`) stays in the controller as an inner defence.
+
+## Pools
+
+A pool is a row in the `fleet_pools` table, one per provider. The scaler reads the enabled rows
+fresh each tick, so a pool edited in the console goes live without a redeploy, and a tick with no
+enabled pools is a cheap no-op. The `FLEET_POOLS` environment variable is deprecated: it only seeds
+an empty table on an existing deployment.
+
+| Knob | Default | Meaning |
+|---|---|---|
+| `warm_min` | `1` | The warm floor — healthy runners kept ready even at zero backlog. |
+| `max` | `10` | Hard ceiling on healthy instances. |
+| `buffer` | `1` | N+1 headroom added on top of demand, so an idle spare always exists. |
+| `slots_per_runner` | `1` | Concurrent jobs one runner claims. |
+| `surge` | `1` | Extra instances allowed above the target during a version rollout (`maxSurge`). |
+| `scale_down_grace_ticks` | `5` | Consecutive over-target ticks before idle surplus is destroyed. |
+| `locations` | `["fsn1"]` | Locations to spread across. |
+| `min_per_location` | `0` | Minimum healthy instances to keep in each listed location. |
+
+## Sizing: `targetCount`
+
+The desired healthy-instance count is a pure function (`plan.ts`, `targetCount`):
+
+```ts
+demand = max(recentPeak, ceil(backlog / slotsPerRunner))
+target = clamp(max(warmMin, demand + buffer), 0, max)
+```
+
+| Input | Source | Meaning |
+|-------|--------|---------|
+| `backlog` | `deps.backlog(provider)` | `QUEUED` jobs targeting this provider |
+| `recentPeak` | `deps.recentPeak(provider)` | in-flight (`CLAIMED`/`PROCESSING`) jobs — auto-grows the floor |
+
+So a pool holds `warm_min` runners warm, lifts toward `demand + buffer` as the queue grows, and never
+plans the claimable (online) count below the warm floor. The default floor of one trades a little idle
+cost for **no cold start** on the common case. Set `warm_min` to `0` to let a pool that tolerates boot
+latency scale to zero.
+
+Scale-down is not a desired-count decrement. Once the pool has been over target for
+`scale_down_grace_ticks` consecutive ticks, the planner **destroys** idle online runners down to the
+target — never a busy one, and never below a location's `min_per_location` (`scale-down-idle`).
+`deps.retire()` closes each destroyed runner's `runner_usage_sessions` billing row. **Draining** is for
+runners that may still hold a job: during a version rollout an outdated runner is drained (marked
+`DRAINING`, so it stops claiming but finishes its in-flight job) and destroyed once idle, and a deleted
+or paused pool drains to zero the same way. Dead instances (no registration past the boot grace) are
+reaped directly. Placement is location-aware: locations below `min_per_location` fill first, then
+the least-loaded one.
+
+## Provider seam
+
+`getFleetProvider()` (`provider.ts`) selects the `FleetProvider` implementation. The default is
+`manual`, a no-op that only logs what it would create or destroy. **`FLEET_PROVIDER=hcloud`** selects
+the Hetzner provider (`hcloud.ts`), a thin `list` / `create` / `destroy` over the Hetzner REST API
+(`https://api.hetzner.cloud/v1`). All diff logic lives in the pure planner, so the whole reconcile is
+unit-testable against a fake world (`fake-provider.ts`).
+
+### VM shape and self-registration
+
+`create` boots a Hetzner VM whose **cloud-init** does a single `docker run` of the per-cloud runner
+image from GHCR:
+
+```
+ghcr.io/alethialabs-io/runner-${provider}:${tag}
+```
+
+The server type is a preference list: cheap ARM `cax21` first, x86 `cpx31` as the fallback
+(`HCLOUD_SERVER_TYPES` overrides it). The image is `ubuntu-24.04` unless `HCLOUD_IMAGE` says
+otherwise.
+
+The VM carries **no long-lived credential**:
+
+<Steps>
+
+### Create
+`controller.ts` calls `hcloud.create()`; the VM boots with cloud-init carrying an
+`ALETHIA_RUNNER_BOOTSTRAP_TOKEN` — a **short-TTL, instance-bound** token minted for that one VM and
+swept by `sweepBootstrapTokens`, not a shared fleet secret.
+
+### Self-register
+The runner exchanges the bootstrap token for its identity via `POST /api/runners/bootstrap`,
+receiving its own runner id and token.
+
+### Claim and work
+The runner enters its claim loop (`POST /api/jobs/claim`) and starts claiming jobs for the clouds it
+serves. Cloud auth is minted per job via keyless OIDC, and state goes through the Console state proxy.
+See [Job queue](/concepts/job-queue).
+
+### Destroy
+When backlog falls and the grace window passes, the planner destroys the idle surplus (a runner
+being rolled out or torn down is drained first). The VM is deleted; billing stops.
+
+</Steps>
+
+<Callout type="info">
+  The container-sandbox knobs on the cloud-init (`ALETHIA_SANDBOX_BACKEND=container`,
+  egress-enforced proxy) are **inert** until enabled — trusted provisioning boots a byte-identical
+  cloud-init. See [Architecture → sandbox seam](/concepts/runner/architecture).
+</Callout>
+
+## The `fleet_actions` ledger
+
+Every applied action appends a durable row via `deps.recordAction()` — the audit trail behind each
+VM lifecycle event. Each `FleetActionRecord` (`controller.ts`) carries:
+
+| Field | Meaning |
+|-------|---------|
+| `action` | `create` \| `drain` \| `destroy` |
+| `reason` | `scale-up-demand`, `min-per-location`, `rollout-surge`, `rollout-drain`, `scale-down-idle`, `reap-dead`, `reap-drained`, `teardown` |
+| `runnerId` | correlated runner (drain/destroy); `null` for a create (the runner self-registers later) |
+| `queueDepth` | `QUEUED` backlog for the provider at decision time |
+| `poolSize` | observed online (claimable) pool size at decision time |
+
+A ledger write is best-effort and never breaks a reconcile.
+
+## Cold start
+
+A cold start happens only when demand outgrows the warm floor, or for a pool set to `warm_min: 0`.
+While the new VM comes up:
+
+1. **Hetzner VM boot + image pull** — cloud-init pulls `runner-<provider>` from GHCR.
+2. **Runner boot + self-register** — `POST /api/runners/bootstrap` with the bootstrap token.
+3. **First heartbeat** — `POST /api/runners/heartbeat` (30-second cadence).
+4. **First job claim** — the runner drains the backlog on startup, then reacts to push wakes.
+
+During this window the job stays `QUEUED`. The `wakeFleetScaler()` call on enqueue is what starts the
+VM immediately rather than at the next 60-second tick.
+
+## Cost model
+
+You pay for Hetzner VM-hours for the warm floor you keep (`warm_min` runners per pool, one by
+default), plus the VMs above it while a backlog lasts. Managed runner cost is billed by provisioned
+hours through the `runner_usage_sessions` ledger — a session opens when a managed runner comes online
+and closes when `retire()` reaps it. There is no Lambda invocation cost and no idle Fargate task.

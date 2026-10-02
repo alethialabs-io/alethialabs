@@ -13,6 +13,9 @@ vi.mock("@/lib/reconcile/reap", () => ({ reapExpiredEphemeralEnvs: vi.fn(async (
 vi.mock("@/lib/drift/dispatch", () => ({ sweepDriftSchedule: vi.fn(async () => ({ enqueued: 0 })) }));
 vi.mock("@/lib/probes/dispatch", () => ({ sweepProbeSchedule: vi.fn(async () => ({ enqueued: 0 })) }));
 vi.mock("@/lib/reconcile/ai-holds", () => ({ releaseStrandedAiHolds: vi.fn(async () => ({ released: 0 })) }));
+vi.mock("@/lib/kubeconfig-mint/sweep", () => ({
+	sweepExpiredKubeconfigMints: vi.fn(async () => ({ expired: 0, cancelledJobs: 0, deleted: 0 })),
+}));
 vi.mock("@/lib/reconcile/gc", () => ({
 	gcJobLogs: vi.fn(async () => ({ deleted: 0 })),
 	gcFleetActions: vi.fn(async () => ({ deleted: 0 })),
@@ -25,6 +28,7 @@ import {
 } from "@/lib/observability/heartbeats";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
+import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
 import { releaseStrandedAiHolds } from "@/lib/reconcile/ai-holds";
 import { gcAuthzActivityLog, gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
@@ -79,6 +83,7 @@ describe("tick — fan-out", () => {
 		expect(gcFleetActions).toHaveBeenCalledTimes(1);
 		expect(gcAuthzActivityLog).toHaveBeenCalledTimes(1);
 		expect(releaseStrandedAiHolds).toHaveBeenCalledTimes(1);
+		expect(sweepExpiredKubeconfigMints).toHaveBeenCalledTimes(1);
 		// Each ran under a heartbeat.
 		const tasks = getHeartbeats().map((h) => h.task).sort();
 		expect(tasks).toEqual([
@@ -88,6 +93,7 @@ describe("tick — fan-out", () => {
 			"gc-authz-activity",
 			"gc-fleet-actions",
 			"gc-job-logs",
+			"kubeconfig-mint-sweep",
 			"probe-schedule",
 			"release-ai-holds",
 		]);
@@ -112,6 +118,8 @@ describe("tick — fan-out", () => {
 		await tick(new Date(Date.now() + 90_000));
 		expect(convergeEnvStatuses).toHaveBeenCalledTimes(1);
 		expect(reapExpiredEphemeralEnvs).toHaveBeenCalledTimes(1);
+		// The mint sweep is hot (1m) too: an uncollected ciphertext must not outlive its window by more.
+		expect(sweepExpiredKubeconfigMints).toHaveBeenCalledTimes(1);
 		expect(sweepProbeSchedule).not.toHaveBeenCalled();
 		expect(sweepDriftSchedule).not.toHaveBeenCalled();
 		expect(gcJobLogs).not.toHaveBeenCalled();

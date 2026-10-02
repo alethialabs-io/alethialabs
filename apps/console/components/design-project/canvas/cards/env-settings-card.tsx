@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { ArrowLeft, Settings2, TriangleAlert } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { Button } from "@repo/ui/button";
 import { Label } from "@repo/ui/label";
 import { SectionHeading } from "@repo/ui/section-heading";
@@ -22,6 +22,13 @@ import { ConnectorSelect } from "../inspector/connector-select";
 import { useNodeCapabilities } from "../inspector/use-node-capabilities";
 import { CompatAlert } from "../inspector/compat-alert";
 import { SheetCard } from "./sheet-card";
+import { DestroyEnvironmentDialog, type DestroyTreeState } from "./destroy-environment-dialog";
+import { DestroyHoldNotice, useDestroyHold } from "./destroy-hold";
+import {
+	type DestroyEnvironmentControl,
+	type DestroyTreeNode,
+	environmentSettingsHref,
+} from "./destroy-tree-view";
 
 /**
  * W2 — the cluster + network are no longer cards on the board (one environment IS one cluster inside
@@ -47,11 +54,11 @@ import { SheetCard } from "./sheet-card";
  * the cluster does: it acts on the environment as a whole, not on any one card.
  */
 export function EnvSettingsCard({
-	onDestroyEnvironment,
+	destroyEnvironment,
 }: {
-	/** Edit mode only: tear down the active environment (queues a DESTROY job). Absent in the
-	 * create flow, where there is no provisioned environment to destroy. */
-	onDestroyEnvironment?: () => void;
+	/** Edit mode only: read the destroy tree and queue a DESTROY job. Absent in the create flow,
+	 * where there is no provisioned environment to destroy. */
+	destroyEnvironment?: DestroyEnvironmentControl;
 }) {
 	const envStatus = useEnvironmentStatus();
 	// A BYO-IaC source in replace mode OWNS the substrate: the cluster's version and the VPC come
@@ -263,46 +270,90 @@ export function EnvSettingsCard({
 				</section>
 				{/* Not gated on `iacGoverned`: an environment whose substrate comes from a BYO-IaC
 				    module is still one that can be torn down. */}
-				{onDestroyEnvironment && (
-					<DestroyEnvironmentZone onDestroy={onDestroyEnvironment} />
-				)}
+				{destroyEnvironment && <DestroyEnvironmentZone control={destroyEnvironment} />}
 			</div>
 		</SheetCard>
 	);
 }
 
-/** Environment-level danger action: tear down the active environment's provisioned infra. */
-function DestroyEnvironmentZone({ onDestroy }: { onDestroy: () => void }) {
-	const [confirm, setConfirm] = useState(false);
+/**
+ * Environment-level danger action: tear down the active environment's provisioned infra.
+ *
+ * Clicking Destroy opens the confirmation AND reads the destroy tree (#5261) — the dialog opens at
+ * once and fills in when the read lands. The read has to come first: a production build redacts a
+ * server action's error text, so the server's refusal naming the tenants would reach the browser as
+ * an unreadable digest.
+ */
+function DestroyEnvironmentZone({ control }: { control: DestroyEnvironmentControl }) {
+	const [open, setOpen] = useState(false);
+	const [tree, setTree] = useState<DestroyTreeState>({ phase: "loading" });
+	const [childrenFirst, setChildrenFirst] = useState<DestroyTreeNode[] | null>(null);
+	const hold = useDestroyHold(control.loadTree);
+	const { loadTree, destroy } = control;
+
+	/** Open the confirmation and read what destroying this environment would take with it. */
+	function openConfirm() {
+		setTree({ phase: "loading" });
+		setChildrenFirst(null);
+		setOpen(true);
+		loadTree()
+			.then((t) => setTree({ phase: "ready", tree: t }))
+			.catch(() => setTree({ phase: "error" }));
+	}
+
 	return (
-		<div className="rounded-none border border-destructive/30">
-			<div className="flex items-center gap-2 border-b border-destructive/20 px-4 py-3">
-				<TriangleAlert className="h-4 w-4 text-destructive" />
-				<p className="text-sm font-medium text-destructive">Danger zone</p>
-			</div>
-			<div className="flex items-center justify-between gap-4 px-4 py-4">
-				<div className="min-w-0">
-					<p className="text-sm font-medium">Destroy environment</p>
-					<p className="text-xs text-muted-foreground">
-						Queue a teardown of the provisioned infrastructure for this environment.
-					</p>
+		<div className="space-y-3">
+			{hold && <DestroyHoldNotice hold={hold} />}
+			<div className="rounded-none border border-destructive/30">
+				<div className="flex items-center gap-2 border-b border-destructive/20 px-4 py-3">
+					<TriangleAlert className="h-4 w-4 text-destructive" />
+					<p className="text-sm font-medium text-destructive">Danger zone</p>
 				</div>
-				<Button
-					type="button"
-					variant="destructive"
-					size="sm"
-					onClick={() => setConfirm(true)}
-				>
-					Destroy
-				</Button>
+				<div className="flex items-center justify-between gap-4 px-4 py-4">
+					<div className="min-w-0">
+						<p className="text-sm font-medium">Destroy environment</p>
+						<p className="text-xs text-muted-foreground">
+							Queue a teardown of the provisioned infrastructure for this environment.
+						</p>
+					</div>
+					<Button type="button" variant="destructive" size="sm" onClick={openConfirm}>
+						Destroy
+					</Button>
+				</div>
+				{childrenFirst && childrenFirst.length > 0 && (
+					<div className="space-y-2 border-t border-destructive/20 px-4 py-3 text-ui-md">
+						<p>
+							Destroy {childrenFirst.length === 1 ? "this environment" : "these environments"}{" "}
+							first. {childrenFirst.length === 1 ? "It is" : "Each is"} placed on this
+							environment&apos;s cluster:
+						</p>
+						<ol className="list-decimal space-y-1 pl-5">
+							{childrenFirst.map((t) => (
+								<li key={t.environment_id}>
+									<Link
+										href={environmentSettingsHref(t.environment_id)}
+										className="underline underline-offset-2"
+									>
+										{t.name}
+									</Link>{" "}
+									<span className="text-muted-foreground">({t.placement_mode})</span>
+								</li>
+							))}
+						</ol>
+						<p className="text-muted-foreground">
+							When {childrenFirst.length === 1 ? "it is" : "they are"} destroyed, destroy this
+							environment.
+						</p>
+					</div>
+				)}
 			</div>
-			<ConfirmDialog
-				open={confirm}
-				onOpenChange={setConfirm}
-				title="Destroy this environment?"
-				description="This queues a DESTROY job that tears down the environment's provisioned cloud infrastructure. This cannot be undone."
-				confirmLabel="Destroy environment"
-				onConfirm={onDestroy}
+			<DestroyEnvironmentDialog
+				open={open}
+				onOpenChange={setOpen}
+				state={tree}
+				projectName={control.projectName}
+				onDestroy={(options) => void destroy(options)}
+				onChildrenFirst={setChildrenFirst}
 			/>
 		</div>
 	);

@@ -1,18 +1,29 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createSelectSchema } from "drizzle-zod";
+import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import { pageInfoSchema } from "@/lib/cli/paging";
 import {
 	cloudIdentities,
 	jobLogs,
 	jobs,
+	KUBECONFIG_MINT_PUBLIC_KEY_B64URL_LENGTH,
+	KUBECONFIG_MINT_SEALED_MAX_LENGTH,
+	KUBECONFIG_MINT_TTL_DEFAULT_SECONDS,
+	KUBECONFIG_MINT_TTL_MAX_SECONDS,
+	KUBECONFIG_MINT_TTL_MIN_SECONDS,
+	kubeconfigMintRequests,
 	runners,
 	projectCluster,
 	projects,
 } from "@/lib/db/schema";
-import { cloudProvider } from "@/lib/db/schema/enums";
+import {
+	cloudProvider,
+	kubeconfigMintShape,
+	kubeconfigMintTier,
+} from "@/lib/db/schema/enums";
+import type { NodeSize } from "@/types/jsonb.types";
 
 /**
  * The CLI wire contract — the single source of truth for every JSON shape the
@@ -94,10 +105,19 @@ export const clusterGitops = z.object({
 	failure_message: z.string().nullable(),
 });
 
-/** A single cluster + its GitOps posture (GET /api/cli/clusters/:id). */
+/** How to get a kubeconfig for the cluster with the caller's own cloud CLI (#5250). Built by
+ *  lib/clusters/kubeconfig-access.ts: `command` to run, or `note` saying why there is none, or
+ *  both null while the cluster has no name yet. */
+export const clusterKubeconfig = z.object({
+	command: z.string().nullable(),
+	note: z.string().nullable(),
+});
+
+/** A single cluster + its GitOps posture + its kubeconfig command (GET /api/cli/clusters/:id). */
 export const cliClusterDetailResponse = z.object({
 	cluster: clusterWire,
 	gitops: clusterGitops.nullable(),
+	kubeconfig: clusterKubeconfig,
 });
 
 /** A cloud identity (GET /api/cli/cloud-identities). `label` is computed. */
@@ -525,7 +545,20 @@ export const cliJobsPageResponse = z.object({
 	offset: z.number().int(),
 	page: pageInfoSchema,
 });
-export const cliJobResponse = z.object({ job: jobWire });
+/**
+ * One DESTROY job a cascade queued (#5249), in destroy order. Carried next to `job` — which is the
+ * TARGET's job, so a pre-cascade client reading only `job` still waits on the right thing — and
+ * present only when the destroy queued more than one job.
+ */
+export const cascadeJobWire = z.object({
+	job_id: z.uuid(),
+	environment_id: z.uuid(),
+	name: z.string(),
+});
+export const cliJobResponse = z.object({
+	job: jobWire,
+	cascade_jobs: z.array(cascadeJobWire).optional(),
+});
 /**
  * The `page` object every cursor-paged list response carries. Registered here — rather than
  * only inside the envelopes that embed it — so the shape is fixture-locked against
@@ -614,10 +647,52 @@ export const cliFleetPoolsResponse = z.object({ pools: z.array(fleetPoolWire) })
 export const cliFleetPoolResponse = z.object({ pool: fleetPoolWire });
 /** POST /api/cli/projects result. */
 export const cliProjectResponse = z.object({ project: projectWire });
+
+/** A cloud-indifferent node size on the wire — the same `{ vcpu, memory_gb }` shape as
+ * `project_cluster.node_size` ({@link NodeSize}), which the Go resolver maps to the nearest catalog
+ * machine type at provision time. Typed against the interface so the two cannot drift apart.
+ * The bounds are the canvas inspector's ("vCPU per node" 1–96, "Memory per node" 1–768 GB), so the
+ * terminal accepts exactly what the canvas does; strict, because the object is stored verbatim in a
+ * jsonb column and a stray key would ride along onto the snapshot. */
+const nodeSizeWire: z.ZodType<NodeSize> = z
+	.object({
+		vcpu: z.number().min(1).max(96),
+		memory_gb: z.number().min(1).max(768),
+	})
+	.strict();
+
+/** The node shape POST /api/cli/projects may carry (#5266) — `alethia project create
+ * --instance-type` / `--node-size`. Both optional; omitting both writes no cluster row and the
+ * template default (which equals the catalog default) applies. Giving BOTH is refused by the route,
+ * not here: the fixture sampled from this schema carries every field, and it must still parse. Go
+ * mirror: `api.ProjectNodeShape`, strict-decoded from `create_project_node_shape.json`. */
+export const cliProjectNodeShapeRequest = z.object({
+	instance_type: z.string().min(1).max(64).optional(),
+	node_size: nodeSizeWire.optional(),
+});
 /** GET /api/cli/projects/:id/environments result. */
 export const cliEnvironmentsResponse = z.object({
 	environments: z.array(environmentWire),
 	page: pageInfoSchema,
+});
+/**
+ * One environment in a destroy tree (GET /api/cli/projects/:id/destroy-tree, #5249). The tree is the
+ * target plus every LIVE environment placed on the Fabric it owns, tenants first and the owner last —
+ * the order a cascade destroys them in. `waiting_on` is non-empty only on the owner: the tenants its
+ * DESTROY will not start before, by name and status, so a tenant whose destroy FAILED is visible
+ * rather than the owner's job waiting silently.
+ */
+export const destroyTreeNodeWire = z.object({
+	environment_id: z.uuid(),
+	name: z.string(),
+	placement_mode: z.string(),
+	status: z.string(),
+	owns_fabric: z.boolean(),
+	waiting_on: z.array(z.object({ name: z.string(), status: z.string() })),
+});
+/** GET /api/cli/projects/:id/destroy-tree result. */
+export const cliDestroyTreeResponse = z.object({
+	tree: z.array(destroyTreeNodeWire),
 });
 /** POST /api/cli/projects/:id/environments result. */
 export const cliEnvironmentResponse = z.object({ environment: environmentWire });
@@ -893,6 +968,197 @@ export const cliAgentResponse = z.object({ agent: agentWire });
 /** DELETE member/team/channel/alert/role/grant result. */
 export const cliOkResponse = z.object({ ok: z.literal(true) });
 
+// --- Short-lived kubeconfig mint (#5250 decisions 1–8; seams #5280) ---
+//
+// The channel, end to end:
+//
+//   1. client → POST /api/cli/clusters/:id/kubeconfig            body cliKubeconfigMintRequest
+//      (the CLI, or the console via WebCrypto, generated an ephemeral X25519 keypair and sends ONLY
+//      the public key)                                           → 202 cliKubeconfigMintResponse
+//   2. runner → GET  /api/jobs/:id/kubeconfig-mint               → runnerKubeconfigMintSpec
+//   3. runner mints in-network, HPKE-seals the kubeconfigMintCredential JSON to the client key with
+//      the AAD bound to (mint id, cluster id) — packages/core/kubeaccess/seal.go
+//   4. runner → POST /api/jobs/:id/kubeconfig-mint               body runnerKubeconfigMintResult
+//                                                                → cliOkResponse
+//   5. client → GET  /api/cli/clusters/:id/kubeconfig/:mintId    → cliKubeconfigMintPollResponse
+//      (`ready` is served ONCE: the row is deleted on that read), then opens `sealed` locally.
+//
+// The console holds ciphertext only (kubeconfig_mint_requests.sealed_result) and can open nothing.
+// kubeconfigMintCredential is the PLAINTEXT inside the seal: it is part of this contract because the
+// CLI and the browser decode it and the runner encodes it, but it never crosses the console in the
+// clear and no console route may ever return or accept it.
+
+/** A 32-byte X25519 public key, base64url without padding (43 chars). Public material. */
+export const kubeconfigMintPublicKey = z
+	.string()
+	.length(KUBECONFIG_MINT_PUBLIC_KEY_B64URL_LENGTH)
+	.regex(/^[A-Za-z0-9_-]+$/, "must be unpadded base64url");
+
+/** Smallest possible sealed blob: 32-byte `enc` + 16-byte GCM tag + 1 byte, base64url (66 chars). */
+const KUBECONFIG_MINT_SEALED_MIN_LENGTH = 66;
+
+/** HPKE `enc || ciphertext`, base64url without padding. Ciphertext only — never a credential. */
+export const kubeconfigMintSealed = z
+	.string()
+	.min(KUBECONFIG_MINT_SEALED_MIN_LENGTH)
+	.max(KUBECONFIG_MINT_SEALED_MAX_LENGTH)
+	.regex(/^[A-Za-z0-9_-]+$/, "must be unpadded base64url");
+
+/** Non-secret failure reason the runner reports (and the poll returns). Bounded so a runner cannot
+ *  park an arbitrary blob — e.g. a credential in an error string — in the row. */
+export const kubeconfigMintFailureReason = z.string().min(1).max(500);
+
+const mintTier = z.enum(kubeconfigMintTier.enumValues);
+const mintShape = z.enum(kubeconfigMintShape.enumValues);
+const mintTtl = z
+	.number()
+	.int()
+	.min(KUBECONFIG_MINT_TTL_MIN_SECONDS)
+	.max(KUBECONFIG_MINT_TTL_MAX_SECONDS);
+
+/** POST /api/cli/clusters/:id/kubeconfig — the mint request body. `tier` defaults to read-only and
+ *  `ttl_seconds` to 1h (max 8h); `shape` is the client's explicit choice — the route refuses `exec`
+ *  where the cloud can only mint a static certificate (Hetzner, Alibaba; decision 4). Strict: an
+ *  unknown key (say, a `server` or a `cluster_name`) is refused — the cluster's identity comes from
+ *  the row and the cloud, never from the request (mint-bind, #5250 §2). */
+export const cliKubeconfigMintRequest = z
+	.object({
+		tier: mintTier.default("readonly"),
+		ttl_seconds: mintTtl.default(KUBECONFIG_MINT_TTL_DEFAULT_SECONDS),
+		shape: mintShape,
+		client_public_key: kubeconfigMintPublicKey,
+	})
+	.strict();
+
+/** The queued mint as the request route returns it. `expires_at` ends the POLL window, not the
+ *  credential (that is `ttl_seconds`, counted by the cloud from the moment the runner mints). */
+export const kubeconfigMintWire = z.object({
+	id: z.uuid(),
+	cluster_id: z.uuid(),
+	job_id: z.uuid(),
+	tier: mintTier,
+	shape: mintShape,
+	ttl_seconds: mintTtl,
+	status: z.literal("pending"),
+	expires_at: iso,
+});
+
+/** POST /api/cli/clusters/:id/kubeconfig result (202). */
+export const cliKubeconfigMintResponse = z.object({ mint: kubeconfigMintWire });
+
+/** GET /api/cli/clusters/:id/kubeconfig/:mintId — one poll. `private_endpoint` is null until the
+ *  runner has reported it, and true means reaching the API needs network access (VPN/bastion) the
+ *  laptop may not have (decision 6). A `ready` answer is served once; the next poll is a 404. */
+export const cliKubeconfigMintPollResponse = z.discriminatedUnion("status", [
+	z.object({
+		status: z.literal("pending"),
+		private_endpoint: z.boolean().nullable(),
+		expires_at: iso,
+	}),
+	z.object({
+		status: z.literal("ready"),
+		private_endpoint: z.boolean(),
+		sealed: kubeconfigMintSealed,
+	}),
+	z.object({
+		status: z.literal("failed"),
+		private_endpoint: z.boolean().nullable(),
+		reason: kubeconfigMintFailureReason,
+	}),
+	z.object({
+		status: z.literal("expired"),
+		private_endpoint: z.boolean().nullable(),
+	}),
+]);
+
+/** GET /api/jobs/:id/kubeconfig-mint (runner-authenticated) — what the MINT_KUBECONFIG job must
+ *  mint and whom to seal it to. Served only to the runner that owns the executing job. Holds no
+ *  secret: the client key is public, and the runner resolves the cluster's endpoint and identity
+ *  itself (mint-bind). */
+export const runnerKubeconfigMintSpec = z.object({
+	mint_id: z.uuid(),
+	cluster_id: z.uuid(),
+	tier: mintTier,
+	shape: mintShape,
+	ttl_seconds: mintTtl,
+	client_public_key: kubeconfigMintPublicKey,
+});
+
+/** POST /api/jobs/:id/kubeconfig-mint (runner-authenticated) — the ONE-SHOT result channel. This
+ *  is the only path a mint result takes: never execution_metadata, job_logs or the job status post
+ *  (#5250 decision 3). A `ready` post carries ciphertext only. Strict, so a plaintext field cannot
+ *  ride along unnoticed. */
+export const runnerKubeconfigMintResult = z.discriminatedUnion("status", [
+	z
+		.object({
+			status: z.literal("ready"),
+			mint_id: z.uuid(),
+			sealed: kubeconfigMintSealed,
+			private_endpoint: z.boolean(),
+		})
+		.strict(),
+	z
+		.object({
+			status: z.literal("failed"),
+			mint_id: z.uuid(),
+			reason: kubeconfigMintFailureReason,
+			private_endpoint: z.boolean().nullable(),
+		})
+		.strict(),
+]);
+
+/**
+ * The PLAINTEXT inside `sealed` — what the runner seals and the client opens. NEVER a console wire
+ * shape: no route may accept or return it. `exec` carries what an ExecCredential and the kubeconfig's
+ * cluster stanza need (`alethia cluster token` caches it until `expires_at`); `static` carries a
+ * complete kubeconfig with the credential embedded. `certificate_authority_data` is the standard
+ * base64 the kubeconfig field takes.
+ */
+export const kubeconfigMintCredential = z.discriminatedUnion("shape", [
+	z
+		.object({
+			shape: z.literal("exec"),
+			tier: mintTier,
+			server: z.url(),
+			certificate_authority_data: z.base64(),
+			token: z.string().min(1),
+			expires_at: iso,
+		})
+		.strict(),
+	z
+		.object({
+			shape: z.literal("static"),
+			tier: mintTier,
+			kubeconfig: z.string().min(1),
+			expires_at: iso,
+		})
+		.strict(),
+]);
+
+/**
+ * The kubeconfig_mint_requests insert, derived from the table (drizzle-zod) with the column refined
+ * to the channel's own validators. The request route builds the row from a parsed
+ * cliKubeconfigMintRequest plus the resolved cluster and actor; `sealed_result`, `failure_reason`,
+ * `status` and `private_endpoint` are the runner's to write and are omitted here.
+ */
+export const kubeconfigMintRequestInsert = createInsertSchema(kubeconfigMintRequests, {
+	client_public_key: kubeconfigMintPublicKey,
+	ttl_seconds: mintTtl,
+}).omit({
+	id: true,
+	sealed_result: true,
+	failure_reason: true,
+	status: true,
+	private_endpoint: true,
+	created_at: true,
+});
+
+export type CliKubeconfigMintRequest = z.infer<typeof cliKubeconfigMintRequest>;
+export type CliKubeconfigMintPollResponse = z.infer<typeof cliKubeconfigMintPollResponse>;
+export type RunnerKubeconfigMintSpec = z.infer<typeof runnerKubeconfigMintSpec>;
+export type RunnerKubeconfigMintResult = z.infer<typeof runnerKubeconfigMintResult>;
+export type KubeconfigMintCredential = z.infer<typeof kubeconfigMintCredential>;
+
 /**
  * The registry of every CLI contract schema, keyed by a stable name. cliJson
  * callers reference these directly; the A2 codegen step enumerates this map to
@@ -938,8 +1204,10 @@ export const cliContract = {
 	FleetPoolsResponse: cliFleetPoolsResponse,
 	FleetPoolResponse: cliFleetPoolResponse,
 	ProjectResponse: cliProjectResponse,
+	ProjectNodeShapeRequest: cliProjectNodeShapeRequest,
 	EnvironmentsResponse: cliEnvironmentsResponse,
 	EnvironmentResponse: cliEnvironmentResponse,
+	DestroyTreeResponse: cliDestroyTreeResponse,
 	ComponentsResponse: cliComponentsResponse,
 	ComponentResponse: cliComponentResponse,
 	DriftResponse: cliDriftResponse,
@@ -958,6 +1226,12 @@ export const cliContract = {
 	AgentResponse: cliAgentResponse,
 	ClassificationDimensionsResponse: cliClassificationDimensionsResponse,
 	ClassificationAssignmentsResponse: cliClassificationAssignmentsResponse,
+	KubeconfigMintRequest: cliKubeconfigMintRequest,
+	KubeconfigMintResponse: cliKubeconfigMintResponse,
+	KubeconfigMintPollResponse: cliKubeconfigMintPollResponse,
+	RunnerKubeconfigMintSpec: runnerKubeconfigMintSpec,
+	RunnerKubeconfigMintResult: runnerKubeconfigMintResult,
+	KubeconfigMintCredential: kubeconfigMintCredential,
 } as const;
 
 export type CliContract = typeof cliContract;

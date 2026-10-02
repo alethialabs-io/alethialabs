@@ -233,6 +233,13 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 		return !field?.visibleWhen || field.visibleWhen(config, ctx);
 	};
 
+	it("shows the cluster capacity type on aws, and elsewhere only while it still says spot (#5266)", () => {
+		expect(visible("cluster", "capacity_type", "aws")).toBe(true);
+		expect(visible("cluster", "capacity_type", "gcp")).toBe(false);
+		// A cluster moved off aws keeps the control, so the refusal ValidateConfig raises can be fixed here.
+		expect(visible("cluster", "capacity_type", "gcp", { capacity_type: "spot" })).toBe(true);
+	});
+
 	it("shows storage_gb/replicas only on hetzner", () => {
 		expect(visible("database", "storage_gb", "hetzner")).toBe(true);
 		expect(visible("database", "replicas", "hetzner")).toBe(true);
@@ -373,7 +380,28 @@ describe("field get/set escape hatches", () => {
 			?.sections.flatMap((s) => s.fields)
 			.find((f) => f.key === "instance_types");
 		expect(field?.get?.({ instance_types: ["m5.large"] })).toBe("m5.large");
-		expect(field?.set?.("m5.xlarge", {})).toEqual({ instance_types: ["m5.xlarge"] });
+		// One writer (#5267): pinning a type clears node_size in the SAME patch. toStrictEqual,
+		// because toEqual would also pass on a patch that never named node_size at all.
+		expect(
+			field?.set?.("m5.xlarge", { node_size: { vcpu: 4, memory_gb: 16 } }),
+		).toStrictEqual({ instance_types: ["m5.xlarge"], node_size: undefined });
+	});
+
+	it("clears the pinned instance type when the portable size is set, from either control", () => {
+		const fields = getKindConfig("cluster")?.sections.flatMap((s) => s.fields) ?? [];
+		const vcpu = fields.find((f) => f.key === "node_size_vcpu");
+		const memory = fields.find((f) => f.key === "node_size_memory");
+		const pinned = { instance_types: ["t3.large"] };
+		expect(vcpu?.set?.(4, pinned)).toStrictEqual({
+			node_size: { vcpu: 4, memory_gb: 8 },
+			instance_types: [],
+		});
+		expect(memory?.set?.(32, pinned)).toStrictEqual({
+			node_size: { vcpu: 2, memory_gb: 32 },
+			instance_types: [],
+		});
+		// Emptying the size is not choosing a machine type: it clears only the size.
+		expect(vcpu?.set?.(null, pinned)).toStrictEqual({ node_size: undefined });
 	});
 
 	it("normalizes the bucket name to S3-safe characters via the transform", () => {

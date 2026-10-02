@@ -383,9 +383,12 @@ artifact, never on a green harness.
   amends that field and leaves the rest of the row alone — which is the only way to change a
   component, since there is no `component update`. There is no dry-run; check the result with
   `alethia project component list --project <p> --env <e>`.
-- **A component field the CLI rejects is not necessarily a field the product lacks.**
-  `--set node_size=…` returns *"Unknown field(s) for cluster"* and lists the eight it does take;
-  `node_size` is derived server-side from `instance_types` via the catalog.
+- **A cluster is sized ONE of two ways, and setting one clears the other.**
+  `--set 'node_size={"vcpu":4,"memory_gb":16}'` is the cloud-indifferent size: the deploy resolves it
+  to the nearest catalog machine type on whatever cloud the cluster lands on, and the write clears
+  `instance_types`. `--set 'instance_types=["e2-standard-4"]'` pins a machine type and clears
+  `node_size`. Naming both in one `add` is refused. Rows written before this rule are left as they
+  are; where one holds both, the pinned `instance_types` is what deploys.
 - **`--project-id` takes the project's UUID, not its name.** `alethia project list -o json` has it.
 - **`plan`/`apply`/`destroy` prompt for a runner** when `--runner-id` is omitted, so under `--no-input`
   they die with *"interactive input required"* — a message that reads like it is complaining about the

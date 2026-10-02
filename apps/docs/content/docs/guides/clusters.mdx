@@ -1,0 +1,93 @@
+---
+title: Clusters
+description: Viewing provisioned Kubernetes clusters with ArgoCD access and kubeconfig.
+---
+
+# Clusters
+
+The **Clusters** page (`/{org}/~/clusters`) shows all provisioned Kubernetes clusters from active projects.
+
+## Cluster Cards
+
+Each cluster displays:
+
+| Field | Description |
+|-------|-------------|
+| **Project Name** | The project's name + a **derived** status badge (Active / Reconciling / Degraded / Provisioning) — rolled up from the cluster and every data service, never hardcoded to "Active" |
+| **Provider** | Provider icon with region, environment, and Kubernetes version (e.g., `K8s 1.32`) |
+| **Cluster Endpoint** | API server URL (copy button) |
+| **kubeconfig Command** | The command that writes a kubeconfig with your own cloud CLI (copy button), or a note saying why a cloud has none — the same answer `alethia cluster get` prints (see below). To get one through Alethia instead, see [Get a kubeconfig](/guides/get-a-kubeconfig). Under it, people with read-only cluster access see **Download kubeconfig (1h, read-only)**: see [From the console](/guides/get-a-kubeconfig#from-the-console). |
+| **ArgoCD URL** | External link to the ArgoCD dashboard, plus a command to retrieve the admin password |
+| **Components** | Control plane, databases, caches, and DNS — each with its endpoint (copy buttons) and its own derived status |
+
+### kubeconfig Commands
+
+There are two ways to get a kubeconfig:
+
+- **Through Alethia**, with no cloud login of your own: `alethia cluster kubeconfig` gets a
+  short-lived, read-only or admin kubeconfig that a runner mints for you. It works on all five
+  clouds, including Hetzner and Alibaba Cloud. See
+  [Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
+- **With your own cloud CLI**, under your own cloud login. The rest of this section is about this
+  way.
+
+The cluster card and `alethia cluster get` (its **Kubeconfig** row) both show the exact command for a cluster, built from
+the values the cluster's last successful deploy recorded — see
+[Accessing a cluster with kubectl](/reference/cli/clusters#accessing-a-cluster-with-kubectl). The
+command per cloud:
+
+<Tabs items={["AWS", "GCP", "Azure", "Alibaba Cloud", "Hetzner"]}>
+  <Tab value="AWS">
+    ```bash
+    aws eks update-kubeconfig --name {cluster-name} --region {region}
+    ```
+  </Tab>
+  <Tab value="GCP">
+    ```bash
+    gcloud container clusters get-credentials {cluster-name} --region {region} --project {gcp-project-id}
+    ```
+
+    A zonal cluster gets `--zone {zone}` instead of `--region {region}`.
+  </Tab>
+  <Tab value="Azure">
+    ```bash
+    az aks get-credentials --resource-group {resource-group} --name {cluster-name}
+    ```
+  </Tab>
+  <Tab value="Alibaba Cloud">
+    Alethia does not record the ACK cluster ID yet. Find it in the ACK console, then call
+    `DescribeClusterUserKubeconfig` with the `aliyun` CLI. Its `config` field is the kubeconfig.
+    Or use [`alethia cluster kubeconfig`](/guides/get-a-kubeconfig), which needs no ACK cluster ID.
+  </Tab>
+  <Tab value="Hetzner">
+    Hetzner has no cloud CLI command for a kubeconfig. Use
+    [`alethia cluster kubeconfig`](/guides/get-a-kubeconfig) instead: your runner mints a
+    short-lived kubeconfig for you.
+  </Tab>
+</Tabs>
+
+The ArgoCD admin-password command is a `kubectl` command, so it needs this kubeconfig first. It
+reads a Secret, so a read-only kubeconfig from `alethia cluster kubeconfig` cannot run it. Use the
+admin tier.
+
+## Pre-Installed Components
+
+Every cluster comes with these components installed via ArgoCD (see [GitOps & ArgoCD](/concepts/gitops-argocd)):
+
+| Component | Purpose |
+|-----------|---------|
+| **ArgoCD** | GitOps continuous delivery |
+| **AWS Load Balancer Controller** | Ingress via ALB/NLB (AWS) |
+| **External DNS** | Automatic DNS record sync |
+| **External Secrets Operator** | Cloud secrets → Kubernetes Secrets |
+| **Karpenter** | Just-in-time node provisioning (AWS) |
+| **Metrics Server** | CPU/memory metrics for HPA |
+| **Storage Class** | GP3 EBS / Persistent Disk / Managed Disk |
+
+## Live Updates
+
+The Clusters page polls every 5 seconds while the tab is focused (TanStack Query pauses the interval in the background) — the interim reconciliation cadence. When a project's default environment reaches `ACTIVE` (deploy completes), the next poll surfaces the new cluster.
+
+## Data Source
+
+Cluster information comes from the DEPLOY job's `finalizeDeployment()` server action, which extracts OpenTofu outputs (cluster name, endpoint, ARN, ArgoCD URL, database/cache endpoints) and writes them to the project's component tables.

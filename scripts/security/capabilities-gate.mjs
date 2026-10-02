@@ -469,8 +469,8 @@ const OUT_OF_SCOPE_PATHS = [
 	"apps/console/components/ai-elements/message-scroller.tsx",
 	"apps/console/lib/db/migrations/meta/_journal.json",
 	// Prose carve-out, by TREE: named for the surface, but documentation, not a code path.
-	"apps/docs/content/docs/console/connectors/aws.mdx",
-	"apps/docs/content/docs/console/design-project/keyless-database-auth.mdx",
+	"apps/docs/content/docs/guides/connectors/aws.mdx",
+	"apps/docs/content/docs/guides/design-project/keyless-database-auth.mdx",
 	// Was apps/marketing/components/landing/home/sections/keyless.tsx, deleted by #2079's
 	// homepage rebuild. The entry outlived the file and passed silently for months, because
 	// expectOutOfScope() read a missing file as "" and an empty file is trivially out of

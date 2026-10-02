@@ -35,6 +35,7 @@ import { type CliCaller, credentialOf } from "@/lib/cli/providers";
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { EnvStateConflictError } from "@/lib/db/env-status";
+import { FabricHasLiveTenantsError } from "@/lib/queries/destroy-tree";
 import { jobs, runners, projects } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import {
@@ -137,6 +138,9 @@ export async function POST(req: Request) {
 			// this is #843; here we only accept + thread it into the placement-aware dispatch.
 			environment_id,
 		} = body;
+		// #5249: DESTROY only. Opt-in to destroying the environments placed on the target's Fabric
+		// too, tenants first. STRICTLY `true` — a string "false" or a 1 is not a yes to a teardown.
+		const cascade = body?.cascade === true;
 
 		if (!job_type) {
 			return NextResponse.json(
@@ -319,6 +323,7 @@ export async function POST(req: Request) {
 		// buildConfigSnapshot, insert the job, flip the env status, audit, and notify
 		// the scaler — identical to a console-queued job.
 		let jobId: string;
+		let cascadeJobs: Array<{ job_id: string; environment_id: string; name: string }> | undefined;
 		try {
 			const result = await runWithActor(actor, async () => {
 				switch (jobType) {
@@ -335,12 +340,26 @@ export async function POST(req: Request) {
 							assigned_runner_id || null,
 							environment_id || null,
 						);
-					case "DESTROY":
-						return destroyProject(
+					case "DESTROY": {
+						// Same authz as any DESTROY: destroyProject authorizes `destroy` on the project,
+						// and every tenant a cascade queues is an environment OF that project.
+						const queued = await destroyProject(
 							configuration_id,
 							environment_id || null,
 							assigned_runner_id || null,
+							{ cascade },
 						);
+						// Report the whole tree only when it IS a tree; a plain destroy keeps the
+						// pre-#5249 response byte-for-byte.
+						if (queued.jobs.length > 1) {
+							cascadeJobs = queued.jobs.map((j) => ({
+								job_id: j.jobId,
+								environment_id: j.environmentId,
+								name: j.name,
+							}));
+						}
+						return queued;
+					}
 				}
 			});
 			jobId = result.jobId;
@@ -359,6 +378,23 @@ export async function POST(req: Request) {
 			// which told the CLI user the console had broken when it had correctly refused.
 			if (e instanceof EnvStateConflictError) {
 				return NextResponse.json({ error: e.message }, { status: 409 });
+			}
+			// #5249: a dedicated environment whose Fabric still hosts live tenants, destroyed without
+			// cascade. A conflict with the resource's current state, like the one above — and the body
+			// names the tenants so a client can render them without parsing the message.
+			if (e instanceof FabricHasLiveTenantsError) {
+				return NextResponse.json(
+					{
+						error: e.message,
+						tenants: e.tenants.map((t) => ({
+							environment_id: t.id,
+							name: t.name,
+							placement_mode: t.placement_mode,
+							status: t.status,
+						})),
+					},
+					{ status: 409 },
+				);
 			}
 			throw e;
 		}
@@ -390,6 +426,11 @@ export async function POST(req: Request) {
 		if (jobType === "DESTROY" && job.org_id) {
 			emitAlertEventSafe(job.org_id, "system.job.destroy_requested", {
 				title: "Destroy requested",
+				...(cascadeJobs
+					? {
+							summary: `Cascade destroy of ${cascadeJobs.length} environments: ${cascadeJobs.map((j) => j.name).join(", ")}`,
+						}
+					: {}),
 				severity: "warning",
 				job_id: job.id,
 				job_type: "DESTROY",
@@ -397,7 +438,11 @@ export async function POST(req: Request) {
 			});
 		}
 
-		return cliJson(cliJobResponse, { job }, { status: 201 });
+		return cliJson(
+			cliJobResponse,
+			cascadeJobs ? { job, cascade_jobs: cascadeJobs } : { job },
+			{ status: 201 },
+		);
 	} catch (err: unknown) {
 		const message =
 			err instanceof Error ? err.message : "Internal Server Error";

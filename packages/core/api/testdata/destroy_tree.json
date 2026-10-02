@@ -1,0 +1,17 @@
+{
+	"tree": [
+		{
+			"environment_id": "00000000-0000-4000-8000-000000000000",
+			"name": "string",
+			"placement_mode": "string",
+			"status": "string",
+			"owns_fabric": false,
+			"waiting_on": [
+				{
+					"name": "string",
+					"status": "string"
+				}
+			]
+		}
+	]
+}

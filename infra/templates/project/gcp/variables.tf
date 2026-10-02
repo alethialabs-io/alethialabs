@@ -140,8 +140,10 @@ variable "gke_cluster_version" {
 }
 
 variable "gke_instance_types" {
+  # Equal to the catalog default (packages/core/catalog/catalog.json compute.gcp.default_instance)
+  # by rule: TestTemplateNodeDefaultsEqualTheCatalog fails when they differ (#5266).
   type        = list(string)
-  default     = ["e2-standard-4"]
+  default     = ["e2-standard-2"]
   description = "Machine types for the GKE node pool"
 
   validation {

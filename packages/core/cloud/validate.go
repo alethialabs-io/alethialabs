@@ -6,8 +6,10 @@ package cloud
 import (
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -96,6 +98,29 @@ func validateNodeSizing(config *types.ProjectConfig) error {
 	return nil
 }
 
+// validateCapacityType refuses a node capacity type the cloud cannot honour (#5266).
+//
+// "" (unset) and "on_demand" are valid everywhere: every cloud's node pool is on-demand unless asked
+// otherwise. "spot" is honoured on aws only, where it becomes `eks_ng_capacity_type = "SPOT"`. The
+// other clouds model interruptible capacity differently (azure adds a SEPARATE spot pool, gcp and
+// alibaba flip a per-pool switch) and none of those knobs reads this field — so accepting "spot"
+// there would store a choice the deploy silently ignores. It is refused instead, naming the cloud.
+func validateCapacityType(config *types.ProjectConfig, provider string, supportsSpot bool) error {
+	switch config.Cluster.CapacityType {
+	case "", types.NodeCapacityTypeOnDemand:
+		return nil
+	case types.NodeCapacityTypeSpot:
+		if supportsSpot {
+			return nil
+		}
+		return configError("cluster.capacity_type", config.Cluster.CapacityType,
+			fmt.Sprintf("spot capacity is not supported on %s through this field yet; use on_demand or leave it unset", provider))
+	default:
+		return configError("cluster.capacity_type", config.Cluster.CapacityType,
+			"it must be on_demand or spot")
+	}
+}
+
 // Worker-node root-disk floors. Each is the `>= N` in that cloud's own disk-size variable
 // validation block — the value the template would reject at plan time — so the rule can only
 // ever refuse a config the template was going to refuse anyway.
@@ -127,6 +152,41 @@ func validateNodeDiskSize(config *types.ProjectConfig, tfvar string, floorGB int
 	if got := *config.Cluster.NodeDiskSizeGB; got < floorGB {
 		return configError("cluster.node_disk_size_gb", got,
 			fmt.Sprintf("this cloud provisions it as %s, which must be at least %d GB", tfvar, floorGB))
+	}
+	return nil
+}
+
+// validateInstanceTypes refuses a pinned machine type that the catalog lists for a DIFFERENT
+// cloud and not for this one — an AWS cluster moved onto a GCP identity that still says
+// `t3.large` (#5269). Without it the SKU rides into `gke_instance_types` and the failure arrives
+// at plan or apply, from the cloud's API, after the deploy was queued.
+//
+// It is deliberately NOT "every entry must be in this cloud's catalog". The catalog's compute
+// inventory is a short curated list, and real projects pin types outside it on purpose: the
+// nightly e2e pins `Standard_D2s_v3` on Azure, the seed data pins `m6i.large` and `cpx31`, and
+// the canvas offers whatever the live capability sync says the account can launch. A strict
+// membership rule would refuse all of those, which breaks rule 1 at the top of this file. So
+// the rule fires only on POSITIVE evidence that the SKU is another cloud's: the catalog names
+// an owner, and the owner is not `provider`. An SKU the catalog has never heard of passes,
+// exactly as before, and the cloud's API stays the authority on it.
+//
+// The resolved `node_size` path needs no check — it is resolved against `provider`'s own
+// inventory, so it cannot produce another cloud's SKU.
+func validateInstanceTypes(provider string, config *types.ProjectConfig) error {
+	cat := catalog.MustLoad()
+	for _, sku := range config.Cluster.InstanceTypes {
+		owners := cat.InstanceOwners(sku)
+		if len(owners) == 0 || slices.Contains(owners, provider) {
+			continue
+		}
+		hint := "a machine type of this cloud"
+		if d := cat.Compute[provider].DefaultInstance; d != "" {
+			hint = fmt.Sprintf("a %s machine type (the default is %s)", provider, d)
+		}
+		return configError("cluster.instance_types", fmt.Sprintf("%q", sku),
+			fmt.Sprintf("that is a %s machine type and this cluster deploys to %s — pick %s, "+
+				"or clear instance_types and set node_size so it resolves on any cloud",
+				strings.Join(owners, "/"), provider, hint))
 	}
 	return nil
 }

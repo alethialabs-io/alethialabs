@@ -318,4 +318,20 @@ describe("portable sizing is exposed for the first time", () => {
 		const written = onChange.mock.calls.at(-1)?.[0];
 		expect(written.node_size).toEqual({ vcpu: 4, memory_gb: 8 });
 	});
+
+	// #5267: every new cluster is stamped with a default instance type, and Go prefers a pinned one,
+	// so a size typed beside the stamp used to be shown on the card and ignored by the deploy. The
+	// write that sets the size must reach the STORE carrying the cleared instance_types too.
+	it("clears the pinned instance type in the same write that sets the size", async () => {
+		const user = userEvent.setup();
+		const { onChange } = renderKind("cluster", {
+			cluster_version: "1.31",
+			instance_types: ["t3.large"],
+		});
+
+		await user.type(screen.getByLabelText(/vCPU per node/), "4");
+		await user.tab();
+		const written = onChange.mock.calls.at(-1)?.[0];
+		expect(written).toEqual({ node_size: { vcpu: 4, memory_gb: 8 }, instance_types: [] });
+	});
 });

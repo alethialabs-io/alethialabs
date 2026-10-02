@@ -229,6 +229,14 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 	// Instead the dump takes whatever is ACTUALLY left, capped by `argoDumpBudget` (argocd_assert.go)
 	// and decided by `planArgoDump`, whose notice says which of the two bound it. If it ever needs
 	// more than the leg can spare, that is the moment to make it a term and raise the cap.
+	//
+	// The kubeconfig-mint proof (#5287) is ON by default — it takes no variable to run — so its term is
+	// in every ladder unless it is explicitly switched off. Two runner jobs and a handful of API calls
+	// spend seconds; the term is the ceiling a hung mint is cut at, reserved rather than taken from
+	// headroom for the reason the paragraph above gives.
+	if KubeconfigMintEnabled() {
+		add("kubeconfig-mint", kubeconfigMintBudget)
+	}
 	add("headroom", t2BaseHeadroom)
 
 	for _, t := range b.Terms {

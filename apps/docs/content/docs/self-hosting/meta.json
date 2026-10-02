@@ -1,5 +1,0 @@
-{
-  "title": "Self-Hosting",
-  "icon": "Server",
-  "pages": ["index", "configuration", "managed-cloud-connectors", "managed-provisioning", "email", "marketing-site", "terraform", "helm", "scaling-out", "one-click", "upgrading"]
-}

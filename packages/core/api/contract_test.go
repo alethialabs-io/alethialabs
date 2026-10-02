@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // The fixtures in testdata/ are the shared CLI wire contract: the console side
@@ -119,10 +121,23 @@ func TestContract_JobsPage(t *testing.T) {
 }
 
 func TestContract_JobResponse(t *testing.T) {
-	var resp struct {
-		Job ProvisionJob `json:"job"`
-	}
+	var resp QueueJobResponse
 	strictDecode(t, "job_response.json", &resp)
+	assertNoExtraStructKeys(t, "job_response.json", resp)
+	if resp.Job == nil || len(resp.CascadeJobs) != 1 {
+		t.Fatalf("unexpected job response: %+v", resp)
+	}
+}
+
+func TestContract_DestroyTree(t *testing.T) {
+	var resp struct {
+		Tree []DestroyTreeNode `json:"tree"`
+	}
+	strictDecode(t, "destroy_tree.json", &resp)
+	assertNoExtraStructKeys(t, "destroy_tree.json", resp)
+	if len(resp.Tree) != 1 || len(resp.Tree[0].WaitingOn) != 1 {
+		t.Fatalf("unexpected destroy tree: %+v", resp)
+	}
 }
 
 func TestContract_InitIdentity(t *testing.T) {
@@ -349,6 +364,18 @@ func TestContract_Project(t *testing.T) {
 	}
 	strictDecode(t, "project.json", &resp)
 	assertNoExtraStructKeys(t, "project.json", resp)
+}
+
+// TestContract_ProjectNodeShape locks the REQUEST half of `project create --instance-type /
+// --node-size` (#5266): the fixture is sampled from the zod schema the route parses with, and the
+// struct is what CreateProject puts on the wire.
+func TestContract_ProjectNodeShape(t *testing.T) {
+	var req ProjectNodeShape
+	strictDecode(t, "create_project_node_shape.json", &req)
+	assertNoExtraStructKeys(t, "create_project_node_shape.json", req)
+	if req.InstanceType == "" || req.NodeSize == nil || req.NodeSize.VCPU == 0 || req.NodeSize.MemoryGB == 0 {
+		t.Errorf("a field decoded to its zero value — renamed on one side? %+v", req)
+	}
 }
 
 func TestContract_Environments(t *testing.T) {
@@ -634,5 +661,35 @@ func TestContract_DesignApply(t *testing.T) {
 	}
 	if resp.Changes[0].Name == nil {
 		t.Error("the fixture's row should carry a name so the pointer field is exercised")
+	}
+}
+
+// TestContract_KubeconfigMint strict-decodes the short-lived kubeconfig mint channel (#5280) into
+// its Go mirrors in packages/core/types, in both drift directions, and runs each decoded value
+// through its own Validate — so a fixture the Zod side accepts but the Go side would refuse fails
+// here, not on a customer's first mint.
+func TestContract_KubeconfigMint(t *testing.T) {
+	type validator interface{ Validate() error }
+	cases := []struct {
+		file string
+		v    any
+	}{
+		{"kubeconfig_mint_request.json", &types.KubeconfigMintRequest{}},
+		{"kubeconfig_mint_response.json", &types.KubeconfigMintResponse{}},
+		{"kubeconfig_mint_poll.json", &types.KubeconfigMintPollResponse{}},
+		{"runner_kubeconfig_mint_spec.json", &types.RunnerKubeconfigMintSpec{}},
+		{"runner_kubeconfig_mint_result.json", &types.RunnerKubeconfigMintResult{}},
+		{"kubeconfig_mint_credential.json", &types.KubeconfigMintCredential{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			strictDecode(t, tc.file, tc.v)
+			assertNoExtraStructKeys(t, tc.file, tc.v)
+			if v, ok := tc.v.(validator); ok {
+				if err := v.Validate(); err != nil {
+					t.Errorf("%s decodes but fails its Go Validate: %v", tc.file, err)
+				}
+			}
+		})
 	}
 }

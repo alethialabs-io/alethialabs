@@ -31,7 +31,7 @@ import * as z from "zod";
 /** Where a customer creates a Hetzner Cloud API token (Console → project → Security → API Tokens). */
 const HETZNER_CONSOLE_URL = "https://console.hetzner.cloud/";
 /** The Alethia connect guide for Hetzner. */
-const HETZNER_DOCS_URL = "/docs/console/connectors/hetzner";
+const HETZNER_DOCS_URL = "/docs/guides/connectors/hetzner";
 
 const tokenSchema = z
 	.object({

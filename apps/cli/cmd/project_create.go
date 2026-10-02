@@ -30,7 +30,7 @@ import (
 // docsProjectPage is the reference page `project create`'s field table lives on. It is the one big
 // command that had NO fieldspec marker at all — its flag table on project.mdx was hand-written and
 // outside every guard.
-const docsProjectPage = "apps/docs/content/docs/cli/commands/project.mdx"
+const docsProjectPage = "apps/docs/content/docs/reference/cli/project.mdx"
 
 var projectCreateSpec = spec.Spec{
 	Command: "alethia project create",
@@ -56,6 +56,10 @@ var projectCreateSpec = spec.Spec{
 			Description: "Placement of the default environment (default dedicated)",
 			Flag:        "placement-mode", Options: "placements",
 			ManifestKey: "placement", Page: docsProjectPage},
+		{Command: "alethia project create", Key: fieldKeyInstanceType, Title: "Machine type",
+			Description: instanceTypeDescription, Flag: fieldKeyInstanceType, Page: docsProjectPage},
+		{Command: "alethia project create", Key: fieldKeyNodeSize, Title: "Node size",
+			Description: nodeSizeDescription, Flag: fieldKeyNodeSize, Page: docsProjectPage},
 		{Command: "alethia project create", Key: "file", Title: "Manifest",
 			Description: "alethia.yaml to take the values and the environment matrix from (the one in the current directory when present)",
 			Flag:        "file", Shorthand: "f", Page: docsProjectPage},
@@ -182,6 +186,17 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 		accountRef := values.Get("account")
 		asked := values.Asked()
 
+		// Refused BEFORE the account is resolved or anything is asked: both flags at once is a
+		// typo-class mistake, and a machine type with no account names a SKU of no cloud in
+		// particular — the server refuses both too, but only after a round trip.
+		shape, err := nodeShapeFrom(values.Get(fieldKeyInstanceType), values.Get(fieldKeyNodeSize))
+		if err != nil {
+			fail(err)
+		}
+		if shape.InstanceType != "" && accountRef == "" {
+			fail(fmt.Errorf("--instance-type names one cloud's machine type, so it needs --cloud-account; use --node-size for a cloud-indifferent size"))
+		}
+
 		identity, err := resolveCloudIdentityID(client, accountRef)
 		if err != nil {
 			fail(err)
@@ -214,6 +229,7 @@ To create the project AND deploy it from the file in one step, use "alethia appl
 			IacVersion:      values.Get("iac-version"),
 			Placement:       values.Get("placement"),
 			Environments:    environments,
+			NodeShape:       shape,
 		}
 		// `--stage` and `--placement-mode` describe the DEFAULT environment, and a matrix's first
 		// entry IS the default environment, so when only one of them speaks the matrix is the more
@@ -338,7 +354,9 @@ func createReplayArgs(params api.CreateProjectParams, accountRef, fileRef string
 	if params.IacVersion != "" {
 		args = append(args, "--iac-version", params.IacVersion)
 	}
-	return args
+	// The node shape changes the project that comes out (#5266), so a replay without it would
+	// reproduce the catalog default instead of the shape that was asked for.
+	return append(args, nodeShapeArgs(params.NodeShape)...)
 }
 
 // manifestFromCreate renders the create that just ran as the alethia.yaml that reproduces it.
@@ -350,12 +368,16 @@ func manifestFromCreate(params api.CreateProjectParams, accountRef string) *mani
 	if account == "" {
 		account = params.CloudIdentityID
 	}
-	return &manifest.Manifest{
+	m := &manifest.Manifest{
 		Project:      params.ProjectName,
 		Cloud:        manifest.Cloud{Account: account, Region: params.Region},
 		IaC:          manifest.IaC{Version: params.IacVersion},
 		Environments: manifest.FromEnvironmentSpecs(params.Environments),
 	}
+	// The node shape (#5266) has no scalar key in the file: it is the dedicated environments'
+	// cluster component, which is what `apply` creates the cluster row from.
+	withNodeShape(m, params.NodeShape)
+	return m
 }
 
 // printManifestReplay prints the file a form-declared matrix adds up to, under the same

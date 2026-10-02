@@ -75,6 +75,6 @@ func TestConfigExportFormatFlagDefaultsToJSON(t *testing.T) {
 		t.Fatal("config export has no --format flag")
 	}
 	if f.DefValue != "json" {
-		t.Errorf("--format default = %q; want json (apps/docs/content/docs/cli/configuration.mdx documents json, and the export route accepts json alone)", f.DefValue)
+		t.Errorf("--format default = %q; want json (apps/docs/content/docs/reference/cli/configuration.mdx documents json, and the export route accepts json alone)", f.DefValue)
 	}
 }

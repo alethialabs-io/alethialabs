@@ -719,6 +719,34 @@ export interface AuditChanges {
 	[key: string]: unknown;
 }
 
+/**
+ * `audit_log.changes` for a kubeconfig mint (#5281; lib/kubeconfig-mint/audit.ts). One row when the
+ * mint is REQUESTED (written in the same transaction as the job, so before any credential exists)
+ * and one when its sealed result is DELIVERED (written in the same transaction as the read-once
+ * delete). It names who, which cluster, which tier, for how long and from where — and NEVER the
+ * credential: there is no field here that could carry a token, a certificate, the ciphertext or the
+ * client's key.
+ */
+export interface KubeconfigMintAuditChanges extends AuditChanges {
+	event: "kubeconfig_mint.requested" | "kubeconfig_mint.delivered";
+	mint_id: string;
+	cluster_id: string;
+	job_id: string | null;
+	tier: "readonly" | "admin";
+	shape: "exec" | "static";
+	ttl_seconds: number;
+	/** End of the poll window (kubeconfig_mint_requests.expires_at), ISO-8601. */
+	request_expires_at: string;
+	/** The latest instant the credential can still be valid: the poll window's end plus the TTL. */
+	credential_expires_by: string;
+	/** Which surface asked: the `alethia` CLI or the console. */
+	client: "cli" | "console";
+	/** Which kind of bearer the CLI call carried (a person's session or a service token). */
+	credential_kind: "session" | "service_token" | null;
+	/** The caller's IP from the deployment's trusted proxy header, or null when it sent none. */
+	source_ip: string | null;
+}
+
 export interface RunnerDeployConfig {
 	region: string;
 	cloud_provider: CloudProvider;

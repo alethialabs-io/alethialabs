@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // capture records the one request a client made, so a test can assert on the URL
@@ -577,6 +580,42 @@ func TestCreateProject_OmitsPlacementWhenUnset(t *testing.T) {
 	}
 }
 
+// TestCreateProject_NodeShapeTravels pins `project create --instance-type / --node-size` (#5266):
+// each half reaches the body under the contract's key, and an unset shape sends neither key, so the
+// server writes no cluster row and the template default applies.
+func TestCreateProject_NodeShapeTravels(t *testing.T) {
+	cases := []struct {
+		name  string
+		shape ProjectNodeShape
+		want  map[string]any
+	}{
+		{"instance type", ProjectNodeShape{InstanceType: "t3.xlarge"}, map[string]any{"instance_type": "t3.xlarge"}},
+		{"node size", ProjectNodeShape{NodeSize: &types.NodeSize{VCPU: 4, MemoryGB: 16}},
+			map[string]any{"node_size": map[string]any{"vcpu": float64(4), "memory_gb": float64(16)}}},
+		{"unset", ProjectNodeShape{}, map[string]any{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got map[string]interface{}
+			client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewDecoder(r.Body).Decode(&got)
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(map[string]any{"project": minimalProjectJSON()})
+			}))
+			if _, err := client.CreateProject(CreateProjectParams{ProjectName: "shop", Region: "eu-west-1", NodeShape: tc.shape}); err != nil {
+				t.Fatalf("CreateProject: %v", err)
+			}
+			for _, k := range []string{"instance_type", "node_size"} {
+				want, wanted := tc.want[k]
+				have, present := got[k]
+				if wanted != present || (wanted && !reflect.DeepEqual(want, have)) {
+					t.Errorf("%s = %#v (present %v), want %#v (present %v)", k, have, present, want, wanted)
+				}
+			}
+		})
+	}
+}
+
 // TestAddEnvironment_PlacementTravels covers the env-add side of the same gap.
 func TestAddEnvironment_PlacementTravels(t *testing.T) {
 	var got map[string]interface{}
@@ -616,5 +655,50 @@ func minimalProjectJSON() map[string]any {
 		"estimated_monthly_cost": nil,
 		"created_at":             "2026-01-01T00:00:00.000Z",
 		"updated_at":             "2026-01-01T00:00:00.000Z",
+	}
+}
+
+// TestQueueJobFull_CascadeSendsTheFlagAndReturnsEveryJob pins #5249's wire: `cascade: true` is sent
+// only when asked, and every job a cascade queued comes back in destroy order next to the owner's.
+func TestQueueJobFull_CascadeSendsTheFlagAndReturnsEveryJob(t *testing.T) {
+	var got capture
+	client := newCapturingClient(t, &got, `{"job":{"id":"j-owner"},"cascade_jobs":[`+
+		`{"job_id":"j-ns","environment_id":"e-ns","name":"dev-1"},`+
+		`{"job_id":"j-owner","environment_id":"e-prod","name":"prod"}]}`)
+
+	resp, err := client.QueueJobFull(QueueJobParams{JobType: "DESTROY", ConfigurationID: "p-1", Cascade: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.body["cascade"] != true {
+		t.Errorf("cascade must be sent as true, got %v", got.body["cascade"])
+	}
+	if resp.Job == nil || resp.Job.ID != "j-owner" || len(resp.CascadeJobs) != 2 || resp.CascadeJobs[0].Name != "dev-1" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+
+	got = capture{} // the recorder decodes into the map it already holds; start the second call clean
+	if _, err := client.QueueJobFull(QueueJobParams{JobType: "DESTROY", ConfigurationID: "p-1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, present := got.body["cascade"]; present {
+		t.Errorf("a plain destroy must not send cascade, got %v", got.body["cascade"])
+	}
+}
+
+// TestGetDestroyTree_AddressesTheEnvAndDecodesTheTree pins the read --cascade confirms against.
+func TestGetDestroyTree_AddressesTheEnvAndDecodesTheTree(t *testing.T) {
+	var got capture
+	client := newCapturingClient(t, &got, `{"tree":[{"environment_id":"e1","name":"prod","placement_mode":"dedicated",`+
+		`"status":"ACTIVE","owns_fabric":true,"waiting_on":[{"name":"dev-1","status":"FAILED"}]}]}`)
+	tree, err := client.GetDestroyTree("boutique", "e1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.path != "/api/cli/projects/boutique/destroy-tree" || got.query != "env=e1" {
+		t.Errorf("unexpected request: %s?%s", got.path, got.query)
+	}
+	if len(tree) != 1 || !tree[0].OwnsFabric || tree[0].WaitingOn[0].Status != "FAILED" {
+		t.Fatalf("unexpected tree: %+v", tree)
 	}
 }

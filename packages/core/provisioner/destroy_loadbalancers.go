@@ -261,6 +261,13 @@ type releaseOutcome struct {
 	// operator), and a sentence written for a human is not a predicate. Reworded once and both
 	// silently change behaviour.
 	NoCluster bool
+	// MintFailed records that a hetzner state carried a talosconfig but a fresh admin kubeconfig could
+	// not be minted from it, so the release never ran (#5330). It is always paired with Skipped, so the
+	// retry and the billing warning treat it like any other transient skip; what it adds is that
+	// RunDestroy then FAILS even when `tofu destroy` succeeded. The state proved a control plane existed,
+	// so "the release did not run" here is not the quiet already-gone case — it is the one where an
+	// hcloud CCM load balancer is most likely still billing.
+	MintFailed string
 }
 
 // billingWarning renders the block appended to a failed destroy's error, or "" when there is

@@ -1,0 +1,129 @@
+---
+title: Quickstart
+description: Sign up, connect a cloud and a Git provider, create a project, deploy it, and open the cluster it provisions.
+---
+
+# Quickstart
+
+This page takes you from a new account to a running Kubernetes cluster in the Alethia console.
+To do the same from a terminal, see [The CLI](/get-started/the-cli).
+
+## Prerequisites
+
+- An account on one of the supported clouds: AWS, GCP, Azure, Hetzner, or Alibaba Cloud.
+  You need permission to create roles or API tokens in that account.
+- A GitHub, GitLab, or Bitbucket account.
+
+<Steps>
+
+### Sign up
+
+1. Open the console.
+2. Select **Continue with email**, or sign in with GitHub, Google, GitLab, or Bitbucket.
+   The email path sends a 6-digit code. A self-hosted console shows only the sign-in providers it configures.
+3. On first sign-in, choose a plan and name your organization.
+
+The console then opens your organization's **Overview**.
+
+### Connect a cloud
+
+1. Select **Connectors** in the sidebar.
+2. On your cloud's card, select **Connect**. A setup sheet opens.
+3. Follow the steps for your cloud:
+
+<Tabs items={["AWS", "GCP", "Azure", "Hetzner", "Alibaba"]}>
+  <Tab value="AWS">
+    1. Select **Open CloudShell**. AWS CloudShell opens in your browser.
+    2. Copy the setup command from the sheet and run it in CloudShell. The command creates an IAM role that trusts Alethia. No access keys are created.
+    3. Paste the `role_arn` that the command prints into **IAM Role ARN**.
+    4. Select **Connect**. Alethia verifies that it can assume the role.
+  </Tab>
+  <Tab value="GCP">
+    1. Select **Open Cloud Shell**.
+    2. Copy the setup command, replace `YOUR_PROJECT_ID`, and run it. The command creates a Workload Identity Pool that trusts Alethia. No service account keys are created.
+    3. Enter the **Project ID** and **Project Number** that the command prints.
+    4. Select **Connect**.
+  </Tab>
+  <Tab value="Azure">
+    1. Select **Open Cloud Shell**. Azure Cloud Shell opens in your browser.
+    2. Copy the setup command, replace `YOUR_SUBSCRIPTION_ID`, and run it. The command creates a managed identity with a federated credential. No client secret is created.
+    3. Enter the **Tenant ID**, **Client ID**, and **Subscription ID** that the command prints.
+    4. Select **Connect**.
+  </Tab>
+  <Tab value="Hetzner">
+    1. Select **Open Hetzner Console**.
+    2. In your Hetzner Cloud project, go to **Security → API Tokens → Generate API token**. Give the token **Read & Write** permission.
+    3. Paste the token into **API Token**.
+    4. Select **Connect**. Alethia verifies the token and stores it encrypted.
+  </Tab>
+  <Tab value="Alibaba">
+    1. Select **Open Cloud Shell**. The Alibaba Cloud Shell opens in your browser.
+    2. Copy the setup command and run it. The command creates a RAM OIDC provider and a role that trusts Alethia.
+    3. Paste the `role_arn` that the command prints into **RAM Role ARN**.
+    4. Select **Connect**.
+  </Tab>
+</Tabs>
+
+Each sheet also offers an infrastructure-as-code method. For details per cloud, see
+[Connectors](/guides/connectors).
+
+### Connect a Git provider
+
+1. On the **Connectors** page, find the GitHub, GitLab, or Bitbucket card.
+2. Select **Connect**.
+3. Authorize Alethia in the provider's OAuth screen. The provider returns you to **Connectors**.
+
+See [Git providers](/guides/connectors/git-providers) for the scopes Alethia requests.
+
+### Create a project
+
+1. On the **Overview** page, select **Create**, then **Project**.
+   With no projects yet, you can select **Create a Project** instead.
+2. Under **Start from scratch**, select **Start from a template**.
+   The **Configure your project** screen opens.
+3. Enter a name under **Project**.
+4. Under **Template**, select **Standard**, **AI Workloads**, or **Custom**.
+   Standard and AI Workloads each name a starter repository to copy. Custom names none.
+5. Under **Cloud & region**, select the cloud account you connected and a region.
+6. Under **Environments**, keep or change the environments.
+7. Select **Create project**.
+
+Alethia creates the project as a draft and opens its **Architecture** canvas.
+Nothing is provisioned yet. For what each template contains, see
+[Starter templates](/guides/design-project/starter-templates).
+
+### Deploy
+
+1. On the canvas, select **Run**, then **Plan**. Alethia queues a plan job.
+2. Select **Jobs** in the project sidebar, then open the plan job.
+3. Read the plan output in the job log.
+4. When the plan succeeds, select **Apply**.
+5. Select **Any available**, or a specific runner, then select **Confirm**.
+
+Alethia queues a deploy job and opens it. Before the runner applies the plan, it runs the
+[verify gate](/guides/jobs/plan-and-apply#verify-gate). A failed gate stops the deploy before
+any change is applied. When the apply succeeds, the runner installs ArgoCD on the cluster.
+
+When you edit the design on the canvas later, a **Pending changes** bar appears.
+Select **Deploy** on that bar to deploy your changes.
+
+### See the cluster
+
+1. Select **Clusters** in the sidebar.
+2. Find the card for your project.
+
+The card shows the cluster endpoint, the ArgoCD URL, and a command that gets the ArgoCD
+admin password. For AWS clusters, the card also shows the `aws eks update-kubeconfig` command.
+For GCP and Azure, use the command in [Clusters](/guides/clusters#kubeconfig-commands).
+To get a short-lived kubeconfig without a cloud login of your own, on any of the five clouds, see
+[Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
+
+</Steps>
+
+## Next steps
+
+- [Deploy Online Boutique to three environments](/tutorials/online-boutique): the hands-on tutorial — one cluster, three environments, from the terminal.
+- [The CLI](/get-started/the-cli): do the same steps from a terminal with `alethia init` and `alethia apply`.
+- [Design a project](/guides/design-project): add databases, caches, and services on the canvas.
+- [Jobs](/guides/jobs): job types, logs, and the plan and apply flow.
+- [Concepts](/concepts): how provisioning, runners, and security work.

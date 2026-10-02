@@ -4,6 +4,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMDX } from "fumadocs-mdx/next";
+import { movedPages } from "./redirects.mjs";
 
 const withMDX = createMDX();
 
@@ -61,6 +62,8 @@ const config = {
 			{ source: "/tendril/:path*", destination: "/runner/:path*", permanent: true },
 			// Shared Go package renamed grape-core -> core (now under runner/)
 			{ source: "/runner/grape-core", destination: "/runner/core", permanent: true },
+			// The Diátaxis restructure (#5240) — one entry per moved page; see redirects.mjs.
+			...movedPages,
 		];
 	},
 };

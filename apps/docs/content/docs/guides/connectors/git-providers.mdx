@@ -1,0 +1,61 @@
+---
+title: Git Providers
+description: GitHub, GitLab, and Bitbucket OAuth integration with automatic token refresh.
+---
+
+# Git Providers
+
+Git provider connectors give Alethia access to your repositories for GitOps. Three providers are supported, each through OAuth.
+
+## Supported Providers
+
+| Provider | Auth Method | Token Refresh |
+|----------|-----------|---------------|
+| GitHub | OAuth 2.0 | Automatic via refresh token |
+| GitLab | OAuth 2.0 | Automatic via refresh token |
+| Bitbucket | OAuth 2.0 | Automatic via refresh token |
+
+## Connection Flow
+
+<Steps>
+
+### Click Connect
+Click "Connect" on the provider card in the Connectors page.
+
+### OAuth Authorization
+You're redirected to the provider's authorization page. Grant the application access to your repositories.
+
+### Callback
+The provider redirects back to Alethia with an authorization code. Better Auth exchanges it for access and refresh tokens.
+
+### Token Storage
+Better Auth stores the provider tokens in its `account` table — one row per linked account.
+
+</Steps>
+
+## Token Refresh
+
+Git tokens have limited lifetimes. The `getValidProviderToken()` server action wraps Better Auth's `getAccessToken`, which handles refresh transparently:
+
+1. Better Auth reads the linked account from the `account` table
+2. If the access token has expired, it refreshes using the stored refresh token against the provider's token endpoint
+3. It returns a valid access token and persists the refreshed one
+
+This happens transparently whenever a Git operation is needed.
+
+## What Tokens Are Used For
+
+- **Repository listing** — the Design a Project form shows repos from your connected provider
+- **ArgoCD access** — after deploying, ArgoCD uses the token to watch repositories for changes
+- **Template cloning** — infrastructure templates can be sourced from your repositories
+
+## Disconnecting
+
+Disconnecting a Git provider:
+
+1. Calls `deleteProviderToken()`, which unlinks the account via Better Auth (`unlinkAccount`) — deleting its `account` row
+2. Existing ArgoCD installations that use this token will lose repository access
+
+<Callout type="warn">
+Disconnecting a Git provider affects all projects that use repositories from that provider. ArgoCD will show "sync failed" until a new token is provided.
+</Callout>

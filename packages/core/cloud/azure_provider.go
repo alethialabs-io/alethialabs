@@ -36,6 +36,12 @@ func (p *azureProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
+	if err := validateInstanceTypes("azure", config); err != nil {
+		return err
+	}
+	if err := validateCapacityType(config, "azure", false); err != nil {
+		return err
+	}
 	if err := validateNodeDiskSize(config, "aks_disk_size_gb", azureNodeDiskFloorGB); err != nil {
 		return err
 	}
@@ -256,7 +262,7 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		mergeProviderConfig(tfvars, r.ProviderConfig, azureRootReserved...)
 	}
 
-	if inst := ResolveInstanceTypes("azure", config.Cluster); len(inst) > 0 {
+	if inst := resolveNodeTypes("azure", config.Cluster.InstanceTypes, config.Cluster.NodeSize); len(inst) > 0 {
 		tfvars["aks_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {

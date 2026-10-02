@@ -1,0 +1,51 @@
+---
+title: Console
+description: Alethia's web control plane for multi-cloud infrastructure orchestration.
+---
+
+# Console
+
+The Console (`apps/console`) is Alethia's web control plane. It provides a visual interface for configuring infrastructure, managing [cloud identities](/guides/connectors), monitoring [jobs](/guides/jobs), and viewing provisioned clusters — all from the browser. Alethia is the platform; the Console is the web app you drive it from.
+
+## Key Pages
+
+<Cards>
+  <Card title="Dashboard" href="/guides/dashboard">
+    Project overview grid, plus project detail with services and infrastructure.
+  </Card>
+  <Card title="Assistant (Elench)" href="/guides/assistant">
+    The in-console AI — grounded in your real infrastructure, with per-project workspaces, a knowledge base, dashboards, and artifacts.
+  </Card>
+  <Card title="Design a Project" href="/guides/design-project">
+    Visual canvas for designing a project's infrastructure, with the cost from its last plan.
+  </Card>
+  <Card title="Connectors" href="/guides/connectors">
+    Connect AWS, GCP, Azure, Alibaba, and Hetzner cloud accounts (each a cloud identity) plus GitHub, GitLab, Bitbucket Git providers.
+  </Card>
+  <Card title="Jobs" href="/guides/jobs">
+    Monitor infrastructure operations with real-time log streaming.
+  </Card>
+  <Card title="Runners" href="/guides/runners">
+    Register, monitor, and manage your own Runners. The sidebar shows Runners only when your organization runs its own.
+  </Card>
+  <Card title="Clusters" href="/guides/clusters">
+    View provisioned Kubernetes clusters with ArgoCD access.
+  </Card>
+  <Card title="API Reference" href="/reference/api">
+    Runner, CLI, and Auth API endpoints.
+  </Card>
+</Cards>
+
+## Architecture
+
+<Mermaid chart={`
+flowchart TD
+  B[Browser] --> A[Next.js App Router]
+  A --> SA[Server Actions<br/>Drizzle · org-scoped RLS]
+  A --> API[API Routes<br/>Runner + CLI token auth]
+  A --> SSE[LISTEN/NOTIFY → SSE]
+  SSE --> ST[Live job-log & message streams]
+`} />
+
+All database access goes through Drizzle with org-scoped RLS policies enforcing per-org data isolation through a Policy Decision Point (PDP). Server Actions set the current org context (`app.current_org` via `set_config`) automatically.
+

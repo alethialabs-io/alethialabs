@@ -102,10 +102,13 @@ RETURNS integer LANGUAGE sql IMMUTABLE AS $$
 $$;
 
 -- Interactive job types jump ahead of batch ones, within the plan band (gap = 10).
+-- MINT_KUBECONFIG (#5281) is as interactive as a PLAN: a person is polling for it, inside a 10-minute
+-- window after which the request expires unclaimed, and it runs no tofu.
 CREATE OR REPLACE FUNCTION public.jobtype_priority_bump(jt public.provision_job_type)
 RETURNS smallint LANGUAGE sql IMMUTABLE AS $$
   SELECT (CASE jt
     WHEN 'PLAN' THEN 3
+    WHEN 'MINT_KUBECONFIG' THEN 3
     WHEN 'DEPLOY_RUNNER' THEN 2
     WHEN 'UPDATE_RUNNER' THEN 2
     WHEN 'DESTROY_RUNNER' THEN 2
@@ -183,6 +186,52 @@ CREATE OR REPLACE FUNCTION public.state_object_busy(
     );
 $$;
 
+-- TRUE iff the candidate job is a DESTROY of a `dedicated` environment whose Fabric still hosts a LIVE
+-- tenant placement — another environment on the same fabric_id, placed as `namespace`/`vcluster`, whose
+-- status is anything but DRAFT or DESTROYED (#5249).
+--
+-- A dedicated environment OWNS its Fabric: the runner's DESTROY tears down the whole cluster
+-- (packages/core/provisioner/destroy.go). Every namespace/vcluster environment placed on that Fabric
+-- runs inside that cluster, and its own teardown — which is what deletes its per-namespace cloud
+-- identity — needs the cluster to still exist (destroy_namespace.go mints a kubeconfig for it, and
+-- fails closed when it cannot). Destroy the owner first and the tenants are orphaned and their
+-- identities leak. So the owner's DESTROY is held QUEUED until its tenants are gone.
+--
+-- This is how a cascade's ORDER is enforced: destroyProject queues every tenant's DESTROY and the
+-- owner's in one transaction, and this predicate — not timing, not queue position — is what makes the
+-- owner go last. It is also the backstop for every way a tenant can be live while an owner DESTROY
+-- sits in the queue that the enqueue-time refusal cannot see: a tenant DEPLOY queued AFTER the owner's
+-- DESTROY was accepted (the refusal read no live tenants a moment earlier), and DESTROY paths that do
+-- not go through destroyProject at all (the ephemeral reaper). DESTROYING and FAILED count as live: a destroy in flight has not finished,
+-- and a failed one may have left resources behind. A tenant whose destroy FAILED therefore holds the
+-- owner until it is destroyed (or the owner's job is cancelled) — visible, not silent: the destroy tree
+-- (GET /api/cli/projects/:id/destroy-tree) names it under the owner's `waiting_on`.
+--
+-- NOT project-scoped, deliberately: a Fabric belongs to one project today, and the app-side read
+-- (lib/queries/destroy-tree.ts, readLiveFabricTenants) IS scoped to it; this guard asks only what is
+-- physically placed on the cluster. NOT a schema change: it reads columns that already exist.
+-- `CASE` so the tenant scan runs only for a DESTROY candidate — every other job type short-circuits.
+DROP FUNCTION IF EXISTS public.destroy_waits_on_tenants(public.provision_job_type, UUID);
+CREATE OR REPLACE FUNCTION public.destroy_waits_on_tenants(
+    p_job_type public.provision_job_type, p_environment_id UUID
+) RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+    SELECT CASE
+      WHEN p_job_type IS DISTINCT FROM 'DESTROY'::public.provision_job_type OR p_environment_id IS NULL
+        THEN false
+      ELSE EXISTS (
+        SELECT 1
+          FROM public.project_environments o
+          JOIN public.project_environments t
+            ON t.fabric_id = o.fabric_id
+           AND t.id <> o.id
+         WHERE o.id = p_environment_id
+           AND o.placement_mode = 'dedicated'
+           AND t.placement_mode <> 'dedicated'
+           AND t.status NOT IN ('DRAFT', 'DESTROYED')
+      )
+    END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.claim_next_job(
     p_runner_id UUID, p_runner_token_hash TEXT, p_cloud_identity_id UUID DEFAULT NULL
 ) RETURNS SETOF public.jobs
@@ -240,6 +289,8 @@ BEGIN
           )
           -- Never open a state file another job is actively writing (see state_object_busy).
           AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
+          -- Never tear down a Fabric that live tenants are still placed on (see destroy_waits_on_tenants).
+          AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
         ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
     ) RETURNING id INTO v_job_id;
 
@@ -281,6 +332,8 @@ BEGIN
                 -- (project, environment) are well within any cap, and that is exactly the pair that
                 -- corrupts — an apply and the destroy racing it.
                 AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
+                -- Never tear down a Fabric that live tenants are still placed on (see destroy_waits_on_tenants).
+                AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
                 AND (
                   public.plan_max_concurrency(public.org_effective_plan(j.org_id)) IS NULL
                   OR public.org_managed_inflight(j.org_id)
@@ -335,6 +388,8 @@ BEGIN
                   -- Never open a state file another job is actively writing (see state_object_busy).
                   -- Self runners are UNCAPPED, so nothing else here bounds concurrency on one state.
                   AND NOT public.state_object_busy(j.project_id, j.environment_id, j.id)
+                  -- Never tear down a Fabric that live tenants are still placed on (see destroy_waits_on_tenants).
+                  AND NOT public.destroy_waits_on_tenants(j.job_type, j.environment_id)
                 ORDER BY j.priority DESC, j.created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED
             ) RETURNING id INTO v_job_id;
         END IF;
@@ -1101,6 +1156,53 @@ BEGIN
            AND (coalesce(current_setting('app.support_all', true), '') = 'true'
                 OR user_id = current_setting('app.current_owner', true)::uuid));
 END $$;
+
+-- Kubeconfig mint requests (#5280): a row holds a client's ephemeral PUBLIC key and, once the runner
+-- has posted, a SEALED (HPKE) credential only that client can open. Org-scoped AND actor-scoped:
+-- unlike `owner_all`'s OR, both must hold. A mint request is its requester's alone — a teammate in
+-- the same org has no reason to see it, and through the app role could otherwise DELETE a `ready`
+-- row (the read-once consume) out from under its owner. Community/personal: org_id == user id ==
+-- current_owner, so this is the same row set. NULL GUCs → deny. The runner's result post and the
+-- expiry sweep run on the service role (RLS-bypassing) and filter on id / job_id / org explicitly.
+DO $$
+BEGIN
+  ALTER TABLE public.kubeconfig_mint_requests ENABLE ROW LEVEL SECURITY;
+  DROP POLICY IF EXISTS owner_all ON public.kubeconfig_mint_requests;
+  CREATE POLICY owner_all ON public.kubeconfig_mint_requests FOR ALL
+    USING (org_id = current_setting('app.current_org', true)::uuid
+           AND actor_user_id = current_setting('app.current_owner', true)::uuid)
+    WITH CHECK (org_id = current_setting('app.current_org', true)::uuid
+           AND actor_user_id = current_setting('app.current_owner', true)::uuid);
+END $$;
+
+-- The mint request's org must BE its cluster's org (and its job's). RLS above checks org_id against
+-- the caller's GUC, but nothing there ties cluster_id to that org: a request route that resolved the
+-- cluster wrongly could insert a row in the caller's own org naming ANOTHER org's cluster, and the
+-- runner would mint a credential for it. That is a cross-tenant credential issue, so it is refused
+-- by the database, not left to every future caller's query. Fires on the service role too (a
+-- trigger is not RLS), which is the point: the runner's channel writes through it.
+CREATE OR REPLACE FUNCTION public.kubeconfig_mint_requests_bind_org()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.project_cluster c
+                  WHERE c.id = NEW.cluster_id AND c.org_id = NEW.org_id) THEN
+    RAISE EXCEPTION 'kubeconfig_mint_requests: cluster % is not in org %', NEW.cluster_id, NEW.org_id
+      USING ERRCODE = '42501';
+  END IF;
+  IF NEW.job_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.jobs j
+                  WHERE j.id = NEW.job_id AND j.org_id = NEW.org_id
+                    AND j.job_type = 'MINT_KUBECONFIG'::public.provision_job_type) THEN
+    RAISE EXCEPTION 'kubeconfig_mint_requests: job % is not a MINT_KUBECONFIG job in org %', NEW.job_id, NEW.org_id
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS kubeconfig_mint_requests_bind_org ON public.kubeconfig_mint_requests;
+CREATE TRIGGER kubeconfig_mint_requests_bind_org
+  BEFORE INSERT OR UPDATE OF org_id, cluster_id, job_id ON public.kubeconfig_mint_requests
+  FOR EACH ROW EXECUTE FUNCTION public.kubeconfig_mint_requests_bind_org();
 
 -- Credential tables (scope-aware): a `personal` row is visible only to its author
 -- (user_id = current_owner); an `org` row is visible to the whole org

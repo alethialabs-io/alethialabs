@@ -103,6 +103,8 @@ variable "ack_cluster_version" {
 }
 
 variable "ack_instance_types" {
+  # Equal to the catalog default (packages/core/catalog/catalog.json compute.alibaba.default_instance)
+  # by rule: TestTemplateNodeDefaultsEqualTheCatalog fails when they differ (#5266).
   type        = list(string)
   default     = ["ecs.g6.large"]
   description = "ECS instance types for the ACK node pool"

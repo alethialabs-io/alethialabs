@@ -1,9 +1,9 @@
 ---
-title: Bring Your Own IaC
+title: Bring-your-own IaC
 description: Attach a git repo holding your own OpenTofu root module to a project environment — Alethia provisions from your module instead of its built-in template, behind a fail-closed static safety gate, a frozen variable contract, and the same verify gate as template provisioning.
 ---
 
-# Bring Your Own IaC
+# Bring-your-own IaC
 
 Alethia normally provisions from its own per-cloud project templates (EKS / GKE / AKS / ACK / Talos +
 supporting services). **Bring-your-own IaC (BYO IaC, "E3")** lets you point a project **environment** at
@@ -12,7 +12,8 @@ from *your* module instead of the built-in template.
 
 Because a customer's OpenTofu is arbitrary code, running it is a trust decision. This page describes the
 contract Alethia gives your module, the static safety gate that vets it, who is allowed to run it, and
-the lifecycle that keeps the whole thing TOCTOU-safe.
+the lifecycle that keeps the whole thing TOCTOU-safe. To attach a module, write a minimal one, or
+detach it, follow the how-to guide [Bring your own IaC](/guides/design-project/bring-your-own-iac).
 
 <Callout type="info">
   **v1 is REPLACE mode.** A BYO source attached to an environment provisions *instead of* the built-in
@@ -37,7 +38,7 @@ fetched at `init` time; an `external` data source executes a program during `pla
    expressions, never runs `tofu`, never fetches remote modules — and blocks anything dangerous before a
    single `tofu` command runs.
 2. The **execution sandbox** (on the managed fleet) that contains a hostile provider even if it slips the
-   gate. See [Isolated Execution](/isolated-execution).
+   gate. See [Isolated Execution](/concepts/isolated-execution).
 
 The gate is the first line; the sandbox is the backstop. Neither is trusted alone.
 
@@ -136,7 +137,7 @@ proxy**. So:
   authoritative state and no object-storage credential — one job's token can only touch its own state.
 
 See [OpenTofu State Management](/concepts/terraform-state) for the state model, and
-[Isolated Execution](/isolated-execution) for how the state-proxy source-drop is part of the sandbox.
+[Isolated Execution](/concepts/isolated-execution) for how the state-proxy source-drop is part of the sandbox.
 
 ## Cluster wiring is opportunistic
 
@@ -201,7 +202,7 @@ install **401s** and the deploy fails at the GitOps step. Grant it in-module, at
 
 ## Verification: the same gate as templates
 
-A BYO plan flows through the **same fail-closed [elench](/elench) verify gate** as template
+A BYO plan flows through the **same fail-closed [Elench](/concepts/elench) verify gate** as template
 provisioning — the deterministic controls (keyless / least-privilege / OIDC-sub, with honest
 `not_evaluable` for what the plan can't show) run between `tofu plan` and `tofu apply`, and a hard
 control failure blocks the apply unless an authorized override waives it. Every plan/apply also produces
@@ -258,76 +259,23 @@ determines whether it is available:
 <Callout type="warn">
   **Managed BYO IaC is trusted-only / gated until the isolation canary passes.** Do not assume managed
   availability. The container sandbox and its turn-on sequence are documented in
-  [Isolated Execution → Architecture](/isolated-execution/architecture) and the
-  [Managed provisioning runbook](/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b).
+  [Isolated Execution → Architecture](/concepts/isolated-execution/architecture) and the
+  [Managed provisioning runbook](/guides/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b).
   Self-hosted BYO IaC is available today under the flag.
 </Callout>
-
-## Getting started
-
-### 1. A minimal BYO module
-
-The smallest valid BYO module needs no cluster and no cloud — a `random`/`null` module exercises the
-whole path (attach → scan → plan → deploy → destroy) with zero spend. Put this in a repo directory (e.g.
-`envs/dev/`):
-
-```hcl
-# main.tf — a minimal BYO IaC module
-terraform {
-  required_providers {
-    random = { source = "hashicorp/random" } # on the default allowlist
-  }
-  # No backend block needed — Alethia overrides it with its state proxy.
-}
-
-# Platform context from the frozen Alethia contract (declare only what you use).
-variable "alethia_project"     { type = string }
-variable "alethia_environment" { type = string }
-
-# Your own variables (any name NOT starting with alethia_).
-variable "greeting" {
-  type    = string
-  default = "hello"
-}
-
-resource "random_pet" "name" {
-  prefix = "${var.alethia_project}-${var.alethia_environment}"
-}
-
-output "pet"      { value = random_pet.name.id }
-output "greeting" { value = var.greeting }
-```
-
-To provision a real cluster instead, output `cluster_name` / `cluster_endpoint` and Alethia
-opportunistically wires the reachability gate + ArgoCD (see [above](#cluster-wiring-is-opportunistic)).
-
-### 2. Enable the feature
-
-Set on the console env (self-hosted):
-
-```bash
-ALETHIA_BYO_IAC_ENABLED=true
-```
-
-For the **managed fleet**, additionally satisfy the sandbox gate — see the
-[operator model](#operator-model--who-can-run-byo-iac) above.
-
-### 3. Attach it to an environment
-
-In the console, open the project's **Architecture** surface for the target environment and attach the
-source: **repo URL** (https or ssh — `file://` and other local schemes are rejected on the untrusted
-path), **ref** (branch/tag), **module path** (e.g. `envs/dev`, `""` = repo root), an optional **git
-credential** (for a private repo), and optional **variable values** (e.g. `greeting = "hi"`). Attaching
-auto-queues the `IAC_SCAN`; once it lands `done`, the commit is pinned and Plan/Deploy unlock.
 
 ## Where to go next
 
 <Cards>
-  <Card title="Isolated Execution" href="/isolated-execution">
+  <Card title="Bring your own IaC (how-to)" href="/guides/design-project/bring-your-own-iac">
+    Attach a module to an environment, read its safety scan, and detach it — with a minimal module
+    that exercises the whole path at zero spend.
+  </Card>
+  <Card title="Isolated Execution" href="/concepts/isolated-execution">
     The per-job container sandbox that contains untrusted BYO code on the managed fleet — the runtime
     backstop behind the static gate.
   </Card>
-  <Card title="Elench (verification)" href="/elench">
+  <Card title="Elench (verification)" href="/concepts/elench">
     The fail-closed verify gate and signed evidence receipt every plan/apply flows through.
   </Card>
   <Card title="OpenTofu State" href="/concepts/terraform-state">

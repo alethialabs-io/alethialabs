@@ -28,6 +28,12 @@ export const RESOURCES = [
 	// Support cases (help-desk). Any org member may open/track/reply to their own cases;
 	// `manage` is the staff-triage capability (owner/admin only — staff answer out-of-band).
 	"support_case",
+	// A provisioned Kubernetes cluster (a `project_cluster` row) as a thing a person can be handed a
+	// credential for (#5250, seams #5280). Its only actions are the two `access_*` tiers below; who
+	// may SEE a cluster is still `project:view`. Resolved org-wide (lib/authz/fga-mapping.ts
+	// ORG_LEVEL): clusters are never individually shared, and the mint route resolves the cluster
+	// row with `project_cluster.org_id = actor.orgId` before it asks.
+	"cluster",
 ] as const;
 export type Resource = (typeof RESOURCES)[number];
 
@@ -79,6 +85,23 @@ export const ACTIONS = [
 	// not in, so an operator can deploy infrastructure and still not mint a credential that could
 	// keep deploying after they leave.
 	"manage_tokens",
+	// Short-lived kubeconfig mint (#5250 §2 "Who can mint", seams #5280): `POST
+	// /api/cli/clusters/:id/kubeconfig` issues a credential INTO the customer's cluster.
+	//
+	// TWO ACTIONS, not a reuse of `view` or `deploy`, for the manage_tokens reason above: a kubeconfig
+	// is a credential that carries your access somewhere you may not be watching, so it must be
+	// nameable and revocable on its own. `view` falls to every member, including viewers.
+	//
+	//   - `access_readonly` — a ServiceAccount token bound to the `alethia:view` ClusterRole (no
+	//     Secrets). Owner, admin and operator: an operator already deploys into the cluster.
+	//   - `access_admin` — the cloud-native admin credential. Owner and admin ONLY: the operator
+	//     template selects on a fixed action list this is not in, and a viewer holds neither.
+	//
+	// The tiers are independent grants, not a ladder: the mint route (a later unit) must check
+	// exactly the action that names the requested tier, and no minter may silently upgrade a
+	// read-only request to admin (#5250 decision 2). Nothing here makes one imply the other.
+	"access_readonly",
+	"access_admin",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -107,10 +130,16 @@ const MATRIX: Partial<Record<Resource, readonly Action[]>> = {
 	alert: ["view_alerts", "manage_alerts"],
 	fleet: ["view", "create", "edit", "destroy"],
 	support_case: ["view", "create", "reply", "manage_support"],
+	cluster: ["access_readonly", "access_admin"],
 };
 
 /** Customer-facing support actions every org member holds on their own cases. */
 const SUPPORT_MEMBER_ACTIONS: readonly Action[] = ["view", "create", "reply"];
+
+/** Cluster-credential actions an operator holds: the read-only tier only (#5280). `access_admin`
+ *  is deliberately absent, so an operator can mint a kubeconfig that reads the cluster and never
+ *  one that administers it. */
+const OPERATOR_CLUSTER_ACTIONS: readonly Action[] = ["access_readonly"];
 
 /** Activity-log actions an operator holds: read the log and export it (#3932). Export is still
  *  refused without the `activityExport` entitlement — `getActivityExportCsv` checks both. */
@@ -171,6 +200,7 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 				!["cloud_identity", "member", "billing", "activity", "fleet"].includes(p.resource)) ||
 			p.action === "view_alerts" ||
 			(p.resource === "activity" && OPERATOR_ACTIVITY_ACTIONS.includes(p.action)) ||
+			(p.resource === "cluster" && OPERATOR_CLUSTER_ACTIONS.includes(p.action)) ||
 			(p.resource === "support_case" && SUPPORT_MEMBER_ACTIONS.includes(p.action)),
 	).map((p) => p.key),
 	// Read-only (including alert config and the Activity log), PLUS opening/replying to their

@@ -8,7 +8,7 @@ description: The entity graph — organization, project, environment, component 
 Every object in Alethia maps to one row in one Postgres table under `apps/console/lib/db/schema/`.
 This page describes that graph and the state machines its rows move through. For the canonical name
 of each concept — and the words the product deliberately avoids — start with the
-[Glossary](/concepts/glossary); this page assumes those terms.
+[Glossary](/reference/glossary); this page assumes those terms.
 
 <img src="/docs/diagrams/concepts/domain-model.svg" alt="Domain Model" />
 
@@ -29,7 +29,7 @@ flowchart TD
 - An **organization** (`org_id`) is the tenancy boundary. Coarse Postgres RLS keyed on `org_id`
   filters every org-scoped table (see [Security](/concepts/security#row-level-security-rls)).
 - A **project** (`projects`) is a declarative infrastructure *app*. It links to **exactly one**
-  [cloud identity](/concepts/glossary#connectivity) (`projects.cloud_identity_id`) and carries the
+  [cloud identity](/reference/glossary#connectivity) (`projects.cloud_identity_id`) and carries the
   `region` and `iac_version`. It owns **N** environments.
 - An **environment** (`project_environments`) is an independently-provisionable deployment target.
   This is the level most other tools collapse to 1:1 — here it is **1:N**: `staging` and `production`
@@ -159,30 +159,14 @@ stateDiagram-v2
   CANCELLED --> [*]
 `} />
 
-See [Job Queue Pattern](/concepts/job-queue) for the atomic-claim mechanics and
-[Runner Scaling](/concepts/runner-scaling) for how capacity appears.
+See [Job queue](/concepts/job-queue) for the atomic-claim mechanics and
+[Warm-pool scaling](/concepts/runner/scaling) for how capacity appears.
 
 ### Job types
 
 The `provision_job_type` enum (`apps/console/lib/db/schema/enums.ts`) is the full catalog of work a
-runner can claim — not just plan/apply/destroy:
-
-| Type | What it does |
-|---|---|
-| `PLAN` | `tofu plan` (+ optional Infracost estimate); uploads a plan artifact |
-| `DEPLOY` | `tofu plan` → [verify gate](/concepts/security) → `tofu apply` → ArgoCD install + manifest scaffold |
-| `DESTROY` | `tofu destroy` with graceful cleanup |
-| `DEPLOY_RUNNER` | Provision a self-operated runner's infrastructure |
-| `UPDATE_RUNNER` | Roll a self-operated runner to a newer release |
-| `DESTROY_RUNNER` | Tear down a self-operated runner's infrastructure |
-| `ANALYZE_REPO` | Clone + statically scan a git repo into a `RepoDigest` (repo-first onboarding) |
-| `DETECT_DRIFT` | `tofu plan -refresh-only` → a drift `Posture` (`packages/core/drift`) |
-| `AUDIT` | Run the Elench `verify` engine over a bring-your-own plan/manifests — **provisions nothing** |
-| `CHART_SCAN` | Render + scan a bring-your-own Helm chart (`helm template` → `verify.EvaluateManifests`); zero secrets, deny-all egress |
-| `IAC_SCAN` | Scan a bring-your-own IaC module (clone → pin commit → inventory providers/modules → `tofu validate`); its result **gates** that environment's `PLAN`/`DEPLOY`/`DESTROY` |
-| `STATE_SURGERY` | Break-glass, two-person-approved, fully-audited repair of a corrupt `tofu` state; ships **inert / fail-closed** (the runner refuses unless explicitly opted in) |
-| `PROBE_CLUSTER` | Live cluster-alive signal (BYOC B2) — reads the env's `tofu` state outputs in-process, dials the cluster API server, and writes one honest `environment_probes` row (unreachable ⇒ a **successful** probe with `reachable=false`) |
-| `BUILD` | W2 image build + push — for each `source.kind == "repo"` service, run an in-cluster kaniko `Job` (git context + Dockerfile → the provisioned registry) and report a per-service `{ service_name → image_digest_uri }` map in `execution_metadata.build_result` |
+runner can claim — not just plan/apply/destroy. Each type is described once, in
+[Job types](/guides/jobs/job-types).
 
 Promotions (`staging → production`) do **not** add a job type — a promotion reuses `PLAN` then
 `DEPLOY` under a `promotions` row.

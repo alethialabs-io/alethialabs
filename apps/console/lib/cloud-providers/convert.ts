@@ -50,6 +50,41 @@ export interface ConversionWarning {
 	message: string;
 }
 
+/**
+ * Maps pinned machine types from one cloud to another: each through `INSTANCE_TYPE_MAP`, an
+ * unmapped one to the target's default WITH a warning saying so, duplicates collapsed.
+ *
+ * The one implementation of that rule. The whole-project conversion below uses it, and so does a
+ * single canvas node whose cloud identity moves to another cloud (the canvas store's
+ * `setNodeIdentity`, #5269) — before that, the node kept the old cloud's SKU (`t3.large` on GCP).
+ * An empty list stays empty: a cluster sized by `node_size` re-resolves on the new cloud by itself.
+ */
+export function convertInstanceTypes(
+	instanceTypes: readonly string[],
+	sourceProvider: CloudProviderSlug,
+	targetProvider: CloudProviderSlug,
+): { instanceTypes: string[]; warnings: ConversionWarning[] } {
+	const warnings: ConversionWarning[] = [];
+	if (sourceProvider === targetProvider) {
+		return { instanceTypes: [...instanceTypes], warnings };
+	}
+	const target = PROVIDERS[targetProvider];
+	const instanceMap = INSTANCE_TYPE_MAP[sourceProvider]?.[targetProvider] ?? {};
+	const mapped = instanceTypes.map((t) => {
+		const equivalent = instanceMap[t];
+		if (!equivalent) {
+			warnings.push({
+				severity: "warning",
+				component: "Cluster",
+				message: `Instance type "${t}" has no known equivalent on ${target.shortName}. Defaulting to ${DEFAULT_INSTANCE_TYPE[targetProvider]}.`,
+			});
+			return DEFAULT_INSTANCE_TYPE[targetProvider];
+		}
+		return equivalent;
+	});
+	return { instanceTypes: [...new Set(mapped)], warnings };
+}
+
 /** Converts a project form config from one cloud provider to another, mapping all provider-specific values. */
 export function convertProjectConfig(
 	source: ProjectFormData,
@@ -79,22 +114,26 @@ export function convertProjectConfig(
 	}
 
 	// --- Cluster ---
-	const instanceMap = INSTANCE_TYPE_MAP[sourceProvider]?.[targetProvider] ?? {};
-	const mappedTypes = (data.cluster.instance_types ?? []).map((t) => {
-		const mapped = instanceMap[t];
-		if (!mapped) {
-			warnings.push({
-				severity: "warning",
-				component: "Cluster",
-				message: `Instance type "${t}" has no known equivalent on ${target.shortName}. Defaulting to ${DEFAULT_INSTANCE_TYPE[targetProvider]}.`,
-			});
-			return DEFAULT_INSTANCE_TYPE[targetProvider];
-		}
-		return mapped;
-	});
-	data.cluster.instance_types = [...new Set(mappedTypes)];
+	const instances = convertInstanceTypes(
+		data.cluster.instance_types ?? [],
+		sourceProvider,
+		targetProvider,
+	);
+	warnings.push(...instances.warnings);
+	data.cluster.instance_types = instances.instanceTypes;
 
 	data.cluster.cluster_version = DEFAULT_K8S_VERSION[targetProvider];
+
+	// Spot through `capacity_type` is honoured on aws only (#5266); the target cloud's ValidateConfig
+	// would refuse it, so a converted cluster goes back to the default with a notice.
+	if (data.cluster.capacity_type === "spot" && targetProvider !== "aws") {
+		data.cluster.capacity_type = undefined;
+		warnings.push({
+			severity: "warning",
+			component: "Cluster",
+			message: `Spot capacity is not offered on ${target.shortName} through this setting; the cluster uses on-demand nodes.`,
+		});
+	}
 	warnings.push({
 		severity: "info",
 		component: "Cluster",

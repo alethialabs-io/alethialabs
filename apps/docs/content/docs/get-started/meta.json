@@ -1,0 +1,11 @@
+{
+	"title": "Get started",
+	"icon": "Rocket",
+	"root": true,
+	"pages": [
+		"index",
+		"install-the-cli",
+		"the-console",
+		"the-cli"
+	]
+}

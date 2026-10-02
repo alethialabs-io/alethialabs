@@ -204,9 +204,11 @@ variable "eks_disk_size" {
 }
 
 variable "eks_instance_types" {
+  # Equal to the catalog default (packages/core/catalog/catalog.json compute.aws.default_instance)
+  # by rule: TestTemplateNodeDefaultsEqualTheCatalog fails when they differ (#5266).
   description = "EC2 instance types for the EKS worker nodes"
   type        = list(string)
-  default     = ["m5a.4xlarge"]
+  default     = ["t3.large"]
 
   validation {
     condition     = length(var.eks_instance_types) > 0
@@ -250,9 +252,13 @@ variable "eks_ng_desired_size" {
 }
 
 variable "eks_ng_capacity_type" {
-  description = "capacity type for node group nodes"
+  # ON_DEMAND by default, Spot opt-in (#5266, maintainer decision): a cluster nobody asked to make
+  # interruptible is not interruptible. The console carries the choice as project_cluster.capacity_type
+  # and the aws provider writes this variable from it. Clusters provisioned while the default was SPOT
+  # were pinned to SPOT by migration, so changing this default replaces no existing node group.
+  description = "Capacity type for the EKS managed node group: ON_DEMAND (default) or SPOT"
   type        = string
-  default     = "SPOT"
+  default     = "ON_DEMAND"
 
   validation {
     condition     = contains(["SPOT", "ON_DEMAND"], var.eks_ng_capacity_type)

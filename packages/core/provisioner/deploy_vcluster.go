@@ -300,6 +300,14 @@ func runVClusterDeploy(ctx context.Context, params DeployParams) (_ *PlanResult,
 	// Register the vcluster with the host ArgoCD as a `cluster` Secret named spec.Name, reading the
 	// exported kubeconfig Secret (#1230). ArgoCD needs this BEFORE the app can sync to destination.name.
 	setStage("argocd")
+	// hetzner's host access is a Talos admin certificate (1h on the managed template), and the three
+	// waits above can take 45m between them, so the ArgoCD stage starts on a fresh one (#5330). The
+	// other clouds' credentials are exec plugins that fetch a token per call and need no re-mint.
+	if params.Provider == "hetzner" {
+		if err := mintVClusterHostAccess(ctx, provider, params.KubeConn, params.TalosKubeconfig, vc, params.Provider, hostCluster, stdout); err != nil {
+			return &result, fmt.Errorf("re-mint host access to %q before the ArgoCD stage: %w", hostCluster, err)
+		}
+	}
 	if err := argocd.EnsureVClusterClusterSecret(spec.Name, spec.KubeconfigSecret, spec.KubeconfigNamespace, stdout, stderr); err != nil {
 		return &result, fmt.Errorf("failed to register vcluster %q with ArgoCD: %w", spec.Name, err)
 	}

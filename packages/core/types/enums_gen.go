@@ -14,20 +14,21 @@ package types
 type JobType string
 
 const (
-	JobTypeDestroyRunner JobType = "DESTROY_RUNNER"
-	JobTypeDeploy        JobType = "DEPLOY"
-	JobTypeDestroy       JobType = "DESTROY"
-	JobTypePlan          JobType = "PLAN"
-	JobTypeDeployRunner  JobType = "DEPLOY_RUNNER"
-	JobTypeUpdateRunner  JobType = "UPDATE_RUNNER"
-	JobTypeAnalyzeRepo   JobType = "ANALYZE_REPO"
-	JobTypeDetectDrift   JobType = "DETECT_DRIFT"
-	JobTypeAudit         JobType = "AUDIT"
-	JobTypeChartScan     JobType = "CHART_SCAN"
-	JobTypeIacScan       JobType = "IAC_SCAN"
-	JobTypeStateSurgery  JobType = "STATE_SURGERY"
-	JobTypeProbeCluster  JobType = "PROBE_CLUSTER"
-	JobTypeBuild         JobType = "BUILD"
+	JobTypeDestroyRunner  JobType = "DESTROY_RUNNER"
+	JobTypeDeploy         JobType = "DEPLOY"
+	JobTypeDestroy        JobType = "DESTROY"
+	JobTypePlan           JobType = "PLAN"
+	JobTypeDeployRunner   JobType = "DEPLOY_RUNNER"
+	JobTypeUpdateRunner   JobType = "UPDATE_RUNNER"
+	JobTypeAnalyzeRepo    JobType = "ANALYZE_REPO"
+	JobTypeDetectDrift    JobType = "DETECT_DRIFT"
+	JobTypeAudit          JobType = "AUDIT"
+	JobTypeChartScan      JobType = "CHART_SCAN"
+	JobTypeIacScan        JobType = "IAC_SCAN"
+	JobTypeStateSurgery   JobType = "STATE_SURGERY"
+	JobTypeProbeCluster   JobType = "PROBE_CLUSTER"
+	JobTypeBuild          JobType = "BUILD"
+	JobTypeMintKubeconfig JobType = "MINT_KUBECONFIG"
 )
 
 // AllJobTypes is every provision_job_type value, in schema order.
@@ -46,6 +47,7 @@ var AllJobTypes = []JobType{
 	JobTypeStateSurgery,
 	JobTypeProbeCluster,
 	JobTypeBuild,
+	JobTypeMintKubeconfig,
 }
 
 // JobStatus mirrors the provision_job_status enum (lib/db/schema/enums.ts).
@@ -148,6 +150,20 @@ var AllPlacementModes = []PlacementMode{
 	PlacementModeNamespace,
 	PlacementModeVcluster,
 	PlacementModeDedicated,
+}
+
+// NodeCapacityType mirrors the node_capacity_type enum (lib/db/schema/enums.ts).
+type NodeCapacityType string
+
+const (
+	NodeCapacityTypeOnDemand NodeCapacityType = "on_demand"
+	NodeCapacityTypeSpot     NodeCapacityType = "spot"
+)
+
+// AllNodeCapacityTypes is every node_capacity_type value, in schema order.
+var AllNodeCapacityTypes = []NodeCapacityType{
+	NodeCapacityTypeOnDemand,
+	NodeCapacityTypeSpot,
 }
 
 // ServiceWorkloadType mirrors the service_workload_type enum (lib/db/schema/enums.ts).
@@ -360,4 +376,50 @@ var AllAlertSeveritys = []AlertSeverity{
 	AlertSeverityInfo,
 	AlertSeverityWarning,
 	AlertSeverityCritical,
+}
+
+// KubeconfigMintTier mirrors the kubeconfig_mint_tier enum (lib/db/schema/enums.ts).
+type KubeconfigMintTier string
+
+const (
+	KubeconfigMintTierReadonly KubeconfigMintTier = "readonly"
+	KubeconfigMintTierAdmin    KubeconfigMintTier = "admin"
+)
+
+// AllKubeconfigMintTiers is every kubeconfig_mint_tier value, in schema order.
+var AllKubeconfigMintTiers = []KubeconfigMintTier{
+	KubeconfigMintTierReadonly,
+	KubeconfigMintTierAdmin,
+}
+
+// KubeconfigMintShape mirrors the kubeconfig_mint_shape enum (lib/db/schema/enums.ts).
+type KubeconfigMintShape string
+
+const (
+	KubeconfigMintShapeExec   KubeconfigMintShape = "exec"
+	KubeconfigMintShapeStatic KubeconfigMintShape = "static"
+)
+
+// AllKubeconfigMintShapes is every kubeconfig_mint_shape value, in schema order.
+var AllKubeconfigMintShapes = []KubeconfigMintShape{
+	KubeconfigMintShapeExec,
+	KubeconfigMintShapeStatic,
+}
+
+// KubeconfigMintStatus mirrors the kubeconfig_mint_status enum (lib/db/schema/enums.ts).
+type KubeconfigMintStatus string
+
+const (
+	KubeconfigMintStatusPending KubeconfigMintStatus = "pending"
+	KubeconfigMintStatusReady   KubeconfigMintStatus = "ready"
+	KubeconfigMintStatusFailed  KubeconfigMintStatus = "failed"
+	KubeconfigMintStatusExpired KubeconfigMintStatus = "expired"
+)
+
+// AllKubeconfigMintStatuses is every kubeconfig_mint_status value, in schema order.
+var AllKubeconfigMintStatuses = []KubeconfigMintStatus{
+	KubeconfigMintStatusPending,
+	KubeconfigMintStatusReady,
+	KubeconfigMintStatusFailed,
+	KubeconfigMintStatusExpired,
 }

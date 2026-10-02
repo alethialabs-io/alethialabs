@@ -1,0 +1,153 @@
+---
+title: Self-operated runners
+description: Running a runner you operate yourself — registered or deployed — for on-premises or air-gapped environments.
+---
+
+# Self-operated runners
+
+A runner is described by two axes: **operator** and **provisioning**. Self-operation is the
+**operator = `self`** case — you run the runner rather than letting Alethia operate it in the
+managed fleet. Within `self`, the **provisioning** axis says who placed it:
+
+- **`deployed`** — provisioned into your cloud by an existing runner running `tofu` (Console
+  "Deploy" tab / `alethia runner deploy`). **AWS only** — it lands on ECS Fargate from
+  [`infra/templates/runner/aws/`](/concepts/runner/infrastructure-templates/aws).
+- **`registered`** — you bring your own runner (your own IaC, or just `alethia runner start`) and
+  register it for a token. Any cloud, plus on-premises, air-gapped, or development hosts.
+
+<Callout type="warn">
+  **Deployed runners are available on AWS only.** `infra/templates/runner/` holds one template,
+  `aws`, so there is no runner template for GCP, Azure, Alibaba Cloud or Hetzner. The Console form
+  offers AWS accounts alone, and both the Console and `alethia runner deploy` refuse a deploy for
+  the other clouds at the moment you queue it.
+
+  This limits **where the runner itself runs**, not what it provisions: one registered runner —
+  the page you are reading — provisions every cloud Alethia supports. To run a runner in GCP,
+  Azure, Alibaba Cloud or Hetzner, register one there.
+</Callout>
+
+<Callout type="info">
+  "Self-hosted" is the legacy term for this whole family; the canonical field is
+  `ALETHIA_RUNNER_OPERATOR=self`. `ALETHIA_RUNNER_MODE=self-hosted` still works as a back-compat
+  fallback. This page covers running the binary directly — a **registered** runner.
+</Callout>
+
+## Prerequisites
+
+The runner is a single Go binary and is **CLI-free** — it does **not** need `aws`, `gcloud`, or
+`azure-cli`. Cloud auth is minted in-process (keyless OIDC), and cluster tokens come from
+`runner kube-token`, so the only host tools it shells out to are:
+
+| Tool | Purpose | Minimum version |
+|------|---------|-----------------|
+| OpenTofu (`tofu`) | Infrastructure provisioning | 1.9+ |
+| kubectl | Kubernetes cluster access | — (unpinned; matched to the target cluster) |
+| Helm | Chart installation (ArgoCD, components) | — (unpinned) |
+
+The official runner image bundles all three (plus the `tofu` provider cache). When running the
+binary directly you install them yourself; the container path needs nothing extra.
+
+## Registration
+
+Before running, the runner must be registered with Alethia:
+
+1. Register the runner via the Console or API (or, in the managed fleet, self-register with a
+   bootstrap token).
+2. Receive a `runner_id` and `runner_token` (shown once).
+3. Pass these as environment variables.
+
+## Running
+
+Set the required environment variables and start the binary. Note there are **no S3 credentials** —
+tofu state flows through the Console state proxy, authenticated by a per-job token the runner
+fetches itself:
+
+```bash
+export ALETHIA_WEB_ORIGIN=https://alethia.example.com
+export ALETHIA_RUNNER_ID=<runner-id>
+export ALETHIA_RUNNER_TOKEN=<runner-token>
+export ALETHIA_RUNNER_OPERATOR=self
+
+# Optional
+export INFRACOST_API_KEY=<key>
+
+./runner
+```
+
+The runner will:
+1. Register / confirm with the Console.
+2. Start the heartbeat goroutine (30s).
+3. React to push wakes (sub-second pickup) with a 30s safety poll as a fallback, and execute claimed jobs keylessly.
+
+## Environment variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ALETHIA_WEB_ORIGIN` | Yes | Alethia control-plane base URL |
+| `ALETHIA_RUNNER_ID` | Yes | Assigned runner ID |
+| `ALETHIA_RUNNER_TOKEN` | Yes | Authentication token |
+| `ALETHIA_RUNNER_OPERATOR` | No | Defaults to `self` when unset; set it explicitly to `self` for clarity (legacy `ALETHIA_RUNNER_MODE=self-hosted` still works) |
+| `ALETHIA_RUNNER_PROVIDERS` | No | Comma-separated clouds this runner serves (e.g. `aws`); unset = any |
+| `ALETHIA_RUNNER_SLOTS` | No | Concurrent jobs per runner (default `1`). Above `1`, the runner supervises N isolated worker subprocesses — run the container with an init (`docker --init` / compose `init: true`) so orphaned tools are reaped |
+| `ALETHIA_RUNNER_INSTANCE_ID` | No | Distinct self-registration id when several runners share a host |
+| `ALETHIA_HELM_REGISTRY_ALLOW_PRIVATE` | No | Set to `1` to let Helm chart pulls reach a registry on a private network — a self-hosted Harbor or JFrog on RFC1918 space. Off by default, so a chart URL cannot be used to reach inside your network. Loopback and link-local (cloud metadata) addresses stay blocked either way. See [Chart repositories](/guides/connectors/chart-repositories) |
+| `INFRACOST_API_KEY` | No | Enables cost estimation |
+| `HCLOUD_TOKEN` | No | Hetzner API token — set it to run **self-managed** Hetzner jobs (token stays here, never in Alethia) |
+| `CIVO_TOKEN` | No | Civo API token — same self-managed token-cloud path |
+| `DIGITALOCEAN_ACCESS_TOKEN` | No | DigitalOcean API token — same self-managed token-cloud path |
+
+<Callout type="info">
+  There are no `ALETHIA_STORAGE_*` variables. The runner holds **no object-storage credentials**:
+  tofu state is written through the Console HTTP state proxy (`backend "http"` →
+  `/api/jobs/{id}/state`, per-job token in `TF_HTTP_PASSWORD`). See
+  [Cloud Credentials](/concepts/runner/cloud-credentials) and [Architecture](/concepts/runner/architecture).
+</Callout>
+
+## Use cases
+
+### On-premises infrastructure
+
+For organizations that need infrastructure provisioned from within their network (private cloud,
+bare metal):
+- Run the runner on a bastion host or CI/CD runner.
+- It polls Alethia over HTTPS (outbound only — no inbound ports required).
+- `tofu` provisions resources reachable from the internal network.
+
+### Self-managed token clouds (DigitalOcean / Hetzner / Civo)
+
+These clouds have no role federation — they authenticate with a single API token. For true
+zero-trust, keep that token in your own runner instead of storing it in Alethia:
+
+- In the connect sheet, pick **"Self-hosted runner — token stays in your infra"** (the cloud
+  identity is recorded with no token).
+- Set the matching env var on this runner — `HCLOUD_TOKEN`, `CIVO_TOKEN`, or
+  `DIGITALOCEAN_ACCESS_TOKEN`.
+- Those jobs are flagged `requires_self_runner`, so `claim_next_job` excludes managed runners from
+  them — only this runner, which holds the token, runs them. Alethia stores nothing.
+
+### Air-gapped environments
+
+For high-security environments without internet access:
+- Pre-download OpenTofu providers and modules.
+- Configure a local provider mirror.
+- The runner communicates with Alethia over an approved network path.
+
+### Development and testing
+
+For local development:
+- Run the runner alongside the Alethia dev console.
+- Point `ALETHIA_WEB_ORIGIN` at `http://localhost:3000`.
+- Exercise job execution without any cloud deploy. (`pnpm dev:runner` stands one up natively.)
+
+## Differences from managed / deployed
+
+| Aspect | Managed (Hetzner fleet) | Self · Deployed (AWS ECS) | Self · Registered (this page) |
+|--------|-------------------------|---------------------------|-------------------------------|
+| Substrate | Hetzner VM warm pool | ECS Fargate | Any host you manage |
+| Deployment | In-app scaler, automatic | `DEPLOY_RUNNER` job (`tofu`) | Manual |
+| Scaling | 60s warm-pool loop, by queue depth | ECS `desired_count` (you) | You start/stop it |
+| Tool management | Baked into the GHCR image | Baked into the GHCR image | You install `tofu`/kubectl/Helm |
+| Updates | New image + drain-replace | `UPDATE_RUNNER` (force-redeploy) | Manual binary update |
+| Monitoring | Console fleet cockpit + logs | CloudWatch + Console | Local stdout/stderr + Console |
+| Network | Platform account | Customer VPC | Your network |
+| Billing | Provisioned hours (`runner_usage_sessions`) | Your AWS bill | Not billed by Alethia |

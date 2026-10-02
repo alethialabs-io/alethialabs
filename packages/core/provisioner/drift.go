@@ -47,8 +47,8 @@ type DriftParams struct {
 // the same workspace state.
 //
 // The outputs ride along because the day-2 InspectCluster refresh needs them:
-// alibaba/hetzner ConfigureKubeconfig read the sensitive `kubeconfig` output, which
-// cannot be synthesized from a cluster name. Outputs are read best-effort (nil on
+// alibaba's ConfigureKubeconfig reads the sensitive `kubeconfig` output and hetzner mints
+// one from the `talosconfig` output (#5330); neither can be synthesized from a cluster name. Outputs are read best-effort (nil on
 // failure) and MUST stay in-process — callers never persist them (the runner scrubs
 // sensitive outputs from anything it posts).
 func RunDriftDetection(ctx context.Context, params DriftParams) (*drift.Posture, map[string]interface{}, error) {
