@@ -12,7 +12,8 @@
 		"postinstall": "fumadocs-mdx",
 		"lint": "eslint",
 		"lint:prose": "vale content",
-		"check:links": "node scripts/check-links.mjs --self-test && node scripts/check-links.mjs"
+		"check:links": "node scripts/check-links.mjs --self-test && node scripts/check-links.mjs",
+		"check:template-cost": "node scripts/check-template-cost.mjs --self-test && node scripts/check-template-cost.mjs"
 	},
 	"dependencies": {
 		"@repo/brand": "workspace:*",
