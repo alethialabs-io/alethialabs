@@ -24,6 +24,7 @@ import { getPdp } from "@/lib/authz";
 import { authorize, authorizeQuiet, currentActor } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
+import { KUBECONFIG_MINT_SHARED_CLUSTER_REASON } from "@/lib/clusters/mint-eligibility";
 import { errorName } from "@/lib/errors";
 import { mayCollectTier, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
 import { pollKubeconfigMint } from "@/lib/kubeconfig-mint/poll";
@@ -70,6 +71,7 @@ function refusalStatus(refusal: MintRequestRefusal): KubeconfigDownloadRefusal {
 			return 409;
 		case "unsupported-cloud":
 		case "static-only":
+		case "shared-cluster":
 			return 422;
 	}
 }
@@ -129,7 +131,11 @@ export async function requestKubeconfigDownload(input: {
 			credentialKind: "session",
 			sourceIp: await sourceIp(),
 		});
-		if (!outcome.ok) return { ok: false, status: refusalStatus(outcome.refusal) };
+		if (!outcome.ok) {
+			return outcome.refusal === "shared-cluster"
+				? { ok: false, status: 422, message: KUBECONFIG_MINT_SHARED_CLUSTER_REASON }
+				: { ok: false, status: refusalStatus(outcome.refusal) };
+		}
 		return {
 			ok: true,
 			mintId: outcome.mint.id,

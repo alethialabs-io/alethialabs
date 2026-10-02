@@ -30,11 +30,13 @@ var clusterGetCmd = &cobra.Command{
 	Use:   "get [selector]",
 	Short: "Get a project's cluster, including kubeconfig and ArgoCD access",
 	Long: `Show a single project's cluster: status, node sizing, region, cost, the command that
-fetches a kubeconfig with your own cloud CLI, and its ArgoCD (cluster-side GitOps) endpoint plus
-the command to retrieve the admin password.
+gets you a kubeconfig, and its ArgoCD (cluster-side GitOps) endpoint plus the command to retrieve
+the admin password.
 
-The kubeconfig command runs under your own cloud login (aws, gcloud, az); Alethia hands out no
-credential. Where a cloud has no such command yet, the Kubeconfig row says why instead.
+The Kubeconfig row is ` + "`alethia cluster kubeconfig <selector>`" + `, which needs no cloud login of
+your own. On AWS, GCP and Azure a Cloud CLI row also gives the cloud's own command (aws, gcloud,
+az), for when you have access to the cloud account. Where there is no command — an environment
+placed on a shared cluster, or a cloud Alethia cannot mint for — the Kubeconfig row says why.
 
 The selector matches by project name, cluster name, or id. Omit it at a terminal and the CLI
 asks which cluster; pass it (or --no-input) and nothing is asked. A selector that names no
@@ -283,6 +285,9 @@ func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops, k *api.Cluste
 			rows = append(rows, row)
 			hasCommand = k.Command != nil && *k.Command != ""
 		}
+		if hasCommand && k.Alternative != nil && *k.Alternative != "" {
+			rows = append(rows, []string{"Cloud CLI", *k.Alternative})
+		}
 
 		// ArgoCD — the cluster-side GitOps CD, installed on every provisioned cluster. The URL
 		// only materialises where a managed ingress exists (AWS ALB+ACM today); elsewhere access
@@ -301,7 +306,8 @@ func clusterFieldRows(c *api.ClusterSummary, g *api.ClusterGitops, k *api.Cluste
 }
 
 // kubeconfigRow renders the server's kubeconfig answer as one row: the command when there is one,
-// otherwise the note saying why not. No row at all when the server sent neither (an older server,
+// otherwise the note saying why not. The cloud-CLI alternative is a separate row, rendered by the
+// caller only beneath a command. No row at all when the server sent neither (an older server,
 // or a cluster with no name yet) — an empty "Kubeconfig" row would read as "there is no way".
 func kubeconfigRow(k *api.ClusterKubeconfig) ([]string, bool) {
 	if k == nil {

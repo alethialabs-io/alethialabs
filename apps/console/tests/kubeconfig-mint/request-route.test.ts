@@ -222,9 +222,20 @@ describe("outcomes", () => {
 		["not-provisioned", 409],
 		["unsupported-cloud", 422],
 		["static-only", 422],
+		["shared-cluster", 422],
 	] as const)("maps %s to %i", async (refusal, status) => {
 		vi.mocked(requestKubeconfigMint).mockResolvedValueOnce({ ok: false, refusal });
 		expect((await post(body())).status).toBe(status);
+	});
+
+	it("answers a shared cluster with the runner's own sentence, byte for byte (#5327)", async () => {
+		vi.mocked(requestKubeconfigMint).mockResolvedValueOnce({ ok: false, refusal: "shared-cluster" });
+		const res = await post(body());
+		expect(res.status).toBe(422);
+		expect(await res.json()).toEqual({
+			error: "Kubeconfig mints are not available for an environment placed on a shared cluster.",
+		});
+		expect(res.headers.get("Cache-Control")).toBe("no-store");
 	});
 
 	it("maps a usage-limit refusal to 402 with its message", async () => {

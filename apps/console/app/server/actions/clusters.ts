@@ -36,8 +36,8 @@ export interface ClusterData {
 		cluster_version: string | null;
 		argocd_url: string | null;
 		status: string;
-		/** How to get a kubeconfig with the user's own cloud CLI — the same object `alethia
-		 *  cluster get` prints (lib/clusters/kubeconfig-access.ts, #5250). */
+		/** How to get a kubeconfig — `alethia cluster kubeconfig`, and the cloud-CLI alternative where
+		 *  there is one — the same object `alethia cluster get` prints (lib/clusters/kubeconfig-access.ts). */
 		kubeconfig: KubeconfigAccess;
 	} | null;
 	project_databases: {
@@ -166,6 +166,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 			kubeconfigs.set(
 				r.cluster_id,
 				await readKubeconfigAccess(tx, {
+					clusterId: r.cluster_id,
 					projectId: r.id,
 					environmentId: r.cluster_environment_id,
 					clusterName: r.cluster_name,
@@ -193,6 +194,7 @@ export async function getClusters(): Promise<ClusterData[]> {
 						status: r.cluster_status,
 						kubeconfig: kubeconfigs.get(r.cluster_id ?? "") ?? {
 							command: null,
+							alternative: null,
 							note: null,
 						},
 					}

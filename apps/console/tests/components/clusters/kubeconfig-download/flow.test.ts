@@ -216,6 +216,7 @@ describe("outcomeMessage", () => {
 		[{ kind: "refused", status: 402, message: "Your plan allows 25 jobs a day." }, /25 jobs a day/],
 		[{ kind: "refused", status: 409 }, /not finished provisioning/],
 		[{ kind: "refused", status: 422 }, /cannot mint a kubeconfig/],
+		[{ kind: "refused", status: 422, message: "Kubeconfig mints are not available for an environment placed on a shared cluster." }, /shared cluster/],
 		[{ kind: "refused", status: 429 }, /Too many kubeconfig requests/],
 		[{ kind: "refused", status: 403 }, /read-only access/],
 		[{ kind: "unsupported" }, /alethia cluster kubeconfig/],

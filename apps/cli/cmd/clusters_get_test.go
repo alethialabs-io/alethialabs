@@ -400,7 +400,7 @@ func TestClusterKubeconfigRows(t *testing.T) {
 		return ""
 	}
 
-	const cmd = "aws eks update-kubeconfig --name web-eks --region eu-west-1"
+	const cmd = "alethia cluster kubeconfig web-eks"
 	withCmd := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Command: str(cmd)}, ui.FormatTable)
 	at := keys(withCmd)
 	if value(withCmd, "Kubeconfig") != cmd {
@@ -418,7 +418,7 @@ func TestClusterKubeconfigRows(t *testing.T) {
 		t.Errorf("csv ArgoCD admin = %q, want the bare command", csv)
 	}
 
-	const note = "Alethia does not hand out a kubeconfig for Hetzner clusters yet"
+	const note = "Kubeconfig mints are not available for an environment placed on a shared cluster."
 	withNote := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Note: str(note)}, ui.FormatTable)
 	if value(withNote, "Kubeconfig") != note {
 		t.Errorf("Kubeconfig row should carry the note when there is no command, got %q", value(withNote, "Kubeconfig"))
@@ -427,9 +427,62 @@ func TestClusterKubeconfigRows(t *testing.T) {
 		t.Errorf("with no command, the ArgoCD hint must not point at a command above, got %q", admin)
 	}
 
+	// An alternative never renders without a command above it: it is "or, instead", not an answer.
+	orphan := clusterFieldRows(c, nil, &api.ClusterKubeconfig{Note: str(note), Alternative: str("aws eks update-kubeconfig --name x --region y")}, ui.FormatTable)
+	if _, ok := keys(orphan)["Cloud CLI"]; ok {
+		t.Error("a Cloud CLI row rendered with no command above it")
+	}
+
 	for name, k := range map[string]*api.ClusterKubeconfig{"older server": nil, "both null": {}} {
 		if _, ok := keys(clusterFieldRows(c, nil, k, ui.FormatTable))["Kubeconfig"]; ok {
 			t.Errorf("%s: no Kubeconfig row expected", name)
+		}
+	}
+}
+
+// kubeconfigAccessCase is one row of testdata/kubeconfig-access-cases.json. Only the server's
+// answer and the rows are read here; `facts` is the console test's half.
+type kubeconfigAccessCase struct {
+	ID     string                `json:"id"`
+	Access api.ClusterKubeconfig `json:"access"`
+	Rows   [][]string            `json:"rows"`
+}
+
+// TestClusterKubeconfigRowsAgreeWithTheSharedTable renders every answer in the table the console's
+// builder test also reads (#5322), and requires exactly the hand-written rows — so the terminal and
+// the cluster card are held to one file, and neither can change a sentence alone.
+func TestClusterKubeconfigRowsAgreeWithTheSharedTable(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "kubeconfig-access-cases.json"))
+	if err != nil {
+		t.Fatalf("read the shared kubeconfig table: %v — it is the subject of this test, so an "+
+			"absent file is a failure and never a skip", err)
+	}
+	var table struct {
+		Cases []kubeconfigAccessCase `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &table); err != nil {
+		t.Fatalf("parse the shared kubeconfig table: %v", err)
+	}
+	if len(table.Cases) == 0 {
+		t.Fatal("the shared kubeconfig table has no cases — every assertion below would be vacuous")
+	}
+	c := &api.ClusterSummary{ProjectName: "web", ClusterName: "web-eks", Status: "ACTIVE", Region: "eu-west-1"}
+	for _, tc := range table.Cases {
+		access := tc.Access
+		var got [][]string
+		for _, r := range clusterFieldRows(c, nil, &access, ui.FormatTable) {
+			if r[0] == "Kubeconfig" || r[0] == "Cloud CLI" {
+				got = append(got, r)
+			}
+		}
+		if len(got) != len(tc.Rows) {
+			t.Errorf("%s: rows = %q, want %q", tc.ID, got, tc.Rows)
+			continue
+		}
+		for i := range got {
+			if len(tc.Rows[i]) != 2 || got[i][0] != tc.Rows[i][0] || got[i][1] != tc.Rows[i][1] {
+				t.Errorf("%s: row %d = %q, want %q", tc.ID, i, got[i], tc.Rows[i])
+			}
 		}
 	}
 }
