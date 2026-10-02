@@ -871,6 +871,35 @@ describe("getProject", () => {
 		setupDb({ select: m });
 		const r = await getProject("p1");
 		expect(r.cloudProvider).toBe("aws");
+		expect(r.clusterCloudProvider).toBe("aws");
+	});
+
+	it("a cluster without its own identity is on the project's cloud, with no second lookup (#5361)", async () => {
+		const m = fullSelect();
+		let lookups = 0;
+		m.set(cloudIdentities, () => {
+			lookups++;
+			return [{ provider: "aws" }];
+		});
+		setupDb({ select: m });
+		const r = await getProject("p1");
+		expect(r.clusterCloudProvider).toBe("aws");
+		expect(lookups).toBe(1);
+	});
+
+	it("a cluster on its own gcp identity in an aws project resolves to gcp (#5361)", async () => {
+		const m = fullSelect();
+		m.set(projectCluster, [
+			{ cluster_version: "1.31", instance_types: [], cloud_identity_id: "ci-gcp" },
+		]);
+		// The mock ignores WHERE: the first lookup is the project's identity, the second the cluster's.
+		const seq: Rows[] = [[{ provider: "aws" }], [{ provider: "gcp" }]];
+		let call = 0;
+		m.set(cloudIdentities, () => seq[call++] ?? []);
+		setupDb({ select: m });
+		const r = await getProject("p1");
+		expect(r.cloudProvider).toBe("aws");
+		expect(r.clusterCloudProvider).toBe("gcp");
 	});
 });
 

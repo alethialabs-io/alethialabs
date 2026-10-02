@@ -12,6 +12,12 @@ import type { CloudProviderSlug } from "@/lib/cloud-providers";
  */
 export interface CanvasContext {
 	provider: CloudProviderSlug;
+	/**
+	 * The cloud the cluster node deploys to — its own identity's, else the project's (#5361). The
+	 * same effective provider the cluster card renders with. Absent from an older client, which
+	 * reads as "on the project's cloud".
+	 */
+	clusterProvider?: CloudProviderSlug | null;
 	form: Record<string, unknown>;
 	/** Current nodes (id · kind · name) so the model can target set_identity/update_config. */
 	nodes?: Array<{ id: string; kind: string; name?: string }>;
