@@ -148,7 +148,9 @@ exclusions:
   # reason inline: Talos installs the version VERBATIM as the component image tag
   # (registry.k8s.io/kube-apiserver:v<ver>), which only exists per PATCH, and the console collects a
   # bare MINOR. Forwarding it would resolve to an unpullable tag — a cluster that cannot come up.
-  # The version is pinned in lockstep with the Talos release (Talos v1.13.6 → k8s 1.35.6).
+  # The version is pinned in lockstep with the Talos release (Talos v1.13.6 → k8s 1.35.6), and
+  # ValidateConfig refuses a cluster_version whose minor is not that pin (#5366), so the value the
+  # row holds can never name a version the cluster does not run.
   #
   # node_max_size: there is nothing to grow into. The template builds a fixed count of
   # `hcloud_server` resources (servers.tf:59) from `worker_count`, which the provider derives from

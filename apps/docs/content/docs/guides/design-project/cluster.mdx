@@ -11,7 +11,7 @@ The cluster section configures the Kubernetes control plane and worker nodes.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| **Kubernetes Version** | Select | Provider-specific versions (e.g., 1.32 for EKS, 1.31 for GKE/AKS) |
+| **Kubernetes Version** | Select | Provider-specific versions (e.g., 1.32 for EKS, 1.31 for GKE/AKS). Read-only on Hetzner, which installs one pinned version |
 | **Instance Type** | Select | A single instance/machine type; the option label shows vCPU and memory per node |
 | **Min Nodes** | Number | Minimum node count (default: 2) |
 | **Desired Nodes** | Number | Target node count (default: 2) |
@@ -22,7 +22,7 @@ The cluster section configures the Kubernetes control plane and worker nodes.
 
 ## Kubernetes Service
 
-<Tabs items={["AWS (EKS)", "GCP (GKE)", "Azure (AKS)"]}>
+<Tabs items={["AWS (EKS)", "GCP (GKE)", "Azure (AKS)", "Hetzner (Talos)"]}>
   <Tab value="AWS (EKS)">
     - **Elastic Kubernetes Service** with managed node groups
     - Versions: 1.29–1.32
@@ -41,6 +41,14 @@ The cluster section configures the Kubernetes control plane and worker nodes.
     - Versions: 1.28–1.31
     - Autoscaler: **Cluster Autoscaler** — scales node count based on pending pods
     - Azure AD integration for RBAC
+  </Tab>
+  <Tab value="Hetzner (Talos)">
+    - Self-managed **Talos Linux** Kubernetes on Hetzner Cloud servers
+    - Version: Kubernetes **1.35.6**. The Talos release sets this version, and you cannot choose
+      another one.
+    - The **Kubernetes Version** field is read-only and shows 1.35.6.
+    - If a cluster already has a different version set, for example from the CLI, its next deploy
+      fails with an error that names 1.35.6. To fix it, clear the version, or set it to 1.35.
   </Tab>
 </Tabs>
 

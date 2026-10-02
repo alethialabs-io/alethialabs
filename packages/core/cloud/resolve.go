@@ -68,7 +68,8 @@ func resolveCacheNodeType(provider string, c types.ProjectCacheConfig) string {
 // Hetzner is the one cloud whose tfvars do NOT forward this value: Talos needs a concrete patch, so
 // hetzner_provider.go pins kubernetes_version itself. For an unset version the catalog default here
 // and that pin share a minor, which is all the gate reads (provisioner/compat_resolved_version_test.go
-// holds that).
+// holds that). A SET version on Hetzner is refused by ValidateConfig unless it is the pinned minor
+// (#5366), so the gate never judges a version Hetzner does not install.
 func ResolveK8sVersion(provider, configVersion string) string {
 	if configVersion != "" {
 		return configVersion

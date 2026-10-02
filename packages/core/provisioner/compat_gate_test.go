@@ -24,7 +24,10 @@ import (
 //
 // The config pins the cluster K8s minor to one Hetzner does NOT offer (matrix records
 // hetzner supported = ["1.35"]), so control COMPAT-K8S-CLOUD-HETZNER fails → the gate
-// blocks under COMPAT-001.
+// blocks under COMPAT-001. Hetzner's ValidateConfig refuses a cluster_version whose minor is
+// not the one Talos installs (#5366), so the config also pins provider_config
+// kubernetes_version to a 1.30 patch: the cluster then really installs 1.30, ValidateConfig
+// admits it, and the refusal under test is the compat gate's.
 func TestCompatGateBlocksIncompatibleApply(t *testing.T) {
 	if _, err := exec.LookPath("tofu"); err != nil {
 		t.Skip("tofu not on PATH — skipping (bare CI without OpenTofu)")
@@ -36,6 +39,10 @@ func TestCompatGateBlocksIncompatibleApply(t *testing.T) {
 		vc := newLocalProjectConfig("alethia", env)
 		// 1.30 is not in the matrix's Hetzner supported set (["1.35"]) → hard fail.
 		vc.Cluster.ClusterVersion = "1.30"
+		if vc.Cluster.ProviderConfig == nil {
+			vc.Cluster.ProviderConfig = map[string]any{}
+		}
+		vc.Cluster.ProviderConfig["kubernetes_version"] = "1.30.14"
 		return vc
 	}
 
