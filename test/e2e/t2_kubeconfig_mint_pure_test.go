@@ -822,3 +822,76 @@ func TestAwaitFirstRead(t *testing.T) {
 		t.Error("awaitFirstRead ignored its bound")
 	}
 }
+
+// TestTierMintDriver pins who mints each static tier. On cli-demo the CLI holds a SERVICE TOKEN, and
+// a service token is refused an admin mint by policy (#5310), so the admin tier must go through the
+// runner channel there — the CLI asking for it is a guaranteed 403 that fails the proof after spend.
+func TestTierMintDriver(t *testing.T) {
+	cases := []struct{ run, tier, want string }{
+		{kubeconfigMintDriverCLI, mintTierReadonly, kubeconfigMintDriverCLI},
+		{kubeconfigMintDriverCLI, mintTierAdmin, kubeconfigMintDriverRunner},
+		{kubeconfigMintDriverRunner, mintTierReadonly, kubeconfigMintDriverRunner},
+		{kubeconfigMintDriverRunner, mintTierAdmin, kubeconfigMintDriverRunner},
+	}
+	for _, c := range cases {
+		if got := tierMintDriver(c.run, c.tier); got != c.want {
+			t.Errorf("tierMintDriver(%s, %s) = %s, want %s", c.run, c.tier, got, c.want)
+		}
+	}
+	// Every required tier has a driver, and on cli-demo the CLI still mints at least one of them —
+	// otherwise the cli driver would prove nothing about the CLI's mint path.
+	cliTiers := 0
+	for _, tier := range requiredStaticTiers {
+		if tierMintDriver(kubeconfigMintDriverCLI, tier) == kubeconfigMintDriverCLI {
+			cliTiers++
+		}
+	}
+	if cliTiers == 0 {
+		t.Error("under the cli driver no static tier is minted by the CLI")
+	}
+}
+
+// TestCLIAdminRefusalCheck pins the service-token admin refusal: it passes only when the CLI failed
+// AND nothing was produced, and an unreadable row table is an error, never a pass.
+func TestCLIAdminRefusalCheck(t *testing.T) {
+	exit1 := errors.New("exit status 1")
+	cases := []struct {
+		name        string
+		runErr      error
+		row, file   bool
+		rowErr      error
+		wantPass    bool
+		wantOutcome kubeOutcome
+	}{
+		{"refused, nothing written", exit1, false, false, nil, true, kubeRefused},
+		{"cli exited 0", nil, false, false, nil, false, kubeAllowed},
+		{"cli failed but a row was written", exit1, true, false, nil, false, kubeAllowed},
+		{"cli failed but a kubeconfig was written", exit1, false, true, nil, false, kubeAllowed},
+		{"cli failed, rows unreadable", exit1, false, false, errors.New("conn reset"), false, kubeError},
+	}
+	for _, c := range cases {
+		r := cliAdminRefusalCheck(c.runErr, c.row, c.rowErr, c.file)
+		if r.Pass != c.wantPass || r.Outcome != string(c.wantOutcome) || r.Name != cliAdminRefusalCheckName || r.Want != string(kubeRefused) {
+			t.Errorf("%s: got pass=%t outcome=%s name=%s want=%s; want pass=%t outcome=%s",
+				c.name, r.Pass, r.Outcome, r.Name, r.Want, c.wantPass, c.wantOutcome)
+		}
+	}
+}
+
+// TestSummarizeNamesATierMintedByAnotherDriver: a cli-demo summary whose admin tier came through the
+// runner channel says so on the verdict line, so the bundle cannot read as a CLI-minted admin.
+func TestSummarizeNamesATierMintedByAnotherDriver(t *testing.T) {
+	s := passingSummary()
+	s.Driver = kubeconfigMintDriverCLI
+	s.Tiers[1].Driver = kubeconfigMintDriverRunner
+	line := summarizeKubeconfigMint(s)
+	if !strings.Contains(line, "admin/static PASS [runner-channel]") {
+		t.Errorf("verdict %q does not name the admin tier's driver", line)
+	}
+	if strings.Contains(line, "readonly/static PASS [") {
+		t.Errorf("verdict %q names a driver on a tier the summary's driver minted", line)
+	}
+	if !summaryPasses(s) {
+		t.Error("a per-tier driver changed the verdict")
+	}
+}
