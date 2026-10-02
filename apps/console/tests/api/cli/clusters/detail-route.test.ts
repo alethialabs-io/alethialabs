@@ -57,7 +57,7 @@ function clusterRow(over: Record<string, unknown> = {}) {
 	};
 }
 
-/** The second query's row: what the last successful DEPLOY recorded. */
+/** The second query's row: the owning environment joined to what its last successful DEPLOY recorded. */
 let deployRows: unknown[];
 let clusterRows: unknown[];
 /** Every `.where` the route issued, in order. */
@@ -112,8 +112,10 @@ describe("GET /api/cli/clusters/:id — kubeconfig (#5250)", () => {
 	it("serves the command built from what the last deploy recorded, and the contract accepts it", async () => {
 		deployRows = [
 			{
+				placementMode: "dedicated",
 				provider: "azure",
 				region: "westeurope",
+				snapshotPlacement: "dedicated",
 				gcpProjectId: null,
 				azureResourceGroup: { value: "rg-web-prod" },
 			},
@@ -122,7 +124,8 @@ describe("GET /api/cli/clusters/:id — kubeconfig (#5250)", () => {
 		expect(status).toBe(200);
 		const parsed = cliClusterDetailResponse.parse(body);
 		expect(parsed.kubeconfig).toEqual({
-			command: "az aks get-credentials --resource-group rg-web-prod --name aks-weu-prod-web",
+			command: "alethia cluster kubeconfig aks-weu-prod-web",
+			alternative: "az aks get-credentials --resource-group rg-web-prod --name aks-weu-prod-web",
 			note: null,
 		});
 		// The internal join columns never reach the wire.
@@ -132,21 +135,43 @@ describe("GET /api/cli/clusters/:id — kubeconfig (#5250)", () => {
 		expect(wheres).toHaveLength(2);
 	});
 
-	it("names what is missing rather than printing a guess", async () => {
+	it("prints no guessed cloud command when a value is unrecorded — the mint still stands", async () => {
 		// Azure, and no deploy recorded a resource group.
 		const { body } = await drive();
 		expect(cliClusterDetailResponse.parse(body).kubeconfig).toEqual({
-			command: null,
-			note: "Alethia has no recorded resource group for this cluster, so it cannot build the command. Redeploy the environment to record it.",
+			command: "alethia cluster kubeconfig aks-weu-prod-web",
+			alternative: null,
+			note: null,
 		});
 	});
 
-	it("says plainly that Hetzner has no kubeconfig path yet", async () => {
+	it("gives Hetzner the mint, which is its only way (#5322)", async () => {
 		clusterRows = [clusterRow({ provider: "hetzner", cluster_name: "web-prod" })];
 		const { body } = await drive();
-		const { kubeconfig } = cliClusterDetailResponse.parse(body);
-		expect(kubeconfig.command).toBeNull();
-		expect(kubeconfig.note).toMatch(/^Alethia does not hand out a kubeconfig for Hetzner/);
+		expect(cliClusterDetailResponse.parse(body).kubeconfig).toEqual({
+			command: "alethia cluster kubeconfig web-prod",
+			alternative: null,
+			note: null,
+		});
+	});
+
+	it("gives a namespace environment the mint refusal's sentence and no command (#5322)", async () => {
+		deployRows = [
+			{
+				placementMode: "namespace",
+				provider: "azure",
+				region: "westeurope",
+				snapshotPlacement: "namespace",
+				gcpProjectId: null,
+				azureResourceGroup: { value: "rg-web-prod" },
+			},
+		];
+		const { body } = await drive();
+		expect(cliClusterDetailResponse.parse(body).kubeconfig).toEqual({
+			command: null,
+			alternative: null,
+			note: "Kubeconfig mints are not available for an environment placed on a shared cluster.",
+		});
 	});
 
 	it("a cluster with no name yet has nothing to say, and no deploy read", async () => {
@@ -154,6 +179,7 @@ describe("GET /api/cli/clusters/:id — kubeconfig (#5250)", () => {
 		const { body } = await drive();
 		expect(cliClusterDetailResponse.parse(body).kubeconfig).toEqual({
 			command: null,
+			alternative: null,
 			note: null,
 		});
 		expect(wheres).toHaveLength(1);

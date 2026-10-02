@@ -19,6 +19,7 @@
 
 import { and, desc, eq, sql } from "drizzle-orm";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
+import { isSharedClusterPlacement } from "@/lib/clusters/mint-eligibility";
 import { getServiceDb, withActorScope } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -77,7 +78,8 @@ export type MintRequestRefusal =
 	| "not-found"
 	| "not-provisioned"
 	| "unsupported-cloud"
-	| "static-only";
+	| "static-only"
+	| "shared-cluster";
 
 /** The outcome of {@link requestKubeconfigMint}. */
 export type MintRequestOutcome =
@@ -90,6 +92,8 @@ interface MintTarget {
 	projectId: string;
 	environmentId: string | null;
 	environmentStatus: string | null;
+	/** The OWNING environment's placement (`project_environments.placement_mode`); null without one. */
+	placementMode: (typeof projectEnvironments.$inferSelect)["placement_mode"] | null;
 	cloudIdentityId: string | null;
 	provider: (typeof cloudIdentities.$inferSelect)["provider"] | null;
 }
@@ -110,6 +114,7 @@ async function resolveMintTarget(
 			projectId: projectCluster.project_id,
 			environmentId: projectCluster.environment_id,
 			environmentStatus: projectEnvironments.status,
+			placementMode: projectEnvironments.placement_mode,
 			cloudIdentityId: cloudIdentities.id,
 			provider: cloudIdentities.provider,
 		})
@@ -162,8 +167,8 @@ async function latestDeploySnapshot(
 }
 
 /**
- * Queues one kubeconfig mint: checks the cluster is in the actor's org, is provisioned, and can
- * mint the requested shape; applies the runner-minute usage guard (but not the daily job quota, which
+ * Queues one kubeconfig mint: checks the cluster is in the actor's org, is not a shared cluster, is
+ * provisioned, and can mint the requested shape; applies the runner-minute usage guard (but not the daily job quota, which
  * exempts mints — #5313); then writes the MINT_KUBECONFIG job, the mint request row and the audit row in one transaction.
  *
  * Throws `UsageLimitError` from the usage guard (the route maps it to 402). Any other throw is a
@@ -177,6 +182,13 @@ export async function requestKubeconfigMint(
 	const target = await resolveMintTarget(clusterId, actor.orgId);
 	if (!target) return { ok: false, refusal: "not-found" };
 
+	// A namespace/vcluster environment's cluster row names the SHARED Fabric cluster, and a mint of
+	// it would hand one tenant the whole cluster (#5327). The runner refuses this too (#5283) and
+	// keeps doing so as defence in depth; refusing here means no job is ever queued to learn it.
+	if (isSharedClusterPlacement(target.placementMode)) {
+		return { ok: false, refusal: "shared-cluster" };
+	}
+
 	const refusal = mintShapeRefusal(target.provider, request.shape);
 	if (refusal) return { ok: false, refusal };
 
@@ -189,6 +201,12 @@ export async function requestKubeconfigMint(
 	}
 	const deploy = await latestDeploySnapshot(target.environmentId, actor.orgId);
 	if (!deploy) return { ok: false, refusal: "not-provisioned" };
+	// The runner decides from the SNAPSHOT this job would carry, not from the column above. An
+	// environment re-placed since its last deploy can disagree with it; refuse on either, so a job
+	// is never queued that the runner is certain to refuse.
+	if (isSharedClusterPlacement(deploy.config_snapshot.placement_mode)) {
+		return { ok: false, refusal: "shared-cluster" };
+	}
 
 	// A mint runs on a runner like any other job, so its runner minutes are metered like one. It is
 	// NOT checked against the community daily job quota, and does not count toward it (#5313):

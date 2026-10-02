@@ -3,20 +3,12 @@
 
 // Which clouds the runner can mint a kubeconfig on, and in which shapes (#5250 decisions 4 and 8).
 
+import { MINTABLE_CLOUDS } from "@/lib/clusters/mint-eligibility";
 import type {
 	CloudProvider,
 	KubeconfigMintShape,
 	KubeconfigMintTier,
 } from "@/lib/db/schema/enums";
-
-/** The five clouds the MINT_KUBECONFIG job serves. DigitalOcean and Civo have no minter. */
-const MINTABLE: ReadonlySet<CloudProvider> = new Set([
-	"aws",
-	"gcp",
-	"azure",
-	"alibaba",
-	"hetzner",
-]);
 
 /** Clouds whose credential is a certificate, so only a static, TTL-capped file can carry it
  *  (decision 4): Talos on Hetzner, ACK on Alibaba. */
@@ -33,7 +25,7 @@ export function mintShapeRefusal(
 	provider: CloudProvider | null,
 	shape: KubeconfigMintShape,
 ): MintShapeRefusal {
-	if (provider === null || !MINTABLE.has(provider)) return "unsupported-cloud";
+	if (provider === null || !MINTABLE_CLOUDS.has(provider)) return "unsupported-cloud";
 	if (shape === "exec" && STATIC_ONLY.has(provider)) return "static-only";
 	return null;
 }

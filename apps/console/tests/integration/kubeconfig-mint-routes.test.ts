@@ -19,6 +19,8 @@
 //   6. EXPIRY. The sweep nulls an uncollected ciphertext, cancels a never-claimed job, and later deletes.
 //   7. THE DAILY JOB QUOTA EXEMPTS MINTS (#5313). The REAL quota guard runs here: a community org at
 //      its limit still gets a 202, the mint does not move the count, and a DEPLOY is still refused.
+//   8. SHARED CLUSTERS ARE REFUSED UP FRONT (#5327). A namespace or vcluster environment is a 422
+//      with the runner's own sentence, and no MINT_KUBECONFIG job exists afterwards.
 //
 // The CLI guard is stubbed (`authorizeCli` is the authz suite's subject; here it hands the handler an
 // actor) and so are the runner-minute usage guard and the scaler poke; the daily job quota is real. The runner's credentials are REAL: two
@@ -76,6 +78,11 @@ const ENV_A = randomUUID();
 const ENV_B = randomUUID();
 const CLUSTER_A = randomUUID();
 const CLUSTER_B = randomUUID();
+// Two more environments of PROJ_A, placed on a shared cluster (#5327).
+const ENV_NS = randomUUID();
+const ENV_VC = randomUUID();
+const CLUSTER_NS = randomUUID();
+const CLUSTER_VC = randomUUID();
 const RUNNER_1 = randomUUID();
 const RUNNER_2 = randomUUID();
 const TOKEN_1 = `it-mint-token-1-${randomUUID()}`;
@@ -203,15 +210,22 @@ describeIfDb("kubeconfig mint routes — request, runner, poll, sweep", () => {
 		await db.insert(projectEnvironments).values([
 			{ id: ENV_A, project_id: PROJ_A, user_id: USER_A, name: "production", is_default: true, status: "ACTIVE" },
 			{ id: ENV_B, project_id: PROJ_B, user_id: USER_B, name: "production", is_default: true, status: "ACTIVE" },
+			{ id: ENV_NS, project_id: PROJ_A, user_id: USER_A, name: "preview-ns", is_default: false, status: "ACTIVE", placement_mode: "namespace" },
+			{ id: ENV_VC, project_id: PROJ_A, user_id: USER_A, name: "preview-vc", is_default: false, status: "ACTIVE", placement_mode: "vcluster" },
 		]);
 		await db.insert(projectCluster).values([
 			{ id: CLUSTER_A, project_id: PROJ_A, environment_id: ENV_A, cluster_name: "eks-a" },
 			{ id: CLUSTER_B, project_id: PROJ_B, environment_id: ENV_B, cluster_name: "eks-b" },
+			{ id: CLUSTER_NS, project_id: PROJ_A, environment_id: ENV_NS, cluster_name: "eks-shared-ns" },
+			{ id: CLUSTER_VC, project_id: PROJ_A, environment_id: ENV_VC, cluster_name: "eks-shared-vc" },
 		]);
 		// Both environments have deployed, so only the org filter can refuse org B's cluster.
 		await db.insert(jobs).values([
 			{ user_id: USER_A, org_id: ORG_A, project_id: PROJ_A, environment_id: ENV_A, job_type: "DEPLOY", status: "SUCCESS", config_snapshot: { cluster: "eks-a" } },
 			{ user_id: USER_B, org_id: ORG_B, project_id: PROJ_B, environment_id: ENV_B, job_type: "DEPLOY", status: "SUCCESS", config_snapshot: { cluster: "eks-b" } },
+			// The shared environments have deployed too, so only their placement can refuse them.
+			{ user_id: USER_A, org_id: ORG_A, project_id: PROJ_A, environment_id: ENV_NS, job_type: "DEPLOY", status: "SUCCESS", config_snapshot: { cluster: "eks-shared-ns", placement_mode: "namespace" } },
+			{ user_id: USER_A, org_id: ORG_A, project_id: PROJ_A, environment_id: ENV_VC, job_type: "DEPLOY", status: "SUCCESS", config_snapshot: { cluster: "eks-shared-vc", placement_mode: "vcluster" } },
 		]);
 		await db.insert(runners).values([
 			{ id: RUNNER_1, name: `it-mint-r1-${RUNNER_1.slice(0, 8)}`, operator: "managed", token_hash: hashRunnerToken(TOKEN_1), status: "ONLINE" },
@@ -286,6 +300,29 @@ describeIfDb("kubeconfig mint routes — request, runner, poll, sweep", () => {
 			.from(jobs)
 			.where(and(eq(jobs.project_id, PROJ_B), eq(jobs.job_type, "MINT_KUBECONFIG")));
 		expect(mintJobs).toEqual([]);
+	});
+
+	it.each([
+		["namespace", () => [CLUSTER_NS, ENV_NS]],
+		["vcluster", () => [CLUSTER_VC, ENV_VC]],
+	] as const)("a %s environment is a 422 with the runner's sentence, and no job or mint row is written (#5327)", async (_mode, ids) => {
+		const [clusterId, envId] = ids();
+		actingAs(TEAMMATE_A, ORG_A);
+		const res = await request(clusterId, "static");
+		expect(res.status).toBe(422);
+		expect(await res.json()).toEqual({
+			error: "Kubeconfig mints are not available for an environment placed on a shared cluster.",
+		});
+		const mintJobs = await getServiceDb()
+			.select({ id: jobs.id })
+			.from(jobs)
+			.where(and(eq(jobs.environment_id, envId), eq(jobs.job_type, "MINT_KUBECONFIG")));
+		expect(mintJobs).toEqual([]);
+		const rows = await getServiceDb()
+			.select({ id: kubeconfigMintRequests.id })
+			.from(kubeconfigMintRequests)
+			.where(eq(kubeconfigMintRequests.cluster_id, clusterId));
+		expect(rows).toEqual([]);
 	});
 
 	it("only the runner holding the claimed job reads its spec", async () => {

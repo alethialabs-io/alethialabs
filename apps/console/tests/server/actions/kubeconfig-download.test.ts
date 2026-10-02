@@ -8,6 +8,7 @@
 // refusal maps to the status the CLI route answers, the audit is stamped `console`/`session`, and a
 // failure logs the error's NAME only — never its message, which could quote the ciphertext.
 
+import { KUBECONFIG_MINT_SHARED_CLUSTER_REASON } from "@/lib/clusters/mint-eligibility";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/headers", () => ({
@@ -139,6 +140,15 @@ describe("requestKubeconfigDownload", () => {
 		expect(await requestKubeconfigDownload({ clusterId: CLUSTER, clientPublicKey: PUB })).toEqual({
 			ok: false,
 			status,
+		});
+	});
+
+	it("maps the shared-cluster refusal to 422 with the reason sentence, as the CLI route does", async () => {
+		vi.mocked(requestKubeconfigMint).mockResolvedValue({ ok: false, refusal: "shared-cluster" });
+		expect(await requestKubeconfigDownload({ clusterId: CLUSTER, clientPublicKey: PUB })).toEqual({
+			ok: false,
+			status: 422,
+			message: KUBECONFIG_MINT_SHARED_CLUSTER_REASON,
 		});
 	});
 

@@ -2,26 +2,69 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @vitest-environment node
 
-// The kubeconfig command both surfaces show (#5250) — the console's cluster card and
+// The kubeconfig commands both surfaces show (#5250, #5322) — the console's cluster card and
 // `alethia cluster get`. Every expected command below is written out BY HAND, never rebuilt with
 // the builder's own template: a test that composed the expectation the way the module composes it
 // would agree with the module by construction, including when the flag is wrong.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
-	KUBECONFIG_ISSUE_URL,
 	type KubeconfigFacts,
 	buildKubeconfigAccess,
 	outputString,
 	readKubeconfigAccess,
 } from "@/lib/clusters/kubeconfig-access";
 import type { Db } from "@/lib/db";
+import { clusterKubeconfig } from "@/lib/validations/cli-contract";
 
-/** Facts for a fully-recorded cluster; each test overrides what it is about. */
+/**
+ * The table `alethia cluster get`'s test also reads (apps/cli/cmd/clusters_get_test.go): the facts,
+ * the answer this builder must give, and the rows the CLI must print for it (#5322). Parsed, not
+ * cast, so a malformed table fails here rather than passing on undefined.
+ */
+const sharedTable = z.object({
+	cases: z
+		.array(
+			z.object({
+				id: z.string(),
+				facts: z.object({
+					clusterId: z.string().nullable(),
+					sharedCluster: z.boolean(),
+					provider: z.string().nullable(),
+					clusterName: z.string().nullable(),
+					region: z.string().nullable(),
+					gcpProjectId: z.string().nullable(),
+					azureResourceGroup: z.string().nullable(),
+				}),
+				access: clusterKubeconfig,
+			}),
+		)
+		.min(1),
+});
+
+const { cases } = sharedTable.parse(
+	JSON.parse(
+		readFileSync(
+			join(
+				dirname(fileURLToPath(import.meta.url)),
+				"../../../../cli/cmd/testdata/kubeconfig-access-cases.json",
+			),
+			"utf8",
+		),
+	),
+);
+
+/** Facts for a fully-recorded aws cluster; each test overrides what it is about. */
 function facts(over: Partial<KubeconfigFacts>): KubeconfigFacts {
 	return {
+		clusterId: "0b3f6c1e-2a4d-4e8f-9c1a-5d7e8f9a0b1c",
+		sharedCluster: false,
 		provider: "aws",
 		clusterName: "eks-euc1-prod-web",
 		region: "eu-central-1",
@@ -31,148 +74,77 @@ function facts(over: Partial<KubeconfigFacts>): KubeconfigFacts {
 	};
 }
 
-describe("buildKubeconfigAccess — one command per cloud", () => {
-	it("aws: update-kubeconfig with the EKS name and region", () => {
-		expect(buildKubeconfigAccess(facts({}))).toEqual({
-			command: "aws eks update-kubeconfig --name eks-euc1-prod-web --region eu-central-1",
-			note: null,
-		});
+describe("buildKubeconfigAccess — the table shared with `alethia cluster get` (#5322)", () => {
+	it.each(cases.map((c) => [c.id, c] as const))("%s", (_id, c) => {
+		expect(buildKubeconfigAccess(c.facts)).toEqual(c.access);
 	});
 
-	it("gcp: a REGION value makes a regional cluster, so --region", () => {
-		expect(
-			buildKubeconfigAccess(
-				facts({
-					provider: "gcp",
-					clusterName: "gke-euw3-prod-web",
-					region: "europe-west3",
-					gcpProjectId: "acme-prod-123",
-				}),
-			),
-		).toEqual({
-			command:
-				"gcloud container clusters get-credentials gke-euw3-prod-web --region europe-west3 --project acme-prod-123",
-			note: null,
-		});
+	it("covers every shape: a mint with and without an alternative, a shared cluster, a note, nothing", () => {
+		const answers = cases.map((c) => c.access);
+		expect(answers.some((a) => a.command && a.alternative)).toBe(true);
+		expect(answers.some((a) => a.command && !a.alternative)).toBe(true);
+		expect(cases.some((c) => c.facts.sharedCluster && c.access.note)).toBe(true);
+		expect(answers.some((a) => !a.command && a.note)).toBe(true);
+		expect(answers.some((a) => !a.command && !a.alternative && !a.note)).toBe(true);
 	});
 
-	it("gcp: a ZONE value makes a zonal cluster, so --zone (gcp/locals.tf passes var.region verbatim)", () => {
-		expect(
-			buildKubeconfigAccess(
-				facts({
-					provider: "gcp",
-					clusterName: "gke-euw3-dev-web",
-					region: "europe-west3-a",
-					gcpProjectId: "acme-dev-123",
-				}),
-			).command,
-		).toBe(
-			"gcloud container clusters get-credentials gke-euw3-dev-web --zone europe-west3-a --project acme-dev-123",
-		);
+	it("every mintable cloud's primary command is the mint", () => {
+		for (const provider of ["aws", "gcp", "azure", "alibaba", "hetzner"]) {
+			expect(buildKubeconfigAccess(facts({ provider })).command).toBe(
+				"alethia cluster kubeconfig eks-euc1-prod-web",
+			);
+		}
 	});
 
-	it("azure: get-credentials with the RECORDED resource group, not a re-derived one", () => {
-		expect(
-			buildKubeconfigAccess(
-				facts({
-					provider: "azure",
-					clusterName: "aks-weu-prod-web",
-					region: "westeurope",
-					azureResourceGroup: "rg-web-prod",
-				}),
-			),
-		).toEqual({
-			command: "az aks get-credentials --resource-group rg-web-prod --name aks-weu-prod-web",
-			note: null,
-		});
-	});
-
-	it("alibaba: no command — the cluster ID is not recorded — and the note names the cluster and the call", () => {
-		const got = buildKubeconfigAccess(
-			facts({ provider: "alibaba", clusterName: "web-prod", region: "cn-hangzhou" }),
-		);
-		expect(got.command).toBeNull();
-		expect(got.note).toContain("web-prod in cn-hangzhou");
-		expect(got.note).toContain("aliyun cs GET /k8s/<cluster-id>/user_config");
-		expect(got.note).toContain(KUBECONFIG_ISSUE_URL);
-	});
-
-	it("alibaba with no region still names the cluster", () => {
-		const got = buildKubeconfigAccess(
-			facts({ provider: "alibaba", clusterName: "web-prod", region: null }),
-		);
-		expect(got.note).toContain("cluster web-prod in the ACK console");
-	});
-
-	it("hetzner: says plainly there is no kubeconfig yet, and points at the issue", () => {
-		const got = buildKubeconfigAccess(
-			facts({ provider: "hetzner", clusterName: "web-prod" }),
-		);
-		expect(got.command).toBeNull();
-		expect(got.note).toMatch(
-			/^Alethia does not hand out a kubeconfig for Hetzner clusters yet/,
-		);
-		expect(got.note).toContain(KUBECONFIG_ISSUE_URL);
-	});
-
-	it("an unsupported cloud gets a note, not a guess", () => {
-		expect(
-			buildKubeconfigAccess(facts({ provider: "civo", clusterName: "x" })),
-		).toEqual({
-			command: null,
-			note: "Alethia has no kubeconfig command for civo clusters.",
-		});
-	});
-
-	it("an unknown cloud says so", () => {
-		expect(buildKubeconfigAccess(facts({ provider: null })).note).toMatch(
-			/does not know which cloud/,
-		);
+	it("a shared cluster gets no command on ANY cloud, not even the cloud's own", () => {
+		for (const provider of ["aws", "gcp", "azure", "alibaba", "hetzner"]) {
+			expect(
+				buildKubeconfigAccess(
+					facts({
+						provider,
+						sharedCluster: true,
+						gcpProjectId: "p-123456",
+						azureResourceGroup: "rg-x",
+					}),
+				),
+			).toEqual({
+				command: null,
+				alternative: null,
+				note: "Kubeconfig mints are not available for an environment placed on a shared cluster.",
+			});
+		}
 	});
 });
 
-describe("buildKubeconfigAccess — missing and unsafe values", () => {
-	it("no cluster name yet ⇒ nothing to say (both null)", () => {
-		expect(buildKubeconfigAccess(facts({ clusterName: null }))).toEqual({
-			command: null,
-			note: null,
-		});
-		expect(buildKubeconfigAccess(facts({ clusterName: "  " }))).toEqual({
-			command: null,
+describe("buildKubeconfigAccess — missing and unsafe values drop only the alternative", () => {
+	it("no cluster name yet ⇒ nothing to say (all null)", () => {
+		const nothing = { command: null, alternative: null, note: null };
+		expect(buildKubeconfigAccess(facts({ clusterName: null }))).toEqual(nothing);
+		expect(buildKubeconfigAccess(facts({ clusterName: "  " }))).toEqual(nothing);
+	});
+
+	it.each([
+		["aws", { region: null }],
+		["gcp", { region: "europe-west3", gcpProjectId: null }],
+		["gcp", { region: null, gcpProjectId: "p-123456" }],
+		["azure", { azureResourceGroup: null }],
+		["azure", { azureResourceGroup: " " }],
+		["aws", { region: "eu-west-1$(id)" }],
+		["gcp", { region: "europe-west3", gcpProjectId: "p'x" }],
+		["azure", { azureResourceGroup: "rg (prod)" }],
+	] as const)("%s with %o ⇒ the mint, and no cloud command", (provider, over) => {
+		expect(buildKubeconfigAccess(facts({ provider, ...over }))).toEqual({
+			command: "alethia cluster kubeconfig eks-euc1-prod-web",
+			alternative: null,
 			note: null,
 		});
 	});
 
-	it.each([
-		["aws", { region: null }, "region"],
-		["gcp", { region: "europe-west3", gcpProjectId: null }, "GCP project ID"],
-		["gcp", { region: null, gcpProjectId: "p-123456" }, "region"],
-		["azure", { azureResourceGroup: null }, "resource group"],
-		["azure", { azureResourceGroup: " " }, "resource group"],
-	] as const)(
-		"%s with %o ⇒ no command, and the note names the missing %s",
-		(provider, over, label) => {
-			const got = buildKubeconfigAccess(facts({ provider, ...over }));
-			expect(got.command).toBeNull();
-			expect(got.note).toBe(
-				`Alethia has no recorded ${label} for this cluster, so it cannot build the command. Redeploy the environment to record it.`,
-			);
-		},
-	);
-
-	it.each([
-		["aws", { clusterName: "web; rm -rf ~" }, "cluster name"],
-		["aws", { region: "eu-west-1$(id)" }, "region"],
-		["gcp", { region: "europe-west3", gcpProjectId: "p'x" }, "GCP project ID"],
-		["azure", { azureResourceGroup: "rg (prod)" }, "resource group"],
-	] as const)(
-		"%s with %o ⇒ refuses to print a command a shell would misread (%s)",
-		(provider, over, label) => {
-			const got = buildKubeconfigAccess(facts({ provider, ...over }));
-			expect(got.command).toBeNull();
-			expect(got.note).toContain(`The recorded ${label} contains characters`);
-		},
-	);
+	it("an unsafe name with no usable id gives the bare command, which asks which cluster", () => {
+		expect(
+			buildKubeconfigAccess(facts({ clusterName: "web; rm -rf ~", clusterId: null })),
+		).toEqual({ command: "alethia cluster kubeconfig", alternative: null, note: null });
+	});
 });
 
 describe("outputString", () => {
@@ -188,18 +160,29 @@ describe("outputString", () => {
 });
 
 describe("readKubeconfigAccess", () => {
-	/** A drizzle-shaped fake: records the WHERE and returns the given rows. */
+	/** A drizzle-shaped fake: records the WHERE, the join and the order, and returns the given rows. */
 	function fakeDb(rows: unknown[]) {
-		const seen: { where?: SQL; selected?: Record<string, unknown>; calls: number } = {
-			calls: 0,
-		};
+		const seen: {
+			where?: SQL;
+			join?: SQL;
+			order?: SQL;
+			selected?: Record<string, unknown>;
+			calls: number;
+		} = { calls: 0 };
 		const chain = {
 			from: () => chain,
+			leftJoin: (_t: unknown, on: SQL) => {
+				seen.join = on;
+				return chain;
+			},
 			where: (w: SQL) => {
 				seen.where = w;
 				return chain;
 			},
-			orderBy: () => chain,
+			orderBy: (o: SQL) => {
+				seen.order = o;
+				return chain;
+			},
 			limit: () => Promise.resolve(rows),
 		};
 		const db = {
@@ -217,7 +200,15 @@ describe("readKubeconfigAccess", () => {
 		return fake as never;
 	}
 
+	/** Renders a captured SQL fragment as Postgres text with its parameters. */
+	function render(fragment: SQL | undefined) {
+		if (!fragment) throw new Error("the fragment was never captured");
+		const q = new PgDialect().sqlToQuery(fragment);
+		return { sql: q.sql.replace(/\s+/g, " "), params: q.params };
+	}
+
 	const locator = {
+		clusterId: "33333333-3333-4333-8333-333333333333",
 		projectId: "11111111-1111-4111-8111-111111111111",
 		environmentId: "22222222-2222-4222-8222-222222222222",
 		clusterName: "aks-weu-prod-web",
@@ -225,47 +216,75 @@ describe("readKubeconfigAccess", () => {
 		region: "eu-west-1",
 	};
 
+	/** One joined row: a dedicated environment whose last deploy recorded `over`. */
+	function joined(over: Record<string, unknown>) {
+		return {
+			placementMode: "dedicated",
+			provider: null,
+			region: null,
+			snapshotPlacement: null,
+			gcpProjectId: null,
+			azureResourceGroup: null,
+			...over,
+		};
+	}
+
 	it("prefers what the last successful DEPLOY recorded over the caller's fallbacks", async () => {
 		const { db, seen } = fakeDb([
-			{
+			joined({
 				provider: "azure",
 				region: "westeurope",
-				gcpProjectId: null,
 				azureResourceGroup: { value: "rg-web-prod" },
-			},
+			}),
 		]);
 		await expect(readKubeconfigAccess(asDb(db), locator)).resolves.toEqual({
-			command: "az aks get-credentials --resource-group rg-web-prod --name aks-weu-prod-web",
+			command: "alethia cluster kubeconfig aks-weu-prod-web",
+			alternative: "az aks get-credentials --resource-group rg-web-prod --name aks-weu-prod-web",
 			note: null,
 		});
-		// Scoped to THIS cluster's owning env, its project, and only SUCCESSful DEPLOYs.
-		if (!seen.where) throw new Error("the query was never filtered");
-		const q = new PgDialect().sqlToQuery(seen.where);
-		expect(q.sql.replace(/\s+/g, " ")).toBe(
-			'("jobs"."project_id" = $1 and "jobs"."environment_id" = $2 and "jobs"."job_type" = $3 and "jobs"."status" = $4)',
-		);
-		expect(q.params).toEqual([
-			locator.projectId,
-			locator.environmentId,
-			"DEPLOY",
-			"SUCCESS",
-		]);
-		// Four scalar paths — never the whole snapshot (it carries a git token).
+		// The owning environment, left-joined to ONLY its project's SUCCESSful DEPLOYs, newest first.
+		expect(render(seen.where)).toEqual({
+			sql: '"project_environments"."id" = $1',
+			params: [locator.environmentId],
+		});
+		expect(render(seen.join)).toEqual({
+			sql: '("jobs"."environment_id" = "project_environments"."id" and "jobs"."project_id" = $1 and "jobs"."job_type" = $2 and "jobs"."status" = $3)',
+			params: [locator.projectId, "DEPLOY", "SUCCESS"],
+		});
+		expect(render(seen.order).sql).toBe('"jobs"."created_at" desc nulls last');
+		// Scalar paths only — never the whole snapshot (it carries a git token).
 		expect(Object.keys(seen.selected ?? {})).toEqual([
+			"placementMode",
 			"provider",
 			"region",
+			"snapshotPlacement",
 			"gcpProjectId",
 			"azureResourceGroup",
 		]);
 	});
 
 	it("falls back to the caller's provider and region when no deploy is recorded", async () => {
-		const { db } = fakeDb([]);
+		const { db } = fakeDb([joined({})]);
 		await expect(
 			readKubeconfigAccess(asDb(db), { ...locator, clusterName: "eks-x" }),
 		).resolves.toEqual({
-			command: "aws eks update-kubeconfig --name eks-x --region eu-west-1",
+			command: "alethia cluster kubeconfig eks-x",
+			alternative: "aws eks update-kubeconfig --name eks-x --region eu-west-1",
 			note: null,
+		});
+	});
+
+	it.each([
+		["the environment's column says namespace", { placementMode: "namespace" }],
+		["the environment's column says vcluster", { placementMode: "vcluster" }],
+		["the deploy's snapshot says namespace", { snapshotPlacement: "namespace" }],
+		["the deploy's snapshot says vcluster", { snapshotPlacement: "vcluster" }],
+	])("a shared cluster when %s: the refusal's sentence, no command", async (_why, over) => {
+		const { db } = fakeDb([joined({ provider: "aws", region: "eu-west-1", ...over })]);
+		await expect(readKubeconfigAccess(asDb(db), locator)).resolves.toEqual({
+			command: null,
+			alternative: null,
+			note: "Kubeconfig mints are not available for an environment placed on a shared cluster.",
 		});
 	});
 
@@ -273,7 +292,7 @@ describe("readKubeconfigAccess", () => {
 		const unnamed = fakeDb([]);
 		await expect(
 			readKubeconfigAccess(asDb(unnamed.db), { ...locator, clusterName: null }),
-		).resolves.toEqual({ command: null, note: null });
+		).resolves.toEqual({ command: null, alternative: null, note: null });
 		expect(unnamed.seen.calls).toBe(0);
 
 		const orphan = fakeDb([]);

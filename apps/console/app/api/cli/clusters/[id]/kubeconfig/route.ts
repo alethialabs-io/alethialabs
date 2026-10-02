@@ -6,10 +6,12 @@ import { trustedClientIp } from "@/lib/auth/trusted-ip";
 import { authorizeCli } from "@/lib/authz/guard";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { cliJson } from "@/lib/cli/respond";
+import { KUBECONFIG_MINT_SHARED_CLUSTER_REASON } from "@/lib/clusters/mint-eligibility";
 import { errorName } from "@/lib/errors";
 import { actionForTier } from "@/lib/kubeconfig-mint/clouds";
 import { MINT_RATE_WINDOW_MS, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
 import { mintError, noStore, readBoundedJson } from "@/lib/kubeconfig-mint/http";
+
 import {
 	type MintRequestRefusal,
 	requestKubeconfigMint,
@@ -36,6 +38,10 @@ function refusalResponse(refusal: MintRequestRefusal): Response {
 			return mintError(422, "This cluster's cloud cannot mint a kubeconfig through Alethia");
 		case "static-only":
 			return mintError(422, 'This cloud issues certificates, so it can only mint a static kubeconfig: use shape "static"');
+		case "shared-cluster":
+			// The runner's own sentence, byte for byte: the CLI prints one message for this whichever
+			// side refused it.
+			return mintError(422, KUBECONFIG_MINT_SHARED_CLUSTER_REASON);
 	}
 }
 
@@ -51,7 +57,7 @@ function refusalResponse(refusal: MintRequestRefusal): Response {
  *      unauthenticated caller learns nothing about the body from the answer.
  *   3. The caller is rate-limited.
  *   4. lib/kubeconfig-mint/request.ts resolves the cluster inside the actor's org (another org's
- *      cluster is a 404) and writes the job, the request row and the audit row in one transaction.
+ *      cluster is a 404), refuses a namespace/vcluster environment (422) before any job exists, and writes the job, the request row and the audit row in one transaction.
  *
  * Answers 202 with the queued mint; the client then polls `GET …/kubeconfig/:mintId`. Every response
  * is `Cache-Control: no-store`. The body carries only the client's PUBLIC key; nothing secret is
