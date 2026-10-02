@@ -8801,7 +8801,7 @@
 			"kind": "string",
 			"typeExpr": "string",
 			"required": false,
-			"description": "TTL for the Talos admin kubeconfig client cert (.cluster.adminKubeconfig.certLifetime). Pinned LOW (default 24h) so placement-minted kubeconfigs are short-lived; the Talos default is 1 year. Go time.Duration format.",
+			"description": "TTL for the Talos admin kubeconfig client cert (.cluster.adminKubeconfig.certLifetime). Pinned LOW (default 1h) so every minted admin kubeconfig is short-lived; the Talos default is 1 year. Go time.Duration format.",
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/hetzner/variables.tf:312",
 			"readBy": [
@@ -8812,7 +8812,7 @@
 			"reachable": true,
 			"ownedByProvider": false,
 			"typed": false,
-			"default": "24h0m0s"
+			"default": "1h0m0s"
 		},
 		{
 			"cloud": "hetzner",
@@ -8883,7 +8883,7 @@
 			"required": false,
 			"description": "In-cluster registry hosts (registry-<name>.registries.svc.cluster.local) to trust over plain HTTP via a containerd mirror. Empty on a cluster with no registry node.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:339",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:344",
 			"readBy": [
 				"hetzner"
 			],
