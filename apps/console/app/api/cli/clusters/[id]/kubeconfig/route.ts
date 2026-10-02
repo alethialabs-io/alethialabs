@@ -100,7 +100,7 @@ export async function POST(
 	if (!z.uuid().safeParse(id).success) return mintError(404, "Cluster not found");
 
 	// The budget is shared with the console's download (lib/kubeconfig-mint/gates.ts).
-	if (!takeMintRateLimit(actor)) {
+	if (!(await takeMintRateLimit(actor))) {
 		const res = mintError(429, "Too many kubeconfig mint requests; try again in a few minutes");
 		res.headers.set("Retry-After", String(Math.ceil(MINT_RATE_WINDOW_MS / 1000)));
 		return res;

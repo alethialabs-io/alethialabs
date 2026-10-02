@@ -64,6 +64,10 @@ vi.mock("@/lib/db", () => ({
 	withActorScope: async (_actor: unknown, fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
 }));
 vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
+// The real limiter counts in Postgres (#5309); see the fixture for what this stand-in keeps.
+vi.mock("@/lib/rate-limit", async () =>
+	(await import("@/tests/fixtures/memory-rate-limit")).memoryRateLimitModule(),
+);
 vi.mock("@/lib/auth/trusted-ip", () => ({ trustedClientIp: vi.fn(() => "203.0.113.7") }));
 vi.mock("@/lib/billing/usage-guard", async (orig) => ({
 	...(await orig<typeof import("@/lib/billing/usage-guard")>()),

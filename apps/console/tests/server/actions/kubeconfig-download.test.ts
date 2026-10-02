@@ -23,7 +23,7 @@ vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/kubeconfig-mint/request", () => ({ requestKubeconfigMint: vi.fn() }));
 vi.mock("@/lib/kubeconfig-mint/poll", () => ({ pollKubeconfigMint: vi.fn() }));
 vi.mock("@/lib/kubeconfig-mint/gates", () => ({
-	takeMintRateLimit: vi.fn(() => true),
+	takeMintRateLimit: vi.fn(async () => true),
 	mayCollectTier: vi.fn(async () => true),
 }));
 vi.mock("@/lib/observability/log", () => {
@@ -61,7 +61,7 @@ beforeEach(() => {
 	vi.mocked(authorize).mockResolvedValue(ACTOR as never);
 	vi.mocked(authorizeQuiet).mockResolvedValue(ACTOR as never);
 	vi.mocked(currentActor).mockResolvedValue(ACTOR as never);
-	vi.mocked(takeMintRateLimit).mockReturnValue(true);
+	vi.mocked(takeMintRateLimit).mockResolvedValue(true);
 });
 
 describe("canDownloadKubeconfig", () => {
@@ -122,7 +122,7 @@ describe("requestKubeconfigDownload", () => {
 	});
 
 	it("answers 429 over the shared rate limit, before queuing", async () => {
-		vi.mocked(takeMintRateLimit).mockReturnValue(false);
+		vi.mocked(takeMintRateLimit).mockResolvedValue(false);
 		expect(await requestKubeconfigDownload({ clusterId: CLUSTER, clientPublicKey: PUB })).toEqual({
 			ok: false,
 			status: 429,

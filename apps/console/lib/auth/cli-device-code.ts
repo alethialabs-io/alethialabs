@@ -9,8 +9,8 @@
  * the predicates below.
  *
  * Deliberately dependency-free: the /cli/login page is a client component and reuses
- * the validators, so this module must not drag server-side state (the in-memory
- * lib/rate-limit store) into the browser bundle. The routes own that call; this module
+ * the validators, so this module must not drag server-side state (lib/rate-limit and the
+ * database client behind it) into the browser bundle. The routes own that call; this module
  * owns the decision of WHICH key to bucket on.
  */
 
@@ -42,9 +42,9 @@ const DEVICE_CODE_PATTERN =
  *
  * Be honest about what this buys: a cap on how many unauthenticated DB round-trips one
  * IP can force, nothing more. It is NOT brute-force protection — the device_code is a
- * 122-bit UUID and no request budget is what makes guessing it infeasible. And because
- * lib/rate-limit.ts is in-memory and per-process, a second replica or a restart resets
- * the counter: this is a damper, not a control.
+ * 122-bit UUID and no request budget is what makes guessing it infeasible. The counter is
+ * shared by every replica and survives a restart (lib/rate-limit.ts keeps it in Postgres,
+ * #5309), and it fails closed if that store cannot answer.
  */
 export const CLI_DEVICE_RATE_LIMIT = { limit: 240, windowMs: 60_000 } as const;
 
@@ -318,8 +318,8 @@ export function clientMetadataField(value: unknown): string | null {
  * still covers several people behind one NAT each starting a login in the same minute,
  * while bounding how many rows one address can insert into `cli_logins`.
  *
- * Same honesty as `CLI_DEVICE_RATE_LIMIT`: `lib/rate-limit.ts` is in-memory and
- * per-process, so a second replica or a restart resets the counter. A damper, not a control.
+ * Like `CLI_DEVICE_RATE_LIMIT`, the counter is shared by every replica (lib/rate-limit.ts,
+ * #5309) and fails closed when its store cannot answer.
  */
 export const CLI_DEVICE_START_RATE_LIMIT = { limit: 20, windowMs: 60_000 } as const;
 

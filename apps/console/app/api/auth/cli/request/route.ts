@@ -45,10 +45,12 @@ export async function GET(req: Request) {
 	const limitKey = cliDeviceRateLimitKey("request", hdrs);
 	if (
 		limitKey &&
-		!checkRateLimit(
-			limitKey,
-			CLI_DEVICE_RATE_LIMIT.limit,
-			CLI_DEVICE_RATE_LIMIT.windowMs,
+		!(
+			await checkRateLimit(
+				limitKey,
+				CLI_DEVICE_RATE_LIMIT.limit,
+				CLI_DEVICE_RATE_LIMIT.windowMs,
+			)
 		).ok
 	) {
 		return deviceCodeFail("Too many requests", 429);

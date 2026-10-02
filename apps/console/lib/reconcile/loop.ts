@@ -15,6 +15,7 @@ import { getServiceDb } from "@/lib/db";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
+import { sweepExpiredRateLimitBuckets } from "@/lib/rate-limit";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
@@ -49,6 +50,9 @@ const INTERVALS = {
 	// 1m — a mint request's poll window is 10m, so an uncollected ciphertext outlives its window by
 	// at most about a minute (lib/kubeconfig-mint/sweep.ts).
 	"kubeconfig-mint-sweep": 60_000,
+	// 5m — a finished window is dead weight, never a wrong answer (a later hit lands in a new row), so
+	// the cadence only bounds how many dead rows sit in rate_limit_buckets (lib/rate-limit.ts).
+	"rate-limit-sweep": 5 * 60_000,
 } as const;
 
 declare global {
@@ -125,6 +129,10 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		// its job if no runner has claimed it, and delete rows one window after that.
 		if (isDue("kubeconfig-mint-sweep", INTERVALS["kubeconfig-mint-sweep"], now)) {
 			await runTask("kubeconfig-mint-sweep", () => sweepExpiredKubeconfigMints(db));
+		}
+		// Rate-limit bucket expiry (#5309): delete every lib/rate-limit.ts window that has ended.
+		if (isDue("rate-limit-sweep", INTERVALS["rate-limit-sweep"], now)) {
+			await runTask("rate-limit-sweep", () => sweepExpiredRateLimitBuckets(db));
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already
