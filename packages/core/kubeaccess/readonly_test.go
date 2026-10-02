@@ -256,6 +256,26 @@ func TestOptions_Validation(t *testing.T) {
 	}
 }
 
+// TestMint_SendsNoStatus: the TokenRequest body carries apiVersion, kind and spec only. A status
+// with an empty expirationTimestamp is refused by a real API server with 400 (metav1.Time cannot
+// decode ""), which failed every read-only mint on hetzner and gcp in the 2026-10-02 dev nightly.
+func TestMint_SendsNoStatus(t *testing.T) {
+	srv := newFakeAPIServer()
+	kube := fakeKube{srv}
+	mustEnsure(t, kube, defaultOpts)
+	if _, err := MintReadOnlyToken(context.Background(), kube, defaultOpts, 15*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if st, ok := srv.lastTokenRequest["status"]; ok {
+		t.Fatalf("TokenRequest body carried a status %v; a real API server refuses it with 400", st)
+	}
+	for _, k := range []string{"apiVersion", "kind", "spec"} {
+		if _, ok := srv.lastTokenRequest[k]; !ok {
+			t.Fatalf("TokenRequest body has no %q", k)
+		}
+	}
+}
+
 // TestMint_ServerClampWins: the server caps the TTL; the returned expiry is the server's, and the
 // request carried exactly the asked-for expirationSeconds.
 func TestMint_ServerClampWins(t *testing.T) {
