@@ -21,6 +21,10 @@
 //      its limit still gets a 202, the mint does not move the count, and a DEPLOY is still refused.
 //   8. SHARED CLUSTERS ARE REFUSED UP FRONT (#5327). A namespace or vcluster environment is a 422
 //      with the runner's own sentence, and no MINT_KUBECONFIG job exists afterwards.
+//   9. THE CREDENTIAL BINDING (#5310). A mint is bound to the credential that asked: the same person's
+//      OTHER service token gets a 404 and cannot consume it, and neither can their session; a token
+//      asking for ADMIN is a 403 that writes nothing; the database refuses a row bound to somebody
+//      else's token, and an admin row bound to any token.
 //
 // The CLI guard is stubbed (`authorizeCli` is the authz suite's subject; here it hands the handler an
 // actor) and so are the runner-minute usage guard and the scaler poke; the daily job quota is real. The runner's credentials are REAL: two
@@ -29,7 +33,7 @@
 
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { describeIfDb } from "./db";
 
@@ -54,6 +58,7 @@ import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { getServiceDb } from "@/lib/db";
 import {
 	auditLog,
+	cliServiceTokens,
 	cloudIdentities,
 	jobs,
 	kubeconfigMintRequests,
@@ -83,6 +88,9 @@ const ENV_NS = randomUUID();
 const ENV_VC = randomUUID();
 const CLUSTER_NS = randomUUID();
 const CLUSTER_VC = randomUUID();
+const TOKEN_X = randomUUID();
+const TOKEN_Y = randomUUID();
+const TEAMMATE_TOKEN = randomUUID();
 const RUNNER_1 = randomUUID();
 const RUNNER_2 = randomUUID();
 const TOKEN_1 = `it-mint-token-1-${randomUUID()}`;
@@ -103,13 +111,27 @@ function actingAs(userId: string, orgId: string): void {
 	});
 }
 
+/** Points the stubbed CLI guard at USER_A in ORG_A, authenticated by service token `tokenId`. */
+function actingAsToken(tokenId: string): void {
+	vi.mocked(authorizeCli).mockResolvedValue({
+		actor: { userId: USER_A, orgId: ORG_A },
+		credential: "service_token",
+		serviceTokenId: tokenId,
+		orgScope: [ORG_A],
+	});
+}
+
 /** Requests a mint on `clusterId` as the current actor. */
-async function request(clusterId: string, shape: "exec" | "static" = "exec"): Promise<Response> {
+async function request(
+	clusterId: string,
+	shape: "exec" | "static" = "exec",
+	tier: "readonly" | "admin" = "readonly",
+): Promise<Response> {
 	return requestPost(
 		new Request(`http://console.test/api/cli/clusters/${clusterId}/kubeconfig`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ shape, client_public_key: KEY }),
+			body: JSON.stringify({ shape, tier, client_public_key: KEY }),
 		}),
 		{ params: Promise.resolve({ id: clusterId }) },
 	);
@@ -227,6 +249,13 @@ describeIfDb("kubeconfig mint routes — request, runner, poll, sweep", () => {
 			{ user_id: USER_A, org_id: ORG_A, project_id: PROJ_A, environment_id: ENV_NS, job_type: "DEPLOY", status: "SUCCESS", config_snapshot: { cluster: "eks-shared-ns", placement_mode: "namespace" } },
 			{ user_id: USER_A, org_id: ORG_A, project_id: PROJ_A, environment_id: ENV_VC, job_type: "DEPLOY", status: "SUCCESS", config_snapshot: { cluster: "eks-shared-vc", placement_mode: "vcluster" } },
 		]);
+		// Two tokens USER_A minted for ORG_A, and one their teammate minted. Every one of USER_A's
+		// acts AS USER_A — which is the whole of #5310.
+		await db.insert(cliServiceTokens).values([
+			{ id: TOKEN_X, organization_id: ORG_A, name: "ci-x", token_hash: `it-${TOKEN_X}`, token_prefix: "alethia_sat_x", created_by: USER_A },
+			{ id: TOKEN_Y, organization_id: ORG_A, name: "ci-y", token_hash: `it-${TOKEN_Y}`, token_prefix: "alethia_sat_y", created_by: USER_A },
+			{ id: TEAMMATE_TOKEN, organization_id: ORG_A, name: "ci-t", token_hash: `it-${TEAMMATE_TOKEN}`, token_prefix: "alethia_sat_t", created_by: TEAMMATE_A },
+		]);
 		await db.insert(runners).values([
 			{ id: RUNNER_1, name: `it-mint-r1-${RUNNER_1.slice(0, 8)}`, operator: "managed", token_hash: hashRunnerToken(TOKEN_1), status: "ONLINE" },
 			{ id: RUNNER_2, name: `it-mint-r2-${RUNNER_2.slice(0, 8)}`, operator: "managed", token_hash: hashRunnerToken(TOKEN_2), status: "ONLINE" },
@@ -243,6 +272,9 @@ describeIfDb("kubeconfig mint routes — request, runner, poll, sweep", () => {
 		await db.delete(projects).where(inArray(projects.id, [PROJ_A, PROJ_B]));
 		await db.delete(cloudIdentities).where(eq(cloudIdentities.org_id, ORG_A));
 		await db.delete(runners).where(inArray(runners.id, [RUNNER_1, RUNNER_2]));
+		await db
+			.delete(cliServiceTokens)
+			.where(inArray(cliServiceTokens.id, [TOKEN_X, TOKEN_Y, TEAMMATE_TOKEN]));
 		await db.delete(profiles).where(inArray(profiles.id, [USER_A, TEAMMATE_A, USER_B]));
 	});
 
@@ -456,6 +488,124 @@ describeIfDb("kubeconfig mint routes — request, runner, poll, sweep", () => {
 		expect(await mintRow(m.mintId)).toMatchObject({ status: "expired", sealed_result: null });
 		// A job a runner held is left alone by the sweep.
 		expect(await jobRow(m.jobId)).toMatchObject({ status: "SUCCESS" });
+	});
+
+	describe("the credential binding (#5310)", () => {
+		/** Requests a mint on CLUSTER_A as the current actor, lands a ready result, and returns its ids. */
+		async function readyMint(): Promise<{ mintId: string; jobId: string }> {
+			const res = await request(CLUSTER_A);
+			expect(res.status).toBe(202);
+			const { mint } = mintBody.parse(await res.json());
+			await claim(mint.job_id);
+			const posted = await result(mint.job_id, R1, { status: "ready", mint_id: mint.id, sealed: SEALED, private_endpoint: false });
+			expect(posted.status).toBe(200);
+			return { mintId: mint.id, jobId: mint.job_id };
+		}
+
+		it("a token's read-only mint: the same person's OTHER token and their session get 404 and consume nothing; the requesting token collects", async () => {
+			actingAsToken(TOKEN_X);
+			const m = await readyMint();
+			expect(await mintRow(m.mintId)).toMatchObject({ actor_user_id: USER_A, service_token_id: TOKEN_X, tier: "readonly" });
+
+			// Same person, same org, another token: the attack in #5310.
+			actingAsToken(TOKEN_Y);
+			const sibling = await poll(m.mintId);
+			expect(sibling.status).toBe(404);
+			expect(await sibling.text()).not.toContain(SEALED);
+			// Same person signed in: a session is a different credential too.
+			actingAs(USER_A, ORG_A);
+			expect((await poll(m.mintId)).status).toBe(404);
+			// Neither took it.
+			expect(await mintRow(m.mintId)).toMatchObject({ status: "ready", sealed_result: SEALED });
+
+			actingAsToken(TOKEN_X);
+			const own = await poll(m.mintId);
+			expect(own.status).toBe(200);
+			expect(await own.json()).toEqual({ status: "ready", private_endpoint: false, sealed: SEALED });
+			expect(await mintRow(m.mintId)).toBeUndefined();
+
+			// Both audit rows name the token by its id — and never carry a secret.
+			const audits = await getServiceDb()
+				.select({ changes: auditLog.changes })
+				.from(auditLog)
+				.where(and(eq(auditLog.component_type, "kubeconfig_mint"), eq(auditLog.component_id, m.mintId)));
+			expect(audits).toHaveLength(2);
+			for (const a of audits) {
+				expect(a.changes).toMatchObject({ credential_kind: "service_token", credential_id: TOKEN_X });
+			}
+			expect(JSON.stringify(audits)).not.toContain(SEALED);
+			expect(JSON.stringify(audits)).not.toContain(`it-${TOKEN_X}`);
+		});
+
+		it("a session's mint is not collectable by the person's token, and the session still collects it", async () => {
+			actingAs(USER_A, ORG_A);
+			const m = await readyMint();
+			expect(await mintRow(m.mintId)).toMatchObject({ service_token_id: null });
+
+			actingAsToken(TOKEN_X);
+			expect((await poll(m.mintId)).status).toBe(404);
+			expect(await mintRow(m.mintId)).toMatchObject({ status: "ready" });
+
+			actingAs(USER_A, ORG_A);
+			const res = await poll(m.mintId);
+			expect(res.status).toBe(200);
+			expect(await res.json()).toEqual({ status: "ready", private_endpoint: false, sealed: SEALED });
+		});
+
+		it("a service token asking for ADMIN is a 403, and no row, job or audit row is written", async () => {
+			const counts = async () => {
+				const db = getServiceDb();
+				const [rows] = await db.select({ n: sql<number>`count(*)::int` }).from(kubeconfigMintRequests).where(eq(kubeconfigMintRequests.org_id, ORG_A));
+				const [mintJobs] = await db.select({ n: sql<number>`count(*)::int` }).from(jobs).where(and(eq(jobs.org_id, ORG_A), eq(jobs.job_type, "MINT_KUBECONFIG")));
+				const [audits] = await db.select({ n: sql<number>`count(*)::int` }).from(auditLog).where(and(eq(auditLog.project_id, PROJ_A), eq(auditLog.component_type, "kubeconfig_mint")));
+				return [rows.n, mintJobs.n, audits.n];
+			};
+			const before = await counts();
+			actingAsToken(TOKEN_X);
+			const res = await request(CLUSTER_A, "exec", "admin");
+			expect(res.status).toBe(403);
+			expect(await res.json()).toEqual({
+				error: "A service token can mint only a read-only kubeconfig. Admin kubeconfigs are for people: sign in with `alethia login` and request it as yourself",
+			});
+			expect(await counts()).toEqual(before);
+		});
+
+		it("the same person's session still mints ADMIN", async () => {
+			actingAs(USER_A, ORG_A);
+			const res = await request(CLUSTER_A, "exec", "admin");
+			expect(res.status).toBe(202);
+			const { mint } = mintBody.parse(await res.json());
+			expect(await mintRow(mint.id)).toMatchObject({ tier: "admin", service_token_id: null });
+		});
+
+		/** A row the route never writes, inserted straight on the service role — the backstops' subject. */
+		async function insertRaw(over: Partial<typeof kubeconfigMintRequests.$inferInsert>): Promise<void> {
+			await getServiceDb().insert(kubeconfigMintRequests).values({
+				org_id: ORG_A,
+				cluster_id: CLUSTER_A,
+				actor_user_id: USER_A,
+				tier: "readonly",
+				ttl_seconds: 3600,
+				shape: "exec",
+				client_public_key: KEY,
+				expires_at: sql`now() + interval '10 minutes'`,
+				...over,
+			});
+		}
+
+		it("the database refuses a mint bound to ANOTHER person's token, even in the same org", async () => {
+			await expect(insertRaw({ service_token_id: TEAMMATE_TOKEN })).rejects.toMatchObject({
+				cause: expect.objectContaining({ code: "42501" }),
+			});
+			// The requester's own token is accepted, so the refusal above is the binding, not the insert.
+			await expect(insertRaw({ service_token_id: TOKEN_Y })).resolves.toBeUndefined();
+		});
+
+		it("the database refuses an ADMIN mint bound to any token", async () => {
+			await expect(insertRaw({ service_token_id: TOKEN_Y, tier: "admin" })).rejects.toMatchObject({
+				cause: expect.objectContaining({ code: "23514", constraint_name: "kubeconfig_mint_requests_token_readonly" }),
+			});
+		});
 	});
 
 	it("a community org at its daily job quota still mints, the mint does not count, and a DEPLOY is still refused (#5313)", async () => {

@@ -6,7 +6,7 @@ import { trustedClientIp } from "@/lib/auth/trusted-ip";
 import { authorizeCli } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
 import { errorName } from "@/lib/errors";
-import { mayCollectTier } from "@/lib/kubeconfig-mint/gates";
+import { mayCollectTier, mintCredentialOf } from "@/lib/kubeconfig-mint/gates";
 import { mintError, noStore } from "@/lib/kubeconfig-mint/http";
 import { pollKubeconfigMint } from "@/lib/kubeconfig-mint/poll";
 import { log } from "@/lib/observability/log";
@@ -22,9 +22,11 @@ const mlog = log.child({ component: "kubeconfig-mint" });
  * - **Who.** The CLI actor is authenticated and must hold `cluster:access_readonly` (every mint
  *   needs at least that). An ADMIN mint is re-checked against `cluster:access_admin` before
  *   anything is answered: somebody demoted after asking does not collect the admin credential.
- * - **Whose.** Only the actor who requested the mint, in the org they requested it in, sees it —
- *   enforced by the row's RLS policy and by the query (lib/kubeconfig-mint/poll.ts). Anybody
- *   else's mint, another cluster's, and one already collected are all the same 404.
+ * - **Whose.** Only the CREDENTIAL that requested the mint, in the org it was requested in, sees it:
+ *   the same service token (by its id), or the same person's session (#5310). The person is enforced
+ *   by the row's RLS policy and the query; the credential by the query (lib/kubeconfig-mint/poll.ts).
+ *   Anybody else's mint, another of the same person's tokens' mint, another cluster's, and one
+ *   already collected are all the same 404.
  * - **Once.** `ready` is served by the statement that deletes the row, with the delivery audit row
  *   in the same transaction. The next poll is a 404.
  *
@@ -38,7 +40,7 @@ export async function GET(
 
 	const auth = await authorizeCli(req, "access_readonly", { type: "cluster", id });
 	if ("error" in auth) return noStore(auth.error);
-	const { actor, credential } = auth;
+	const { actor } = auth;
 
 	if (!z.uuid().safeParse(id).success || !z.uuid().safeParse(mintId).success) {
 		return mintError(404, "Kubeconfig mint not found");
@@ -50,7 +52,7 @@ export async function GET(
 			clusterId: id,
 			mintId,
 			client: "cli",
-			credentialKind: credential,
+			credential: mintCredentialOf(auth),
 			sourceIp: trustedClientIp(req.headers),
 			mayCollect: (tier) => mayCollectTier(actor, id, tier),
 		});

@@ -10,7 +10,8 @@
 // "delivered" row commits with the read-once DELETE, so a ciphertext that left the console always has
 // its row, and a failed audit write leaves the ciphertext where it was.
 //
-// What the row never carries: the credential, the ciphertext, the client's public key. The shape is
+// What the row never carries: the credential, the ciphertext, the client's public key. It does name
+// WHICH bearer asked — its kind, and for a service token its id (#5310) — which is not a secret. The shape is
 // KubeconfigMintAuditChanges (types/jsonb.types.ts) and has no field that could hold one.
 
 import type { Tx } from "@/lib/db";
@@ -23,6 +24,18 @@ import type { KubeconfigMintAuditChanges } from "@/types/jsonb.types";
 
 /** Which surface asked for the mint. */
 export type MintClient = "cli" | "console";
+
+/**
+ * The credential a mint is BOUND to (#5310): only this same credential may poll and collect it.
+ *
+ * - `session` — a signed-in person (the console, or `alethia login`). The mint is that person's.
+ * - `service_token` — one CLI service token, by its `cli_service_tokens.id`. Every token a person
+ *   mints acts as that person (`actor.userId` is the MINTER), so the person alone cannot tell two of
+ *   their tokens apart; the token's own id can.
+ */
+export type MintCredential =
+	| { kind: "session" }
+	| { kind: "service_token"; tokenId: string };
 
 /** Everything one mint audit row records. */
 export interface MintAuditInput {
@@ -37,7 +50,7 @@ export interface MintAuditInput {
 	ttlSeconds: number;
 	requestExpiresAt: Date;
 	client: MintClient;
-	credentialKind: KubeconfigMintAuditChanges["credential_kind"];
+	credential: MintCredential;
 	sourceIp: string | null;
 }
 
@@ -56,7 +69,9 @@ function mintAuditChanges(input: MintAuditInput): KubeconfigMintAuditChanges {
 			input.requestExpiresAt.getTime() + input.ttlSeconds * 1000,
 		).toISOString(),
 		client: input.client,
-		credential_kind: input.credentialKind,
+		credential_kind: input.credential.kind,
+		// The token's id, never the token: it names the row in the console's token list.
+		credential_id: input.credential.kind === "service_token" ? input.credential.tokenId : null,
 		source_ip: input.sourceIp,
 	};
 }

@@ -105,7 +105,7 @@ describe("requestKubeconfigDownload", () => {
 				clusterId: CLUSTER,
 				request: { tier: "readonly", shape: "static", ttl_seconds: 3600, client_public_key: PUB },
 				client: "console",
-				credentialKind: "session",
+				credential: { kind: "session" },
 			}),
 		);
 	});
@@ -131,6 +131,7 @@ describe("requestKubeconfigDownload", () => {
 	});
 
 	it.each([
+		["admin-needs-a-person", 403],
 		["not-found", 404],
 		["not-provisioned", 409],
 		["unsupported-cloud", 422],
@@ -196,7 +197,7 @@ describe("pollKubeconfigDownload", () => {
 		expect(authorizeQuiet).toHaveBeenCalledWith("access_readonly", { type: "cluster", id: CLUSTER });
 		expect(mayCollectTier).toHaveBeenCalledWith(ACTOR, CLUSTER, "admin");
 		expect(pollKubeconfigMint).toHaveBeenCalledWith(
-			expect.objectContaining({ mintId: MINT, client: "console", credentialKind: "session" }),
+			expect.objectContaining({ mintId: MINT, client: "console", credential: { kind: "session" } }),
 		);
 	});
 
