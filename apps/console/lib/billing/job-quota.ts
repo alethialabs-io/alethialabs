@@ -19,7 +19,7 @@
 // enqueue path (lib/kubeconfig-mint/request.ts) therefore does not call this guard.
 
 import "server-only";
-import { and, count, eq, gte, notInArray } from "drizzle-orm";
+import { and, count, eq, gte } from "drizzle-orm";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { getServiceDb } from "@/lib/db";
@@ -72,7 +72,6 @@ export async function assertJobQuotaAllowed(orgId: string): Promise<void> {
 				and(
 					eq(jobs.org_id, orgId),
 					eq(jobs.initiated_by, "user"),
-					notInArray(jobs.job_type, [...QUOTA_EXEMPT_JOB_TYPES]),
 					gte(jobs.created_at, since),
 				),
 			);
