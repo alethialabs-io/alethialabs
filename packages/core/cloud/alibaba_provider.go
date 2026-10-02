@@ -39,6 +39,12 @@ func (p *alibabaProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
+	if err := validateInstanceTypes("alibaba", config); err != nil {
+		return err
+	}
+	if err := validateCapacityType(config, "alibaba", false); err != nil {
+		return err
+	}
 	if err := validateNodeDiskSize(config, "ack_disk_size_gb", alibabaNodeDiskFloorGB); err != nil {
 		return err
 	}
@@ -244,7 +250,7 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		mergeProviderConfig(tfvars, cache.ProviderConfig, alibabaRootReserved...)
 	}
 
-	if inst := ResolveInstanceTypes("alibaba", config.Cluster); len(inst) > 0 {
+	if inst := resolveNodeTypes("alibaba", config.Cluster.InstanceTypes, config.Cluster.NodeSize); len(inst) > 0 {
 		tfvars["ack_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {

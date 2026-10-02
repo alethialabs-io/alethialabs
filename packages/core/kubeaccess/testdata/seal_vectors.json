@@ -1,0 +1,60 @@
+{
+  "_comment": [
+    "Test vectors for the kubeconfig mint seal (packages/core/kubeaccess/seal.go, #5280).",
+    "Consumed by seal_test.go and, later, by the browser (WebCrypto) open implementation, which must pass both.",
+    "rfc9180: HPKE base mode, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-256-GCM (0x0020/0x0001/0x0002), from the CFRG test-vectors.json the RFC 9180 appendix is generated from (github.com/cfrg/draft-irtf-cfrg-hpke, test-vectors.json, sha256 61fc662f01996cd06d713dacf5e133167bd309a1f329442d53f1e21a47b3ede6). RFC 9180 Appendix A prints this KEM/KDF only with AES-128-GCM and ChaCha20Poly1305; this AES-256-GCM entry is the same file's. pkRm/skRm/enc match Go's crypto/hpke testdata/rfc9180.json for this suite. Only the first two encryptions and the first export are kept; all hex.",
+    "alethia_mint: one real seal under the Alethia construction (info = 'alethia/kubeconfig-mint/v1', aad = info || 0x00 || mint_id || 0x00 || cluster_id). The recipient key is DeriveKeyPair(recipient_ikm). The blob was produced once by Seal (random ephemeral) and frozen; opening it with recipient_sk, mint_id and cluster_id must yield plaintext exactly, and opening it with any other id must fail."
+  ],
+  "rfc9180": {
+    "mode": 0,
+    "kem_id": 32,
+    "kdf_id": 1,
+    "aead_id": 2,
+    "info": "4f6465206f6e2061204772656369616e2055726e",
+    "ikmR": "dac33b0e9db1b59dbbea58d59a14e7b5896e9bdf98fad6891e99d1686492b9ee",
+    "ikmE": "2cd7c601cefb3d42a62b04b7a9041494c06c7843818e0ce28a8f704ae7ab20f9",
+    "skRm": "497b4502664cfea5d5af0b39934dac72242a74f8480451e1aee7d6a53320333d",
+    "skEm": "179d4b53b6365c45b600c4163b61d95cbc2f4d9e36f1695558dce265ab8bab11",
+    "pkRm": "430f4b9859665145a6b1ba274024487bd66f03a2dd577d7753c68d7d7d00c00c",
+    "pkEm": "6c93e09869df3402d7bf231bf540fadd35cd56be14f97178f0954db94b7fc256",
+    "enc": "6c93e09869df3402d7bf231bf540fadd35cd56be14f97178f0954db94b7fc256",
+    "shared_secret": "3101c54c3a4f87439eaac080699ed9bbcc726ffe44e860c0424ccb7e3e2ead7b",
+    "key_schedule_context": "004ce5472ecdd5093ba0aecb8f871ff13f1fbc90ee76f0e18ace1a1b7e565bafa306f6ef962c9ee7cea40407b5d60f0f26990472faae3ac44c78366f1cac1ecde1",
+    "secret": "2058ac9b02c1f52c1aaf08bedbec9198219751a94ef67b7d5f0c8b6e2b54ebfb",
+    "key": "f50b0609186798729ed0564b36ef2ef8044f1f9d05636874d1f46c819c7a669f",
+    "base_nonce": "151d9929e2449747889bc923",
+    "exporter_secret": "86017151bbff6a1940e8abae2ac9e0e7032e33df1eaaecc02ca6259b130d62df",
+    "encryptions": [
+      {
+        "aad": "436f756e742d30",
+        "ct": "e5d84cd531cfb583096e7cfa9641bd3079cf3a91cda813c52deb5f512be9931980a41de125a925cdad859d5b7a",
+        "nonce": "151d9929e2449747889bc923",
+        "pt": "4265617574792069732074727574682c20747275746820626561757479"
+      },
+      {
+        "aad": "436f756e742d31",
+        "ct": "2c43aff25343fdbff864506f0818b9d87df84ea01b1a2144d23b4d40c26bf655fdf197fe40297a8aebeed5cc2d",
+        "nonce": "151d9929e2449747889bc922",
+        "pt": "4265617574792069732074727574682c20747275746820626561757479"
+      }
+    ],
+    "exports": [
+      {
+        "exporter_context": "",
+        "L": 32,
+        "exported_value": "ded6cffafaea6b812cbf3e241e88332adbc077aca81512914213810ee291770a"
+      }
+    ]
+  },
+  "alethia_mint": {
+    "info": "alethia/kubeconfig-mint/v1",
+    "recipient_ikm_hex": "616c6574686961206b756265636f6e666967206d696e74207465737420726563697069656e7420696b6d207631202e2e2e2e2e2e",
+    "recipient_sk_hex": "40d22240fd9b4963437d82fc72198f684f809e4731aaf3fd2accbebb6a998151",
+    "recipient_pk_b64url": "hufrF92CG1HA7VvGLgUKrklVI-A4E6RmImXDhK_s9Rg",
+    "mint_id": "3f1c9a52-7d4e-4b8a-9c21-6e0f5a7b8c9d",
+    "cluster_id": "b2e4f6a8-1c3d-4e5f-8a9b-0c1d2e3f4a5b",
+    "aad_hex": "616c65746869612f6b756265636f6e6669672d6d696e742f76310033663163396135322d376434652d346238612d396332312d3665306635613762386339640062326534663661382d316333642d346535662d386139622d306331643265336634613562",
+    "sealed_b64url": "smXujilz6Ue69mhBn5YjaCp_U6SmAGpS8DHShv9FYnKKsewCLBy7kqWNzXsFuoLLBV2TIy54ZSr24B0Qr0VAZPSDO2om4XbczzRl_ice0l_y_IZPtx3qFp9Pmgxz5Xvl2KHzxPa1-iYw67CtCv2BTv7IXpTj--ThheZRMVGccub-TW4eBT8PKonUuPh7Ns7_tw4bAhNdYF1vrFeirWQTx3RjYmQDkw",
+    "plaintext": "{\"shape\":\"static\",\"tier\":\"readonly\",\"kubeconfig\":\"apiVersion: v1\\nkind: Config\\n\",\"expires_at\":\"2026-10-01T13:00:00Z\"}"
+  }
+}

@@ -96,6 +96,6 @@ stop *accidental* runaway, not to cap intentional scale.
 | Expiry tag | `cost_guard_require_expiry_tag` and no `expiry`/`ttl` tag present | `cost_guard_expiry_tag_keys` | off |
 
 The e2e nightly typically tightens the node/instance limits and sets
-`cost_guard_require_expiry_tag = true` so a leaked estate is always time-bounded. `m5a.4xlarge`
-(the template default) and `m5.12xlarge` are **not** flagged; `m5.16xlarge`, `p4d.24xlarge`,
+`cost_guard_require_expiry_tag = true` so a leaked estate is always time-bounded. `t3.large`
+(the template default), `m5a.4xlarge` and `m5.12xlarge` are **not** flagged; `m5.16xlarge`, `p4d.24xlarge`,
 `g5.48xlarge`, `inf2.xlarge` and `*.metal` are.

@@ -158,8 +158,10 @@ const FIXTURES: Record<keyof typeof cliContract, string> = {
 	FleetPoolsResponse: "fleet_pools.json",
 	FleetPoolResponse: "fleet_pool.json",
 	ProjectResponse: "project.json",
+	ProjectNodeShapeRequest: "create_project_node_shape.json",
 	EnvironmentsResponse: "environments.json",
 	EnvironmentResponse: "environment.json",
+	DestroyTreeResponse: "destroy_tree.json",
 	ComponentsResponse: "components.json",
 	ComponentResponse: "component.json",
 	DriftResponse: "drift.json",
@@ -178,6 +180,73 @@ const FIXTURES: Record<keyof typeof cliContract, string> = {
 	AgentResponse: "agent.json",
 	ClassificationDimensionsResponse: "classification_dimensions.json",
 	ClassificationAssignmentsResponse: "classification_assignments.json",
+	KubeconfigMintRequest: "kubeconfig_mint_request.json",
+	KubeconfigMintResponse: "kubeconfig_mint_response.json",
+	KubeconfigMintPollResponse: "kubeconfig_mint_poll.json",
+	RunnerKubeconfigMintSpec: "runner_kubeconfig_mint_spec.json",
+	RunnerKubeconfigMintResult: "runner_kubeconfig_mint_result.json",
+	KubeconfigMintCredential: "kubeconfig_mint_credential.json",
+};
+
+// The kubeconfig mint channel (#5280) carries base64url keys and ciphertext under a length + pattern
+// bound, and its poll / result / credential shapes are discriminated unions. The sampler emits
+// "string" for a patterned string and takes a union's FIRST branch, so it would write fixtures the
+// contract itself rejects, and would lock only the least informative variant. These are written out
+// instead, each the RICHEST variant (the one that carries the sealed blob or the credential).
+//
+// The key is the RFC 9180 suite vector's recipient key (DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 /
+// AES-256-GCM, pkRm) and the blob is that vector's `enc || ct` for sequence 0 — real material of the
+// right shape. It does NOT open under a mint's AAD; it is a shape fixture, not a seal test (those live
+// in packages/core/kubeaccess/seal_test.go).
+const MINT_PUBLIC_KEY = "Qw9LmFlmUUWmsbonQCRIe9ZvA6LdV313U8aNfX0AwAw";
+const MINT_SEALED =
+	"bJPgmGnfNALXvyMb9UD63TXNVr4U-XF48JVNuUt_wlbl2EzVMc-1gwlufPqWQb0wec86kc2oE8Ut619RK-mTGYCkHeElqSXNrYWdW3o";
+const OVERRIDES: Partial<Record<keyof typeof cliContract, unknown>> = {
+	KubeconfigMintRequest: {
+		tier: "readonly",
+		ttl_seconds: 3600,
+		shape: "exec",
+		client_public_key: MINT_PUBLIC_KEY,
+	},
+	KubeconfigMintResponse: {
+		mint: {
+			id: SAMPLE_UUID,
+			cluster_id: SAMPLE_UUID,
+			job_id: SAMPLE_UUID,
+			tier: "readonly",
+			shape: "exec",
+			ttl_seconds: 3600,
+			status: "pending",
+			expires_at: SAMPLE_TS,
+		},
+	},
+	KubeconfigMintPollResponse: {
+		status: "ready",
+		private_endpoint: false,
+		sealed: MINT_SEALED,
+	},
+	RunnerKubeconfigMintSpec: {
+		mint_id: SAMPLE_UUID,
+		cluster_id: SAMPLE_UUID,
+		tier: "readonly",
+		shape: "exec",
+		ttl_seconds: 3600,
+		client_public_key: MINT_PUBLIC_KEY,
+	},
+	RunnerKubeconfigMintResult: {
+		status: "ready",
+		mint_id: SAMPLE_UUID,
+		sealed: MINT_SEALED,
+		private_endpoint: false,
+	},
+	KubeconfigMintCredential: {
+		shape: "exec",
+		tier: "readonly",
+		server: "https://203.0.113.10:6443",
+		certificate_authority_data: "Q0EtREFUQQ==",
+		token: "sample-token",
+		expires_at: SAMPLE_TS,
+	},
 };
 
 const testdataDir = join(
@@ -188,8 +257,10 @@ mkdirSync(testdataDir, { recursive: true });
 
 for (const [key, file] of typedEntries(FIXTURES)) {
 	const js = asRecord(z.toJSONSchema(cliContract[key], { target: "draft-7" }));
-	const value =
-		key === "LatestRelease"
+	const override = OVERRIDES[key];
+	const value = override !== undefined
+		? override
+		: key === "LatestRelease"
 			? {
 					version: "1.2.3",
 					release_notes: "Release notes",

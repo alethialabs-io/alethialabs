@@ -1,0 +1,9 @@
+{
+	"title": "API",
+	"pages": [
+		"index",
+		"cli-apis",
+		"auth-apis",
+		"oidc-apis"
+	]
+}

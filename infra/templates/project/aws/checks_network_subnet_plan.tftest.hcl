@@ -6,8 +6,9 @@
 #
 # The defect (#1919): the private subnets were `cidrsubnet(vpc, 10, {0,4,8})` — a /26, 59 usable —
 # while the DATABASE subnets were a /24. Under the VPC CNI every pod takes a real address out of the
-# node's subnet, and one m5a.4xlarge (the default of var.eks_instance_types) draws up to
-# 8 ENIs × 30 IPv4 = 240 of them. The aws nightly died at
+# node's subnet, and one m5a.4xlarge (var.eks_instance_types' default until #5266 made it the
+# catalog's t3.large; still a shape anyone can pin) draws up to 8 ENIs × 30 IPv4 = 240 of them.
+# The aws nightly died at
 #   `plugin type="aws-cni" … failed (add): add cmd: failed to assign an IP address to container`
 # after ArgoCD's pods filled 10.0.1.10 … 10.0.1.56 of 10.0.1.0/26 on a SINGLE t3.large.
 #
@@ -137,8 +138,9 @@ run "every_private_subnet_is_at_least_a_slash_20" {
 }
 
 # The budget stated as addresses rather than as a prefix, so the reason survives a future rewrite of
-# the derivation. `var.eks_instance_types` defaults to ["m5a.4xlarge"] = 8 ENIs × 30 IPv4 = 240
-# addresses per node, and AWS reserves 5 addresses in every subnet. Two nodes per AZ is the floor a
+# the derivation. The budget is sized for an m5a.4xlarge = 8 ENIs × 30 IPv4 = 240 addresses per
+# node (var.eks_instance_types' default until #5266; today's default t3.large draws 36, so this is
+# the stricter bound), and AWS reserves 5 addresses in every subnet. Two nodes per AZ is the floor a
 # cluster that can roll a node has to clear; the shipped /20 clears it seventeen times over.
 run "a_private_subnet_holds_more_than_one_default_node" {
   command = plan

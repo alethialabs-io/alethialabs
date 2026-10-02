@@ -65,6 +65,12 @@ func (p *awsProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
+	if err := validateInstanceTypes("aws", config); err != nil {
+		return err
+	}
+	if err := validateCapacityType(config, "aws", true); err != nil {
+		return err
+	}
 	if err := validateNodeDiskSize(config, "eks_disk_size", awsNodeDiskFloorGB); err != nil {
 		return err
 	}
@@ -359,7 +365,7 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		mergeProviderConfig(tfvars, r.ProviderConfig, awsRootReserved...)
 	}
 
-	if inst := ResolveInstanceTypes("aws", config.Cluster); len(inst) > 0 {
+	if inst := resolveNodeTypes("aws", config.Cluster.InstanceTypes, config.Cluster.NodeSize); len(inst) > 0 {
 		tfvars["eks_instance_types"] = inst
 	}
 	if config.Cluster.NodeMinSize > 0 {
@@ -373,6 +379,12 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	}
 	if config.Cluster.NodeDiskSizeGB != nil {
 		tfvars["eks_disk_size"] = *config.Cluster.NodeDiskSizeGB
+	}
+	// The node group's purchase option (#5266). Unset leaves the template default (ON_DEMAND);
+	// clusters provisioned while that default was SPOT carry an explicit "spot" (pinned by migration),
+	// so their node groups are not replaced by the default's change.
+	if capacity := awsCapacityType(config.Cluster.CapacityType); capacity != "" {
+		tfvars["eks_ng_capacity_type"] = capacity
 	}
 
 	// Generic passthrough: any provider_config key that names a template variable
@@ -446,7 +458,7 @@ var (
 		"dns_hosted_zone", "dns_main_domain", "ecr_names_map", "ecr_repo_settings",
 		"ecr_repository_image_scan_on_push", "ecr_repository_image_tag_mutability",
 		"eks_cluster_admins", "eks_cluster_version", "eks_disk_size", "eks_instance_types",
-		"eks_ng_desired_size", "eks_ng_max_size", "eks_ng_min_size", "enable_karpenter", "environment",
+		"eks_ng_capacity_type", "eks_ng_desired_size", "eks_ng_max_size", "eks_ng_min_size", "enable_karpenter", "environment",
 		"project_name", "provision_ecr", "provision_sqs", "provision_vpc",
 		"rds_backup_retention_period", "rds_config", "rds_iam_auth_enabled", "rds_iam_irsa",
 		"rds_instance_type", "rds_logs_exports", "rds_scaling_config", "redis_allowed_cidr_blocks",
@@ -978,3 +990,15 @@ func buildS3Buckets(buckets []types.ProjectStorageBucketConfig) []map[string]int
 }
 
 var _ CloudProvider = (*awsProvider)(nil)
+
+// awsCapacityType maps the cloud-indifferent node capacity type onto the EKS managed node group's
+// spelling. "" (unset, or a value ValidateConfig has already refused) leaves the template default.
+func awsCapacityType(capacity types.NodeCapacityType) string {
+	switch capacity {
+	case types.NodeCapacityTypeSpot:
+		return "SPOT"
+	case types.NodeCapacityTypeOnDemand:
+		return "ON_DEMAND"
+	}
+	return ""
+}

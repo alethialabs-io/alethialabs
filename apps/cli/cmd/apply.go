@@ -48,7 +48,7 @@ import (
 // its LABEL, and the environment's fields have names rather than positions in a colon tuple.
 
 // docsPlanApplyPage is the page `apply` and `plan` are documented on.
-const docsPlanApplyPage = "apps/docs/content/docs/cli/commands/plan-and-apply.mdx"
+const docsPlanApplyPage = "apps/docs/content/docs/reference/cli/plan-and-apply.mdx"
 
 // applySpec is what `apply` takes from a person, declared once. `plan` shares the manifest half.
 var applySpec = spec.Spec{

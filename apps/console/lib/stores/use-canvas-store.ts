@@ -18,6 +18,10 @@ import {
 	normalizeWafEnabled,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
+import {
+	type ConversionWarning,
+	convertInstanceTypes,
+} from "@/lib/cloud-providers/convert";
 import { normalizeCapacityMode } from "@/lib/cloud-providers/nosql-capacity";
 import {
 	NODE_REGISTRY,
@@ -245,6 +249,57 @@ function withPlacement(
 	provider: CloudProviderSlug | null,
 ): CanvasNodeData {
 	return { ...data, cloud_identity_id: cloudIdentityId, provider };
+}
+
+/** The cloud a node deploys to: its own placement, else the project root's. */
+function effectiveProviderIn(
+	nodes: CanvasNode[],
+	node: CanvasNode,
+): CloudProviderSlug | null {
+	return (
+		node.data.provider ??
+		nodes.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ??
+		null
+	);
+}
+
+/**
+ * Carry each cluster's PINNED machine types onto the cloud it now deploys to (#5269).
+ *
+ * Re-placing a node on another cloud's identity used to rewrite only its placement, so an AWS
+ * cluster moved onto a GCP account still said `t3.large` and failed at plan, inside GCP's API.
+ * The mapping is convert.ts's `convertInstanceTypes` — the same rule the whole-project conversion
+ * applies, not a copy of it — including its fallback to the target's default with a notice.
+ *
+ * Compares each cluster's effective cloud BEFORE and AFTER, rather than looking only at the node
+ * that moved, because repointing the PROJECT root moves every cluster that inherits from it. A
+ * cluster sized by `node_size` (empty instance_types) is left alone: it re-resolves on the new
+ * cloud by itself.
+ */
+function convertInstanceTypesAcrossNodes(
+	before: CanvasNode[],
+	after: CanvasNode[],
+): { nodes: CanvasNode[]; warnings: ConversionWarning[] } {
+	const warnings: ConversionWarning[] = [];
+	const nodes = after.map((n) => {
+		if (n.data.kind !== "cluster") return n;
+		const pinned = n.data.config.instance_types ?? [];
+		if (pinned.length === 0) return n;
+		const old = before.find((b) => b.id === n.id);
+		const from = old ? effectiveProviderIn(before, old) : null;
+		const to = effectiveProviderIn(after, n);
+		if (!from || !to || from === to) return n;
+		const converted = convertInstanceTypes(pinned, from, to);
+		warnings.push(...converted.warnings);
+		return {
+			...n,
+			data: {
+				...n.data,
+				config: { ...n.data.config, instance_types: converted.instanceTypes },
+			},
+		};
+	});
+	return { nodes, warnings };
 }
 
 /**
@@ -524,11 +579,14 @@ interface CanvasStore {
 		position?: { x: number; y: number },
 	) => string;
 	updateNodeConfig: (id: string, patch: Record<string, unknown>) => void;
+	/** Re-place a node on another cloud identity. Returns the notices the move produced — a
+	 * cluster's pinned machine type mapped to the new cloud, or defaulted because it has no
+	 * equivalent there (#5269) — for the caller to SHOW; empty when nothing had to change. */
 	setNodeIdentity: (
 		id: string,
 		cloudIdentityId: string | null,
 		provider: CloudProviderSlug | null,
-	) => void;
+	) => ConversionWarning[];
 	/** Remove nodes. The project root and any `deletable: false` node (out-of-band kinds) are kept;
 	 * commits an undo step. Every delete path — keyboard, danger zone, context menu, AI proposal —
 	 * goes through here, so every delete is undoable. */
@@ -989,18 +1047,20 @@ export const useCanvasStore = create<CanvasStore>()(
 
 			setNodeIdentity: (id, cloudIdentityId, provider) => {
 				get().commit();
-				const next = normalizeCapacityAcrossNodes(
-					normalizeWafAcrossNodes(
-						normalizeKeylessAcrossNodes(
-							get().nodes.map((n) =>
-								n.id === id
-									? { ...n, data: withPlacement(n.data, cloudIdentityId, provider) }
-									: n,
-							),
-						),
+				const prev = get().nodes;
+				const placed = convertInstanceTypesAcrossNodes(
+					prev,
+					prev.map((n) =>
+						n.id === id
+							? { ...n, data: withPlacement(n.data, cloudIdentityId, provider) }
+							: n,
 					),
 				);
+				const next = normalizeCapacityAcrossNodes(
+					normalizeWafAcrossNodes(normalizeKeylessAcrossNodes(placed.nodes)),
+				);
 				set({ nodes: next, edges: deriveEdges(next), dirty: true });
+				return placed.warnings;
 			},
 
 			removeNodes: (ids) => {

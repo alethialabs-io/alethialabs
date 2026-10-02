@@ -22,6 +22,12 @@ Tools live in `lib/ai/tools/` — `compose.ts` (canvas-building) + `read.ts` (re
 external agent (read-only at launch). `assertAudienceCoverage` (tested in
 `tests/lib/ai/tools/registry.test.ts`) fails CI if a new tool ships without an explicit audience.
 
+**Denylist (`registry.ts` `AI_TOOL_DENIED_MODULES` / `AI_TOOL_DENIED_NAME_PARTS`):** code no tool may
+reach, whatever its audience — today the kubeconfig mint (#5281) and the console download built on it (#5285: `app/server/actions/kubeconfig-download.ts`, `components/clusters/kubeconfig-download/`), because a tool that issues a cluster
+credential carries the caller's access somewhere they are not watching. ⛔ `mint_kubeconfig` and every
+other `*kubeconfig*` name. `tests/kubeconfig-mint/ai-tool-denylist.test.ts` walks the agent's import
+graph and fails if any file reaches a denied module.
+
 ## READ — backing action · PDP verb (all ✅ wired, trimmed + secret-free)
 - ✅ `list_services` — registry/`PROVIDERS` (pure) — addable node kinds + per-cloud service names.
 - ✅ `list_service_options(provider)` — `lib/cloud-providers` tables — instance types / k8s / db / cache / regions.

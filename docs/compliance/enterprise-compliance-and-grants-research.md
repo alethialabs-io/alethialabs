@@ -79,11 +79,11 @@ Strong evidence already present in the repo:
   regression tests from audit evidence.
 - `docs/compliance/security-e2e-matrix.md` maps tenant isolation, authorization parity, sandbox hardening,
   secret non-leakage, and fail-closed gates to evidence.
-- `apps/docs/content/docs/standards/security-and-compliance.mdx` states the right external posture: Alethia is
+- `apps/docs/content/docs/reference/standards/security-and-compliance.mdx` states the right external posture: Alethia is
   built for SOC 2 readiness but is not SOC 2 certified.
 - `apps/docs/content/docs/concepts/security.mdx` documents the zero-static-cloud-credential model, OIDC
   issuer, workload identity, state proxy, least-privilege connector roles, and tenant isolation.
-- `ee/README.md` and `apps/docs/content/docs/access-control/sso.mdx` show Enterprise SSO/RBAC/OpenFGA
+- `ee/README.md` and `apps/docs/content/docs/guides/access/sso.mdx` show Enterprise SSO/RBAC/OpenFGA
   direction, including offline license verification for self-managed customers.
 - `docs/ops/incident-response-runbook.md` already contains incident-response, break-glass, DR, trace
   correlation, and audit-ledger concepts.

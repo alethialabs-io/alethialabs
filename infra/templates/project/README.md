@@ -96,9 +96,9 @@ Variables can be passed via the main YAML configuration file of **idp-installer*
 | <a name="input_eks_aws_users_path"></a> [eks\_aws\_users\_path](#input\_eks\_aws\_users\_path) | The organizational path of the user used for building the arn , by default it's just / | `string` | `"/"` | no |
 | <a name="input_eks_cluster_version"></a> [eks\_cluster\_version](#input\_eks\_cluster\_version) | Desired Kubernetes cluster version | `string` | `"1.29"` | no |
 | <a name="input_eks_disk_size"></a> [eks\_disk\_size](#input\_eks\_disk\_size) | Disk size of the root volume attached to the EKS worker nodes | `number` | `50` | no |
-| <a name="input_eks_instance_types"></a> [eks\_instance\_types](#input\_eks\_instance\_types) | EC2 instance types for the EKS worker nodes | `list(string)` | <pre>[<br>  "m5a.4xlarge"<br>]</pre> | no |
+| <a name="input_eks_instance_types"></a> [eks\_instance\_types](#input\_eks\_instance\_types) | EC2 instance types for the EKS worker nodes | `list(string)` | <pre>[<br>  "t3.large"<br>]</pre> | no |
 | <a name="input_eks_kms_key_users"></a> [eks\_kms\_key\_users](#input\_eks\_kms\_key\_users) | A list of IAM ARNs for [key users](https://docs.aws.amazon.com/kms/latest/developerguide/key-policy-default.html#key-policy-default-allow-users) | `list(string)` | `[]` | no |
-| <a name="input_eks_ng_capacity_type"></a> [eks\_ng\_capacity\_type](#input\_eks\_ng\_capacity\_type) | capacity type for node group nodes | `string` | `"SPOT"` | no |
+| <a name="input_eks_ng_capacity_type"></a> [eks\_ng\_capacity\_type](#input\_eks\_ng\_capacity\_type) | Capacity type for the EKS managed node group: ON_DEMAND (default) or SPOT | `string` | `"ON_DEMAND"` | no |
 | <a name="input_eks_ng_desired_size"></a> [eks\_ng\_desired\_size](#input\_eks\_ng\_desired\_size) | Desired number of the worker nodes in the node group | `number` | `2` | no |
 | <a name="input_eks_ng_max_size"></a> [eks\_ng\_max\_size](#input\_eks\_ng\_max\_size) | Maximum number of the worker nodes in the node group | `number` | `5` | no |
 | <a name="input_eks_ng_min_size"></a> [eks\_ng\_min\_size](#input\_eks\_ng\_min\_size) | Minimum number of the worker nodes in the node group | `number` | `2` | no |

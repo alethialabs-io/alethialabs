@@ -24,6 +24,14 @@ vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
 vi.mock("@/lib/authz/tuple-sync", () => ({ mirrorHierarchyEdge: vi.fn() }));
+// The live-tenant READ is mocked (its SQL is exercised against real Postgres in
+// tests/integration/destroy-fabric-tenants.test.ts); the tree ordering and the refusal error stay
+// REAL. Default: no tenants — every pre-#5249 destroy test is about an environment nobody shares.
+vi.mock("@/lib/queries/destroy-tree", async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import("@/lib/queries/destroy-tree")>();
+	return { ...actual, readLiveFabricTenants: vi.fn(async () => []) };
+});
 // SPIED, not replaced. UNSUPPORTED_KINDS_BY_PROVIDER is EMPTY since #3228 — Hetzner was the last
 // cloud refusing a kind, and nosql was its last entry — so `blocked.size > 0` is now false for
 // every real provider and the fail-closed kind gate never executes in production. A gate with no
@@ -40,6 +48,11 @@ import { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { ProjectNameTakenError } from "@/lib/queries/projects";
 import {
+	type DestroyTreeSubject,
+	FabricHasLiveTenantsError,
+	readLiveFabricTenants,
+} from "@/lib/queries/destroy-tree";
+import {
 	addEnvironment,
 	createProject,
 	deleteEnvironment,
@@ -47,6 +60,7 @@ import {
 	destroyProject,
 	duplicateProjectForProvider,
 	getProject,
+	getDestroyTree,
 	getProjectAsFormData,
 	getProjectDuplicateSummary,
 	getProjectEnvironments,
@@ -150,7 +164,9 @@ function mockRunnerLookup(runnerOrgId: string | null = "org-1") {
 }
 
 type Rows = unknown[];
-type RowsResolver = Rows | (() => Rows);
+/** A function resolver receives the query's WHERE (when one was given), so a fixture that must
+ *  answer differently per row asked for — the cascade's per-tenant snapshots — can. */
+type RowsResolver = Rows | ((where?: unknown) => Rows);
 
 /**
  * Builds a table-aware, thenable drizzle-ish tx and wires it through withActorScope.
@@ -181,9 +197,10 @@ function setupDb(cfg: {
 	const resolve = (
 		map: Map<unknown, RowsResolver> | undefined,
 		table: unknown,
+		where?: unknown,
 	): Rows => {
 		const v = map?.get(table);
-		if (typeof v === "function") return v();
+		if (typeof v === "function") return v(where);
 		return v ?? def;
 	};
 
@@ -192,6 +209,7 @@ function setupDb(cfg: {
 		table?: unknown,
 	) {
 		let from = table;
+		let whereArg: unknown;
 		const c: Record<string, unknown> = {};
 		Object.assign(c, {
 			from: (t: unknown) => {
@@ -200,7 +218,10 @@ function setupDb(cfg: {
 			},
 			leftJoin: () => c,
 			innerJoin: () => c,
-			where: () => c,
+			where: (w: unknown) => {
+				whereArg = w;
+				return c;
+			},
 			limit: () => c,
 			orderBy: () => c,
 			onConflictDoNothing: () => c,
@@ -218,9 +239,9 @@ function setupDb(cfg: {
 					op === "insert"
 						? resolve(cfg.insert, from)
 						: op === "select"
-							? resolve(cfg.select, from)
+							? resolve(cfg.select, from, whereArg)
 							: op === "update"
-								? resolve(cfg.update, from)
+								? resolve(cfg.update, from, whereArg)
 								: def,
 				),
 		});
@@ -1358,6 +1379,146 @@ describe("buildConfigSnapshot — DNS switches (#1810)", () => {
 	});
 });
 
+// #5267: node_size was dead config end to end — the canvas edited it, the card showed it, and the
+// snapshot never carried it, so the Go resolver (resolve.go) never saw it. Emitted only when set,
+// like the DNS switches above, so the byte-locked t2_config_snapshot fixtures do not move.
+describe("buildConfigSnapshot — node_size (#5267)", () => {
+	/** Run planProject against a single cluster row and return the frozen `cluster` snapshot. */
+	async function clusterSnapshot(row: Record<string, unknown>) {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([[projectCluster, [row]]]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await planProject("p1");
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
+		return snapshot.cluster as Record<string, unknown>;
+	}
+
+	it("carries node_size beside an empty instance_types, the shape Go resolves", async () => {
+		const cluster = await clusterSnapshot({
+			instance_types: [],
+			node_size: { vcpu: 4, memory_gb: 16 },
+		});
+		expect(cluster.node_size).toEqual({ vcpu: 4, memory_gb: 16 });
+		expect(cluster.instance_types).toEqual([]);
+	});
+
+	it("omits the key when the row has no size, so the snapshot bytes do not move", async () => {
+		const cluster = await clusterSnapshot({
+			instance_types: ["t3.large"],
+			node_size: null,
+		});
+		expect(cluster).not.toHaveProperty("node_size");
+		expect(cluster.instance_types).toEqual(["t3.large"]);
+	});
+});
+
+describe("getProjectAsFormData — node_size round-trip (#5267)", () => {
+	const clusterSelect = (clusterRow: Record<string, unknown>) =>
+		new Map<unknown, RowsResolver>([
+			[
+				projects,
+				[
+					{
+						id: "p1",
+						org_id: "org-1",
+						cloud_identity_id: "ci-1",
+						region: "us-east-1",
+						iac_version: "1.9.5",
+						project_name: "My App",
+						slug: "my-app",
+					},
+				],
+			],
+			[
+				projectEnvironments,
+				[{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }],
+			],
+			[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+			[projectCluster, [clusterRow]],
+		]);
+
+	// REGRESSION: the load dropped node_size, and updateProjectDesign reconciles delete-then-insert —
+	// so the first canvas save after a reload re-inserted the cluster WITHOUT the size the user set.
+	it("carries node_size so a canvas save cannot wipe it", async () => {
+		setupDb({
+			select: clusterSelect({
+				cluster_version: "1.33",
+				instance_types: [],
+				node_size: { vcpu: 2, memory_gb: 8 },
+			}),
+		});
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.cluster.node_size).toEqual({ vcpu: 2, memory_gb: 8 });
+		expect(formData.cluster.instance_types).toEqual([]);
+	});
+
+	it("leaves node_size absent for a row that has none", async () => {
+		setupDb({
+			select: clusterSelect({ cluster_version: "1.33", instance_types: ["t3.large"], node_size: null }),
+		});
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.cluster.node_size).toBeUndefined();
+	});
+});
+
+// #5266: the node pool's capacity type. Carried only when set — Go reads it omitempty and an absent
+// key means the template default — and loaded back, because a canvas save is delete-then-insert and
+// would otherwise drop the `spot` migration 0156 pinned onto running aws clusters.
+describe("capacity_type carriage (#5266)", () => {
+	/** Run planProject against a single cluster row and return the frozen `cluster` snapshot. */
+	async function clusterSnapshot(row: Record<string, unknown>) {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(new Map<unknown, RowsResolver>([[projectCluster, [row]]])),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await planProject("p1");
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		return snapshot.cluster as Record<string, unknown>;
+	}
+
+	it("carries a set capacity type onto the snapshot", async () => {
+		const cluster = await clusterSnapshot({ instance_types: ["m5a.4xlarge"], capacity_type: "spot" });
+		expect(cluster.capacity_type).toBe("spot");
+	});
+
+	it("omits the key when unset, so the snapshot bytes do not move", async () => {
+		const cluster = await clusterSnapshot({ instance_types: ["t3.large"], capacity_type: null });
+		expect(cluster).not.toHaveProperty("capacity_type");
+	});
+
+	it("loads it back into the canvas form, so a save cannot wipe it", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[
+					projects,
+					[
+						{
+							id: "p1",
+							org_id: "org-1",
+							cloud_identity_id: "ci-1",
+							region: "us-east-1",
+							iac_version: "1.9.5",
+							project_name: "My App",
+							slug: "my-app",
+						},
+					],
+				],
+				[projectEnvironments, [{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }]],
+				[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+				[projectCluster, [{ cluster_version: "1.33", instance_types: ["m5a.4xlarge"], capacity_type: "spot" }]],
+			]),
+		});
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.cluster.capacity_type).toBe("spot");
+	});
+});
+
 // #2568: the cluster cloud's own DNS may refuse the TLD outright — hetzner answers a `.io` zone
 // create with "unsupported tld" (422). #2570 added the gate; these are the two conditions it has
 // to get right, neither of which had a test.
@@ -2208,7 +2369,10 @@ describe("destroyProject — BYO IaC source", () => {
 		});
 
 		const r = await destroyProject("p1");
-		expect(r).toEqual({ jobId: "job-9" });
+		expect(r).toEqual({
+			jobId: "job-9",
+			jobs: [{ jobId: "job-9", environmentId: "env-1", name: "production" }],
+		});
 		const jobVals = valuesFor(valuesSpy, jobs);
 		expect(jobVals).toMatchObject({ job_type: "DESTROY", status: "QUEUED" });
 		// Destroy tears down the module that CREATED the state, not the failed fresh scan.
@@ -2239,6 +2403,338 @@ describe("destroyProject — BYO IaC source", () => {
 		});
 		await expect(destroyProject("p1")).rejects.toThrow(/no deployed IaC state/);
 		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+});
+
+// ============================================================
+// destroyProject — environments placed on the target's Fabric (#5249)
+// ============================================================
+
+describe("destroyProject — a Fabric owner with live tenants (#5249)", () => {
+	// prod is `dedicated` and owns fab-1; dev-1 (namespace) and staging (vcluster) are placed on it.
+	const envRow = (
+		id: string,
+		name: string,
+		placement: "dedicated" | "namespace" | "vcluster",
+		status: string,
+	) => ({
+		id,
+		project_id: "p1",
+		name,
+		stage: "production",
+		status,
+		is_default: id === "env-prod",
+		region: null,
+		fabric_id: "fab-1",
+		placement_mode: placement,
+		namespace: placement === "dedicated" ? null : name,
+	});
+	const prod = envRow("env-prod", "prod", "dedicated", "ACTIVE");
+	const dev1 = envRow("env-dev1", "dev-1", "namespace", "ACTIVE");
+	const staging = envRow("env-staging", "staging", "vcluster", "FAILED");
+	const ENVS = [prod, dev1, staging];
+
+	const subject = (r: ReturnType<typeof envRow>): DestroyTreeSubject => ({
+		id: r.id,
+		name: r.name,
+		project_id: r.project_id,
+		fabric_id: r.fabric_id,
+		placement_mode: r.placement_mode,
+		status: r.status as DestroyTreeSubject["status"],
+	});
+
+	/**
+	 * projectEnvironments answers by the id the query ASKED for (the mock ignores WHERE otherwise), so
+	 * each per-tenant snapshot really resolves that tenant — falling back to the default env (prod)
+	 * for the "no id given" lookup.
+	 */
+	const envsByWhere = (where?: unknown): unknown[] => {
+		const params =
+			where instanceof SQL ? new PgDialect().sqlToQuery(where).params : [];
+		const hit = ENVS.find((e) => params.includes(e.id));
+		return [hit ?? prod];
+	};
+
+	/** A select map for a destroy of the prod tree; jobs ids come out in insert order. */
+	function setupTree() {
+		let n = 0;
+		return setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([[projectEnvironments, envsByWhere]]),
+			),
+			insert: new Map<unknown, RowsResolver>([
+				[jobs, () => [{ id: `job-${++n}` }]],
+			]),
+		});
+	}
+
+	afterEach(() => {
+		vi.mocked(readLiveFabricTenants).mockImplementation(async () => []);
+	});
+
+	// ── THE DEFECT ──────────────────────────────────────────────────────────────────────────────────
+	it("REFUSES to destroy a dedicated env whose Fabric still hosts live tenants, naming each one", async () => {
+		vi.mocked(readLiveFabricTenants).mockImplementation(async () => [
+			subject(dev1),
+			subject(staging),
+		]);
+		const { insertSpy, executeSpy } = setupTree();
+
+		const err = await destroyProject("p1", "env-prod").then(
+			() => null,
+			(e: unknown) => e,
+		);
+
+		expect(err).toBeInstanceOf(FabricHasLiveTenantsError);
+		const msg = err instanceof Error ? err.message : "";
+		expect(msg).toContain('"prod"');
+		expect(msg).toContain("dev-1 (namespace, ACTIVE)");
+		expect(msg).toContain("staging (vcluster, FAILED)");
+		expect(msg).toMatch(/destroy them first/i);
+		expect(msg).toMatch(/cascade/);
+		// Nothing was queued, no env moved, nothing audited, nobody woken.
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(executeSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
+		// The tenants were asked about the env that is actually being destroyed.
+		expect(vi.mocked(readLiveFabricTenants).mock.calls[0]?.[1]).toMatchObject({
+			id: "env-prod",
+			placement_mode: "dedicated",
+			fabric_id: "fab-1",
+		});
+	});
+
+	it("ALLOWS the destroy when no tenant is live — DRAFT and DESTROYED tenants are not read as live", async () => {
+		// readLiveFabricTenants is what excludes DRAFT/DESTROYED (pinned against real Postgres in the
+		// integration suite); here it answers "none", and the plain single-job path runs.
+		const { valuesSpy } = setupTree();
+		const r = await destroyProject("p1", "env-prod");
+		expect(r).toEqual({
+			jobId: "job-1",
+			jobs: [{ jobId: "job-1", environmentId: "env-prod", name: "prod" }],
+		});
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({
+			job_type: "DESTROY",
+			environment_id: "env-prod",
+		});
+	});
+
+	it("never blocks a NON-dedicated target — the real read answers no tenants for a namespace env", async () => {
+		const actual = await vi.importActual<typeof import("@/lib/queries/destroy-tree")>(
+			"@/lib/queries/destroy-tree",
+		);
+		// Use the REAL read: for a namespace/vcluster target it must return [] without even querying,
+		// however many environments share the Fabric.
+		vi.mocked(readLiveFabricTenants).mockImplementation(actual.readLiveFabricTenants);
+		const { valuesSpy } = setupTree();
+		const r = await destroyProject("p1", "env-dev1");
+		expect(r.jobs).toEqual([{ jobId: "job-1", environmentId: "env-dev1", name: "dev-1" }]);
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ environment_id: "env-dev1" });
+	});
+
+	// ── CASCADE ─────────────────────────────────────────────────────────────────────────────────────
+	it("with cascade, queues N+1 DESTROY jobs in ONE transaction — tenants first, owner last — each audited", async () => {
+		vi.mocked(readLiveFabricTenants).mockImplementation(async () => [
+			subject(staging),
+			subject(dev1),
+		]);
+		const { tx, valuesSpy, executeSpy } = setupTree();
+		// Record WHICH withScope call each write lands in, to prove the tree is one transaction.
+		const writeScopes: number[] = [];
+		let scopeN = 0;
+		vi.mocked(withScope).mockImplementation(((
+			_scope: unknown,
+			cb: (t: unknown) => unknown,
+		) => {
+			const mine = ++scopeN;
+			return cb({
+				...tx,
+				insert: (t: unknown) => {
+					writeScopes.push(mine);
+					return tx.insert(t);
+				},
+				execute: (q: unknown) => {
+					writeScopes.push(mine);
+					return tx.execute(q);
+				},
+			});
+		}) as never);
+
+		const r = await destroyProject("p1", "env-prod", null, { cascade: true });
+
+		// The owner is the RETURNED job (what a pre-cascade caller waits on), and last in the tree.
+		expect(r.jobId).toBe("job-3");
+		expect(r.jobs).toEqual([
+			{ jobId: "job-1", environmentId: "env-staging", name: "staging" },
+			{ jobId: "job-2", environmentId: "env-dev1", name: "dev-1" },
+			{ jobId: "job-3", environmentId: "env-prod", name: "prod" },
+		]);
+
+		const jobRows = valuesSpy.mock.calls
+			.filter((c) => c[0] === jobs)
+			.map((c) => c[1] as Record<string, unknown>);
+		expect(jobRows.map((j) => j.environment_id)).toEqual([
+			"env-staging",
+			"env-dev1",
+			"env-prod",
+		]);
+		for (const j of jobRows) expect(j).toMatchObject({ job_type: "DESTROY", status: "QUEUED" });
+
+		// Every queued env moved through the CAS, and every job has an audit row naming the cascade.
+		expect(executeSpy).toHaveBeenCalledTimes(3);
+		const audits = valuesSpy.mock.calls
+			.filter((c) => c[0] === auditLog)
+			.map((c) => c[1] as Record<string, unknown>);
+		expect(audits).toHaveLength(3);
+		for (const a of audits) {
+			expect(a).toMatchObject({
+				action: "DESTROYED",
+				changes: {
+					cascade_of: "env-prod",
+					cascade_tenants: ["env-staging", "env-dev1"],
+				},
+			});
+		}
+		// ONE transaction: all 3 jobs, 3 CAS moves and 3 audit rows were written inside the same
+		// withScope call. And ONE scaler wake.
+		expect(writeScopes).toHaveLength(9);
+		expect(new Set(writeScopes).size).toBe(1);
+		expect(notifyScaler).toHaveBeenCalledTimes(1);
+	});
+
+	it("with cascade, rolls the WHOLE tree back when one env refuses its CAS — never half a cascade", async () => {
+		vi.mocked(readLiveFabricTenants).mockImplementation(async () => [subject(dev1)]);
+		let n = 0;
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([[projectEnvironments, envsByWhere]]),
+			),
+			insert: new Map<unknown, RowsResolver>([[jobs, () => [{ id: `job-${++n}` }]]]),
+			envCasUpdated: false,
+		});
+		await expect(
+			destroyProject("p1", "env-prod", null, { cascade: true }),
+		).rejects.toThrow(/not in a valid state/);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("with cascade, does not queue a second DESTROY for a tenant whose destroy is already in flight", async () => {
+		vi.mocked(readLiveFabricTenants).mockImplementation(async () => [
+			subject(dev1),
+			subject(staging),
+		]);
+		let n = 0;
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[projectEnvironments, envsByWhere],
+					// staging already has a DESTROY queued/running — the owner will wait for it at claim.
+					[jobs, [{ environment_id: "env-staging" }]],
+				]),
+			),
+			insert: new Map<unknown, RowsResolver>([[jobs, () => [{ id: `job-${++n}` }]]]),
+		});
+		const r = await destroyProject("p1", "env-prod", null, { cascade: true });
+		expect(r.jobs.map((j) => j.name)).toEqual(["dev-1", "prod"]);
+		const queuedEnvs = valuesSpy.mock.calls
+			.filter((c) => c[0] === jobs)
+			.map((c) => (c[1] as Record<string, unknown>).environment_id);
+		expect(queuedEnvs).toEqual(["env-dev1", "env-prod"]);
+	});
+
+	it("authorizes `destroy` on the project before reading anything", async () => {
+		vi.mocked(authorize).mockRejectedValueOnce(new Error("forbidden"));
+		setupTree();
+		await expect(
+			destroyProject("p1", "env-prod", null, { cascade: true }),
+		).rejects.toThrow("forbidden");
+		expect(authorize).toHaveBeenCalledWith("destroy", { type: "project", id: "p1" });
+		expect(readLiveFabricTenants).not.toHaveBeenCalled();
+	});
+});
+
+describe("getDestroyTree (#5249)", () => {
+	afterEach(() => {
+		vi.mocked(readLiveFabricTenants).mockImplementation(async () => []);
+	});
+
+	it("returns the tenants first and the owner last, with the owner waiting on each tenant by name and status", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectEnvironments,
+						[
+							{
+								id: "env-prod",
+								project_id: "p1",
+								name: "prod",
+								status: "QUEUED",
+								fabric_id: "fab-1",
+								placement_mode: "dedicated",
+							},
+						],
+					],
+				]),
+			),
+		});
+		const t = (id: string, name: string, placement: "namespace" | "vcluster", status: "ACTIVE" | "FAILED") =>
+			({ id, name, project_id: "p1", fabric_id: "fab-1", placement_mode: placement, status }) satisfies DestroyTreeSubject;
+		vi.mocked(readLiveFabricTenants).mockImplementation(async () => [
+			t("env-staging", "staging", "vcluster", "ACTIVE"),
+			t("env-dev1", "dev-1", "namespace", "FAILED"),
+		]);
+
+		const { tree } = await getDestroyTree("p1", "env-prod");
+
+		expect(authorize).toHaveBeenCalledWith("view", { type: "project", id: "p1" });
+		expect(tree.map((n) => n.name)).toEqual(["dev-1", "staging", "prod"]);
+		expect(tree[2]).toEqual({
+			environment_id: "env-prod",
+			name: "prod",
+			placement_mode: "dedicated",
+			status: "QUEUED",
+			owns_fabric: true,
+			// A FAILED tenant is named here — the owner's QUEUED destroy is waiting on it, visibly.
+			waiting_on: [
+				{ name: "dev-1", status: "FAILED" },
+				{ name: "staging", status: "ACTIVE" },
+			],
+		});
+		expect(tree[0]).toMatchObject({ owns_fabric: false, waiting_on: [] });
+	});
+
+	it("a non-dedicated environment's tree is itself alone, owning nothing", async () => {
+		setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([
+					[
+						projectEnvironments,
+						[
+							{
+								id: "env-dev1",
+								project_id: "p1",
+								name: "dev-1",
+								status: "ACTIVE",
+								fabric_id: "fab-1",
+								placement_mode: "namespace",
+							},
+						],
+					],
+				]),
+			),
+		});
+		const { tree } = await getDestroyTree("p1", "env-dev1");
+		expect(tree).toEqual([
+			{
+				environment_id: "env-dev1",
+				name: "dev-1",
+				placement_mode: "namespace",
+				status: "ACTIVE",
+				owns_fabric: false,
+				waiting_on: [],
+			},
+		]);
 	});
 });
 

@@ -75,7 +75,7 @@ locals {
   # EC2 instance types that are almost never intended for an automated/e2e provision and cost real
   # money per hour: bare metal (`.metal`), the largest sizes (>= .16xlarge — i.e. 16/18/24/32/48
   # xlarge), and high-end GPU/accelerator families (p2-p9, dl*, trn*, inf*). Matched
-  # case-insensitively via RE2. The default `m5a.4xlarge` and the example `m5a.large` do NOT match.
+  # case-insensitively via RE2. The default `t3.large`, `m5a.4xlarge` and the example `m5a.large` do NOT match.
   cost_guard_expensive_instance_regex = "(?i)(\\.metal|\\.(1[6-9]|[2-9][0-9])xlarge|^(p[2-9]|dl[0-9]|trn[0-9]|inf[0-9]))"
 
   cost_guard_flagged_instance_types = [

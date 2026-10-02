@@ -1,0 +1,77 @@
+---
+title: Connectors Overview
+description: Connect cloud providers and Git accounts to enable infrastructure provisioning.
+---
+
+# Connectors
+
+The **connector** catalog is the registry of provider *types* you can connect. Each account you actually connect becomes a **cloud identity** (`cloud_identities`) — the credential anchor a project provisions against. The catalog spans the **federated clouds** (AWS, GCP, Azure, Alibaba) and the **token clouds** (Hetzner, DigitalOcean, Civo), plus Git providers (GitHub, GitLab, Bitbucket) and **pluggable per-category providers** (DNS, secrets, registry, chart repositories, observability). At least one cloud identity and one Git provider must be connected before provisioning; pluggable providers are optional — they let a project use a tool you already run instead of the cloud-native default.
+
+## How It Works
+
+Connectors are displayed as cards organized by category:
+
+| Category | Providers | Auth |
+|----------|-----------|------|
+| **Cloud Providers** | AWS, GCP, Azure, Alibaba | keyless federation off the Alethia OIDC issuer (no stored keys) |
+| **Token Clouds** | Hetzner, DigitalOcean, Civo | the customer's own API token (encrypted at rest) |
+| **Git Providers** | GitHub, GitLab, Bitbucket | OAuth |
+| **DNS** | Cloudflare | API key |
+| **Secrets** | HashiCorp Vault | API key |
+| **Registry** | Docker Hub | API key |
+| **Chart repositories** | GitHub Container Registry, Docker Hub, GitLab, Scaleway, generic OCI, HTTPS | API key |
+| **Observability** | Datadog, Grafana Cloud | API key |
+
+Each card shows:
+- Provider icon and name
+- Connection status — a grayscale status badge (dot + label, no color): **Connected**, **Needs Reconnection**, or **Not Connected**
+- Connected account identifier (AWS Account ID, GCP Project, GitHub username)
+- Action button (Connect / Disconnect / Reconnect)
+
+## Connection Status
+
+| Status | Meaning |
+|--------|---------|
+| **Connected** | Credentials valid and verified |
+| **Needs Reconnection** | Git token expired, automatic refresh failed |
+| **Not Connected** | No credentials on file |
+| **Coming Soon** | Provider supported but not yet implemented |
+
+## Cloud Provider Connections
+
+The four **federated clouds** use the platform's [zero-credential model](/concepts/security) — the customer's
+role/pool/provider trusts the Alethia OIDC issuer directly, and Alethia federates in with a short-lived minted
+assertion. **No static keys are stored.**
+
+<Cards>
+  <Card title="AWS" href="/guides/connectors/aws">Keyless IAM role via an IAM OIDC provider</Card>
+  <Card title="GCP" href="/guides/connectors/gcp">Workload Identity Federation — enter Project ID + Number, config assembled for you</Card>
+  <Card title="Azure" href="/guides/connectors/azure">Federated credential on your own managed identity — no platform Entra app</Card>
+  <Card title="Alibaba" href="/guides/connectors/alibaba">RAM AssumeRoleWithOIDC (account-free)</Card>
+</Cards>
+
+The **token clouds** (Hetzner, DigitalOcean, Civo) instead use the customer's own API token — there is no
+account to federate into. The token is encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`). Only the console holds that key: it
+decrypts the token when a runner claims a job and hands it to that runner, so no runner can read a
+stored credential.
+
+After connecting, Alethia verifies the credentials **instantly, server-side** (an auth + provisioning-permission probe — no runner, no job) and marks the cloud identity `Connected`, `Degraded`, or `Disconnected`. Existing resources (VPCs, subnets, DNS zones) are discovered + kept fresh by the server-side, event-driven asset inventory. See [Connection health & inventory](/guides/connectors/health-and-inventory).
+
+## Git Provider Connections
+
+Git connections use standard OAuth. See [Git Providers](/guides/connectors/git-providers) for details.
+
+## Pluggable Connectors
+
+DNS, secrets, registry, chart repository, and observability providers authenticate with an **API key / token**. Secret fields are encrypted at rest (`ALETHIA_CRED_ENCRYPTION_KEY`). The console decrypts them only to hand them to the runner running the job that needs them, and they are never stored in a Project snapshot. After connecting, a verification ping confirms the credential works.
+
+<Cards>
+  <Card title="Pluggable Connectors" href="/guides/connectors/pluggable">Cloudflare · Vault · Docker Hub · Datadog · Grafana Cloud</Card>
+  <Card title="Chart Repositories" href="/guides/connectors/chart-repositories">Private Helm and OCI chart sources</Card>
+</Cards>
+
+## Disconnecting
+
+- **Cloud providers**: Removes the `cloud_identities` record. Existing projects referencing that identity can no longer run jobs.
+- **Git providers**: Removes the Better Auth `account` record and revokes the OAuth grant.
+- **Pluggable connectors**: Removes the `connector_credentials` record. Projects referencing that provider fall back to failing validation until reconnected.

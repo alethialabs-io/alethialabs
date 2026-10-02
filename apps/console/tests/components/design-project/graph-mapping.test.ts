@@ -245,6 +245,26 @@ describe("formToGraph / graphToForm round-trip", () => {
 // delete-then-insert the save path runs (updateProjectDesign → writeComponents). Anything
 // formToGraph declines to put on the graph is gone from the next save with no error, which is
 // exactly the silent-wipe class this issue exists to close.
+// #5251 moved the catalog defaults (aws t3.medium → t3.large, hetzner cax11 → cpx22). The default is
+// stamped only on a NEW node (node-registry defaultData); an EXISTING cluster reaches the canvas via
+// getProjectAsFormData and is saved back through writeComponents, so its persisted shape must
+// survive that load → save unchanged — including the old default and an empty list (which means
+// "template default" and must not be filled on save, or a running cluster's node pool is replaced).
+describe("an existing cluster keeps its instance types across a canvas save (#5251)", () => {
+	it.each([
+		["the old aws default", ["t3.medium"]],
+		["the old hetzner default", ["cax11"]],
+		["an empty list", []],
+	])("keeps %s", (_label, instance_types) => {
+		const form = sampleForm();
+		form.cluster = { ...form.cluster, instance_types };
+		const { nodes } = formToGraph(form, IDENTITIES);
+		const parsed = projectFormSchema.safeParse(graphToForm(nodes));
+		if (!parsed.success) throw parsed.error;
+		expect(parsed.data.cluster.instance_types).toEqual(instance_types);
+	});
+});
+
 describe("repositories.apps_path survives the canvas round-trip (#1767)", () => {
 	const roundTrip = (repositories: ProjectFormData["repositories"]) => {
 		const { nodes } = formToGraph({ ...sampleForm(), repositories }, IDENTITIES);

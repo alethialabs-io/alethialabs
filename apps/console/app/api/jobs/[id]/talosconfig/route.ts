@@ -16,6 +16,10 @@
 // talosconfig). GET also admits the DESTROY of a namespace/vcluster placement: its teardown reaches the
 // Fabric exactly as its deploy did, and without this read no placement on Hetzner could be deregistered
 // (#845, run 36646962419). A dedicated DESTROY runs tofu against its own state and is refused.
+// GET also admits a MINT_KUBECONFIG job (#5283) — the short-lived kubeconfig mint on Hetzner mints a
+// Talos client certificate from this talosconfig on the runner, in memory, and returns only a sealed
+// ciphertext over its own channel. Only for a DEDICATED environment: a namespace/vcluster environment's
+// cluster is the shared Fabric, whose admin credential is not one tenant's to mint from.
 
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -87,7 +91,8 @@ async function gateHetznerJob(
 		};
 	}
 	const isPlacementDestroy = job.job_type === "DESTROY" && access === "read";
-	if (job.job_type !== "DEPLOY" && !isPlacementDestroy) {
+	const isDedicatedMint = job.job_type === "MINT_KUBECONFIG" && access === "read";
+	if (job.job_type !== "DEPLOY" && !isPlacementDestroy && !isDedicatedMint) {
 		return {
 			ok: false,
 			res: NextResponse.json({ error: "Job kind has no talosconfig" }, { status: 403 }),
@@ -127,6 +132,14 @@ async function gateHetznerJob(
 	}
 	// A DESTROY reads only as a placement: a dedicated teardown never needs the Fabric's admin credential.
 	if (isPlacementDestroy && !TALOS_PLACEMENT_MODES.has(env.placement_mode)) {
+		return {
+			ok: false,
+			res: NextResponse.json({ error: "Job kind has no talosconfig" }, { status: 403 }),
+		};
+	}
+	// A mint reads only for the environment that OWNS the Fabric's cluster (dedicated): minting from a
+	// shared Fabric's talosconfig would hand one placement the whole cluster.
+	if (isDedicatedMint && env.placement_mode !== "dedicated") {
 		return {
 			ok: false,
 			res: NextResponse.json({ error: "Job kind has no talosconfig" }, { status: 403 }),

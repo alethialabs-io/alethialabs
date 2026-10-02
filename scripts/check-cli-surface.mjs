@@ -114,7 +114,7 @@
 // ── THE FOUR COUNTERS ────────────────────────────────────────────────────────────────────────
 //
 // 1 · HANDOFFS. `<placeholder>` tokens a reader must copy from one command's output into the next,
-//     in the golden-path docs (`apps/docs/content/docs/cli/**/*.mdx`). An example carrying
+//     in the golden-path docs (`apps/docs/content/docs/{reference/cli,get-started}/**/*.mdx`). An example carrying
 //     `<job-id>` is not an example — it is an instruction to go and find a value somewhere else,
 //     which is the ergonomic failure the CLI programme exists to remove.
 //
@@ -398,8 +398,13 @@ function placeholderToken(token) {
 	return token.startsWith("[") && token.endsWith("]") && token.length > 2;
 }
 
-/** Where the golden-path docs live. Every `.mdx` under it is in the census. */
-const CLI_DOCS_DIR = "apps/docs/content/docs/cli";
+/**
+ * Where the golden-path docs live. Every `.mdx` under each root is in the census. Two roots since
+ * the docs restructure (#5240): the CLI reference, and Get started, which holds the install and
+ * quick-start pages a new user copies from first. The first root is the reference.
+ */
+const CLI_DOCS_DIRS = ["apps/docs/content/docs/reference/cli", "apps/docs/content/docs/get-started"];
+const CLI_DOCS_DIR = CLI_DOCS_DIRS[0];
 
 /**
  * Counter 1. `<placeholder>` tokens across every golden-path docs page.
@@ -411,17 +416,17 @@ function censusHandoffs(io, pagesFloor) {
 	const name = "handoffs";
 	const method =
 		`placeholder tokens (a balanced \`<x>\`, a bracketed VALUE \`[x]\`, \`…\`/\`...\`) in shell-fenced ` +
-		`\`alethia …\` examples across every .mdx under ${CLI_DOCS_DIR}. The COLLECTION rule is restated ` +
+		`\`alethia …\` examples across every .mdx under ${CLI_DOCS_DIRS.join(" and ")}. The COLLECTION rule is restated ` +
 		`from apps/cli/cmd/hyg_cli_docs_test.go unchanged; the TOKEN rule is that file's ` +
 		`docsPlaceholderToken NARROWED by #4513 — a shell redirect (\`> jobs.csv\`) and bracketed flag ` +
 		`notation (\`[--wait]\`) are reported beside the total, not in it`;
 
-	const pages = io.list(CLI_DOCS_DIR, ".mdx");
+	const pages = CLI_DOCS_DIRS.flatMap((dir) => io.list(dir, ".mdx"));
 	if (pages.length === 0) {
 		return refused(
 			name,
 			method,
-			`parsed ZERO docs pages under ${CLI_DOCS_DIR}. The directory is gone, was renamed, or the ` +
+			`parsed ZERO docs pages under ${CLI_DOCS_DIRS.join(" or ")}. The directory is gone, was renamed, or the ` +
 				`.mdx suffix changed — a handoff count of 0 from an unread corpus is the failure this ` +
 				`counter exists to not report.`,
 		);
@@ -910,7 +915,7 @@ function reaches(seedBody, funcs, markers) {
 /**
  * Command paths in the docs command tree — the CORROBORATING derivation for counter 2.
  *
- * `apps/docs/content/docs/cli/commands/index.mdx` draws the tree with box-drawing characters, and
+ * `apps/docs/content/docs/reference/cli/index.mdx` draws the tree with box-drawing characters, and
  * it is written by hand: it is independent of the Go source in exactly the way a second method has
  * to be. It will not agree exactly (it omits hidden commands and lags a new one), so its number is
  * REPORTED beside the parse's and never substituted for it.
@@ -1085,7 +1090,7 @@ function censusFormCoverage(io, filesFloor) {
 	}
 
 	const pct = ((interactive / takingInput) * 100).toFixed(1);
-	const treePage = `${CLI_DOCS_DIR}/commands/index.mdx`;
+	const treePage = `${CLI_DOCS_DIR}/index.mdx`;
 	const docsCount = io.exists(treePage) ? docsTreeCommandCount(io.read(treePage)) : 0;
 	// The control that found the ops group. A literal with no parent is either a deliberately
 	// unregistered command or an edge this parser cannot see, and the two are indistinguishable

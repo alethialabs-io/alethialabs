@@ -1,0 +1,101 @@
+---
+title: Real-time log streaming
+description: How the runner streams OpenTofu output to the browser in real-time.
+---
+
+# Real-time log streaming
+
+The runner streams all `tofu` output back to Alethia in real time. Users see `tofu plan` and
+`tofu apply` output in the browser as it happens.
+
+## Architecture
+
+<Mermaid chart={`
+flowchart TD
+  Tofu[tofu process] --> Out[JobLogger STDOUT]
+  Tofu --> Err[JobLogger STDERR]
+  Out --> Buf[Buffer]
+  Err --> Buf
+  Buf -->|POST /api/jobs/id/logs| Tbl[(job_logs)]
+  Tbl -->|NOTIFY on INSERT| Listen[Console LISTEN]
+  Listen -->|SSE stream| Browser[Browser EventSource]
+`} />
+
+## JobLogger
+
+The `JobLogger` is a Go struct that wraps an `io.Writer`. It buffers output and flushes to the
+Alethia API periodically.
+
+**Two loggers per job:**
+- **STDOUT logger** — captures normal `tofu` output (plan details, resource progress)
+- **STDERR logger** — captures errors and warnings
+
+**Buffer flush triggers:**
+- Within ~100ms of a write (a coalescing wake), backed by a **1-second** ticker as a backstop
+- When the buffer exceeds **10 KB** (size-based flush)
+- On job completion (final flush)
+
+## API Delivery
+
+Each flush sends a batch POST:
+
+```
+POST /api/jobs/{job_id}/logs
+Content-Type: application/json
+
+{
+  "log_chunk": "Creating VPC...\nVPC created: vpc-12345\n",
+  "stream_type": "STDOUT"
+}
+```
+
+The Alethia API inserts the chunk into `job_logs` (via the `insert_job_log` RPC):
+
+```sql
+INSERT INTO job_logs (job_id, log_chunk, stream_type, traceparent)
+VALUES ($1, $2, $3, $4);
+```
+
+## LISTEN/NOTIFY → SSE
+
+The `insert_job_log` RPC fires a Postgres `NOTIFY` on the `job_logs` channel carrying only
+`{jobId, logId}` (an 8 KB payload cap rules out the chunk itself). The console relays it to the
+browser over an SSE stream scoped to the `job_id` — the shared mechanism is described in
+[Real-time updates](/concepts/realtime). On each notification the stream route fetches the rows newer
+than the last id it sent and writes each one as an SSE message whose `id:` is the log row id. The
+browser consumes the stream with an `EventSource` (`hooks/use-job-log-stream.ts`):
+
+```typescript
+const events = new EventSource(`/api/stream/jobs/${jobId}`);
+
+events.onmessage = (event) => {
+  const row = JSON.parse(event.data); // { id, log_chunk, stream_type, created_at }
+  appendLog(row);
+};
+```
+
+A dropped connection reconnects on its own and resumes from the last row through `Last-Event-ID`,
+so no chunk is lost or shown twice.
+
+## Log display
+
+The job detail page renders logs in a terminal-like viewer, one row per chunk with a line number and
+a timestamp. **STDERR** chunks render in the destructive (error) color; STDOUT and SYSTEM chunks
+render in the muted text color. The viewer scrolls to the bottom as new chunks arrive.
+
+## Local Echo
+
+All log output is also written to the container's stdout — journald/`docker logs` on a managed
+Hetzner fleet VM, CloudWatch Logs for a self-deployed runner on ECS Fargate, or the local terminal
+for a registered runner. This provides a secondary log source for debugging.
+
+## Timing
+
+| Event | Latency |
+|-------|---------|
+| tofu writes to stdout | 0ms (piped to JobLogger) |
+| JobLogger buffer flush | ~100ms (coalescing wake; 1s backstop ticker) |
+| API POST to Alethia | ~50ms (network) |
+| Database INSERT | ~5ms |
+| NOTIFY → SSE delivery | ~50ms (server-sent event) |
+| **Total: tofu output → browser** | **~200ms** |

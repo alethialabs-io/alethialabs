@@ -83,8 +83,44 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
 	compare_providers: "both",
 };
 
+/**
+ * The AI tool-scope DENYLIST: code no agent tool — in-app, external or support — may ever reach.
+ *
+ * Audience decides who may SEE a tool. This decides what no tool may DO at all, whatever its
+ * audience and whatever PDP verb it checks: each entry issues a credential that carries the caller's
+ * access somewhere they might not be watching, so an agent must never be the thing that asks for it
+ * (#5250 §5 "ReBAC": "No AI tool may call the mint"). A person runs `alethia cluster kubeconfig`;
+ * a model does not.
+ *
+ * Paths are console-root-relative prefixes — a directory (ending in `/`) or one file. `tests/kubeconfig-mint/ai-tool-denylist.test.ts` walks
+ * the import graph of every agent entry point (lib/ai, lib/agent, the agent and MCP routes) and fails
+ * if any file reaches one of them, and fails if one of them stops existing — a prefix that matches
+ * nothing denies nothing. Add the module here BEFORE adding the capability anywhere else.
+ */
+export const AI_TOOL_DENIED_MODULES: readonly string[] = [
+	// Kubeconfig mint (#5281): the request/poll/runner logic and the routes that expose it.
+	"lib/kubeconfig-mint/",
+	"app/api/cli/clusters/[id]/kubeconfig/",
+	"app/api/jobs/[id]/kubeconfig-mint/",
+	// The console's download (#5285): the server actions that request and collect a mint for the
+	// session, and the browser code that opens the seal and saves the file.
+	"app/server/actions/kubeconfig-download.ts",
+	"components/clusters/kubeconfig-download/",
+];
+
+/** Tool names no tool may be registered under, for the same reason (#5281). Matched as a substring,
+ *  case-insensitively: `get_kubeconfig`, `mintKubeconfig` and `cluster_kubeconfig` are all refused. */
+export const AI_TOOL_DENIED_NAME_PARTS: readonly string[] = ["kubeconfig"];
+
+/** Whether `name` is a tool name the denylist refuses. */
+export function isDeniedToolName(name: string): boolean {
+	const lower = name.toLowerCase();
+	return AI_TOOL_DENIED_NAME_PARTS.some((part) => lower.includes(part));
+}
+
 /** Whether a tool is part of the external (read-only) MCP projection. */
 export function isExternalTool(name: string): boolean {
+	if (isDeniedToolName(name)) return false;
 	const a = TOOL_AUDIENCE[name];
 	return a === "external" || a === "both";
 }
@@ -111,6 +147,13 @@ export function externalToolsOnly(tools: ToolSet): ToolSet {
  * a newly added tool cannot ship without an explicit exposure decision.
  */
 export function assertAudienceCoverage(toolNames: string[]): void {
+	const denied = toolNames.filter(isDeniedToolName);
+	if (denied.length > 0) {
+		throw new Error(
+			`tool(s) on the AI tool-scope denylist: ${denied.join(", ")}. ` +
+				`A tool may not issue a cluster credential (lib/ai/tools/registry.ts AI_TOOL_DENIED_NAME_PARTS).`,
+		);
+	}
 	const missing = toolNames.filter((n) => !(n in TOOL_AUDIENCE));
 	if (missing.length > 0) {
 		throw new Error(

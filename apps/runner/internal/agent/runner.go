@@ -529,6 +529,10 @@ func (w *Runner) executeJob(ctx context.Context, claim *ClaimResponse) (retErr e
 		// W2 image build & push — schedules kaniko Jobs in the customer's own cluster and
 		// reports the per-service digest map on execution_metadata.build_result. See build.go.
 		execErr = w.executeBuild(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
+	case types.JobTypeMintKubeconfig:
+		// Short-lived kubeconfig mint (#5250, #5283) — see kubeconfig_mint.go. The result goes back
+		// over its own one-shot channel, sealed to the client's key; never execution_metadata.
+		execErr = w.executeMintKubeconfig(ctx, job, provider, claim.CloudIdentity, stdoutLogger, stderrLogger)
 	default:
 		execErr = fmt.Errorf("unknown job type: %s", job.JobType)
 	}

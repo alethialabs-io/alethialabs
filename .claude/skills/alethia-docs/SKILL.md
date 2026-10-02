@@ -24,10 +24,18 @@ Pick exactly one — don't blend a tutorial into a reference.
 
 | Type            | Purpose                          | Shape                                                        | Alethia home                         |
 | --------------- | -------------------------------- | ----------------------------------------------------------- | ------------------------------------ |
-| **Tutorial**    | teach a beginner, end to end     | a guaranteed-to-work lesson; concrete, no digressions       | a first-project walkthrough          |
-| **How-to**      | help a competent user do a task  | numbered steps toward one goal; assumes context             | `cli/`, `self-hosting/`              |
-| **Reference**   | state the facts                  | dry, exhaustive, consistently structured; describe, not teach | config keys, `elench/control-catalog` |
-| **Explanation** | build understanding              | discursive; the *why*, trade-offs, connections              | `concepts/` (pipeline, domain model) |
+| **Tutorial**    | teach a beginner, end to end     | a guaranteed-to-work lesson; concrete, no digressions       | `tutorials/`                         |
+| **How-to**      | help a competent user do a task  | numbered steps toward one goal; assumes context             | `guides/` (connectors, design-project, self-hosting, …) |
+| **Reference**   | state the facts                  | dry, exhaustive, consistently structured; describe, not teach | `reference/` (CLI, API, config, control catalog, glossary) |
+| **Explanation** | build understanding              | discursive; the *why*, trade-offs, connections              | `concepts/` (pipeline, domain model, runner, Elench) |
+
+The top-level sections ARE the four types (#5240), plus `get-started/` — the one onboarding path
+(sign up → connect → design → deploy, and installing the CLI) — and `editions/`. A page's folder is
+its type, so a page that belongs in two folders is a page to split.
+
+**User docs only.** How the code is built — schema tables, CI pipelines, package maps, internal
+runbooks — goes in the repository's `docs/contributing/`, not here. The test: would someone
+*using* Alethia, or running their own copy, ever need it?
 
 If a page is trying to do two of these, split it.
 
@@ -42,8 +50,9 @@ If a page is trying to do two of these, split it.
 
 ### Canonical terminology (the enforced floor)
 
-These are the only **error-level** rules — a wrong product name blocks CI. Broader guidance is
-just guidance:
+These are the only **error-level** rules — a wrong product name blocks CI (`Alethia.Terminology`,
+`Alethia.BringYourOwnIaC`, and `Alethia.Connector`: "connector", the console's word for the provider
+catalog, over "provider integration"). Broader guidance is just guidance:
 
 | Write            | Not                        |
 | ---------------- | -------------------------- |
@@ -51,6 +60,7 @@ just guidance:
 | OpenTofu         | Open Tofu                  |
 | ArgoCD           | Argo CD                    |
 | GitHub / GitLab  | Github / Gitlab            |
+| bring-your-own IaC, BYO IaC | Bring Your Own IaC, BYO-IaC, "Bring-your-own IaC" mid-sentence |
 
 Source of truth for spelling + case is `apps/docs/styles/Alethia/` (the Vale style) and
 `apps/docs/styles/config/vocabularies/Alethia/accept.txt` (the vocab). Add new product terms
@@ -62,7 +72,12 @@ there, not in prose exceptions.
 - **Register the page:** add it to the section's `meta.json` order, or it won't appear in the nav.
 - **Components:** `<Callout type="info|warn">` for asides, `<Steps>`/`<Step>` for procedures.
 - **Code fences carry a language** (` ```bash `, ` ```ts `) — Vale skips them, and they get highlighting.
-- **Cross-links are absolute paths:** `/concepts/provisioning-pipeline`, not a relative `../`.
+- **Cross-links are absolute paths:** `/concepts/provisioning-pipeline`, not a relative `../`, and
+  never with the `/docs` basePath. `pnpm -F docs check:links` fails on a broken page or `#anchor`
+  (an em dash in a heading slugs to a DOUBLE hyphen), and on product code linking a docs page that
+  moved.
+- **Moving a page:** add the old → new pair to `apps/docs/redirects.mjs` (permanent; shipped CLI
+  binaries print docs URLs). The link check refuses a redirect to a page that does not exist.
 - **Diagrams** live under `apps/docs/public/docs/diagrams/<section>/` and are referenced with an `<img>`.
 
 ## 4. Lint before you PR
@@ -75,7 +90,7 @@ brew install vale && npm i -g mdx2vast   # one-time; mdx2vast must be on $PATH f
 pnpm -F docs lint:prose                   # runs `vale content` from apps/docs
 ```
 
-CI runs the same lint (`docs-prose` job, path-gated to `apps/docs/**`). It **fails only on
+CI runs the same lint and the link check (`docs-prose` job, path-gated to `apps/docs/**`). It **fails only on
 error-level** alerts (terminology). Plain-language swaps + "avoid *will*/*we*" are non-blocking
 warnings worth clearing; long-sentence nudges are suggestions (`vale --minAlertLevel=suggestion`).
 

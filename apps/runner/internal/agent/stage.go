@@ -312,6 +312,9 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 		// persisted talosconfig via the Talos machine API. nil unless this is a hetzner placement carrying
 		// a fetched talosconfig; invoked only by the hetzner branch of mintClusterOutputs.
 		TalosKubeconfig: newTalosKubeconfigMinter(sec.TalosConfig),
+		// Dedicated hetzner: mint the admin kubeconfig from the state's talosconfig output before each
+		// post-apply step, instead of holding the one certificate the apply stored (#5330).
+		TalosMint: mintFromTalosconfig,
 		// Record the provisioning phase under the workdir so the runner can tell an
 		// interrupted apply (orphan risk) from a pre-apply cancel. Shared by the
 		// Passthrough (same process) and container child (RW-mounted workdir) paths.
@@ -355,6 +358,9 @@ func runDestroyStage(ctx context.Context, p stageDestroyPayload, sec stageSecret
 		// hetzner-talos placement kubeconfig minter: a hetzner namespace teardown has no cloud API to
 		// re-mint kube access from, so it needs the same persisted-talosconfig path the deploy used.
 		TalosKubeconfig: newTalosKubeconfigMinter(sec.TalosConfig),
+		// Dedicated hetzner: the load-balancer release mints from the state's talosconfig, so an
+		// expired stored certificate can no longer leave hcloud load balancers billing (#5330).
+		TalosMint: mintFromTalosconfig,
 	})
 	return writeStageResult(workDir, stageResult{}, err)
 }

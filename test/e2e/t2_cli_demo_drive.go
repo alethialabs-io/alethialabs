@@ -948,8 +948,8 @@ var cliDemoClaimWindow = 90 * time.Second
 // WHY IT IS TRANSLATED AND NOT RESTATED. On the seeded path the workflow's shape reaches the
 // snapshot through ALETHIA_E2E_CLUSTER_JSON, merged key by key by t2MergeClusterJSON. The CLI path
 // has no snapshot to merge into — the CLI AUTHORS the project — so without this the project takes
-// the TEMPLATE DEFAULTS, which on aws is m5a.4xlarge x2 and which the harness's own cost guard
-// hard-fails before spending. Writing the shape out again here would put a second copy of it one
+// the TEMPLATE DEFAULTS (on aws t3.large x2 ON_DEMAND since #5266, m5a.4xlarge x2 SPOT before), which the
+// harness's own cost guard hard-fails before spending. Writing the shape out again here would put a second copy of it one
 // edit away from disagreeing with the workflow; reading the same variable cannot.
 //
 // Hetzner passes no shape at all (its template default is already cents/run), so this returns

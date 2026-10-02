@@ -9,6 +9,16 @@
 //     field today, so this is the guard that keeps it true as registry/secrets/dns adopt the field.
 //  2. Switching connector must not leave the previous provider's knobs behind, or a stale host rides
 //     into the snapshot and the seeded repository credential.
+//
+// EVERY option is FOUND (`findBy*`), never got, after the trigger is clicked (#5202). Base UI's
+// Select opens on `mousedown` inside a `requestAnimationFrame` (floating-ui-react `useClick`), and
+// jsdom runs rAF callbacks on a 1000/60 ms `setInterval` that only starts when a frame is
+// requested. So `await user.click(trigger)` can resolve before the popup is open, and a
+// synchronous `getByRole("option")` then finds the closed, `hidden` popup. Whether it does
+// depends only on how long the click took. The FIRST Select render in a file is cold and takes
+// more than a frame, so the popup happened to be open in time. Any later test is warm and faster,
+// so it lost the race. That is why "offers the native default" failed every time after "carries
+// over…" and passed when it ran alone. The shared state was the clock, not a fixture.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -90,7 +100,7 @@ describe("ConnectorSelect", () => {
 		);
 
 		await user.click(screen.getByRole("combobox"));
-		await user.click(screen.getByRole("option", { name: /oci-generic-cr/i }));
+		await user.click(await screen.findByRole("option", { name: /oci-generic-cr/i }));
 
 		// `repo_url` means nothing to an OCI provider; leaving it would ride into the snapshot.
 		expect(onChange).toHaveBeenCalledWith({
@@ -115,7 +125,7 @@ describe("ConnectorSelect", () => {
 		);
 
 		await user.click(screen.getByRole("combobox"));
-		await user.click(screen.getByRole("option", { name: /cluster native/i }));
+		await user.click(await screen.findByRole("option", { name: /cluster native/i }));
 
 		// provider NULL is the column's own sentinel for "no connector" — never the UI token — and the
 		// knobs go with it, since they describe a provider that is no longer selected.

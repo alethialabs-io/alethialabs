@@ -52,7 +52,7 @@ function getSetupSteps(
 		{
 			key: "cloud",
 			title: "Connect a cloud",
-			desc: "Link AWS, GCP, or Azure — zero stored keys.",
+			desc: "Link AWS, GCP, Azure, Alibaba Cloud, or Hetzner.",
 			href: globalHref(orgSlug, "connectors"),
 			done: state.hasCloud,
 			icon: <Cloud className="size-4" />,

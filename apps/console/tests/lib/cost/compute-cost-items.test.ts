@@ -10,8 +10,13 @@ import {
 	computeCostItems,
 	type CostInput,
 } from "@/lib/cost/compute-cost-items";
+import type { RegionPrices } from "@/lib/pricing/region-prices";
 
-const META = { clusterService: "EKS", secretsService: "Secrets Manager" };
+const META = {
+	clusterService: "EKS",
+	secretsService: "Secrets Manager",
+	provider: "aws",
+} as const;
 const HOURS = 730;
 
 /** Minimal valid input; override per case. */
@@ -37,7 +42,9 @@ describe("computeCostItems (fallback prices)", () => {
 		const cp = items.find((i) => i.label === "EKS Control Plane");
 		expect(cp?.cost).toBeCloseTo(0.1 * HOURS, 5); // 73
 		const nodes = items.find((i) => i.label === "EKS Nodes");
-		expect(nodes?.cost).toBeCloseTo(0.0456 * 2 * HOURS, 5); // default EC2 rate × 2 nodes
+		// No instance type → the AWS template's own default, which is the catalog's t3.large since
+		// #5266 (FALLBACK_EC2 0.0912/h), × 2.
+		expect(nodes?.cost).toBeCloseTo(0.0912 * 2 * HOURS, 5);
 		const nat = items.find((i) => i.label === "NAT Gateway");
 		expect(nat?.cost).toBeCloseTo(0.048 * HOURS, 5);
 		expect(total).toBeCloseTo(items.reduce((s, i) => s + i.cost, 0), 5);
@@ -140,5 +147,61 @@ describe("computeCostItems (fallback prices)", () => {
 		);
 		expect(total).toBeCloseTo(items.reduce((s, i) => s + i.cost, 0), 5);
 		expect(total).toBeGreaterThan(0);
+	});
+});
+
+// #5251: an EMPTY instance list is what the template buys, not a cheap guess. The rates are written
+// out (not read from TEMPLATE_DEFAULT_NODE) so a change to that table has to change this file too.
+describe("computeCostItems — an empty instance list is priced at the cloud's template default", () => {
+	it.each([
+		["aws", "t3.large", 0.0912],
+		["gcp", "e2-standard-2", 49 / 730],
+		["azure", "Standard_D2s_v5", 70 / 730],
+		["hetzner", "cpx22", 19 / 730],
+		["alibaba", "ecs.g6.large", 50 / 730],
+	] as const)("%s → %s", (provider, instanceType, hourly) => {
+		const { items } = computeCostItems(input({ nodeDesiredSize: 2 }), null, {
+			clusterService: "K8s",
+			secretsService: "Secrets",
+			provider,
+		});
+		const nodes = items.find((i) => i.label === "K8s Nodes");
+		expect(nodes?.cost).toBeCloseTo(hourly * 2 * HOURS, 5);
+		expect(nodes?.detail).toBe(`2x ${instanceType} (template default)`);
+	});
+
+	it("prices an empty list exactly as the catalog default it now provisions (#5266)", () => {
+		const empty = computeCostItems(input({ nodeDesiredSize: 2 }), null, META);
+		const asDefault = computeCostItems(
+			input({ instanceTypes: ["t3.large"], nodeDesiredSize: 2 }),
+			null,
+			META,
+		);
+		const nodes = (r: typeof empty) => r.items.find((i) => i.label === "EKS Nodes")?.cost ?? 0;
+		expect(nodes(empty)).toBeCloseTo(nodes(asDefault), 5);
+	});
+
+	it("prefers a live price for the template default over the fallback", () => {
+		const prices: RegionPrices = {
+			eksControlPlane: 0.1,
+			ec2: { "t3.large": 0.5 },
+			natGateway: 0.048,
+			auroraACU: 0.14,
+			cache: {},
+			wafWebACL: 5,
+			region: "us-east-1",
+			fetchedAt: "2026-10-01T00:00:00Z",
+		};
+		const { items } = computeCostItems(input({ nodeDesiredSize: 1 }), prices, META);
+		expect(items.find((i) => i.label === "EKS Nodes")?.cost).toBeCloseTo(0.5 * HOURS, 5);
+	});
+
+	it("still prices an explicit instance type, not the template default", () => {
+		const { items } = computeCostItems(
+			input({ instanceTypes: ["t3.large"], nodeDesiredSize: 1 }),
+			null,
+			{ ...META, provider: "hetzner" },
+		);
+		expect(items.find((i) => i.label === "EKS Nodes")?.cost).toBeCloseTo(0.0912 * HOURS, 5);
 	});
 });

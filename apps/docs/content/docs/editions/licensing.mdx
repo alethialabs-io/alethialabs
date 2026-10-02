@@ -6,7 +6,7 @@ description: How the Enterprise license works — entitlements, activation, and 
 # Licensing
 
 The <Enterprise>Enterprise</Enterprise> features are gated by a license. This page explains the mechanism;
-the [Enterprise setup runbook](/editions/enterprise-setup) walks through turning it all on.
+the [Enterprise setup runbook](/guides/self-hosting/enterprise-setup) walks through turning it all on.
 
 ## Entitlements, not scattered checks
 
@@ -44,11 +44,12 @@ tolerant seam** (`lib/enterprise.ts`). The rule that makes this open-core:
 So there are really two ways a deployment is "Community":
 
 1. **The open-source build** — `@alethia/ee` isn't installed at all.
-2. **An Enterprise build without an active license** — `@alethia/ee` is present, but the entitlements resolve
-   to all-`false`.
+2. **An Enterprise build without an active license** — `@alethia/ee` is present, and each organization's
+   entitlements fall back to its billing record (`resolveOrgEntitlements` in
+   `apps/console/lib/billing/queries.ts`). An organization with no live paid plan resolves to all-`false`.
 
-Both behave identically: the Community product. See the
-[open-core architecture](/access-control/open-core) for the boundary guarantees and CI guards.
+For an organization without a paid plan, both behave identically: the Community product. See the
+[open-core architecture](/concepts/access-control/open-core) for the boundary guarantees and CI guards.
 
 ## Graceful degradation
 
@@ -60,7 +61,7 @@ simply stops accepting new enterprise-only operations until the license is resto
 
 At a high level, enabling Enterprise is: install `@alethia/ee`, provide a license, run the extra migrations,
 and (optionally) bring up OpenFGA. The full, ordered checklist is in the
-[**Enterprise setup runbook**](/editions/enterprise-setup).
+[**Enterprise setup runbook**](/guides/self-hosting/enterprise-setup).
 
 <Callout type="warn">
   Self-hosting an Enterprise deployment requires a commercial license. Running the **open-source Community

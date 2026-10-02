@@ -118,8 +118,10 @@ variable "aks_cluster_version" {
 }
 
 variable "aks_instance_types" {
+  # Equal to the catalog default (packages/core/catalog/catalog.json compute.azure.default_instance)
+  # by rule: TestTemplateNodeDefaultsEqualTheCatalog fails when they differ (#5266).
   type        = list(string)
-  default     = ["Standard_D4s_v5"]
+  default     = ["Standard_D2s_v5"]
   description = "VM sizes for the AKS default node pool"
 
   validation {

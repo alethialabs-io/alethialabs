@@ -9,6 +9,7 @@ import { useCanvasStore, type WorkspaceCard } from "@/lib/stores/use-canvas-stor
 import { InspectorPanel } from "../node-inspector";
 import { ActivityCard } from "./activity-card";
 import { ChartScanCard } from "./chart-scan-card";
+import type { DestroyEnvironmentControl } from "./destroy-tree-view";
 import { EnvSettingsCard } from "./env-settings-card";
 import { IacScanCard } from "./iac-scan-card";
 
@@ -78,11 +79,11 @@ function cardKey(card: WorkspaceCard): string {
 export function WorkspaceRail({
 	projectId,
 	environmentId,
-	onDestroyEnvironment,
+	destroyEnvironment,
 }: {
 	projectId?: string;
 	environmentId?: string | null;
-	onDestroyEnvironment?: () => void;
+	destroyEnvironment?: DestroyEnvironmentControl;
 }) {
 	const card = useCanvasStore((s) => s.card);
 	const closeCard = useCanvasStore((s) => s.closeCard);
@@ -117,7 +118,7 @@ export function WorkspaceRail({
 								card={card}
 								projectId={projectId}
 								environmentId={environmentId}
-								onDestroyEnvironment={onDestroyEnvironment}
+								destroyEnvironment={destroyEnvironment}
 							/>
 						</motion.div>
 					)}
@@ -132,18 +133,18 @@ function CardBody({
 	card,
 	projectId,
 	environmentId,
-	onDestroyEnvironment,
+	destroyEnvironment,
 }: {
 	card: WorkspaceCard;
 	projectId?: string;
 	environmentId?: string | null;
-	onDestroyEnvironment?: () => void;
+	destroyEnvironment?: DestroyEnvironmentControl;
 }) {
 	switch (card.kind) {
 		case "inspector":
 			return <InspectorPanel />;
 		case "env-settings":
-			return <EnvSettingsCard onDestroyEnvironment={onDestroyEnvironment} />;
+			return <EnvSettingsCard destroyEnvironment={destroyEnvironment} />;
 		case "addon":
 			// `isRailOpen` declines this card without a project, so the rail never opens for it —
 			// this branch keeps the types honest rather than describing a reachable state.

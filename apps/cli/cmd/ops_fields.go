@@ -58,7 +58,7 @@ const (
 )
 
 // docsOpsPage is the group's page, relative to the repository root.
-const docsOpsPage = "apps/docs/content/docs/cli/commands/ops.mdx"
+const docsOpsPage = "apps/docs/content/docs/reference/cli/ops.mdx"
 
 // opsReasonDescription is the one sentence that describes `--reason`, written once because eleven
 // commands take it and eleven copies is eleven chances to describe the same field differently.

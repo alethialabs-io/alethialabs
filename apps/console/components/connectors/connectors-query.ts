@@ -40,7 +40,7 @@ export const GROUP_META: {
 		description:
 			"Provider accounts Alethia provisions into, via short-lived federated credentials.",
 		icon: Cloud,
-		docsHref: "/docs/console/connectors",
+		docsHref: "/docs/guides/connectors",
 	},
 	{
 		id: "source",
@@ -48,7 +48,7 @@ export const GROUP_META: {
 		description:
 			"Git providers Alethia reads repositories from and wires GitOps deployments through.",
 		icon: GitBranch,
-		docsHref: "/docs/console/connectors/git-providers",
+		docsHref: "/docs/guides/connectors/git-providers",
 	},
 	{
 		id: "registries",
@@ -56,7 +56,7 @@ export const GROUP_META: {
 		description:
 			"Container registries clusters pull from. Pull credentials are injected & rotated automatically.",
 		icon: Container,
-		docsHref: "/docs/console/connectors/pluggable",
+		docsHref: "/docs/guides/connectors/pluggable",
 	},
 	{
 		id: "chart_repos",
@@ -64,7 +64,7 @@ export const GROUP_META: {
 		description:
 			"Private Helm chart repositories (OCI or HTTPS) ArgoCD pulls add-on & BYO charts from. Repo credentials are seeded automatically at deploy.",
 		icon: Package,
-		docsHref: "/docs/console/connectors/pluggable",
+		docsHref: "/docs/guides/connectors/pluggable",
 	},
 	{
 		id: "secrets",
@@ -72,7 +72,7 @@ export const GROUP_META: {
 		description:
 			"External secret stores Projects read secrets from at deploy time — fetched just-in-time, never written to state.",
 		icon: KeyRound,
-		docsHref: "/docs/console/connectors/pluggable",
+		docsHref: "/docs/guides/connectors/pluggable",
 	},
 	{
 		id: "observability",
@@ -80,7 +80,7 @@ export const GROUP_META: {
 		description:
 			"External destinations Alethia ships cluster metrics, logs, and traces to.",
 		icon: Activity,
-		docsHref: "/docs/console/connectors/pluggable",
+		docsHref: "/docs/guides/connectors/pluggable",
 	},
 	{
 		id: "dns",
@@ -88,7 +88,7 @@ export const GROUP_META: {
 		description:
 			"DNS providers Alethia manages records and certificates through.",
 		icon: Globe,
-		docsHref: "/docs/console/connectors/pluggable",
+		docsHref: "/docs/guides/connectors/pluggable",
 	},
 ];
 

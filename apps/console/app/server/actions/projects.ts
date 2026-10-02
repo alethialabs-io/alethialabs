@@ -73,6 +73,12 @@ import {
 } from "@/lib/addons/webhook-ca-consumers";
 import { resolveClassificationSnapshot } from "@/lib/classification/snapshot";
 import { resolveServingCluster } from "@/lib/queries/cluster-for-env";
+import {
+	buildDestroyTree,
+	type DestroyTreeNode,
+	FabricHasLiveTenantsError,
+	readLiveFabricTenants,
+} from "@/lib/queries/destroy-tree";
 import { pickDefaultEnvironment } from "@/lib/queries/default-environment";
 import {
 	envScope,
@@ -1656,6 +1662,16 @@ async function buildConfigSnapshot(
 				cluster_name: cluster?.cluster_name ?? null,
 				cluster_endpoint: cluster?.cluster_endpoint ?? null,
 				instance_types: cluster?.instance_types ?? [],
+				// The cloud-indifferent size (#5267). Go resolves it to the nearest catalog SKU when
+				// instance_types is empty (packages/core/cloud/resolve.go), and nothing carried it here
+				// — the canvas edited it, the card showed it, and the deploy ignored it. Emitted ONLY
+				// when set, like network.subnet_ids: Go reads a pointer, so an absent key means unset
+				// and the byte-locked snapshot fixtures stay green.
+				...(cluster?.node_size ? { node_size: cluster.node_size } : {}),
+				// The node pool's purchase option (#5266). Emitted ONLY when set, like node_size: Go reads
+				// it `omitempty`, an absent key means "the template default" (ON_DEMAND), and the
+				// byte-locked snapshot fixtures stay green for every cluster that never set it.
+				...(cluster?.capacity_type ? { capacity_type: cluster.capacity_type } : {}),
 				node_min_size: cluster?.node_min_size ?? 2,
 				node_max_size: cluster?.node_max_size ?? 5,
 				node_desired_size: cluster?.node_desired_size ?? 2,
@@ -2360,17 +2376,49 @@ export async function queueDriftDetection(
 	return result;
 }
 
+/** Options for {@link destroyProject}. */
+export interface DestroyProjectOptions {
+	/**
+	 * Destroy the environments placed on the target's Fabric too (#5249). Without it, destroying a
+	 * `dedicated` environment that still hosts live `namespace`/`vcluster` tenants is REFUSED with a
+	 * {@link FabricHasLiveTenantsError} naming them. Ignored for a target that owns no Fabric.
+	 */
+	cascade?: boolean;
+}
+
+/** One DESTROY job a {@link destroyProject} call queued, in the order the tree destroys them. */
+export interface QueuedDestroy {
+	jobId: string;
+	environmentId: string;
+	name: string;
+}
+
 /**
  * Queue a DESTROY job to tear down a project's environment in the cloud — mirrors
  * provisionProject but with job_type DESTROY: the env moves to QUEUED and a runner
  * destroys the provisioned resources. Distinct from deleteProject, which only drops the
- * DB rows. Used by the canvas Pending Changes bar's Destroy action.
+ * DB rows. Used by the canvas Pending Changes bar's Destroy action and by `POST /api/jobs`.
+ *
+ * A `dedicated` environment owns its Fabric — the cluster every `namespace`/`vcluster` environment
+ * placed on that Fabric runs in. Destroying it while those tenants are live orphans them and leaks
+ * their per-namespace cloud identities (#5249), so:
+ *
+ *   - by DEFAULT it is refused, with a {@link FabricHasLiveTenantsError} naming each live tenant;
+ *   - with `cascade`, one transaction queues a DESTROY for every live tenant AND for the target, each
+ *     audited. The ORDER — tenants before owner — is not left to timing: `claim_next_job` will not hand
+ *     the owner's DESTROY to a runner while any live tenant remains on its Fabric
+ *     (`destroy_waits_on_tenants`, lib/db/programmables.sql). A tenant whose destroy is already in
+ *     flight is not queued twice; the owner simply waits for it.
+ *
+ * Returns the target's job as `jobId` (what every pre-cascade caller reads) and every queued job, in
+ * destroy order, as `jobs`.
  */
 export async function destroyProject(
 	projectId: string,
 	environmentId?: string | null,
 	runnerId?: string | null,
-) {
+	options: DestroyProjectOptions = {},
+): Promise<{ jobId: string; jobs: QueuedDestroy[] }> {
 	const actor = await authorize("destroy", { type: "project", id: projectId });
 	// Defense-in-depth: a client-supplied assigned runner must belong to the
 	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
@@ -2378,19 +2426,75 @@ export async function destroyProject(
 	await assertUsageAllowed(actor.orgId);
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
-	const { identity, environment, configSnapshot, iacSource } =
-		await buildConfigSnapshot(
+	const scope = { ownerId: owner, orgId: actor.orgId };
+	const target = await buildConfigSnapshot(
+		owner,
+		actor.orgId,
+		projectId,
+		environmentId,
+		"destroy",
+	);
+	assertIacSourceQueueable(target.iacSource, "destroy");
+
+	// Who else lives on this environment's Fabric? Always empty for a non-dedicated target — a
+	// namespace or vcluster owns no cluster, so destroying it orphans nobody and is never blocked here.
+	const { tenants, tenantDestroysInFlight } = await withScope(scope, async (tx) => {
+		const live = await readLiveFabricTenants(tx, target.environment);
+		if (live.length === 0) return { tenants: live, tenantDestroysInFlight: new Set<string>() };
+		const inFlight = await tx
+			.select({ environment_id: jobs.environment_id })
+			.from(jobs)
+			.where(
+				and(
+					inArray(
+						jobs.environment_id,
+						live.map((t) => t.id),
+					),
+					eq(jobs.job_type, "DESTROY"),
+					inArray(jobs.status, ["QUEUED", "CLAIMED", "PROCESSING"]),
+				),
+			);
+		return {
+			tenants: live,
+			tenantDestroysInFlight: new Set(
+				inFlight.flatMap((r) => (r.environment_id ? [r.environment_id] : [])),
+			),
+		};
+	});
+
+	if (tenants.length > 0 && !options.cascade) {
+		throw new FabricHasLiveTenantsError(target.environment.name, tenants);
+	}
+
+	// Snapshot each tenant still to be queued BEFORE opening the write transaction —
+	// buildConfigSnapshot runs its own scoped reads. A tenant whose DESTROY is already queued or
+	// running is skipped: queueing it again would be refused by the env-status CAS anyway, and the
+	// owner's DESTROY waits for it at claim time either way.
+	const tenantSnapshots: Array<Awaited<ReturnType<typeof buildConfigSnapshot>>> = [];
+	for (const t of tenants) {
+		if (tenantDestroysInFlight.has(t.id)) continue;
+		const snap = await buildConfigSnapshot(
 			owner,
 			actor.orgId,
 			projectId,
-			environmentId,
+			t.id,
 			"destroy",
 		);
-	assertIacSourceQueueable(iacSource, "destroy");
+		assertIacSourceQueueable(snap.iacSource, "destroy");
+		tenantSnapshots.push(snap);
+	}
+	const cascadeOf =
+		tenants.length > 0
+			? { cascade_of: target.environment.id, cascade_tenants: tenants.map((t) => t.id) }
+			: {};
 
-	const result = await withScope(
-		{ ownerId: owner, orgId: actor.orgId },
-		async (tx) => {
+	// ONE transaction for the whole tree: if any env refuses its CAS (a job already in flight on it),
+	// nothing is queued — never half a cascade.
+	const queued = await withScope(scope, async (tx) => {
+		const out: QueuedDestroy[] = [];
+		// Tenants first, owner last — the same order the claim predicate enforces, so the job ids and
+		// the audit trail read in the order the teardown will actually happen.
+		for (const snap of [...tenantSnapshots, target]) {
 			const [job] = await tx
 				.insert(jobs)
 				.values(
@@ -2398,11 +2502,11 @@ export async function destroyProject(
 						user_id: owner,
 						org_id: actor.orgId,
 						project_id: projectId,
-						environment_id: environment.id,
-						cloud_identity_id: identity.id,
+						environment_id: snap.environment.id,
+						cloud_identity_id: snap.identity.id,
 						initiated_by: "user",
 						job_type: "DESTROY",
-						config_snapshot: configSnapshot,
+						config_snapshot: snap.configSnapshot,
 						status: "QUEUED",
 						// New trace root for this teardown operation (enqueue → claim → runner).
 						traceparent: newTraceparent(),
@@ -2411,24 +2515,62 @@ export async function destroyProject(
 				)
 				.returning({ id: jobs.id });
 
-			await enqueueEnvTransition(tx, environment.id, "enqueueDestroy", job.id, {
-				orgId: actor.orgId,
-				projectId,
-			});
+			await enqueueEnvTransition(
+				tx,
+				snap.environment.id,
+				"enqueueDestroy",
+				job.id,
+				{ orgId: actor.orgId, projectId },
+			);
 
 			await tx.insert(auditLog).values({
 				project_id: projectId,
 				user_id: owner,
 				action: "DESTROYED",
-				changes: { job_id: job.id, environment_id: environment.id },
+				changes: {
+					job_id: job.id,
+					environment_id: snap.environment.id,
+					...cascadeOf,
+				},
 			});
 
-			return { jobId: job.id };
-		},
-	);
+			out.push({
+				jobId: job.id,
+				environmentId: snap.environment.id,
+				name: snap.environment.name,
+			});
+		}
+		return out;
+	});
 
 	notifyScaler();
-	return result;
+	const own = queued[queued.length - 1];
+	return { jobId: own.jobId, jobs: queued };
+}
+
+/**
+ * The DESTROY TREE of an environment (#5249): the environment plus every live tenant placed on the
+ * Fabric it owns, in the order a cascade destroys them — tenants first, the owner last. A
+ * non-dedicated environment's tree is itself alone. Read by `alethia project destroy --cascade`
+ * (which prints it before confirming) and, as a follow-up, the canvas destroy confirmation.
+ *
+ * `view`, not `destroy`: it reveals nothing the environment list does not, and showing someone what
+ * a destroy WOULD do must not require being allowed to do it.
+ */
+export async function getDestroyTree(
+	projectId: string,
+	environmentId?: string | null,
+): Promise<{ tree: DestroyTreeNode[] }> {
+	const actor = await authorize("view", { type: "project", id: projectId });
+	return withScope({ ownerId: actor.userId, orgId: actor.orgId }, async (tx) => {
+		const { environment } = await resolveTargetEnvironment(
+			tx,
+			projectId,
+			environmentId,
+		);
+		const tenants = await readLiveFabricTenants(tx, environment);
+		return { tree: buildDestroyTree(environment, tenants) };
+	});
 }
 
 /**
@@ -2594,6 +2736,12 @@ export async function getProjectAsFormData(
 						source.components.cluster.cluster_version ??
 						DEFAULT_K8S_VERSION[provider],
 					instance_types: source.components.cluster.instance_types ?? [],
+					// Carried, or a canvas save — delete-then-insert — wipes the size it never loaded
+					// (#5267).
+					node_size: source.components.cluster.node_size ?? undefined,
+					// Carried for the same reason (#5266): the migration pinned `spot` onto running aws
+					// clusters, and a save that dropped it would replace their node groups.
+					capacity_type: source.components.cluster.capacity_type ?? undefined,
 					node_min_size: source.components.cluster.node_min_size ?? 2,
 					node_max_size: source.components.cluster.node_max_size ?? 5,
 					node_desired_size: source.components.cluster.node_desired_size ?? 2,

@@ -254,11 +254,25 @@ type ClusterGitops struct {
 	FailureMessage   *string `json:"failure_message"`
 }
 
-// ClusterDetail is a single cluster plus its GitOps posture (GET /api/cli/clusters/:id).
-// Mirrors cliClusterDetailResponse in cli-contract.ts.
+// ClusterKubeconfig is how to get a kubeconfig for the cluster with the caller's OWN cloud CLI
+// (#5250): Command to run, or Note saying why there is none, or both nil while the cluster has no
+// name yet. The console builds it (apps/console/lib/clusters/kubeconfig-access.ts) — the CLI only
+// renders it, so the terminal and the cluster card cannot disagree. Mirrors clusterKubeconfig in
+// cli-contract.ts.
+type ClusterKubeconfig struct {
+	Command *string `json:"command"`
+	Note    *string `json:"note"`
+}
+
+// ClusterDetail is a single cluster plus its GitOps posture and kubeconfig command
+// (GET /api/cli/clusters/:id). Mirrors cliClusterDetailResponse in cli-contract.ts.
+//
+// Kubeconfig is a pointer because a server older than #5250 does not send it; nil there means
+// "this server cannot say", not "this cloud has no command".
 type ClusterDetail struct {
-	Cluster ClusterSummary `json:"cluster"`
-	Gitops  *ClusterGitops `json:"gitops"`
+	Cluster    ClusterSummary     `json:"cluster"`
+	Gitops     *ClusterGitops     `json:"gitops"`
+	Kubeconfig *ClusterKubeconfig `json:"kubeconfig"`
 }
 
 type CloudIdentity struct {
@@ -291,6 +305,42 @@ type QueueJobParams struct {
 	// server (#837) routes it through planProject/provisionProject/destroyProject.
 	EnvironmentID  string
 	ConfigSnapshot map[string]interface{}
+	// Cascade (DESTROY only, #5249) also destroys the environments placed on the target's Fabric,
+	// tenants first. Without it the server refuses to destroy a Fabric owner that still has live
+	// tenants, naming them. Sent only when true.
+	Cascade bool
+}
+
+// CascadeJob is one DESTROY job a cascade queued, in destroy order (tenants first, owner last).
+type CascadeJob struct {
+	JobID         string `json:"job_id"`
+	EnvironmentID string `json:"environment_id"`
+	Name          string `json:"name"`
+}
+
+// QueueJobResponse is POST /api/jobs's body. Job is the TARGET's job; CascadeJobs lists every job a
+// cascade queued, and is empty for anything that queued a single job.
+type QueueJobResponse struct {
+	Job         *ProvisionJob `json:"job"`
+	CascadeJobs []CascadeJob  `json:"cascade_jobs,omitempty"`
+}
+
+// DestroyTreeNode is one environment in a destroy tree (#5249): what destroying an environment
+// destroys, in order. WaitingOn is non-empty only on the Fabric owner — the live tenants its DESTROY
+// will not start before.
+type DestroyTreeNode struct {
+	EnvironmentID string               `json:"environment_id"`
+	Name          string               `json:"name"`
+	PlacementMode string               `json:"placement_mode"`
+	Status        string               `json:"status"`
+	OwnsFabric    bool                 `json:"owns_fabric"`
+	WaitingOn     []DestroyTreeWaiting `json:"waiting_on"`
+}
+
+// DestroyTreeWaiting names one tenant a Fabric owner's DESTROY is waiting on.
+type DestroyTreeWaiting struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
 }
 
 // --- Helpers ---
@@ -330,6 +380,9 @@ func (c *Client) getProviderToken() string {
 type APIError struct {
 	StatusCode int
 	Message    string
+	// RetryAfter is the wait a 429 named in its Retry-After header, or zero when it named none. Only
+	// the verbs that read the header set it (kubeconfig_mint.go); it never changes Error().
+	RetryAfter time.Duration
 }
 
 // Error renders the failure. It NEVER renders empty: the control plane's own explanation when there
@@ -592,6 +645,16 @@ func (c *Client) ExportConfiguration(projectName, format string) (*Configuration
 // --- Jobs ---
 
 func (c *Client) QueueJobWithParams(params QueueJobParams) (*ProvisionJob, error) {
+	resp, err := c.QueueJobFull(params)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Job, nil
+}
+
+// QueueJobFull is QueueJobWithParams returning the whole response — including, for a cascaded
+// DESTROY, every job it queued.
+func (c *Client) QueueJobFull(params QueueJobParams) (*QueueJobResponse, error) {
 	endpoint := fmt.Sprintf("%s/jobs", c.baseURL)
 	payload := map[string]interface{}{
 		"job_type": params.JobType,
@@ -614,14 +677,28 @@ func (c *Client) QueueJobWithParams(params QueueJobParams) (*ProvisionJob, error
 	if params.ConfigSnapshot != nil {
 		payload["config_snapshot"] = params.ConfigSnapshot
 	}
-
-	var successResp struct {
-		Job *ProvisionJob `json:"job"`
+	if params.Cascade {
+		payload["cascade"] = true
 	}
+
+	var successResp QueueJobResponse
 	if err := c.doPost(endpoint, payload, &successResp); err != nil {
 		return nil, fmt.Errorf("failed to queue job: %w", err)
 	}
-	return successResp.Job, nil
+	return &successResp, nil
+}
+
+// GetDestroyTree returns what destroying envID (empty: the project's default environment) would
+// destroy, in order — every live environment placed on the Fabric it owns, then itself.
+func (c *Client) GetDestroyTree(project, envID string) ([]DestroyTreeNode, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/destroy-tree", c.baseURL, url.PathEscape(project)), envID)
+	var resp struct {
+		Tree []DestroyTreeNode `json:"tree"`
+	}
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to read the destroy tree: %w", err)
+	}
+	return resp.Tree, nil
 }
 
 func (c *Client) GetJobs(status string, limit, offset int) (*JobsPage, error) {
@@ -1782,6 +1859,22 @@ type CreateProjectParams struct {
 	// environment plus ONE shared Fabric for the `namespace`/`vcluster` ones — which is the difference
 	// between a two-tier project costing two clusters and costing one.
 	Environments []EnvironmentSpec
+	// The node shape for the project's clusters (#5266). Zero value ⇒ nothing is sent, no cluster row
+	// is written, and the template default (which equals the catalog default) applies. When set, the
+	// server writes it as an explicit cluster row on every `dedicated` environment.
+	NodeShape ProjectNodeShape
+}
+
+// ProjectNodeShape is the node shape a project create may carry: a concrete machine type for the
+// project's cloud, OR a cloud-indifferent size. At most one — the server refuses both, because the
+// resolver prefers the machine type and would silently ignore the size.
+//
+// Mirrors cliProjectNodeShapeRequest in apps/console/lib/validations/cli-contract.ts, and is
+// strict-decoded from testdata/create_project_node_shape.json (TestContract_ProjectNodeShape), so a
+// renamed key on either side fails a test instead of being dropped on the wire.
+type ProjectNodeShape struct {
+	InstanceType string          `json:"instance_type,omitempty"`
+	NodeSize     *types.NodeSize `json:"node_size,omitempty"`
 }
 
 // EnvironmentSpec is one row of the environment matrix: an environment and how it is PLACED onto a
@@ -1798,27 +1891,36 @@ type EnvironmentSpec struct {
 	IsDefault bool   `json:"is_default,omitempty"`
 }
 
+// createProjectPayload is the body of POST /api/cli/projects. Every optional key is omitempty, so
+// a create that sets nothing optional sends exactly `project_name` and `region`, and the server's
+// own defaults apply.
+//
+// ProjectNodeShape is EMBEDDED, so its keys are inlined at the top level under its own struct tags
+// — the ones TestContract_ProjectNodeShape strict-decodes against the zod schema. The bytes this
+// sends for the shape are therefore the bytes the contract test locks, not keys restated here.
+type createProjectPayload struct {
+	ProjectName     string            `json:"project_name"`
+	Region          string            `json:"region"`
+	CloudIdentityID string            `json:"cloud_identity_id,omitempty"`
+	Stage           string            `json:"stage,omitempty"`
+	IacVersion      string            `json:"iac_version,omitempty"`
+	PlacementMode   string            `json:"placement_mode,omitempty"`
+	Environments    []EnvironmentSpec `json:"environments,omitempty"`
+	ProjectNodeShape
+}
+
 // CreateProject creates a new project and returns it.
 func (c *Client) CreateProject(params CreateProjectParams) (*Project, error) {
 	endpoint := fmt.Sprintf("%s/cli/projects", c.baseURL)
-	payload := map[string]interface{}{
-		"project_name": params.ProjectName,
-		"region":       params.Region,
-	}
-	if params.CloudIdentityID != "" {
-		payload["cloud_identity_id"] = params.CloudIdentityID
-	}
-	if params.Stage != "" {
-		payload["stage"] = params.Stage
-	}
-	if params.IacVersion != "" {
-		payload["iac_version"] = params.IacVersion
-	}
-	if params.Placement != "" {
-		payload["placement_mode"] = params.Placement
-	}
-	if len(params.Environments) > 0 {
-		payload["environments"] = params.Environments
+	payload := createProjectPayload{
+		ProjectName:      params.ProjectName,
+		Region:           params.Region,
+		CloudIdentityID:  params.CloudIdentityID,
+		Stage:            params.Stage,
+		IacVersion:       params.IacVersion,
+		PlacementMode:    params.Placement,
+		Environments:     params.Environments,
+		ProjectNodeShape: params.NodeShape,
 	}
 	var successResp struct {
 		Project *Project `json:"project"`

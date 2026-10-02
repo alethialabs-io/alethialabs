@@ -17,12 +17,18 @@ section is the human summary.
 
 Every page is one of four kinds, and they don't mix:
 
-| Type            | Answers                       | Alethia examples                        |
-| --------------- | ----------------------------- | --------------------------------------- |
-| **Tutorial**    | "teach me, start to finish"   | a first-project walkthrough             |
-| **How-to**      | "help me do X"                | `cli/`, `self-hosting/` task pages      |
-| **Reference**   | "tell me the facts"           | config keys, the control catalog        |
-| **Explanation** | "help me understand"          | `concepts/` (pipeline, domain model)    |
+| Type            | Answers                       | Folder under `content/docs/`               |
+| --------------- | ----------------------------- | ------------------------------------------ |
+| **Tutorial**    | "teach me, start to finish"   | `tutorials/`                               |
+| **How-to**      | "help me do X"                | `guides/`                                  |
+| **Reference**   | "tell me the facts"           | `reference/` (CLI, API, config, catalog)   |
+| **Explanation** | "help me understand"          | `concepts/`                                |
+
+The top-level folders are the four types, plus `get-started/` (the one onboarding path) and
+`editions/`. A page's folder is its type. Material about how the code is built (schema tables, CI
+pipelines, internal runbooks) is not user documentation: it goes in the repository's
+[`docs/contributing/`](../../docs/contributing/). When you move a page, add the old → new pair to
+`redirects.mjs`.
 
 ### Prose — plain language (STE-informed)
 
@@ -46,9 +52,24 @@ pnpm -F docs lint:prose    # runs `vale content`
 ```
 
 The `docs-prose` CI job runs the same lint on any `apps/docs/**` change. It **fails only on
-error-level alerts** — a wrong product name (the `Alethia.Terminology` rule). Plain-language
+error-level alerts** — a wrong product name (the `Alethia.Terminology` rule, which includes
+`k8s`/`K8s` in prose) or a drifted spelling of "bring-your-own IaC" (`Alethia.BringYourOwnIaC`).
+It also fails on `Alethia.Connector` ("provider integration" or "integrations page" for what the
+console calls Connectors). Plain-language
 swaps and "avoid *will*/*we*" surface as non-blocking warnings; long-sentence nudges are
 suggestions (hidden by default — see them with `vale --minAlertLevel=suggestion content`).
+
+Links are checked too, by the same job:
+
+```bash
+pnpm -F docs check:links   # node only, no install needed: node scripts/check-links.mjs
+```
+
+It fails on an internal link to a page or `#anchor` that does not exist, a relative link
+(`./x` — write `/section/x`), a link starting `/docs/` (the basePath is added for you), and a
+page missing from its section's `meta.json`. Anchors are slugged as fumadocs does: an em dash
+in a heading leaves a **double** hyphen (`## Step 1 — Apply` → `#step-1--apply`). External URLs
+are not checked.
 
 ## Learn More
 

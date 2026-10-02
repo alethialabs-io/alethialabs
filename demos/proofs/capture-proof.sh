@@ -351,6 +351,26 @@ STUB
 		echo "  ✓ no templates summary, no templates-summary.json"
 	fi
 
+	# 10 · KUBECONFIG MINT TIERS (#5287): the summary is folded into the bundle and its verdict line
+	#      lands in VERDICT.txt — and its absence says n/a rather than leaving a file behind.
+	kc_line='✅ kubeconfig-mint (runner-channel): readonly/static PASS · admin/static PASS · private_endpoint=false · canary clean=true'
+	jq -n --arg v "$kc_line" '{enabled:true,provider:"hetzner",driver:"runner-channel",private_endpoint:false,tiers:[],canary_clean:true,verdict:$v}' >"$tmp/kubeconfig-mint.json"
+	kc_dir="$(ALETHIA_E2E_KUBECONFIG_MINT_SUMMARY="$tmp/kubeconfig-mint.json" _capture kcmint success "$tmp/pass.json" floor)"
+	_t "the kubeconfig-mint summary is folded into the bundle" "kubeconfig-mint-summary.json driver" \
+		"$(jq -r '.driver // "none"' "$kc_dir/kubeconfig-mint-summary.json" 2>/dev/null || echo none)" "runner-channel"
+	if grep -qF "kubeconfig-mint: $kc_line" "$kc_dir/VERDICT.txt" 2>/dev/null; then
+		echo "  ✓ VERDICT.txt carries the kubeconfig-mint verdict"
+	else
+		echo "  ✗ VERDICT.txt does not carry the kubeconfig-mint verdict: $(grep '^kubeconfig-mint:' "$kc_dir/VERDICT.txt" 2>/dev/null)" >&2
+		fails=$((fails + 1))
+	fi
+	if [ -e "$pass_dir/kubeconfig-mint-summary.json" ] || ! grep -q '^kubeconfig-mint: n/a' "$pass_dir/VERDICT.txt" 2>/dev/null; then
+		echo "  ✗ a bundle with no kubeconfig-mint summary carries one anyway, or does not say n/a" >&2
+		fails=$((fails + 1))
+	else
+		echo "  ✓ no kubeconfig-mint summary: no file, and VERDICT.txt says n/a"
+	fi
+
 	if [ "$fails" -ne 0 ]; then
 		echo "capture-proof --self-test: $fails assertion(s) FAILED" >&2
 		exit 1
@@ -692,6 +712,21 @@ if [ -n "$day2_access_summary" ] && [ -f "$day2_access_summary" ]; then
 	[ -n "$day2_access_verdict" ] && echo "  · day2-access: $day2_access_verdict"
 fi
 
+# ── Kubeconfig mint tiers (#5287). The T2 test writes its verdict to
+#    ALETHIA_E2E_KUBECONFIG_MINT_SUMMARY: per tier, the mint's status, its expiry and where that was read
+#    from, every API check's status code, and the endpoint's privacy. No credential is ever in it — the
+#    Go writer refuses to write one and the T2 canary scans this bundle's sources — and it passes the
+#    same scrub and grep-clean tripwire as every other file here. Absent ⇒ the capture is unchanged.
+kubeconfig_mint_summary="${ALETHIA_E2E_KUBECONFIG_MINT_SUMMARY:-}"
+kubeconfig_mint_verdict=""
+if [ -n "$kubeconfig_mint_summary" ] && [ -f "$kubeconfig_mint_summary" ]; then
+	scrub_stream <"$kubeconfig_mint_summary" >"$out/kubeconfig-mint-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/kubeconfig-mint-summary.json" ]; then
+		kubeconfig_mint_verdict="$(jq -r '.verdict // empty' "$out/kubeconfig-mint-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$kubeconfig_mint_verdict" ] && echo "  · kubeconfig-mint: $kubeconfig_mint_verdict"
+fi
+
 # ── Day-2 OFFER postures (#1440 classifier / #1495 harness). The T2 layer writes per-op
 #    postures to ALETHIA_E2E_DAY2_OFFER_SUMMARY — resource addresses, booleans and counts,
 #    never a secret. Fold it in (scrubbed as a backstop) and surface a one-line verdict.
@@ -963,6 +998,7 @@ teardown:  destroyed=$destroyed (${resources_destroyed:-?} resources)
 duration:  ${duration_s:-?}s
 soak:      ${soak_verdict:-n/a (A0.3 soak off or not reached)}
 day2-access: ${day2_access_verdict:-n/a (P2-E day-2 access off or not reached)}
+kubeconfig-mint: ${kubeconfig_mint_verdict:-n/a (#5287 kubeconfig mint tiers off or not reached)}
 day2offer: ${day2_offer_verdict:-n/a (day-2 offer postures off or not reached)}
 fabric-demo: ${fabric_demo_verdict:-n/a (#845 Fabric placement gate off or not reached)}
 acm-cert: ${acm_cert_verdict:-n/a (#1773 ACM certificate gate off or not reached)}
@@ -1043,6 +1079,7 @@ echo "✓ proof bundle scrubbed + grep-clean: $out"
 	echo "| duration | ${duration_s:-n/a}s |"
 	echo "| day-2 soak (A0.3) | ${soak_verdict:-n/a} |"
 	echo "| day-2 access (P2-E) | ${day2_access_verdict:-n/a} |"
+	echo "| kubeconfig mint tiers (#5287) | ${kubeconfig_mint_verdict:-n/a} |"
 	echo "| day-2 offer postures | ${day2_offer_verdict:-n/a} |"
 	echo "| fabric placements (#845) | ${fabric_demo_verdict:-n/a} |"
 	echo "| xacct secrets (#1268) | ${xacct_verdict:-n/a} |"

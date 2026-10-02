@@ -6,6 +6,8 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { ago, JOB_LABEL, JOB_STATUS } from "@/lib/canvas/job-display";
 import { useCanvasStore } from "@/lib/stores/use-canvas-store";
+import { useDestroyHold, waitingOnLabel } from "./destroy-hold";
+import type { DestroyTreeNode } from "./destroy-tree-view";
 
 /**
  * One line, top-left of the board: the job running now, else the last one — "Deploy · Running ·
@@ -14,10 +16,20 @@ import { useCanvasStore } from "@/lib/stores/use-canvas-store";
  *
  * This is what remains of the floating activity list: the one fact worth having over the board
  * (is something running, did the last thing fail), with the history one click away on the rail.
+ *
+ * A DESTROY held back by the environments placed on this one's cluster (#5261) reads "Waiting on
+ * dev-1" instead of "Running": it is queued, and no runner will claim it until they are gone.
+ * `loadDestroyTree` is how it asks — and it asks only while a DESTROY is queued.
  */
-export function ActivityStatusLine() {
+export function ActivityStatusLine({
+	loadDestroyTree,
+}: {
+	/** Edit mode: reads the active environment's destroy tree. Absent → never shows a hold. */
+	loadDestroyTree?: () => Promise<DestroyTreeNode[]>;
+} = {}) {
 	const env = useEnvironmentStatus();
 	const openCard = useCanvasStore((s) => s.openCard);
+	const waiting = waitingOnLabel(useDestroyHold(loadDestroyTree));
 
 	const active = env.activeJob;
 	const last = env.recentJobs[0];
@@ -32,7 +44,9 @@ export function ActivityStatusLine() {
 	const vx = active ? "live" : (JOB_STATUS[status] ?? "idle");
 	// "Running" is the WORD for an in-flight job — its row status is QUEUED/CLAIMED/PROCESSING,
 	// none of which is what a person means when they ask whether something is running.
-	const word = active ? "Running" : status.charAt(0) + status.slice(1).toLowerCase();
+	const word = active
+		? (waiting ?? "Running")
+		: status.charAt(0) + status.slice(1).toLowerCase();
 
 	return (
 		<button

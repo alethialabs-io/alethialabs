@@ -71,6 +71,19 @@ describe("OpenFGA model generation", () => {
 		}
 	});
 
+	it("asks a cluster access tier on the ORG even when a cluster id is given (#5280)", () => {
+		const id = "11111111-1111-4111-8111-111111111111";
+		expect(toCheck("cluster", "access_admin", { id, orgId: "o" })).toEqual({
+			object: "org:o",
+			relation: "cluster_access_admin",
+		});
+		expect(toCheck("cluster", "access_readonly", { id, orgId: "o" })).toEqual({
+			object: "org:o",
+			relation: "cluster_access_readonly",
+		});
+		expect(byType.has("cluster")).toBe(false);
+	});
+
 	it("gives instance types a parent relation for inheritance", () => {
 		for (const r of ["project", "runner", "cloud_identity", "connector"]) {
 			expect(byType.get(r)?.relations.parent, `${r} missing parent`).toBeDefined();

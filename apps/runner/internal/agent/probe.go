@@ -66,8 +66,11 @@ func (w *Runner) executeProbeCluster(ctx context.Context, job *Job, provider str
 		Provider:      provider,
 		IacVersion:    vc.IacVersion,
 		StateBackend:  stateBackend,
-		Stdout:        stdout,
-		Stderr:        stderr,
+		// hetzner: probe with a kubeconfig minted now from the state's talosconfig, not the certificate
+		// the last apply stored — that one expires, and the probe then reported a healthy cluster down (#5330).
+		TalosMint: mintFromTalosconfig,
+		Stdout:    stdout,
+		Stderr:    stderr,
 	})
 	if err != nil {
 		// The probe could not RUN. Distinct from an honest "the cluster is down" (above).

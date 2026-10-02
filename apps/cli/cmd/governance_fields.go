@@ -79,12 +79,12 @@ const (
 
 // Docs pages, relative to the repository root.
 const (
-	docsProtectionPage     = "apps/docs/content/docs/cli/commands/protection.mdx"
-	docsPromotionsPage     = "apps/docs/content/docs/cli/commands/promotions.mdx"
-	docsProbesPage         = "apps/docs/content/docs/cli/commands/probes.mdx"
-	docsNotificationsPage  = "apps/docs/content/docs/cli/commands/notifications.mdx"
-	docsClassificationPage = "apps/docs/content/docs/cli/commands/classification.mdx"
-	docsFleetPage          = "apps/docs/content/docs/cli/commands/billing.mdx"
+	docsProtectionPage     = "apps/docs/content/docs/reference/cli/protection.mdx"
+	docsPromotionsPage     = "apps/docs/content/docs/reference/cli/promotions.mdx"
+	docsProbesPage         = "apps/docs/content/docs/reference/cli/probes.mdx"
+	docsNotificationsPage  = "apps/docs/content/docs/reference/cli/notifications.mdx"
+	docsClassificationPage = "apps/docs/content/docs/reference/cli/classification.mdx"
+	docsFleetPage          = "apps/docs/content/docs/reference/cli/billing.mdx"
 )
 
 // govFields is the spec. One entry per value a command in this group takes from a person, in the

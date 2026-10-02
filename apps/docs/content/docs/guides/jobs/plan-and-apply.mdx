@@ -1,0 +1,107 @@
+---
+title: Plan and apply in the console
+description: Plan an environment, review the plan and its verify report, apply that exact plan, or destroy the environment — from the console.
+---
+
+# Plan and apply in the console
+
+Infrastructure provisioning follows a strict **Plan-Review-Apply** workflow. Nothing is provisioned without explicit user confirmation.
+
+This guide covers the console. To run the same workflow from a terminal, see the CLI reference
+[Plan & Apply](/reference/cli/plan-and-apply). For what the runner does inside each job, see
+[Plan jobs](/concepts/runner/job-execution/plan-jobs) and [Deploy jobs](/concepts/runner/job-execution/deploy-jobs).
+
+## The Workflow
+
+<Steps>
+
+### Generate Plan
+From the [project detail page](/guides/dashboard/project-detail), click **Plan**. Select a Runner to execute. A `PLAN` job is queued.
+
+The runner plans the environment against its config snapshot, evaluates the
+[verify gate](#verify-gate) over the plan JSON, optionally prices it with Infracost
+([cost estimation](/concepts/cost-estimation)), and uploads the plan artifact.
+
+### Review Plan
+The Plan tab in project detail shows:
+
+**Plan Summary Bar:**
+- Resources to **create** (green count)
+- Resources to **update** (yellow count)
+- Resources to **destroy** (red count)
+- Estimated monthly cost
+
+**Resource Groups:**
+Collapsible sections grouped by resource type (e.g., "AWS EKS", "AWS VPC", "AWS RDS"). Each resource shows:
+- Resource address (e.g., `module.eks.aws_eks_cluster.main`)
+- Action: create / update / delete
+- Per-resource monthly cost (from Infracost)
+
+**Verify Report:**
+The Plan tab renders the [verify gate](#verify-gate) result (`execution_metadata["verify_result"]`) — per-control pass / fail / `not_evaluable` outcomes over the plan JSON. See [engine internals](/concepts/elench/engine-internals).
+
+**Cost Breakdown:**
+Total estimated monthly cost with per-resource itemization.
+
+### Apply
+Click **Apply** to provision. Select a Runner. A `DEPLOY` job is queued, bound to the plan you
+reviewed: the runner applies that plan's saved artifact (see [Applying the reviewed plan](#config-hash-validation)).
+The verify gate runs again before `tofu apply` and is **fail-closed**. After the apply, the runner
+installs ArgoCD ([GitOps](/concepts/gitops-argocd)) and reports cluster metadata back to the Console.
+
+### Finalization
+When the `DEPLOY` job succeeds, the Console records the cluster, database and cache endpoints on the
+environment and sets its status to `ACTIVE`. See
+[Deploy jobs → Finalization](/concepts/runner/job-execution/deploy-jobs#finalization).
+
+</Steps>
+
+## Verify gate
+
+Between `tofu plan` and `tofu apply`, the runner runs the [Elench](/concepts/elench) verification gate
+over the OpenTofu **plan JSON**: per-control `pass`, `fail`, or an honest `not_evaluable` for anything
+the plan cannot prove. A hard control failure **blocks before `tofu apply`** unless an authorized
+override waives it — see [Verify override](/guides/jobs/verify-override). `PLAN` jobs attach the
+report too, so you see the outcome in the **Plan** tab before you apply. For the control catalog and
+the signed evidence receipt, see [Engine internals](/concepts/elench/engine-internals).
+
+## Config hash validation
+
+An apply bound to a plan applies **that plan**, not a fresh one:
+
+- The `PLAN` job must have finished with `SUCCESS`, or the `DEPLOY` job fails.
+- The runner downloads the plan's saved artifact and applies it. If the artifact cannot be fetched,
+  the runner logs a warning and plans again from the `DEPLOY` job's own snapshot.
+- When both jobs carry a configuration hash, the runner compares them and fails on a mismatch with
+  `configuration changed since plan was generated`. Jobs queued through the jobs API — which the CLI
+  uses — carry that hash; jobs queued from the console do not, so the saved artifact is what binds a
+  console apply to its plan.
+
+## Destroy Workflow
+
+Destroy follows a simpler flow — no plan step required:
+
+1. Click **Destroy** from project detail
+2. Select a Runner
+3. A `DESTROY` job is queued
+4. The Runner runs `tofu destroy -auto-approve`
+5. Environment status → DESTROYING → DESTROYED
+
+<Callout type="warn">
+Destroy permanently removes all cloud resources (VPC, cluster, databases, etc.). OpenTofu state is preserved so accidental destroys can be recovered by re-applying, but data in databases will be lost.
+</Callout>
+
+## Free plan limits
+
+Community (free) organizations have two limits on provisioning jobs:
+
+- **Concurrency** — at most **2 jobs** run at once (enforced when a runner claims a job). Extra jobs wait in the queue rather than being rejected. Team raises this to 8; Enterprise has no concurrency cap.
+- **Daily volume** — at most **25 provisioning jobs you start** in any rolling 24-hour window (an operator can change the number with `ALETHIA_FREE_DAILY_JOB_QUOTA`). Reaching it blocks the next plan/apply/destroy/scan with an upgrade prompt; the limit clears as older jobs age out of the window. Paid plans have no daily cap.
+
+Only jobs **you** start count toward the daily limit. Background jobs the platform runs on your behalf — drift detection, cluster probes, reconciliation, and ephemeral-environment cleanup — are never counted and never blocked, so day-2 automation keeps running regardless of the cap.
+
+Requests for a short-lived cluster kubeconfig are not counted toward the daily limit and are not blocked by it, so you can always reach a cluster you have deployed. They have their own rate limit of 20 requests in 10 minutes for each person, and their runner time counts toward your included provisioning minutes like any other job.
+
+<Callout>
+Upgrading to a paid plan removes the daily cap and raises (Team) or removes (Enterprise) the concurrency cap. See the [billing commands](/reference/cli/billing) or the **Billing** page in the console.
+</Callout>

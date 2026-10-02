@@ -26,7 +26,7 @@ import { VerifyReceipt } from "./verify-receipt";
 
 /**
  * Real `alethia verify receipt` output, copied verbatim from
- * apps/docs/content/docs/cli/commands/verify.mdx. If the CLI's output changes,
+ * apps/docs/content/docs/reference/cli/verify.mdx. If the CLI's output changes,
  * this changes with it — it is a quotation, not a mock-up.
  */
 const VERIFY_TRANSCRIPT = `$ alethia verify receipt --job 4f3c2b1a
@@ -90,10 +90,10 @@ export function ConsoleBand() {
 				},
 				label: "Console",
 				links: [
-					{ label: "The Project designer", href: "/docs/console/design-project" },
-					{ label: "Plan and apply", href: "/docs/console/jobs/plan-and-apply" },
+					{ label: "The Project designer", href: "/docs/guides/design-project" },
+					{ label: "Plan and apply", href: "/docs/guides/jobs/plan-and-apply" },
 					{ label: "GitOps with ArgoCD", href: "/docs/concepts/gitops-argocd" },
-					{ label: "Runners", href: "/docs/runner" },
+					{ label: "Runners", href: "/docs/concepts/runner" },
 				],
 			}}
 		/>
@@ -121,10 +121,10 @@ export function CliBand() {
 				},
 				label: "Commands",
 				links: [
-					{ label: "Install the CLI", href: "/docs/cli/installation" },
-					{ label: "Plan and apply", href: "/docs/cli/commands/plan-and-apply" },
-					{ label: "Verify a receipt", href: "/docs/cli/commands/verify" },
-					{ label: "Command reference", href: "/docs/cli" },
+					{ label: "Install the CLI", href: "/docs/get-started/install-the-cli" },
+					{ label: "Plan and apply", href: "/docs/reference/cli/plan-and-apply" },
+					{ label: "Verify a receipt", href: "/docs/reference/cli/verify" },
+					{ label: "Command reference", href: "/docs/reference/cli" },
 				],
 			}}
 		/>
@@ -143,10 +143,10 @@ export function ReceiptBand() {
 				},
 				label: "Receipts",
 				links: [
-					{ label: "What a receipt binds", href: "/docs/elench/receipts" },
-					{ label: "The control catalog", href: "/docs/elench/control-catalog" },
-					{ label: "Verify from the CLI", href: "/docs/cli/commands/verify" },
-					{ label: "Elench, the engine", href: "/docs/elench" },
+					{ label: "What a receipt binds", href: "/docs/concepts/elench/receipts" },
+					{ label: "The control catalog", href: "/docs/reference/control-catalog" },
+					{ label: "Verify from the CLI", href: "/docs/reference/cli/verify" },
+					{ label: "Elench, the engine", href: "/docs/concepts/elench" },
 				],
 			}}
 		/>
@@ -171,7 +171,7 @@ export function Announce() {
 	return (
 		<div className="py-2.5 text-center" style={{ borderBottom: "1px solid var(--border-faint)" }}>
 			<Link
-				href="/docs/elench/receipts"
+				href="/docs/concepts/elench/receipts"
 				className="vx-clamp vx-clamp--tight inline-flex items-center gap-2 text-[11px] text-text-tertiary no-underline transition-colors hover:text-text-secondary"
 			>
 				Receipts verify offline, without us

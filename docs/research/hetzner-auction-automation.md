@@ -271,7 +271,7 @@ amortise. It wins when a floor of demand is continuous. Alethia's compute is alm
 
 **The prize, in full.** `infra/templates/runner/aws/main.tf:188-203` — `desired_count = 1`,
 `launch_type = "FARGATE"`, `runtime_platform { cpu_architecture = "ARM64" }`, and **no autoscaling resource
-in the file at all**. `apps/docs/content/docs/runner/self-hosted.mdx:148` states the posture:
+in the file at all**. `apps/docs/content/docs/guides/runners/self-operated.mdx:148` states the posture:
 *"| Scaling | 60s warm-pool loop, by queue depth | ECS `desired_count` (**you**) | You start/stop it |"*.
 
 ```
@@ -637,4 +637,4 @@ This repo (paths absolute from repo root):
 - `scripts/check-e2e-spend-guard.mjs` · `.github/workflows/e2e-nightly.yml`
 - `scripts/e2e/hcloud-cleanup.sh` · `scripts/env.sh` · `infra/sandbox/variables.tf`
 - `apps/console/lib/fleet/{hcloud.ts,costs.ts}` · `apps/console/lib/addons/catalog.ts`
-- `apps/docs/content/docs/runner/self-hosted.mdx` · `ARCHITECTURE.md`
+- `apps/docs/content/docs/guides/runners/self-operated.mdx` · `ARCHITECTURE.md`

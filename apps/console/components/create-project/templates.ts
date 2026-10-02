@@ -41,7 +41,7 @@ export interface TemplateOption {
 
 /**
  * The picker's catalogue, keyed on {@link TemplateId}. STATIC ON PURPOSE: the three starter
- * repositories are public and fixed (`apps/docs/content/docs/console/design-project/starter-templates.mdx`),
+ * repositories are public and fixed (`apps/docs/content/docs/guides/design-project/starter-templates.mdx`),
  * so the screen never asks GitHub anything at render time.
  *
  * WHAT A TEMPLATE DOES NOT CHANGE: the cluster. All three create the same CPU node pool —
@@ -76,7 +76,7 @@ export const TEMPLATE_OPTIONS: readonly TemplateOption[] = [
 			url: "https://github.com/alethialabs-io/alethia-starter-ai",
 		},
 		nextStep:
-			"KServe needs cert-manager, which Alethia installs only when the DNS component has a domain and Managed TLS certificate switched on. Set that first; its add-ons go in the apps repository and its workloads in a bring-your-own chart.",
+			"Copy it. Its add-ons go in the apps repository and its workloads in a bring-your-own chart. Alethia installs the cert-manager KServe needs for you — no domain required.",
 	},
 	{
 		id: "custom",
@@ -201,8 +201,13 @@ export function buildEmptyCreateInput(args: {
 			cidr_block: "10.0.0.0/16",
 			single_nat_gateway: true,
 		},
+		// No `cluster_version` and no instance type, on purpose (#5268, #5266): no cloud is known yet, so
+		// there is no catalog to pick either from. Unset reaches the snapshot as an empty version, and the
+		// Go resolver (`resolveK8sVersion`) picks the catalog's default for whichever cloud the project is
+		// deployed on; `[]` instance types take the template default, which equals the catalog default.
+		// This used to hard-code "1.31" — a minor in no cloud's catalog k8s_versions, which the resolver
+		// passes through untouched to EKS/GKE/AKS.
 		cluster: {
-			cluster_version: "1.31",
 			instance_types: [],
 			node_min_size: 2,
 			node_max_size: 5,

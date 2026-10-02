@@ -79,11 +79,22 @@ func resolveK8sVersion(provider, configVersion string) string {
 // source of truth that drifts the first time this precedence changes, and the drift would be
 // silent: the gate would go on passing while checking a machine type the deploy does not buy.
 func ResolveInstanceTypes(provider string, cl types.ProjectClusterConfig) []string {
-	if len(cl.InstanceTypes) > 0 {
-		return cl.InstanceTypes
+	return resolveNodeTypes(provider, cl.InstanceTypes, cl.NodeSize)
+}
+
+// resolveNodeTypes is ResolveInstanceTypes over the two fields it reads, and the form every
+// provider's ProviderTfvars calls. It takes the FIELDS rather than the cluster struct so the call
+// site names both values that decide the instance-type tfvar: the config-carriage guard
+// (apps/console/scripts/check-config-carriage.mjs) follows a value within one function body, and a
+// call passing `config.Cluster` whole named neither — so `node_size` and `instance_types` read as
+// "the guard cannot follow it" on every cloud, which is how #5267's dead `node_size` hid on that
+// board. Same precedence, one implementation: the exported wrapper above delegates here.
+func resolveNodeTypes(provider string, instanceTypes []string, nodeSize *types.NodeSize) []string {
+	if len(instanceTypes) > 0 {
+		return instanceTypes
 	}
-	if cl.NodeSize != nil {
-		if i, ok := catalog.MustLoad().NearestInstance(provider, cl.NodeSize.VCPU, cl.NodeSize.MemoryGB, "general"); ok {
+	if nodeSize != nil {
+		if i, ok := catalog.MustLoad().NearestInstance(provider, nodeSize.VCPU, nodeSize.MemoryGB, "general"); ok {
 			return []string{i.Value}
 		}
 	}

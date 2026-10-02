@@ -1,9 +1,9 @@
 ---
-title: Bring Your Own Charts
+title: Bring-your-own charts
 description: Point an add-on at a Helm chart in your own git repository — Alethia deploys it through ArgoCD under a hardened project that confines it to its own namespace, auto-syncs it, and never prunes or reverts what you change.
 ---
 
-# Bring Your Own Charts
+# Bring-your-own charts
 
 Alethia's add-on marketplace installs charts from public Helm registries. **Bring-your-own charts**
 let you install a Helm chart from **your own git repository** instead, alongside marketplace add-ons
@@ -11,11 +11,12 @@ in the same cluster.
 
 Your chart is not Alethia's code, so it runs under a deliberately narrower contract than a
 marketplace add-on. This page is that contract: what gets deployed, what your chart is allowed to
-create, what Alethia will and will not do to it afterwards, and how to remove it.
+create, what Alethia will and will not do to it afterwards, and how to remove it. To attach a chart,
+scan it, and bind its workloads, follow [Bring your own Helm charts](/guides/design-project/bring-your-own-charts).
 
 <Callout type="info">
   **A BYO chart is a Helm chart in git.** It is a different thing from
-  [Bring Your Own IaC](/docs/concepts/bring-your-own-iac), which points an environment at your own
+  [bring-your-own IaC](/concepts/bring-your-own-iac), which points an environment at your own
   **OpenTofu root module** and provisions the infrastructure itself. They can be used together;
   neither requires the other.
 </Callout>
