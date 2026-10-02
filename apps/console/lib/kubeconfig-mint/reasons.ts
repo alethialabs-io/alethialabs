@@ -32,7 +32,8 @@ export const KUBECONFIG_MINT_FAILURE_REASONS: readonly string[] = [
 	"This cloud cannot issue the requested kubeconfig shape.",
 	"The runner could not seal the credential to the client key.",
 	// A namespace/vcluster environment's cluster row names the SHARED Fabric cluster; the runner
-	// refuses to mint the whole shared cluster's credential for one tenant of it (#5283).
+	// refuses to mint the whole shared cluster's credential for one tenant of it (#5283). The console
+	// refuses it first (#5327) with lib/clusters/mint-eligibility.ts's copy of this sentence.
 	"Kubeconfig mints are not available for an environment placed on a shared cluster.",
 ];
 
