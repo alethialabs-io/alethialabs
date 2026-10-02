@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // capture records the one request a client made, so a test can assert on the URL
@@ -574,6 +577,42 @@ func TestCreateProject_OmitsPlacementWhenUnset(t *testing.T) {
 		if _, present := got[k]; present {
 			t.Errorf("%q must be absent when unset, got %+v", k, got)
 		}
+	}
+}
+
+// TestCreateProject_NodeShapeTravels pins `project create --instance-type / --node-size` (#5266):
+// each half reaches the body under the contract's key, and an unset shape sends neither key, so the
+// server writes no cluster row and the template default applies.
+func TestCreateProject_NodeShapeTravels(t *testing.T) {
+	cases := []struct {
+		name  string
+		shape ProjectNodeShape
+		want  map[string]any
+	}{
+		{"instance type", ProjectNodeShape{InstanceType: "t3.xlarge"}, map[string]any{"instance_type": "t3.xlarge"}},
+		{"node size", ProjectNodeShape{NodeSize: &types.NodeSize{VCPU: 4, MemoryGB: 16}},
+			map[string]any{"node_size": map[string]any{"vcpu": float64(4), "memory_gb": float64(16)}}},
+		{"unset", ProjectNodeShape{}, map[string]any{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got map[string]interface{}
+			client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewDecoder(r.Body).Decode(&got)
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(map[string]any{"project": minimalProjectJSON()})
+			}))
+			if _, err := client.CreateProject(CreateProjectParams{ProjectName: "shop", Region: "eu-west-1", NodeShape: tc.shape}); err != nil {
+				t.Fatalf("CreateProject: %v", err)
+			}
+			for _, k := range []string{"instance_type", "node_size"} {
+				want, wanted := tc.want[k]
+				have, present := got[k]
+				if wanted != present || (wanted && !reflect.DeepEqual(want, have)) {
+					t.Errorf("%s = %#v (present %v), want %#v (present %v)", k, have, present, want, wanted)
+				}
+			}
+		})
 	}
 }
 

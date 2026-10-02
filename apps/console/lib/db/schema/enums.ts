@@ -52,6 +52,11 @@ export const environmentLifecycle = pgEnum("environment_lifecycle", [
 // cluster on a shared Fabric (own control plane/CRDs/version — the middle tier neither Porter
 // nor Qovery offers); `dedicated` = the env owns its Fabric 1:1 (prod/hard-isolation; ≈ the
 // legacy env=cluster behaviour, so it is the back-compat default).
+// A cluster node pool's purchase option (#5266). NULL on project_cluster means "unset": the template
+// default applies (ON_DEMAND on aws since #5266). Only aws honours `spot` today; ValidateConfig in
+// packages/core/cloud refuses it on the other clouds rather than storing a choice nothing reads.
+export const nodeCapacityType = pgEnum("node_capacity_type", ["on_demand", "spot"]);
+
 export const placementMode = pgEnum("placement_mode", [
 	"namespace",
 	"vcluster",
@@ -542,6 +547,7 @@ export type ComponentStatus = (typeof componentStatus.enumValues)[number];
 export type AddonMode = (typeof addonMode.enumValues)[number];
 export type EnvironmentStage = (typeof environmentStage.enumValues)[number];
 export type PlacementMode = (typeof placementMode.enumValues)[number];
+export type NodeCapacityType = (typeof nodeCapacityType.enumValues)[number];
 export type EnvironmentLifecycle =
 	(typeof environmentLifecycle.enumValues)[number];
 export type PromotionStatus = (typeof promotionStatus.enumValues)[number];

@@ -86,7 +86,10 @@ export const SHAPE_CONTROLS = {
  */
 const HETZNER_TYPE_SOURCES = [
 	{ file: "infra/templates/project/hetzner/variables.tf", extract: extractTfServerTypeDefaults },
-	{ file: "packages/core/cloud/hetzner_provider.go", extract: extractProviderDefault },
+	// hetzner_provider.go substitutes the CATALOG default for an empty list (#5266) — it used to carry
+	// its own `workerType := "cpx22"` literal, which is what this row read. The catalog is now the one
+	// place that default lives, so the catalog is what is read.
+	{ file: "packages/core/catalog/catalog.json", extract: extractCatalogHetznerDefault },
 	{ file: "test/e2e/maxconfig.go", extract: extractMaxconfigHetzner },
 ];
 const HETZNER_FIXTURE_DIR = "test/e2e/fixtures";
@@ -313,9 +316,12 @@ export function extractTfServerTypeDefaults(text) {
 	return [...text.matchAll(/variable\s+"[a-z_]*server_type"\s*\{[^}]*?default\s*=\s*"([^"]+)"/g)].map((m) => m[1]);
 }
 
-/** @returns {string[]} the `workerType := "..."` default in hetzner_provider.go. */
-export function extractProviderDefault(text) {
-	return [...text.matchAll(/workerType\s*:=\s*"([^"]+)"/g)].map((m) => m[1]);
+/** @returns {string[]} `compute.hetzner.default_instance` from catalog.json — the server type
+ * hetzner_provider.go provisions for a cluster that pins none. Empty when the key is missing, which
+ * readHetznerTypes turns into a refusal rather than a smaller domain. */
+export function extractCatalogHetznerDefault(text) {
+	const value = JSON.parse(text)?.compute?.hetzner?.default_instance;
+	return typeof value === "string" && value !== "" ? [value] : [];
 }
 
 /**
@@ -485,7 +491,8 @@ function runSelfTest() {
 		"tf extractor reads both *_server_type defaults",
 		extractTfServerTypeDefaults('variable "control_plane_server_type" {\n  type = string\n  default     = "cpx22"\n}\nvariable "worker_server_type" {\n  default = "cx33"\n}\nvariable "worker_count" {\n  default = 1\n}').join() === "cpx22,cx33",
 	);
-	assert("provider extractor reads workerType", extractProviderDefault('\tworkerType := "cpx22"\n').join() === "cpx22");
+	assert("catalog extractor reads compute.hetzner.default_instance", extractCatalogHetznerDefault('{"compute":{"hetzner":{"default_instance":"cpx22"}}}').join() === "cpx22");
+	assert("catalog extractor yields nothing for a catalog with no hetzner default", extractCatalogHetznerDefault('{"compute":{}}').length === 0);
 	assert(
 		"maxconfig extractor reads the hetzner arm and not its neighbours",
 		extractMaxconfigHetzner(

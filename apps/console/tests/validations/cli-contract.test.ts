@@ -14,6 +14,7 @@ import {
   cliJobResponse,
   cliJobsPageResponse,
   cliPageInfo,
+  cliProjectNodeShapeRequest,
   cliRepositoriesResponse,
   cliLatestReleaseWire,
   cliReleasePublishWire,
@@ -95,6 +96,9 @@ const cases: ReadonlyArray<[string, z.ZodType]> = [
   ["runner_kubeconfig_mint_spec.json", runnerKubeconfigMintSpec],
   ["runner_kubeconfig_mint_result.json", runnerKubeconfigMintResult],
   ["kubeconfig_mint_credential.json", kubeconfigMintCredential],
+  // #5266: the node shape `alethia project create --instance-type / --node-size` sends. A REQUEST
+  // fixture — the Go side strict-decodes it into api.ProjectNodeShape, the struct CreateProject sends.
+  ["create_project_node_shape.json", cliProjectNodeShapeRequest],
 ];
 
 describe("CLI wire contract ↔ fixtures", () => {

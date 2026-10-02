@@ -72,8 +72,8 @@ export function computeCostItems(
 	});
 
 	const { instanceTypes, nodeDesiredSize } = input;
-	// No instance type means the template's own default, not a cheap guess: on AWS that is an
-	// m5a.4xlarge, and pricing it as a t3.medium understated the estimate ~17× (#5251).
+	// No instance type means the template's own default, not a cheap guess (#5251). Since #5266 that
+	// default equals the catalog's (on AWS a t3.large), so this prices the node that is bought.
 	const templateDefault = TEMPLATE_DEFAULT_NODE[meta.provider];
 	const avgHr =
 		instanceTypes.length > 0

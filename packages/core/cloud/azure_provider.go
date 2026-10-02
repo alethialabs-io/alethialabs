@@ -39,6 +39,9 @@ func (p *azureProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateInstanceTypes("azure", config); err != nil {
 		return err
 	}
+	if err := validateCapacityType(config, "azure", false); err != nil {
+		return err
+	}
 	if err := validateNodeDiskSize(config, "aks_disk_size_gb", azureNodeDiskFloorGB); err != nil {
 		return err
 	}

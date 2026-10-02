@@ -98,6 +98,29 @@ func validateNodeSizing(config *types.ProjectConfig) error {
 	return nil
 }
 
+// validateCapacityType refuses a node capacity type the cloud cannot honour (#5266).
+//
+// "" (unset) and "on_demand" are valid everywhere: every cloud's node pool is on-demand unless asked
+// otherwise. "spot" is honoured on aws only, where it becomes `eks_ng_capacity_type = "SPOT"`. The
+// other clouds model interruptible capacity differently (azure adds a SEPARATE spot pool, gcp and
+// alibaba flip a per-pool switch) and none of those knobs reads this field — so accepting "spot"
+// there would store a choice the deploy silently ignores. It is refused instead, naming the cloud.
+func validateCapacityType(config *types.ProjectConfig, provider string, supportsSpot bool) error {
+	switch config.Cluster.CapacityType {
+	case "", types.NodeCapacityTypeOnDemand:
+		return nil
+	case types.NodeCapacityTypeSpot:
+		if supportsSpot {
+			return nil
+		}
+		return configError("cluster.capacity_type", config.Cluster.CapacityType,
+			fmt.Sprintf("spot capacity is not supported on %s through this field yet; use on_demand or leave it unset", provider))
+	default:
+		return configError("cluster.capacity_type", config.Cluster.CapacityType,
+			"it must be on_demand or spot")
+	}
+}
+
 // Worker-node root-disk floors. Each is the `>= N` in that cloud's own disk-size variable
 // validation block — the value the template would reject at plan time — so the rule can only
 // ever refuse a config the template was going to refuse anyway.

@@ -20,9 +20,10 @@ locals {
   #
   #   instance type            ENIs × IPv4/ENI   addresses taken from the subnet, per node
   #   ----------------------   ---------------   -----------------------------------------
-  #   m5a.4xlarge (the default
-  #     of var.eks_instance_types)   8 × 30                240   (max pods 8×(30−1)+2 = 234)
-  #   t3.large (the e2e floor)       3 × 12                 36   (max pods 3×(12−1)+2 =  35)
+  #   m5a.4xlarge (the template
+  #     default until #5266)         8 × 30                240   (max pods 8×(30−1)+2 = 234)
+  #   t3.large (the default now —
+  #     the catalog's, #5266)        3 × 12                 36   (max pods 3×(12−1)+2 =  35)
   #
   # AWS also reserves 5 addresses in every subnet, so usable = size − 5.
   #
@@ -35,10 +36,10 @@ locals {
   # subnets, which hold a handful of ENIs, were a /24.
   #
   # 1/16 of the VPC = a /20 on a /16 = 4096 addresses, 4091 usable:
-  #   4091 / 240 ≈ 17 default m5a.4xlarge nodes per AZ  (≈ 51 across the three AZs, ~4 000 pods)
-  #   4091 /  36 ≈ 113 t3.large nodes per AZ
+  #   4091 / 240 ≈ 17 m5a.4xlarge nodes per AZ  (≈ 51 across the three AZs, ~4 000 pods)
+  #   4091 /  36 ≈ 113 default t3.large nodes per AZ
   # A /24 (251 usable) — the widest that fits between the OLD netnums without moving the public
-  # subnets — holds exactly ONE default node and is therefore not a fix, so the private subnets
+  # subnets — holds exactly ONE m5a.4xlarge node and is therefore not a fix, so the private subnets
   # move up into free space instead. Public and database keep their existing CIDRs BYTE-FOR-BYTE
   # (see the map below); only the private subnets are re-addressed.
   #

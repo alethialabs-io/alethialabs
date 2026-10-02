@@ -201,8 +201,13 @@ export function buildEmptyCreateInput(args: {
 			cidr_block: "10.0.0.0/16",
 			single_nat_gateway: true,
 		},
+		// No `cluster_version` and no instance type, on purpose (#5268, #5266): no cloud is known yet, so
+		// there is no catalog to pick either from. Unset reaches the snapshot as an empty version, and the
+		// Go resolver (`resolveK8sVersion`) picks the catalog's default for whichever cloud the project is
+		// deployed on; `[]` instance types take the template default, which equals the catalog default.
+		// This used to hard-code "1.31" — a minor in no cloud's catalog k8s_versions, which the resolver
+		// passes through untouched to EKS/GKE/AKS.
 		cluster: {
-			cluster_version: "1.31",
 			instance_types: [],
 			node_min_size: 2,
 			node_max_size: 5,

@@ -123,6 +123,17 @@ export function convertProjectConfig(
 	data.cluster.instance_types = instances.instanceTypes;
 
 	data.cluster.cluster_version = DEFAULT_K8S_VERSION[targetProvider];
+
+	// Spot through `capacity_type` is honoured on aws only (#5266); the target cloud's ValidateConfig
+	// would refuse it, so a converted cluster goes back to the default with a notice.
+	if (data.cluster.capacity_type === "spot" && targetProvider !== "aws") {
+		data.cluster.capacity_type = undefined;
+		warnings.push({
+			severity: "warning",
+			component: "Cluster",
+			message: `Spot capacity is not offered on ${target.shortName} through this setting; the cluster uses on-demand nodes.`,
+		});
+	}
 	warnings.push({
 		severity: "info",
 		component: "Cluster",

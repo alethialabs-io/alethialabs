@@ -1467,6 +1467,58 @@ describe("getProjectAsFormData — node_size round-trip (#5267)", () => {
 	});
 });
 
+// #5266: the node pool's capacity type. Carried only when set — Go reads it omitempty and an absent
+// key means the template default — and loaded back, because a canvas save is delete-then-insert and
+// would otherwise drop the `spot` migration 0156 pinned onto running aws clusters.
+describe("capacity_type carriage (#5266)", () => {
+	/** Run planProject against a single cluster row and return the frozen `cluster` snapshot. */
+	async function clusterSnapshot(row: Record<string, unknown>) {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(new Map<unknown, RowsResolver>([[projectCluster, [row]]])),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await planProject("p1");
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<string, unknown>;
+		return snapshot.cluster as Record<string, unknown>;
+	}
+
+	it("carries a set capacity type onto the snapshot", async () => {
+		const cluster = await clusterSnapshot({ instance_types: ["m5a.4xlarge"], capacity_type: "spot" });
+		expect(cluster.capacity_type).toBe("spot");
+	});
+
+	it("omits the key when unset, so the snapshot bytes do not move", async () => {
+		const cluster = await clusterSnapshot({ instance_types: ["t3.large"], capacity_type: null });
+		expect(cluster).not.toHaveProperty("capacity_type");
+	});
+
+	it("loads it back into the canvas form, so a save cannot wipe it", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[
+					projects,
+					[
+						{
+							id: "p1",
+							org_id: "org-1",
+							cloud_identity_id: "ci-1",
+							region: "us-east-1",
+							iac_version: "1.9.5",
+							project_name: "My App",
+							slug: "my-app",
+						},
+					],
+				],
+				[projectEnvironments, [{ id: "env-1", name: "production", status: "DEPLOYED", is_default: true }]],
+				[cloudIdentities, [{ id: "ci-1", provider: "aws" }]],
+				[projectCluster, [{ cluster_version: "1.33", instance_types: ["m5a.4xlarge"], capacity_type: "spot" }]],
+			]),
+		});
+		const { formData } = await getProjectAsFormData("p1");
+		expect(formData.cluster.capacity_type).toBe("spot");
+	});
+});
+
 // #2568: the cluster cloud's own DNS may refuse the TLD outright — hetzner answers a `.io` zone
 // create with "unsupported tld" (422). #2570 added the gate; these are the two conditions it has
 // to get right, neither of which had a test.

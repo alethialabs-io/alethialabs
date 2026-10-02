@@ -1,0 +1,7 @@
+{
+	"instance_type": "string",
+	"node_size": {
+		"vcpu": 1,
+		"memory_gb": 1
+	}
+}

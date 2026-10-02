@@ -985,6 +985,31 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						max: 100,
 					},
 					{ key: "node_max_size", type: "number", label: "Max nodes", min: 1, max: 100 },
+					// The node pool's purchase option (#5266): on-demand by default, Spot an explicit
+					// opt-in. Only aws honours Spot through this field (ValidateConfig refuses it
+					// elsewhere), so it is shown on aws — and on any other cloud ONLY while it still
+					// says `spot`, e.g. after a cluster moved off aws, so the refusal can be fixed here.
+					{
+						key: "capacity_type",
+						type: "select",
+						label: "Capacity",
+						requiresProvider: true,
+						visibleWhen: (c, { provider }) => provider === "aws" || c.capacity_type === "spot",
+						get: (c) => c.capacity_type ?? "on_demand",
+						set: (v) => ({ capacity_type: v === "spot" ? "spot" : "on_demand" }),
+						options: [
+							{
+								value: "on_demand",
+								label: "On-demand",
+								description: "The default. The cloud does not reclaim the nodes.",
+							},
+							{
+								value: "spot",
+								label: "Spot",
+								description: "Cheaper, but AWS can reclaim a node with two minutes' notice.",
+							},
+						],
+					},
 					{
 						key: "node_disk_size_gb",
 						type: "number",

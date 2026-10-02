@@ -171,9 +171,9 @@ variable "eks_ng_desired_size" {
 }
 
 variable "eks_ng_capacity_type" {
-  description = "capacity type for node group nodes"
+  description = "Capacity type for the managed node group: ON_DEMAND (default) or SPOT"
   type        = string
-  default     = "SPOT"
+  default     = "ON_DEMAND"
 }
 
 variable "kms_key_enable_default_policy" {
