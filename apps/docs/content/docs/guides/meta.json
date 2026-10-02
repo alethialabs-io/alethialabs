@@ -12,6 +12,7 @@
 		"jobs",
 		"dashboard",
 		"clusters",
+		"get-a-kubeconfig",
 		"fleet-pools",
 		"alerts",
 		"classification",
