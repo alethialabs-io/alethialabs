@@ -78,6 +78,9 @@ type ControlPlane struct {
 	// talosStore overrides the Postgres reads the talosconfig channel makes; nil ⇒ the real pool. A
 	// test seam only; the harness itself never sets it.
 	talosStore talosStore
+	// mintStore overrides the Postgres reads and writes of the kubeconfig mint channel (#5287); nil ⇒
+	// the real pool. A test seam only.
+	mintStore mintStore
 
 	// In-memory OpenTofu http state backend, keyed by a STORAGE KEY (state + lock).
 	// The key is the requesting job's id by default, but a job may be ALIASED onto
@@ -374,6 +377,9 @@ func (cp *ControlPlane) mux() http.Handler {
 	// 404'd and no hetzner placement could ever reach its Fabric (#845, run 36626677124).
 	m.HandleFunc("PUT /api/jobs/{id}/talosconfig", cp.handlePutTalosconfig)
 	m.HandleFunc("GET /api/jobs/{id}/talosconfig", cp.handleGetTalosconfig)
+	// The kubeconfig mint's runner channel (#5287) — see t2_kubeconfig_mint_shim.go.
+	m.HandleFunc("GET /api/jobs/{id}/kubeconfig-mint", cp.handleGetKubeconfigMint)
+	m.HandleFunc("POST /api/jobs/{id}/kubeconfig-mint", cp.handlePostKubeconfigMint)
 	m.HandleFunc("POST /api/runners/heartbeat", cp.handleHeartbeat)
 	m.HandleFunc("GET /api/runners/wake", cp.handleWake)
 	// OpenTofu http state backend (in-memory). Lock is a distinct sub-path.
