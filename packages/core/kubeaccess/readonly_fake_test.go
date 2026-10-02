@@ -149,9 +149,21 @@ func (f *fakeAPIServer) serveToken(w http.ResponseWriter, saPath string, body []
 		_, _ = io.WriteString(w, f.rawTokenBody)
 		return
 	}
-	var req map[string]any
+	var req, sent map[string]any
 	_ = json.Unmarshal(body, &req)
-	f.lastTokenRequest = req
+	_ = json.Unmarshal(body, &sent) // a separate decode: req gains a status below, sent must not
+	f.lastTokenRequest = sent
+	// A real API server decodes the whole body into authentication/v1.TokenRequest, and
+	// metav1.Time refuses a status.expirationTimestamp that is not RFC 3339 (an empty string
+	// included) with 400 before the spec is read. Mirror that, so a sent status cannot pass here.
+	if st, ok := req["status"].(map[string]any); ok {
+		if ts, ok := st["expirationTimestamp"].(string); ok {
+			if _, err := time.Parse(time.RFC3339, ts); err != nil {
+				writeStatus(w, http.StatusBadRequest, "BadRequest", "status.expirationTimestamp: "+err.Error())
+				return
+			}
+		}
+	}
 	requested := int64(req["spec"].(map[string]any)["expirationSeconds"].(float64))
 	var status map[string]any
 	if f.tokenResponse != nil {
