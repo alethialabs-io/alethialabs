@@ -807,7 +807,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"redirectOnly": false,
-			"surfaceFiles": 231,
+			"surfaceFiles": 246,
 			"families": {
 				"S": {
 					"instrumented": 4,
@@ -1397,7 +1397,7 @@
 		{
 			"route": "/[org]/~/clusters",
 			"redirectOnly": false,
-			"surfaceFiles": 230,
+			"surfaceFiles": 245,
 			"families": {
 				"S": {
 					"instrumented": 4,
