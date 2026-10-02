@@ -128,6 +128,10 @@ describe("queryMembersPage", () => {
 		expect(page.resultCount).toBe(2);
 		// 2 members + 1 invitation in the UNFILTERED universe.
 		expect(page.total).toBe(3);
+		// The page names who it was read for and when, so the table's "You" badge and its
+		// "… ago" come from the dehydrated payload, not from each renderer's session or clock (#5377).
+		expect(page.viewerUserId).toBe("viewer-1");
+		expect(Number.isNaN(Date.parse(page.asOf))).toBe(false);
 		expect(page.facets.statuses).toEqual([
 			{ value: "active", label: null, count: 1 },
 			{ value: "pending", label: null, count: 1 },
@@ -276,6 +280,9 @@ describe("queryMembersPage", () => {
 			teams: [],
 			joinedAt: "2026-01-05T09:00:00.000Z",
 		});
+		// The viewer is reading the page, so the synthesized owner is active AS OF the read — the
+		// same instant as the page's `asOf`, which is what renders it as "less than a minute ago".
+		expect(page.members[0].lastActiveAt).toBe(page.asOf);
 		// The synthesized row IS the universe, so the facets describe it rather than nothing.
 		expect(page.total).toBe(1);
 		expect(page.facets.roles).toEqual([{ value: "owner", label: null, count: 1 }]);

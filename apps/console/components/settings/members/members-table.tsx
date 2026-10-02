@@ -402,7 +402,7 @@ function StatusCell({ row }: CellContext<MemberRowView, unknown>) {
   return <MemberStatusBadge status={row.original.status} />;
 }
 
-/** When the member was last active, already formatted by the row builder. */
+/** When the member was last active, already formatted by the row builder against the page's `asOf`. */
 function ActivityCell({ row }: CellContext<MemberRowView, unknown>) {
   return (
     <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
@@ -514,8 +514,6 @@ function membersColumns(canManage: boolean): ColumnDef<MemberRowView>[] {
 /** Settings · Members: the filterable members + invitations table and its confirmations. */
 export function MembersTable() {
   const canManage = useEntitlement("organizations");
-  const { data: session } = authClient.useSession();
-  const myId = session?.user?.id;
   const { org } = useParams<{ org: string }>();
   const qc = useQueryClient();
 
@@ -581,6 +579,14 @@ export function MembersTable() {
   // classification query below on each paint while the fetch is still in flight.
   const members = useMemo(() => page.data?.members ?? [], [page.data]);
   const invites = useMemo(() => page.data?.invitations ?? [], [page.data]);
+  // WHO is viewing and WHEN the rows were read both come from the payload, never from this
+  // renderer: the route dehydrates the payload, so the server render and the hydrating client
+  // read the same two values and produce the same markup. Reading the viewer from
+  // `authClient.useSession()` and the clock from `new Date()` here made the two renders disagree
+  // whenever the session fetch beat hydration (an extra "You" badge, React #418 "HTML") or the
+  // two clocks straddled a minute boundary (a different "… ago", #418 "text") — #5377.
+  const viewerUserId = page.data?.viewerUserId;
+  const asOf = page.data?.asOf;
   /** Every member + pending invitation in the org — what tells onboarding from an empty filter. */
   const total = page.data?.total ?? 0;
 
@@ -637,8 +643,10 @@ export function MembersTable() {
       role: m.role,
       teams: m.teams,
       status: m.status === "suspended" ? "suspended" : "active",
-      activity: m.lastActiveAt ? formatRelative(m.lastActiveAt) : "—",
-      isYou: m.userId === myId,
+      activity: m.lastActiveAt
+        ? formatRelative(m.lastActiveAt, asOf ? new Date(asOf) : undefined)
+        : "—",
+      isYou: m.userId === viewerUserId,
     }));
     const inviteRows: MemberRowView[] = invites.map((i) => ({
       id: `i:${i.id}`,
@@ -655,7 +663,7 @@ export function MembersTable() {
       isYou: false,
     }));
     return [...memberRows, ...inviteRows];
-  }, [members, invites, myId]);
+  }, [members, invites, viewerUserId, asOf]);
 
   // One batched query hydrates every member row's classification chips (invites aren't
   // classifiable). Keyed on the member row id (member.id).

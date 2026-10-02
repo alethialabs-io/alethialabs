@@ -103,6 +103,26 @@ export interface MembersPage {
 	resultCount: number;
 	/** Every member + pending invitation in the org — the count pill's denominator. */
 	total: number;
+	/**
+	 * The user this page was read FOR — the row the table marks "You".
+	 *
+	 * Carried in the payload rather than read from `authClient.useSession()` on the client, because
+	 * the payload is what the route prefetches and dehydrates: the server render and the hydrating
+	 * client both read THIS value, so they agree by construction. The session hook does not give
+	 * that guarantee — better-auth's `useStore` passes the client's live `get` as
+	 * `getServerSnapshot`, so a session fetch that lands before the table hydrates renders a "You"
+	 * badge the server's HTML never had: an extra element, React #418 "HTML" (#5377).
+	 */
+	viewerUserId: string;
+	/**
+	 * When this page was read (ISO 8601) — the baseline every "Last active … ago" is measured from.
+	 *
+	 * `lastActiveAt` is itself a reading taken at this instant, so its age is stated as of the same
+	 * instant. Measuring it against each renderer's own wall clock made the server and the
+	 * hydrating client disagree whenever the two clocks straddled a `formatDistance` boundary
+	 * (React #418 "text", #5377). One instant from the payload gives both renders the same string.
+	 */
+	asOf: string;
 	facets: {
 		/** All three statuses, always, over the UNFILTERED universe. */
 		statuses: FacetOption[];
@@ -147,6 +167,8 @@ export async function queryMembersPage(
 	query: MembersQuery = {},
 ): Promise<MembersPage> {
 	const db = getServiceDb();
+	// One instant for the whole read: the page's `asOf`, and the personal owner's "active now".
+	const readAt = new Date();
 	const search = searchTerm(query.search);
 	const like = search ? likeTerm(search) : undefined;
 	const statuses = narrowTo(MEMBER_ROW_STATUSES, query.statuses);
@@ -267,7 +289,7 @@ export async function queryMembersPage(
 	// Personal workspace: no member rows anywhere in the org → you are the sole owner.
 	const personal = facetMembers.length === 0;
 	const syntheticOwner = personal
-		? await synthesizeOwner(viewerUserId)
+		? await synthesizeOwner(viewerUserId, readAt)
 		: null;
 
 	const userIds = memberRows.map((r) => r.userId);
@@ -356,6 +378,8 @@ export async function queryMembersPage(
 		invitations,
 		resultCount: members.length + invitations.length,
 		total: universeMembers.length + facetInvites.length,
+		viewerUserId,
+		asOf: readAt.toISOString(),
 		facets: {
 			statuses: orderedOptions(statusCounts, MEMBER_ROW_STATUSES),
 			roles: asOptions(roleCounts),
@@ -364,8 +388,11 @@ export async function queryMembersPage(
 	};
 }
 
-/** The sole-owner row a personal workspace shows in place of `member` rows. */
-async function synthesizeOwner(userId: string): Promise<MemberRow | null> {
+/**
+ * The sole-owner row a personal workspace shows in place of `member` rows. The viewer IS this
+ * owner and is reading the page, so they are active as of the read (`now`).
+ */
+async function synthesizeOwner(userId: string, now: Date): Promise<MemberRow | null> {
 	const [u] = await getServiceDb()
 		.select({
 			id: user.id,
@@ -390,7 +417,7 @@ async function synthesizeOwner(userId: string): Promise<MemberRow | null> {
 		status: "active",
 		joinedAt: u.createdAt.toISOString(),
 		teams: [],
-		lastActiveAt: new Date().toISOString(),
+		lastActiveAt: now.toISOString(),
 	};
 }
 
