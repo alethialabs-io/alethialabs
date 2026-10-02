@@ -398,8 +398,8 @@ function engineLabel(config: {
  * The cluster's portable-size write, under the one-writer rule (#5267): setting `node_size` clears
  * `instance_types` in the same patch. Go prefers a non-empty instance_types, and every new cluster
  * is stamped with a default one (#5270), so a size written beside it would be ignored by the deploy.
- * `[]` rather than undefined so the snapshot carries an explicit empty list. The CLI applies the
- * same rule through applySizingOneWriter (lib/cloud-providers/node-sizing.ts).
+ * `[]` rather than undefined so the snapshot carries an explicit empty list. The CLI and accepted AI
+ * proposals apply the same rule through applySizingOneWriter (lib/cloud-providers/node-sizing.ts).
  */
 function nodeSizeWrite(size: NodeSize): { node_size: NodeSize; instance_types: string[] } {
 	return { node_size: size, instance_types: [] };

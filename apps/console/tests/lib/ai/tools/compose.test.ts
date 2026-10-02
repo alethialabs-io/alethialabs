@@ -270,6 +270,30 @@ describe("composeTools.estimate_cost", () => {
 	});
 });
 
+describe("composeTools.estimate_cost prices the machine the card names (#5291)", () => {
+	it("a node_size cluster is priced at its resolved SKU, and Spot is said to be on-demand", async () => {
+		const ctx: CanvasContext = {
+			provider: "gcp",
+			form: {
+				cluster: {
+					instance_types: [],
+					node_size: { vcpu: 4, memory_gb: 16 },
+					node_desired_size: 1,
+					capacity_type: "spot",
+				},
+			},
+		};
+		const out = await run(composeTools(ctx).estimate_cost, {});
+		const items = typeof out === "object" && out && "items" in out && Array.isArray(out.items) ? out.items : [];
+		const nodes = items.find((i: { label?: string }) => i.label === "GKE Nodes");
+		// e2-standard-4's catalog hint is ~$98/mo — not the e2-standard-2 template default (~$49).
+		expect(nodes?.monthly).toBe(98);
+		expect(nodes?.detail).toBe(
+			"1x 4 vCPU / 16 GB → e2-standard-4 · Spot, estimated at on-demand rates",
+		);
+	});
+});
+
 describe("composeTools.propose_changes", () => {
 	it("is a HITL tool with NO execute (the user accepts client-side)", () => {
 		// Removing execute makes the model's turn pause on the proposal until the user
