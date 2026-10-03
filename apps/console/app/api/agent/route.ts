@@ -10,7 +10,8 @@ import {
 	type UIMessage,
 } from "ai";
 import { z } from "zod";
-import { saveThreadMessages } from "@/app/server/actions/agent";
+import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
+import { transcriptNotSaved } from "@/lib/ai/transcript-not-saved";
 import { AGENT_STEP_PART_TYPE, agentStepMarker } from "@/lib/ai/agent-steps";
 import {
 	formatMentionsForPrompt,
@@ -373,7 +374,12 @@ export async function POST(req: Request) {
 				writer.merge(result.toUIMessageStream());
 			},
 			onFinish: ({ messages: finished }) => {
-				if (threadId) void saveThreadMessages(threadId, finished);
+				if (threadId) {
+					void saveThreadTranscript(
+						{ owner: actor.userId, threadId, kind: "agent", projectId: null },
+						finished,
+					).catch(transcriptNotSaved(threadId));
+				}
 			},
 		});
 
