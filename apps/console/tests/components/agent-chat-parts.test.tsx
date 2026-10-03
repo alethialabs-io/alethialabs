@@ -8,6 +8,7 @@
 // spacer reserves space only while a turn is in flight.
 
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { UIMessage } from "ai";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { AgentChat } from "@/components/agent/agent-chat";
@@ -128,5 +129,30 @@ describe("AgentChat part rendering", () => {
 		expect(
 			container.querySelector("[data-message-scroller-spacer]")?.className,
 		).toContain("max-h-0");
+	});
+});
+
+describe("AgentChat — Regenerate response", () => {
+	it("runs onRegenerate, never onRetry, when both are given", async () => {
+		// Elench's `onRetry` is a failed send's re-attempt while one is pending; regenerating a
+		// reply must not submit the composer instead (#5423 review).
+		const onRetry = vi.fn();
+		const onRegenerate = vi.fn();
+		const messages: UIMessage[] = [
+			{ id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
+			{ id: "a1", role: "assistant", parts: [{ type: "text", text: "hello" }] },
+		];
+		render(
+			<AgentChat
+				messages={messages}
+				status="ready"
+				onSend={() => {}}
+				onRetry={onRetry}
+				onRegenerate={onRegenerate}
+			/>,
+		);
+		await userEvent.click(screen.getByRole("button", { name: "Regenerate response" }));
+		expect(onRegenerate).toHaveBeenCalledTimes(1);
+		expect(onRetry).not.toHaveBeenCalled();
 	});
 });
