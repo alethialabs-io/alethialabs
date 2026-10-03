@@ -28,10 +28,11 @@
 // the same charge is refused by the server, a link already written is completed rather than refused,
 // and the declaration is an upsert.
 //
-// The slug and the billing details typed at checkout are sent to the server record at the start of
-// each run, so a setup finished from ANY tab — `findUnfinishedNewOrgSetup` reads the record by user, no
-// browser copy and no search index involved — still creates at the chosen URL, sends the tax id and
-// honours "use as the team's address". The typed authority attestation is the one thing it does not
+// The slug and the billing details typed at checkout are sent to the server record BEFORE the card is
+// confirmed (the checkout form's `beforeConfirm`), and again at the start of each run, so a setup
+// finished from ANY tab — `findUnfinishedNewOrgSetup` reads the record by user, no browser copy and no
+// search index involved — still creates at the chosen URL, sends the tax id and honours "use as the
+// team's address". The typed authority attestation is the one thing it does not
 // keep: a recovered setup asks the payer to declare again, through the same gate as a purchase.
 
 // The steps themselves run here, outside the sheet's React state, for the same reason: a close while
@@ -65,6 +66,7 @@ import {
 import type { PayerDeclaration } from "@/components/billing/payer-declaration-form";
 import { authClient } from "@/lib/auth/client";
 import {
+	NEW_ORG_SETUP_IN_PROGRESS_CODE,
 	NEW_ORG_SETUP_ORG_EXISTS_CODE,
 	NEW_ORG_SUBSCRIPTION_KEY,
 	type NewOrgSetupState,
@@ -355,6 +357,23 @@ export function finishPaidSetup(
 	return run;
 }
 
+/** The words for a setup field the server refused, as the customer knows it from the form. */
+function fieldLabel(field: string): string {
+	switch (field) {
+		case "slug":
+			return "the team URL";
+		case "taxValue":
+		case "taxType":
+			return "the tax ID";
+		case "postalCode":
+			return "the postal code";
+		case "name":
+			return "the cardholder name";
+		default:
+			return "the billing address";
+	}
+}
+
 /** Thrown inside a run for a refusal whose sentence is the customer's to read. */
 class SetupStopped extends Error {}
 
@@ -385,16 +404,24 @@ async function runSteps(
 	let finishedOrgId = "";
 	try {
 		// The slug and the checkout details onto the SERVER's record, so a resume from another tab
-		// restores them. Best-effort: this tab's record still carries them, and the steps below do not
-		// depend on it.
+		// restores them. The checkout already saved them before the charge; this run re-saves because the
+		// slug can have changed since (a refusal after payment). A field the server refuses is SAID —
+		// the steps below still run on this tab's copy, but a resume elsewhere would not have it. A
+		// failed call is not: this tab's record still carries everything, and the pre-charge save holds
+		// the server's copy.
 		try {
-			await saveNewOrgSetupDetails({
+			const saved = await saveNewOrgSetupDetails({
 				subscriptionId: record.subscriptionId,
 				slug: record.slug,
 				billing: record.billing,
 			});
+			if (!saved.ok) {
+				toast.warning(
+					`We couldn't keep ${saved.refused.map((r) => fieldLabel(r.field)).join(", ")} for finishing this setup from another tab (${saved.refused[0]?.message ?? "refused"}). This tab still has it.`,
+				);
+			}
 		} catch {
-			// Kept in this tab's record; a resume elsewhere asks for the tax id again.
+			// Kept in this tab's record, and in the server's copy saved before the charge.
 		}
 		if (!record.customerDetailsSaved) {
 			if (record.billing) {
@@ -459,6 +486,10 @@ async function runSteps(
 				if (again?.org) {
 					orgId = again.org.id;
 					save({ ...record, createdOrgId: again.org.id, createdSlug: again.org.slug });
+				} else if (error?.code === NEW_ORG_SETUP_IN_PROGRESS_CODE) {
+					// Another create for this charge holds the claim right now (a second tab, or the
+					// first attempt still in flight). A retry finds the team it makes.
+					throw new Error(error.message ?? "This team is already being set up.");
 				} else if (error?.code === NEW_ORG_SETUP_ORG_EXISTS_CODE) {
 					// The server holds an organization for this charge that this account is not in
 					// (someone else joined it, or it was left to them). Creating another is refused,

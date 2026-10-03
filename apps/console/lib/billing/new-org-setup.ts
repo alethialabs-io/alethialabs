@@ -30,6 +30,12 @@ export const NEW_ORG_CREATED_BY_KEY = "newOrgCreatedBy";
 export const NEW_ORG_SETUP_ORG_EXISTS_CODE = "NEW_ORG_SETUP_ORG_EXISTS";
 
 /**
+ * The refusal code for a create naming a setup another create is claiming right now (two tabs, or a
+ * retry racing the first attempt). Retryable: the retry finds the organization the other one made.
+ */
+export const NEW_ORG_SETUP_IN_PROGRESS_CODE = "NEW_ORG_SETUP_IN_PROGRESS";
+
+/**
  * The subscription id an organization's metadata says it was created for, or null. Tolerant: the
  * metadata column is free-form JSON text (better-auth hands hooks a parsed object), and anything that
  * is not an object carrying a string under the key reads as "none".
@@ -79,8 +85,8 @@ export interface NewOrgSetupState {
 	slug: string;
 	/**
 	 * The billing details typed at checkout, kept server-side — the tax id and the "use as the team's
-	 * address" choice a recovered setup restores. Null when they never reached the server (the tab was
-	 * lost between the charge and that write) or for a setup that predates the record.
+	 * address" choice a recovered setup restores. Null for a setup recorded before the checkout saved
+	 * them ahead of the charge, or one backfilled from Stripe for a subscription that predates the record.
 	 */
 	billing: PendingOrgSetupBilling | null;
 	currency: string;

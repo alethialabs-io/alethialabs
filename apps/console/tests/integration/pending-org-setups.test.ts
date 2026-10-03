@@ -21,15 +21,27 @@ import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { seedAuthz } from "@/lib/authz/seed";
 import {
+	NEW_ORG_SETUP_IN_PROGRESS_CODE,
+	NEW_ORG_SUBSCRIPTION_KEY,
+} from "@/lib/billing/new-org-setup";
+import {
 	findSetupOrg,
 	markPendingOrgSetupDeclared,
 	pendingOrgSetupFor,
 	recordPendingOrgSetup,
 	savePendingOrgSetupDetails,
+	stampNewOrgMetadata,
 	unfinishedPendingOrgSetups,
 } from "@/lib/billing/pending-org-setup";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
-import { grants, member, organization, pendingOrgSetups, user } from "@/lib/db/schema";
+import {
+	grants,
+	member,
+	organization,
+	organizationBilling,
+	pendingOrgSetups,
+	user,
+} from "@/lib/db/schema";
 import { APP_ROLE_DISTINCT, describeIfDb, refusalText } from "./db";
 
 const USER_A = randomUUID();
@@ -209,5 +221,124 @@ describeIfDb("pending_org_setups — the actor's own record, RLS, and the org lo
 		);
 		expect(changed).toHaveLength(0);
 		expect((await pendingOrgSetupFor(USER_B, SUB_B))?.intended_slug).toBe("bravo");
+	});
+});
+
+// The concurrency half (#5445 review of 3aae22463). Each case is built to be DETERMINISTIC rather than
+// to hope two promises interleave: the race is held open by a transaction that has not committed.
+const RACER = randomUUID();
+const OTHER = randomUUID();
+const SUB_CLAIM = `sub_it_${randomUUID().slice(0, 8)}`;
+const SUB_REPAIR = `sub_it_${randomUUID().slice(0, 8)}`;
+const SUB_LEGACY = `sub_it_${randomUUID().slice(0, 8)}`;
+const ORG_REPAIR = randomUUID();
+const ORG_LEGACY = randomUUID();
+
+describeIfDb("pending_org_setups — concurrent creates, the owner repair, and closing a legacy record", () => {
+	beforeAll(async () => {
+		const db = getServiceDb();
+		await seedAuthz();
+		await db.insert(user).values([
+			{ id: RACER, email: `it-pending-racer-${RACER}@example.test` },
+			{ id: OTHER, email: `it-pending-other-${OTHER}@example.test` },
+		]);
+		for (const sub of [SUB_CLAIM, SUB_REPAIR, SUB_LEGACY]) {
+			await recordPendingOrgSetup({
+				userId: RACER,
+				subscriptionId: sub,
+				customerId: "cus_racer",
+				name: "Racer",
+				slug: "racer",
+			});
+		}
+	});
+
+	afterAll(async () => {
+		const db = getServiceDb();
+		await db.delete(pendingOrgSetups).where(inArray(pendingOrgSetups.user_id, [RACER, OTHER]));
+		await db.delete(grants).where(inArray(grants.org_id, [ORG_REPAIR, ORG_LEGACY]));
+		await db.delete(organization).where(inArray(organization.id, [ORG_REPAIR, ORG_LEGACY]));
+		await db.delete(user).where(inArray(user.id, [RACER, OTHER]));
+	});
+
+	// Two creates for one charge (two tabs, different slugs). Against 3aae22463 both read "no org yet"
+	// and both were stamped, so two organizations were made for one payment.
+	it("two creates for one charge in the same instant: exactly one is let through, the other is told it is in progress", async () => {
+		const marker = { [NEW_ORG_SUBSCRIPTION_KEY]: SUB_CLAIM };
+		const verdicts = await Promise.all([
+			stampNewOrgMetadata(marker, RACER),
+			stampNewOrgMetadata(marker, RACER),
+		]);
+		const through = verdicts.filter((v) => v !== null && "metadata" in v);
+		const refused = verdicts.filter((v) => v !== null && "refusal" in v);
+		expect(through).toHaveLength(1);
+		expect(refused).toEqual([
+			{ refusal: { code: NEW_ORG_SETUP_IN_PROGRESS_CODE, message: expect.any(String) } },
+		]);
+		expect((await pendingOrgSetupFor(RACER, SUB_CLAIM))?.creating_at).toBeInstanceOf(Date);
+	});
+
+	// better-auth inserts the org, then (separately) the creator's member row. The repair can run in
+	// that gap. Held open here by a transaction that has inserted the creator's row and not committed:
+	// the repair reads "no members", inserts, and — with the unique index — waits for the transaction,
+	// then does nothing. Against 3aae22463 there was no index, so both rows landed: two owner rows, two
+	// billable seats.
+	it("the owner repair racing better-auth's own creator insert leaves ONE member row", async () => {
+		const db = getServiceDb();
+		await db.insert(organization).values({
+			id: ORG_REPAIR,
+			name: "Racer",
+			slug: `it-repair-${ORG_REPAIR.slice(0, 8)}`,
+			metadata: JSON.stringify({ newOrgSubscriptionId: SUB_REPAIR, newOrgCreatedBy: RACER }),
+		});
+		const row = await pendingOrgSetupFor(RACER, SUB_REPAIR);
+		if (!row) throw new Error("fixture: the racer's record is missing");
+
+		let repair: Promise<unknown> = Promise.resolve();
+		await db.transaction(async (tx) => {
+			await tx.insert(member).values({ organizationId: ORG_REPAIR, userId: RACER, role: "owner" });
+			repair = findSetupOrg(row, RACER);
+			// Long enough for the repair to read "no members" and reach its insert.
+			await new Promise((r) => setTimeout(r, 1500));
+		});
+		await expect(repair).resolves.toEqual({ id: ORG_REPAIR, slug: `it-repair-${ORG_REPAIR.slice(0, 8)}` });
+		const rows = await db
+			.select({ userId: member.userId })
+			.from(member)
+			.where(eq(member.organizationId, ORG_REPAIR));
+		expect(rows).toHaveLength(1);
+	});
+
+	it("one membership per (organization, user): a second row for the same pair is refused by the database", async () => {
+		const text = await refusalText(() =>
+			getServiceDb().insert(member).values({ organizationId: ORG_REPAIR, userId: RACER, role: "admin" }),
+		);
+		expect(text).toMatch(/member_organization_user_unique|duplicate key/i);
+	});
+
+	// A record backfilled for a subscription minted before the table existed has no created_org_id.
+	// Against 3aae22463 the declaration matched on created_org_id alone, so it stayed open for good.
+	it("a declaration closes a record with no created_org_id by the subscription the org is linked to — and only the owner's", async () => {
+		const db = getServiceDb();
+		await db.insert(organization).values({
+			id: ORG_LEGACY,
+			name: "Legacy",
+			slug: `it-legacy-${ORG_LEGACY.slice(0, 8)}`,
+		});
+		await db.insert(organizationBilling).values({
+			organizationId: ORG_LEGACY,
+			stripeSubscriptionId: SUB_LEGACY,
+		});
+		expect((await pendingOrgSetupFor(RACER, SUB_LEGACY))?.created_org_id).toBeNull();
+
+		await markPendingOrgSetupDeclared(OTHER, ORG_LEGACY);
+		expect((await pendingOrgSetupFor(RACER, SUB_LEGACY))?.declared_at).toBeNull();
+
+		await markPendingOrgSetupDeclared(RACER, ORG_LEGACY);
+		const closed = await pendingOrgSetupFor(RACER, SUB_LEGACY);
+		expect(closed?.declared_at).toBeInstanceOf(Date);
+		expect(closed?.created_org_id).toBe(ORG_LEGACY);
+		// The other records of the same user are not touched.
+		expect((await pendingOrgSetupFor(RACER, SUB_CLAIM))?.declared_at).toBeNull();
 	});
 });

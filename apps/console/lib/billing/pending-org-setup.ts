@@ -19,11 +19,13 @@
 // "the one I paid for and lost", whatever its metadata says.
 
 import "server-only";
-import { and, asc, desc, eq, isNull, like, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { ensureMemberGrant } from "@/lib/authz/grants";
+import { BILLING_FIELD_CAPS, ORG_SLUG_MAX } from "@/lib/billing/billing-field-caps";
 import {
 	NEW_ORG_CREATED_BY_KEY,
+	NEW_ORG_SETUP_IN_PROGRESS_CODE,
 	NEW_ORG_SETUP_ORG_EXISTS_CODE,
 	NEW_ORG_SUBSCRIPTION_KEY,
 	newOrgCreatedByOf,
@@ -31,25 +33,29 @@ import {
 } from "@/lib/billing/new-org-setup";
 import { TAX_ID_TYPES, type TaxIdType } from "@/lib/billing/tax-ids";
 import { getServiceDb } from "@/lib/db";
-import { member, organization, pendingOrgSetups } from "@/lib/db/schema";
+import { member, organization, organizationBilling, pendingOrgSetups } from "@/lib/db/schema";
 import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
 
 /** One `pending_org_setups` row. */
 export type PendingOrgSetupRow = typeof pendingOrgSetups.$inferSelect;
 
-/** The checkout billing details as the browser sends them — validated, never trusted as typed. */
+/**
+ * The checkout billing details as the browser sends them — validated, never trusted as typed. The caps
+ * are the checkout form's own (lib/billing/billing-field-caps.ts), so a value the form accepts is never
+ * refused here.
+ */
 export const pendingOrgSetupBillingSchema = z.object({
-	name: z.string().max(200),
-	line1: z.string().max(200),
-	line2: z.string().max(200).optional(),
-	city: z.string().max(200),
-	state: z.string().max(200).optional(),
-	postalCode: z.string().max(40),
-	country: z.string().max(2),
+	name: z.string().max(BILLING_FIELD_CAPS.name),
+	line1: z.string().max(BILLING_FIELD_CAPS.line1),
+	line2: z.string().max(BILLING_FIELD_CAPS.line2).optional(),
+	city: z.string().max(BILLING_FIELD_CAPS.city),
+	state: z.string().max(BILLING_FIELD_CAPS.state).optional(),
+	postalCode: z.string().max(BILLING_FIELD_CAPS.postalCode),
+	country: z.string().max(BILLING_FIELD_CAPS.country),
 	taxType: z.custom<TaxIdType>(
 		(v) => typeof v === "string" && TAX_ID_TYPES.some((t) => t.value === v),
 	),
-	taxValue: z.string().max(64),
+	taxValue: z.string().max(BILLING_FIELD_CAPS.taxValue),
 	useAsPrimary: z.boolean(),
 });
 
@@ -57,8 +63,26 @@ export const pendingOrgSetupBillingSchema = z.object({
 export const pendingOrgSetupSlugSchema = z
 	.string()
 	.trim()
-	.max(63)
+	.max(ORG_SLUG_MAX)
 	.regex(/^[a-z0-9]*(?:-[a-z0-9]+)*$/);
+
+/**
+ * Stripe statuses of a new-org subscription that was never paid — the only ones that may be cancelled
+ * and have their record forgotten when the customer replaces the intent (a currency switch, a "← Back"
+ * and re-declare). Every other status is a charge, or was one (`active`, `trialing`, `past_due`,
+ * `unpaid`, `paused`, `canceled` after payment), and its record is the server's only way back to it.
+ */
+export const REPLACEABLE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
+	"incomplete",
+	"incomplete_expired",
+]);
+
+/** What `forgetPendingOrgSetup` needs to know about a subscription, read from Stripe by the caller. */
+export interface RetrievedSubscription {
+	id: string;
+	status: string;
+	metadata?: { created_by?: string } | null;
+}
 
 /**
  * Records a new-org subscription the moment it is minted, before the client can pay it. A second call
@@ -85,19 +109,28 @@ export async function recordPendingOrgSetup(input: {
 
 /**
  * Drops the record of a subscription that was replaced before it was paid (a currency switch, a
- * "← Back" and re-declare). Only while nothing has been created for it.
+ * "← Back" and re-declare). `sub` is the subscription AS STRIPE RETURNED IT to the caller, never an id
+ * from the browser: the record goes only when Stripe says `userId` minted it and it was never paid
+ * (`REPLACEABLE_SUBSCRIPTION_STATUSES`), and only while nothing has been created for it. Returns
+ * whether it was allowed to; a paid subscription's record is never dropped here.
  */
-export async function forgetPendingOrgSetup(userId: string, subscriptionId: string): Promise<void> {
+export async function forgetPendingOrgSetup(
+	userId: string,
+	sub: RetrievedSubscription,
+): Promise<boolean> {
+	if (sub.metadata?.created_by !== userId) return false;
+	if (!REPLACEABLE_SUBSCRIPTION_STATUSES.has(sub.status)) return false;
 	await getServiceDb()
 		.delete(pendingOrgSetups)
 		.where(
 			and(
 				eq(pendingOrgSetups.user_id, userId),
-				eq(pendingOrgSetups.subscription_id, subscriptionId),
+				eq(pendingOrgSetups.subscription_id, sub.id),
 				isNull(pendingOrgSetups.created_org_id),
 				isNull(pendingOrgSetups.linked_at),
 			),
 		);
+	return true;
 }
 
 /** The actor's record for one subscription, or null — never another user's. */
@@ -131,16 +164,19 @@ export async function unfinishedPendingOrgSetups(
 		.limit(limit);
 }
 
-/** Saves the slug (and, when given, the checkout billing details) on the actor's unfinished record. */
+/**
+ * Saves the slug and the checkout billing details on the actor's unfinished record — each only when
+ * given (null leaves the stored value as it is).
+ */
 export async function savePendingOrgSetupDetails(
 	userId: string,
 	subscriptionId: string,
-	details: { slug: string; billing: PendingOrgSetupBilling | null },
+	details: { slug: string | null; billing: PendingOrgSetupBilling | null },
 ): Promise<void> {
 	await getServiceDb()
 		.update(pendingOrgSetups)
 		.set({
-			intended_slug: details.slug,
+			...(details.slug !== null ? { intended_slug: details.slug } : {}),
 			...(details.billing ? { billing: details.billing } : {}),
 			updated_at: new Date(),
 		})
@@ -173,16 +209,41 @@ export async function markPendingOrgSetupLinked(
 /**
  * Stamps the last step — the payer declaration for `orgId` — on the actor's record for that org, and
  * drops the billing details it no longer needs.
+ *
+ * The record is matched by `created_org_id`, OR by its subscription: the one `orgId`'s billing row
+ * names (the link step wrote it there), or `subscriptionId` when the caller has just read it linked to
+ * `orgId` from Stripe. A record with no `created_org_id` — one backfilled for a subscription minted
+ * before the table existed, or one whose org was found by the link rather than by the marker — is
+ * closed by its subscription and gets `created_org_id` filled in. Matched on the created org alone it
+ * stayed open for good, and every Create-a-team open retrieved it from Stripe again.
  */
-export async function markPendingOrgSetupDeclared(userId: string, orgId: string): Promise<void> {
-	await getServiceDb()
+export async function markPendingOrgSetupDeclared(
+	userId: string,
+	orgId: string,
+	subscriptionId?: string,
+): Promise<void> {
+	const db = getServiceDb();
+	const linkedSubscription = db
+		.select({ id: organizationBilling.stripeSubscriptionId })
+		.from(organizationBilling)
+		.where(eq(organizationBilling.organizationId, orgId));
+	await db
 		.update(pendingOrgSetups)
-		.set({ declared_at: new Date(), billing: null, updated_at: new Date() })
+		.set({
+			declared_at: new Date(),
+			billing: null,
+			created_org_id: sql`coalesce(${pendingOrgSetups.created_org_id}, ${orgId}::uuid)`,
+			updated_at: new Date(),
+		})
 		.where(
 			and(
 				eq(pendingOrgSetups.user_id, userId),
-				eq(pendingOrgSetups.created_org_id, orgId),
 				isNull(pendingOrgSetups.declared_at),
+				or(
+					eq(pendingOrgSetups.created_org_id, orgId),
+					inArray(pendingOrgSetups.subscription_id, linkedSubscription),
+					subscriptionId ? eq(pendingOrgSetups.subscription_id, subscriptionId) : undefined,
+				),
 			),
 		);
 }
@@ -203,9 +264,15 @@ export type NewOrgMetadataVerdict =
  * an organization claim a setup it does not own.
  *
  * Refuses a create naming a setup that already has an organization — the server-side idempotency key
- * for "one organization per charge". Two creates arriving inside the same instant can both pass this
- * check; the slug's unique index then refuses the second when both carry the same slug, and the resume
- * converges on the older organization when they do not.
+ * for "one organization per charge". Before it lets a create through it CLAIMS the record
+ * (`claimPendingOrgSetup`, one conditional UPDATE), so of two creates for one charge arriving in the
+ * same instant exactly one gets the claim; the other is refused with `NEW_ORG_SETUP_IN_PROGRESS_CODE`
+ * and its retry finds the organization the first one made. A claim whose create then failed (the org
+ * insert itself, after this hook) lapses after `CLAIM_TTL`, and a retry after that still cannot make a
+ * second org: by then a committed one carries the marker, which is checked after the claim.
+ *
+ * Runs in better-auth's create AFTER its slug check and after the reserved-slug hook (ee/src/index.ts),
+ * so a slug refusal never leaves a claim behind.
  */
 export async function stampNewOrgMetadata(
 	metadata: unknown,
@@ -224,14 +291,24 @@ export async function stampNewOrgMetadata(
 	if (!subscriptionId) return keep();
 	const row = await pendingOrgSetupFor(userId, subscriptionId);
 	if (!row) return keep();
-	if (row.created_org_id || (await markedOrgs(subscriptionId, userId)).length > 0) {
+	const exists: NewOrgMetadataVerdict = {
+		refusal: {
+			code: NEW_ORG_SETUP_ORG_EXISTS_CODE,
+			message: "A team was already created for this payment.",
+		},
+	};
+	if (row.created_org_id) return exists;
+	if (!(await claimPendingOrgSetup(row.id, userId))) {
+		const now = await pendingOrgSetupFor(userId, subscriptionId);
+		if (now?.created_org_id) return exists;
 		return {
 			refusal: {
-				code: NEW_ORG_SETUP_ORG_EXISTS_CODE,
-				message: "A team was already created for this payment.",
+				code: NEW_ORG_SETUP_IN_PROGRESS_CODE,
+				message: "This team is already being set up. Try again in a minute.",
 			},
 		};
 	}
+	if ((await markedOrgs(subscriptionId, userId)).length > 0) return exists;
 	return {
 		metadata: {
 			...rest,
@@ -239,6 +316,33 @@ export async function stampNewOrgMetadata(
 			[NEW_ORG_CREATED_BY_KEY]: userId,
 		},
 	};
+}
+
+/** How long a create's claim on a setup record holds before another create may take it. */
+const CLAIM_TTL = sql`interval '1 minute'`;
+
+/**
+ * Claims the actor's setup record for one organization create: sets `creating_at` only while no
+ * organization is recorded for it and no live claim holds it, in ONE statement, so two concurrent
+ * creates cannot both succeed. True when this call got the claim.
+ */
+async function claimPendingOrgSetup(rowId: string, userId: string): Promise<boolean> {
+	const claimed = await getServiceDb()
+		.update(pendingOrgSetups)
+		.set({ creating_at: sql`now()`, updated_at: new Date() })
+		.where(
+			and(
+				eq(pendingOrgSetups.id, rowId),
+				eq(pendingOrgSetups.user_id, userId),
+				isNull(pendingOrgSetups.created_org_id),
+				or(
+					isNull(pendingOrgSetups.creating_at),
+					lt(pendingOrgSetups.creating_at, sql`now() - ${CLAIM_TTL}`),
+				),
+			),
+		)
+		.returning({ id: pendingOrgSetups.id });
+	return claimed.length > 0;
 }
 
 /**
@@ -352,12 +456,15 @@ export async function findSetupOrg(
 		.where(eq(member.organizationId, org.id));
 	if (!members.some((m) => m.userId === userId)) {
 		if (members.length > 0) return null;
-		// Inserted only while the organization still has no member at all, in one statement, so two
-		// resumes racing here cannot both add a row, and nothing lands in a team someone joined since.
+		// Inserted only while the organization still has no member at all, so nothing lands in a team
+		// someone joined since. `not exists` alone does not stop two concurrent inserts (each reads before
+		// either commits) — nor this one racing better-auth's own member insert for the creator, still in
+		// flight; the unique (organization_id, user_id) index does, and the loser does nothing.
 		await db.execute(sql`
 			insert into public.member (organization_id, user_id, role)
 			select ${org.id}::uuid, ${userId}::uuid, 'owner'
-			 where not exists (select 1 from public.member where organization_id = ${org.id}::uuid)`);
+			 where not exists (select 1 from public.member where organization_id = ${org.id}::uuid)
+			on conflict (organization_id, user_id) do nothing`);
 		const [mine] = await db
 			.select({ role: member.role })
 			.from(member)

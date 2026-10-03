@@ -12,11 +12,10 @@ import { authorizeInOrg, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { organization } from "@/lib/db/schema";
 import {
-	type OrgMeta,
 	type OrgPrimaryAddress,
 	type OrgSettings,
 	orgSettingsForOrg,
-	parseMeta,
+	withPrimaryAddress,
 } from "@/lib/org/settings";
 
 export type { OrgPrimaryAddress, OrgSettings } from "@/lib/org/settings";
@@ -63,10 +62,11 @@ export async function updateOrgPrimaryAddress(
 		.from(organization)
 		.where(eq(organization.id, actor.orgId))
 		.limit(1);
-	const next: OrgMeta = { ...parseMeta(org?.metadata ?? null), primaryAddress: address };
+	// Every other key in the blob is kept as stored (`withPrimaryAddress`) — this is a direct write, so
+	// the organization plugin's update hook that guards the create-a-team marker never sees it.
 	await db
 		.update(organization)
-		.set({ metadata: JSON.stringify(next), updatedAt: new Date() })
+		.set({ metadata: withPrimaryAddress(org?.metadata ?? null, address), updatedAt: new Date() })
 		.where(eq(organization.id, actor.orgId));
 	return { ok: true };
 }

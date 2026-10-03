@@ -82,7 +82,7 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 vi.mock("sonner", () => ({
-	toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
+	toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }));
 vi.mock("next/navigation", () => ({
 	useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -109,28 +109,47 @@ vi.mock("@/components/billing/payer-declaration-form", () => ({
 vi.mock("@/components/billing/stripe-elements", () => ({
 	StripeElementsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
-vi.mock("@/components/billing/billing-checkout-form", () => ({
-	billingAddressFrom: vi.fn(() => ({})),
-	BillingCheckoutForm: ({ onPaid }: { onPaid: (b: unknown) => void }) => (
-		<button
-			type="button"
-			onClick={() =>
-				onPaid({
-					name: "Acme GmbH",
-					line1: "Hauptstr. 1",
-					city: "Berlin",
-					postalCode: "10115",
-					country: "DE",
-					taxType: "eu_vat",
-					taxValue: "",
-					useAsPrimary: false,
-				})
-			}
-		>
-			Pay
-		</button>
-	),
-}));
+/** What the stand-in checkout saw at the moment it "charged": whether the details had reached the server. */
+const atCharge = { detailsSaved: false };
+vi.mock("@/components/billing/billing-checkout-form", async (importActual) => {
+	const actual = await importActual<typeof import("@/components/billing/billing-checkout-form")>();
+	return {
+		billingAddressFrom: vi.fn(() => ({})),
+		checkoutFieldOf: actual.checkoutFieldOf,
+		// Like the real form: `beforeConfirm` first, and a refusal stops the charge.
+		BillingCheckoutForm: ({
+			onPaid,
+			beforeConfirm,
+		}: {
+			onPaid: (b: unknown) => void;
+			beforeConfirm?: (b: unknown) => Promise<{ message: string } | null>;
+		}) => {
+			const billing = {
+				name: "Acme GmbH",
+				line1: "Hauptstr. 1",
+				city: "Berlin",
+				postalCode: "10115",
+				country: "DE",
+				taxType: "eu_vat",
+				taxValue: "",
+				useAsPrimary: false,
+			};
+			return (
+				<button
+					type="button"
+					onClick={async () => {
+						const refusal = beforeConfirm ? await beforeConfirm(billing) : null;
+						if (refusal) return;
+						atCharge.detailsSaved = saveDetails.mock.calls.length > 0;
+						onPaid(billing);
+					}}
+				>
+					Pay
+				</button>
+			);
+		},
+	};
+});
 vi.mock("@/components/billing/currency-toggle", () => ({ CurrencyToggle: () => null }));
 vi.mock("@/lib/billing/use-live-plan-price", () => ({
 	useLivePlanPrice: () => ({ unitAmount: 0, label: "$0" }),
@@ -206,7 +225,9 @@ beforeEach(() => {
 	inviteMember.mockResolvedValue({ data: {}, error: null });
 	window.sessionStorage.clear();
 	isOrgSlugAvailable.mockResolvedValue(true);
+	atCharge.detailsSaved = false;
 	createIntent.mockResolvedValue({
+		kind: "intent",
 		subscriptionId: "sub_1",
 		customerId: "cus_1",
 		clientSecret: "pi_secret",
@@ -753,5 +774,82 @@ describe("CreateOrgSheet — the server, not the record, says how far a paid set
 		await vi.waitFor(() =>
 			expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/couldn.t check .* don.t pay again/i)),
 		);
+	});
+});
+
+describe("CreateOrgSheet — a charge the page never heard about is not replaced (#5445 review of 3aae22463)", () => {
+	// Stripe took the payment, but `confirmCardPayment` reported an error (a dropped connection), so the
+	// pay view stayed up with "← Back". Going back and declaring again sent the PAID subscription as
+	// `priorSubscriptionId`; the server cancelled it with no refund and deleted its record. Now the server
+	// answers `resume` for a paid prior, and the sheet finishes the setup on it. Against 3aae22463 the
+	// sheet read that answer as a new intent: no org was created and nothing was linked.
+	it("Back → declare again, and the server says the prior was PAID: the setup finishes on that charge — no second payment", async () => {
+		const user = userEvent.setup();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+		await user.type(screen.getByLabelText(/team name/i), "Acme Cloud");
+		const cont = screen.getByRole("button", { name: /continue/i });
+		await vi.waitFor(() => expect(cont).toBeEnabled());
+		await user.click(cont);
+		await user.click(await screen.findByRole("button", { name: "Declare payer" }));
+		await screen.findByRole("button", { name: "Pay" });
+
+		createIntent.mockResolvedValueOnce({
+			kind: "resume",
+			setup: {
+				subscriptionId: "sub_1",
+				customerId: "cus_1",
+				paid: true,
+				org: null,
+				linked: false,
+				declared: false,
+				name: "Acme Cloud",
+				slug: "acme",
+				billing: null,
+				currency: "eur",
+			},
+		});
+		createOrg.mockResolvedValue({ data: { id: "org-new", slug: "acme" }, error: null });
+		await user.click(screen.getByRole("button", { name: /back/i }));
+		await user.click(await screen.findByRole("button", { name: "Declare payer" }));
+
+		await vi.waitFor(() => expect(declarePayer).toHaveBeenCalledTimes(1));
+		expect(createIntent).toHaveBeenLastCalledWith(
+			"team",
+			expect.objectContaining({ priorSubscriptionId: "sub_1" }),
+		);
+		expect(createOrg).toHaveBeenCalledWith(
+			expect.objectContaining({ metadata: { newOrgSubscriptionId: "sub_1" } }),
+		);
+		expect(linkSubscription).toHaveBeenCalledWith(
+			expect.objectContaining({ subscriptionId: "sub_1", customerId: "cus_1", orgId: "org-new" }),
+		);
+		expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/won.t be charged again/i));
+		expect(screen.queryByRole("button", { name: "Pay" })).not.toBeInTheDocument();
+	});
+
+	// The details used to reach the server only in the first post-payment step, so a crash between the
+	// charge and that step lost them. Against 3aae22463 nothing had been saved when the card was charged.
+	it("the URL and the billing details reach the server BEFORE the card is charged", async () => {
+		const user = userEvent.setup();
+		await pay(user);
+		await vi.waitFor(() => expect(createOrg).toHaveBeenCalled());
+		expect(atCharge.detailsSaved).toBe(true);
+		expect(saveDetails).toHaveBeenNthCalledWith(1, {
+			subscriptionId: "sub_1",
+			slug: "acme-cloud",
+			billing: expect.objectContaining({ name: "Acme GmbH", line1: "Hauptstr. 1" }),
+		});
+	});
+
+	it("a field the server refuses before the charge stops the charge — nothing is created", async () => {
+		saveDetails.mockResolvedValueOnce({
+			ok: false,
+			refused: [{ field: "line1", message: "Use at most 200 characters." }],
+		});
+		const user = userEvent.setup();
+		await pay(user);
+		await new Promise((r) => setTimeout(r, 50));
+		expect(createOrg).not.toHaveBeenCalled();
+		expect(window.sessionStorage.getItem(KEY)).toBeNull();
 	});
 });

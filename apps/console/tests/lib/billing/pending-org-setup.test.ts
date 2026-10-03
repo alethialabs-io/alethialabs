@@ -15,10 +15,12 @@ vi.mock("@/lib/authz/grants", () => ({ ensureMemberGrant: vi.fn() }));
 
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import {
+	NEW_ORG_SETUP_IN_PROGRESS_CODE,
 	NEW_ORG_SETUP_ORG_EXISTS_CODE,
 } from "@/lib/billing/new-org-setup";
 import {
 	findSetupOrg,
+	forgetPendingOrgSetup,
 	keepStoredNewOrgMarker,
 	type PendingOrgSetupRow,
 	recordNewOrgCreated,
@@ -30,7 +32,7 @@ import { getServiceDb } from "@/lib/db";
 function makeDb() {
 	const queue: unknown[][] = [];
 	const chain: Record<string, unknown> = {};
-	for (const m of ["from", "where", "limit", "orderBy", "set", "values", "onConflictDoNothing", "innerJoin"]) {
+	for (const m of ["from", "where", "limit", "orderBy", "set", "values", "onConflictDoNothing", "innerJoin", "returning"]) {
 		chain[m] = () => chain;
 	}
 	chain.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
@@ -64,6 +66,7 @@ function row(overrides: Partial<PendingOrgSetupRow> = {}): PendingOrgSetupRow {
 		intended_slug: "acme",
 		billing: null,
 		created_org_id: null,
+		creating_at: null,
 		linked_at: null,
 		declared_at: null,
 		created_at: new Date("2026-10-03T12:00:00Z"),
@@ -141,6 +144,7 @@ describe("stampNewOrgMetadata — the marker is the server's, not the browser's"
 
 	it("keeps the marker for the record's owner and stamps the creator from the session, over any value sent", async () => {
 		db.queue.push([row()]); // the caller's record for sub_1
+		db.queue.push([{ id: "row-1" }]); // the claim: this create got it
 		db.queue.push([]); // no org marked for it yet
 		await expect(
 			stampNewOrgMetadata({ newOrgSubscriptionId: "sub_1", newOrgCreatedBy: "someone-else", region: "eu" }, "user-1"),
@@ -165,10 +169,60 @@ describe("stampNewOrgMetadata — the marker is the server's, not the browser's"
 
 	it("refuses when an org already carries the marker but its created_org_id was never recorded", async () => {
 		db.queue.push([row()]);
+		db.queue.push([{ id: "row-1" }]); // the claim
 		db.queue.push([{ id: "org-made", slug: "acme", metadata: marked("sub_1", "user-1") }]);
 		await expect(stampNewOrgMetadata({ newOrgSubscriptionId: "sub_1" }, "user-1")).resolves.toMatchObject({
 			refusal: { code: NEW_ORG_SETUP_ORG_EXISTS_CODE },
 		});
+	});
+});
+
+describe("stampNewOrgMetadata — one create per charge at a time (the claim)", () => {
+	// The claim is one conditional UPDATE; the race itself is pinned against Postgres in
+	// tests/integration/pending-org-setups.test.ts. Here: what a create that LOST the claim is told.
+	it("a create that loses the claim is refused as in progress — retryable — and not let through", async () => {
+		db.queue.push([row()]);
+		db.queue.push([]); // the claim: another create holds it
+		db.queue.push([row()]); // re-read: still no org recorded
+		await expect(stampNewOrgMetadata({ newOrgSubscriptionId: "sub_1" }, "user-1")).resolves.toEqual({
+			refusal: { code: NEW_ORG_SETUP_IN_PROGRESS_CODE, message: expect.any(String) },
+		});
+		expect(db.db.update).toHaveBeenCalledTimes(1);
+	});
+
+	it("a create that loses the claim to one that has since FINISHED is told the team exists", async () => {
+		db.queue.push([row()]);
+		db.queue.push([]);
+		db.queue.push([row({ created_org_id: "org-made" })]);
+		await expect(stampNewOrgMetadata({ newOrgSubscriptionId: "sub_1" }, "user-1")).resolves.toMatchObject({
+			refusal: { code: NEW_ORG_SETUP_ORG_EXISTS_CODE },
+		});
+	});
+});
+
+describe("forgetPendingOrgSetup — a record goes only for an unpaid subscription the actor minted", () => {
+	it.each(["active", "trialing", "past_due", "canceled", "unpaid", "paused"])(
+		"keeps the record of a %s subscription",
+		async (status) => {
+			await expect(
+				forgetPendingOrgSetup("user-1", { id: "sub_1", status, metadata: { created_by: "user-1" } }),
+			).resolves.toBe(false);
+			expect(db.db.delete).not.toHaveBeenCalled();
+		},
+	);
+
+	it("keeps the record of a subscription someone else minted, even an unpaid one", async () => {
+		await expect(
+			forgetPendingOrgSetup("user-1", { id: "sub_1", status: "incomplete", metadata: { created_by: "user-2" } }),
+		).resolves.toBe(false);
+		expect(db.db.delete).not.toHaveBeenCalled();
+	});
+
+	it.each(["incomplete", "incomplete_expired"])("drops the record of the actor's %s subscription", async (status) => {
+		await expect(
+			forgetPendingOrgSetup("user-1", { id: "sub_1", status, metadata: { created_by: "user-1" } }),
+		).resolves.toBe(true);
+		expect(db.db.delete).toHaveBeenCalledTimes(1);
 	});
 });
 

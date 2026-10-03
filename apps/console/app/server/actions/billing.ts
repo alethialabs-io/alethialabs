@@ -44,6 +44,7 @@ import {
 import type { PayerCapacity } from "@repo/legal/commerce";
 import { countBillableSeats } from "@/lib/billing/seats";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
+import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
 import { type Money, money } from "@repo/format";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { currencyFromRequest } from "@/lib/billing/currency";
@@ -69,6 +70,7 @@ import {
 	pendingOrgSetupFor,
 	pendingOrgSetupSlugSchema,
 	type PendingOrgSetupRow,
+	REPLACEABLE_SUBSCRIPTION_STATUSES,
 	recordPendingOrgSetup,
 	savePendingOrgSetupDetails,
 	unfinishedPendingOrgSetups,
@@ -668,22 +670,26 @@ async function ensureCustomer(
  * subs that a re-opened checkout / upgrade sheet would otherwise pile up (each one Stripe
  * auto-generates a draft invoice for). Stateless: it lists Stripe directly rather than the
  * DB, so it cleans up even the subs that were never persisted to organization_billing — the
- * exact leak the old DB-only guard missed. Best-effort per subscription.
+ * exact leak the old DB-only guard missed. Best-effort per subscription. Returns the ones it
+ * cancelled, as Stripe listed them (status `incomplete`).
  */
-async function cancelIncompleteSubscriptions(customerId: string): Promise<void> {
+async function cancelIncompleteSubscriptions(customerId: string): Promise<Stripe.Subscription[]> {
 	const stripe = getStripe();
 	const subs = await stripe.subscriptions.list({
 		customer: customerId,
 		status: "incomplete",
 		limit: 100,
 	});
+	const cancelled: Stripe.Subscription[] = [];
 	for (const s of subs.data) {
 		try {
 			await stripe.subscriptions.cancel(s.id);
+			cancelled.push(s);
 		} catch {
 			// Already gone / expired on Stripe's side — ignore.
 		}
 	}
+	return cancelled;
 }
 
 /**
@@ -1057,14 +1063,31 @@ export interface NewOrgSubscriptionIntent extends SubscriptionIntent {
 }
 
 /**
+ * What `createNewOrgSubscriptionIntent` hands back: a new intent to pay, or — when the attempt it
+ * replaces turns out to be PAID already — that setup to finish, with nothing new to pay.
+ */
+export type NewOrgSubscriptionStart =
+	| ({ kind: "intent" } & NewOrgSubscriptionIntent)
+	| { kind: "resume"; setup: NewOrgSetupState };
+
+/**
  * Creates an incomplete subscription for an org that doesn't exist yet — the deferred
  * create-org flow: take payment first, then create + link the org (linkSubscriptionToNewOrg).
  * The customer/sub carry `created_by` (not `organization_id`) so they can't be claimed by
  * another user, and the webhook ignores them until the link step stamps the org id.
  *
  * Idempotent across retries: pass the prior `customerId` to reuse it and `priorSubscriptionId`
- * to cancel the previous incomplete sub (e.g. after "← Back" or a seat change), so a Stripe
+ * to replace the previous attempt (e.g. after "← Back" or a currency switch), so a Stripe
  * customer is never duplicated and incomplete subscriptions don't pile up.
+ *
+ * `priorSubscriptionId` comes from the browser, which can be wrong about it — a payment Stripe took
+ * whose confirmation never reached the page leaves the pay view on screen with "← Back" and the
+ * currency toggle. So the prior subscription is READ from Stripe first (#5445), and:
+ *   - one this user did not mint is ignored — never cancelled, its record never touched;
+ *   - one that was never paid (`incomplete`, `incomplete_expired`) is cancelled and its record dropped;
+ *   - one that is PAID is never cancelled and no new subscription is minted: the setup it belongs to is
+ *     returned (`kind: "resume"`) and the sheet finishes it;
+ *   - any other status (it was paid once) is left alone.
  */
 export async function createNewOrgSubscriptionIntent(
 	plan: PaidPlan,
@@ -1083,7 +1106,7 @@ export async function createNewOrgSubscriptionIntent(
 		 */
 		payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
 	},
-): Promise<NewOrgSubscriptionIntent> {
+): Promise<NewOrgSubscriptionStart> {
 	const actor = await currentActor();
 	requireHostedBilling();
 	// The org does not exist yet, so the context is assembled from what the caller declared. Note
@@ -1096,6 +1119,26 @@ export async function createNewOrgSubscriptionIntent(
 		billingCountry: opts.payer?.billingCountry ?? null,
 	};
 	await assertPaidConversionAllowed(newOrgContext);
+
+	if (opts.priorSubscriptionId) {
+		const prior = await ownNewOrgSubscription(opts.priorSubscriptionId, actor.userId);
+		if (prior && PAID_SUBSCRIPTION_STATUSES.has(prior.status)) {
+			const setup = await newOrgSetupStateFor(prior, actor.userId);
+			if (setup) return { kind: "resume", setup };
+		} else if (prior && REPLACEABLE_SUBSCRIPTION_STATUSES.has(prior.status)) {
+			let gone = prior.status === "incomplete_expired";
+			if (!gone) {
+				try {
+					await getStripe().subscriptions.cancel(prior.id);
+					gone = true;
+				} catch {
+					// Not cancelled — its record stays, and `findUnfinishedNewOrgSetup` drops it once
+					// Stripe expires the subscription.
+				}
+			}
+			if (gone) await forgetPendingOrgSetup(actor.userId, prior);
+		}
+	}
 
 	// Reuse the customer from a prior attempt only if this user owns it; otherwise mint
 	// a fresh bare customer (no organization_id until the org exists and is linked).
@@ -1123,19 +1166,12 @@ export async function createNewOrgSubscriptionIntent(
 		customerId = customer.id;
 	}
 
-	// Cancel the previous incomplete sub from this attempt so it doesn't leak, and drop its record.
-	if (opts.priorSubscriptionId) {
-		try {
-			await getStripe().subscriptions.cancel(opts.priorSubscriptionId);
-		} catch {
-			// Already gone / expired — nothing to clean up.
-		}
-		await forgetPendingOrgSetup(actor.userId, opts.priorSubscriptionId);
-	}
 	// Belt-and-suspenders: void any other dangling incomplete subs on this customer (e.g. a
 	// prior attempt whose id wasn't threaded back), so they can't accumulate as FAILED draft
-	// invoices.
-	await cancelIncompleteSubscriptions(customerId);
+	// invoices — and drop their records, under the same guard as the prior one above.
+	for (const cancelled of await cancelIncompleteSubscriptions(customerId)) {
+		await forgetPendingOrgSetup(actor.userId, cancelled);
+	}
 
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
@@ -1185,27 +1221,77 @@ export async function createNewOrgSubscriptionIntent(
 		}
 		throw new Error("Couldn't start the purchase — try again.", { cause: e });
 	}
-	return { clientSecret, subscriptionId: sub.id, customerId, currency };
+	return { kind: "intent", clientSecret, subscriptionId: sub.id, customerId, currency };
+}
+
+/**
+ * A new-org subscription read from Stripe by id, with its customer expanded — or null when it does
+ * not exist or this user did not mint it. Any other failure is thrown: an outage must not read as "no
+ * prior subscription", or a paid one would be replaced by a second purchase.
+ */
+async function ownNewOrgSubscription(
+	subscriptionId: string,
+	userId: string,
+): Promise<Stripe.Subscription | null> {
+	let sub: Stripe.Subscription;
+	try {
+		sub = await getStripe().subscriptions.retrieve(subscriptionId, { expand: ["customer"] });
+	} catch (e) {
+		if (isStripeResourceMissing(e)) return null;
+		throw e;
+	}
+	return sub.metadata?.created_by === userId ? sub : null;
+}
+
+/** One field `saveNewOrgSetupDetails` did not keep, and why — the form shows it under that field. */
+export interface RefusedSetupField {
+	/** `slug`, or a billing field name (`line1`, `taxValue`, …). */
+	field: string;
+	message: string;
 }
 
 /**
  * Saves the slug and the checkout billing details on the caller's record of an unfinished paid setup
  * (#5445), so a setup finished from another tab — or after this one is gone — still creates the team at
- * the chosen URL, still sends the tax id, and still honours "use as the team's address". Validated
- * here: the browser's copy is input. A record that is not the caller's is not touched.
+ * the chosen URL, still sends the tax id, and still honours "use as the team's address". The sheet calls
+ * it BEFORE it confirms the card, so a crash after the charge cannot lose them. Validated here: the
+ * browser's copy is input. A record that is not the caller's is not touched.
+ *
+ * The slug and the billing details are validated SEPARATELY: one that fails never stops the other from
+ * being kept. What was not kept is RETURNED, field by field, never thrown away in silence — the forms
+ * apply the same caps (lib/billing/billing-field-caps.ts), so a refusal here is a form that let through
+ * what it should not have, and the caller shows it.
  */
 export async function saveNewOrgSetupDetails(input: {
 	subscriptionId: string;
 	slug: string;
 	billing: unknown;
-}): Promise<{ ok: true }> {
+}): Promise<{ ok: true } | { ok: false; refused: RefusedSetupField[] }> {
 	const actor = await currentActor();
 	requireHostedBilling();
-	const slug = pendingOrgSetupSlugSchema.parse(input.slug);
-	const billing =
-		input.billing === null ? null : pendingOrgSetupBillingSchema.parse(input.billing);
-	await savePendingOrgSetupDetails(actor.userId, input.subscriptionId, { slug, billing });
-	return { ok: true };
+	const refused: RefusedSetupField[] = [];
+	const slug = pendingOrgSetupSlugSchema.safeParse(input.slug);
+	if (!slug.success) {
+		refused.push({ field: "slug", message: slug.error.issues[0]?.message ?? "Invalid URL." });
+	}
+	let billing: PendingOrgSetupBilling | null = null;
+	if (input.billing !== null) {
+		const parsed = pendingOrgSetupBillingSchema.safeParse(input.billing);
+		if (parsed.success) {
+			billing = parsed.data;
+		} else {
+			for (const issue of parsed.error.issues) {
+				refused.push({ field: String(issue.path[0] ?? "billing"), message: issue.message });
+			}
+		}
+	}
+	if (slug.success || billing) {
+		await savePendingOrgSetupDetails(actor.userId, input.subscriptionId, {
+			slug: slug.success ? slug.data : null,
+			billing,
+		});
+	}
+	return refused.length > 0 ? { ok: false, refused } : { ok: true };
 }
 
 /**
@@ -1380,7 +1466,7 @@ async function newOrgSetupStateFor(
 		// A declaration that landed but whose stamp did not (a lost response) is recorded now, so the
 		// setup stops being reported as unfinished.
 		if (declared && !row.declared_at && linkedTo === org.id) {
-			await markPendingOrgSetupDeclared(userId, org.id);
+			await markPendingOrgSetupDeclared(userId, org.id, sub.id);
 		}
 	}
 	return {
@@ -1429,17 +1515,16 @@ export async function resolveNewOrgSetup(input: {
 	return newOrgSetupStateFor(sub, actor.userId);
 }
 
-/** Stripe subscription statuses from which no payment can follow — the record can go. */
-const DEAD_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
-
 /**
  * The caller's paid create-a-team setup that never finished, found WITHOUT any browser record (#5445):
  * a closed tab, cleared site data, a crash a second after the charge. Without this the sheet offered a
  * new purchase to a customer already charged.
  *
  * Read from the caller's setup records (`declared_at IS NULL`, newest first), each checked against
- * Stripe by id — a direct read, so a subscription paid a second ago is found. Records of subscriptions
- * that can no longer be paid (cancelled, expired) are dropped on the way.
+ * Stripe by id — a direct read, so a subscription paid a second ago is found. A record is dropped on the
+ * way only when Stripe says its subscription expired unpaid (`forgetPendingOrgSetup`'s guard); one that
+ * was cancelled, or that Stripe cannot find, is skipped and KEPT — a cancelled subscription may have
+ * been paid first, and a missing one is not proof of anything.
  *
  * Subscriptions minted before the record existed have none. For those this falls back to Stripe's
  * search API (which indexes with a delay, irrelevant for a subscription that old) and backfills a
@@ -1461,13 +1546,10 @@ export async function findUnfinishedNewOrgSetup(): Promise<NewOrgSetupState | nu
 			sub = await stripe.subscriptions.retrieve(row.subscription_id, { expand: ["customer"] });
 		} catch (e) {
 			if (!isStripeResourceMissing(e)) throw e;
-			await forgetPendingOrgSetup(actor.userId, row.subscription_id);
 			continue;
 		}
 		if (!PAID_SUBSCRIPTION_STATUSES.has(sub.status)) {
-			if (DEAD_SUBSCRIPTION_STATUSES.has(sub.status)) {
-				await forgetPendingOrgSetup(actor.userId, row.subscription_id);
-			}
+			if (sub.status === "incomplete_expired") await forgetPendingOrgSetup(actor.userId, sub);
 			continue;
 		}
 		const state = await newOrgSetupStateFor(sub, actor.userId);

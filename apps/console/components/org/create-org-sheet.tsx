@@ -36,13 +36,16 @@ import {
 	getProOffer,
 	isOrgSlugAvailable,
 	type ProOffer,
+	saveNewOrgSetupDetails,
 	startProTrial,
 } from "@/app/server/actions/billing";
 import { payerConversionStatus } from "@/app/server/actions/legal";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
 import {
 	BillingCheckoutForm,
+	type CheckoutRefusal,
 	type CollectedBilling,
+	checkoutFieldOf,
 } from "@/components/billing/billing-checkout-form";
 import {
 	PayerDeclarationForm,
@@ -69,6 +72,7 @@ import {
 	writePendingPaidSetup,
 } from "@/components/org/pending-paid-setup";
 import type { NewOrgSetupState } from "@/lib/billing/new-org-setup";
+import { ORG_SLUG_MAX, tooLongMessage } from "@/lib/billing/billing-field-caps";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { authClient } from "@/lib/auth/client";
@@ -107,6 +111,8 @@ const schema = z.object({
 		.string()
 		.trim()
 		.min(1, "Pick a slug.")
+		// The server's cap for the slug it records with a paid setup (billing-field-caps.ts).
+		.max(ORG_SLUG_MAX, tooLongMessage(ORG_SLUG_MAX))
 		.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and hyphens.")
 		// Checked HERE, not left to `isOrgSlugAvailable`: that action answers one boolean for both
 		// "reserved" and "taken", so a reserved slug ("docs") used to be refused as TAKEN — a sentence
@@ -348,27 +354,76 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		} finally {
 			setBusy(false);
 		}
+		await runRecovered(recovered, next);
+	}
+
+	/**
+	 * Builds the record for a setup the SERVER found (recovered on open, or found paid when this sheet
+	 * asked to replace it) from the server's state and this declaration, and runs the steps on it.
+	 */
+	async function runRecovered(state: NewOrgSetupState, next: PayerDeclaration) {
 		const values = form.getValues();
+		const known = SUPPORTED_CURRENCIES.find((c) => c === state.currency);
 		const record: PendingPaidSetup = {
-			subscriptionId: recovered.subscriptionId,
-			customerId: recovered.customerId,
+			subscriptionId: state.subscriptionId,
+			customerId: state.customerId,
 			name: values.name,
 			slug: values.slug,
-			currency,
+			currency: known ?? currency,
 			declaration: next,
-			billing: recovered.billing,
-			customerDetailsSaved: recovered.billing === null,
-			createdOrgId: recovered.org?.id ?? null,
-			createdSlug: recovered.org?.slug ?? "",
-			linked: recovered.linked,
+			billing: state.billing,
+			customerDetailsSaved: state.billing === null,
+			createdOrgId: state.org?.id ?? null,
+			createdSlug: state.org?.slug ?? "",
+			linked: state.linked,
 			slugRefusal: null,
 		};
 		writePendingPaidSetup(viewerId, record);
+		setSubscriptionId(state.subscriptionId);
+		setCustomerId(state.customerId);
+		setClientSecret(null);
+		if (known) setCurrency(known);
 		setDeclaration(next);
 		setRecovered(null);
 		setPending(record);
 		setView("pay");
 		await runSetup(record);
+	}
+
+	/**
+	 * The server found the attempt this sheet asked to replace already PAID — Stripe took the charge,
+	 * and the confirmation never reached this page. Nothing new was minted; the setup is finished on
+	 * that charge, and the customer is told so rather than being asked to pay again.
+	 */
+	async function resumePaidPrior(state: NewOrgSetupState, next: PayerDeclaration) {
+		toast.info(
+			"Your earlier payment for this team went through. Finishing the setup with it — you won't be charged again.",
+		);
+		await runRecovered(state, next);
+	}
+
+	/**
+	 * Saves the slug and the billing details on the server's record of this setup BEFORE the card is
+	 * confirmed (#5445), so a crash or a closed tab after the charge cannot lose them. A refusal is
+	 * returned to the checkout form, which shows it and does not charge.
+	 */
+	async function saveDetailsBeforeCharge(billing: CollectedBilling): Promise<CheckoutRefusal | null> {
+		if (!subscriptionId) {
+			return { field: null, message: "This checkout lost its reference — go back and try again." };
+		}
+		const saved = await saveNewOrgSetupDetails({
+			subscriptionId,
+			slug: form.getValues().slug,
+			billing,
+		});
+		if (saved.ok) return null;
+		const [first] = saved.refused;
+		if (!first) return null;
+		const field = checkoutFieldOf(first.field);
+		return {
+			field,
+			message: field ? first.message : `Team URL: ${first.message}`,
+		};
 	}
 
 	// Closing the TAB is outside the sheet's reach and outside sessionStorage's scope, so while a paid
@@ -576,6 +631,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 					billingCountry: next.billingCountry,
 				},
 			});
+			if (intent.kind === "resume") {
+				await resumePaidPrior(intent.setup, next);
+				return;
+			}
 			setSubscriptionId(intent.subscriptionId);
 			setCustomerId(intent.customerId);
 			setClientSecret(intent.clientSecret);
@@ -609,6 +668,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 					billingCountry: declaration.billingCountry,
 				},
 			});
+			if (intent.kind === "resume") {
+				await resumePaidPrior(intent.setup, declaration);
+				return;
+			}
 			setSubscriptionId(intent.subscriptionId);
 			setCustomerId(intent.customerId);
 			setClientSecret(intent.clientSecret);
@@ -923,6 +986,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 											submitLabel="Create"
 											scrollable
 											onPaid={(b) => handlePaid(b)}
+										beforeConfirm={saveDetailsBeforeCharge}
 										/>
 									</StripeElementsProvider>
 								</div>

@@ -1,5 +1,5 @@
 {
-  "id": "2c905974-a3a7-44f2-9bc9-9a4708d63a7f",
+  "id": "d18ae720-65cc-4f7b-9337-c74c5fa2e63c",
   "prevId": "547c2887-525f-41b8-aa55-e95ad67b3bd3",
   "version": "7",
   "dialect": "postgresql",
@@ -14527,7 +14527,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "member_organization_user_unique": {
+          "name": "member_organization_user_unique",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "member_organization_id_organization_id_fk": {
           "name": "member_organization_id_organization_id_fk",
@@ -15735,6 +15757,12 @@
         "created_org_id": {
           "name": "created_org_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "creating_at": {
+          "name": "creating_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },

@@ -19,9 +19,10 @@
 // record and no search index.
 //
 // `billing` carries what the customer typed at checkout (address, tax id, the "use as the team's
-// address" choice) so a resume from any tab restores it. It is written after the charge — the form
-// collects it together with the card — so a tab lost between the charge and that write leaves it
-// null, and the recovery view says the tax id must be re-added in billing.
+// address" choice) so a resume from any tab restores it. It is written BEFORE the card is confirmed (the
+// checkout refuses to charge until it is), so a crash after the charge cannot lose it. It is null only for
+// a setup recorded before that, or one backfilled from Stripe, and the recovery view then says the tax
+// id must be re-added in billing.
 //
 // TENANCY. A row is its user's alone: RLS (programmables.sql) is `user_id = app.current_owner`, and
 // every server read filters on the actor's own id. No `org_id`: the organization does not exist when
@@ -47,6 +48,9 @@ export const pendingOrgSetups = pgTable(
 		intended_slug: text().notNull(),
 		billing: jsonb().$type<PendingOrgSetupBilling>(),
 		created_org_id: uuid().references(() => organization.id, { onDelete: "set null" }),
+		// Claimed by an organization create for this setup (`stampNewOrgMetadata`), so two concurrent
+		// creates cannot both make an organization for one charge. A claim lapses after a minute.
+		creating_at: timestamp({ withTimezone: true }),
 		linked_at: timestamp({ withTimezone: true }),
 		declared_at: timestamp({ withTimezone: true }),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
