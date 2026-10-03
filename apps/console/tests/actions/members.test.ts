@@ -312,6 +312,29 @@ describe("setMemberSuspended", () => {
 		expect(revokeMemberGrant).not.toHaveBeenCalled();
 	});
 
+	// #5465: `member.role` can be comma-joined, and `toPdpRole` reads any `owner` part as owner. The
+	// old `role === "owner"` let these through, so the org could lose its active owner.
+	it.each(["owner,admin", "admin,owner", "viewer, owner"])(
+		"refuses to suspend %j, which the PDP reads as an owner",
+		async (role) => {
+			const { setSpy } = mockDb([[{ orgId: "org-1", userId: "u-1", role }]]);
+			await expect(setMemberSuspended("m-1", true)).rejects.toThrow(
+				/owner can't be suspended/,
+			);
+			expect(setSpy).not.toHaveBeenCalled();
+			expect(revokeMemberGrant).not.toHaveBeenCalled();
+		},
+	);
+
+	it("reactivates a suspended owner: adding an active owner back is never refused", async () => {
+		const { setSpy } = mockDb([
+			[{ orgId: "org-1", userId: "u-1", role: "owner" }],
+		]);
+		expect(await setMemberSuspended("m-1", false)).toEqual({ ok: true });
+		expect(setSpy).toHaveBeenCalledWith({ status: "active" });
+		expect(ensureMemberGrant).toHaveBeenCalledWith("org-1", "u-1", "owner");
+	});
+
 	it("propagates the authorization failure (no db access)", async () => {
 		vi.mocked(authorize).mockRejectedValue(new Error("Forbidden"));
 		await expect(setMemberSuspended("m-2", true)).rejects.toThrow(
