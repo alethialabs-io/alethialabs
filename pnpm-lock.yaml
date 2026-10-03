@@ -6,8 +6,8 @@ settings:
 
 overrides:
   '@alicloud/credentials': 2.4.7
-  '@ai-sdk/provider': 3.0.15
-  '@ai-sdk/provider-utils': 4.0.50
+  '@ai-sdk/provider': 3.0.18
+  '@ai-sdk/provider-utils': 4.0.56
   react: 19.2.8
   react-dom: 19.2.8
   '@types/react': 19.2.8
@@ -189,8 +189,8 @@ importers:
         specifier: 3.0.121
         version: 3.0.121(zod@4.5.4)
       '@ai-sdk/provider':
-        specifier: 3.0.15
-        version: 3.0.15
+        specifier: 3.0.18
+        version: 3.0.18
       '@ai-sdk/react':
         specifier: ^3.0.300
         version: 3.0.300(react@19.2.8)(zod@4.5.4)
@@ -1220,14 +1220,14 @@ packages:
     peerDependencies:
       zod: 4.5.4
 
-  '@ai-sdk/provider-utils@4.0.50':
-    resolution: {integrity: sha512-YAcB+7M1JhAYsHorTrWyldCyZihjCKr/QRXH2vFrara/+lwqNE7q5KzoucKLZ7ktFiUonhnhFhRoiymsq/2K2Q==}
+  '@ai-sdk/provider-utils@4.0.56':
+    resolution: {integrity: sha512-Svfg3OwsLRqkDDn/lTk6x3Dmrlft+u3Xs2M5YvVqpuDY9sftY125xJ9jnref63W/CrFln0j7Ij3/YgG9WHpOqA==}
     engines: {node: '>=18.17'}
     peerDependencies:
       zod: 4.5.4
 
-  '@ai-sdk/provider@3.0.15':
-    resolution: {integrity: sha512-XeZW1CcDF2GMbH4wejW6xBRI2QCOgnkVYUnxoeDadB1mf85riL2bMUeDoh+6gJ/r4mjNfzUPW8OjLjvwTP0u1Q==}
+  '@ai-sdk/provider@3.0.18':
+    resolution: {integrity: sha512-IpefF5ssZVOZCD4Wu7zxt6PwZoGT2HLVjxpJ10Bjx6EAmRfLYJPjyrfxb0RYDlwvXnDb9nkQ7Do/oJVDuRFzew==}
     engines: {node: '>=18'}
 
   '@ai-sdk/react@3.0.300':
@@ -10865,38 +10865,38 @@ snapshots:
 
   '@ai-sdk/anthropic@3.0.125(zod@4.5.4)':
     dependencies:
-      '@ai-sdk/provider': 3.0.15
-      '@ai-sdk/provider-utils': 4.0.50(zod@4.5.4)
+      '@ai-sdk/provider': 3.0.18
+      '@ai-sdk/provider-utils': 4.0.56(zod@4.5.4)
       zod: 4.5.4
 
   '@ai-sdk/gateway@3.0.206(zod@4.5.4)':
     dependencies:
-      '@ai-sdk/provider': 3.0.15
-      '@ai-sdk/provider-utils': 4.0.50(zod@4.5.4)
+      '@ai-sdk/provider': 3.0.18
+      '@ai-sdk/provider-utils': 4.0.56(zod@4.5.4)
       '@vercel/oidc': 3.2.0
       zod: 4.5.4
 
   '@ai-sdk/openai@3.0.121(zod@4.5.4)':
     dependencies:
-      '@ai-sdk/provider': 3.0.15
-      '@ai-sdk/provider-utils': 4.0.50(zod@4.5.4)
+      '@ai-sdk/provider': 3.0.18
+      '@ai-sdk/provider-utils': 4.0.56(zod@4.5.4)
       zod: 4.5.4
 
-  '@ai-sdk/provider-utils@4.0.50(zod@4.5.4)':
+  '@ai-sdk/provider-utils@4.0.56(zod@4.5.4)':
     dependencies:
-      '@ai-sdk/provider': 3.0.15
+      '@ai-sdk/provider': 3.0.18
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.1.1
       undici: 6.29.0
       zod: 4.5.4
 
-  '@ai-sdk/provider@3.0.15':
+  '@ai-sdk/provider@3.0.18':
     dependencies:
       json-schema: 0.4.0
 
   '@ai-sdk/react@3.0.300(react@19.2.8)(zod@4.5.4)':
     dependencies:
-      '@ai-sdk/provider-utils': 4.0.50(zod@4.5.4)
+      '@ai-sdk/provider-utils': 4.0.56(zod@4.5.4)
       ai: 6.0.297(zod@4.5.4)
       react: 19.2.8
       swr: 2.5.1(react@19.2.8)
@@ -15943,8 +15943,8 @@ snapshots:
   ai@6.0.297(zod@4.5.4):
     dependencies:
       '@ai-sdk/gateway': 3.0.206(zod@4.5.4)
-      '@ai-sdk/provider': 3.0.15
-      '@ai-sdk/provider-utils': 4.0.50(zod@4.5.4)
+      '@ai-sdk/provider': 3.0.18
+      '@ai-sdk/provider-utils': 4.0.56(zod@4.5.4)
       '@opentelemetry/api': 1.9.1
       zod: 4.5.4
 
