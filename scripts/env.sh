@@ -695,24 +695,29 @@ preflight_capacity() {
   loc="${loc:-nbg1}"
 
   command -v hcloud >/dev/null 2>&1 || return 0
-  avail="$(hc server-type list -o json 2>/dev/null |
-    jq -r --arg w "$want" '.[] | select(.name == $w) | .name' || true)"
+  local types
+  types="$(hc server-type list -o json 2>/dev/null || true)"
+  [ -n "$types" ] || return 0
+  avail="$(printf '%s' "$types" |
+    jq -r --arg w "$want" '.[] | select(.name == $w) | .name' 2>/dev/null || true)"
   [ -n "$avail" ] || return 0
 
-  # `hc datacenter describe` carries the authoritative per-DC availability list.
-  local dc ok
-  dc="$(hc datacenter list -o json 2>/dev/null | jq -r --arg l "$loc" '.[] | select(.name | startswith($l)) | .name' | head -1)"
-  [ -n "$dc" ] || return 0
-  ok="$(hc datacenter describe "$dc" -o json 2>/dev/null |
-    jq -r --arg w "$want" --slurpfile st <(hc server-type list -o json) \
-      '[.server_types.available[]] as $a | ($st[0][] | select(.name==$w) | .id) as $id | if ($a | index($id)) then "yes" else "no" end' 2>/dev/null || echo yes)"
+  # Each server type's `locations[].available` is the authoritative per-location availability.
+  # It replaced `hcloud datacenter describe`: Hetzner removed GET /v1/datacenters on 2026-10-01
+  # (HTTP 410 Gone). An answer that does not list the location at all — an hcloud CLI too old to
+  # print `locations`, say — is UNKNOWN and stays quiet, never a false "out of stock".
+  local ok
+  ok="$(printf '%s' "$types" |
+    jq -r --arg w "$want" --arg l "$loc" \
+      '[.[] | select(.name == $w) | .locations[]? | select(.name == $l) | .available] | if length == 0 then "unknown" elif any then "yes" else "no" end' \
+      2>/dev/null || echo unknown)"
 
   if [ "$ok" = "no" ]; then
     echo "⚠ $want is OUT OF STOCK in $loc right now." >&2
     echo "  Available there with >=16 GB:" >&2
-    hc datacenter describe "$dc" -o json 2>/dev/null |
-      jq -r --slurpfile st <(hc server-type list -o json) \
-        '[.server_types.available[]] as $a | $st[0][] | select(.id as $i | $a | index($i)) | select(.memory >= 16) | "    \(.name)  \(.cores)c \(.memory)GB \(.disk)GB \(.architecture)"' 2>/dev/null >&2 || true
+    printf '%s' "$types" |
+      jq -r --arg l "$loc" \
+        '.[] | select(any(.locations[]?; .name == $l and .available)) | select(.memory >= 16) | "    \(.name)  \(.cores)c \(.memory)GB \(.disk)GB \(.architecture)"' 2>/dev/null >&2 || true
     echo "  Set server_type in $TF_DIR/terraform.tfvars and retry." >&2
     echo >&2
   fi

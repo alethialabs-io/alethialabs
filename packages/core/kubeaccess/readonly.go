@@ -197,13 +197,25 @@ type namespace struct {
 	Metadata objectMeta `json:"metadata"`
 }
 
-// tokenRequest is authentication.k8s.io/v1 TokenRequest, both directions.
+// tokenRequestSpec is the spec of an authentication.k8s.io/v1 TokenRequest.
+type tokenRequestSpec struct {
+	Audiences         []string `json:"audiences,omitempty"`
+	ExpirationSeconds int64    `json:"expirationSeconds"`
+}
+
+// tokenRequestBody is the TokenRequest this package SENDS. It has no status on purpose: a status
+// with an empty expirationTimestamp is not a valid metav1.Time, so the API server refuses the whole
+// request with 400 before it reads the spec. That shipped once (one struct for both directions)
+// and failed every read-only mint on every real cloud while the fake server accepted it.
+type tokenRequestBody struct {
+	typeMeta
+	Spec tokenRequestSpec `json:"spec"`
+}
+
+// tokenRequest is the TokenRequest the API server ANSWERS with.
 type tokenRequest struct {
 	typeMeta
-	Spec struct {
-		Audiences         []string `json:"audiences,omitempty"`
-		ExpirationSeconds int64    `json:"expirationSeconds"`
-	} `json:"spec"`
+	Spec   tokenRequestSpec `json:"spec"`
 	Status struct {
 		Token               string `json:"token"`
 		ExpirationTimestamp string `json:"expirationTimestamp"`
@@ -382,7 +394,7 @@ func MintReadOnlyToken(ctx context.Context, kube KubeAPI, opts ReadOnlyOptions, 
 	if err := types.ValidateKubeconfigMintTTL(int(seconds)); err != nil {
 		return MintedToken{}, err
 	}
-	var req tokenRequest
+	var req tokenRequestBody
 	req.APIVersion, req.Kind = "authentication.k8s.io/v1", "TokenRequest"
 	req.Spec.ExpirationSeconds = seconds
 	var resp tokenRequest

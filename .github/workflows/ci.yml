@@ -1921,6 +1921,11 @@ jobs:
       - name: GCP sweeper four-state verification
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/gcp-cleanup.sh --self-test
+      # The red-gcp-leg diagnostic (#5273): scoped to the run's own cluster, read-only, and never
+      # an exit code on the real path. Hermetic — `gcloud` is a stub on PATH.
+      - name: GKE operation-error diagnostic (scoped, read-only, never masks the red)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/e2e/gke-op-errors.sh --self-test
       - name: Azure sweeper four-state verification
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/azure-cleanup.sh --self-test

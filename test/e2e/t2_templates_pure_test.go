@@ -327,7 +327,7 @@ func TestParseHcloudServerCosts(t *testing.T) {
 				map[string]any{"location": "fsn1", "price_hourly": map[string]any{"net": "9.9", "gross": "9.9"}},
 				map[string]any{"location": loc, "price_hourly": map[string]any{"net": net, "gross": gross}},
 			}},
-			"datacenter": map[string]any{"location": map[string]any{"name": loc}},
+			"location": map[string]any{"name": loc},
 		}
 	}
 	raw, _ := json.Marshal(map[string]any{"servers": []any{
@@ -354,10 +354,25 @@ func TestParseHcloudServerCosts(t *testing.T) {
 	var v map[string]any
 	_ = json.Unmarshal(noPrice, &v)
 	s := v["servers"].([]any)[0].(map[string]any)
-	s["datacenter"] = map[string]any{"location": map[string]any{"name": "ash"}}
+	s["location"] = map[string]any{"name": "ash"}
 	noPrice, _ = json.Marshal(v)
 	if _, _, _, err := parseHcloudServerCosts(noPrice); err == nil {
 		t.Error("a server with no price for its location was priced anyway")
+	}
+	// A payload that still carries only the deprecated `datacenter` is priced from it.
+	legacy := server("w", "cpx32", "nbg1", "0.0200", "0.0238")
+	delete(legacy, "location")
+	legacy["datacenter"] = map[string]any{"location": map[string]any{"name": "nbg1"}}
+	legacyRaw, _ := json.Marshal(map[string]any{"servers": []any{legacy}})
+	if _, n, _, err := parseHcloudServerCosts(legacyRaw); err != nil || n < 0.0199 || n > 0.0201 {
+		t.Errorf("a datacenter-only server must still be priced: net=%v err=%v", n, err)
+	}
+	// When both are present the top-level location wins over the deprecated datacenter.
+	both := server("w", "cpx32", "nbg1", "0.0200", "0.0238")
+	both["datacenter"] = map[string]any{"location": map[string]any{"name": "ash"}}
+	bothRaw, _ := json.Marshal(map[string]any{"servers": []any{both}})
+	if _, _, _, err := parseHcloudServerCosts(bothRaw); err != nil {
+		t.Errorf("the top-level location must win over a stale datacenter: %v", err)
 	}
 }
 

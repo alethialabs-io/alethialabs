@@ -372,6 +372,10 @@ interface HcloudServer {
 	id: number;
 	created: string;
 	labels?: Record<string, string>;
+	/** The server's location — the field to read. */
+	location?: { name?: string };
+	/** Deprecated by Hetzner for removal after 2026-07-01 (it removed GET /v1/datacenters on
+	 *  2026-10-01); read only as a fallback when `location` is absent. */
 	datacenter?: { location?: { name?: string } };
 }
 
@@ -405,7 +409,7 @@ function isUnknownArray(v: unknown): v is unknown[] {
 }
 
 /** Type-guard for a Hetzner server object — validates only the fields list() maps that must exist;
- *  optional labels/datacenter are read defensively in the map, so a partial entry is skipped, not thrown. */
+ *  optional labels/location/datacenter are read defensively in the map, so a partial entry is skipped, not thrown. */
 function isHcloudServer(v: unknown): v is HcloudServer {
 	return isRecord(v) && typeof v.id === "number" && typeof v.created === "string";
 }
@@ -557,7 +561,7 @@ class HcloudFleetProvider implements FleetProvider {
 		const now = Date.now();
 		return servers.map((s) => ({
 			instanceId: String(s.id),
-			location: s.datacenter?.location?.name ?? "",
+			location: s.location?.name ?? s.datacenter?.location?.name ?? "",
 			version: s.labels?.["alethia-version"] ?? null,
 			ageSeconds: Math.max(0, Math.floor((now - Date.parse(s.created)) / 1000)),
 		}));

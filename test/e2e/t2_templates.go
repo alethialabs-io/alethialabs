@@ -717,9 +717,12 @@ func parseHcloudServerCosts(raw []byte) ([]templatesServerCost, float64, float64
 	var out []templatesServerCost
 	var net, gross float64
 	for _, s := range resp.Servers {
-		loc := s.Datacenter.Location.Name
+		// The top-level `location` first: Hetzner deprecated a server's `datacenter` for
+		// removal after 2026-07-01 (it removed `/v1/datacenters` on 2026-10-01), so the
+		// nested read is only a fallback for a payload that still carries it.
+		loc := s.Location.Name
 		if loc == "" {
-			loc = s.Location.Name
+			loc = s.Datacenter.Location.Name
 		}
 		found := false
 		for _, p := range s.ServerType.Prices {
