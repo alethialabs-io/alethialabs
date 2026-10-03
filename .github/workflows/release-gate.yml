@@ -876,7 +876,8 @@ jobs:
   #     `failed` entry, or a `passed` one turned `failed`, passed every other guard. Asked on EVERY
   #     non-draft PR: it reads only the tree, so it cannot red a PR for a change made elsewhere.
   #   · EVERY `{fixme}` CITES AN OPEN ISSUE — scripts/check-gate-fixme-issues.mjs, the instrument the
-  #     daily gate-fixme-currency.yml also runs; exit 1 (a closed issue) and exit 2 (an unanswered
+  #     daily gate-fixme-currency.yml will also run once it reaches main (a schedule runs from the
+  #     default branch, so as of 2026-10-04 it never has); exit 1 (a closed issue) and exit 2 (an unanswered
   #     question) are both red. It reads ISSUE STATE, which changes outside the diff, so on a dev PR
   #     it is asked only when the PR changes the ledger or the code that decides what a fixme is.
   #     A fixme can only be added by changing the ledger, so that PR is asked. A promotion PR and a
@@ -951,8 +952,8 @@ jobs:
           rc=$?
           case "$rc" in
             0)
-              echo "not asked: this dev PR changes neither the ledger nor the code that reads its fixmes; the daily gate-fixme-currency.yml and every promotion PR ask"
-              echo "### Fixme currency: not asked on this PR — it does not change the ledger. The daily cron and every promotion PR ask." >> "$GITHUB_STEP_SUMMARY"
+              echo "not asked: this dev PR changes neither the ledger nor the code that reads its fixmes; every promotion PR asks (the daily gate-fixme-currency.yml runs only once it reaches main)"
+              echo "### Fixme currency: not asked on this PR — it does not change the ledger. Every promotion PR asks; the daily cron runs only once gate-fixme-currency.yml reaches main." >> "$GITHUB_STEP_SUMMARY"
               echo "ask=no" >> "$GITHUB_OUTPUT" ;;
             1)
               echo "asked: this PR changes the ledger or the code that reads its fixmes"

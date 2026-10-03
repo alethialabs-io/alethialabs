@@ -255,7 +255,7 @@ PR carries `release-gate:run` / `release-gate:all` or changes that leg's own spe
 PR's other legs say nothing about the code it changed, and an exclusion justified by a suite nothing
 launched on that PR is justified by nothing.
 
-**A gate leg passes by ratchet, and the ledger's bar is zero failed and zero fixme.** Each leg fails
+**A gate leg passes by ratchet, and the ledger's bar is: no `failed` entry, and every `{fixme}` cites an open issue.** Each leg fails
 on regression against `apps/console/e2e/gate-baseline.json`. That ledger once recorded 94 `failed`
 tests; it now records none, and `node scripts/e2e-ratchet.mjs --census` prints today's counts
 (they are derived, never written down). The rules, and how to move the ledger, are in
@@ -266,7 +266,7 @@ places:
 |---|---|---|
 | a recorded `passed` still passes; a test the ledger does not know passes; a recorded `failed` that now passes is moved out of the ledger; a skip is recorded as a `{fixme}` or a `{skip}` | `scripts/e2e-ratchet.mjs`, the `Ratchet` step of each `Release gate (<leg>)` | every leg that runs: every promotion PR and dispatch, and a `dev` PR only as above |
 | the ledger holds **no `failed` entry** | the ``Zero `failed` entries in gate-baseline.json`` step of `Gate ledger — zero failed, every fixme cites an open issue` in `release-gate.yml` | every non-draft PR into `dev`, `staging` or `main`, and every dispatch |
-| every `{fixme}` cites exactly one issue, and that issue is **OPEN** (an unreadable state is red, never skipped) | `scripts/check-gate-fixme-issues.mjs` | the same `Gate ledger` job, on a promotion PR, a dispatch, or a `dev` PR that changes the ledger or the code that reads its fixmes; and daily from `gate-fixme-currency.yml` |
+| every `{fixme}` cites exactly one issue, and that issue is **OPEN** (an unreadable state is red, never skipped) | `scripts/check-gate-fixme-issues.mjs` | the same `Gate ledger` job, on a promotion PR, a dispatch, or a `dev` PR that changes the ledger or the code that reads its fixmes. `gate-fixme-currency.yml` schedules a daily run too, but a schedule runs from the DEFAULT branch (`main`) and that workflow has not reached `main` yet, so as of 2026-10-04 it has never run |
 
 Read the two ledger rules precisely. The ratchet cannot enforce zero failed: a recorded `failed` test
 that still fails is "no regression", and a PR that changes a spec may re-record that spec's slice, so
@@ -274,7 +274,7 @@ a new `failed` entry passed every leg before the `Gate ledger` job existed. That
 committed ledger, which is why it runs on every PR. The fixme rule reads issue state, which changes
 outside any diff, so on a `dev` PR that changes neither the ledger nor its reader it is not asked; a
 fixme can only be added by changing the ledger, and an issue closed under a fixme already on `dev`
-is caught by the daily run and by the next promotion PR. "Zero fixme" is today's state, not a rule
+is caught by the next promotion PR (and, once `gate-fixme-currency.yml` reaches `main`, by its daily run). "Zero fixme" is today's state, not a rule
 any check enforces: a fixme that cites an open issue is allowed. And the `Gate ledger` context is
 required by no ruleset and named nowhere in `.mergify.yml`, so its red is a signal on the PR, not a
 block.
