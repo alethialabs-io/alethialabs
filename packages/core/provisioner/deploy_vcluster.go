@@ -62,7 +62,7 @@ const (
 //   - gcp: GKE clusters.get via the runner-injected KubeConnResolver (mintGCPToken + ResolveGKEClusterConn);
 //     project = CloudAccountID, location = Region (the shared cluster's region).
 //
-//   - azure: AKS ManagedClusters get/list + listClusterUserCredentials via the runner-injected resolver
+//   - azure: AKS ManagedClusters get/list + listClusterUserCredential via the runner-injected resolver
 //     (ARM token + ResolveAKSResourceGroup by name + ResolveAKSClusterConn); subscription = CloudAccountID.
 //
 //   - alibaba: ACK resolved output-free IN-CORE (like aws) — alibabaProvider.ConfigureKubeconfig builds
