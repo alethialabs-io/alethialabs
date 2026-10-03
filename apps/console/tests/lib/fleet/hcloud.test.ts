@@ -550,6 +550,29 @@ describe("HcloudFleetProvider.list", () => {
 		expect(out[0].ageSeconds).toBeLessThanOrEqual(125);
 	});
 
+	it("reads the top-level location first and falls back to the deprecated datacenter", async () => {
+		const created = new Date(Date.now() - 1_000).toISOString();
+		fetchMock.mockResolvedValue(
+			jsonRes({
+				servers: [
+					// Today's shape: both present and disagreeing — the top-level location wins.
+					{
+						id: 1,
+						created,
+						location: { name: "nbg1" },
+						datacenter: { location: { name: "fsn1" } },
+					},
+					// After Hetzner drops the deprecated field: location alone.
+					{ id: 2, created, location: { name: "hel1" } },
+					// A payload that still carries only the datacenter.
+					{ id: 3, created, datacenter: { location: { name: "fsn1" } } },
+				],
+			}),
+		);
+		const out = await getHcloudFleetProvider().list(target("aws"));
+		expect(out.map((i) => i.location)).toEqual(["nbg1", "hel1", "fsn1"]);
+	});
+
 	it("defaults version/location and clamps a future-created age to 0", async () => {
 		fetchMock.mockResolvedValue(
 			jsonRes({ servers: [{ id: 7, created: new Date(Date.now() + 60_000).toISOString() }] }),

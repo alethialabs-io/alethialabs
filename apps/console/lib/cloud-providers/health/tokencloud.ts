@@ -10,10 +10,12 @@ import { decryptSecret } from "@/lib/crypto/secrets";
 import type { CloudIdentity } from "@/lib/db/schema";
 import { type HealthResult, errorMessage } from "./types";
 
-/** A cheap authenticated endpoint per token cloud (mirrors the runner's VerifyTokenCloud). */
+/** A cheap authenticated endpoint per token cloud (mirrors the runner's VerifyTokenCloud). Only the
+ *  status is read, never the body. Hetzner's is `/locations`: it was `/datacenters` until Hetzner
+ *  removed that endpoint on 2026-10-01 (HTTP 410 Gone), which failed every Hetzner connect. */
 const PROBE_URL: Record<string, string> = {
 	digitalocean: "https://api.digitalocean.com/v2/account",
-	hetzner: "https://api.hetzner.cloud/v1/datacenters",
+	hetzner: "https://api.hetzner.cloud/v1/locations",
 	civo: "https://api.civo.com/v2/regions",
 };
 

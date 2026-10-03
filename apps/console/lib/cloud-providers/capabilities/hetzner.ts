@@ -5,9 +5,11 @@
 // (the one non-keyless path; Hetzner has no role federation). Reads what THIS project can launch: its
 // locations and, per location, the server types with a tri-state `launchable` verdict.
 //
-// Hetzner's `/datacenters` is the authoritative launch signal (generalizing the shipped fleet
-// `serverTypeAvailabilityFromTypes`): `server_types.available[]` = creatable NOW ⇒ launchable;
-// `server_types.supported[]` minus available = offered but capacity-blocked ⇒ not_launchable. There is no
+// Each server type's `locations[]` is the authoritative launch signal (generalizing the shipped fleet
+// `serverTypeAvailabilityFromTypes`): a location entry with `available: true` = creatable NOW ⇒
+// launchable; a listed location with `available: false` = offered but capacity-blocked ⇒ not_launchable.
+// This replaced `/datacenters` (`server_types.available[]` / `supported[]`), which Hetzner deprecated on
+// 2026-06-02 and REMOVED on 2026-10-01 — it now answers HTTP 410 Gone, so it must never be called. There is no
 // queryable project quota (the resource limit only surfaces reactively as a 403 on create), so the quota
 // DIMENSION is not_evaluable — but availability itself gives a real launch verdict. Availability is
 // design-time GUIDANCE, never a hard gate; best-effort, never throws.
@@ -41,10 +43,12 @@ interface HcloudServerType {
 	cores?: number;
 	memory?: number; // GB
 	architecture?: string; // "x86" | "arm"
+	/** Where this type is offered, and whether it can be created there NOW. */
+	locations?: HcloudServerTypeLocation[];
 }
-interface HcloudDatacenter {
-	location?: { name?: string };
-	server_types?: { available?: number[]; supported?: number[] };
+interface HcloudServerTypeLocation {
+	name?: string;
+	available?: boolean;
 }
 interface HcloudLocation {
 	name?: string;
@@ -163,24 +167,23 @@ export async function syncHetznerCapabilities(
 	}
 
 	// Per location: available (launchable now) vs supported (offered, may be capacity-blocked).
-	const datacenters = await listAll<HcloudDatacenter>(
-		"datacenters",
-		"datacenters",
-		token,
-	);
 	const byRegion = new Map<
 		string,
 		{ available: Set<number>; supported: Set<number> }
 	>();
-	for (const dc of datacenters) {
-		const region = dc.location?.name;
-		if (!region) continue;
-		if (!byRegion.has(region))
-			byRegion.set(region, { available: new Set(), supported: new Set() });
-		const agg = byRegion.get(region);
-		if (!agg) continue;
-		for (const id of dc.server_types?.available ?? []) agg.available.add(id);
-		for (const id of dc.server_types?.supported ?? []) agg.supported.add(id);
+	for (const st of serverTypes) {
+		if (typeof st.id !== "number") continue;
+		for (const loc of st.locations ?? []) {
+			const region = loc.name;
+			if (!region) continue;
+			let agg = byRegion.get(region);
+			if (!agg) {
+				agg = { available: new Set(), supported: new Set() };
+				byRegion.set(region, agg);
+			}
+			agg.supported.add(st.id);
+			if (loc.available === true) agg.available.add(st.id);
+		}
 	}
 
 	const seenTypes: string[] = [];
