@@ -9,9 +9,11 @@ import {
 	type UIMessage,
 } from "ai";
 import { and, eq, or } from "drizzle-orm";
-import { saveThreadMessages } from "@/app/server/actions/agent";
+import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
+import { transcriptNotSaved } from "@/lib/ai/transcript-not-saved";
 import { buildAgentSystemPrompt, scopeToolsToAgent } from "@/lib/agent/executor";
 import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
+import { refuseUserMessage } from "@/lib/ai/message-limits";
 import { cachedSystemMessage, thinkingOptions } from "@/lib/ai/provider-options";
 import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { currentActor } from "@/lib/authz/guard";
@@ -81,6 +83,16 @@ export async function POST(
 	);
 	if (!agent) return new Response("Agent not found", { status: 404 });
 
+	// Read BEFORE the budget hold (it used to be read after, inside the hold's try): the
+	// per-message limit every metered chat route enforces refuses a malformed (400) or
+	// over-limit (413) turn here, so it reserves nothing.
+	const body: AgentChatBody | null = await req.json().catch(() => null);
+	if (body === null || typeof body !== "object") {
+		return new Response("The request body is malformed.", { status: 400 });
+	}
+	const refusal = refuseUserMessage(body.messages);
+	if (refusal) return refusal;
+
 	const charge = await assertAiAllowed(actor.orgId, "agent", actor.userId).catch((e: unknown) => {
 		if (e instanceof AiBudgetError) return e;
 		throw e;
@@ -93,9 +105,9 @@ export async function POST(
 	}
 
 	// Everything from here through the streamText registration runs AFTER the hold was reserved. A
-	// throw in this window (req parsing, tool scoping, message conversion) would strand the ≈$0.10
+	// throw in this window (tool scoping, message conversion) would strand the ≈$0.10
 	// hold — nothing downstream releases it — so release it in the catch. refId defaults to the
-	// always-available agentId, then narrows to the thread's session id once req.json() resolves.
+	// always-available agentId, then narrows to the thread's session id.
 	const holdCtx: AiHoldContext = {
 		orgId: actor.orgId,
 		userId: actor.userId,
@@ -103,7 +115,7 @@ export async function POST(
 		refId: agentId,
 	};
 	try {
-		const { messages, mode = "ask", threadId }: AgentChatBody = await req.json();
+		const { messages, mode = "ask", threadId } = body;
 		const model = getAiModel();
 		const tools = scopeToolsToAgent(buildAgentTools({ mode }), agent.tool_scope);
 		// LLM-observability enrichment (PostHog): the thread is the "session", the prompt is the input,
@@ -184,7 +196,12 @@ export async function POST(
 		return result.toUIMessageStreamResponse({
 			originalMessages: messages,
 			onFinish: ({ messages }) => {
-				if (threadId) void saveThreadMessages(threadId, messages);
+				if (threadId) {
+					void saveThreadTranscript(
+						{ owner: actor.userId, threadId, kind: "agent", projectId: agent.project_id },
+						messages,
+					).catch(transcriptNotSaved(threadId));
+				}
 			},
 		});
 	} catch (e) {

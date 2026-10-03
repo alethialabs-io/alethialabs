@@ -59,12 +59,13 @@
 			"elench-agent.spec.ts": {
 				"Elench agent — modal (org) › opens as a fullscreen modal with the empty landing": "passed",
 				"Elench agent — modal (org) › Ask-mode popover switches ask ↔ auto": "passed",
-				"Elench agent — Ask-mode segments (org) › the Ask-mode segments expose which one is current": "passed",
+				"Elench agent — modal (org) › the response-style segments expose which one is current": "passed",
 				"Elench agent — modal (org) › the @-mention popover opens against real resources": "passed",
-				"Elench agent — modal (org) › minimize → panel → maximize preserves the conversation": "failed",
+				"Elench agent — modal (org) › minimize → panel → maximize preserves the conversation": "passed",
 				"Elench agent — modal (org) › the panel closes": "passed",
+				"Elench agent — Ask-mode segments (org) › the Ask-mode segments expose which one is current": "passed",
 				"Elench agent — AI-off deterministic flows (org) › the suggestion carousel pages through its cards": "passed",
-				"Elench agent — AI-off deterministic flows (org) › a sent thread persists across a reload": "failed",
+				"Elench agent — AI-off deterministic flows (org) › a sent thread persists across a reload": "passed",
 				"Elench agent — AI-off deterministic flows (org) › sending with no AI key surfaces the 'AI not configured' error + Retry": "passed"
 			},
 			"evidence.spec.ts": {
