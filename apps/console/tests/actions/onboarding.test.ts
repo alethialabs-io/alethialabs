@@ -64,25 +64,64 @@ describe("configureOnboardingOrg — guards", () => {
 		await expect(configureOnboardingOrg(ok)).rejects.toThrow(/owner/);
 	});
 
-	it("rejects a too-short name", async () => {
-		await expect(configureOnboardingOrg({ name: "A", slug: "acme" })).rejects.toThrow(/name/);
+	// The four refusals a user can fix are RETURNED, never thrown: a throw out of a "use server"
+	// export is redacted to a digest + HTTP 500 in a production build, so the form could never say
+	// which one it was (#5415, the #4644 class). Each case below asserted `.rejects.toThrow` before.
+
+	it("refuses a too-short name with a readable reason", async () => {
+		expect(await configureOnboardingOrg({ name: "A", slug: "acme" })).toEqual({
+			ok: false,
+			error: expect.stringMatching(/name/),
+		});
 	});
 
-	it("rejects an invalid slug", async () => {
-		await expect(configureOnboardingOrg({ name: "Acme", slug: "Bad Slug!" })).rejects.toThrow(/lowercase/);
+	it("refuses an invalid slug with a readable reason", async () => {
+		expect(await configureOnboardingOrg({ name: "Acme", slug: "Bad Slug!" })).toEqual({
+			ok: false,
+			error: expect.stringMatching(/lowercase/),
+		});
 	});
 
-	it("rejects a reserved slug", async () => {
-		await expect(configureOnboardingOrg({ name: "Acme", slug: "dashboard" })).rejects.toThrow(/reserved/);
-	});
+	it.each(["dashboard", "docs", "DOCS", " docs "])(
+		"refuses the reserved slug %j with a readable reason",
+		async (slug) => {
+			expect(await configureOnboardingOrg({ name: "Acme", slug })).toEqual({
+				ok: false,
+				error: "That slug is reserved — try another.",
+			});
+		},
+	);
 
-	it("rejects a slug already taken by another org", async () => {
+	it("refuses a slug already taken by another org with a readable reason", async () => {
 		mockDb([{ id: "other-org" }]); // collision
-		await expect(configureOnboardingOrg(ok)).rejects.toThrow(/taken/);
+		expect(await configureOnboardingOrg(ok)).toEqual({
+			ok: false,
+			error: expect.stringMatching(/taken/),
+		});
+	});
+
+	it("does not write the org when it refuses", async () => {
+		const update = vi.fn();
+		const db: Record<string, unknown> = {};
+		Object.assign(db, {
+			select: () => db,
+			from: () => db,
+			where: () => db,
+			limit: () => db,
+			update: (...args: unknown[]) => {
+				update(...args);
+				return db;
+			},
+			set: () => db,
+			then: (resolve: (v: unknown) => void) => resolve([]),
+		});
+		vi.mocked(getServiceDb).mockReturnValue(db as never);
+		await configureOnboardingOrg({ name: "Acme", slug: "docs" });
+		expect(update).not.toHaveBeenCalled();
 	});
 
 	it("persists and returns the slug on success", async () => {
-		expect(await configureOnboardingOrg(ok)).toEqual({ slug: "acme" });
+		expect(await configureOnboardingOrg(ok)).toEqual({ ok: true, slug: "acme" });
 	});
 });
 

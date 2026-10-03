@@ -97,6 +97,15 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 		setSlugError(null);
 		try {
 			const res = await configureOnboardingOrg({ name, slug });
+			if (!res.ok) {
+				// A refusal the user can fix (name, slug format, reserved, taken) arrives as a value:
+				// a thrown one is redacted to a digest in a production build (#4644, #5415). Open the
+				// URL editor so the slug the sentence is about is right there to change.
+				setSlugError(res.error);
+				setShowUrl(true);
+				setBusy(false);
+				return;
+			}
 			setSlug(res.slug);
 			track("org_created", { plan });
 			if (plan === "community") {
@@ -124,9 +133,9 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 			setCurrency(intent.currency);
 			setBusy(false);
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : "Couldn't create the organization";
-			if (/slug|name|reserved|taken/i.test(msg)) setSlugError(msg);
-			else toast.error(msg);
+			// Only an UNEXPECTED failure lands here; its message may be a production digest, so it
+			// is a toast and never sniffed for a field-level error.
+			toast.error(e instanceof Error ? e.message : "Couldn't create the organization");
 			setBusy(false);
 		}
 	}
@@ -322,7 +331,11 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 						/>
 					</div>
 				)}
-				{slugError && <p className="text-ui-xs text-destructive">{slugError}</p>}
+				{slugError && (
+					<p role="alert" className="text-ui-xs text-destructive">
+						{slugError}
+					</p>
+				)}
 			</div>
 
 			{/* Logo (optional) */}
