@@ -29,6 +29,10 @@
 // · "Newest" is the bundle directory's timestamp name (`YYYYMMDDTHHMMSSZ`, UTC, fixed width), so
 //   lexical order IS chronological order. Not the file's mtime: a checkout rewrites every mtime.
 // · A FAIL bundle newer than a PASS one is skipped — the reader answers "last GREEN-proven".
+//   NOTE: no producer writes a FAIL bundle today. `scripts/e2e/commit-proof.sh` files a template
+//   under `demos/proofs/templates/<t>/` ONLY when that template's own verdict is PASS, so every
+//   bundle on dev is a PASS. The FAIL handling here (and its fixtures) is for a bundle filed by
+//   hand or by a future producer — it is not evidence that FAIL bundles exist.
 // · No network. This reads the working tree only; comparing against the starter repo's live HEAD
 //   is a different unit (#2766 unit 2), and a network call here would make every caller flaky.
 // · Three templates, `apps`, `chart`, `ai`. Alibaba is not a template and is not added (#5411).
@@ -46,7 +50,10 @@
 //     `commit` is not a 40-hex sha, or its `repo` is not an https URL
 //   · an entry under a template directory is not a timestamp-named bundle directory, or a
 //     directory under the proofs root is not one of the three templates — an unrecognised entry
-//     silently skipped is how a renamed bundle stops being read and nobody notices.
+//     silently skipped is how a renamed bundle stops being read and nobody notices. A DOTFILE
+//     (`.DS_Store`, left by macOS Finder) is refused the same way — it is still an entry nobody
+//     filed as a proof — but the error names it as a dotfile, so the fix is "delete it", not a hunt
+//     for a misnamed bundle.
 //
 // Every summary in a template's directory is parsed and validated, not only the newest PASS one:
 // a malformed OLD bundle is still a malformed bundle, and validating only the winner would let a
@@ -69,6 +76,17 @@ export const SUMMARY_FILE = "template-summary.json";
 
 const BUNDLE_NAME = /^\d{8}T\d{6}Z$/;
 const SHA = /^[0-9a-f]{40}$/;
+
+/**
+ * The cause clause for an unexpected directory entry: a dotfile is named as one, because the
+ * likeliest source (`.DS_Store`) is fixed by deleting it, not by renaming a bundle.
+ *
+ * @param {string} name  the entry's base name
+ * @returns {string}  "" for an ordinary name, else a parenthesised cause
+ */
+function dotfileCause(name) {
+	return name.startsWith(".") ? ` (a dotfile${name === ".DS_Store" ? " left by macOS Finder" : ""} — delete it; it is not a proof)` : "";
+}
 
 /** The repo root this module lives in (`scripts/lib/` → two levels up). */
 function defaultRoot() {
@@ -129,7 +147,7 @@ export function readTemplateProofs(opts = {}) {
 	}
 	for (const entry of readdirSync(proofsRoot).sort()) {
 		if (!TEMPLATES.includes(entry)) {
-			throw new Error(`template-proofs: ${path.join(proofsRoot, entry)} is not one of the templates (${TEMPLATES.join(", ")})`);
+			throw new Error(`template-proofs: ${path.join(proofsRoot, entry)} is not one of the templates (${TEMPLATES.join(", ")})${dotfileCause(entry)}`);
 		}
 	}
 
@@ -147,7 +165,7 @@ export function readTemplateProofs(opts = {}) {
 		for (const name of bundles) {
 			const full = path.join(dir, name);
 			if (!BUNDLE_NAME.test(name) || !statSync(full).isDirectory()) {
-				throw new Error(`template-proofs: ${full} is not a timestamp-named bundle directory (YYYYMMDDTHHMMSSZ)`);
+				throw new Error(`template-proofs: ${full} is not a timestamp-named bundle directory (YYYYMMDDTHHMMSSZ)${dotfileCause(name)}`);
 			}
 			read.push({ name, summary: readSummary(path.join(full, SUMMARY_FILE), template) });
 		}
@@ -196,7 +214,9 @@ export function parseCliArgs(argv) {
 		"-h": "help",
 	};
 	if (argv.length === 0) return { mode: "json", error: null };
-	const unknown = argv.filter((a) => !(a in MODES));
+	// Object.hasOwn, not `in`: `in` walks the prototype, so `constructor` / `toString` would pass as
+	// modes and fall through to an undefined one.
+	const unknown = argv.filter((a) => !Object.hasOwn(MODES, a));
 	if (unknown.length > 0) return { mode: null, error: `unrecognised argument${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}` };
 	if (argv.some((a) => MODES[a] === "help")) return { mode: "help", error: null };
 	const distinct = [...new Set(argv.map((a) => MODES[a]))];
@@ -376,6 +396,16 @@ function selfTest({ mutate }) {
 			raises("an unknown template directory throws (alibaba is not a template)", () => readTemplateProofs({ root: r }), "is not one of the templates");
 		}
 		{
+			const r = tree(false);
+			writeFileSync(path.join(r, PROOFS_DIR, "chart", ".DS_Store"), "");
+			raises("a .DS_Store in a template directory throws, and names itself a dotfile", () => readTemplateProofs({ root: r }), "a dotfile left by macOS Finder");
+		}
+		{
+			const r = tree(false);
+			writeFileSync(path.join(r, PROOFS_DIR, ".DS_Store"), "");
+			raises("a .DS_Store under the proofs root throws, and names itself a dotfile", () => readTemplateProofs({ root: r }), "a dotfile left by macOS Finder");
+		}
+		{
 			const r = mkdtempSync(path.join(tmpdir(), "template-proofs-empty-"));
 			roots.push(r);
 			raises("a missing proofs root throws", () => readTemplateProofs({ root: r }), "does not exist");
@@ -392,6 +422,8 @@ function selfTest({ mutate }) {
 		ok("--mutation-control is a mode", parseCliArgs(["--mutation-control"]).mode === "mutation-control");
 		ok("an unknown argument is refused", parseCliArgs(["--jsn"]).error !== null);
 		ok("two modes are refused", parseCliArgs(["--json", "--self-test"]).error !== null);
+		ok("a prototype key (`constructor`) is refused by the parser", parseCliArgs(["constructor"]).error !== null);
+		ok("…and by the CLI, with exit 2", spawnSync(process.execPath, [fileURLToPath(import.meta.url), "constructor"], { encoding: "utf8" }).status === 2);
 		ok("USAGE names every flag", ["--json", "--self-test", "--mutation-control", "--help"].every((f) => USAGE.includes(f)));
 
 		// ── the mutation control, judged by its EXIT CODE ──
