@@ -333,9 +333,7 @@
 				"Cross-cutting — a11y per surface › runners has no serious/critical a11y violations": "passed",
 				"Cross-cutting — a11y per surface › jobs has no serious/critical a11y violations": "passed",
 				"Cross-cutting — a11y per surface › clusters has no serious/critical a11y violations": "passed",
-				"Cross-cutting — a11y per surface › evidence has no serious/critical a11y violations": {
-					"fixme": "BUG: the evidence table paints non-disabled informational text in the disabled ink tier (--text-disabled on --surface is 1.95:1 against a 4.5:1 bar), 15 nodes #4612"
-				},
+				"Cross-cutting — a11y per surface › evidence has no serious/critical a11y violations": "passed",
 				"Cross-cutting — a11y per surface › alerts has no serious/critical a11y violations": "passed",
 				"Cross-cutting — a11y per surface › usage has no serious/critical a11y violations": "passed",
 				"Cross-cutting — a11y per surface › support has no serious/critical a11y violations": "passed",
