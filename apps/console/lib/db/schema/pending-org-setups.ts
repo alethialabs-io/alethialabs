@@ -49,7 +49,8 @@ export const pendingOrgSetups = pgTable(
 		billing: jsonb().$type<PendingOrgSetupBilling>(),
 		created_org_id: uuid().references(() => organization.id, { onDelete: "set null" }),
 		// Claimed by an organization create for this setup (`stampNewOrgMetadata`), so two concurrent
-		// creates cannot both make an organization for one charge. A claim lapses after a minute.
+		// creates cannot both make an organization for one charge. A create that fails gives its claim
+		// back (`runOrgCreate`); one whose request never answered lapses after a minute.
 		creating_at: timestamp({ withTimezone: true }),
 		linked_at: timestamp({ withTimezone: true }),
 		declared_at: timestamp({ withTimezone: true }),

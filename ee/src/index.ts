@@ -138,6 +138,18 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
             await slugHooks.beforeCreateOrganization(data);
             return setupHooks.beforeCreateOrganization(data);
           },
+          // An invitation accepted by someone who is ALREADY in the team is refused with a reason
+          // (#5445). better-auth's accept does not check, and `member` is unique on (organization,
+          // user) — so the insert failed with a raw unique violation the person saw only as an
+          // unexplained error. Before the index it inserted a second row: a second billable seat.
+          beforeAcceptInvitation: async ({ invitation, user }) => {
+            if (await core.isOrgMember(invitation.organizationId, user.id)) {
+              throw new APIError("BAD_REQUEST", {
+                code: "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION",
+                message: "You're already a member of this team, so there is nothing to accept.",
+              });
+            }
+          },
           // Pay-to-collaborate: a card-less Pro trial is solo. Block invites until
           // the org is on a paid (or card-backed) subscription — enforced here so
           // it holds regardless of the client (the UI shows the upsell separately).

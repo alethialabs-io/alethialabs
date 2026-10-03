@@ -89,21 +89,31 @@ vi.mock("next/navigation", () => ({
 }));
 // Stripe and the payer form are other screens' subjects. Each stand-in is one button that reports
 // what the real component reports when the customer finishes it — in the real shapes, since those
-// shapes are what is written to storage and validated on the way back.
+// shapes are what is written to storage and validated on the way back. The payer form's stand-in
+// also shows the refusal it is given, as the real one does.
 vi.mock("@/components/billing/payer-declaration-form", () => ({
-	PayerDeclarationForm: ({ onDeclare }: { onDeclare: (d: unknown) => void }) => (
-		<button
-			type="button"
-			onClick={() =>
-				onDeclare({
-					capacity: "organization",
-					billingCountry: "DE",
-					authorityAttestation: "CTO",
-				})
-			}
-		>
-			Declare payer
-		</button>
+	PayerDeclarationForm: ({
+		onDeclare,
+		refusal,
+	}: {
+		onDeclare: (d: unknown) => void;
+		refusal: string | null;
+	}) => (
+		<>
+			<button
+				type="button"
+				onClick={() =>
+					onDeclare({
+						capacity: "organization",
+						billingCountry: "DE",
+						authorityAttestation: "CTO",
+					})
+				}
+			>
+				Declare payer
+			</button>
+			{refusal && <p role="alert">{refusal}</p>}
+		</>
 	),
 }));
 vi.mock("@/components/billing/stripe-elements", () => ({
@@ -825,6 +835,65 @@ describe("CreateOrgSheet — a charge the page never heard about is not replaced
 		);
 		expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/won.t be charged again/i));
 		expect(screen.queryByRole("button", { name: "Pay" })).not.toBeInTheDocument();
+	});
+
+	// #5455 advisory: the resume built the team from the FORM's name. After "← Back" the form can hold
+	// a name other than the one the charge was taken under (and the Stripe customer carries), and the
+	// team was created under that one. The server's name is used now.
+	it("a paid prior is finished under the SERVER's name for it, not the form's", async () => {
+		const user = userEvent.setup();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+		await user.type(screen.getByLabelText(/team name/i), "Acme Cloud");
+		const cont = screen.getByRole("button", { name: /continue/i });
+		await vi.waitFor(() => expect(cont).toBeEnabled());
+		await user.click(cont);
+		await user.click(await screen.findByRole("button", { name: "Declare payer" }));
+		await screen.findByRole("button", { name: "Pay" });
+
+		createIntent.mockResolvedValueOnce({
+			kind: "resume",
+			setup: {
+				subscriptionId: "sub_1",
+				customerId: "cus_1",
+				paid: true,
+				org: null,
+				linked: false,
+				declared: false,
+				name: "Acme Cloud GmbH",
+				slug: "acme",
+				billing: null,
+				currency: "eur",
+			},
+		});
+		createOrg.mockResolvedValue({ data: { id: "org-new", slug: "acme-cloud" }, error: null });
+		await user.click(screen.getByRole("button", { name: /back/i }));
+		await user.click(await screen.findByRole("button", { name: "Declare payer" }));
+
+		await vi.waitFor(() => expect(createOrg).toHaveBeenCalled());
+		expect(createOrg).toHaveBeenCalledWith(expect.objectContaining({ name: "Acme Cloud GmbH" }));
+		expect(toast.info).toHaveBeenCalledWith(expect.stringContaining("Acme Cloud GmbH"));
+	});
+
+	// #5455 blocker: when the prior's payment may be under way, the server starts nothing and says why.
+	// The previous head had no such answer; a reply without an intent opened the pay view on nothing.
+	it("the server refuses to start a purchase beside a payment that may be under way: the reason is shown, nothing is paid or created", async () => {
+		const user = userEvent.setup();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+		await user.type(screen.getByLabelText(/team name/i), "Acme Cloud");
+		const cont = screen.getByRole("button", { name: /continue/i });
+		await vi.waitFor(() => expect(cont).toBeEnabled());
+		await user.click(cont);
+		await user.click(await screen.findByRole("button", { name: "Declare payer" }));
+		await screen.findByRole("button", { name: "Pay" });
+
+		const message = "An earlier payment on this checkout is still being processed, or could not be checked.";
+		createIntent.mockResolvedValueOnce({ kind: "refused", message });
+		await user.click(screen.getByRole("button", { name: /back/i }));
+		await user.click(await screen.findByRole("button", { name: "Declare payer" }));
+
+		await vi.waitFor(() => expect(screen.queryByText(message)).toBeInTheDocument());
+		expect(screen.queryByRole("button", { name: "Pay" })).not.toBeInTheDocument();
+		expect(createOrg).not.toHaveBeenCalled();
 	});
 
 	// The details used to reach the server only in the first post-payment step, so a crash between the

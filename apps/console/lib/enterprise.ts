@@ -37,6 +37,7 @@ import { resolveOrgEntitlements } from "@/lib/billing/queries";
 import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email/notify-email";
+import { isMember } from "@/lib/platform/provision";
 import { reservedOrgSlugRefusal } from "@/lib/routing";
 import {
   keepStoredNewOrgMarker,
@@ -86,6 +87,12 @@ export interface CoreContext {
    * (and refuses a second org for one charge); `recordCreated` writes the new org onto that record;
    * `keepStoredMarker` makes an update carry the stored marker, never the request's. Injected so the organization plugin's create hooks can run them without ee/ importing core billing.
    */
+  /**
+   * Whether a user already holds a membership in an organization. Injected so the organization
+   * plugin's `beforeAcceptInvitation` refuses an invitation accepted by an existing member with a
+   * reason, instead of the raw unique violation the `member` index raises (#5445).
+   */
+  isOrgMember: typeof isMember;
   newOrgSetup: {
     stampMetadata: typeof stampNewOrgMetadata;
     recordCreated: typeof recordNewOrgCreated;
@@ -233,6 +240,7 @@ function loadEnterprise(): void {
       canOrgInvite,
       canOrgCreateTeams,
       reservedOrgSlugRefusal,
+      isOrgMember: isMember,
       newOrgSetup: {
         stampMetadata: stampNewOrgMetadata,
         recordCreated: recordNewOrgCreated,

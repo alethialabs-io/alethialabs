@@ -205,7 +205,7 @@ describe("forgetPendingOrgSetup — a record goes only for an unpaid subscriptio
 		"keeps the record of a %s subscription",
 		async (status) => {
 			await expect(
-				forgetPendingOrgSetup("user-1", { id: "sub_1", status, metadata: { created_by: "user-1" } }),
+				forgetPendingOrgSetup("user-1", { id: "sub_1", status, metadata: { created_by: "user-1" } }, "never_paid"),
 			).resolves.toBe(false);
 			expect(db.db.delete).not.toHaveBeenCalled();
 		},
@@ -213,14 +213,26 @@ describe("forgetPendingOrgSetup — a record goes only for an unpaid subscriptio
 
 	it("keeps the record of a subscription someone else minted, even an unpaid one", async () => {
 		await expect(
-			forgetPendingOrgSetup("user-1", { id: "sub_1", status: "incomplete", metadata: { created_by: "user-2" } }),
+			forgetPendingOrgSetup("user-1", { id: "sub_1", status: "incomplete", metadata: { created_by: "user-2" } }, "never_paid"),
 		).resolves.toBe(false);
 		expect(db.db.delete).not.toHaveBeenCalled();
 	});
 
+	// #5455: `incomplete` is not "never paid" — a first payment that is processing, or succeeded before
+	// its invoice settled, is still `incomplete`. The status alone dropped the record of a taken charge.
+	it.each(["incomplete", "incomplete_expired"])(
+		"keeps the record of the actor's %s subscription whose first payment is not proven unpaid",
+		async (status) => {
+			await expect(
+				forgetPendingOrgSetup("user-1", { id: "sub_1", status, metadata: { created_by: "user-1" } }, "not_proven_unpaid"),
+			).resolves.toBe(false);
+			expect(db.db.delete).not.toHaveBeenCalled();
+		},
+	);
+
 	it.each(["incomplete", "incomplete_expired"])("drops the record of the actor's %s subscription", async (status) => {
 		await expect(
-			forgetPendingOrgSetup("user-1", { id: "sub_1", status, metadata: { created_by: "user-1" } }),
+			forgetPendingOrgSetup("user-1", { id: "sub_1", status, metadata: { created_by: "user-1" } }, "never_paid"),
 		).resolves.toBe(true);
 		expect(db.db.delete).toHaveBeenCalledTimes(1);
 	});

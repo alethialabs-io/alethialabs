@@ -60,6 +60,7 @@ import {
 	type LivePlanPriceMap,
 } from "@/lib/billing/pricing";
 import { getStripe } from "@/lib/billing/stripe";
+import { type FirstPayment, readFirstPayment } from "@/lib/billing/first-payment";
 import { type NewOrgSetupState, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
 import {
 	findSetupOrg,
@@ -666,30 +667,59 @@ async function ensureCustomer(
 }
 
 /**
+ * What `cancelIncompleteSubscriptions` did: the subscriptions it cancelled (each with the
+ * `readFirstPayment` verdict that allowed it), and the `incomplete` ones it KEPT because their first
+ * payment is not provably unpaid — in flight, taken, or unreadable.
+ */
+interface IncompleteSweep {
+	cancelled: { sub: Stripe.Subscription; firstPayment: FirstPayment }[];
+	kept: Stripe.Subscription[];
+}
+
+/** What a caller tells the customer when a sweep kept a subscription whose payment may be under way. */
+const PAYMENT_MAY_BE_UNDER_WAY =
+	"An earlier payment on this checkout is still being processed, or could not be checked. Nothing new was started — try again in a minute. You won't be charged twice.";
+
+/**
  * Cancels a customer's dangling `incomplete` subscriptions — the never-paid first-invoice
  * subs that a re-opened checkout / upgrade sheet would otherwise pile up (each one Stripe
  * auto-generates a draft invoice for). Stateless: it lists Stripe directly rather than the
  * DB, so it cleans up even the subs that were never persisted to organization_billing — the
- * exact leak the old DB-only guard missed. Best-effort per subscription. Returns the ones it
- * cancelled, as Stripe listed them (status `incomplete`).
+ * exact leak the old DB-only guard missed.
+ *
+ * `incomplete` is not "never paid": Stripe keeps a subscription `incomplete` while its first payment
+ * is `processing`, and until its invoice settles after the payment succeeded. So each one is cancelled
+ * only when `readFirstPayment` proves it unpaid; any other — or one whose payment cannot be read — is
+ * KEPT and returned, and the caller must not start a second purchase beside it. A cancel that fails is
+ * neither (already gone or expired on Stripe's side).
  */
-async function cancelIncompleteSubscriptions(customerId: string): Promise<Stripe.Subscription[]> {
+async function cancelIncompleteSubscriptions(customerId: string): Promise<IncompleteSweep> {
 	const stripe = getStripe();
 	const subs = await stripe.subscriptions.list({
 		customer: customerId,
 		status: "incomplete",
 		limit: 100,
 	});
-	const cancelled: Stripe.Subscription[] = [];
+	const sweep: IncompleteSweep = { cancelled: [], kept: [] };
 	for (const s of subs.data) {
+		let firstPayment: FirstPayment;
+		try {
+			firstPayment = await readFirstPayment(s);
+		} catch {
+			firstPayment = "not_proven_unpaid";
+		}
+		if (firstPayment !== "never_paid") {
+			sweep.kept.push(s);
+			continue;
+		}
 		try {
 			await stripe.subscriptions.cancel(s.id);
-			cancelled.push(s);
+			sweep.cancelled.push({ sub: s, firstPayment });
 		} catch {
 			// Already gone / expired on Stripe's side — ignore.
 		}
 	}
-	return cancelled;
+	return sweep;
 }
 
 /**
@@ -795,7 +825,8 @@ export async function createSubscriptionIntent(
 	// re-opening the upgrade sheet can never pile up never-paid subs (and their draft
 	// invoices). Stateless — works even though an incomplete sub is never persisted to the DB,
 	// which is why the old organization_billing-only guard leaked.
-	await cancelIncompleteSubscriptions(customerId);
+	const swept = await cancelIncompleteSubscriptions(customerId);
+	if (swept.kept.length > 0) return { error: PAYMENT_MAY_BE_UNDER_WAY };
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
 		: {};
@@ -1063,12 +1094,15 @@ export interface NewOrgSubscriptionIntent extends SubscriptionIntent {
 }
 
 /**
- * What `createNewOrgSubscriptionIntent` hands back: a new intent to pay, or — when the attempt it
- * replaces turns out to be PAID already — that setup to finish, with nothing new to pay.
+ * What `createNewOrgSubscriptionIntent` hands back: a new intent to pay; or — when the attempt it
+ * replaces turns out to be PAID already — that setup to finish, with nothing new to pay; or a refusal
+ * to start anything, with the reason to show, when an earlier payment may be under way or was taken
+ * for a setup this user cannot finish here.
  */
 export type NewOrgSubscriptionStart =
 	| ({ kind: "intent" } & NewOrgSubscriptionIntent)
-	| { kind: "resume"; setup: NewOrgSetupState };
+	| { kind: "resume"; setup: NewOrgSetupState }
+	| { kind: "refused"; message: string };
 
 /**
  * Creates an incomplete subscription for an org that doesn't exist yet — the deferred
@@ -1084,10 +1118,18 @@ export type NewOrgSubscriptionStart =
  * whose confirmation never reached the page leaves the pay view on screen with "← Back" and the
  * currency toggle. So the prior subscription is READ from Stripe first (#5445), and:
  *   - one this user did not mint is ignored — never cancelled, its record never touched;
- *   - one that was never paid (`incomplete`, `incomplete_expired`) is cancelled and its record dropped;
+ *   - one that is `incomplete` / `incomplete_expired` is cancelled and its record dropped ONLY when its
+ *     first payment provably never happened (`readFirstPayment`: the PaymentIntent awaits the
+ *     customer). One whose payment is `processing`, `succeeded` or `requires_capture` is never
+ *     cancelled: nothing new is minted, and the action returns `kind: "refused"` with a retryable
+ *     message — a minute later it is paid and resumes;
  *   - one that is PAID is never cancelled and no new subscription is minted: the setup it belongs to is
- *     returned (`kind: "resume"`) and the sheet finishes it;
+ *     returned (`kind: "resume"`) and the sheet finishes it. When there is no setup this user can
+ *     finish (it is linked to a team they are not an owner of), the action returns `kind: "refused"` —
+ *     a second purchase is never minted beside a paid one;
  *   - any other status (it was paid once) is left alone.
+ * The same proof guards the sweep of the customer's other `incomplete` subscriptions: one it cannot
+ * prove unpaid is kept, and the action refuses rather than mint beside it.
  */
 export async function createNewOrgSubscriptionIntent(
 	plan: PaidPlan,
@@ -1125,7 +1167,17 @@ export async function createNewOrgSubscriptionIntent(
 		if (prior && PAID_SUBSCRIPTION_STATUSES.has(prior.status)) {
 			const setup = await newOrgSetupStateFor(prior, actor.userId);
 			if (setup) return { kind: "resume", setup };
+			return {
+				kind: "refused",
+				message:
+					"Your earlier payment went through, but it is linked to a team you are not an owner of, so it can't be finished here and nothing new was started. Contact support with the time of the payment — you won't be charged again.",
+			};
 		} else if (prior && REPLACEABLE_SUBSCRIPTION_STATUSES.has(prior.status)) {
+			// An outage reading the payment throws: it may be the paid one.
+			const firstPayment = await readFirstPayment(prior);
+			if (firstPayment !== "never_paid") {
+				return { kind: "refused", message: PAYMENT_MAY_BE_UNDER_WAY };
+			}
 			let gone = prior.status === "incomplete_expired";
 			if (!gone) {
 				try {
@@ -1136,7 +1188,7 @@ export async function createNewOrgSubscriptionIntent(
 					// Stripe expires the subscription.
 				}
 			}
-			if (gone) await forgetPendingOrgSetup(actor.userId, prior);
+			if (gone) await forgetPendingOrgSetup(actor.userId, prior, firstPayment);
 		}
 	}
 
@@ -1168,10 +1220,13 @@ export async function createNewOrgSubscriptionIntent(
 
 	// Belt-and-suspenders: void any other dangling incomplete subs on this customer (e.g. a
 	// prior attempt whose id wasn't threaded back), so they can't accumulate as FAILED draft
-	// invoices — and drop their records, under the same guard as the prior one above.
-	for (const cancelled of await cancelIncompleteSubscriptions(customerId)) {
-		await forgetPendingOrgSetup(actor.userId, cancelled);
+	// invoices — and drop their records, under the same guard as the prior one above. One whose
+	// payment may be under way is kept, and nothing new is minted beside it.
+	const swept = await cancelIncompleteSubscriptions(customerId);
+	for (const { sub: cancelled, firstPayment } of swept.cancelled) {
+		await forgetPendingOrgSetup(actor.userId, cancelled, firstPayment);
 	}
+	if (swept.kept.length > 0) return { kind: "refused", message: PAYMENT_MAY_BE_UNDER_WAY };
 
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
@@ -1515,14 +1570,18 @@ export async function resolveNewOrgSetup(input: {
 	return newOrgSetupStateFor(sub, actor.userId);
 }
 
+/** How many setup records `findUnfinishedNewOrgSetup` reads per page. */
+const UNFINISHED_PAGE = 10;
+
 /**
  * The caller's paid create-a-team setup that never finished, found WITHOUT any browser record (#5445):
  * a closed tab, cleared site data, a crash a second after the charge. Without this the sheet offered a
  * new purchase to a customer already charged.
  *
- * Read from the caller's setup records (`declared_at IS NULL`, newest first), each checked against
- * Stripe by id — a direct read, so a subscription paid a second ago is found. A record is dropped on the
- * way only when Stripe says its subscription expired unpaid (`forgetPendingOrgSetup`'s guard); one that
+ * Read from the caller's setup records (`declared_at IS NULL`, newest first, page by page), each checked
+ * against Stripe by id — a direct read, so a subscription paid a second ago is found. A record is dropped
+ * on the way only when Stripe says its subscription expired and its first payment never happened
+ * (`forgetPendingOrgSetup`'s guard, on `readFirstPayment`'s verdict); one that
  * was cancelled, or that Stripe cannot find, is skipped and KEPT — a cancelled subscription may have
  * been paid first, and a missing one is not proof of anything.
  *
@@ -1539,23 +1598,32 @@ export async function findUnfinishedNewOrgSetup(): Promise<NewOrgSetupState | nu
 	// not a failure (the sheet reports a failure as "couldn't check").
 	if (!isStripeConfigured()) return null;
 	const stripe = getStripe();
-	const rows = await unfinishedPendingOrgSetups(actor.userId);
-	for (const row of rows) {
-		let sub: Stripe.Subscription;
-		try {
-			sub = await stripe.subscriptions.retrieve(row.subscription_id, { expand: ["customer"] });
-		} catch (e) {
-			if (!isStripeResourceMissing(e)) throw e;
-			continue;
+	// Read page by page until a live one is found or the records run out, so records that are dead for
+	// good (a subscription cancelled after payment, or one Stripe cannot find — both kept) never fill
+	// the window and hide an older unfinished paid one behind them.
+	const seen = new Set<string>();
+	for (let offset = 0; ; offset += UNFINISHED_PAGE) {
+		const rows = await unfinishedPendingOrgSetups(actor.userId, UNFINISHED_PAGE, offset);
+		for (const row of rows) {
+			seen.add(row.subscription_id);
+			let sub: Stripe.Subscription;
+			try {
+				sub = await stripe.subscriptions.retrieve(row.subscription_id, { expand: ["customer"] });
+			} catch (e) {
+				if (!isStripeResourceMissing(e)) throw e;
+				continue;
+			}
+			if (!PAID_SUBSCRIPTION_STATUSES.has(sub.status)) {
+				if (sub.status === "incomplete_expired") {
+					await forgetPendingOrgSetup(actor.userId, sub, await readFirstPayment(sub));
+				}
+				continue;
+			}
+			const state = await newOrgSetupStateFor(sub, actor.userId);
+			if (state && !(state.linked && state.declared)) return state;
 		}
-		if (!PAID_SUBSCRIPTION_STATUSES.has(sub.status)) {
-			if (sub.status === "incomplete_expired") await forgetPendingOrgSetup(actor.userId, sub);
-			continue;
-		}
-		const state = await newOrgSetupStateFor(sub, actor.userId);
-		if (state && !(state.linked && state.declared)) return state;
+		if (rows.length < UNFINISHED_PAGE) break;
 	}
-	const seen = new Set(rows.map((r) => r.subscription_id));
 	const found = await stripe.subscriptions.search({
 		query: `metadata['created_by']:'${actor.userId}'`,
 		limit: 20,

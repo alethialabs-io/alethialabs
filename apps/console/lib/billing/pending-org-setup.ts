@@ -19,10 +19,12 @@
 // "the one I paid for and lost", whatever its metadata says.
 
 import "server-only";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { and, asc, desc, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { BILLING_FIELD_CAPS, ORG_SLUG_MAX } from "@/lib/billing/billing-field-caps";
+import type { FirstPayment } from "@/lib/billing/first-payment";
 import {
 	NEW_ORG_CREATED_BY_KEY,
 	NEW_ORG_SETUP_IN_PROGRESS_CODE,
@@ -67,10 +69,12 @@ export const pendingOrgSetupSlugSchema = z
 	.regex(/^[a-z0-9]*(?:-[a-z0-9]+)*$/);
 
 /**
- * Stripe statuses of a new-org subscription that was never paid — the only ones that may be cancelled
- * and have their record forgotten when the customer replaces the intent (a currency switch, a "← Back"
- * and re-declare). Every other status is a charge, or was one (`active`, `trialing`, `past_due`,
- * `unpaid`, `paused`, `canceled` after payment), and its record is the server's only way back to it.
+ * Stripe statuses under which a new-org subscription MAY never have been paid — a necessary condition
+ * for cancelling it and forgetting its record, never a sufficient one. `incomplete` also covers a first
+ * payment that is `processing`, or that succeeded before its invoice settled; only the PaymentIntent can
+ * tell those apart (`readFirstPayment`, lib/billing/first-payment.ts). Every other status is a charge,
+ * or was one (`active`, `trialing`, `past_due`, `unpaid`, `paused`, `canceled` after payment), and its
+ * record is the server's only way back to it.
  */
 export const REPLACEABLE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set([
 	"incomplete",
@@ -110,16 +114,20 @@ export async function recordPendingOrgSetup(input: {
 /**
  * Drops the record of a subscription that was replaced before it was paid (a currency switch, a
  * "← Back" and re-declare). `sub` is the subscription AS STRIPE RETURNED IT to the caller, never an id
- * from the browser: the record goes only when Stripe says `userId` minted it and it was never paid
- * (`REPLACEABLE_SUBSCRIPTION_STATUSES`), and only while nothing has been created for it. Returns
- * whether it was allowed to; a paid subscription's record is never dropped here.
+ * from the browser, and `firstPayment` is what `readFirstPayment` read from Stripe for it: the record
+ * goes only when Stripe says `userId` minted it, its status is `REPLACEABLE_SUBSCRIPTION_STATUSES`, its
+ * first payment provably never happened (`never_paid`), and nothing has been created for it. Returns
+ * whether it was allowed to; the record of a payment that is in flight or went through is never
+ * dropped here.
  */
 export async function forgetPendingOrgSetup(
 	userId: string,
 	sub: RetrievedSubscription,
+	firstPayment: FirstPayment,
 ): Promise<boolean> {
 	if (sub.metadata?.created_by !== userId) return false;
 	if (!REPLACEABLE_SUBSCRIPTION_STATUSES.has(sub.status)) return false;
+	if (firstPayment !== "never_paid") return false;
 	await getServiceDb()
 		.delete(pendingOrgSetups)
 		.where(
@@ -151,17 +159,22 @@ export async function pendingOrgSetupFor(
 	return row ?? null;
 }
 
-/** The actor's setups whose last step (the payer declaration) has not been recorded, newest first. */
+/**
+ * One page of the actor's setups whose last step (the payer declaration) has not been recorded, newest
+ * first (ties broken by id, so pages neither overlap nor skip).
+ */
 export async function unfinishedPendingOrgSetups(
 	userId: string,
 	limit = 10,
+	offset = 0,
 ): Promise<PendingOrgSetupRow[]> {
 	return getServiceDb()
 		.select()
 		.from(pendingOrgSetups)
 		.where(and(eq(pendingOrgSetups.user_id, userId), isNull(pendingOrgSetups.declared_at)))
-		.orderBy(desc(pendingOrgSetups.created_at))
-		.limit(limit);
+		.orderBy(desc(pendingOrgSetups.created_at), desc(pendingOrgSetups.id))
+		.limit(limit)
+		.offset(offset);
 }
 
 /**
@@ -268,8 +281,9 @@ export type NewOrgMetadataVerdict =
  * (`claimPendingOrgSetup`, one conditional UPDATE), so of two creates for one charge arriving in the
  * same instant exactly one gets the claim; the other is refused with `NEW_ORG_SETUP_IN_PROGRESS_CODE`
  * and its retry finds the organization the first one made. A claim whose create then failed (the org
- * insert itself, after this hook) lapses after `CLAIM_TTL`, and a retry after that still cannot make a
- * second org: by then a committed one carries the marker, which is checked after the claim.
+ * insert itself, after this hook) is released when that request answers (`runOrgCreate`); one whose
+ * request never answered (a process that died) lapses after `CLAIM_TTL`. A retry after either still
+ * cannot make a second org: a committed one carries the marker, which is checked after the claim.
  *
  * Runs in better-auth's create AFTER its slug check and after the reserved-slug hook (ee/src/index.ts),
  * so a slug refusal never leaves a claim behind.
@@ -321,15 +335,54 @@ export async function stampNewOrgMetadata(
 /** How long a create's claim on a setup record holds before another create may take it. */
 const CLAIM_TTL = sql`interval '1 minute'`;
 
+/** The claim one `/organization/create` request took, if it took one (see `runOrgCreate`). */
+interface CreateRequestScope {
+	claim: { rowId: string; userId: string; at: Date } | null;
+}
+
+const createRequestScope = new AsyncLocalStorage<CreateRequestScope>();
+
+/**
+ * Runs one `/organization/create` request (app/api/auth/[...all]/route.ts) and, when it does not
+ * succeed, releases the setup claim it took. A claim exists to stop a SECOND create while the first is
+ * still in flight; once this request has answered with a failure — the org insert refused its slug,
+ * the database failed — it is not in flight, and holding the claim for the rest of `CLAIM_TTL` only
+ * refused every retry with "already being set up". Only this request's own claim is cleared (same row,
+ * same `creating_at`), and only while no organization is recorded for it. An organization that was
+ * inserted before a later step failed still carries its marker, which a retry checks after its claim,
+ * so a release never allows a second one.
+ */
+export async function runOrgCreate(create: () => Promise<Response>): Promise<Response> {
+	const scope: CreateRequestScope = { claim: null };
+	const response = await createRequestScope.run(scope, create);
+	if (!response.ok && scope.claim) {
+		const { rowId, userId, at } = scope.claim;
+		await getServiceDb()
+			.update(pendingOrgSetups)
+			.set({ creating_at: null, updated_at: new Date() })
+			.where(
+				and(
+					eq(pendingOrgSetups.id, rowId),
+					eq(pendingOrgSetups.user_id, userId),
+					eq(pendingOrgSetups.creating_at, at),
+					isNull(pendingOrgSetups.created_org_id),
+				),
+			);
+	}
+	return response;
+}
+
 /**
  * Claims the actor's setup record for one organization create: sets `creating_at` only while no
  * organization is recorded for it and no live claim holds it, in ONE statement, so two concurrent
- * creates cannot both succeed. True when this call got the claim.
+ * creates cannot both succeed. True when this call got the claim; the claim is noted on the request
+ * (`runOrgCreate`) so a failed create gives it back.
  */
 async function claimPendingOrgSetup(rowId: string, userId: string): Promise<boolean> {
+	const at = new Date();
 	const claimed = await getServiceDb()
 		.update(pendingOrgSetups)
-		.set({ creating_at: sql`now()`, updated_at: new Date() })
+		.set({ creating_at: at, updated_at: at })
 		.where(
 			and(
 				eq(pendingOrgSetups.id, rowId),
@@ -342,7 +395,10 @@ async function claimPendingOrgSetup(rowId: string, userId: string): Promise<bool
 			),
 		)
 		.returning({ id: pendingOrgSetups.id });
-	return claimed.length > 0;
+	if (claimed.length === 0) return false;
+	const scope = createRequestScope.getStore();
+	if (scope) scope.claim = { rowId, userId, at };
+	return true;
 }
 
 /**

@@ -360,14 +360,22 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	/**
 	 * Builds the record for a setup the SERVER found (recovered on open, or found paid when this sheet
 	 * asked to replace it) from the server's state and this declaration, and runs the steps on it.
+	 *
+	 * The team's NAME is the server's — the one the charge was taken under and the Stripe customer
+	 * carries — never what the form holds now: after "← Back" the form may hold an edited name, and a
+	 * team created under it would disagree with its own customer. The form is reset to it so the screen
+	 * says what is being created. The slug is the form's: the customer may have chosen another since,
+	 * and one the create refuses comes back as a field error for them to change.
 	 */
 	async function runRecovered(state: NewOrgSetupState, next: PayerDeclaration) {
 		const values = form.getValues();
+		if (values.name !== state.name) form.setValue("name", state.name);
+		setCheckoutOrgName(state.name);
 		const known = SUPPORTED_CURRENCIES.find((c) => c === state.currency);
 		const record: PendingPaidSetup = {
 			subscriptionId: state.subscriptionId,
 			customerId: state.customerId,
-			name: values.name,
+			name: state.name,
 			slug: values.slug,
 			currency: known ?? currency,
 			declaration: next,
@@ -397,7 +405,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 */
 	async function resumePaidPrior(state: NewOrgSetupState, next: PayerDeclaration) {
 		toast.info(
-			"Your earlier payment for this team went through. Finishing the setup with it — you won't be charged again.",
+			`Your earlier payment for "${state.name}" went through. Finishing the setup of that team with it — you won't be charged again.`,
 		);
 		await runRecovered(state, next);
 	}
@@ -635,6 +643,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				await resumePaidPrior(intent.setup, next);
 				return;
 			}
+			if (intent.kind === "refused") {
+				setRefusal(intent.message);
+				return;
+			}
 			setSubscriptionId(intent.subscriptionId);
 			setCustomerId(intent.customerId);
 			setClientSecret(intent.clientSecret);
@@ -670,6 +682,10 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			});
 			if (intent.kind === "resume") {
 				await resumePaidPrior(intent.setup, declaration);
+				return;
+			}
+			if (intent.kind === "refused") {
+				toast.error(intent.message);
 				return;
 			}
 			setSubscriptionId(intent.subscriptionId);

@@ -136,7 +136,10 @@ describe("orgSlugHooks — inside better-auth's own endpoints", () => {
  * runtime-bound member stubbed. OpenFGA is reported off, so `register` builds no FGA client and
  * never touches `db`; the lifecycle hooks the create path fires resolve without doing anything.
  */
-function stubCore(newOrgSetup: CoreContext["newOrgSetup"] = passThroughSetup()): CoreContext {
+function stubCore(
+  newOrgSetup: CoreContext["newOrgSetup"] = passThroughSetup(),
+  isOrgMember: CoreContext["isOrgMember"] = vi.fn(async () => false),
+): CoreContext {
   const stub = {
     db: {},
     orgAc,
@@ -152,6 +155,7 @@ function stubCore(newOrgSetup: CoreContext["newOrgSetup"] = passThroughSetup()):
     recordActivity: vi.fn(),
     resolveOrgEntitlements: vi.fn(),
     newOrgSetup,
+    isOrgMember,
     fga: { isEnabled: () => false },
   };
   // A test-only stub: `db` and most of `fga` are never reached with OpenFGA off (see above).
@@ -194,7 +198,10 @@ function stubSetup() {
 describe("register(core) — the organization plugin production mounts", () => {
   /** A better-auth carrying the plugin `register` returned, a signed-in user, and an HTTP caller. */
   async function setup(newOrgSetup?: CoreContext["newOrgSetup"]) {
-    const mod = register(stubCore(newOrgSetup));
+    // core's membership read, over this instance's own store.
+    const isOrgMember = async (orgId: string, userId: string): Promise<boolean> =>
+      db.member.some((m) => m.organizationId === orgId && m.userId === userId);
+    const mod = register(stubCore(newOrgSetup, isOrgMember));
     const orgPlugin = mod.authPlugins?.find((p) => p.id === "organization");
     if (!orgPlugin) throw new Error("register() returned no organization plugin");
     const db: Record<string, Record<string, unknown>[]> = {
@@ -225,16 +232,27 @@ describe("register(core) — the organization plugin production mounts", () => {
       returnHeaders: true,
     });
     const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
-    /** POSTs a JSON body to a better-auth endpoint as the signed-in user, the way a client would. */
-    const post = (path: string, body: unknown): Promise<Response> =>
+    /** POSTs a JSON body to a better-auth endpoint as the user `as` names, the way a client would. */
+    const postAs = (as: string, path: string, body: unknown): Promise<Response> =>
       auth.handler(
         new Request(`${baseURL}/api/auth${path}`, {
           method: "POST",
-          headers: { "content-type": "application/json", cookie, origin: baseURL },
+          headers: { "content-type": "application/json", cookie: as, origin: baseURL },
           body: JSON.stringify(body),
         }),
       );
-    return { db, post, userId: db.user[0]?.id };
+    /** POSTs as the signed-in owner. */
+    const post = (path: string, body: unknown): Promise<Response> => postAs(cookie, path, body);
+    /** Signs up another user and returns their session cookie and id. */
+    const signUp = async (email: string): Promise<{ cookie: string; id: unknown }> => {
+      const r = await auth.api.signUpEmail({
+        body: { email, password: "a-long-password-1", name: email },
+        returnHeaders: true,
+      });
+      const id = db.user.find((u) => u.email === email)?.id;
+      return { cookie: (r.headers.get("set-cookie") ?? "").split(";")[0] ?? "", id };
+    };
+    return { db, post, postAs, signUp, userId: db.user[0]?.id };
   }
 
   it("refuses POST /organization/create with slug `docs`, and stores no organization", async () => {
@@ -299,6 +317,46 @@ describe("register(core) — the organization plugin production mounts", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: "NEW_ORG_SETUP_ORG_EXISTS" });
     expect(db.organization).toHaveLength(0);
+  });
+
+  // #5445: `member` is unique on (organization, user), and better-auth's accept does not check for
+  // an existing membership. A member who accepted a stale second invitation got a raw unique violation
+  // (before the index: a second member row, a second billable seat). Against the previous head this
+  // accept answers 200 and stores a second row for the same person.
+  it("refuses an invitation accepted by someone already in the team, with a reason, and adds no row", async () => {
+    const { db, post, postAs, signUp } = await setup();
+    const created = await post("/organization/create", { name: "Acme", slug: "acme" });
+    expect(created.status).toBe(200);
+    const orgId = db.organization[0]?.id;
+    const invitee = await signUp("member@example.com");
+    db.member.push({
+      id: "member-existing",
+      organizationId: orgId,
+      userId: invitee.id,
+      role: "viewer",
+      createdAt: new Date(),
+    });
+    db.invitation.push({
+      id: "invite-stale",
+      organizationId: orgId,
+      email: "member@example.com",
+      role: "admin",
+      status: "pending",
+      inviterId: db.user[0]?.id,
+      expiresAt: new Date(Date.now() + 86_400_000),
+      createdAt: new Date(),
+    });
+
+    const res = await postAs(invitee.cookie, "/organization/accept-invitation", {
+      invitationId: "invite-stale",
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION",
+      message: expect.stringMatching(/already a member/),
+    });
+    expect(db.member.filter((m) => m.userId === invitee.id)).toHaveLength(1);
   });
 
   it("an update that writes the metadata gets the stored marker from core, not the request's", async () => {
