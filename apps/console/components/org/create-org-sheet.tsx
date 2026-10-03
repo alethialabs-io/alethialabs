@@ -60,11 +60,15 @@ import {
 	finishPaidSetup,
 	type PaidSetupOutcome,
 	paidSetupInFlight,
+	pendingPaidSetupInPageOnly,
 	type PendingPaidSetup,
-	readPendingPaidSetup,
+	readStoredPaidSetup,
+	recoverUnfinishedPaidSetup,
 	SLUG_TAKEN,
+	watchPaidSetup,
 	writePendingPaidSetup,
 } from "@/components/org/pending-paid-setup";
+import type { NewOrgSetupState } from "@/lib/billing/new-org-setup";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { authClient } from "@/lib/auth/client";
@@ -79,7 +83,11 @@ import {
 } from "@/lib/routing";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
-import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
+import {
+	SUPPORTED_CURRENCIES,
+	type SupportedCurrency,
+	planMeta,
+} from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import {
@@ -154,6 +162,19 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const [refusal, setRefusal] = useState<string | null>(null);
 	const [createdSlug, setCreatedSlug] = useState("");
 	/**
+	 * The id of the org this sheet created (paid or trial). Invites NAME it: better-auth's
+	 * `inviteMember` otherwise targets the session's ACTIVE org, which a resumed setup never switched
+	 * — so an invite sent from it went to the team the customer was already in (#4133's class).
+	 */
+	const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
+	/**
+	 * A paid setup the SERVER says is unfinished, found with no usable record in this tab (a closed
+	 * tab, cleared storage, a record that no longer parses). The payer is asked to declare again —
+	 * the typed attestation was only ever in the lost record — and setup then resumes on the same
+	 * subscription. Never a new purchase.
+	 */
+	const [recovered, setRecovered] = useState<NewOrgSetupState | null>(null);
+	/**
 	 * The paid setup this sheet is finishing — set the moment the charge is confirmed, mirrored from
 	 * the record `finishPaidSetup` persists after each step, and null again only once the payer
 	 * declaration (the last step) succeeded. While it is set, a close is confirmed first.
@@ -206,13 +227,44 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	}, [open]);
 
 	// Reopening the sheet resumes a pending paid setup instead of starting a new purchase — at the
-	// first step the record says has not completed. Only when nothing is in flight in memory: an open
-	// intent of this session wins. A run still in flight from before the close is ATTACHED to, never
-	// started a second time beside it.
+	// first step the record says has not completed (each run re-checks that with the server). Only
+	// when nothing is in flight in memory: an open intent of this session wins. A run still in flight
+	// from before the close is ATTACHED to, never started a second time beside it.
+	//
+	// With no usable record, the SERVER is asked whether this user has a paid setup that never
+	// finished — a charge must not be offered a second purchase because one tab lost its copy.
 	useEffect(() => {
 		if (!open || !viewerId || subscriptionId) return;
-		const stored = readPendingPaidSetup(viewerId);
-		if (!stored) return;
+		const stored = readStoredPaidSetup(viewerId);
+		if (stored.kind === "ok") {
+			resumeFromRecord(stored.record);
+			return;
+		}
+		let active = true;
+		void recoverUnfinishedPaidSetup(stored.kind === "unreadable" ? stored.ids : null).then(
+			(state) => {
+				if (!active) return;
+				if (state) {
+					beginRecovery(state);
+				} else if (stored.kind === "unreadable") {
+					// Unreadable, and the server has nothing unfinished under it (or could not be
+					// asked). Said, not dropped: the customer may still hold a receipt for it.
+					toast.error(
+						"We found an unfinished team setup in this tab that we couldn't read. If you were charged for a team that doesn't exist, contact support with the time of the payment.",
+					);
+				}
+			},
+		);
+		return () => {
+			active = false;
+		};
+		// `form` is stable for the component's life; re-running on `subscriptionId` would re-read
+		// storage after every intent. The read is for the moment the sheet opens.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [open, viewerId]);
+
+	/** Restores the sheet from this tab's record and attaches to (or offers to retry) its run. */
+	function resumeFromRecord(stored: PendingPaidSetup) {
 		form.reset({ name: stored.name, slug: stored.slug });
 		setSlugTouched(true);
 		setCheckoutOrgName(stored.name);
@@ -221,6 +273,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setCurrency(stored.currency);
 		setDeclaration(stored.declaration);
 		setCreatedSlug(stored.createdSlug);
+		setCreatedOrgId(stored.createdOrgId);
 		setPending(stored);
 		if (stored.slugRefusal) {
 			form.setError("slug", { message: stored.slugRefusal });
@@ -237,10 +290,53 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		} else {
 			setNeedsSetupRetry(true);
 		}
-		// `form` is stable for the component's life; re-running on `subscriptionId` would re-read
-		// storage after every intent. The read is for the moment the sheet opens.
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [open, viewerId]);
+	}
+
+	/** Opens the declaration step for a paid setup the server found with no record in this tab. */
+	function beginRecovery(state: NewOrgSetupState) {
+		const name = state.name;
+		const slugIntent = state.org?.slug || slugifyOrEmpty(name);
+		form.reset({ name, slug: slugIntent });
+		setSlugTouched(true);
+		setCheckoutOrgName(name);
+		setSubscriptionId(state.subscriptionId);
+		setCustomerId(state.customerId);
+		const known = SUPPORTED_CURRENCIES.find((c) => c === state.currency);
+		if (known) setCurrency(known);
+		setRecovered(state);
+		setRefusal(null);
+		setView("declare");
+	}
+
+	/**
+	 * The recovered setup, declared again: builds the record from the server's state and the payer's
+	 * new declaration, and runs the steps. Nothing is re-sent to the Stripe customer — the typed
+	 * billing details went with the lost record, and Stripe has the address from the payment method.
+	 */
+	async function finishRecovered(next: PayerDeclaration) {
+		if (!recovered) return;
+		const values = form.getValues();
+		const record: PendingPaidSetup = {
+			subscriptionId: recovered.subscriptionId,
+			customerId: recovered.customerId,
+			name: values.name,
+			slug: values.slug,
+			currency,
+			declaration: next,
+			billing: null,
+			customerDetailsSaved: true,
+			createdOrgId: recovered.org?.id ?? null,
+			createdSlug: recovered.org?.slug ?? "",
+			linked: recovered.linked,
+			slugRefusal: null,
+		};
+		writePendingPaidSetup(viewerId, record);
+		setDeclaration(next);
+		setRecovered(null);
+		setPending(record);
+		setView("pay");
+		await runSetup(record);
+	}
 
 	// Closing the TAB is outside the sheet's reach and outside sessionStorage's scope, so while a paid
 	// setup is unfinished — running or failed — the browser is asked to confirm leaving the page.
@@ -255,8 +351,26 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		return () => window.removeEventListener("beforeunload", warn);
 	}, [setupUnfinished]);
 
+	// While this sheet is open on a paid setup, it is the one that renders the setup's outcome; a run
+	// that ends with no sheet watching toasts it instead (`finishPaidSetup`).
+	const unwatch = useRef<(() => void) | null>(null);
+	const watchedSubscription = open ? pending?.subscriptionId : undefined;
+	useEffect(() => {
+		if (!watchedSubscription) return;
+		const stop = watchPaidSetup(watchedSubscription);
+		unwatch.current = stop;
+		return () => {
+			stop();
+			if (unwatch.current === stop) unwatch.current = null;
+		};
+	}, [watchedSubscription]);
+
 	function reset() {
 		generation.current += 1;
+		// Unregistered NOW, not on the next render: a run ending in between must see no sheet
+		// watching, or its outcome would be dropped instead of toasted.
+		unwatch.current?.();
+		unwatch.current = null;
 		form.reset({ name: "", slug: "" });
 		setSlugTouched(false);
 		setShowUrl(false);
@@ -266,6 +380,8 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setCustomerId(null);
 		setSubscriptionId(null);
 		setCreatedSlug("");
+		setCreatedOrgId(null);
+		setRecovered(null);
 		setPending(null);
 		setDeclaration(null);
 		setDeclaring(false);
@@ -359,6 +475,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		}
 		const persisted = org.slug ?? data.slug;
 		setCreatedSlug(persisted);
+		setCreatedOrgId(org.id);
 		await setActiveOrganization(org.id);
 		return { id: org.id, slug: persisted };
 	}
@@ -500,6 +617,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 					.delete({ organizationId: org.id })
 					.catch(() => {});
 				setCreatedSlug("");
+				setCreatedOrgId(null);
 				throw trialErr;
 			}
 			await fetchWorkspace();
@@ -526,6 +644,16 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			// charge with nothing tied to it.
 			toast.error(
 				"Your payment went through, but this page lost its reference to it. Contact support with the time of the payment.",
+			);
+			return;
+		}
+		if (!viewerId) {
+			// The record is keyed by the viewer; without one it would be written nowhere and the
+			// steps would run with no resumable copy. The server still knows the charge, and the sheet
+			// asks it on open (`recoverUnfinishedPaidSetup`) — so a reload is the way back.
+			toast.error(
+				"Your payment went through, but this page hasn't finished loading your account. Reload, then open Create a team to finish — you won't be charged again.",
+				{ duration: Number.POSITIVE_INFINITY },
 			);
 			return;
 		}
@@ -574,12 +702,14 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		if (outcome.kind === "done") {
 			setPending(null);
 			setCreatedSlug(outcome.slug);
+			setCreatedOrgId(outcome.orgId);
 			setIsTrialOrg(false);
 			setView("invite");
 			return;
 		}
 		setPending(outcome.record);
 		setCreatedSlug(outcome.record.createdSlug);
+		setCreatedOrgId(outcome.record.createdOrgId);
 		if (outcome.kind === "slug-refused") {
 			// Paid, and the slug was refused at the create. Asked for in place — the refusal used to be
 			// written to a field on the NAME step, which is not rendered here.
@@ -615,8 +745,22 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			toast.error("Enter a valid email to invite.");
 			return;
 		}
+		if (!createdOrgId) {
+			// Never fall back to the session's active org: that is the team the customer was in
+			// before, not the one just made.
+			toast.error("Couldn't tell which team to invite into — open the team and invite from Members.");
+			return;
+		}
 		try {
-			await authClient.organization.inviteMember({ email, role: inviteRole });
+			const { error } = await authClient.organization.inviteMember({
+				email,
+				role: inviteRole,
+				organizationId: createdOrgId,
+			});
+			if (error) {
+				toast.error(error.message ?? "Couldn't send the invite");
+				return;
+			}
 			setSent((p) => [...p, { email, role: inviteRole }]);
 			setInviteEmail("");
 			toast.success(`Invitation sent to ${email}`);
@@ -658,6 +802,20 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 								ready={offer !== null}
 								onContinue={() => void continueToCheckout()}
 							/>
+						) : view === "declare" && recovered ? (
+							<div className="space-y-3">
+								<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
+									We found a payment for a team that isn&apos;t set up yet. Confirm who is
+									paying to finish setting it up — you won&apos;t be charged again.
+								</p>
+								<PayerDeclarationForm
+									busy={busy}
+									refusal={null}
+									submitLabel="Finish setup"
+									onBack={() => handleOpenChange(false)}
+									onDeclare={(d) => void finishRecovered(d)}
+								/>
+							</div>
 						) : view === "declare" ? (
 							<PayerDeclarationForm
 								busy={declaring}
@@ -669,6 +827,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 						) : pending && confirmingClose ? (
 							<ConfirmCloseUnfinished
 								running={busy}
+								inPageOnly={pendingPaidSetupInPageOnly(viewerId)}
 								onStay={() => setConfirmingClose(false)}
 								onClose={closeKeepingPaidSetup}
 							/>
@@ -982,15 +1141,22 @@ function RetryWithNewSlug({
 
 /**
  * Asked before the sheet closes on an unfinished paid setup. States what happens to the payment and
- * where the setup can be finished; "Close for now" keeps it in this tab's sessionStorage. `running`
- * is true while a post-payment step is still in flight — it keeps running after the close.
+ * where the setup can be finished. `running` is true while a post-payment step is still in flight —
+ * it keeps running after the close. `inPageOnly` is true when this tab's storage refused the record
+ * and it lives only in the page, so a reload loses it.
+ *
+ * What it promises is what holds: in this tab (and, with working storage, across a reload) the
+ * setup resumes with everything typed. Without that copy, Create a team still finds the payment on
+ * the server and asks who is paying again — Stripe's search indexes it within about a minute.
  */
 function ConfirmCloseUnfinished({
 	running,
+	inPageOnly,
 	onStay,
 	onClose,
 }: {
 	running: boolean;
+	inPageOnly: boolean;
 	onStay: () => void;
 	onClose: () => void;
 }) {
@@ -1003,9 +1169,11 @@ function ConfirmCloseUnfinished({
 				{running
 					? "Your payment went through and setup is still running — closing this panel does not stop it. "
 					: "Your payment went through and is kept for this team. "}
-				To finish later, open Create a team again in this browser tab — it picks up at the step
-				that has not finished, and you won&apos;t be charged again. Closing the browser tab
-				itself does not keep it.
+				To finish later, open Create a team again — it picks up at the step that has not
+				finished, and you won&apos;t be charged again.{" "}
+				{inPageOnly
+					? "This browser isn't letting the page keep a copy, so after a reload or in another tab it will ask you again who is paying (it can take a minute to find the payment)."
+					: "If you close this browser tab first, it will ask you again who is paying (it can take a minute to find the payment)."}
 			</p>
 			<Button className="w-full" onClick={onStay}>
 				{running ? "Stay while it finishes" : "Finish setup now"}

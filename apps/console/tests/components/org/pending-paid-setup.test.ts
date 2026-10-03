@@ -19,7 +19,9 @@ vi.mock("sonner", () => ({ toast: {} }));
 import {
 	type PendingPaidSetup,
 	pendingPaidSetupKey,
+	pendingPaidSetupInPageOnly,
 	readPendingPaidSetup,
+	readStoredPaidSetup,
 	writePendingPaidSetup,
 } from "@/components/org/pending-paid-setup";
 
@@ -71,8 +73,34 @@ describe("pending paid setup — storage", () => {
 		expect(readPendingPaidSetup("user-3")).toEqual(record);
 	});
 
+	it("prefers the NEWER in-page copy over an older sessionStorage copy (a later write that threw)", () => {
+		const older = { ...record, createdOrgId: null, linked: false };
+		writePendingPaidSetup("user-4", older);
+		vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+			throw new Error("QuotaExceededError");
+		});
+		writePendingPaidSetup("user-4", record);
+		// sessionStorage still holds the older copy, without the org; the read must not return it.
+		expect(window.sessionStorage.getItem(pendingPaidSetupKey("user-4"))).toContain('"createdOrgId":null');
+		expect(readPendingPaidSetup("user-4")).toEqual(record);
+		expect(pendingPaidSetupInPageOnly("user-4")).toBe(true);
+	});
+
+	it("a record that no longer parses still gives up the ids of the charge, for the server to resume", () => {
+		window.sessionStorage.setItem(
+			pendingPaidSetupKey("user-5"),
+			JSON.stringify({ subscriptionId: "sub_5", customerId: "cus_5", schemaFrom: "the future" }),
+		);
+		expect(readStoredPaidSetup("user-5")).toEqual({
+			kind: "unreadable",
+			ids: { subscriptionId: "sub_5", customerId: "cus_5" },
+		});
+		window.sessionStorage.setItem(pendingPaidSetupKey("user-6"), "{not json");
+		expect(readStoredPaidSetup("user-6")).toEqual({ kind: "unreadable", ids: null });
+	});
+
 	it("writes and reads nothing without a user id", () => {
-		writePendingPaidSetup("", record);
+		expect(writePendingPaidSetup("", record)).toBe(false);
 		expect(window.sessionStorage.length).toBe(0);
 		expect(readPendingPaidSetup("")).toBeNull();
 	});

@@ -83,8 +83,10 @@ import {
 	getCollaborationAccess,
 	getPlanHistory,
 	getProOffer,
+	findUnfinishedNewOrgSetup,
 	isOrgSlugAvailable,
 	linkSubscriptionToNewOrg,
+	resolveNewOrgSetup,
 	getInvoice,
 	listInvoices,
 	listPaymentMethods,
@@ -131,6 +133,7 @@ function makeDb() {
 		"values",
 		"returning",
 		"onConflictDoUpdate",
+		"orderBy",
 	]) {
 		chain[m] = () => chain;
 	}
@@ -692,28 +695,200 @@ describe("linkSubscriptionToNewOrg", () => {
 		);
 	});
 
-	it("refuses a sub already linked to an org", async () => {
+	it("refuses a sub already linked to a DIFFERENT org", async () => {
 		stripe.subscriptions.retrieve.mockResolvedValue({
 			customer: "cus_1",
-			metadata: { organization_id: "org-existing" },
-		} as never);
+			metadata: { organization_id: "org-existing", created_by: "user-1" },
+		});
+		stripe.customers.retrieve.mockResolvedValue({
+			deleted: false,
+			metadata: { created_by: "user-1" },
+		});
 		await expect(linkSubscriptionToNewOrg(input)).rejects.toThrow(
 			/already linked/,
 		);
+		expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+		expect(syncSubscriptionToBilling).not.toHaveBeenCalled();
+	});
+
+	// #5445 review: the Stripe writes land BEFORE the billing sync and the payer write, so a failure
+	// in either — or a lost response — left a subscription that already named this org, and every
+	// retry was refused as "already linked". A charged customer could never finish. The second call
+	// for the SAME org must complete the remaining steps instead.
+	it("is idempotent for the SAME org: a retry after the Stripe writes landed completes the sync and the payer write", async () => {
+		stripe.subscriptions.retrieve.mockResolvedValueOnce({
+			id: "sub_1",
+			customer: "cus_1",
+			metadata: { created_by: "user-1" },
+		});
+		stripe.customers.retrieve.mockResolvedValue({
+			deleted: false,
+			metadata: { created_by: "user-1" },
+		});
+		db.queue.push([{ name: "LinkedCo" }]);
+		const linked = {
+			id: "sub_1",
+			customer: "cus_1",
+			metadata: { created_by: "user-1", organization_id: "org-1" },
+		};
+		stripe.subscriptions.update.mockResolvedValue(linked);
+		vi.mocked(syncSubscriptionToBilling).mockRejectedValueOnce(new Error("db blip"));
+		const payer: { capacity: "organization"; billingCountry: string } = {
+			capacity: "organization",
+			billingCountry: "de",
+		};
+
+		await expect(linkSubscriptionToNewOrg({ ...input, payer })).rejects.toThrow(/db blip/);
+
+		// The retry sees the subscription as Stripe now holds it: linked to org-1.
+		stripe.subscriptions.retrieve.mockResolvedValueOnce(linked);
+		await expect(linkSubscriptionToNewOrg({ ...input, payer })).resolves.toBeUndefined();
+
+		expect(stripe.subscriptions.update).toHaveBeenCalledTimes(1);
+		expect(stripe.customers.update).toHaveBeenCalledTimes(1);
+		expect(syncSubscriptionToBilling).toHaveBeenCalledTimes(2);
+		expect(syncSubscriptionToBilling).toHaveBeenLastCalledWith(linked);
+		expect(db.update).toHaveBeenCalledTimes(1);
+	});
+
+	it("refuses a same-org link stamped by ANOTHER user", async () => {
+		stripe.subscriptions.retrieve.mockResolvedValue({
+			customer: "cus_1",
+			metadata: { organization_id: "org-1", created_by: "intruder" },
+		});
+		stripe.customers.retrieve.mockResolvedValue({
+			deleted: false,
+			metadata: { created_by: "user-1" },
+		});
+		await expect(linkSubscriptionToNewOrg(input)).rejects.toThrow(/already linked/);
 	});
 
 	it("refuses when the customer wasn't minted by this actor", async () => {
 		stripe.subscriptions.retrieve.mockResolvedValue({
 			customer: "cus_1",
 			metadata: {},
-		} as never);
+		});
 		stripe.customers.retrieve.mockResolvedValue({
 			deleted: false,
 			metadata: { created_by: "intruder" },
-		} as never);
+		});
 		await expect(linkSubscriptionToNewOrg(input)).rejects.toThrow(
 			/Not allowed to link/,
 		);
+	});
+});
+
+// ── resolveNewOrgSetup / findUnfinishedNewOrgSetup (#5445) ─────────────────────
+describe("resolveNewOrgSetup", () => {
+	const ids = { subscriptionId: "sub_1", customerId: "cus_1" };
+	const sub = (metadata: Record<string, string>, status = "active") => ({
+		id: "sub_1",
+		status,
+		currency: "eur",
+		customer: { id: "cus_1", name: "Acme Cloud", deleted: false },
+		metadata,
+	});
+
+	it("finds the org the caller OWNS whose metadata names the subscription — a create whose response was lost", async () => {
+		stripe.subscriptions.retrieve.mockResolvedValue(sub({ created_by: "user-1" }));
+		db.queue.push([
+			{ id: "org-old", slug: "old", metadata: null },
+			{ id: "org-first", slug: "acme-cloud", metadata: JSON.stringify({ newOrgSubscriptionId: "sub_1" }) },
+			{ id: "org-second", slug: "acme-2", metadata: JSON.stringify({ newOrgSubscriptionId: "sub_1" }) },
+		]);
+		db.queue.push([]);
+
+		await expect(resolveNewOrgSetup(ids)).resolves.toEqual({
+			subscriptionId: "sub_1",
+			customerId: "cus_1",
+			paid: true,
+			org: { id: "org-first", slug: "acme-cloud" },
+			linked: false,
+			declared: false,
+			name: "Acme Cloud",
+			currency: "eur",
+		});
+	});
+
+	it("reports a linked, declared setup from the subscription and the billing row", async () => {
+		stripe.subscriptions.retrieve.mockResolvedValue(
+			sub({ created_by: "user-1", organization_id: "org-first" }),
+		);
+		db.queue.push([{ id: "org-first", slug: "acme-cloud", metadata: null }]);
+		db.queue.push([{ payerCapacity: "organization", authorityAttestation: "CTO" }]);
+		await expect(resolveNewOrgSetup(ids)).resolves.toMatchObject({
+			org: { id: "org-first" },
+			linked: true,
+			declared: true,
+		});
+	});
+
+	it("answers null for a subscription minted for someone else — a tampered record learns nothing", async () => {
+		stripe.subscriptions.retrieve.mockResolvedValue(sub({ created_by: "intruder" }));
+		await expect(resolveNewOrgSetup(ids)).resolves.toBeNull();
+		expect(db.select).not.toHaveBeenCalled();
+	});
+
+	it("answers null when the subscription is linked to an org the caller does not own", async () => {
+		stripe.subscriptions.retrieve.mockResolvedValue(
+			sub({ created_by: "user-1", organization_id: "org-theirs" }),
+		);
+		db.queue.push([{ id: "org-mine", slug: "mine", metadata: null }]);
+		await expect(resolveNewOrgSetup(ids)).resolves.toBeNull();
+	});
+
+	it("answers null for a customer id that does not match, and for a subscription Stripe does not have", async () => {
+		stripe.subscriptions.retrieve.mockResolvedValueOnce(sub({ created_by: "user-1" }));
+		db.queue.push([]);
+		await expect(
+			resolveNewOrgSetup({ subscriptionId: "sub_1", customerId: "cus_OTHER" }),
+		).resolves.toBeNull();
+		stripe.subscriptions.retrieve.mockRejectedValueOnce(
+			Object.assign(new Error("No such subscription"), { code: "resource_missing" }),
+		);
+		await expect(resolveNewOrgSetup(ids)).resolves.toBeNull();
+	});
+
+	it("throws an outage rather than reporting it as 'nothing to resume'", async () => {
+		stripe.subscriptions.retrieve.mockRejectedValue(new Error("Stripe is unavailable"));
+		await expect(resolveNewOrgSetup(ids)).rejects.toThrow(/unavailable/);
+	});
+});
+
+describe("findUnfinishedNewOrgSetup", () => {
+	it("returns the newest PAID subscription of the caller's that is linked to no org, skipping unpaid ones", async () => {
+		const searchFn = vi.fn().mockResolvedValue({
+			data: [
+				{ id: "sub_old", created: 1, status: "active", currency: "eur", customer: { id: "cus_1", name: "Old" }, metadata: { created_by: "user-1" } },
+				{ id: "sub_unpaid", created: 3, status: "incomplete", currency: "eur", customer: { id: "cus_1", name: "X" }, metadata: { created_by: "user-1" } },
+				{ id: "sub_new", created: 2, status: "active", currency: "eur", customer: { id: "cus_1", name: "Acme" }, metadata: { created_by: "user-1" } },
+			],
+		});
+		Object.assign(stripe.subscriptions, { search: searchFn });
+		db.queue.push([]);
+
+		await expect(findUnfinishedNewOrgSetup()).resolves.toMatchObject({
+			subscriptionId: "sub_new",
+			linked: false,
+			name: "Acme",
+		});
+		expect(searchFn).toHaveBeenCalledWith(
+			expect.objectContaining({ query: "metadata['created_by']:'user-1'" }),
+		);
+	});
+
+	it("never reports an older team linked before the marker existed, even with an incomplete declaration", async () => {
+		Object.assign(stripe.subscriptions, {
+			search: vi.fn().mockResolvedValue({
+				data: [
+					{ id: "sub_legacy", created: 1, status: "active", currency: "usd", customer: { id: "cus_1", name: "Legacy" }, metadata: { created_by: "user-1", organization_id: "org-legacy" } },
+				],
+			}),
+		});
+		db.queue.push([{ id: "org-legacy", slug: "legacy", metadata: null }]);
+		db.queue.push([{ payerCapacity: null, authorityAttestation: null }]);
+		db.queue.push([{ metadata: null }]);
+		await expect(findUnfinishedNewOrgSetup()).resolves.toBeNull();
 	});
 });
 

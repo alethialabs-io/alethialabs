@@ -24,15 +24,24 @@ const createIntent = vi.fn();
 const linkSubscription = vi.fn();
 const declarePayer = vi.fn();
 
-vi.mock("@/app/server/actions/billing", () => ({
-	attachTaxIdToCustomer: vi.fn(),
-	createNewOrgSubscriptionIntent: (...a: unknown[]) => createIntent(...a),
-	getProOffer: vi.fn().mockResolvedValue({ kind: "pay" }),
-	isOrgSlugAvailable: (...a: unknown[]) => isOrgSlugAvailable(...a),
-	linkSubscriptionToNewOrg: (...a: unknown[]) => linkSubscription(...a),
-	setCustomerBillingAddress: vi.fn().mockResolvedValue(undefined),
-	startProTrial: vi.fn(),
-}));
+const findUnfinished = vi.fn();
+const resolveSetup = vi.fn();
+
+vi.mock("@/app/server/actions/billing", async () => {
+	const fake = await import("./fake-new-org-server");
+	return {
+		attachTaxIdToCustomer: vi.fn(),
+		findUnfinishedNewOrgSetup: (...a: unknown[]) => findUnfinished(...a),
+		resolveNewOrgSetup: (input: { subscriptionId: string; customerId: string }) =>
+			resolveSetup(input) ?? fake.fakeResolve(input),
+		createNewOrgSubscriptionIntent: (...a: unknown[]) => createIntent(...a),
+		getProOffer: vi.fn().mockResolvedValue({ kind: "pay" }),
+		isOrgSlugAvailable: (...a: unknown[]) => isOrgSlugAvailable(...a),
+		linkSubscriptionToNewOrg: fake.recordingLink((...a: unknown[]) => linkSubscription(...a)),
+		setCustomerBillingAddress: vi.fn().mockResolvedValue(undefined),
+		startProTrial: vi.fn(),
+	};
+});
 vi.mock("@/app/server/actions/legal", () => ({
 	declarePayer: (...a: unknown[]) => declarePayer(...a),
 	payerConversionStatus: vi.fn().mockResolvedValue({ allowed: true }),
@@ -41,17 +50,22 @@ vi.mock("@/app/server/actions/org-settings", () => ({ updateOrgPrimaryAddress: v
 vi.mock("@/app/server/actions/workspace", () => ({
 	setActiveOrganization: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("@/lib/auth/client", () => ({
-	authClient: {
-		organization: {
-			create: (...a: unknown[]) => createOrg(...a),
-			delete: vi.fn().mockResolvedValue({}),
-			inviteMember: vi.fn(),
+const inviteMember = vi.fn();
+
+vi.mock("@/lib/auth/client", async () => {
+	const fake = await import("./fake-new-org-server");
+	return {
+		authClient: {
+			organization: {
+				create: fake.recordingCreate((...a: unknown[]) => createOrg(...a)),
+				delete: vi.fn().mockResolvedValue({}),
+				inviteMember: (...a: unknown[]) => inviteMember(...a),
+			},
 		},
-	},
-}));
+	};
+});
 vi.mock("@/components/providers/viewer-provider", () => ({
-	useViewer: () => ({ viewer: { email: "owner@example.com" } }),
+	useViewer: () => ({ viewer: { id: "user-1", email: "owner@example.com" } }),
 }));
 vi.mock("@/lib/stores/use-workspace-store", () => ({
 	useWorkspaceStore: (pick: (s: { fetchWorkspace: () => Promise<void> }) => unknown) =>
@@ -97,6 +111,7 @@ vi.mock("@/lib/billing/use-live-plan-price", () => ({
 vi.mock("@/lib/org-url", () => ({ orgHost: () => "alethialabs.io" }));
 
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
+import { fakeServer } from "./fake-new-org-server";
 
 const TAKEN = "That slug is taken — try another.";
 
@@ -113,6 +128,11 @@ async function payWithClaimedSlug(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	window.sessionStorage.clear();
+	fakeServer.reset();
+	findUnfinished.mockResolvedValue(null);
+	resolveSetup.mockReturnValue(undefined);
+	inviteMember.mockResolvedValue({ data: {}, error: null });
 	isOrgSlugAvailable.mockResolvedValue(true);
 	createIntent.mockResolvedValue({
 		subscriptionId: "sub_1",
@@ -169,7 +189,11 @@ describe("CreateOrgSheet — a slug claimed during payment", () => {
 				}),
 			),
 		);
-		expect(createOrg).toHaveBeenLastCalledWith({ name: "Acme Cloud", slug: "acme-cloud-eu" });
+		expect(createOrg).toHaveBeenLastCalledWith({
+			name: "Acme Cloud",
+			slug: "acme-cloud-eu",
+			metadata: { newOrgSubscriptionId: "sub_1" },
+		});
 		expect(createIntent).toHaveBeenCalledTimes(1);
 	});
 

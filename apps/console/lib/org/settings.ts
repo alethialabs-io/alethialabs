@@ -25,6 +25,11 @@ export interface OrgSettings {
 	description: string;
 	/** Billing-derived primary address (set from checkout); null when unset. */
 	primaryAddress: OrgPrimaryAddress | null;
+	/**
+	 * The subscription a paid create-a-team setup created this org for, or null. Not edited anywhere —
+	 * carried so the General settings write, which replaces the whole metadata blob, keeps it.
+	 */
+	newOrgSubscriptionId: string | null;
 	region: string;
 	defaultEnv: string;
 	terraformVersion: string;
@@ -51,6 +56,10 @@ const orgMetaSchema = z
 		defaultEnv: z.string().optional().catch(undefined),
 		terraformVersion: z.string().optional().catch(undefined),
 		primaryAddress: orgPrimaryAddressSchema.optional().catch(undefined),
+		// The subscription a paid create-a-team setup created this org for (#5445, see
+		// lib/billing/new-org-setup.ts). Listed so a settings write — which rewrites the blob from
+		// this parse — keeps it: dropping it would let a resumed setup create a second org.
+		newOrgSubscriptionId: z.string().optional().catch(undefined),
 	})
 	.catch({});
 export type OrgMeta = z.infer<typeof orgMetaSchema>;
@@ -90,6 +99,7 @@ export async function orgSettingsForOrg(orgId: string): Promise<OrgSettings | nu
 		logo: org.logo,
 		description: m.description ?? "",
 		primaryAddress: m.primaryAddress ?? null,
+		newOrgSubscriptionId: m.newOrgSubscriptionId ?? null,
 		region: m.region ?? "eu-west-1",
 		defaultEnv: m.defaultEnv ?? "staging",
 		terraformVersion: m.terraformVersion ?? "1.9.5",

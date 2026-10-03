@@ -26,15 +26,24 @@ const createIntent = vi.fn();
 const linkSubscription = vi.fn();
 const declarePayer = vi.fn();
 
-vi.mock("@/app/server/actions/billing", () => ({
-	attachTaxIdToCustomer: vi.fn(),
-	createNewOrgSubscriptionIntent: (...a: unknown[]) => createIntent(...a),
-	getProOffer: vi.fn().mockResolvedValue({ kind: "pay" }),
-	isOrgSlugAvailable: (...a: unknown[]) => isOrgSlugAvailable(...a),
-	linkSubscriptionToNewOrg: (...a: unknown[]) => linkSubscription(...a),
-	setCustomerBillingAddress: vi.fn().mockResolvedValue(undefined),
-	startProTrial: vi.fn(),
-}));
+const findUnfinished = vi.fn();
+const resolveSetup = vi.fn();
+
+vi.mock("@/app/server/actions/billing", async () => {
+	const fake = await import("./fake-new-org-server");
+	return {
+		attachTaxIdToCustomer: vi.fn(),
+		findUnfinishedNewOrgSetup: (...a: unknown[]) => findUnfinished(...a),
+		resolveNewOrgSetup: (input: { subscriptionId: string; customerId: string }) =>
+			resolveSetup(input) ?? fake.fakeResolve(input),
+		createNewOrgSubscriptionIntent: (...a: unknown[]) => createIntent(...a),
+		getProOffer: vi.fn().mockResolvedValue({ kind: "pay" }),
+		isOrgSlugAvailable: (...a: unknown[]) => isOrgSlugAvailable(...a),
+		linkSubscriptionToNewOrg: fake.recordingLink((...a: unknown[]) => linkSubscription(...a)),
+		setCustomerBillingAddress: vi.fn().mockResolvedValue(undefined),
+		startProTrial: vi.fn(),
+	};
+});
 vi.mock("@/app/server/actions/legal", () => ({
 	declarePayer: (...a: unknown[]) => declarePayer(...a),
 	payerConversionStatus: vi.fn().mockResolvedValue({ allowed: true }),
@@ -43,15 +52,20 @@ vi.mock("@/app/server/actions/org-settings", () => ({ updateOrgPrimaryAddress: v
 vi.mock("@/app/server/actions/workspace", () => ({
 	setActiveOrganization: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("@/lib/auth/client", () => ({
-	authClient: {
-		organization: {
-			create: (...a: unknown[]) => createOrg(...a),
-			delete: vi.fn().mockResolvedValue({}),
-			inviteMember: vi.fn(),
+const inviteMember = vi.fn();
+
+vi.mock("@/lib/auth/client", async () => {
+	const fake = await import("./fake-new-org-server");
+	return {
+		authClient: {
+			organization: {
+				create: fake.recordingCreate((...a: unknown[]) => createOrg(...a)),
+				delete: vi.fn().mockResolvedValue({}),
+				inviteMember: (...a: unknown[]) => inviteMember(...a),
+			},
 		},
-	},
-}));
+	};
+});
 vi.mock("@/components/providers/viewer-provider", () => ({
 	useViewer: () => ({ viewer: { id: "user-1", email: "owner@example.com" } }),
 }));
@@ -117,7 +131,13 @@ vi.mock("@/lib/billing/use-live-plan-price", () => ({
 vi.mock("@/lib/org-url", () => ({ orgHost: () => "alethialabs.io" }));
 
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
-import { pendingPaidSetupKey } from "@/components/org/pending-paid-setup";
+import { fakeServer, orgCreatedButResponseLost } from "./fake-new-org-server";
+import {
+	pendingPaidSetupKey,
+	UNATTENDED_FAILURE,
+	UNATTENDED_SLUG_REFUSAL,
+} from "@/components/org/pending-paid-setup";
+import { toast } from "sonner";
 
 const KEY = pendingPaidSetupKey("user-1");
 
@@ -169,6 +189,10 @@ async function payAndFail(user: ReturnType<typeof userEvent.setup>, onOpenChange
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	fakeServer.reset();
+	findUnfinished.mockResolvedValue(null);
+	resolveSetup.mockReturnValue(undefined);
+	inviteMember.mockResolvedValue({ data: {}, error: null });
 	window.sessionStorage.clear();
 	isOrgSlugAvailable.mockResolvedValue(true);
 	createIntent.mockResolvedValue({
@@ -238,7 +262,11 @@ describe("CreateOrgSheet — closing an unfinished paid setup", () => {
 				}),
 			),
 		);
-		expect(createOrg).toHaveBeenLastCalledWith({ name: "Acme Cloud", slug: "acmecloud" });
+		expect(createOrg).toHaveBeenLastCalledWith({
+			name: "Acme Cloud",
+			slug: "acmecloud",
+			metadata: { newOrgSubscriptionId: "sub_1" },
+		});
 		expect(declarePayer).toHaveBeenCalledWith(
 			{ capacity: "organization", billingCountry: "DE", authorityAttestation: "CTO" },
 			{ orgId: "org-new" },
@@ -290,11 +318,14 @@ describe("CreateOrgSheet — closing an unfinished paid setup", () => {
 		expect(event.defaultPrevented).toBe(true);
 	});
 
-	it("ignores a stored record that does not parse, and starts at the name step", async () => {
+	it("a stored record that does not parse, with nothing unfinished on the server, starts at the name step — and says so", async () => {
 		window.sessionStorage.setItem(KEY, JSON.stringify({ subscriptionId: "sub_x" }));
 		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
 		expect(await screen.findByLabelText(/team name/i)).toBeInTheDocument();
 		expect(screen.queryByText(/your payment went through/i)).not.toBeInTheDocument();
+		await vi.waitFor(() =>
+			expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/couldn.t read/i)),
+		);
 	});
 
 	// The three below are the review's blockers on 5a9b069e6, each reproduced against it.
@@ -404,5 +435,197 @@ describe("CreateOrgSheet — closing an unfinished paid setup", () => {
 		expect(createOrg).toHaveBeenCalledTimes(2);
 		expect(createIntent).toHaveBeenCalledTimes(1);
 		expect(stored()).toBeNull();
+	});
+});
+
+/** A record as it stands in storage mid-setup, for the tests that start from a reload. */
+function record(over: Record<string, unknown>) {
+	return {
+		subscriptionId: "sub_1",
+		customerId: "cus_1",
+		name: "Acme Cloud",
+		slug: "acme-cloud",
+		currency: "eur",
+		declaration: { capacity: "organization", billingCountry: "DE", authorityAttestation: "CTO" },
+		billing: {
+			name: "Acme GmbH",
+			line1: "Hauptstr. 1",
+			city: "Berlin",
+			postalCode: "10115",
+			country: "DE",
+			taxType: "eu_vat",
+			taxValue: "",
+			useAsPrimary: false,
+		},
+		customerDetailsSaved: true,
+		createdOrgId: null,
+		createdSlug: "",
+		linked: false,
+		slugRefusal: null,
+		...over,
+	};
+}
+
+// The review's blockers on bb9c97124. The browser's record used to be the only account of how far
+// the setup had got, so anything that happened on the server without the browser hearing of it —
+// a create or a link whose response was lost — was invisible, and the resume acted on a false
+// picture. Each case below fails against bb9c97124.
+describe("CreateOrgSheet — the server, not the record, says how far a paid setup got", () => {
+	it("a create whose response was lost (reload mid-create) is FOUND and reused — no second org, no new-URL ask", async () => {
+		// The server committed the org; the browser reloaded before the response, so its record
+		// still says "no org yet".
+		orgCreatedButResponseLost("sub_1", { id: "org-first", slug: "acme-cloud" });
+		window.sessionStorage.setItem(KEY, JSON.stringify(record({ createdOrgId: null })));
+		// Were the sheet to create again, the slug would be "taken" — by the customer's own org.
+		createOrg.mockResolvedValue({ data: null, error: { message: "Organization already exists" } });
+		const user = userEvent.setup();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+
+		await user.click(await screen.findByRole("button", { name: /complete setup/i }));
+		await vi.waitFor(() => expect(declarePayer).toHaveBeenCalledTimes(1));
+		expect(createOrg).not.toHaveBeenCalled();
+		expect(linkSubscription).toHaveBeenCalledWith(
+			expect.objectContaining({ orgId: "org-first", subscriptionId: "sub_1" }),
+		);
+		expect(declarePayer).toHaveBeenCalledWith(expect.anything(), { orgId: "org-first" });
+		expect(screen.queryByLabelText("Team URL")).not.toBeInTheDocument();
+		expect(stored()).toBeNull();
+	});
+
+	it("a create refused as taken because the FIRST create landed meanwhile adopts that org instead of asking for a new URL", async () => {
+		const user = userEvent.setup();
+		// The pre-create check finds nothing; the create then collides with the customer's own org,
+		// committed by a request whose response never arrived.
+		resolveSetup.mockReturnValueOnce(
+			Promise.resolve({
+				subscriptionId: "sub_1",
+				customerId: "cus_1",
+				paid: true,
+				org: null,
+				linked: false,
+				declared: false,
+				name: "Acme Cloud",
+				currency: "eur",
+			}),
+		);
+		createOrg.mockImplementationOnce(async () => {
+			orgCreatedButResponseLost("sub_1", { id: "org-first", slug: "acme-cloud" });
+			return { data: null, error: { message: "Organization already exists" } };
+		});
+		await pay(user);
+
+		await vi.waitFor(() => expect(declarePayer).toHaveBeenCalledTimes(1));
+		expect(createOrg).toHaveBeenCalledTimes(1);
+		expect(linkSubscription).toHaveBeenCalledWith(
+			expect.objectContaining({ orgId: "org-first" }),
+		);
+		expect(screen.queryByLabelText("Team URL")).not.toBeInTheDocument();
+	});
+
+	it("a link whose Stripe writes landed but whose response was lost is retried, and the retry completes", async () => {
+		createOrg.mockResolvedValue({ data: { id: "org-made", slug: "acme-cloud" }, error: null });
+		// The server linked the subscription, then the response was lost.
+		linkSubscription.mockImplementationOnce(async () => {
+			fakeServer.linked.set("sub_1", "org-made");
+			throw new Error("Failed to fetch");
+		});
+		const user = userEvent.setup();
+		await payAndFail(user);
+		expect(stored()).toMatchObject({ createdOrgId: "org-made", linked: false });
+
+		await user.click(screen.getByRole("button", { name: /complete setup/i }));
+		await vi.waitFor(() => expect(declarePayer).toHaveBeenCalledTimes(1));
+		// Linked again — the server's link is idempotent for the same org, and this completes its
+		// billing sync — and then declared.
+		expect(linkSubscription).toHaveBeenCalledTimes(2);
+		expect(createOrg).toHaveBeenCalledTimes(1);
+		expect(stored()).toBeNull();
+	});
+
+	it.each([
+		{
+			name: "success",
+			arrange: () => {},
+			settle: { data: { id: "org-new", slug: "acme-cloud" }, error: null },
+			expectToast: () =>
+				expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/organization is ready/i)),
+		},
+		{
+			name: "a slug refusal",
+			arrange: () => {},
+			settle: { data: null, error: { message: "Organization already exists" } },
+			expectToast: () =>
+				expect(toast.error).toHaveBeenCalledWith(UNATTENDED_SLUG_REFUSAL, expect.anything()),
+		},
+		{
+			name: "a failure",
+			arrange: () => linkSubscription.mockRejectedValueOnce(new Error("Stripe is unavailable")),
+			settle: { data: { id: "org-new", slug: "acme-cloud" }, error: null },
+			expectToast: () =>
+				expect(toast.error).toHaveBeenCalledWith(UNATTENDED_FAILURE, expect.anything()),
+		},
+	])("a run that ends in $name after 'Close for now' says so in a toast", async ({ arrange, settle, expectToast }) => {
+		arrange();
+		const held = deferred<CreateResult>();
+		createOrg.mockReturnValueOnce(held.promise);
+		const user = userEvent.setup();
+		await pay(user);
+		await vi.waitFor(() => expect(createOrg).toHaveBeenCalledTimes(1));
+		await user.click(screen.getByRole("button", { name: "Close" }));
+		await user.click(screen.getByRole("button", { name: /close for now/i }));
+
+		await act(async () => {
+			held.resolve(settle);
+		});
+		await vi.waitFor(expectToast);
+	});
+
+	it("an invite sent after a RESUMED setup names the org just made, not the session's active org", async () => {
+		fakeServer.orgs.set("sub_1", { id: "org-made", slug: "acme-cloud" });
+		fakeServer.linked.set("sub_1", "org-made");
+		window.sessionStorage.setItem(
+			KEY,
+			JSON.stringify(record({ createdOrgId: "org-made", createdSlug: "acme-cloud", linked: true })),
+		);
+		const user = userEvent.setup();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+
+		await user.click(await screen.findByRole("button", { name: /complete setup/i }));
+		await user.type(await screen.findByLabelText("Invite by email"), "dev@acme.test");
+		await user.click(screen.getByRole("button", { name: /invite/i }));
+
+		await vi.waitFor(() =>
+			expect(inviteMember).toHaveBeenCalledWith(
+				expect.objectContaining({ email: "dev@acme.test", organizationId: "org-made" }),
+			),
+		);
+	});
+
+	it("with NO record in this tab, a paid setup the server knows is resumed on the same subscription — never a new purchase", async () => {
+		findUnfinished.mockResolvedValue({
+			subscriptionId: "sub_9",
+			customerId: "cus_9",
+			paid: true,
+			org: null,
+			linked: false,
+			declared: false,
+			name: "Acme Cloud",
+			currency: "eur",
+		});
+		createOrg.mockResolvedValue({ data: { id: "org-new", slug: "acme-cloud" }, error: null });
+		const user = userEvent.setup();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+
+		expect(await screen.findByText(/we found a payment for a team/i)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Declare payer" }));
+
+		await vi.waitFor(() => expect(declarePayer).toHaveBeenCalledTimes(1));
+		expect(createOrg).toHaveBeenCalledWith(
+			expect.objectContaining({ slug: "acme-cloud", metadata: { newOrgSubscriptionId: "sub_9" } }),
+		);
+		expect(linkSubscription).toHaveBeenCalledWith(
+			expect.objectContaining({ subscriptionId: "sub_9", customerId: "cus_9", orgId: "org-new" }),
+		);
+		expect(createIntent).not.toHaveBeenCalled();
 	});
 });
