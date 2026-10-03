@@ -36,7 +36,7 @@ import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
 import { elenchChatId, useElenchStore } from "@/lib/stores/use-elench-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref } from "@/lib/routing";
-import { ElenchComposer } from "./elench-composer";
+import { ElenchComposer, type ElenchComposerHandle } from "./elench-composer";
 import {
 	ElenchModalLanding,
 	ElenchPanelEmpty,
@@ -259,7 +259,7 @@ export function ElenchConversation({
 	// the text, the user turn stored with the row) BEFORE the message goes out, so prepareBody
 	// carries the id and the route's onFinish persists the reply. If that creation fails,
 	// NOTHING is sent — a send without a thread is never stored — the failure shows inline, the
-	// composer keeps the text, and Retry re-attempts the thread (see `useElenchSend`).
+	// composer keeps the text (still editable), and Retry re-attempts the thread (see below).
 	const {
 		send: onSend,
 		error: sendError,
@@ -270,15 +270,23 @@ export function ElenchConversation({
 	useEffect(() => {
 		resetSend();
 	}, [chatId, resetSend]);
-	// Remounts the docked composer once a Retry has sent the text it was still holding.
-	const [composerKey, setComposerKey] = useState(0);
+	// Whichever composer is mounted (the modal hero's or the docked one — never both).
+	const composerRef = useRef<ElenchComposerHandle>(null);
+	// Retry after a failed thread start is the composer's own submit — EXACTLY Enter: it sends
+	// what the box holds NOW, edits included, and clears only on a send that went out. Re-sending
+	// the failed attempt's snapshot instead sent text the user had since changed, then the
+	// composer was remounted (or the landing unmounted) and the edit was gone without a word.
+	// Only when the box holds nothing is the pending turn re-sent: that message never came from
+	// the composer (a suggestion card, a seed prompt, a grid cell) or was cleared from it, so
+	// there is no typed text to lose.
 	const onRetryStart = useMemo(
 		() =>
 			retrySend
 				? () => {
-						void retrySend().then((sent) => {
-							if (sent) setComposerKey((k) => k + 1);
-						});
+						void (async () => {
+							const outcome = await composerRef.current?.submit();
+							if (outcome === undefined || outcome === "empty") await retrySend();
+						})();
 					}
 				: undefined,
 		[retrySend],
@@ -433,6 +441,7 @@ export function ElenchConversation({
 					showModel={isOrg}
 					context={isOrg ? "org" : "project"}
 					status={status}
+					composerRef={composerRef}
 					notice={
 						sendError ? (
 							<ChatError error={sendError} onRetry={onRetryStart} />
@@ -457,7 +466,7 @@ export function ElenchConversation({
 					}
 					renderComposer={
 						<ElenchComposer
-							key={composerKey}
+							handleRef={composerRef}
 							onSend={onSend}
 							onStop={() => void stop()}
 							showModel={isOrg}

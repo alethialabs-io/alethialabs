@@ -72,6 +72,18 @@ const cellTargetSchema = z
 	.nullish()
 	.catch(null);
 
+/**
+ * The body fields that steer what the route DOES, validated before the budget hold. `mode` picks
+ * the prompt and the tool set: an unknown value used to run silently as Ask (both test only for
+ * `"act"`). `threadId` is where `onFinish` writes the transcript and the hold's `refId`: a
+ * non-uuid reached Postgres only after the turn had been paid for. A bad value is the client's
+ * error — a 400, with nothing reserved.
+ */
+const agentControlSchema = z.looseObject({
+	mode: z.enum(["ask", "act"]).optional(),
+	threadId: z.uuid().nullish(),
+});
+
 /** Parse the optional `deepReasoning` flag from a request body — defaults to false. */
 const deepReasoningSchema = z.boolean().catch(false);
 
@@ -167,10 +179,14 @@ export async function POST(req: Request) {
 	// malformed or over-limit turn reserves nothing.
 	const refusal = refuseUserMessage(body.messages);
 	if (refusal) return refusal;
+	const control = agentControlSchema.safeParse(body);
+	if (!control.success) {
+		return new Response("The request's mode or threadId is invalid.", { status: 400 });
+	}
+	const { mode = "ask", threadId: threadIdRaw } = control.data;
+	const threadId = threadIdRaw ?? undefined;
 	const {
 		messages,
-		threadId,
-		mode = "ask",
 		model,
 		mentions,
 		deepReasoning: deepReasoningRaw,

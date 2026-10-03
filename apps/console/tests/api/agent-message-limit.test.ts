@@ -182,6 +182,38 @@ describe.each([
 	});
 });
 
+// `mode` picks the prompt and the tool set, and `threadId` is where the reply is stored and what
+// the hold is booked against — both validated before the hold, so a bad value is a 400 that
+// reserves nothing (an unknown mode used to run silently as Ask; a non-uuid thread id reached
+// Postgres only after the turn was paid for).
+describe("POST /api/agent — mode and threadId", () => {
+	const THREAD = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+	/** A valid one-turn body with these extra fields. */
+	const withFields = (fields: Record<string, unknown>) =>
+		JSON.stringify({ messages: [userTurn(5)], ...fields });
+
+	it.each([
+		["an unknown mode", { mode: "admin" }],
+		["a mode that is not a string", { mode: 1 }],
+		["a threadId that is not a uuid", { threadId: "t-1" }],
+		["a threadId that is not a string", { threadId: 42 }],
+	])("answers 400 for %s and reserves no budget", async (_case, fields) => {
+		const res = await postOrg(withFields(fields));
+		expect(res.status).toBe(400);
+		expect(assertAiAllowed).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["no mode and no threadId", {}],
+		["mode act with a uuid threadId", { mode: "act", threadId: THREAD }],
+		["mode ask with a null threadId", { mode: "ask", threadId: null }],
+	])("takes %s to the budget gate", async (_case, fields) => {
+		const res = await postOrg(withFields(fields));
+		expect(res.status).not.toBe(400);
+		expect(assertAiAllowed).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("lastUserMessageTooLong", () => {
 	it("reads only the LAST message, and only when it is the user's", () => {
 		const long = userTurn(MAX_USER_MESSAGE_CHARS + 1, "old");
