@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { cancelJob, rerunJob } from "@/app/server/actions/jobs";
-import { provisionProject } from "@/app/server/actions/projects";
+import { tryProvisionProject } from "@/app/server/actions/projects";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
@@ -170,9 +170,15 @@ export default function JobDetailPage() {
 		if (!job?.project_id || !jobId) return;
 		setActionLoading(true);
 		try {
-			const { jobId: deployJobId } = await provisionProject(job.project_id, jobId, runnerId);
+			const res = await tryProvisionProject(job.project_id, jobId, runnerId);
+			if (!res.ok) {
+				// A refusal the user can act on, returned so its sentence survives a production build.
+				toast.error(res.error);
+				setActionLoading(false);
+				return;
+			}
 			toast.success("Deploy job created");
-			router.push(`/${org}/~/jobs/${deployJobId}`);
+			router.push(`/${org}/~/jobs/${res.jobId}`);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to apply");
 			setActionLoading(false);
