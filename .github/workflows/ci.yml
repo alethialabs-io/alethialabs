@@ -1978,6 +1978,16 @@ jobs:
         run: |
           node scripts/check-e2e-spend-guard.mjs --self-test
           node scripts/check-e2e-spend-guard.mjs
+      # Which commit of each starter template was last green-proven (#5411), and whether each starter
+      # repo's HEAD has moved past it (#5418). The live comparison runs daily from
+      # template-proof-currency.yml and NOT here: a push to a starter repo is a change in another repo,
+      # not in this diff. These are the hermetic halves, so a broken reader or a comparison that can no
+      # longer go red fails the PR that broke it. Each self-test carries its own mutation control.
+      - name: Template proof reader + currency check self-tests (no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          node scripts/lib/template-proofs.mjs --self-test
+          node scripts/check-template-proof-currency.mjs --self-test
       # `schedule:` fires the DEFAULT BRANCH's copy — the workflow AND, for an unpinned checkout, the
       # whole tree it executes. So a measurement defined on `dev` can run green for days and publish
       # nothing, which is #4395: eight successful orphan-reaper runs, zero artifacts, and MVP
