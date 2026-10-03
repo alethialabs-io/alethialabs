@@ -33,6 +33,7 @@ import {
 	renameThread,
 	saveThreadMessages,
 } from "@/app/server/actions/agent";
+import { MAX_USER_MESSAGE_CHARS } from "@/lib/ai/message-limits";
 import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 import { eq, isNull } from "drizzle-orm";
@@ -204,6 +205,22 @@ describe("createThread", () => {
 		).rejects.toThrow();
 		await expect(
 			createThread("x", undefined, { id: "", text: "hello" }),
+		).rejects.toThrow();
+		expect(withOwnerScope).not.toHaveBeenCalled();
+	});
+
+	// The stored first turn is capped by the SAME constant the chat routes 413 on and the
+	// composer refuses at — one number, so the action never rejects a turn the route would take.
+	it("stores a first turn of exactly the shared limit and refuses one character more", async () => {
+		const { calls } = useChain([{ id: "t-max" }]);
+		const atLimit = "a".repeat(MAX_USER_MESSAGE_CHARS);
+		await createThread("long", undefined, { id: "msg-max", text: atLimit });
+		expect(calls.values.mock.calls[0][0].messages[0].parts[0].text).toHaveLength(
+			MAX_USER_MESSAGE_CHARS,
+		);
+		vi.mocked(withOwnerScope).mockClear();
+		await expect(
+			createThread("long", undefined, { id: "msg-over", text: `${atLimit}a` }),
 		).rejects.toThrow();
 		expect(withOwnerScope).not.toHaveBeenCalled();
 	});

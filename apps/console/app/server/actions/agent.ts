@@ -6,6 +6,7 @@ import type { UIMessage } from "ai";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireOwner } from "@/lib/auth/owner";
+import { MAX_USER_MESSAGE_CHARS } from "@/lib/ai/message-limits";
 import { withOwnerScope } from "@/lib/db";
 import { type AgentThread, agentThreads } from "@/lib/db/schema";
 
@@ -23,10 +24,12 @@ function titleFrom(firstMessage?: string): string {
  */
 const firstTurnSchema = z.object({
 	id: z.string().min(1).max(128),
-	// Stored verbatim (no trim): the in-memory message is not trimmed either.
+	// Stored verbatim (no trim): the in-memory message is not trimmed either. The cap is the
+	// one the chat routes and the composer enforce, so a turn this rejects is one the route
+	// would have refused anyway — the composer stops it before it gets here.
 	text: z
 		.string()
-		.max(100_000)
+		.max(MAX_USER_MESSAGE_CHARS)
 		.refine((t) => t.trim().length > 0, "A first turn needs text"),
 });
 

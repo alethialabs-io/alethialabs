@@ -20,6 +20,7 @@ import {
 import { ArrowUp, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Mention } from "@/lib/ai/mentions";
+import { isMessageTooLong, MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
 import { cn } from "@repo/ui/utils";
 import {
 	ElenchAskMode,
@@ -82,6 +83,10 @@ function ComposerBody({
 }) {
 	const [editor] = useLexicalComposerContext();
 	const [empty, setEmpty] = useState(true);
+	// Over the per-message limit the routes and `createThread` enforce: Send is disabled and the
+	// reason is shown under the editor, and the text STAYS so the user can shorten it. Without
+	// this an over-limit first message threw inside `startThread` and vanished with no word.
+	const [tooLong, setTooLong] = useState(false);
 	const pending = status === "submitted" || status === "streaming";
 	/** The composer box — the mention menu portals into it and opens above it. */
 	const boxRef = useRef<HTMLDivElement>(null);
@@ -112,6 +117,12 @@ function ComposerBody({
 		});
 		const trimmed = text.trim();
 		if (!trimmed) return;
+		// Refused here (Enter reaches this even while the button is disabled); the editor is
+		// NOT cleared, and the alert below is already on screen.
+		if (isMessageTooLong(trimmed)) {
+			setTooLong(true);
+			return;
+		}
 		onSend(trimmed, mentions);
 		editor.update(() => {
 			$getRoot().clear();
@@ -140,7 +151,11 @@ function ComposerBody({
 	);
 
 	const onChange = useCallback((state: EditorState) => {
-		state.read(() => setEmpty($getRoot().getTextContent().trim().length === 0));
+		state.read(() => {
+			const text = $getRoot().getTextContent().trim();
+			setEmpty(text.length === 0);
+			setTooLong(isMessageTooLong(text));
+		});
 	}, []);
 
 	return (
@@ -169,6 +184,15 @@ function ComposerBody({
 					<HistoryPlugin />
 					<MentionTypeaheadPlugin boxRef={boxRef} />
 				</div>
+				{tooLong && (
+					<p
+						role="alert"
+						data-testid="elench-composer-too-long"
+						className="px-3.5 pb-1 text-ui-xs text-destructive"
+					>
+						{MESSAGE_TOO_LONG} Shorten it to send.
+					</p>
+				)}
 				<div className="flex items-center justify-between px-2.5 pb-2.5">
 					<div className="flex items-center gap-1.5">
 						<ElenchAskMode />
@@ -181,7 +205,7 @@ function ComposerBody({
 							type="button"
 							aria-label={pending && onStop ? "Stop" : "Send"}
 							onClick={pending ? onStop : submit}
-							disabled={pending ? !onStop : empty}
+							disabled={pending ? !onStop : empty || tooLong}
 							className="flex size-8 items-center justify-center bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
 						>
 							{pending ? (

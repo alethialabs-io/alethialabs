@@ -8,8 +8,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentArtifactGallery } from "@/components/agent/agent-artifact-gallery";
 import { AgentKnowledgePanel } from "@/components/agent/agent-knowledge-panel";
 import { AgentChat } from "@/components/agent/agent-chat";
+import { UnansweredTurnError } from "@/components/agent/chat-error";
 import { ChatSkeleton } from "@/components/agent/chat-skeleton";
 import type { FirstTurn } from "@/app/server/actions/agent";
+import { isMessageTooLong } from "@/lib/ai/message-limits";
 import { openArtifactOnGrid } from "@/app/server/actions/artifacts";
 import {
 	getThreadFeedback,
@@ -59,10 +61,9 @@ function takePendingCellTarget(): { x: number; y: number } | null {
 
 const PLACEHOLDER = "Ask Elench, or type @ to tag a resource";
 
-/** The error a resumed transcript shows when it ends on a user turn that was never answered. */
-const UNANSWERED_TURN = new Error(
-	"This message was not answered — the request did not complete.",
-);
+/** The error a resumed transcript shows when it ends on a user turn that was never answered.
+ * `ChatError` recognises it by type: "No reply arrived" + Retry, and no `elench_error` event. */
+const UNANSWERED_TURN = new UnansweredTurnError();
 
 export interface ElenchThreadApi {
 	/** False until the initial thread list resolves — the body shows a skeleton meanwhile. */
@@ -252,10 +253,18 @@ export function ElenchConversation({
 			// the chat sends are one message under one id, not two lookalikes.
 			const id = generateId();
 			if (messages.length === 0 && activeId == null) {
-				await startThread(
-					text,
-					text.trim() ? { id, text } : undefined,
-				);
+				// An over-limit turn is not stored (`createThread` would refuse it): the composer
+				// stops typed text first, and anything that gets past it is refused by the route
+				// below with a 413 that `ChatError` shows as "Message too long".
+				const firstTurn =
+					text.trim() && !isMessageTooLong(text) ? { id, text } : undefined;
+				try {
+					await startThread(text, firstTurn);
+				} catch {
+					// The row could not be created. Send anyway, as before the turn was stored: the
+					// route's reply — or its error — then shows in the transcript, where a throw
+					// here would have dropped the message with nothing on screen.
+				}
 			}
 			track("elench_message_sent", {
 				context: isOrg ? "org" : "project",
