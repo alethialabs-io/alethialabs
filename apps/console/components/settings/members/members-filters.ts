@@ -15,6 +15,7 @@
 // sessionStorage-persisted store module, and a client module imported there is a reference, not
 // a callable function.
 
+import { BUILT_IN_ROLE_LABELS, BUILT_IN_ROLE_NAMES } from "@/lib/authz/registry";
 import {
 	filterStateFromUrl,
 	type ParamReader,
@@ -71,12 +72,10 @@ export const MEMBER_STATUS_OPTIONS = [
  * is the point — conflating them is how "filter by owner" and "demote the owner" became the
  * same array.
  */
-export const MEMBER_ROLE_FILTER_OPTIONS = [
-	{ value: "owner", label: "Owner" },
-	{ value: "admin", label: "Admin" },
-	{ value: "operator", label: "Operator" },
-	{ value: "viewer", label: "Viewer" },
-] as const;
+export const MEMBER_ROLE_FILTER_OPTIONS = BUILT_IN_ROLE_NAMES.map((value) => ({
+	value,
+	label: BUILT_IN_ROLE_LABELS[value],
+}));
 
 /** The roles a member's inline role picker may assign. Never includes `owner`. */
 export const ASSIGNABLE_ROLE_OPTIONS = ["admin", "operator", "viewer"] as const;

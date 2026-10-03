@@ -58,14 +58,14 @@ test.describe("Deploy jobs — negative & empty states", () => {
 		).toBeVisible({ timeout: 25_000 });
 		// An empty state with nowhere to go from it is the defect the shared component replaced.
 		//
-		// ROLE `button`, ON AN `<a href>`, AND THAT IS NOT A TYPO. The action is
-		// `<Button nativeButton={false} render={<Link …/>}>`; `@repo/ui/button` is base-ui, whose
-		// `useButton` adds `role: 'button'` to any non-native element it renders through
-		// (`use-button/useButton.js`). So the anchor is announced as a button and `getByRole("link")`
-		// finds nothing — which is what this assertion did on its first run. The href is asserted
-		// alongside it, because the role no longer says where the control goes and this test's whole
-		// claim is that there IS a way back.
-		const back = owner.page.getByRole("button", { name: "Back to jobs" });
+		// ROLE `link`. This assertion used to read `getByRole("button")`, deliberately: the action
+		// is `<Button nativeButton={false} render={<Link …/>}>`, and base-ui's `useButton` adds
+		// `role: 'button'` to any non-native element it renders through (`use-button/useButton.js`),
+		// so the anchor was announced as a button and `getByRole("link")` found nothing. That was
+		// the defect, not the contract: #5444 made `@repo/ui/button` announce any href-carrying
+		// render as a link, and this now asserts what a screen reader should hear. The href stays
+		// asserted alongside it, because this test's whole claim is that there IS a way back.
+		const back = owner.page.getByRole("link", { name: "Back to jobs" });
 		await expect(back).toBeVisible();
 		await expect(back).toHaveAttribute("href", `/${owner.orgSlug}/~/jobs`);
 	});

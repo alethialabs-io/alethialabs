@@ -60,6 +60,7 @@ import { Skeleton } from "@repo/ui/skeleton";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { authClient } from "@/lib/auth/client";
 import { toOrgRole } from "@/lib/authz/org-access-control";
+import { BUILT_IN_ROLE_LABELS, roleDisplayName } from "@/lib/authz/registry";
 import { userInitials } from "@/lib/user-display";
 import {
   ASSIGNABLE_ROLE_OPTIONS,
@@ -226,14 +227,14 @@ function RoleSelect({
       <SelectTrigger
         size="sm"
         aria-label="Role"
-        className="h-7 w-auto gap-1 border-0 bg-transparent px-2 text-xs font-medium capitalize shadow-none hover:bg-muted focus-visible:ring-0"
+        className="h-7 w-auto gap-1 border-0 bg-transparent px-2 text-xs font-medium shadow-none hover:bg-muted focus-visible:ring-0"
       >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
         {ASSIGNABLE_ROLE_OPTIONS.map((ro) => (
-          <SelectItem key={ro} value={ro} className="text-xs capitalize">
-            {ro}
+          <SelectItem key={ro} value={ro} className="text-xs">
+            {BUILT_IN_ROLE_LABELS[ro]}
           </SelectItem>
         ))}
       </SelectContent>
@@ -355,7 +356,7 @@ function RoleCell({ row }: CellContext<MemberRowView, unknown>) {
     return (
       <span className="inline-flex items-center gap-1.5 px-2 text-xs font-medium text-foreground">
         <Shield size={13} className="text-muted-foreground" />
-        Owner
+        {BUILT_IN_ROLE_LABELS.owner}
       </span>
     );
   }
@@ -369,8 +370,8 @@ function RoleCell({ row }: CellContext<MemberRowView, unknown>) {
     );
   }
   return (
-    <span className="px-2 text-xs font-medium capitalize text-foreground">
-      {r.role}
+    <span className="px-2 text-xs font-medium text-foreground">
+      {roleDisplayName(r.role)}
     </span>
   );
 }

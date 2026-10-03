@@ -93,12 +93,12 @@ The "passed" column includes the tests that passed on retry.
 | `flows/billing.spec.ts` › Billing settings — Hobby → Pro upgrade (owner) › the purchase sheet offers a billing currency once the intent exists | **#4633** (open) |
 | `flows/cross-cutting.spec.ts` › Cross-cutting — a11y per surface › evidence has no serious/critical a11y violations | **#4612** (closed 2026-09-18 by #4762). Entry deleted by #5416 |
 
-**The `#4612` entry has outlived its issue.** #4612 closed on 2026-09-18, but the `A11Y_DEBT` map
-in `flows/cross-cutting.spec.ts` still names it. That file's own header warns about this case: a
-`fixme` left in place after its issue closes becomes a skip that nobody reviews. So the evidence
-page's a11y scan did not run in this gate run. The ratchet cannot catch it, because it checks that
-a `fixme` names an issue, not that the issue is still open. The repair is to delete the entry and
-regenerate the `qa` ledger slice for that file. Both files are outside this document's scope.
+**The `#4612` entry outlived its issue.** #4612 closed on 2026-09-18, but at the time of this run
+the `A11Y_DEBT` map in `flows/cross-cutting.spec.ts` still named it. That file's own header warns
+about this case: a `fixme` left in place after its issue closes becomes a skip that nobody reviews.
+So the evidence page's a11y scan did not run in this gate run. The ratchet could not catch it,
+because it checks that a `fixme` names an issue, not that the issue is still open. The repair was to
+delete the entry and regenerate the `qa` ledger slice for that file; #5416 did both (below).
 
 **Repaired by #5416 (2026-10-03).** The `org:evidence` entry is deleted, so the evidence page's
 a11y scan runs again, and the `flows/cross-cutting.spec.ts` slice of `gate-baseline.json` was
