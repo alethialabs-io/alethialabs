@@ -33,8 +33,10 @@ CREATE INDEX "pending_org_setups_user_idx" ON "pending_org_setups" USING btree (
 --   - the other rows are deleted. No foreign key references member.id.
 -- The one exception: an org is never left without an active owner. When no member of the org would
 -- be an active owner after the merge, every merged pair of that org that held an owner row keeps the
--- role and status of its oldest owner row instead (setMemberSuspended refuses to suspend an owner, so
--- that row is active in practice).
+-- role and status of its highest-ranked owner row, preferring an ACTIVE one, then the oldest. Owner
+-- rows can be suspended (setMemberSuspended only refuses role === "owner", so "owner,admin" can be
+-- suspended, and a suspended member can be promoted), so the active preference is what keeps an
+-- active owner when one existed.
 -- The PDP authorizes from `grants`, keyed on (org, user), not on the member row. The merge only ever
 -- LOWERS what those grants allow, never raises it:
 --   - an active pair: each org-wide allow grant of a built-in role ranked ABOVE the merged role is
@@ -77,7 +79,7 @@ WITH "ranked" AS (
 		"oldest" AS (PARTITION BY "organization_id", "user_id" ORDER BY "created_at", "id"),
 		"lowest" AS (PARTITION BY "organization_id", "user_id" ORDER BY "rank" = 0, "rank", "created_at", "id"),
 		"inactive_first" AS (PARTITION BY "organization_id", "user_id" ORDER BY "status" = 'active', "created_at", "id"),
-		"highest" AS (PARTITION BY "organization_id", "user_id" ORDER BY "rank" DESC, "created_at", "id")
+		"highest" AS (PARTITION BY "organization_id", "user_id" ORDER BY "rank" DESC, "status" = 'active' DESC, "created_at", "id")
 ), "owned" AS (
 	-- Orgs that still have an active owner after a least-privileged merge.
 	SELECT "organization_id" FROM "ranked" WHERE "copies" = 1 AND "rank" = 4 AND "status" = 'active'

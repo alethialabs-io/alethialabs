@@ -103,6 +103,10 @@ describeIfDb("migration 0159 — merges differing duplicate member rows least-pr
 		const ORG_NO_RAISE = randomUUID();
 		// one owner row — untouched.
 		const ORG_SINGLE = randomUUID();
+		// owner,admin (oldest, SUSPENDED) + owner (active), no other owner → the kept row is an ACTIVE
+		// owner (#5455 review: the owner row chosen must prefer an active one), owner grant kept.
+		const ORG_SOLE_SUSPENDED = randomUUID();
+		const SOLE_SUSPENDED_KEEP = randomUUID();
 		const DEMOTE_KEEP = randomUUID();
 		const SOLE_KEEP = randomUUID();
 		const SUSPENDED_KEEP = randomUUID();
@@ -123,7 +127,7 @@ describeIfDb("migration 0159 — merges differing duplicate member rows least-pr
 						sql`insert into "user" (id, email) values (${u}::uuid, ${`it-merge-${u}@example.test`})`,
 					);
 				}
-				for (const org of [ORG_DEMOTE, ORG_SOLE_OWNER, ORG_SUSPENDED, ORG_NO_RAISE, ORG_SINGLE]) {
+				for (const org of [ORG_DEMOTE, ORG_SOLE_OWNER, ORG_SUSPENDED, ORG_NO_RAISE, ORG_SINGLE, ORG_SOLE_SUSPENDED]) {
 					await tx.execute(
 						sql`insert into organization (id, name, slug) values (${org}::uuid, 'merge', ${`it-merge-${org.slice(0, 8)}`})`,
 					);
@@ -142,14 +146,17 @@ describeIfDb("migration 0159 — merges differing duplicate member rows least-pr
 					  (${NO_RAISE_KEEP}::uuid, ${ORG_NO_RAISE}::uuid, ${USER}::uuid, 'admin,viewer', 'active', '2026-01-01'),
 					  (gen_random_uuid(), ${ORG_NO_RAISE}::uuid, ${USER}::uuid, 'owner', 'active', '2026-02-01'),
 					  (gen_random_uuid(), ${ORG_NO_RAISE}::uuid, ${OTHER_OWNER}::uuid, 'owner', 'active', '2026-01-01'),
-					  (${SINGLE}::uuid, ${ORG_SINGLE}::uuid, ${USER}::uuid, 'owner', 'active', '2026-01-01')`);
+					  (${SINGLE}::uuid, ${ORG_SINGLE}::uuid, ${USER}::uuid, 'owner', 'active', '2026-01-01'),
+					  (${SOLE_SUSPENDED_KEEP}::uuid, ${ORG_SOLE_SUSPENDED}::uuid, ${USER}::uuid, 'owner,admin', 'suspended', '2026-01-01'),
+					  (gen_random_uuid(), ${ORG_SOLE_SUSPENDED}::uuid, ${USER}::uuid, 'owner', 'active', '2026-02-01')`);
 				// The org-wide role grants each pair's lifecycle wrote, a scoped allow and an org-wide deny.
 				await tx.execute(sql`
 					insert into grants (org_id, principal_type, principal_id, role_id, resource_type) values
 					  (${ORG_DEMOTE}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.owner}::uuid, 'org'),
 					  (${ORG_SOLE_OWNER}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.owner}::uuid, 'org'),
 					  (${ORG_SUSPENDED}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.viewer}::uuid, 'org'),
-					  (${ORG_NO_RAISE}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.viewer}::uuid, 'org')`);
+					  (${ORG_NO_RAISE}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.viewer}::uuid, 'org'),
+					  (${ORG_SOLE_SUSPENDED}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.owner}::uuid, 'org')`);
 				await tx.execute(sql`
 					insert into grants (org_id, principal_type, principal_id, role_id, resource_type, resource_id)
 					values (${ORG_SUSPENDED}::uuid, 'user', ${USER}::uuid, ${BUILTIN_ROLE_IDS.operator}::uuid, 'project', gen_random_uuid())`);
@@ -195,7 +202,7 @@ describeIfDb("migration 0159 — merges differing duplicate member rows least-pr
 
 		expect(outcome).toBe("ok");
 		const byOrg = new Map(members.map((m) => [m.organization_id, m]));
-		expect(members).toHaveLength(5);
+		expect(members).toHaveLength(6);
 		expect(byOrg.get(ORG_DEMOTE)).toEqual({
 			id: DEMOTE_KEEP,
 			organization_id: ORG_DEMOTE,
@@ -227,6 +234,14 @@ describeIfDb("migration 0159 — merges differing duplicate member rows least-pr
 			status: "active",
 		});
 
+		// The org's only owner had a suspended and an active owner row: it stays an ACTIVE owner.
+		expect(byOrg.get(ORG_SOLE_SUSPENDED)).toEqual({
+			id: SOLE_SUSPENDED_KEEP,
+			organization_id: ORG_SOLE_SUSPENDED,
+			role: "owner",
+			status: "active",
+		});
+
 		/** The org-wide allow role grants left for one org. */
 		const roleGrants = (org: string) =>
 			orgGrants.filter((g) => g.org_id === org && g.effect === "allow" && g.role_id !== null);
@@ -237,6 +252,9 @@ describeIfDb("migration 0159 — merges differing duplicate member rows least-pr
 		// The org's only owner keeps owner, and so keeps the owner grant.
 		expect(roleGrants(ORG_SOLE_OWNER)).toEqual([
 			{ org_id: ORG_SOLE_OWNER, effect: "allow", role_id: BUILTIN_ROLE_IDS.owner, permission_key: null },
+		]);
+		expect(roleGrants(ORG_SOLE_SUSPENDED)).toEqual([
+			{ org_id: ORG_SOLE_SUSPENDED, effect: "allow", role_id: BUILTIN_ROLE_IDS.owner, permission_key: null },
 		]);
 		// Never raised: the viewer grant stays viewer although the merged role is admin.
 		expect(roleGrants(ORG_NO_RAISE)).toEqual([
