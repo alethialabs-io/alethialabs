@@ -136,10 +136,11 @@ describe("useElenchThreads — project context (Phase-2 un-gating)", () => {
 		const { result } = renderHook(() => useElenchThreads());
 		await waitFor(() => expect(result.current.ready).toBe(true));
 
-		await result.current.startThread("scale my cluster");
-		// createThread carries the first message (title) + projectId; the id attaches WITHOUT
-		// bumping the lineage so the in-flight send is not recreated.
-		expect(createThread).toHaveBeenCalledWith("scale my cluster", "proj-1");
+		const turn = { id: "msg-1", text: "scale my cluster" };
+		await result.current.startThread("scale my cluster", turn);
+		// createThread carries the title + projectId + the user turn to store with the row; the
+		// id attaches WITHOUT bumping the lineage so the in-flight send is not recreated.
+		expect(createThread).toHaveBeenCalledWith("scale my cluster", "proj-1", turn);
 		expect(attachThread).toHaveBeenCalledWith("pt-fresh");
 		expect(selectThread).not.toHaveBeenCalled();
 	});
