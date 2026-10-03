@@ -251,7 +251,13 @@ test.describe("Projects — delete guard on a live environment", () => {
 			status: "ACTIVE", // default env ACTIVE → in LIVE_ENV_STATUSES
 		});
 		await owner.page.goto(`/${owner.orgSlug}/${project.slug}/settings/general`);
-		await owner.page.getByRole("button", { name: /^Delete project$/ }).click({ timeout: 15_000 });
+		// Wait for hydration before clicking, as in projects.spec's DRAFT delete. `load` does not
+		// mean hydrated, and a click on the server-rendered trigger opens nothing. The project name
+		// in the `register`ed input is written only by the hydrated client.
+		await expect(owner.page.getByRole("textbox", { name: "Project name" })).toHaveValue(name, {
+			timeout: 15_000,
+		});
+		await owner.page.getByRole("button", { name: /^Delete project$/ }).click();
 		const dialog = owner.page.getByRole("alertdialog");
 		await expect(dialog.getByText(/delete this project\?/i)).toBeVisible();
 		await dialog.getByRole("button", { name: /delete project/i }).click();
