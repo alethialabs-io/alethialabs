@@ -163,7 +163,7 @@ const COPY: Record<
 		icon: MessageSquareWarning,
 		title: "Could not start the conversation",
 		description:
-			"Your message was not sent, and it has not been lost. Retry to start the conversation and send it.",
+			"Your message was not sent. It is still in the box below — retry to start the conversation and send it. Closing this chat or reloading discards it.",
 	},
 	network: {
 		icon: WifiOff,
