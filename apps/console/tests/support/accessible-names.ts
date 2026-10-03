@@ -19,8 +19,9 @@ import { expect } from "vitest";
  * [role="menuitem"]`, serious).
  *
  * Native `<button>` alone is not enough: base-ui's `useButton` stamps `role="button"` on whatever
- * element it is asked to render, so the org switcher's body is an `<a role="button">` that a
- * `button` query never sees.
+ * non-native element it is asked to render, and `@repo/ui/button` turns an href-carrying one into
+ * `role="link"` (#5444) — so the org switcher's body is an `<a role="link">` that a `button` query
+ * never sees.
  */
 export const COMMAND_ROLES =
 	'button, [role="button"], [role="link"], [role="menuitem"]';

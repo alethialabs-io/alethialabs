@@ -180,6 +180,40 @@ export const BUILT_IN_ROLE_DESCRIPTIONS: Record<BuiltInRole, string> = {
 	viewer: "Read-only access.",
 };
 
+/** What each built-in role is CALLED on screen — the single source, beside its description.
+ *  Before #5444 this was derived three ways (a `charAt(0).toUpperCase()` in the roles manager, a
+ *  hand-written `{ value: "owner", label: "Owner" }` table in the members filter, and CSS
+ *  `capitalize` everywhere else), and nothing made them agree. */
+export const BUILT_IN_ROLE_LABELS: Record<BuiltInRole, string> = {
+	owner: "Owner",
+	admin: "Admin",
+	operator: "Operator",
+	viewer: "Viewer",
+};
+
+/** The built-in role keys, in the order the console lists them. */
+export const BUILT_IN_ROLE_NAMES: readonly BuiltInRole[] = ["owner", "admin", "operator", "viewer"];
+
+/** True if `name` is a built-in role's registry key (`owner`, …). */
+export function isBuiltInRole(name: string): name is BuiltInRole {
+	return isEnumMember(name, BUILT_IN_ROLE_NAMES);
+}
+
+/**
+ * The on-screen name of a role. A built-in's `name` is its registry key, so it shows its label
+ * (`owner` → `Owner`); any other name is text a user typed and is shown EXACTLY as entered — never
+ * re-cased, which is what CSS `capitalize` did (`k8s-readers` → `K8s-Readers`, `iOS team` →
+ * `IOS Team`), and which also left a lowercase accessible name under a capitalised visible one.
+ *
+ * `builtin`, when the caller knows it, is authoritative: a CUSTOM role that happens to be named
+ * `owner` keeps its own spelling. Callers that hold only a name (a grant row joins `role.name`
+ * alone) fall back to matching the key.
+ */
+export function roleDisplayName(name: string, builtin?: boolean): string {
+	if (builtin === false) return name;
+	return isBuiltInRole(name) ? BUILT_IN_ROLE_LABELS[name] : name;
+}
+
 export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 	// Full control, including billing + member management.
 	owner: "*",
