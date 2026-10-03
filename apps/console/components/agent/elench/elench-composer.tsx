@@ -66,9 +66,19 @@ export function ElenchComposer(props: {
 	autoFocus?: boolean;
 	/** Lets the caller submit the editor's CURRENT content — the error card's Retry. */
 	handleRef?: Ref<ElenchComposerHandle>;
+	/**
+	 * A serialized editor state to start from, read ONCE at mount (a later change is ignored: a
+	 * mounted composer already holds what the user typed). Elench passes a failed first turn's
+	 * state here, so a composer remounted by a minimize or maximize shows what Retry would send.
+	 */
+	seed?: string | null;
 }) {
+	// Frozen at mount — `initialConfig` is read once by LexicalComposer anyway.
+	const [seed] = useState(() => props.seed ?? null);
 	return (
-		<LexicalComposer initialConfig={EDITOR_CONFIG}>
+		<LexicalComposer
+			initialConfig={seed ? { ...EDITOR_CONFIG, editorState: seed } : EDITOR_CONFIG}
+		>
 			<ComposerBody {...props} />
 		</LexicalComposer>
 	);
@@ -82,6 +92,8 @@ export function ElenchComposer(props: {
 export type ElenchComposerSend = (
 	text: string,
 	mentions: Mention[],
+	/** The editor's serialized state at send time, so a send that fails can be put back as typed. */
+	state: string,
 ) => void | boolean | Promise<boolean>;
 
 /** What a {@link ElenchComposerHandle.submit} did: nothing to send, sent, or not sent (kept). */
@@ -94,6 +106,8 @@ export type ElenchComposerSubmit = "empty" | "sent" | "not-sent";
  */
 export interface ElenchComposerHandle {
 	submit: () => Promise<ElenchComposerSubmit>;
+	/** Replace the editor's content with a serialized state (one `ElenchComposerSend` handed out). */
+	restore: (state: string) => void;
 }
 
 /** Inner body — lives inside the Lexical context so send/Enter can read + clear the editor. */
@@ -137,9 +151,10 @@ function ComposerBody({
 		// Busy is "not sent": the text stays, and the caller must not treat it as empty.
 		if (pending || sendingRef.current) return "not-sent";
 		let text = "";
+		const state = editor.getEditorState();
 		const seen = new Set<string>();
 		const mentions: Mention[] = [];
-		editor.getEditorState().read(() => {
+		state.read(() => {
 			text = $getRoot().getTextContent();
 			for (const node of $nodesOfType(MentionNode)) {
 				if (!$isMentionNode(node)) continue;
@@ -164,7 +179,8 @@ function ComposerBody({
 		sendingRef.current = true;
 		let notSent = false;
 		try {
-			notSent = (await onSend(trimmed, mentions)) === false;
+			notSent =
+				(await onSend(trimmed, mentions, JSON.stringify(state.toJSON()))) === false;
 		} finally {
 			sendingRef.current = false;
 		}
@@ -177,7 +193,13 @@ function ComposerBody({
 		});
 		return "sent";
 	}, [editor, onSend, pending]);
-	useImperativeHandle(handleRef, () => ({ submit }), [submit]);
+	const restore = useCallback(
+		(serialized: string) => {
+			editor.setEditorState(editor.parseEditorState(serialized));
+		},
+		[editor],
+	);
+	useImperativeHandle(handleRef, () => ({ submit, restore }), [submit, restore]);
 
 	// Enter sends (Shift+Enter = newline). Registered LOW so the mention typeahead (NORMAL) wins
 	// when it has a selectable option — its handler consumes Enter to pick, so this never runs.
@@ -207,6 +229,11 @@ function ComposerBody({
 			setTooLong(isMessageTooLong(text));
 		});
 	}, []);
+	// `OnChangePlugin` skips the initial state, so a composer that mounts seeded (see `seed`)
+	// reads it once here — otherwise Send would stay disabled over a box that holds text.
+	useEffect(() => {
+		onChange(editor.getEditorState());
+	}, [editor, onChange]);
 
 	return (
 		// The mention menu is portaled in here and opens UPWARD from the top of this box, so it

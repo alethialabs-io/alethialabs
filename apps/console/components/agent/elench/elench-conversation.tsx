@@ -264,6 +264,7 @@ export function ElenchConversation({
 		send: onSend,
 		error: sendError,
 		retry: retrySend,
+		failedState,
 		reset: resetSend,
 	} = useElenchSend({ hasThread, startThread, sendMessage, beforeSend });
 	// A new chat / resume (a new lineage) starts with no failed send pending.
@@ -276,20 +277,24 @@ export function ElenchConversation({
 	// what the box holds NOW, edits included, and clears only on a send that went out. Re-sending
 	// the failed attempt's snapshot instead sent text the user had since changed, then the
 	// composer was remounted (or the landing unmounted) and the edit was gone without a word.
-	// Only when the box holds nothing is the pending turn re-sent: that message never came from
-	// the composer (a suggestion card, a seed prompt, a grid cell) or was cleared from it, so
-	// there is no typed text to lose.
+	// When the box holds nothing, a turn that was TYPED in the composer is put back into it and
+	// nothing is sent: the user emptied the box, and Retry must not send words they just erased.
+	// A turn that never lived in the composer (a suggestion card, a seed prompt, a grid cell) is
+	// re-sent as it was — there is no typed text to lose.
 	const onRetryStart = useMemo(
 		() =>
 			retrySend
 				? () => {
 						void (async () => {
-							const outcome = await composerRef.current?.submit();
-							if (outcome === undefined || outcome === "empty") await retrySend();
+							const composer = composerRef.current;
+							const outcome = await composer?.submit();
+							if (outcome !== undefined && outcome !== "empty") return;
+							if (composer && failedState) composer.restore(failedState);
+							else await retrySend();
 						})();
 					}
 				: undefined,
-		[retrySend],
+		[retrySend, failedState],
 	);
 	// A failed send (thread not created / too long) is shown where the transcript's own error
 	// would be, and takes precedence over it: it is the newer event.
@@ -442,6 +447,7 @@ export function ElenchConversation({
 					context={isOrg ? "org" : "project"}
 					status={status}
 					composerRef={composerRef}
+					composerSeed={failedState}
 					notice={
 						sendError ? (
 							<ChatError error={sendError} onRetry={onRetryStart} />
@@ -455,6 +461,7 @@ export function ElenchConversation({
 					error={visibleError}
 					onSend={onSend}
 					onRetry={onRetry}
+					onRegenerate={() => void regenerate()}
 					onStop={() => void stop()}
 					renderToolPart={renderToolPart}
 					placeholder={PLACEHOLDER}
@@ -467,6 +474,7 @@ export function ElenchConversation({
 					renderComposer={
 						<ElenchComposer
 							handleRef={composerRef}
+							seed={failedState}
 							onSend={onSend}
 							onStop={() => void stop()}
 							showModel={isOrg}

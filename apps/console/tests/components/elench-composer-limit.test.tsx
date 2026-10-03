@@ -86,7 +86,7 @@ describe("ElenchComposer — the per-message limit", () => {
 
 		expect(screen.queryByTestId("elench-composer-too-long")).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Send" }));
-		expect(onSend).toHaveBeenCalledWith(atLimit, []);
+		expect(onSend).toHaveBeenCalledWith(atLimit, [], expect.any(String));
 	});
 
 	it("clears the alert once the message is shortened back under the limit", () => {
@@ -108,7 +108,7 @@ describe("ElenchComposer — a send that did not go out", () => {
 		render(<ElenchComposer onSend={onSend} status="ready" />);
 		fill("keep me");
 		await user.click(screen.getByRole("button", { name: "Send" }));
-		expect(onSend).toHaveBeenCalledWith("keep me", []);
+		expect(onSend).toHaveBeenCalledWith("keep me", [], expect.any(String));
 		expect(content()).toBe("keep me");
 	});
 

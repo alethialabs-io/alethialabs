@@ -21,6 +21,7 @@ import {
 	type ElenchComposerHandle,
 	type ElenchComposerSubmit,
 } from "@/components/agent/elench/elench-composer";
+import { $createMentionNode } from "@/components/agent/elench/mention-node";
 
 vi.mock("@/components/agent/elench/elench-controls", () => ({
 	ElenchAskMode: () => null,
@@ -73,7 +74,7 @@ describe("ElenchComposer — the submit handle", () => {
 		render(<ElenchComposer onSend={onSend} handleRef={ref} />);
 		fill("deploy staging, edited");
 		expect(await submit(ref)).toBe("sent");
-		expect(onSend).toHaveBeenCalledWith("deploy staging, edited", []);
+		expect(onSend).toHaveBeenCalledWith("deploy staging, edited", [], expect.any(String));
 		expect(content()).toBe("");
 	});
 
@@ -108,7 +109,64 @@ describe("ElenchComposer — the submit handle", () => {
 			release(true);
 			await pending;
 		});
-		expect(onSend).toHaveBeenCalledWith("first part", []);
+		expect(onSend).toHaveBeenCalledWith("first part", [], expect.any(String));
 		expect(content()).toBe("first part, and more typed meanwhile");
+	});
+});
+
+// A failed first send hands its serialized editor state out with the message; the conversation
+// seeds a composer that mounts while that failure is pending (a minimize or maximize remounts it),
+// and puts it back into an emptied box on Retry (`restore`).
+describe("ElenchComposer — seed and restore", () => {
+	/** The serialized state of a box holding "deploy " plus a mention pill, as `onSend` hands it out. */
+	async function stateWithMention(): Promise<string> {
+		const ref = createRef<ElenchComposerHandle>();
+		const onSend = vi.fn(async () => false);
+		const view = render(<ElenchComposer onSend={onSend} handleRef={ref} />);
+		act(() => {
+			composerEditor().update(
+				() => {
+					$getRoot().clear().append(
+						$createParagraphNode().append(
+							$createTextNode("deploy "),
+							$createMentionNode("@api", "cl-1", "cluster"),
+						),
+					);
+				},
+				{ discrete: true },
+			);
+		});
+		expect(await submit(ref)).toBe("not-sent");
+		view.unmount();
+		const state = onSend.mock.calls[0]?.at(2);
+		if (typeof state !== "string") throw new Error("onSend was not handed the editor state");
+		return state;
+	}
+
+	it("a seeded composer opens holding the turn, mention pill included, with Send enabled", async () => {
+		const seed = await stateWithMention();
+		const ref = createRef<ElenchComposerHandle>();
+		const onSend = vi.fn(async () => true);
+		render(<ElenchComposer onSend={onSend} handleRef={ref} seed={seed} />);
+
+		expect(content()).toBe("deploy @api");
+		expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(false);
+		expect(await submit(ref)).toBe("sent");
+		expect(onSend).toHaveBeenCalledWith(
+			"deploy @api",
+			[{ id: "cl-1", type: "cluster", label: "api" }],
+			expect.any(String),
+		);
+	});
+
+	it("restore puts a handed-out state back into an emptied box", async () => {
+		const seed = await stateWithMention();
+		const ref = createRef<ElenchComposerHandle>();
+		render(<ElenchComposer onSend={vi.fn(async () => true)} handleRef={ref} />);
+		expect(content()).toBe("");
+
+		act(() => ref.current?.restore(seed));
+
+		expect(content()).toBe("deploy @api");
 	});
 });
