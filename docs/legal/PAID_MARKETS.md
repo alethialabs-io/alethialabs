@@ -17,6 +17,16 @@ is not a to-do written optimistically — it is a statement that the repository 
 evidence, and it names what would settle it. Nothing here may be marked established because
 it is probably fine.
 
+## The release gate's test-mode waiver is not a cell
+
+`apps/console/lib/billing/eligibility.ts` waives the market check, and only the market check,
+when **both** of these hold: `STRIPE_SECRET_KEY` is a test secret (`sk_test_…`) and
+`ALETHIA_BILLING_TEST_MARKET=1`. The maintainer ruled this on 2026-10-03 (#5412) so the release
+gate can drive the real checkout against Stripe test mode. A test-mode account cannot charge a
+card, so nothing the waiver lets through is a sale. A live key with the flag set still refuses.
+The flag is set in `.github/workflows/release-gate.yml` and nowhere else. It opens no cell
+and is not evidence for any of the four conditions below.
+
 ## What a cell is
 
 One entry in `PAID_MARKETS` is a **country × payer capacity** pair, not a country:
