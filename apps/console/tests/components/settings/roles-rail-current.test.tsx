@@ -53,8 +53,8 @@ const bootstrap: RolesBootstrap = {
 describe("the roles rail", () => {
 	it("marks the selected role's row current — and only that row", async () => {
 		render(<RolesManager bootstrap={bootstrap} />);
-		const owner = screen.getByRole("button", { name: "owner3" });
-		const viewer = screen.getByRole("button", { name: "viewer1" });
+		const owner = screen.getByRole("button", { name: "Owner3" });
+		const viewer = screen.getByRole("button", { name: "Viewer1" });
 		expect(owner).toHaveAttribute("aria-current", "true");
 		expect(viewer).not.toHaveAttribute("aria-current");
 

@@ -57,6 +57,18 @@ import {
 import { PermissionMatrix } from "./permission-matrix";
 import { RoleSheet } from "./role-sheet";
 
+/**
+ * What a role is CALLED on screen. A built-in's `name` is its registry key (`owner`), so it is
+ * shown by its label (`Owner`); a custom role's `name` is text the user typed, so it is shown
+ * exactly as entered. Both used to go through CSS `capitalize`, which re-cased custom names
+ * (`k8s-readers` → `K8s-Readers`, `iOS team` → `IOS Team`) and left the built-ins with a lowercase
+ * accessible name under a capitalised visible one (#5413).
+ */
+function roleDisplayName(role: Pick<RoleRow, "name" | "builtin">): string {
+	if (!role.builtin) return role.name;
+	return role.name.charAt(0).toUpperCase() + role.name.slice(1);
+}
+
 /** A rail row — selectable role with its permission count. */
 function RailRow({
 	name,
@@ -86,7 +98,7 @@ function RailRow({
 		>
 			<span
 				className={cn(
-					"truncate text-ui-md capitalize",
+					"truncate text-ui-md",
 					active ? "font-medium text-text-primary" : "text-text-secondary",
 				)}
 			>
@@ -283,7 +295,7 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 								builtinList.map((r) => (
 									<RailRow
 										key={r.id}
-										name={r.name}
+										name={roleDisplayName(r)}
 										count={r.permissionKeys.length}
 										active={selectedId === r.id}
 										onClick={() => setSelectedId(r.id)}
@@ -308,7 +320,7 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 								custom.map((r) => (
 									<RailRow
 										key={r.id}
-										name={r.name}
+										name={roleDisplayName(r)}
 										count={r.permissionKeys.length}
 										active={selectedId === r.id}
 										onClick={() => setSelectedId(r.id)}
@@ -401,8 +413,8 @@ function RoleDetail({
 				<div className="min-w-0">
 					<div className="flex items-center gap-2">
 						<Shield size={15} className="text-text-tertiary" />
-						<span className="text-ui-lg font-semibold capitalize text-text-primary">
-							{role.name}
+						<span className="text-ui-lg font-semibold text-text-primary">
+							{roleDisplayName(role)}
 						</span>
 						<span className="rounded-full border border-border-strong px-2 py-0.5 font-mono text-ui-3xs uppercase tracking-[0.1em] text-text-secondary">
 							{role.builtin ? "Built-in" : "Custom"}
