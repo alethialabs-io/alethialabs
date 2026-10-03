@@ -140,6 +140,32 @@ describe.each([
 		expect(releaseAiHold).not.toHaveBeenCalled();
 	});
 
+	// A real second turn: the transcript carries an assistant turn whose parts have NO `text`
+	// (data, step-start, tool parts). Captured from the elench-ai gate's 400 on this exact shape.
+	it("takes a transcript whose earlier turn has text-less parts to the budget gate", async () => {
+		const assistant = {
+			id: "a1",
+			role: "assistant",
+			parts: [
+				{ type: "data-agent-step", id: "s1", data: { phase: "working" } },
+				{ type: "step-start" },
+				{ type: "reasoning", id: "r1", text: "thinking", state: "done" },
+				{
+					type: "tool-build_dashboard",
+					toolCallId: "c1",
+					state: "output-available",
+					input: {},
+					output: {},
+				},
+				{ type: "step-start" },
+				{ type: "text", text: "Your dashboard is on the grid.", state: "done" },
+			],
+		};
+		const res = await post(bodyWith([userTurn(10, "u1"), assistant, userTurn(12, "u2")]));
+		expect(res.status).not.toBe(400);
+		expect(assertAiAllowed).toHaveBeenCalledTimes(1);
+	});
+
 	// A body the limit cannot read is the CLIENT's error: a 400, never a TypeError surfacing as
 	// a 500, and still before the hold.
 	it.each([
