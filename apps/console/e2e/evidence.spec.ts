@@ -34,10 +34,11 @@ test.describe("Evidence surface", () => {
 		).toContainText("Evidence");
 
 		// The zero-environment branch, by its own copy and its own call to action. (The CTA is a
-		// `Button` rendering a `Link`, which keeps role=button — see evidence-empty.tsx.)
+		// `Button` rendering a `Link`; `@repo/ui/button` announces an href as a link — #5444.
+		// Before that, base-ui's role=button was on the anchor and this asserted `button`.)
 		await expect(page.getByText("No environments yet")).toBeVisible();
 		await expect(
-			page.getByRole("button", { name: /create a project/i }),
+			page.getByRole("link", { name: /create a project/i }),
 		).toBeVisible();
 
 		// The posture surfaces belong to the other branch. Asserting they are ABSENT is what makes

@@ -137,9 +137,11 @@ describe("shell chrome — accessible names", () => {
 
 	it("keeps the org switcher a split control: the org body and a separately named chevron", () => {
 		render(<AppSidebar isHosted selfRunners />);
-		// The body navigates to the org (base-ui renders the anchor with role=button); only the
-		// chevron opens the picker, and it is the half that carries the author-supplied name.
-		expect(screen.getByRole("button", { name: /Acme/ })).toBeInTheDocument();
+		// The body navigates to the org, so it is a LINK: `@repo/ui/button` announces any `render`
+		// element with an href as one (#5444 — before it, base-ui stamped role=button on the anchor).
+		// Only the chevron opens the picker, and it is the half that carries the author-supplied name.
+		expect(screen.getByRole("link", { name: /Acme/ })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /Acme/ })).toBeNull();
 		expect(
 			screen.getByRole("button", { name: "Switch organization" }),
 		).toBeInTheDocument();

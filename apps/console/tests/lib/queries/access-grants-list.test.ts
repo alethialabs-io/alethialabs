@@ -114,6 +114,7 @@ describe("queryAccessGrantsPage", () => {
 			[],
 			[
 				{ effect: "allow", resourceType: "org", roleName: "admin", permissionKey: null },
+				{ effect: "allow", resourceType: "org", roleName: "k8s-readers", permissionKey: null },
 				{ effect: "allow", resourceType: "org", roleName: null, permissionKey: "runner.exec" },
 				{ effect: "allow", resourceType: "org", roleName: null, permissionKey: null },
 			],
@@ -121,13 +122,15 @@ describe("queryAccessGrantsPage", () => {
 
 		const page = await queryAccessGrantsPage("org-1");
 
-		// A named role is its own value; a bare permission gets the `permission:` prefix and
-		// is LABELLED with the key alone; neither is the "—" bucket. Compared as a set: the
+		// A named role is its own value, LABELLED by the registry's one role-label source
+		// (`admin` → `Admin`, a custom name exactly as typed — #5444); a bare permission gets the
+		// `permission:` prefix and is labelled with the key alone; neither is the "—" bucket. Compared as a set: the
 		// order is `localeCompare` over the labels, and where an em-dash sorts against a
 		// letter is the platform's ICU collation to decide, not this module's contract.
 		expect([...page.facets.roles].sort((a, b) => a.value.localeCompare(b.value))).toEqual(
 			[
-				{ value: "admin", label: "admin", count: 1 },
+				{ value: "admin", label: "Admin", count: 1 },
+				{ value: "k8s-readers", label: "k8s-readers", count: 1 },
 				{ value: "permission:runner.exec", label: "runner.exec", count: 1 },
 				{ value: "—", label: "—", count: 1 },
 			].sort((a, b) => a.value.localeCompare(b.value)),
