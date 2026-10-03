@@ -149,6 +149,86 @@ describe("saveTranscript", () => {
 		expect(rows[0].messages).toEqual([]);
 	});
 
+	it("fails loudly when a deleted thread's transcript cannot be recovered, and writes nothing", async () => {
+		// The first id the in-memory table mints for an id-less insert is held by a row this owner
+		// cannot see, so the recovery insert comes back null.
+		const { rows, impl } = table(
+			[{ id: T, title: "", kind: "agent", status: THREAD_DELETED, projectId: null, messages: [] }],
+			["00000000-0000-4000-8000-000000000001"],
+		);
+		await expect(saveTranscript(impl, target, transcript("deploy staging", "Planned."))).rejects.toThrow(
+			`Thread ${T} was deleted and its transcript could not be recovered.`,
+		);
+		expect(rows).toEqual([
+			{ id: T, title: "", kind: "agent", status: THREAD_DELETED, projectId: null, messages: [] },
+		]);
+	});
+
+	it("titles a recovered thread from its text alone, and plainly when no user message is held", async () => {
+		const { rows, impl } = table([
+			{ id: T, title: "", kind: "agent", status: THREAD_DELETED, projectId: null, messages: [] },
+		]);
+		const replyOnly: UIMessage[] = [{ id: "a-0", role: "assistant", parts: [{ type: "text", text: "Planned." }] }];
+		const outcome = await saveTranscript(impl, target, replyOnly);
+		expect(outcome.kind).toBe("recovered");
+		expect(rows.filter((r) => r.id !== T)).toEqual([
+			expect.objectContaining({ title: "Recovered:", messages: replyOnly }),
+		]);
+
+		const { rows: second, impl: secondImpl } = table([
+			{ id: T, title: "", kind: "agent", status: THREAD_DELETED, projectId: null, messages: [] },
+		]);
+		const withFile: UIMessage[] = [
+			{
+				id: "u-0",
+				role: "user",
+				parts: [
+					{ type: "file", mediaType: "text/plain", url: "data:text/plain,x" },
+					{ type: "text", text: "read this" },
+				],
+			},
+		];
+		await saveTranscript(secondImpl, target, withFile);
+		expect(second.filter((r) => r.id !== T)[0].title).toBe("Recovered: read this");
+	});
+
+	it("does not look up an earlier recovery for an empty transcript, and still keeps it", async () => {
+		const { rows, impl } = table([
+			{ id: T, title: "", kind: "agent", status: THREAD_DELETED, projectId: null, messages: [] },
+			// A live thread a lookup with an undefined first-message id would wrongly match.
+			{ id: "11111111-1111-4111-8111-111111111111", title: "x", kind: "agent", status: "active", projectId: null, messages: [] },
+		]);
+		const outcome = await saveTranscript(impl, target, []);
+		expect(outcome.kind).toBe("recovered");
+		expect(outcome).not.toEqual({ kind: "recovered", threadId: "11111111-1111-4111-8111-111111111111" });
+		expect(rows).toHaveLength(3);
+	});
+
+	it("recovers into a new thread when the earlier recovered thread stops matching before the write", async () => {
+		const earlierId = "22222222-2222-4222-8222-222222222222";
+		const { rows, impl } = table([
+			{ id: T, title: "", kind: "agent", status: THREAD_DELETED, projectId: null, messages: [] },
+			{ id: earlierId, title: "Recovered: deploy staging", kind: "agent", status: "active", projectId: null, messages: transcript("deploy staging") },
+		]);
+		// The earlier thread is deleted between the lookup and the update: the update must not write
+		// over it, and the turn still lands in a thread the rail lists.
+		const racing: TranscriptRows = {
+			...impl,
+			async findRecovered(...args) {
+				const id = await impl.findRecovered(...args);
+				const row = rows.find((r) => r.id === id);
+				if (row) row.status = THREAD_DELETED;
+				return id;
+			},
+		};
+		const messages = transcript("deploy staging", "Planned.");
+		const outcome = await saveTranscript(racing, target, messages);
+		expect(outcome.kind).toBe("recovered");
+		expect(outcome).not.toEqual({ kind: "recovered", threadId: earlierId });
+		expect(rows.find((r) => r.id === earlierId)?.messages).toEqual(transcript("deploy staging"));
+		expect(rows.filter((r) => r.status === "active")).toEqual([expect.objectContaining({ messages })]);
+	});
+
 	it("fails loudly when the id is held by a row this owner cannot see", async () => {
 		const { rows, impl } = table([], [T]);
 		await expect(saveTranscript(impl, target, transcript("hi", "hello"))).rejects.toThrow(
