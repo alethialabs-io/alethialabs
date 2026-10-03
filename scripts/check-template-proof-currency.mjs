@@ -318,8 +318,9 @@ function writeProofs(root, commits) {
 
 /**
  * Run this script as a child process and return its exit code — the self-test asserts on what the
- * process EXITS with, never on what it prints. The token is blanked so a fixture run can never fall
- * through to a live GitHub read.
+ * process EXITS with, never on what it prints. What keeps a fixture run offline is `--heads-from`,
+ * which every self-test child passes: blanking GH_TOKEN/GITHUB_TOKEN below does NOT, because `gh`
+ * falls back to its keyring login and the starter repos are public.
  *
  * @param {string[]} args
  * @returns {{code: number, stdout: string}}

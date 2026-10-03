@@ -48,7 +48,9 @@ permissions:
 
 concurrency:
   group: template-proof-currency
-  cancel-in-progress: true
+  # false: the tracker job lists, then creates, an issue. Cancelling between those two calls is how
+  # a second tracker with the same title gets filed — queue the next run instead.
+  cancel-in-progress: false
 
 jobs:
   measure:
@@ -104,7 +106,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      TITLE: "templates: a starter repo's HEAD has moved past its last green-proven commit"
+      # One title for BOTH red outcomes, drift (1) and an unanswered check (2), so it must not claim
+      # drift: the body (the check's own report) says which one this run was.
+      TITLE: "templates: a starter repo's HEAD is not proven to be its last green-proven commit"
       CODE: ${{ needs.measure.outputs.code }}
       REPORT: ${{ needs.measure.outputs.report }}
     steps:
