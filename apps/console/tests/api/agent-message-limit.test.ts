@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @vitest-environment node
 
-// Both chat routes Elench posts to refuse an over-limit user message with a 413 whose body is
-// the shared MESSAGE_TOO_LONG, BEFORE the AI budget hold is reserved. The limit is the one
+// Every metered chat route — the two Elench posts to, and the agent-scoped `/api/agent/[agentId]`
+// — refuses an over-limit user message with a 413 whose body is the shared MESSAGE_TOO_LONG, and
+// a body whose messages it cannot read with a 400 (it used to throw a TypeError → a 500), BEFORE
+// the AI budget hold is reserved. The limit is the one
 // `createThread` and the composer enforce (lib/ai/message-limits.ts). Before #5423's repair the
 // action capped a first turn at 100k while these routes capped nothing, so a long first message
 // threw inside `startThread` and the send vanished. Every collaborator is mocked; what is
@@ -18,7 +20,10 @@ vi.mock("ai", () => ({
 	createUIMessageStream: vi.fn(() => ({})),
 	createUIMessageStreamResponse: vi.fn(() => new Response("ok")),
 	stepCountIs: vi.fn(() => () => false),
-	streamText: vi.fn(() => ({ toUIMessageStream: () => ({}) })),
+	streamText: vi.fn(() => ({
+		toUIMessageStream: () => ({}),
+		toUIMessageStreamResponse: () => new Response("ok"),
+	})),
 }));
 vi.mock("@/app/server/actions/agent", () => ({ saveThreadMessages: vi.fn() }));
 vi.mock("@/app/server/actions/resolve", () => ({
@@ -35,6 +40,13 @@ vi.mock("@/lib/ai/environment-knowledge", () => ({
 vi.mock("@/lib/ai/tools", () => ({
 	buildAgentTools: vi.fn(() => ({})),
 	buildProjectAgentTools: vi.fn(() => ({})),
+}));
+vi.mock("@/lib/agent/executor", () => ({
+	buildAgentSystemPrompt: vi.fn(() => "system"),
+	scopeToolsToAgent: vi.fn(() => ({})),
+}));
+vi.mock("@/lib/db", () => ({
+	withScope: vi.fn(async () => ({ id: "agent-1", tool_scope: [] })),
 }));
 vi.mock("@/lib/auth/owner", () => ({ getOwner: vi.fn(async () => "user-1") }));
 vi.mock("@/lib/authz/guard", () => ({
@@ -53,13 +65,14 @@ vi.mock("@/lib/billing/ai-guard", () => ({
 vi.mock("@/lib/billing/ai-plan", () => ({ resolveAiTier: vi.fn(async () => "ai_free") }));
 vi.mock("@/lib/config/ai", () => ({
 	isAiConfigured: () => true,
+	getAiModel: () => ({ key: "haiku", model: {} }),
 	isSelectableModel: () => false,
 	resolveModel: () => ({}),
 	getExecutorModel: () => ({ key: "haiku", model: {} }),
 	getAdvisorModel: () => ({ key: "haiku", model: {} }),
 }));
 
-import { assertAiAllowed } from "@/lib/billing/ai-guard";
+import { assertAiAllowed, releaseAiHold } from "@/lib/billing/ai-guard";
 import {
 	lastUserMessageTooLong,
 	MAX_USER_MESSAGE_CHARS,
@@ -73,27 +86,35 @@ function userTurn(length: number, id = "u1"): UIMessage {
 	return { id, role: "user", parts: [{ type: "text", text: "a".repeat(length) }] };
 }
 
-/** POST the org agent route (`/api/agent`) with these messages. */
-async function postOrg(messages: UIMessage[]): Promise<Response> {
-	const { POST } = await import("@/app/api/agent/route");
-	return POST(
-		new Request("https://console.local/api/agent", {
-			method: "POST",
-			body: JSON.stringify({ messages }),
-		}),
-	);
+/** A JSON request body carrying these messages (any value: the malformed cases need that). */
+function bodyWith(messages: unknown): string {
+	return JSON.stringify({ messages });
 }
 
-/** POST the project assistant route with these messages. */
-async function postProject(messages: UIMessage[]): Promise<Response> {
+/** POST the org agent route (`/api/agent`) with this raw body. */
+async function postOrg(body: string): Promise<Response> {
+	const { POST } = await import("@/app/api/agent/route");
+	return POST(new Request("https://console.local/api/agent", { method: "POST", body }));
+}
+
+/** POST the project assistant route with this raw body. */
+async function postProject(body: string): Promise<Response> {
 	const { POST } = await import("@/app/api/projects/[projectId]/assistant/route");
 	return POST(
 		new Request(`https://console.local/api/projects/${PROJECT}/assistant`, {
 			method: "POST",
-			body: JSON.stringify({ messages }),
+			body,
 		}),
 		{ params: Promise.resolve({ projectId: PROJECT }) },
 	);
+}
+
+/** POST the agent-scoped route (`/api/agent/[agentId]`) with this raw body. */
+async function postAgent(body: string): Promise<Response> {
+	const { POST } = await import("@/app/api/agent/[agentId]/route");
+	return POST(new Request("https://console.local/api/agent/agent-1", { method: "POST", body }), {
+		params: Promise.resolve({ agentId: "agent-1" }),
+	});
 }
 
 beforeEach(() => {
@@ -103,18 +124,35 @@ beforeEach(() => {
 describe.each([
 	["POST /api/agent", postOrg],
 	["POST /api/projects/[projectId]/assistant", postProject],
+	["POST /api/agent/[agentId]", postAgent],
 ])("%s — the per-message limit", (_name, post) => {
 	it("refuses a user message one character over the limit with 413 and reserves no budget", async () => {
-		const res = await post([userTurn(MAX_USER_MESSAGE_CHARS + 1)]);
+		const res = await post(bodyWith([userTurn(MAX_USER_MESSAGE_CHARS + 1)]));
 		expect(res.status).toBe(413);
 		expect(await res.text()).toBe(MESSAGE_TOO_LONG);
 		expect(assertAiAllowed).not.toHaveBeenCalled();
 	});
 
 	it("takes a user message of exactly the limit to the budget gate", async () => {
-		const res = await post([userTurn(MAX_USER_MESSAGE_CHARS)]);
+		const res = await post(bodyWith([userTurn(MAX_USER_MESSAGE_CHARS)]));
 		expect(res.status).not.toBe(413);
 		expect(assertAiAllowed).toHaveBeenCalledTimes(1);
+		expect(releaseAiHold).not.toHaveBeenCalled();
+	});
+
+	// A body the limit cannot read is the CLIENT's error: a 400, never a TypeError surfacing as
+	// a 500, and still before the hold.
+	it.each([
+		["no messages at all", JSON.stringify({})],
+		["messages that is not a list", bodyWith("hello")],
+		["a message with no parts", bodyWith([{ id: "u", role: "user" }])],
+		["a text part with no text", bodyWith([{ id: "u", role: "user", parts: [{ type: "text" }] }])],
+		["a JSON null body", "null"],
+		["a body that is not JSON", "{not json"],
+	])("answers 400 for %s and reserves no budget", async (_case, body) => {
+		const res = await post(body);
+		expect(res.status).toBe(400);
+		expect(assertAiAllowed).not.toHaveBeenCalled();
 	});
 });
 

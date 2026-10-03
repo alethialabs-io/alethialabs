@@ -5,6 +5,7 @@
 import type { ChatStatus } from "ai";
 import { Sparkles } from "lucide-react";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { AlethiaMark } from "@repo/brand/lockup";
 import type { Mention } from "@/lib/ai/mentions";
 import { track } from "@/lib/analytics/track";
@@ -65,7 +66,8 @@ function ElenchMark({ className }: { className?: string }) {
 }
 
 interface ModalLandingProps {
-	onSend: (text: string, mentions?: Mention[]) => void;
+	/** Resolves false when the message did not go out — the composer then keeps its text. */
+	onSend: (text: string, mentions?: Mention[]) => void | Promise<boolean>;
 	suggestions: ElenchSuggestion[];
 	/** Recent threads for "Ready to keep going?" (empty → section hidden). */
 	recents: AgentThread[];
@@ -75,6 +77,8 @@ interface ModalLandingProps {
 	/** Org vs project — drives the Try-now prompt + analytics context. */
 	context: ElenchContext;
 	status?: ChatStatus;
+	/** Shown above the composer — a send that did not go out (its error and Retry). */
+	notice?: ReactNode;
 }
 
 /**
@@ -92,6 +96,7 @@ export function ElenchModalLanding({
 	showModel,
 	context,
 	status,
+	notice,
 }: ModalLandingProps) {
 	return (
 		<div className="h-full overflow-y-auto">
@@ -101,6 +106,7 @@ export function ElenchModalLanding({
 				What should we do today?
 			</h1>
 
+			{notice && <div className="mb-4">{notice}</div>}
 			<ElenchComposer
 				onSend={onSend}
 				showModel={showModel}

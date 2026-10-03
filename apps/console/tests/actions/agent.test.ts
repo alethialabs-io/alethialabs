@@ -43,7 +43,7 @@ import { agentThreads } from "@/lib/db/schema";
  * A drizzle-ish chain whose every builder returns itself, awaits to `rows`, and records the
  * args handed to the mutating verbs so tests can assert the exact write.
  */
-function mockChain(rows: unknown[]) {
+function mockChain(rows: unknown[], sequence: unknown[][] = []) {
 	const calls = {
 		insert: vi.fn(),
 		values: vi.fn(),
@@ -91,14 +91,16 @@ function mockChain(rows: unknown[]) {
 			calls.delete(...a);
 			return db;
 		},
-		then: (resolve: (v: unknown) => void) => resolve(rows),
+		// Each awaited query takes the next queued result, then `rows` once the queue is empty.
+		then: (resolve: (v: unknown) => void) => resolve(sequence.shift() ?? rows),
 	});
 	return { db, calls };
 }
 
-/** Wire withOwnerScope to invoke the real callback against the given chain. */
-function useChain(rows: unknown[]) {
-	const { db, calls } = mockChain(rows);
+/** Wire withOwnerScope to invoke the real callback against the given chain. `sequence` holds
+ * per-query results in await order (e.g. the first-turn lookup, then the insert). */
+function useChain(rows: unknown[], sequence: unknown[][] = []) {
+	const { db, calls } = mockChain(rows, sequence);
 	vi.mocked(withOwnerScope).mockImplementation(
 		((_owner: unknown, cb: (tx: unknown) => unknown) => cb(db)) as never,
 	);
@@ -161,7 +163,8 @@ describe("createThread", () => {
 	// first message must therefore be stored BY THE INSERT, or the row keeps zero messages,
 	// listThreads hides it, and the typed message vanishes on reload.
 	it("stores the first user turn as the thread's transcript in the same insert", async () => {
-		const { calls } = useChain([{ id: "t-turn" }]);
+		// The idempotency lookup finds no row holding this turn, so the insert runs.
+		const { calls } = useChain([{ id: "t-turn" }], [[]]);
 		await createThread("persisted elench thread", undefined, {
 			id: "msg-1",
 			text: "persisted elench thread",
@@ -183,7 +186,7 @@ describe("createThread", () => {
 	});
 
 	it("stores the first turn on a project-scoped thread too", async () => {
-		const { calls } = useChain([{ id: "t-pturn" }]);
+		const { calls } = useChain([{ id: "t-pturn" }], [[]]);
 		await createThread("Deploy prod", "proj-9", { id: "msg-2", text: "Deploy prod" });
 		const values = calls.values.mock.calls[0][0];
 		expect(values.project_id).toBe("proj-9");
@@ -212,7 +215,7 @@ describe("createThread", () => {
 	// The stored first turn is capped by the SAME constant the chat routes 413 on and the
 	// composer refuses at — one number, so the action never rejects a turn the route would take.
 	it("stores a first turn of exactly the shared limit and refuses one character more", async () => {
-		const { calls } = useChain([{ id: "t-max" }]);
+		const { calls } = useChain([{ id: "t-max" }], [[]]);
 		const atLimit = "a".repeat(MAX_USER_MESSAGE_CHARS);
 		await createThread("long", undefined, { id: "msg-max", text: atLimit });
 		expect(calls.values.mock.calls[0][0].messages[0].parts[0].text).toHaveLength(
@@ -223,6 +226,43 @@ describe("createThread", () => {
 			createThread("long", undefined, { id: "msg-over", text: `${atLimit}a` }),
 		).rejects.toThrow();
 		expect(withOwnerScope).not.toHaveBeenCalled();
+	});
+
+	// The #5423 review: a server action can fail AFTER its insert committed (the response is
+	// lost). The client retries with the SAME first-turn id; a second insert would leave two
+	// threads holding one message, one of them never answered.
+	it("returns the row a lost response already committed for this turn id, inserting nothing", async () => {
+		const stored = {
+			id: "t-committed",
+			messages: [{ id: "msg-r", role: "user", parts: [{ type: "text", text: "hello" }] }],
+		};
+		const rewritten = { ...stored, title: "hello" };
+		// 1st await: the lookup finds the committed row; 2nd: the rewrite returns it.
+		const { calls } = useChain([], [[stored], [rewritten]]);
+		const thread = await createThread("hello", undefined, { id: "msg-r", text: "hello" });
+		expect(thread).toBe(rewritten);
+		expect(calls.insert).not.toHaveBeenCalled();
+		expect(calls.update).toHaveBeenCalledTimes(1);
+		expect(calls.set.mock.calls[0][0]).toMatchObject({
+			title: "hello",
+			messages: [{ id: "msg-r", role: "user", parts: [{ type: "text", text: "hello" }] }],
+		});
+	});
+
+	it("keeps the committed row when it already holds more than the first turn", async () => {
+		const stored = { id: "t-answered", messages: [] };
+		// The rewrite is guarded to a one-message transcript; it matches nothing here.
+		const { calls } = useChain([], [[stored], []]);
+		const thread = await createThread("hello", undefined, { id: "msg-a", text: "hello" });
+		expect(thread).toBe(stored);
+		expect(calls.insert).not.toHaveBeenCalled();
+	});
+
+	it("does not look a turn up when no first turn is given (an artifact's new chat)", async () => {
+		const { calls } = useChain([{ id: "t-plain" }]);
+		await createThread("An artifact");
+		expect(calls.where).not.toHaveBeenCalled();
+		expect(calls.insert).toHaveBeenCalledTimes(1);
 	});
 
 	it("throws when there is no authenticated owner", async () => {

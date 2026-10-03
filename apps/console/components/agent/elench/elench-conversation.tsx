@@ -2,16 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { generateId, type UIMessage } from "ai";
+import type { UIMessage } from "ai";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentArtifactGallery } from "@/components/agent/agent-artifact-gallery";
 import { AgentKnowledgePanel } from "@/components/agent/agent-knowledge-panel";
 import { AgentChat } from "@/components/agent/agent-chat";
-import { UnansweredTurnError } from "@/components/agent/chat-error";
+import { ChatError, UnansweredTurnError } from "@/components/agent/chat-error";
 import { ChatSkeleton } from "@/components/agent/chat-skeleton";
 import type { FirstTurn } from "@/app/server/actions/agent";
-import { isMessageTooLong } from "@/lib/ai/message-limits";
 import { openArtifactOnGrid } from "@/app/server/actions/artifacts";
 import {
 	getThreadFeedback,
@@ -45,6 +44,7 @@ import {
 import { ElenchErrorBoundary } from "./elench-error-boundary";
 import { ElenchModal } from "./elench-modal";
 import { ElenchPanel } from "./elench-panel";
+import { useElenchSend } from "./use-elench-send";
 import {
 	ORG_SUGGESTIONS,
 	PROJECT_SUGGESTIONS,
@@ -241,40 +241,52 @@ export function ElenchConversation({
 
 	const setPendingMentions = useElenchStore((s) => s.setPendingMentions);
 
-	const onSend = useCallback(
-		async (text: string, mentions: Mention[] = []) => {
+	const beforeSend = useCallback(
+		(mentions: Mention[]) => {
 			// Stage the @-referenced resources so prepareBody sends them with the request.
 			setPendingMentions(mentions);
-			// First send of an ephemeral conversation: lazily create+attach the thread so its
-			// id (title derived from `text`) rides this request — prepareBody reads it fresh at
-			// send time, and the route's onFinish persists the transcript to it. The user turn is
-			// stored WITH the row, so a turn that fails before any reply still leaves the message
-			// behind (and the thread listed). Its id is minted here so the stored copy and the one
-			// the chat sends are one message under one id, not two lookalikes.
-			const id = generateId();
-			if (messages.length === 0 && activeId == null) {
-				// An over-limit turn is not stored (`createThread` would refuse it): the composer
-				// stops typed text first, and anything that gets past it is refused by the route
-				// below with a 413 that `ChatError` shows as "Message too long".
-				const firstTurn =
-					text.trim() && !isMessageTooLong(text) ? { id, text } : undefined;
-				try {
-					await startThread(text, firstTurn);
-				} catch {
-					// The row could not be created. Send anyway, as before the turn was stored: the
-					// route's reply — or its error — then shows in the transcript, where a throw
-					// here would have dropped the message with nothing on screen.
-				}
-			}
 			track("elench_message_sent", {
 				context: isOrg ? "org" : "project",
 				model: useElenchStore.getState().model,
 				project: projectId || undefined,
 			});
-			sendMessage({ id, role: "user", parts: [{ type: "text", text }] });
 		},
-		[messages.length, activeId, startThread, sendMessage, setPendingMentions, isOrg, projectId],
+		[setPendingMentions, isOrg, projectId],
 	);
+	// The store, read fresh: `startThread` attaches the id before this component re-renders.
+	const hasThread = useCallback(() => useElenchStore.getState().threadId != null, []);
+	// The first send of an ephemeral conversation creates + attaches its thread (title from
+	// the text, the user turn stored with the row) BEFORE the message goes out, so prepareBody
+	// carries the id and the route's onFinish persists the reply. If that creation fails,
+	// NOTHING is sent — a send without a thread is never stored — the failure shows inline, the
+	// composer keeps the text, and Retry re-attempts the thread (see `useElenchSend`).
+	const {
+		send: onSend,
+		error: sendError,
+		retry: retrySend,
+		reset: resetSend,
+	} = useElenchSend({ hasThread, startThread, sendMessage, beforeSend });
+	// A new chat / resume (a new lineage) starts with no failed send pending.
+	useEffect(() => {
+		resetSend();
+	}, [chatId, resetSend]);
+	// Remounts the docked composer once a Retry has sent the text it was still holding.
+	const [composerKey, setComposerKey] = useState(0);
+	const onRetryStart = useMemo(
+		() =>
+			retrySend
+				? () => {
+						void retrySend().then((sent) => {
+							if (sent) setComposerKey((k) => k + 1);
+						});
+					}
+				: undefined,
+		[retrySend],
+	);
+	// A failed send (thread not created / too long) is shown where the transcript's own error
+	// would be, and takes precedence over it: it is the newer event.
+	const visibleError = sendError ?? shownError;
+	const onRetry = sendError ? onRetryStart : () => void regenerate();
 
 	// Auto-send a staged seed prompt once into an otherwise-empty conversation.
 	const seededRef = useRef(false);
@@ -421,14 +433,19 @@ export function ElenchConversation({
 					showModel={isOrg}
 					context={isOrg ? "org" : "project"}
 					status={status}
+					notice={
+						sendError ? (
+							<ChatError error={sendError} onRetry={onRetryStart} />
+						) : undefined
+					}
 				/>
 			) : (
 				<AgentChat
 					messages={messages}
 					status={status}
-					error={shownError}
+					error={visibleError}
 					onSend={onSend}
-					onRetry={() => void regenerate()}
+					onRetry={onRetry}
 					onStop={() => void stop()}
 					renderToolPart={renderToolPart}
 					placeholder={PLACEHOLDER}
@@ -440,6 +457,7 @@ export function ElenchConversation({
 					}
 					renderComposer={
 						<ElenchComposer
+							key={composerKey}
 							onSend={onSend}
 							onStop={() => void stop()}
 							showModel={isOrg}

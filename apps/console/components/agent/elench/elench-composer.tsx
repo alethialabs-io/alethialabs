@@ -49,7 +49,7 @@ const EDITOR_CONFIG = {
  * (org) + send on the right. Used in the modal hero and (via the shared chat) the docked composer.
  */
 export function ElenchComposer(props: {
-	onSend: (text: string, mentions: Mention[]) => void;
+	onSend: ElenchComposerSend;
 	/** Abort the in-flight stream — wired to the Square button while generating. */
 	onStop?: () => void;
 	placeholder?: string;
@@ -65,6 +65,16 @@ export function ElenchComposer(props: {
 	);
 }
 
+/**
+ * What the composer hands a message to. Resolving `false` means the message did NOT go out (its
+ * conversation could not be started, say): the composer then keeps the text instead of clearing
+ * it, so a failed send never loses what the user typed. Anything else clears the editor.
+ */
+export type ElenchComposerSend = (
+	text: string,
+	mentions: Mention[],
+) => void | boolean | Promise<boolean>;
+
 /** Inner body — lives inside the Lexical context so send/Enter can read + clear the editor. */
 function ComposerBody({
 	onSend,
@@ -74,7 +84,7 @@ function ComposerBody({
 	status,
 	autoFocus = false,
 }: {
-	onSend: (text: string, mentions: Mention[]) => void;
+	onSend: ElenchComposerSend;
 	onStop?: () => void;
 	placeholder?: string;
 	showModel?: boolean;
@@ -87,6 +97,8 @@ function ComposerBody({
 	// reason is shown under the editor, and the text STAYS so the user can shorten it. Without
 	// this an over-limit first message threw inside `startThread` and vanished with no word.
 	const [tooLong, setTooLong] = useState(false);
+	// A send in progress (its conversation is being created): a second Enter must not send twice.
+	const sendingRef = useRef(false);
 	const pending = status === "submitted" || status === "streaming";
 	/** The composer box — the mention menu portals into it and opens above it. */
 	const boxRef = useRef<HTMLDivElement>(null);
@@ -95,9 +107,10 @@ function ComposerBody({
 		if (autoFocus) editor.focus();
 	}, [autoFocus, editor]);
 
-	/** Read the editor → plain text + resolved mentions, send, then clear. */
-	const submit = useCallback(() => {
-		if (pending) return;
+	/** Read the editor → plain text + resolved mentions, send, then clear — unless the send
+	 * reports it did not go out, in which case the text stays for the user to retry. */
+	const submit = useCallback(async () => {
+		if (pending || sendingRef.current) return;
 		let text = "";
 		const seen = new Set<string>();
 		const mentions: Mention[] = [];
@@ -123,7 +136,14 @@ function ComposerBody({
 			setTooLong(true);
 			return;
 		}
-		onSend(trimmed, mentions);
+		sendingRef.current = true;
+		let notSent = false;
+		try {
+			notSent = (await onSend(trimmed, mentions)) === false;
+		} finally {
+			sendingRef.current = false;
+		}
+		if (notSent) return;
 		editor.update(() => {
 			$getRoot().clear();
 		});
@@ -142,7 +162,7 @@ function ComposerBody({
 				(event) => {
 					if (event?.shiftKey) return false;
 					event?.preventDefault();
-					submit();
+					void submit();
 					return true;
 				},
 				COMMAND_PRIORITY_LOW,
@@ -204,7 +224,7 @@ function ComposerBody({
 						<button
 							type="button"
 							aria-label={pending && onStop ? "Stop" : "Send"}
-							onClick={pending ? onStop : submit}
+							onClick={pending ? onStop : () => void submit()}
 							disabled={pending ? !onStop : empty || tooLong}
 							className="flex size-8 items-center justify-center bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
 						>
