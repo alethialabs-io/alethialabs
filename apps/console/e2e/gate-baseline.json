@@ -44,9 +44,9 @@
 				"Activity page (a brand-new org) › narrowing to denials drives a server refetch to the empty state": "passed"
 			},
 			"billing.spec.ts": {
-				"Billing — plan-state coherence › a canceled org shows Canceled, no renew/next-charge, and an Upgrade CTA": "failed",
-				"Billing — plan-state coherence › an active org shows Renews and never a Canceled/Cancels contradiction": "failed",
-				"Billing — owned invoices › mirrored invoices render on the dedicated page with a working PDF route": "failed"
+				"Billing — plan-state coherence › a canceled org reads as Hobby — no lifecycle badge, no renew/next-charge, and an Upgrade CTA": "passed",
+				"Billing — plan-state coherence › an active org shows Renews and never a Canceled/Cancels contradiction": "passed",
+				"Billing — owned invoices › mirrored invoices render on the dedicated page with a working PDF route": "passed"
 			},
 			"connectors.spec.ts": {
 				"Connectors page › loads the board on the shared filter grammar": "passed",
@@ -217,12 +217,8 @@
 				"Billing settings — Pro trial (team) › cloud-spend disclaimer is shown on the plan card": "passed",
 				"Billing settings — Pro trial (team) › a Stripe customer (trial) gets the in-app Payment methods section": "passed",
 				"Billing settings — Pro trial (team) › plan history, transactions and invoices sections render for a customer": "passed",
-				"Billing — Stripe test mode › the /start trial CTA redirects into a TEST-mode Checkout session": {
-					"fixme": "BUG: /start's createCheckoutSession is refused for an undeclared payer capacity and the page swallows it, redirecting to billing #4633"
-				},
-				"Billing — Stripe test mode › the upgrade sheet mounts Stripe.js's own card fields, not a look-alike": {
-					"fixme": "BUG: the upgrade sheet's createSubscriptionIntent is refused for an undeclared payer capacity, so Elements never mounts #4633"
-				},
+				"Billing — Stripe test mode › the /start trial CTA redirects into a TEST-mode Checkout session": "passed",
+				"Billing — Stripe test mode › the upgrade sheet mounts Stripe.js's own card fields, not a look-alike": "passed",
 				"Billing — Stripe test mode › a card attached to the org's real customer appears in Payment methods": "passed",
 				"Billing — destructive controls ask first › Cancel plan opens a confirmation, and Cancel leaves the subscription renewing": "passed",
 				"Billing — destructive controls ask first › Remove opens the card confirmation, and Cancel leaves the card attached": "passed",
@@ -230,24 +226,22 @@
 				"Billing — mirrored invoices (team) › the dedicated invoices page lists mirrored rows with their amount and status": "passed",
 				"Billing — mirrored invoices (team) › an invoice's PDF route resolves for its own org rather than 404ing": "passed",
 				"Billing settings — Hobby → Pro upgrade (owner) › the Hobby card offers an upgrade and no subscription lifecycle at all": "passed",
-				"Billing settings — Hobby → Pro upgrade (owner) › Upgrade to Pro opens the shared upgrade sheet with the checkout form": "failed",
-				"Billing settings — Hobby → Pro upgrade (owner) › the upgrade sheet's order summary reflects the Pro total (no charge)": "failed",
+				"Billing settings — Hobby → Pro upgrade (owner) › Upgrade to Pro opens the shared upgrade sheet with the checkout form": "passed",
+				"Billing settings — Hobby → Pro upgrade (owner) › the upgrade sheet's order summary reflects the Pro total (no charge)": "passed",
 				"Billing settings — Hobby → Pro upgrade (owner) › the purchase sheet presents the plan's inclusions": "passed",
-				"Billing settings — Hobby → Pro upgrade (owner) › the purchase sheet offers a billing currency once the intent exists": {
-					"fixme": "BUG: the currency toggle stays disabled because createSubscriptionIntent is refused for an undeclared payer capacity #4633"
-				},
-				"Billing settings — Hobby → Pro upgrade (owner) › the upgrade sheet can be dismissed via its Close control": "failed",
+				"Billing settings — Hobby → Pro upgrade (owner) › the purchase sheet offers a billing currency once the intent exists": "passed",
+				"Billing settings — Hobby → Pro upgrade (owner) › the upgrade sheet can be dismissed via its Close control": "passed",
 				"Usage — Pro trial (team) › authed persona reaches usage (not bounced to /login)": "passed",
 				"Usage — Pro trial (team) › header shows the Pro plan standing and a Manage billing link": "passed",
-				"Usage — Pro trial (team) › plan & limits renders the seats / concurrency gauges": "failed",
+				"Usage — Pro trial (team) › plan & limits renders the seats / concurrency gauges": "passed",
 				"Usage — Pro trial (team) › the spend-control hard-cap toggle flips and can be restored": "passed",
 				"Usage — Pro trial (team) › resources section surfaces spend-under-management": "passed",
 				"Usage — Pro trial (team) › usage-over-time metric tabs switch the summary metric": "passed",
 				"Usage — Pro trial (team) › the quick-range filter changes the active window": "passed",
-				"Usage — Pro trial (team) › AI usage section shows the weekly window, balance and top-up link": "failed",
+				"Usage — Pro trial (team) › AI plan & usage shows the weekly window and the AI plan upgrade on the free AI tier": "passed",
 				"Usage — Pro trial (team) › usage page has no serious accessibility violations": "passed",
 				"Usage — Hobby (owner) › community org shows the Hobby standing and an inline upgrade CTA": "passed",
-				"Usage — Hobby (owner) › the inline usage upgrade CTA opens the Pro sheet (stop before payment)": "failed"
+				"Usage — Hobby (owner) › the inline usage upgrade CTA opens the Pro sheet (stop before payment)": "passed"
 			},
 			"flows/connectors.negative.spec.ts": {
 				"Connectors — a cloud this instance cannot connect › a managed cloud with no platform credentials says so in words": "passed",
@@ -333,9 +327,7 @@
 				"Cross-cutting — a11y per surface › runners has no serious/critical a11y violations": "passed",
 				"Cross-cutting — a11y per surface › jobs has no serious/critical a11y violations": "passed",
 				"Cross-cutting — a11y per surface › clusters has no serious/critical a11y violations": "passed",
-				"Cross-cutting — a11y per surface › evidence has no serious/critical a11y violations": {
-					"fixme": "BUG: the evidence table paints non-disabled informational text in the disabled ink tier (--text-disabled on --surface is 1.95:1 against a 4.5:1 bar), 15 nodes #4612"
-				},
+				"Cross-cutting — a11y per surface › evidence has no serious/critical a11y violations": "passed",
 				"Cross-cutting — a11y per surface › alerts has no serious/critical a11y violations": "passed",
 				"Cross-cutting — a11y per surface › usage has no serious/critical a11y violations": "passed",
 				"Cross-cutting — a11y per surface › support has no serious/critical a11y violations": "passed",
@@ -458,7 +450,7 @@
 				"Onboarding negatives — login gating › an invalid email format does not advance past the email step": "passed",
 				"Onboarding negatives — OTP code › a wrong 6-digit code is rejected with an inline error": "passed",
 				"Onboarding negatives — OTP code › the code step lets you go back to change the email": "passed",
-				"Onboarding negatives — wizard validation › a reserved slug is rejected": "failed",
+				"Onboarding negatives — wizard validation › a reserved slug is rejected": "passed",
 				"Onboarding negatives — wizard validation › a blank org name keeps the create button disabled": "passed",
 				"Onboarding negatives — create-org sheet › continuing with a blank team name surfaces a validation error": "passed",
 				"Onboarding negatives — invitation accept › an invitation addressed to somebody else is refused for the wrong account": "passed",
@@ -567,17 +559,17 @@
 				"RBAC — Members (Pro owner) › invite lifecycle — send a real invitation, see it pending, then cancel it": "passed",
 				"RBAC — Members (Pro owner) › cancelling an invitation asks first — and Cancel leaves it pending": "passed",
 				"RBAC — Teams (Enterprise gate) › Hobby: empty teams surface shows the Enterprise upsell": "passed",
-				"RBAC — Teams (Enterprise gate) › Hobby: Create team opens the Enterprise upgrade dialog (Contact Sales)": "failed",
+				"RBAC — Teams (Enterprise gate) › Hobby: Create team opens the Enterprise upgrade dialog (Contact Sales)": "passed",
 				"RBAC — Teams (Enterprise gate) › Pro: teams is still Enterprise-gated (upsell present)": "passed",
-				"RBAC — Teams (Enterprise gate) › Pro: Create team also opens the Enterprise upgrade dialog": "failed",
-				"RBAC — Roles › built-in roles rail renders all four roles + the count": "failed",
-				"RBAC — Roles › default detail panel shows the Owner built-in role (read-only)": "failed",
-				"RBAC — Roles › selecting Viewer swaps the detail panel to the Viewer description": "failed",
+				"RBAC — Teams (Enterprise gate) › Pro: Create team also opens the Enterprise upgrade dialog": "passed",
+				"RBAC — Roles › built-in roles rail renders all four roles + the count": "passed",
+				"RBAC — Roles › default detail panel shows the Owner built-in role (read-only)": "passed",
+				"RBAC — Roles › selecting Viewer swaps the detail panel to the Viewer description": "passed",
 				"RBAC — Roles › no custom roles yet — the rail shows the empty custom section": "passed",
-				"RBAC — Roles › Create role is gated → opens the Enterprise custom-roles dialog": "failed",
+				"RBAC — Roles › Create role is gated → opens the Enterprise custom-roles dialog": "passed",
 				"RBAC — Roles › the built-in detail renders the per-service permission matrix": "passed",
-				"RBAC — Roles › searching the rail filters the built-in roles": "failed",
-				"RBAC — Roles › Pro: roles remain custom-role gated (built-ins still visible)": "failed",
+				"RBAC — Roles › searching the rail filters the built-in roles": "passed",
+				"RBAC — Roles › Pro: roles remain custom-role gated (built-ins still visible)": "passed",
 				"RBAC — Access (grants) › Hobby: inheritance note + Enterprise upsell render": "passed",
 				"RBAC — Access (grants) › Pro: access is still Enterprise-gated (no grants table, upsell shown)": "passed",
 				"RBAC — Single Sign-On › Hobby: SSO surface shows the Enterprise upsell": "passed",
@@ -585,7 +577,8 @@
 				"RBAC — General settings › general page loads with the org profile prefilled": "passed",
 				"RBAC — General settings › profile fields render (name prefilled, description, URL)": "passed",
 				"RBAC — General settings › Save changes and Danger zone controls are present": "passed",
-				"RBAC — General settings › Delete organization opens a confirm dialog — Cancel aborts (no delete)": "passed"
+				"RBAC — General settings › Delete organization opens a confirm dialog — Cancel aborts (no delete)": "passed",
+				"RBAC — General settings › Transfer ownership is a stub → disabled, and says ownership transfer is coming soon": "passed"
 			},
 			"flows/runners.negative.spec.ts": {
 				"Runners — the byoRunners gate is deployment-mode scoped › a Hobby org reaches the runner surface, because the upsell is hosted-only": "passed",

@@ -29,6 +29,7 @@
 
 import { Button as ButtonPrimitive } from "@base-ui-components/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
+import { isValidElement } from "react"
 import type * as React from "react"
 
 import { cn } from "./utils"
@@ -84,23 +85,60 @@ type ButtonProps = React.ComponentProps<"button"> &
   Pick<ButtonPrimitive.Props, "render" | "nativeButton"> &
   VariantProps<typeof buttonVariants>
 
+/**
+ * Whether `render` is an element that NAVIGATES — an `<a href>`, a Next `<Link href>`, or anything
+ * else carrying an `href` prop (a string, or the UrlObject `Link` also accepts).
+ *
+ * Only the element form can be read. A render FUNCTION builds its element at render time inside
+ * base-ui, so its href is invisible from here and such a caller must still pass `role="link"`
+ * itself; every caller in the repo today uses the element form.
+ */
+function rendersLink(render: ButtonProps["render"]): boolean {
+  return isValidElement<{ href?: unknown }>(render) && render.props.href != null
+}
+
 /** Grayscale/squared button. Migrated off Radix `Slot` to the base-ui `Button` primitive: pass a
  * `render` prop (base-ui's `asChild` replacement, e.g. `render={<Link href="…" />}`) to render as a
  * different element; the button's children merge into it. `nativeButton={false}` when rendering a
  * non-`<button>` element (e.g. an anchor). base-ui's Button is itself a client component, so this
- * wrapper stays server-compatible. */
+ * wrapper stays server-compatible.
+ *
+ * A `render` element with an `href` is announced as a LINK. base-ui's `useButton` merges
+ * `{role: "button"}` onto every non-native element it renders (`use-button/useButton.js`), so
+ * `<Button nativeButton={false} render={<Link href="/" />}>` used to reach the accessibility tree as
+ * `<a href role="button">`: a screen reader said "button" for a control that navigates, and
+ * `getByRole("link")` could not find it (#5444). base-ui merges external props LAST, so the `role`
+ * set here wins over its default — and a caller's own `role` still wins over this one. Separately,
+ * an href defaults `nativeButton` to false: an anchor is never a native `<button>`, and
+ * base-ui otherwise stamps `type="button"` on it and logs a mismatch in development.
+ *
+ * What the role does NOT change is base-ui's key handling. Its `onKeyUp` calls the caller's
+ * `onClick` on Space for every non-native element, a `role="link"` anchor included (only the
+ * Enter path is skipped for a real `<a href>`, which it leaves to the browser). A native link does
+ * not activate on Space; a link-Button whose `onClick` does work will run it there, though Space
+ * still does not navigate. This wrapper does not intercept `onKeyUp`. */
 function Button({
   className,
   variant = "default",
   size = "default",
+  render,
+  nativeButton,
+  role,
   ...props
 }: ButtonProps) {
+  const link = rendersLink(render)
+  // Omitted, never `role={undefined}`: base-ui's mergeProps copies an own key whatever its value,
+  // so an explicit undefined would ERASE the `role="button"` a non-native, non-link render needs.
+  const resolvedRole = role ?? (link ? "link" : undefined)
   return (
     <ButtonPrimitive
       data-slot="button"
       data-variant={variant}
       data-size={size}
       className={cn(buttonVariants({ variant, size, className }))}
+      render={render}
+      nativeButton={nativeButton ?? !link}
+      {...(resolvedRole === undefined ? {} : { role: resolvedRole })}
       {...props}
     />
   )

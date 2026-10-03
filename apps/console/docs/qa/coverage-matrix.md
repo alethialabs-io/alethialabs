@@ -127,9 +127,10 @@ Column meanings:
   design.
 - **Not covered, by omission:** a `member` billing negative. `billing.negative.spec.ts` uses
   `owner` and `team` only.
-- **One recorded skip outlived its issue.** The `fixme` on the evidence page's a11y scan in
-  `flows/cross-cutting.spec.ts` names #4612, which is closed. Until the entry is deleted, that
-  scan does not run. See `findings.md`.
+- **One recorded skip outlived its issue, and is repaired.** The `fixme` on the evidence page's
+  a11y scan in `flows/cross-cutting.spec.ts` named #4612 after it closed, so that scan did not
+  run. #5416 deleted the entry and regenerated the ledger slice; the scan runs again. See
+  `findings.md`.
 
 ## The 2026-09-02 matrix (superseded)
 

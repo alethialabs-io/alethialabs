@@ -5,6 +5,8 @@
 // `"use server"` actions file, which may only export async functions) so both the server
 // action (getInviteContext) and the client dialog can share it.
 
+import { BUILT_IN_ROLE_LABELS } from "@/lib/authz/registry";
+
 /** A role the invite dialog can offer (value + label + one-line blurb). */
 export interface InviteRoleOption {
 	value: string;
@@ -18,17 +20,17 @@ export interface InviteRoleOption {
 export const INVITE_ROLES: InviteRoleOption[] = [
 	{
 		value: "admin",
-		label: "Admin",
+		label: BUILT_IN_ROLE_LABELS.admin,
 		description: "Manage members, invitations and all resources.",
 	},
 	{
 		value: "operator",
-		label: "Operator",
+		label: BUILT_IN_ROLE_LABELS.operator,
 		description: "Create, deploy and destroy resources.",
 	},
 	{
 		value: "viewer",
-		label: "Viewer",
+		label: BUILT_IN_ROLE_LABELS.viewer,
 		description: "Read-only access across the organization.",
 	},
 ];

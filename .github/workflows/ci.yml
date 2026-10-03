@@ -967,6 +967,17 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-forbidden-names.mjs --self-test
+      # The release gate's billing flag, beside a Stripe test key, opens the paid-conversion gate's
+      # market check (#5412). Three places said it is set ONLY in release-gate.yml and nothing made
+      # that true (#5443). This fails when the name appears in any tracked file outside a five-entry
+      # allowlist — every deploy workflow, deploy/, infra/ and env assembly included — and when an
+      # allowlisted file stops naming it.
+      - name: The billing test-market flag is set only by the release gate
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-billing-test-market-flag.mjs
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-billing-test-market-flag.mjs --self-test
       # #3855 was auto-closed TWICE on 2026-09-22 — at 16:54Z and again at 21:41Z — by PR bodies
       # saying they did NOT close it. Both parsers carried the defect; only the destructive one
       # was visible. This fails the build if either loses its negation guard, or if the two drift.
@@ -1978,6 +1989,16 @@ jobs:
         run: |
           node scripts/check-e2e-spend-guard.mjs --self-test
           node scripts/check-e2e-spend-guard.mjs
+      # Which commit of each starter template was last green-proven (#5411), and whether each starter
+      # repo's HEAD has moved past it (#5418). The live comparison runs daily from
+      # template-proof-currency.yml and NOT here: a push to a starter repo is a change in another repo,
+      # not in this diff. These are the hermetic halves, so a broken reader or a comparison that can no
+      # longer go red fails the PR that broke it. Each self-test carries its own mutation control.
+      - name: Template proof reader + currency check self-tests (no network)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          node scripts/lib/template-proofs.mjs --self-test
+          node scripts/check-template-proof-currency.mjs --self-test
       # `schedule:` fires the DEFAULT BRANCH's copy — the workflow AND, for an unpinned checkout, the
       # whole tree it executes. So a measurement defined on `dev` can run green for days and publish
       # nothing, which is #4395: eight successful orphan-reaper runs, zero artifacts, and MVP

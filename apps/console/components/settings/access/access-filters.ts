@@ -11,6 +11,7 @@
 // UNFILTERED grants of the same scope, so `filterGrants` and `accessFacetCounts` are gone and
 // this module is the normalize step, the display vocabulary, and nothing else.
 
+import { roleDisplayName } from "@/lib/authz/registry";
 import type { AccessGrantQuery } from "@/lib/queries/access-grants";
 import type { FacetOption } from "@/lib/queries/facets";
 
@@ -63,9 +64,10 @@ export function reachLabel(resourceType: string): string {
 	}
 }
 
-/** The label for a role facet value produced by {@link grantRoleKey}. */
+/** The label for a role facet value produced by {@link grantRoleKey}: a direct permission grant
+ *  shows its key, a role shows its on-screen name (`owner` → `Owner`, a custom name verbatim). */
 export function grantRoleLabel(key: string): string {
-	return key.startsWith("permission:") ? key.slice("permission:".length) : key;
+	return key.startsWith("permission:") ? key.slice("permission:".length) : roleDisplayName(key);
 }
 
 /**

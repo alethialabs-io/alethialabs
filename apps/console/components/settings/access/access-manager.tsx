@@ -22,6 +22,7 @@ import {
   type GrantOptions,
   revokeGrant,
 } from "@/app/server/actions/grants";
+import { roleDisplayName } from "@/lib/authz/registry";
 import { useAccessGrantsPageQuery } from "@/lib/query/use-access-grants-query";
 import { lookup } from "@/lib/typed-object";
 import { DataTable } from "@/components/data-table";
@@ -200,9 +201,9 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
           return (
             <div className="flex items-center gap-2">
               {g.roleName ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium capitalize text-foreground">
+                <span className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium text-foreground">
                   <Shield size={12} className="text-muted-foreground" />
-                  {g.roleName}
+                  {roleDisplayName(g.roleName)}
                 </span>
               ) : (
                 <code className="font-mono text-xs text-foreground">
@@ -602,7 +603,7 @@ function GrantBuilder({
                 { value: "", label: "Select a role…" },
                 ...options.roles.map((r) => ({
                   value: r.id,
-                  label: r.builtin ? `${r.name} (built-in)` : r.name,
+                  label: r.builtin ? `${roleDisplayName(r.name, true)} (built-in)` : r.name,
                 })),
               ]}
             />

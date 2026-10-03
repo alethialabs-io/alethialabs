@@ -223,6 +223,19 @@ export const NOT_A_MEASUREMENT = {
 		why: "Opens issues from PostHog errors. Its output is issues, not an artifact this repo reads back.",
 		issue: "#4397",
 	},
+	"gate-fixme-currency.yml": {
+		why:
+			"A currency check that fails in place: it reds when a {fixme} in gate-baseline.json cites a CLOSED " +
+			"issue, and uploads no artifact any repo file reads back, so there is no producer/consumer pair for S3.",
+		issue: "#5410",
+	},
+	"template-proof-currency.yml": {
+		why:
+			"A currency check that reports in place: it reds, and upserts one issue, when a starter repo's HEAD has " +
+			"moved past the commit its newest PASS bundle under demos/proofs/templates/ was proven on. It uploads no " +
+			"artifact any repo file reads back, so there is no producer/consumer pair for S3.",
+		issue: "#5418",
+	},
 };
 
 // ───────────────────────────── parsing ─────────────────────────────
