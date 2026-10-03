@@ -25,14 +25,18 @@
 //   exit 1  at least one fixme cites a CLOSED issue. Each is named: project, spec, test title, issue.
 //   exit 2  the instrument could not answer — an issue's state was unreadable (gh missing, no token,
 //           rate limit, deleted issue, an unexpected state word), a fixme carries no parseable `#n`,
-//           or the ledger could not be read. NEVER 0: an unanswered question is not an open issue,
+//           a fixme cites MORE than one `#n` (ambiguous — see below), or the ledger could not be read. NEVER 0: an unanswered question is not an open issue,
 //           and assuming "open" is exactly how a stale fixme survives the guard written to catch it.
 //           When findings AND blindness coexist the findings are still printed and the exit is 2,
 //           because a partial answer must not read as a complete one.
 //
-// The `#n` is extracted with the ratchet's OWN `FIXME_RE` — imported, not copied, so the two can
-// never disagree about what a fixme is. `FIXME_RE` is `/^BUG: .+#\d+/`: its greedy `.+` makes the
-// matched prefix end at the LAST `#<digits>`, so the cited issue is that last number.
+// Whether a string IS a fixme is decided by the ratchet's OWN `FIXME_RE` — imported, not copied, so
+// the two can never disagree about it. `FIXME_RE` is `/^BUG: .+#\d+/`, which requires AT LEAST one
+// `#<digits>` and does not limit how many: "BUG: regressed by #12, tracked in #4612" is a fixme the
+// ratchet accepts. Nothing structural says which of the two is the tracking issue, so a fixme citing
+// more than one `#n` is AMBIGUOUS and exits 2 rather than silently checking one of them — picking the
+// last would let a closed tracking issue hide behind an open "regressed by" reference, or vice versa.
+// The fix is to cite exactly one issue in the fixme and move the other reference into the spec.
 //
 // ── WHAT THIS DOES NOT DO ─────────────────────────────────────────────────────────────────────────
 //
@@ -44,6 +48,7 @@
 //   node scripts/check-gate-fixme-issues.mjs                    # live: asks GitHub (needs gh + token)
 //   node scripts/check-gate-fixme-issues.mjs --self-test        # hermetic: fixtures + a mutation control
 //   node scripts/check-gate-fixme-issues.mjs --baseline=<path>  # a different ledger file
+//   node scripts/check-gate-fixme-issues.mjs --states-from=<file.json>  # fixture states, not GitHub
 //
 // `--states-from=<file.json>` replaces the GitHub reads with a `{ "<n>": "OPEN" | "CLOSED" | … }`
 // map. It exists so `--self-test` can drive the REAL exit path in a child process; the workflow
@@ -60,6 +65,8 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_BASELINE, FIXME_RE } from "./e2e-ratchet.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
+
+const USAGE = "usage: node scripts/check-gate-fixme-issues.mjs [--baseline=<path>] [--states-from=<file.json>] [--self-test]";
 const ROOT = path.resolve(path.dirname(SELF), "..");
 
 export const EXIT_OK = 0;
@@ -67,22 +74,32 @@ export const EXIT_CLOSED = 1;
 export const EXIT_BLIND = 2;
 
 /**
- * @typedef {{project: string, spec: string, title: string, fixme: string, issue: number | null}} Fixme
+ * @typedef {{project: string, spec: string, title: string, fixme: string, issue: number | null, cited: number[]}} Fixme
  * @typedef {{state: string, error: string}} StateRead
  */
 
 /**
- * The issue a fixme cites: the last `#<digits>` of the prefix `FIXME_RE` matches, or null when the
- * string is not a fixme the ratchet would accept.
+ * Every `#<digits>` a fixme cites, in order, or [] when the string is not a fixme the ratchet would
+ * accept. More than one entry means the fixme is ambiguous.
+ *
+ * @param {string} fixme
+ * @returns {number[]}
+ */
+export function citedIssues(fixme) {
+	if (!FIXME_RE.test(fixme)) return [];
+	return [...fixme.matchAll(/#(\d+)/g)].map((m) => Number(m[1]));
+}
+
+/**
+ * The ONE issue a fixme cites, or null when it is not a fixme the ratchet would accept OR it cites
+ * more than one `#n` (ambiguous — `decide` reports that as its own bucket).
  *
  * @param {string} fixme
  * @returns {number | null}
  */
 export function citedIssue(fixme) {
-	const m = FIXME_RE.exec(fixme);
-	if (!m) return null;
-	const tail = /#(\d+)$/.exec(m[0]);
-	return tail ? Number(tail[1]) : null;
+	const cited = citedIssues(fixme);
+	return cited.length === 1 ? cited[0] : null;
 }
 
 /**
@@ -106,7 +123,7 @@ export function fixmesIn(doc) {
 			for (const [title, recorded] of Object.entries(tests)) {
 				entries += 1;
 				if (isObject(recorded) && typeof recorded.fixme === "string") {
-					fixmes.push({ project, spec, title, fixme: recorded.fixme, issue: citedIssue(recorded.fixme) });
+					fixmes.push({ project, spec, title, fixme: recorded.fixme, issue: citedIssue(recorded.fixme), cited: citedIssues(recorded.fixme) });
 				}
 			}
 		}
@@ -130,14 +147,19 @@ function isObject(v) {
  *
  * @param {Fixme[]} fixmes
  * @param {Map<number, StateRead>} states issue number → what reading its state produced
- * @returns {{code: number, open: Fixme[], closed: Fixme[], unparseable: Fixme[], unreadable: Fixme[]}}
+ * @returns {{code: number, open: Fixme[], closed: Fixme[], ambiguous: Fixme[], unparseable: Fixme[], unreadable: Fixme[]}}
  */
 export function decide(fixmes, states) {
+	/** @type {Fixme[]} */ const ambiguous = [];
 	/** @type {Fixme[]} */ const open = [];
 	/** @type {Fixme[]} */ const closed = [];
 	/** @type {Fixme[]} */ const unparseable = [];
 	/** @type {Fixme[]} */ const unreadable = [];
 	for (const f of fixmes) {
+		if (f.cited.length > 1) {
+			ambiguous.push(f);
+			continue;
+		}
 		if (f.issue === null) {
 			unparseable.push(f);
 			continue;
@@ -149,9 +171,9 @@ export function decide(fixmes, states) {
 		// Bucketing it with either would be the guard answering a question it got no answer to.
 		else unreadable.push(f);
 	}
-	const blind = unparseable.length + unreadable.length > 0;
+	const blind = ambiguous.length + unparseable.length + unreadable.length > 0;
 	const code = blind ? EXIT_BLIND : closed.length > 0 ? EXIT_CLOSED : EXIT_OK;
-	return { code, open, closed, unparseable, unreadable };
+	return { code, open, closed, ambiguous, unparseable, unreadable };
 }
 
 /**
@@ -197,7 +219,8 @@ function readStateFromMap(map) {
  * @returns {string}
  */
 function describe(f) {
-	return `[${f.project}] ${f.spec} › ${f.title} — cites ${f.issue === null ? "(no #n)" : `#${f.issue}`}`;
+	const cites = f.cited.length === 0 ? "(no #n)" : f.cited.map((n) => `#${n}`).join(", ");
+	return `[${f.project}] ${f.spec} › ${f.title} — cites ${cites}`;
 }
 
 /**
@@ -226,7 +249,7 @@ function parseArgs(argv) {
 export function main(argv) {
 	const args = parseArgs(argv);
 	if (args.help) {
-		console.log("usage: node scripts/check-gate-fixme-issues.mjs [--baseline=<path>] [--self-test]");
+		console.log(USAGE);
 		return EXIT_OK;
 	}
 	if (args.unknown.length > 0) {
@@ -284,6 +307,11 @@ export function main(argv) {
 		console.error("  `node scripts/e2e-ratchet.mjs --project=<p> --results=<json> --write --only=<spec>` in the same PR — or it is still true");
 		console.error("  and needs an OPEN issue: reopen it, or file one and cite that.");
 	}
+	if (v.ambiguous.length > 0) {
+		console.error(`::error::check-gate-fixme-issues: ${v.ambiguous.length} {fixme} cite MORE than one issue — which one tracks the bug is ambiguous.`);
+		for (const f of v.ambiguous) console.error(`  ? ${describe(f)}: ${JSON.stringify(f.fixme)}`);
+		console.error("  Cite exactly ONE #n (the issue that tracks this bug) and move any other reference into the spec.");
+	}
 	if (v.unparseable.length > 0) {
 		console.error(`::error::check-gate-fixme-issues: ${v.unparseable.length} {fixme} carry no issue FIXME_RE can read ("BUG: … #<n>").`);
 		for (const f of v.unparseable) console.error(`  ? ${describe(f)}: ${JSON.stringify(f.fixme)}`);
@@ -309,10 +337,11 @@ export function main(argv) {
  * process EXITS with, never on what it prints.
  *
  * @param {string[]} args
+ * @param {Record<string, string>} [env]  overrides on top of the (token-stripped) parent environment
  * @returns {number}
  */
-function runChild(args) {
-	const r = spawnSync(process.execPath, [SELF, ...args], { encoding: "utf8", env: { ...process.env, GH_TOKEN: "", GITHUB_TOKEN: "" } });
+function runChild(args, env = {}) {
+	const r = spawnSync(process.execPath, [SELF, ...args], { encoding: "utf8", env: { ...process.env, GH_TOKEN: "", GITHUB_TOKEN: "", ...env } });
 	return typeof r.status === "number" ? r.status : -1;
 }
 
@@ -333,7 +362,8 @@ function selfTest() {
 
 	// citedIssue — the extraction rides FIXME_RE, so these also pin what that regex accepts.
 	ok("a fixme's #n is extracted", citedIssue("BUG: the thing breaks #4633") === 4633);
-	ok("the LAST #n is the cited one", citedIssue("BUG: regressed by #12, tracked in #4612") === 4612);
+	ok("two #n → no single cited issue (ambiguous)", citedIssue("BUG: regressed by #12, tracked in #4612") === null);
+	ok("…but both are reported as cited", JSON.stringify(citedIssues("BUG: regressed by #12, tracked in #4612")) === "[12,4612]");
 	ok("a fixme without BUG: is not one", citedIssue("the thing breaks #4633") === null);
 	ok("a fixme without #n is not one", citedIssue("BUG: the thing breaks") === null);
 
@@ -354,7 +384,12 @@ function selfTest() {
 	ok("an unexpected state word → 2", decide(found.fixmes, st({ 10: "OPEN", 20: "MERGED" })).code === EXIT_BLIND);
 	ok("a missing read → 2", decide(found.fixmes, st({ 10: "OPEN" })).code === EXIT_BLIND);
 	ok("CLOSED plus unreadable → 2 (a partial answer is not a complete one)", decide(found.fixmes, st({ 10: "CLOSED" })).code === EXIT_BLIND);
-	ok("a fixme with no #n → 2", decide([{ project: "qa", spec: "s", title: "t", fixme: "BUG: no number", issue: null }], new Map()).code === EXIT_BLIND);
+	ok("a fixme with no #n → 2", decide([{ project: "qa", spec: "s", title: "t", fixme: "BUG: no number", issue: null, cited: [] }], new Map()).code === EXIT_BLIND);
+	{
+		const amb = fixmesIn(ledger({ fz: { fixme: "BUG: regressed by #12, tracked in #4612" } })).fixmes;
+		const v = decide(amb, st({ 12: "OPEN", 4612: "OPEN" }));
+		ok("a fixme citing two #n → 2 even when both are OPEN", v.code === EXIT_BLIND && v.ambiguous.length === 1);
+	}
 
 	// The real CLI, by exit code, against fixture files.
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gate-fixme-"));
@@ -365,6 +400,7 @@ function selfTest() {
 	};
 	try {
 		const base = write("baseline.json", doc);
+		/** @type {Record<string, string>} */
 		const openStates = { 10: "OPEN", 20: "OPEN" };
 		const openFile = write("open.json", openStates);
 		ok("CLI: every fixme cites an OPEN issue → exit 0", runChild([`--baseline=${base}`, `--states-from=${openFile}`]) === EXIT_OK);
@@ -372,17 +408,35 @@ function selfTest() {
 		// THE MUTATION CONTROL: the same fixture, one issue flipped OPEN → CLOSED. Prove the mutation
 		// applied before trusting its result — a mutation that silently did not apply passes.
 		const mutated = { ...openStates, 20: "CLOSED" };
-		ok("mutation applied: the fixture differs from the OPEN one in exactly one issue", JSON.stringify(mutated) !== JSON.stringify(openStates));
+		const keys = [...new Set([...Object.keys(openStates), ...Object.keys(mutated)])];
+		const differing = keys.filter((k) => openStates[k] !== mutated[k]);
+		ok(
+			"mutation applied: the fixture differs from the OPEN one in exactly one issue (#20, OPEN → CLOSED)",
+			keys.length === Object.keys(openStates).length && differing.length === 1 && differing[0] === "20" && mutated[20] === "CLOSED",
+		);
 		const closedFile = write("closed.json", mutated);
 		ok("CLI MUTATION: one issue flipped OPEN → CLOSED turns the run red → exit 1", runChild([`--baseline=${base}`, `--states-from=${closedFile}`]) === EXIT_CLOSED);
 
 		ok("CLI: a state the fixture does not name → exit 2", runChild([`--baseline=${base}`, `--states-from=${write("partial.json", { 10: "OPEN" })}`]) === EXIT_BLIND);
 		ok("CLI: an empty state string → exit 2", runChild([`--baseline=${base}`, `--states-from=${write("empty.json", { 10: "OPEN", 20: "" })}`]) === EXIT_BLIND);
+		ok(
+			"CLI: a fixme citing two #n → exit 2 (ambiguous), even with both OPEN",
+			runChild([`--baseline=${write("twonum.json", ledger({ f: { fixme: "BUG: regressed by #10, tracked in #20" } }))}`, `--states-from=${openFile}`]) === EXIT_BLIND,
+		);
+		// The LIVE reader's fail-closed path: no --states-from and a PATH with no `gh` on it, so
+		// readStateFromGitHub's catch runs for real. It must answer 2 — never treat the failure as OPEN.
+		const noGhBin = fs.mkdtempSync(path.join(os.tmpdir(), "gate-fixme-nogh-"));
+		try {
+			ok("CLI: gh unavailable (no --states-from, PATH without gh) → exit 2, never 0", runChild([`--baseline=${base}`], { PATH: noGhBin }) === EXIT_BLIND);
+		} finally {
+			fs.rmSync(noGhBin, { recursive: true, force: true });
+		}
 		ok("CLI: a fixme with no #n → exit 2", runChild([`--baseline=${write("nonum.json", ledger({ f: { fixme: "BUG: nothing cited" } }))}`, `--states-from=${openFile}`]) === EXIT_BLIND);
 		ok("CLI: a ledger whose shape it cannot walk → exit 2", runChild([`--baseline=${write("shape.json", { tests: {} })}`, `--states-from=${openFile}`]) === EXIT_BLIND);
 		ok("CLI: a missing ledger → exit 2", runChild([`--baseline=${path.join(dir, "absent.json")}`, `--states-from=${openFile}`]) === EXIT_BLIND);
 		ok("CLI: a ledger with no fixme → exit 0 (stated as asserting nothing)", runChild([`--baseline=${write("none.json", ledger({ p: "passed" }))}`, `--states-from=${openFile}`]) === EXIT_OK);
 		ok("CLI: an unknown flag → exit 2, not a live run", runChild(["--baselin=typo"]) === EXIT_BLIND);
+		ok("--help names every flag", ["--baseline=", "--states-from=", "--self-test"].every((f) => USAGE.includes(f)));
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
@@ -392,7 +446,7 @@ function selfTest() {
 	try {
 		const real = fixmesIn(JSON.parse(fs.readFileSync(path.join(ROOT, DEFAULT_BASELINE), "utf8")));
 		ok(`the real ledger is walkable (${real.entries} entries)`, real.entries > 0);
-		ok(`every {fixme} in the real ledger cites a #n (${real.fixmes.length} fixme(s))`, real.fixmes.every((f) => f.issue !== null));
+		ok(`every {fixme} in the real ledger cites exactly one #n (${real.fixmes.length} fixme(s))`, real.fixmes.every((f) => f.issue !== null && f.cited.length === 1));
 	} catch (err) {
 		ok(`the real ledger is readable: ${err instanceof Error ? err.message : String(err)}`, false);
 	}
