@@ -30,6 +30,11 @@ interface StartPageProps {
  * one thing that says whether the answer is theirs to change, so it is rendered here, with the way
  * on to billing beside it. Every OTHER failure keeps the old fallback: those are about the
  * deployment or the scope (no org yet, Stripe unconfigured), and billing is where they resolve.
+ *
+ * The heading and the gate's sentence are read together, so they must not disagree (#5443): the
+ * `market_closed` sentence once said "the Pro trial is unaffected" directly under "We can't start
+ * your trial checkout", with no way to that trial from here. The sentence no longer makes a claim
+ * about a trial; `tests/app/start-page.test.tsx` renders the gate's REAL refusal to pin that.
  */
 export default async function StartPage({ searchParams }: StartPageProps) {
 	// Only Team has a self-serve trial today; the param is reserved for future plans.

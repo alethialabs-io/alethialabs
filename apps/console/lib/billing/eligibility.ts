@@ -29,6 +29,7 @@ import {
 	paidMarketEnabled,
 } from "@repo/legal/commerce";
 import { LEGAL_DOCUMENTS } from "@repo/legal/documents";
+import { stripeSecretKey } from "@/lib/billing/stripe-key";
 import { getServiceDb } from "@/lib/db";
 import { legalAcceptance, organizationBilling } from "@/lib/db/schema";
 
@@ -103,7 +104,10 @@ export async function hasAcceptedCurrentDocuments(
 /**
  * The gate-only flag that opens the market check for a Stripe TEST-mode console (#5412).
  *
- * Set by `.github/workflows/release-gate.yml` on the legs that promise `stripe`, and nowhere else.
+ * Set by `.github/workflows/release-gate.yml` on the legs that promise `stripe`, and nowhere else —
+ * and that is enforced, not just stated: `scripts/check-billing-test-market-flag.mjs` (CI, the
+ * `guards` job) fails when the name appears in any tracked file outside its short allowlist, which
+ * covers every deploy workflow, `deploy/`, `infra/` and env assembly (#5443).
  */
 export const TEST_MODE_MARKET_FLAG = "ALETHIA_BILLING_TEST_MARKET";
 
@@ -122,14 +126,22 @@ export const TEST_MODE_MARKET_FLAG = "ALETHIA_BILLING_TEST_MARKET";
  *    `.env`; they keep measuring the product as it ships, refusals included.
  *
  * Only the MARKET check is waived. Terms acceptance, the payer's declared capacity and the billing
- * country are still asked first, so the gate run walks the same declaration a customer does. Read
- * from `process.env` at call time, not at import, so a test can flip it and so `next build` cannot
- * bake it into a bundle.
+ * country are still asked first, so the gate run walks the same declaration a customer does.
+ *
+ * Read from `process.env` at call time, not at import, so a test can flip it between calls. That is
+ * NOT what keeps it out of a client bundle, and an earlier version of this comment said it was:
+ * Next inlines only `NEXT_PUBLIC_*` names (plus any listed under `next.config`'s `env`, which the
+ * console does not use), so a server-only name such as this one is never baked in however it is
+ * read. `scripts/check-billing-test-market-flag.mjs` fails if the name ever appears in
+ * `next.config` or any other env assembly.
+ *
+ * The key is read through `stripeSecretKey`, the same accessor the Stripe client is built from, so
+ * the key this waiver judges is the key that would move the money (#5443).
  */
 export function testModeMarketOpen(
 	env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
-	const key = env.STRIPE_SECRET_KEY?.trim() ?? "";
+	const key = stripeSecretKey(env);
 	return key.startsWith("sk_test_") && env[TEST_MODE_MARKET_FLAG] === "1";
 }
 
@@ -166,10 +178,17 @@ export async function assertPaidConversionAllowed(
 		);
 	}
 	if (!paidMarketEnabled(country, ctx.capacity) && !testModeMarketOpen()) {
+		// No word about a trial (#5443). This sentence used to add "and the Pro trial is
+		// unaffected", but the gate is what REFUSES a trial on the most-used path: the public "Start
+		// free trial" CTA lands on /start, which opens a Pro Checkout carrying a 30-day trial, and this
+		// is the refusal it renders under "We can't start your trial checkout". The card-less trial
+		// (`startProTrial`) really is ungated, but it is reachable only from onboarding and the
+		// create-org sheet, and only while the account has not used it — so no page that shows this
+		// sentence can promise it.
 		throw new PaidConversionNotAllowedError(
 			"market_closed",
 			"Alethia is not yet able to sell to customers in this country in this capacity. " +
-				"Community remains free and unlimited in time, and the Pro trial is unaffected. " +
+				"Community remains free and unlimited in time. " +
 				"Contact sales@alethialabs.io and we will tell you when it opens.",
 		);
 	}
