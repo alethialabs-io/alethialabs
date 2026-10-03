@@ -584,7 +584,21 @@ test.describe("Projects — delete (non-live)", () => {
 		// `{ role: button, name: "Delete project" }` — the trigger reads "Delete" but carries
 		// `aria-label="Delete project"` (#4463) — an alert-dialog titled "Delete this project?", and
 		// a confirm action also named "Delete project".
-		await owner.page.getByRole("button", { name: /^Delete project$/ }).click({ timeout: 15_000 });
+		//
+		// WAIT FOR HYDRATION before clicking; a visible trigger is not enough. The page is reached on
+		// `domcontentloaded`, so the server-rendered "Delete" button is visible and clickable before
+		// React hydrates `project-general.tsx`. Its `AlertDialogTrigger` opens the dialog from a
+		// client handler, so a click that lands first hits a button that does nothing: no dialog, and
+		// `alertdialog` is never found. Release gate 37109081352 failed exactly that way on both
+		// attempts, with the page fully rendered. The signal is the one #5202 uses for rename on this
+		// page. The name input is `register`ed, so the server HTML leaves it EMPTY, and only the
+		// hydrated client writes the project name into it. No Suspense boundary sits between the
+		// input and the trigger, so they hydrate together: seeing the name means the trigger is live.
+		await expect(owner.page.getByRole("textbox", { name: "Project name" })).toHaveValue(
+			project.name,
+			{ timeout: 15_000 },
+		);
+		await owner.page.getByRole("button", { name: /^Delete project$/ }).click();
 		const dialog = owner.page.getByRole("alertdialog");
 		await expect(dialog.getByText(/delete this project\?/i)).toBeVisible();
 		await dialog.getByRole("button", { name: /delete project/i }).click();
