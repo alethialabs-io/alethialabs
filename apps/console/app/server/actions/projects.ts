@@ -88,6 +88,7 @@ import { listAssignmentsFor } from "@/lib/queries/classification";
 import {
 	type EnvironmentSpec,
 	insertProjectWithDefaultFabric,
+	isEnvironmentNameTaken,
 	isProjectNameTaken,
 	ProjectNameTakenError,
 } from "@/lib/queries/projects";
@@ -116,7 +117,7 @@ import {
 } from "@/lib/cloud-providers";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
-import { assertUsageAllowed } from "@/lib/billing/usage-guard";
+import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
 import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 import { designInventory } from "@/lib/promotions/diff";
@@ -135,13 +136,35 @@ import { repoLabel } from "@/lib/repos/repo-label";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
 /**
+ * A refusal to queue a job that the USER can act on — every one of them names its remedy ("link a
+ * cloud account", "remove the binding", "rename it in the canvas"). Raised by the deploy-time gates
+ * in {@link buildConfigSnapshot} and {@link assertIacSourceQueueable}.
+ *
+ * WHY A TYPE (#5445). These gates throw, and that is right for the CLI route (`POST /api/jobs`),
+ * whose handler turns a thrown message into a JSON body the CLI prints. But the console calls the
+ * same actions as `"use server"` exports, and a production build replaces a thrown message with a
+ * digest — so a user pressing Deploy on a project with no cloud account was told nothing. The type
+ * is what lets {@link refusalAsValue} return THESE as `{ ok: false, error }` while every other
+ * failure keeps throwing: an unexpected error may carry query text, the user cannot act on it, and
+ * its redaction is the correct behaviour (see {@link ProjectRefusal}).
+ *
+ * NOT exported: in a `"use server"` file every runtime export becomes a POST-addressable action.
+ */
+class JobRefusalError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "JobRefusalError";
+	}
+}
+
+/**
  * Mirrors the Go provisioner gate (packages/core/provisioner/placement.go):
  * a CORE resource placed on a cloud account other than the project's primary one is
  * a hot cross-cloud data-plane edge we can't provision yet. Thrown before a job is
  * queued so the user fails fast.
  */
 function placementGateError(resourceType: string, name: string): Error {
-	return new Error(
+	return new JobRefusalError(
 		`Cross-cloud ${resourceType} "${name}" targets a different cloud account than this stack's core. ` +
 			"Hot cross-cloud data-plane edges (compute reaching a primary datastore in another cloud) are on " +
 			"the roadmap and require cross-cloud networking that isn't available yet — move this resource onto " +
@@ -158,7 +181,7 @@ function placementGateError(resourceType: string, name: string): Error {
  */
 function hetznerDbEngineGateError(name: string, engineFamily: string): Error {
 	const label = engineFamily === "mysql" ? "MySQL" : `"${engineFamily}"`;
-	return new Error(
+	return new JobRefusalError(
 		`Database "${name}": ${label} databases can't be provisioned on Hetzner — the in-cluster ` +
 			"CloudNativePG operator supports PostgreSQL only. Switch the database engine to PostgreSQL " +
 			"or move the stack to a cloud with a managed service for this engine.",
@@ -176,7 +199,7 @@ function hetznerDbEngineGateError(name: string, engineFamily: string): Error {
  * layer up from the one #1510 fixes. The renderer refuses these cells too, with the same sentence.
  */
 function keylessAuthGateError(name: string, reason: string): Error {
-	return new Error(
+	return new JobRefusalError(
 		`Database "${name}": ${reason} Turn IAM authentication off for this database, or move it to a ` +
 			"cloud that supports keyless database auth.",
 	);
@@ -206,7 +229,7 @@ function unsupportedKindGateError(
 	};
 	const detail =
 		hint[kind] ?? `"${kind}" components have no provisioning path here`;
-	return new Error(
+	return new JobRefusalError(
 		`Component "${name}" (${kind}) can't be provisioned on ${cloud}: ${detail}.`,
 	);
 }
@@ -252,6 +275,68 @@ export type UpdateProjectNameResult =
 
 /** {@link deleteProject}'s result: the deletion, or a refusal to render. */
 export type DeleteProjectResult = { ok: true } | ProjectRefusal;
+
+/**
+ * {@link addEnvironment}'s and {@link duplicateEnvironment}'s result: the created environment, or
+ * a refusal to render beside the name field.
+ *
+ * Two refusals travel this way, and both are the user's to fix by typing another name: the shared
+ * env-name rule (`environmentNameProblem` — empty after slugging, or a word a console route
+ * shadows), and a name this project already has. Both used to be THROWN — the first as
+ * `throw new Error(problem)`, the second as a raw 23505 — and the new-environment dialog toasted
+ * whatever arrived, which in a production build is a digest (#5445).
+ */
+export type AddEnvironmentResult =
+	| { ok: true; environment: ProjectEnvironment }
+	| ProjectRefusal;
+
+/** The sentence for an environment name this project already has. */
+function environmentNameTakenRefusal(name: string): ProjectRefusal {
+	return {
+		ok: false,
+		error: `This project already has an environment named "${name}". Choose another name.`,
+	};
+}
+
+/**
+ * Runs an environment insert, mapping the `(project_id, name)` unique violation onto the same
+ * refusal the pre-check returns.
+ *
+ * The pre-check inside `run` answers the ordinary case; this catch answers the loser of two
+ * concurrent adds of one name, which read the same rows and both passed it. The catch is OUTSIDE
+ * the transaction on purpose: a failed statement aborts the transaction, so there is nothing to
+ * return from inside it. Every other error — including `notFound()` — is rethrown untouched.
+ */
+async function insertEnvironmentOrRefuse(
+	name: string,
+	run: () => Promise<AddEnvironmentResult>,
+): Promise<AddEnvironmentResult> {
+	try {
+		return await run();
+	} catch (err) {
+		if (isEnvironmentNameTaken(err)) return environmentNameTakenRefusal(name);
+		throw err;
+	}
+}
+
+/** Whether `projectId` already has an environment stored under the slug `name`. */
+async function environmentNameExists(
+	tx: Tx,
+	projectId: string,
+	name: string,
+): Promise<boolean> {
+	const [row] = await tx
+		.select({ id: projectEnvironments.id })
+		.from(projectEnvironments)
+		.where(
+			and(
+				eq(projectEnvironments.project_id, projectId),
+				eq(projectEnvironments.name, name),
+			),
+		)
+		.limit(1);
+	return Boolean(row);
+}
 
 /**
  * The project-name rule, READ from `project-form.schema.ts` rather than retyped.
@@ -1063,7 +1148,7 @@ async function buildConfigSnapshot(
 		);
 
 		if (!project.cloud_identity_id) {
-			throw new Error(
+			throw new JobRefusalError(
 				"No cloud account linked to this project. Go to Connectors to connect.",
 			);
 		}
@@ -1075,7 +1160,7 @@ async function buildConfigSnapshot(
 			.limit(1);
 
 		if (!identity) {
-			throw new Error(
+			throw new JobRefusalError(
 				"Cloud account is not verified. Go to Connectors to verify.",
 			);
 		}
@@ -1294,7 +1379,7 @@ async function buildConfigSnapshot(
 									? queueNames.has(b.target.name)
 									: secretNames.has(b.target.name);
 					if (!targetExists) {
-						throw new Error(
+						throw new JobRefusalError(
 							`Service "${svc.name}" binds to ${b.target.kind} "${b.target.name}", which does not exist in this environment. Add the ${b.target.kind} or remove the binding.`,
 						);
 					}
@@ -1333,7 +1418,7 @@ async function buildConfigSnapshot(
 		if (dns?.waf_enabled) {
 			const reason = wafUnavailableReasonForCloud(identity.provider);
 			if (reason) {
-				throw new Error(
+				throw new JobRefusalError(
 					`Web application firewall: ${reason} Open this project in the canvas and save the staged change to turn the WAF switch off, or move the project to a cloud where Alethia provisions one.`,
 				);
 			}
@@ -1373,7 +1458,7 @@ async function buildConfigSnapshot(
 				dns.domain_name,
 			);
 			if (reason) {
-				throw new Error(`DNS: ${reason}`);
+				throw new JobRefusalError(`DNS: ${reason}`);
 			}
 		}
 
@@ -1415,7 +1500,7 @@ async function buildConfigSnapshot(
 					for (const row of rows) {
 						const problem = hetznerNodeNameProblem(kind, row.name);
 						if (problem) {
-							throw new Error(
+							throw new JobRefusalError(
 								`Component name: ${problem} Rename it in the canvas and save, then deploy again.`,
 							);
 						}
@@ -1597,7 +1682,7 @@ async function buildConfigSnapshot(
 						: identity.provider === "gcp"
 							? "network"
 							: "VPC";
-				throw new Error(
+				throw new JobRefusalError(
 					`Cannot plan: no ${netLabel} selected. Edit the project's network settings or enable network provisioning.`,
 				);
 			}
@@ -1945,7 +2030,7 @@ function assertIacSourceQueueable(
 ): void {
 	if (!iacSource) return;
 	if (!isByoIacEnabled()) {
-		throw new Error(
+		throw new JobRefusalError(
 			"This environment has a bring-your-own IaC source attached, but the feature is disabled " +
 				"on this instance — set ALETHIA_BYO_IAC_ENABLED=true, or detach the IaC source.",
 		);
@@ -1953,7 +2038,7 @@ function assertIacSourceQueueable(
 	if (kind === "destroy") {
 		// Destroy needs the module commit that created the state, not a clean re-scan.
 		if (!iacSource.deployed_commit_sha) {
-			throw new Error(
+			throw new JobRefusalError(
 				"This environment has no deployed IaC state to destroy — deploy the attached IaC " +
 					"source first (destroy tears down the exact commit that was applied).",
 			);
@@ -1961,7 +2046,7 @@ function assertIacSourceQueueable(
 		return;
 	}
 	if (iacSource.scan_status !== "done" || !iacSource.commit_sha) {
-		throw new Error(
+		throw new JobRefusalError(
 			"The attached IaC source hasn't passed a scan yet — run the IaC scan first (it pins the " +
 				"exact commit that will be applied) before planning or deploying this environment.",
 		);
@@ -2068,6 +2153,77 @@ async function enqueueEnvTransition(
 	const moved = await transitionEnv(tx, envId, context, jobId, meta);
 	// Typed, so POST /api/jobs answers 409 (a state conflict) rather than 500 (#5090).
 	if (!moved) throw new EnvStateConflictError(context);
+}
+
+/**
+ * What a `try*` job action answers: the queued job(s), or a refusal to render.
+ *
+ * The success arm is the wrapped action's own result with `ok: true` added, so a caller that used
+ * `jobId` (or `jobs`) keeps reading the same field after narrowing.
+ */
+export type QueueJobResult<T extends object> = ({ ok: true } & T) | ProjectRefusal;
+
+/**
+ * Runs a job-queueing action and returns a refusal the user can act on as a VALUE.
+ *
+ * Exactly four types are refusals, each already written as a sentence for a person:
+ *   · {@link JobRefusalError} — the deploy-time gates (no cloud account, a dangling binding, a WAF
+ *     the cloud cannot provide, a Hetzner node name, no network selected, an unscanned IaC source…);
+ *   · `EnvStateConflictError` — a job is already in flight on the environment; the same request
+ *     succeeds once it settles (the CLI route answers it 409 for the same reason);
+ *   · `UsageLimitError` — the plan's hard usage cap or the free daily job quota, both naming the
+ *     way out (wait, or upgrade);
+ *   · `FabricHasLiveTenantsError` — a destroy that would orphan tenants, naming them.
+ * Everything else rethrows: an unexpected failure is not advice, and its redaction is correct.
+ */
+async function refusalAsValue<T extends object>(
+	run: () => Promise<T>,
+): Promise<QueueJobResult<T>> {
+	try {
+		return { ok: true, ...(await run()) };
+	} catch (err) {
+		if (
+			err instanceof JobRefusalError ||
+			err instanceof EnvStateConflictError ||
+			err instanceof UsageLimitError ||
+			err instanceof FabricHasLiveTenantsError
+		) {
+			return { ok: false, error: err.message };
+		}
+		throw err;
+	}
+}
+
+/**
+ * {@link planProject} for the console: the same authorization, gates and job, with a refusal the
+ * user can act on RETURNED rather than thrown (#5445). `planProject` itself keeps throwing — `POST
+ * /api/jobs` relies on that, and a route handler's message is not redacted.
+ */
+export async function tryPlanProject(
+	...args: Parameters<typeof planProject>
+): Promise<QueueJobResult<Awaited<ReturnType<typeof planProject>>>> {
+	return refusalAsValue(() => planProject(...args));
+}
+
+/** {@link provisionProject} for the console — a refusal is returned, not thrown (see {@link tryPlanProject}). */
+export async function tryProvisionProject(
+	...args: Parameters<typeof provisionProject>
+): Promise<QueueJobResult<Awaited<ReturnType<typeof provisionProject>>>> {
+	return refusalAsValue(() => provisionProject(...args));
+}
+
+/** {@link destroyProject} for the console — a refusal is returned, not thrown (see {@link tryPlanProject}). */
+export async function tryDestroyProject(
+	...args: Parameters<typeof destroyProject>
+): Promise<QueueJobResult<Awaited<ReturnType<typeof destroyProject>>>> {
+	return refusalAsValue(() => destroyProject(...args));
+}
+
+/** {@link queueDriftDetection} for the console — a refusal is returned, not thrown (see {@link tryPlanProject}). */
+export async function tryQueueDriftDetection(
+	...args: Parameters<typeof queueDriftDetection>
+): Promise<QueueJobResult<Awaited<ReturnType<typeof queueDriftDetection>>>> {
+	return refusalAsValue(() => queueDriftDetection(...args));
 }
 
 export async function planProject(
@@ -3200,26 +3356,32 @@ export async function getProjectEnvironments(projectId: string) {
 /**
  * Adds an environment to a project. The `name` is slugified (it feeds the tofu state
  * path + the URL); it inherits the project's region unless one is given. Never default.
+ *
+ * A name the user can fix is RETURNED as a refusal ({@link AddEnvironmentResult}), not thrown —
+ * a thrown message does not survive a production build's server-action boundary.
  */
 export async function addEnvironment(
 	projectId: string,
 	input: { name: string; stage: EnvironmentStage; region?: string | null },
-) {
+): Promise<AddEnvironmentResult> {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
 	// One definition of what an environment name may be, shared with the CLI's `project env add`
 	// and with `project create --env` (lib/validations/names.ts). The two used to disagree: this
 	// path slugified `Prod` to `prod`, the create path 400'd on it.
 	const problem = environmentNameProblem(input.name);
-	if (problem) throw new Error(problem);
+	if (problem) return { ok: false, error: problem };
 	const name = normalizeEnvironmentName(input.name);
-	return withActorScope(actor, async (tx) => {
+	return insertEnvironmentOrRefuse(name, () => withActorScope(actor, async (tx): Promise<AddEnvironmentResult> => {
 		const [project] = await tx
 			.select({ org_id: projects.org_id })
 			.from(projects)
 			.where(eq(projects.id, projectId))
 			.limit(1);
 		if (!project) notFound(); // stale/deleted id → 404, not a captured error
+		if (await environmentNameExists(tx, projectId, name)) {
+			return environmentNameTakenRefusal(name);
+		}
 		const [env] = await tx
 			.insert(projectEnvironments)
 			.values({
@@ -3248,8 +3410,8 @@ export async function addEnvironment(
 				region: input.region ?? null,
 			})
 			.returning();
-		return { environment: env };
-	});
+		return { ok: true, environment: env };
+	}));
 }
 
 /**
@@ -3262,18 +3424,18 @@ export async function duplicateEnvironment(
 	projectId: string,
 	baseEnvironmentId: string,
 	name: string,
-) {
+): Promise<AddEnvironmentResult> {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
 	const problem = environmentNameProblem(name);
-	if (problem) throw new Error(problem);
+	if (problem) return { ok: false, error: problem };
 	const slug = normalizeEnvironmentName(name);
 	// The base env's design (form shape = config only; provisioned outputs already stripped). Null
 	// when the base env has no design yet (an empty env) → the duplicate is created empty too.
 	const baseConfig = await getProjectAsFormData(projectId, baseEnvironmentId)
 		.then((r) => r.formData)
 		.catch(() => null);
-	return withActorScope(actor, async (tx) => {
+	return insertEnvironmentOrRefuse(slug, () => withActorScope(actor, async (tx): Promise<AddEnvironmentResult> => {
 		const [base] = await tx
 			.select({
 				org_id: projectEnvironments.org_id,
@@ -3289,6 +3451,9 @@ export async function duplicateEnvironment(
 			)
 			.limit(1);
 		if (!base) throw new Error("Base environment not found for this project");
+		if (await environmentNameExists(tx, projectId, slug)) {
+			return environmentNameTakenRefusal(slug);
+		}
 		const [env] = await tx
 			.insert(projectEnvironments)
 			.values({
@@ -3320,8 +3485,8 @@ export async function duplicateEnvironment(
 		if (!env) throw new Error("Failed to create environment");
 		// Copy the base env's components into the new env (fresh rows, status defaults to PENDING).
 		if (baseConfig) await writeComponents(tx, projectId, env.id, baseConfig);
-		return { environment: env };
-	});
+		return { ok: true, environment: env };
+	}));
 }
 
 /** Toggles opt-in auto-heal for an environment (reconcile re-applies the deployed design on drift). */
