@@ -139,6 +139,7 @@ describe("orgSlugHooks — inside better-auth's own endpoints", () => {
 function stubCore(
   newOrgSetup: CoreContext["newOrgSetup"] = passThroughSetup(),
   isOrgMember: CoreContext["isOrgMember"] = vi.fn(async () => false),
+  roleChangeOwnerRefusal: CoreContext["roleChangeOwnerRefusal"] = vi.fn(async () => null),
 ): CoreContext {
   const stub = {
     db: {},
@@ -156,6 +157,7 @@ function stubCore(
     resolveOrgEntitlements: vi.fn(),
     newOrgSetup,
     isOrgMember,
+    roleChangeOwnerRefusal,
     fga: { isEnabled: () => false },
   };
   // A test-only stub: `db` and most of `fga` are never reached with OpenFGA off (see above).
@@ -197,11 +199,14 @@ function stubSetup() {
 
 describe("register(core) — the organization plugin production mounts", () => {
   /** A better-auth carrying the plugin `register` returned, a signed-in user, and an HTTP caller. */
-  async function setup(newOrgSetup?: CoreContext["newOrgSetup"]) {
+  async function setup(
+    newOrgSetup?: CoreContext["newOrgSetup"],
+    roleChangeOwnerRefusal?: CoreContext["roleChangeOwnerRefusal"],
+  ) {
     // core's membership read, over this instance's own store.
     const isOrgMember = async (orgId: string, userId: string): Promise<boolean> =>
       db.member.some((m) => m.organizationId === orgId && m.userId === userId);
-    const mod = register(stubCore(newOrgSetup, isOrgMember));
+    const mod = register(stubCore(newOrgSetup, isOrgMember, roleChangeOwnerRefusal));
     const orgPlugin = mod.authPlugins?.find((p) => p.id === "organization");
     if (!orgPlugin) throw new Error("register() returned no organization plugin");
     const db: Record<string, Record<string, unknown>[]> = {
@@ -373,5 +378,62 @@ describe("register(core) — the organization plugin production mounts", () => {
     expect(marker.keepStoredMarker).toHaveBeenCalledWith(orgId, { newOrgSubscriptionId: "sub_forged" });
     const stored = db.organization[0]?.metadata;
     expect(typeof stored === "string" ? JSON.parse(stored) : stored).toEqual({ stored: "marker-kept" });
+  });
+
+  // #5465: a role change that would leave the org with no ACTIVE owner is refused inside
+  // better-auth's own endpoint, with core's sentence. better-auth's built-in check counts suspended
+  // owners and sees only self-demotion, so against the previous head this answers 200 and stores
+  // the new role.
+  it("refuses POST /organization/update-member-role when core says it leaves no active owner, and keeps the role", async () => {
+    const refuse = vi.fn(async (_org: string, memberId: string, _role: string) =>
+      memberId === "member-last-owner" ? "only active owner" : null,
+    );
+    const { db, post, signUp } = await setup(undefined, refuse);
+    const created = await post("/organization/create", { name: "Acme", slug: "acme" });
+    expect(created.status).toBe(200);
+    const orgId = db.organization[0]?.id;
+    // Both users are signed up before any row is pushed: written interleaved with the sign-ups, the
+    // pushed rows were missing from the in-memory store when the endpoint read it.
+    const secondOwner = await signUp("second-owner@example.com");
+    const admin = await signUp("admin@example.com");
+    db.member.push(
+      {
+        id: "member-last-owner",
+        organizationId: orgId,
+        userId: secondOwner.id,
+        role: "owner",
+        createdAt: new Date(),
+      },
+      {
+        id: "member-admin",
+        organizationId: orgId,
+        userId: admin.id,
+        role: "admin",
+        createdAt: new Date(),
+      },
+    );
+
+    // The control: the same endpoint and plugin, a change core does not refuse, is stored.
+    const ok = await post("/organization/update-member-role", {
+      organizationId: orgId,
+      memberId: "member-admin",
+      role: "viewer",
+    });
+    expect(ok.status).toBe(200);
+    expect(db.member.find((m) => m.id === "member-admin")?.role).toBe("viewer");
+
+    const res = await post("/organization/update-member-role", {
+      organizationId: orgId,
+      memberId: "member-last-owner",
+      role: "viewer",
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: "ORGANIZATION_NEEDS_AN_ACTIVE_OWNER",
+      message: "only active owner",
+    });
+    expect(refuse).toHaveBeenCalledWith(orgId, "member-last-owner", "viewer");
+    expect(db.member.find((m) => m.id === "member-last-owner")?.role).toBe("owner");
   });
 });

@@ -9,11 +9,12 @@
 // core internals). Membership roles == the PDP roles (owner/admin/operator/viewer),
 // see lib/authz/org-access-control.ts.
 
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { toPdpRole } from "@/lib/authz/org-access-control";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
+import { member } from "@/lib/db/schema";
 
 /** Mirror a grant change to OpenFGA, best-effort (Postgres is the source of truth). */
 function mirror(run: Promise<void>): void {
@@ -32,6 +33,18 @@ function mirror(run: Promise<void>): void {
  * and an org overview that threw ForbiddenError into its error boundary. `toPdpRole` now maps
  * it; a member left ungranted is a defect either way, so it is logged loudly rather than
  * dropped — a member with no grant is invisible in the product until someone loads a page.
+ *
+ * A member whose `member.status` is anything but `active` gets NO grant either (#5465). Every
+ * writer of a member's org grant comes through here — the ee lifecycle hooks (create, add, accept,
+ * role change), reactivation in `setMemberSuspended`, onboarding, the paid org setup and the
+ * #3754 operator command — so this is the one place the rule can hold for all of them. Before it,
+ * promoting a SUSPENDED member re-wrote their grant and the PDP (which reads grants, not
+ * `member.status`) let them back in while the members table still said suspended.
+ *
+ * The status is read `for update` inside the same transaction as the write, so a suspension that
+ * commits while this runs either lands first (and is seen here) or waits for this write and then
+ * revokes it. A user with NO member row in the org is granted as before: the personal workspace
+ * (`lib/auth/index.ts`) has no member row by design.
  */
 export async function ensureMemberGrant(
 	orgId: string,
@@ -48,17 +61,32 @@ export async function ensureMemberGrant(
 		return;
 	}
 	const roleId = BUILTIN_ROLE_IDS[resolved];
-	const db = getServiceDb();
-	await db.execute(sql`
-		delete from grants
-		where org_id = ${orgId}::uuid and principal_type = 'user'
-		  and principal_id = ${userId}::uuid
-		  and resource_type = 'org' and resource_id is null
-	`);
-	await db.execute(sql`
-		insert into grants (org_id, principal_type, principal_id, role_id, resource_type)
-		values (${orgId}::uuid, 'user', ${userId}::uuid, ${roleId}::uuid, 'org')
-	`);
+	const refusedStatus = await getServiceDb().transaction(async (tx) => {
+		const [m] = await tx
+			.select({ status: member.status })
+			.from(member)
+			.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
+			.for("update");
+		if (m && m.status !== "active") return m.status;
+		await tx.execute(sql`
+			delete from grants
+			where org_id = ${orgId}::uuid and principal_type = 'user'
+			  and principal_id = ${userId}::uuid
+			  and resource_type = 'org' and resource_id is null
+		`);
+		await tx.execute(sql`
+			insert into grants (org_id, principal_type, principal_id, role_id, resource_type)
+			values (${orgId}::uuid, 'user', ${userId}::uuid, ${roleId}::uuid, 'org')
+		`);
+		return null;
+	});
+	if (refusedStatus !== null) {
+		console.warn(
+			`[authz] member ${userId} in org ${orgId} is "${refusedStatus}", not active — NO grant ` +
+				`written. Reactivating them (setMemberSuspended) grants their role.`,
+		);
+		return;
+	}
 	mirror(getTupleSync().syncMemberGrant(orgId, userId, resolved));
 }
 

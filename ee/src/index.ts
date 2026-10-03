@@ -227,6 +227,20 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
               resource_id: user.id,
             });
           },
+          // A role change that would leave the org with no ACTIVE owner is refused (#5465).
+          // better-auth refuses only an owner demoting themselves as the last member whose role
+          // contains `owner`, and it counts suspended owners; core's rule counts active ones.
+          beforeUpdateMemberRole: async ({ member, newRole, organization: org }) => {
+            const refusal = await core.roleChangeOwnerRefusal(org.id, member.id, newRole);
+            if (refusal) {
+              throw new APIError("BAD_REQUEST", {
+                code: "ORGANIZATION_NEEDS_AN_ACTIVE_OWNER",
+                message: refusal,
+              });
+            }
+          },
+          // ensureMemberGrant writes no grant for a member who is not active (#5465), so
+          // promoting a suspended member changes their stored role and nothing they can reach.
           afterUpdateMemberRole: async ({
             organization: org,
             user,
