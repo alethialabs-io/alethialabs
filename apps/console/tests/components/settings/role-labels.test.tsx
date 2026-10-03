@@ -8,6 +8,8 @@
 // capitalised visible one. Its review found the same device on the members table (the role
 // select, its options and the read-only role cell) and on the Access table's role chip — and three
 // separate derivations of "the label for a built-in role" that nothing made agree.
+// The create-role sheet's "Start from" chips were one more: built-in keys under `capitalize`, so the
+// chip read "Owner" and was named "owner".
 //
 // jsdom applies no CSS, so `textContent` is what a screen reader reads: under `capitalize` the
 // members table said "admin" and the Access chip said "owner". Each assertion below fails on that.
@@ -21,6 +23,7 @@ import { grantRoleLabel } from "@/components/settings/access/access-filters";
 import { AccessManager } from "@/components/settings/access/access-manager";
 import { MEMBER_ROLE_FILTER_OPTIONS } from "@/components/settings/members/members-filters";
 import { MembersTable } from "@/components/settings/members/members-table";
+import { RoleSheet } from "@/components/settings/roles/role-sheet";
 import {
 	BUILT_IN_ROLE_DESCRIPTIONS,
 	BUILT_IN_ROLE_LABELS,
@@ -62,6 +65,7 @@ vi.mock("@/app/server/actions/grants", () => ({
 	revokeGrant: vi.fn(),
 	getGrantOptions: vi.fn(async () => ({ roles: [], permissions: [], principals: [], resources: {} })),
 }));
+vi.mock("@/app/server/actions/roles", () => ({ createRole: vi.fn(), updateRole: vi.fn() }));
 vi.mock("@/lib/query/use-classification-query", () => ({
 	useAssignmentsForKind: () => ({ data: undefined }),
 }));
@@ -216,5 +220,33 @@ describe("Settings › Access renders the role chip without re-casing", () => {
 		expect(within(table).getByText("iOS team")).toBeInTheDocument();
 		expect(custom.className).not.toMatch(/\bcapitalize\b/);
 		expect(within(table).queryByText("owner")).toBeNull();
+	});
+});
+
+describe("Settings › Roles › the create sheet's \"Start from\" chips", () => {
+	it("name each built-in template by its label, not its CSS-capitalised key", () => {
+		const templates = BUILT_IN_ROLE_NAMES.map((name) => ({
+			id: `builtin:${name}`,
+			name,
+			description: null,
+			builtin: true,
+			permissionKeys: [],
+			grantCount: 0,
+		}));
+		renderWithClient(
+			<RoleSheet
+				open
+				onOpenChange={() => {}}
+				role={null}
+				templates={templates}
+				canManage
+				onSaved={() => {}}
+			/>,
+		);
+		for (const name of BUILT_IN_ROLE_NAMES) {
+			const chip = screen.getByRole("button", { name: BUILT_IN_ROLE_LABELS[name] });
+			expect(chip.className).not.toMatch(/\bcapitalize\b/);
+		}
+		expect(screen.queryByRole("button", { name: "owner" })).toBeNull();
 	});
 });

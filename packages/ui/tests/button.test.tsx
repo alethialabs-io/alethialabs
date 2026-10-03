@@ -6,8 +6,9 @@
 // base-ui's `useButton` merges `{role: "button"}` onto every non-native element it renders, so
 // `<Button nativeButton={false} render={<Link href="…" />}>` — the console's way of drawing a link
 // as a button — reached the accessibility tree as `<a href role="button">`. A screen reader said
-// "button" for something that leaves the page, and `getByRole("link")` found nothing. About
-// twenty call sites had it; five had patched it one at a time with `role="link"`.
+// "button" for something that leaves the page, and `getByRole("link")` found nothing. Every
+// `nativeButton={false}` call site rendering an href had it; seven renders, in six files, had
+// patched it one at a time with `role="link"`.
 //
 // The other half matters as much: the fix must NOT strip `role="button"` from a non-native render
 // that does not navigate, and a caller's own `role` must still win.

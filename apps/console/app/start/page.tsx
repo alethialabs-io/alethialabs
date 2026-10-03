@@ -68,7 +68,7 @@ export default async function StartPage({ searchParams }: StartPageProps) {
 					title="We can't start your trial checkout"
 					description={refusal}
 					action={
-						<Button nativeButton={false} role="link" render={<Link href={billingHref} />}>
+						<Button nativeButton={false} render={<Link href={billingHref} />}>
 							Go to billing
 						</Button>
 					}

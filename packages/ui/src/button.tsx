@@ -110,7 +110,13 @@ function rendersLink(render: ButtonProps["render"]): boolean {
  * `getByRole("link")` could not find it (#5444). base-ui merges external props LAST, so the `role`
  * set here wins over its default — and a caller's own `role` still wins over this one. Separately,
  * an href defaults `nativeButton` to false: an anchor is never a native `<button>`, and
- * base-ui otherwise stamps `type="button"` on it and logs a mismatch in development. */
+ * base-ui otherwise stamps `type="button"` on it and logs a mismatch in development.
+ *
+ * What the role does NOT change is base-ui's key handling. Its `onKeyUp` calls the caller's
+ * `onClick` on Space for every non-native element, a `role="link"` anchor included (only the
+ * Enter path is skipped for a real `<a href>`, which it leaves to the browser). A native link does
+ * not activate on Space; a link-Button whose `onClick` does work will run it there, though Space
+ * still does not navigate. This wrapper does not intercept `onKeyUp`. */
 function Button({
   className,
   variant = "default",

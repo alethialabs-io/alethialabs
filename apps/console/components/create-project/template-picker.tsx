@@ -110,8 +110,8 @@ export function TemplatePicker({ value, onChange }: TemplatePickerProps) {
 					<span className="text-ui-xs text-muted-foreground">{selected.nextStep}</span>
 				</div>
 				{selected.starter && (
-					// A plain anchor in the button's clothes, not `<Button render={<a/>}>`: base-ui gives
-					// that anchor `role="button"`, and this navigates — it should be announced as a link.
+					// A plain anchor in `buttonVariants` clothes. Either form is announced as a link:
+					// `@repo/ui/button` gives a `render` element with an `href` `role="link"` (#5444).
 					<a
 						href={starterCopyUrl(selected.starter)}
 						target="_blank"
