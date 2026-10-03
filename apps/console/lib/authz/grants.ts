@@ -34,10 +34,12 @@ function mirror(run: Promise<void>): void {
  * it; a member left ungranted is a defect either way, so it is logged loudly rather than
  * dropped — a member with no grant is invisible in the product until someone loads a page.
  *
- * A member whose `member.status` is anything but `active` gets NO grant either (#5465). Every
- * writer of a member's org grant comes through here — the ee lifecycle hooks (create, add, accept,
- * role change), reactivation in `setMemberSuspended`, onboarding, the paid org setup and the
- * #3754 operator command — so this is the one place the rule can hold for all of them. Before it,
+ * A member whose `member.status` is anything but `active` gets NO grant either (#5465). The
+ * member LIFECYCLE writers come through here — the ee lifecycle hooks (create, add, accept, role
+ * change), reactivation in `setMemberSuspended`, onboarding, the paid org setup and the #3754
+ * operator command — so the rule holds for all of them. It does NOT cover the explicit grant APIs:
+ * `assignGrant` and `POST /api/cli/grants` can still insert an org-wide allow grant for a
+ * suspended user principal (tracked in #5472). Before this check,
  * promoting a SUSPENDED member re-wrote their grant and the PDP (which reads grants, not
  * `member.status`) let them back in while the members table still said suspended.
  *
