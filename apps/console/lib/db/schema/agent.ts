@@ -148,7 +148,7 @@ export type AgentContext = typeof agentContext.$inferSelect;
 export type NewAgentContext = typeof agentContext.$inferInsert;
 
 // Per-message thumbs feedback (up/down) on an assistant turn. Owner-scoped (same owner_all
-// RLS as agent_threads). A SEPARATE table rather than a field on the thread: saveThreadMessages
+// RLS as agent_threads). A SEPARATE table rather than a field on the thread: saveThreadTranscript
 // overwrites the whole `messages` JSONB every turn, which would clobber an inline feedback map.
 // One row per (thread, message, owner); toggling the same value off deletes the row.
 export const agentMessageFeedback = pgTable(

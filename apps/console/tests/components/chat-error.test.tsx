@@ -2,16 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Component test for ChatError: it classifies a useChat error into missing-key / budget /
-// network (generic falls to network) and renders the matching title plus an always-present
-// Retry that invokes the callback. On a budget error the CTA is tier-aware (packs are
-// paid-only), so the summary fetch is mocked per test. The analytics track() call in the
-// mount effect is mocked.
+// too-long / unanswered / thread-start / network (generic falls to network) and renders the
+// matching title plus a Retry that invokes the callback (on every kind but too-long). On a
+// budget error the CTA is tier-aware (packs are paid-only), so the summary fetch is mocked per
+// test. The analytics track() call in the mount effect is mocked.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { track } from "@/lib/analytics/track";
-import { ChatError } from "@/components/agent/chat-error";
+import {
+	ChatError,
+	ThreadStartError,
+	UnansweredTurnError,
+} from "@/components/agent/chat-error";
+import { MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
 
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 // ChatError fetches the AI summary to pick the tier-aware budget CTA.
@@ -157,6 +162,55 @@ describe("ChatError", () => {
 	it("omits the Retry button when no onRetry is given", () => {
 		render(<ChatError error={new Error("AI is not configured")} />);
 		expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+	});
+
+	// A reloaded transcript that ends on an unanswered user turn (#5423). It used to fall to
+	// "network": the copy blamed a transient network/model error that never happened in this
+	// session, and every open of the thread counted a fresh elench_error{kind:"network"}.
+	it("classifies an UnansweredTurnError as unanswered, with Retry and no network copy", async () => {
+		const user = userEvent.setup();
+		const onRetry = vi.fn();
+		render(<ChatError error={new UnansweredTurnError()} onRetry={onRetry} />);
+		expect(screen.getByText("No reply arrived")).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"This message was sent, but the reply never arrived. Retry to send it again.",
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByText("The assistant hit an error")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /retry/i }));
+		expect(onRetry).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not report an unanswered turn to analytics — opening the thread is not an error", () => {
+		render(<ChatError error={new UnansweredTurnError()} onRetry={vi.fn()} />);
+		expect(vi.mocked(track)).not.toHaveBeenCalled();
+	});
+
+	it("recognises the unanswered turn by type, not by its text", () => {
+		// The same words in a plain Error are an ordinary failure, not a stored unanswered turn.
+		render(<ChatError error={new Error(new UnansweredTurnError().message)} />);
+		expect(screen.getByText("The assistant hit an error")).toBeInTheDocument();
+		expect(vi.mocked(track)).toHaveBeenCalledWith("elench_error", { kind: "network" });
+	});
+
+	it("shows a ThreadStartError as an unsent message with a Retry that re-attempts it", async () => {
+		const user = userEvent.setup();
+		const onRetry = vi.fn();
+		render(<ChatError error={new ThreadStartError()} onRetry={onRetry} />);
+		expect(screen.getByText("Could not start the conversation")).toBeInTheDocument();
+		expect(screen.getByText(/was not sent. It is still in the box below/)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /retry/i }));
+		expect(onRetry).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(track)).toHaveBeenCalledWith("elench_error", { kind: "thread-start" });
+	});
+
+	it("classifies the routes' 413 body as too-long, without a Retry that can only fail again", () => {
+		render(<ChatError error={new Error(MESSAGE_TOO_LONG)} onRetry={vi.fn()} />);
+		expect(screen.getByText("Message too long")).toBeInTheDocument();
+		expect(screen.getByText(MESSAGE_TOO_LONG)).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+		expect(vi.mocked(track)).toHaveBeenCalledWith("elench_error", { kind: "too-long" });
 	});
 
 	it("reports the surfaced error kind to analytics (kind only, no raw message)", () => {

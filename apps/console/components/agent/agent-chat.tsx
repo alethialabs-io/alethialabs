@@ -81,6 +81,12 @@ export interface AgentChatProps {
 	/** When provided, the last assistant message gets a Retry action that re-runs it.
 	 * Also drives the error state's always-present Retry. */
 	onRetry?: () => void;
+	/**
+	 * What the last message's "Regenerate response" action runs, when it must differ from
+	 * `onRetry`. Elench sets it: its `onRetry` is a failed send's re-attempt while one is
+	 * pending, and regenerating a reply must never submit the composer instead.
+	 */
+	onRegenerate?: () => void;
 	/** Abort the in-flight stream. When set, the composer's submit becomes a Stop
 	 * control while generating. */
 	onStop?: () => void;
@@ -134,6 +140,7 @@ export function AgentChat({
 	renderToolPart,
 	errorMessage,
 	onRetry,
+	onRegenerate,
 	onStop,
 	className,
 	composerLeft,
@@ -366,11 +373,11 @@ export function AgentChat({
 																		<CopyIcon className="size-3.5" />
 																	)}
 																</Action>
-																{onRetry && m.id === lastMessageId && (
+																{(onRegenerate ?? onRetry) && m.id === lastMessageId && (
 																	<Action
 																		tooltip="Retry"
 																		label="Regenerate response"
-																		onClick={onRetry}
+																		onClick={onRegenerate ?? onRetry}
 																	>
 																		<RefreshCcwIcon className="size-3.5" />
 																	</Action>
