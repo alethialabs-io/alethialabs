@@ -20,10 +20,16 @@ export function UpsellActions({ feature }: { feature: GatedFeature }) {
 	const meta = FEATURE_UPSELLS[feature];
 	const planName = planMeta(meta.requiredPlan).name;
 
+	// Contact Sales and Learn more are `<a href>` that open a new tab, so they are LINKS. base-ui's
+	// Button merges `{role: "button"}` onto every non-native element (`use-button/useButton.js`),
+	// so without the explicit `role="link"` a screen reader announced a button that navigates
+	// away, and `getByRole("link", { name: /contact sales/i })` found nothing in any upgrade
+	// dialog (#5413). External props win that merge — the same fix as
+	// `app/(private)/[org]/not-found.tsx`. "Upgrade to …" opens a sheet in place and stays a button.
 	return (
 		<div className="flex flex-wrap items-center justify-center gap-2">
 			{meta.requiredPlan === "enterprise" ? (
-				<Button size="sm" nativeButton={false} render={<a href={legalUrl("/contact/sales")} target="_blank" rel="noreferrer" />}>
+				<Button size="sm" nativeButton={false} role="link" render={<a href={legalUrl("/contact/sales")} target="_blank" rel="noreferrer" />}>
 					Contact Sales
 				</Button>
 			) : (
@@ -31,7 +37,7 @@ export function UpsellActions({ feature }: { feature: GatedFeature }) {
 					Upgrade to {planName}
 				</Button>
 			)}
-			<Button size="sm" variant="ghost" nativeButton={false} render={<a href={meta.learnMoreHref} target="_blank" rel="noreferrer" />}>
+			<Button size="sm" variant="ghost" nativeButton={false} role="link" render={<a href={meta.learnMoreHref} target="_blank" rel="noreferrer" />}>
 				Learn more
 			</Button>
 		</div>
