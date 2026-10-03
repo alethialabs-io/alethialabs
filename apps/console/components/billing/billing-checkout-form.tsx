@@ -26,6 +26,7 @@ import { useId, useState } from "react";
 import { Controller, type UseFormReturn, useForm } from "react-hook-form";
 import { z } from "zod";
 import { cardElementStyle } from "@/components/billing/stripe-elements";
+import { BILLING_FIELD_CAPS, tooLongMessage } from "@/lib/billing/billing-field-caps";
 import {
   DEFAULT_TAX_ID_TYPE,
   TAX_ID_TYPES,
@@ -100,20 +101,50 @@ export function billingAddressFrom(b: CollectedBilling) {
   };
 }
 
+/** A trimmed string no longer than `max` — the server's cap for the same field (billing-field-caps.ts). */
+function capped(max: number) {
+  return z.string().trim().max(max, tooLongMessage(max));
+}
+
 const schema = z.object({
-  name: z.string().trim().min(1, "Enter the cardholder name."),
-  country: z.string().trim().min(2, "Select a country or region."),
-  line1: z.string().trim().min(1, "Enter your address."),
-  line2: z.string().trim(),
-  city: z.string().trim().min(1, "Enter your city."),
-  state: z.string().trim(),
-  postalCode: z.string().trim().min(1, "Enter your postal code."),
+  name: capped(BILLING_FIELD_CAPS.name).min(1, "Enter the cardholder name."),
+  country: capped(BILLING_FIELD_CAPS.country).min(2, "Select a country or region."),
+  line1: capped(BILLING_FIELD_CAPS.line1).min(1, "Enter your address."),
+  line2: capped(BILLING_FIELD_CAPS.line2),
+  city: capped(BILLING_FIELD_CAPS.city).min(1, "Enter your city."),
+  state: capped(BILLING_FIELD_CAPS.state),
+  postalCode: capped(BILLING_FIELD_CAPS.postalCode).min(1, "Enter your postal code."),
   useAsPrimary: z.boolean(),
   taxType: z.custom<TaxIdType>(
     (v) => typeof v === "string" && TAX_ID_TYPES.some((t) => t.value === v),
   ),
-  taxValue: z.string().trim(),
+  taxValue: capped(BILLING_FIELD_CAPS.taxValue),
 });
+
+/** A refusal from `beforeConfirm`: the field it is about (null for the form as a whole) and why. */
+export interface CheckoutRefusal {
+  field: keyof CollectedBilling | null;
+  message: string;
+}
+
+/** The checkout field a server-side field name refers to, or null when it is not one of this form's. */
+export function checkoutFieldOf(field: string): keyof CollectedBilling | null {
+  switch (field) {
+    case "name":
+    case "line1":
+    case "line2":
+    case "city":
+    case "state":
+    case "postalCode":
+    case "country":
+    case "taxType":
+    case "taxValue":
+    case "useAsPrimary":
+      return field;
+    default:
+      return null;
+  }
+}
 type FormData = z.infer<typeof schema>;
 
 /**
@@ -167,6 +198,13 @@ interface BillingCheckoutFormProps {
    * the button in its processing state until it resolves; never re-charges.
    */
   onPaid: (billing: CollectedBilling) => void | Promise<void>;
+  /**
+   * Runs BEFORE the card is confirmed, with the details about to be charged for. A refusal (or a
+   * throw) stops the charge and is shown on the form — the customer has not paid, and nothing they
+   * typed is lost. The create-a-team sheet saves the details server-side here, so a crash after the
+   * charge cannot lose them (#5445).
+   */
+  beforeConfirm?: (billing: CollectedBilling) => Promise<CheckoutRefusal | null>;
 }
 
 export function BillingCheckoutForm({
@@ -179,6 +217,7 @@ export function BillingCheckoutForm({
   submitLabel,
   scrollable = false,
   onPaid,
+  beforeConfirm,
 }: BillingCheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();
@@ -239,6 +278,34 @@ export function BillingCheckoutForm({
       form.setError("root", { message: "Card details are not ready yet." });
       return;
     }
+    const billing: CollectedBilling = {
+      name: values.name,
+      line1: values.line1,
+      line2: values.line2 || undefined,
+      city: values.city,
+      state: values.state || undefined,
+      postalCode: values.postalCode,
+      country: values.country,
+      taxType: values.taxType,
+      taxValue: showTaxId ? values.taxValue : "",
+      useAsPrimary: values.useAsPrimary,
+    };
+    if (beforeConfirm) {
+      let refusal: CheckoutRefusal | null;
+      try {
+        refusal = await beforeConfirm(billing);
+      } catch {
+        refusal = {
+          field: null,
+          message: "Couldn't save your billing details. You have not been charged — try again.",
+        };
+      }
+      if (refusal) {
+        if (refusal.field) form.setError(refusal.field, { message: refusal.message });
+        else form.setError("root", { message: refusal.message });
+        return;
+      }
+    }
     const result = await stripe.confirmCardPayment(clientSecret, {
       payment_method: {
         card,
@@ -263,18 +330,7 @@ export function BillingCheckoutForm({
     }
     // Charge confirmed — hand off; the consumer persists + swaps the view. Errors
     // there are handled by the consumer (retry without re-charging).
-    await onPaid({
-      name: values.name,
-      line1: values.line1,
-      line2: values.line2 || undefined,
-      city: values.city,
-      state: values.state || undefined,
-      postalCode: values.postalCode,
-      country: values.country,
-      taxType: values.taxType,
-      taxValue: showTaxId ? values.taxValue : "",
-      useAsPrimary: values.useAsPrimary,
-    });
+    await onPaid(billing);
   }
 
   return (
@@ -386,7 +442,11 @@ export function BillingCheckoutForm({
           </Field>
 
           {/* address line 2 (optional) */}
-          <Field label="Address line 2" optional>
+          <Field
+            label="Address line 2"
+            optional
+            error={form.formState.errors.line2?.message}
+          >
             {(id) => (
               <Input
                 id={id}
@@ -425,7 +485,11 @@ export function BillingCheckoutForm({
           </div>
 
           {/* state / province (optional) */}
-          <Field label="State / province" optional>
+          <Field
+            label="State / province"
+            optional
+            error={form.formState.errors.state?.message}
+          >
             {(id) => (
               <Input
                 id={id}
@@ -644,6 +708,11 @@ function TaxIdSection({
           {...form.register("taxValue")}
         />
       </div>
+      {(form.formState.errors.taxValue?.message ?? form.formState.errors.taxType?.message) && (
+        <p className="text-ui-xs text-destructive">
+          {form.formState.errors.taxValue?.message ?? form.formState.errors.taxType?.message}
+        </p>
+      )}
     </div>
   );
 }

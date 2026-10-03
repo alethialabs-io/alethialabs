@@ -21,6 +21,7 @@ import { auth } from "@/lib/auth";
 import { trustedIpFailure } from "@/lib/auth/trusted-ip";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { currentActor } from "@/lib/authz/guard";
+import { runOrgCreate } from "@/lib/billing/pending-org-setup";
 import { toNextJsHandler } from "better-auth/next-js";
 
 const handlers = toNextJsHandler(auth);
@@ -85,6 +86,11 @@ export async function POST(req: Request): Promise<Response> {
 		} catch {
 			// Unauthenticated (or scope unresolvable) → defer to the auth handler.
 		}
+	}
+	// An organization create that fails gives back the paid-setup claim it took (#5445), so a retry is
+	// not refused as "already being set up" by a request that is no longer running.
+	if (new URL(req.url).pathname.endsWith("/organization/create")) {
+		return runOrgCreate(() => handlers.POST(req));
 	}
 	return handlers.POST(req);
 }

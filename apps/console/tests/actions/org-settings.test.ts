@@ -101,4 +101,31 @@ describe("updateOrgPrimaryAddress", () => {
 		expect(written.region).toBe("eu-west-1"); // preserved
 		expect(written.primaryAddress).toMatchObject({ name: "Acme", country: "EE" }); // merged
 	});
+
+	// #5445 review: this is a direct write, so the organization plugin's update hook that guards the
+	// create-a-team marker never sees it. Rebuilt through parseMeta (which reads only the settings
+	// fields) it dropped both marker keys — and any other key the blob carried.
+	it("keeps every key it does not own — the paid-setup marker included — exactly as stored", async () => {
+		const stored = {
+			region: "eu-west-1",
+			newOrgSubscriptionId: "sub_1",
+			newOrgCreatedBy: "user-1",
+			demo: true,
+		};
+		const { setSpy } = mockDb([{ metadata: JSON.stringify(stored) }]);
+		await updateOrgPrimaryAddress({ name: "Acme", line1: "1 St", country: "EE" });
+		const written = JSON.parse(setSpy.mock.calls[0][0].metadata);
+		expect(written).toEqual({
+			...stored,
+			primaryAddress: { name: "Acme", line1: "1 St", country: "EE" },
+		});
+	});
+
+	it("replaces a blob that is not a JSON object", async () => {
+		const { setSpy } = mockDb([{ metadata: "not json" }]);
+		await updateOrgPrimaryAddress({ name: "Acme", line1: "1 St", country: "EE" });
+		expect(JSON.parse(setSpy.mock.calls[0][0].metadata)).toEqual({
+			primaryAddress: { name: "Acme", line1: "1 St", country: "EE" },
+		});
+	});
 });

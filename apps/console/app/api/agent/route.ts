@@ -10,13 +10,15 @@ import {
 	type UIMessage,
 } from "ai";
 import { z } from "zod";
-import { saveThreadMessages } from "@/app/server/actions/agent";
+import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
+import { transcriptNotSaved } from "@/lib/ai/transcript-not-saved";
 import { AGENT_STEP_PART_TYPE, agentStepMarker } from "@/lib/ai/agent-steps";
 import {
 	formatMentionsForPrompt,
 	type Mention,
 	mentionsSchema,
 } from "@/lib/ai/mentions";
+import { refuseUserMessage } from "@/lib/ai/message-limits";
 import {
 	formatContextBlock,
 	readAgentContext,
@@ -70,6 +72,18 @@ const cellTargetSchema = z
 	.object({ x: z.number().int().min(0).max(4), y: z.number().int().min(0) })
 	.nullish()
 	.catch(null);
+
+/**
+ * The body fields that steer what the route DOES, validated before the budget hold. `mode` picks
+ * the prompt and the tool set: an unknown value used to run silently as Ask (both test only for
+ * `"act"`). `threadId` is where `onFinish` writes the transcript and the hold's `refId`: a
+ * non-uuid reached Postgres only after the turn had been paid for. A bad value is the client's
+ * error — a 400, with nothing reserved.
+ */
+const agentControlSchema = z.looseObject({
+	mode: z.enum(["ask", "act"]).optional(),
+	threadId: z.uuid().nullish(),
+});
 
 /** Parse the optional `deepReasoning` flag from a request body — defaults to false. */
 const deepReasoningSchema = z.boolean().catch(false);
@@ -155,15 +169,30 @@ export async function POST(req: Request) {
 	}
 
 	const actor = await currentActor();
+	// `AgentBody` is the shape the client sends, not a validated one: a body that is not even
+	// an object is a 400 here rather than a TypeError (a 500) at the destructure below.
+	const body: AgentBody | null = await req.json().catch(() => null);
+	if (body === null || typeof body !== "object") {
+		return new Response("The request body is malformed.", { status: 400 });
+	}
+	// The one per-message limit the composer and `createThread` also enforce, on messages
+	// validated first (400 when malformed) — refused before the budget hold below, so a
+	// malformed or over-limit turn reserves nothing.
+	const refusal = refuseUserMessage(body.messages);
+	if (refusal) return refusal;
+	const control = agentControlSchema.safeParse(body);
+	if (!control.success) {
+		return new Response("The request's mode or threadId is invalid.", { status: 400 });
+	}
+	const { mode = "ask", threadId: threadIdRaw } = control.data;
+	const threadId = threadIdRaw ?? undefined;
 	const {
 		messages,
-		threadId,
-		mode = "ask",
 		model,
 		mentions,
 		deepReasoning: deepReasoningRaw,
 		cellTarget: cellTargetRaw,
-	}: AgentBody = await req.json();
+	} = body;
 	const deepReasoning = deepReasoningSchema.parse(deepReasoningRaw);
 	const cellTarget = cellTargetSchema.parse(cellTargetRaw);
 
@@ -345,7 +374,12 @@ export async function POST(req: Request) {
 				writer.merge(result.toUIMessageStream());
 			},
 			onFinish: ({ messages: finished }) => {
-				if (threadId) void saveThreadMessages(threadId, finished);
+				if (threadId) {
+					void saveThreadTranscript(
+						{ owner: actor.userId, threadId, kind: "agent", projectId: null },
+						finished,
+					).catch(transcriptNotSaved(threadId));
+				}
 			},
 		});
 

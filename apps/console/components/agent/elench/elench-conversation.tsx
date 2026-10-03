@@ -8,7 +8,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentArtifactGallery } from "@/components/agent/agent-artifact-gallery";
 import { AgentKnowledgePanel } from "@/components/agent/agent-knowledge-panel";
 import { AgentChat } from "@/components/agent/agent-chat";
+import { ChatError, UnansweredTurnError } from "@/components/agent/chat-error";
 import { ChatSkeleton } from "@/components/agent/chat-skeleton";
+import type { FirstTurn } from "@/app/server/actions/agent";
 import { openArtifactOnGrid } from "@/app/server/actions/artifacts";
 import {
 	getThreadFeedback,
@@ -34,7 +36,7 @@ import { useWidgetGridStore } from "@/lib/stores/use-widget-grid-store";
 import { elenchChatId, useElenchStore } from "@/lib/stores/use-elench-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { globalHref } from "@/lib/routing";
-import { ElenchComposer } from "./elench-composer";
+import { ElenchComposer, type ElenchComposerHandle } from "./elench-composer";
 import {
 	ElenchModalLanding,
 	ElenchPanelEmpty,
@@ -42,6 +44,7 @@ import {
 import { ElenchErrorBoundary } from "./elench-error-boundary";
 import { ElenchModal } from "./elench-modal";
 import { ElenchPanel } from "./elench-panel";
+import { useElenchSend } from "./use-elench-send";
 import {
 	ORG_SUGGESTIONS,
 	PROJECT_SUGGESTIONS,
@@ -58,6 +61,10 @@ function takePendingCellTarget(): { x: number; y: number } | null {
 
 const PLACEHOLDER = "Ask Elench, or type @ to tag a resource";
 
+/** The error a resumed transcript shows when it ends on a user turn that was never answered.
+ * `ChatError` recognises it by type: "No reply arrived" + Retry, and no `elench_error` event. */
+const UNANSWERED_TURN = new UnansweredTurnError();
+
 export interface ElenchThreadApi {
 	/** False until the initial thread list resolves — the body shows a skeleton meanwhile. */
 	ready: boolean;
@@ -66,8 +73,9 @@ export interface ElenchThreadApi {
 	initialMessages: UIMessage[];
 	selectThread: (id: string) => void;
 	newChat: () => void;
-	/** Lazily persist the ephemeral conversation on its first send; returns the new thread. */
-	startThread: (firstMessage: string) => Promise<AgentThread>;
+	/** Lazily persist the ephemeral conversation on its first send (storing `firstTurn`, the
+	 * user message, with it); returns the new thread. */
+	startThread: (title: string, firstTurn?: FirstTurn) => Promise<AgentThread>;
 	deleteThread: (id: string) => void;
 }
 
@@ -197,7 +205,6 @@ export function ElenchConversation({
 		error,
 		regenerate,
 		stop,
-		resumeStream,
 		addToolResult,
 	} = useAgentChat({
 		api,
@@ -206,16 +213,21 @@ export function ElenchConversation({
 		prepareBody,
 	});
 
-	// Resume an interrupted stream after a reload: if the resumed transcript ends on a
-	// user turn, the assistant reply never landed — try to reconnect once per lineage.
-	// Guarded so a settled thread (last message is the assistant's) never fires a needless
-	// request. Re-armed per epoch since this component is not remounted between threads.
-	const resumedEpoch = useRef<number | null>(null);
-	useEffect(() => {
-		if (resumedEpoch.current === epoch) return;
-		resumedEpoch.current = epoch;
-		if (initialMessages.at(-1)?.role === "user") void resumeStream();
-	}, [epoch, initialMessages, resumeStream]);
+	// A resumed transcript that ENDS on a user turn is a turn whose reply never landed — most
+	// often a first send that failed (AI not configured, budget, provider error): `createThread`
+	// stores that message with the row, and only a successful turn writes a reply after it.
+	// Show it as the failed turn it is, with the transcript's own error + Retry (`regenerate`
+	// re-sends a trailing user turn), until the chat moves on. This used to call
+	// `resumeStream()`, which GETs `<api>/<chatId>/stream` — a route that has never existed —
+	// so it 404'd and surfaced Next's error page as a misclassified chat error.
+	const unanswered =
+		error === undefined &&
+		status === "ready" &&
+		messages.length > 0 &&
+		messages.length === initialMessages.length &&
+		messages.at(-1)?.id === initialMessages.at(-1)?.id &&
+		messages.at(-1)?.role === "user";
+	const shownError = unanswered ? UNANSWERED_TURN : error;
 
 	// The per-chat widget grid: hydrate it for the active thread and auto-pin matching
 	// tool results (registry reads + exploded build_dashboard blocks + pin_widget).
@@ -229,25 +241,65 @@ export function ElenchConversation({
 
 	const setPendingMentions = useElenchStore((s) => s.setPendingMentions);
 
-	const onSend = useCallback(
-		async (text: string, mentions: Mention[] = []) => {
+	const beforeSend = useCallback(
+		(mentions: Mention[]) => {
 			// Stage the @-referenced resources so prepareBody sends them with the request.
 			setPendingMentions(mentions);
-			// First send of an ephemeral conversation: lazily create+attach the thread so its
-			// id (title derived from `text`) rides this request — prepareBody reads it fresh at
-			// send time, and the route's onFinish persists the transcript to it.
-			if (messages.length === 0 && activeId == null) {
-				await startThread(text);
-			}
 			track("elench_message_sent", {
 				context: isOrg ? "org" : "project",
 				model: useElenchStore.getState().model,
 				project: projectId || undefined,
 			});
-			sendMessage({ text });
 		},
-		[messages.length, activeId, startThread, sendMessage, setPendingMentions, isOrg, projectId],
+		[setPendingMentions, isOrg, projectId],
 	);
+	// The store, read fresh: `startThread` attaches the id before this component re-renders.
+	const hasThread = useCallback(() => useElenchStore.getState().threadId != null, []);
+	// The first send of an ephemeral conversation creates + attaches its thread (title from
+	// the text, the user turn stored with the row) BEFORE the message goes out, so prepareBody
+	// carries the id and the route's onFinish persists the reply. If that creation fails,
+	// NOTHING is sent — a send without a thread is never stored — the failure shows inline, the
+	// composer keeps the text (still editable), and Retry re-attempts the thread (see below).
+	const {
+		send: onSend,
+		error: sendError,
+		retry: retrySend,
+		failedState,
+		reset: resetSend,
+	} = useElenchSend({ hasThread, startThread, sendMessage, beforeSend });
+	// A new chat / resume (a new lineage) starts with no failed send pending.
+	useEffect(() => {
+		resetSend();
+	}, [chatId, resetSend]);
+	// Whichever composer is mounted (the modal hero's or the docked one — never both).
+	const composerRef = useRef<ElenchComposerHandle>(null);
+	// Retry after a failed thread start is the composer's own submit — EXACTLY Enter: it sends
+	// what the box holds NOW, edits included, and clears only on a send that went out. Re-sending
+	// the failed attempt's snapshot instead sent text the user had since changed, then the
+	// composer was remounted (or the landing unmounted) and the edit was gone without a word.
+	// When the box holds nothing, a turn that was TYPED in the composer is put back into it and
+	// nothing is sent: the user emptied the box, and Retry must not send words they just erased.
+	// A turn that never lived in the composer (a suggestion card, a seed prompt, a grid cell) is
+	// re-sent as it was — there is no typed text to lose.
+	const onRetryStart = useMemo(
+		() =>
+			retrySend
+				? () => {
+						void (async () => {
+							const composer = composerRef.current;
+							const outcome = await composer?.submit();
+							if (outcome !== undefined && outcome !== "empty") return;
+							if (composer && failedState) composer.restore(failedState);
+							else await retrySend();
+						})();
+					}
+				: undefined,
+		[retrySend, failedState],
+	);
+	// A failed send (thread not created / too long) is shown where the transcript's own error
+	// would be, and takes precedence over it: it is the newer event.
+	const visibleError = sendError ?? shownError;
+	const onRetry = sendError ? onRetryStart : () => void regenerate();
 
 	// Auto-send a staged seed prompt once into an otherwise-empty conversation.
 	const seededRef = useRef(false);
@@ -394,14 +446,22 @@ export function ElenchConversation({
 					showModel={isOrg}
 					context={isOrg ? "org" : "project"}
 					status={status}
+					composerRef={composerRef}
+					composerSeed={failedState}
+					notice={
+						sendError ? (
+							<ChatError error={sendError} onRetry={onRetryStart} />
+						) : undefined
+					}
 				/>
 			) : (
 				<AgentChat
 					messages={messages}
 					status={status}
-					error={error}
+					error={visibleError}
 					onSend={onSend}
-					onRetry={() => void regenerate()}
+					onRetry={onRetry}
+					onRegenerate={() => void regenerate()}
 					onStop={() => void stop()}
 					renderToolPart={renderToolPart}
 					placeholder={PLACEHOLDER}
@@ -413,6 +473,8 @@ export function ElenchConversation({
 					}
 					renderComposer={
 						<ElenchComposer
+							handleRef={composerRef}
+							seed={failedState}
 							onSend={onSend}
 							onStop={() => void stop()}
 							showModel={isOrg}

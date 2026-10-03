@@ -37,6 +37,13 @@ import { resolveOrgEntitlements } from "@/lib/billing/queries";
 import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email/notify-email";
+import { isMember } from "@/lib/platform/provision";
+import { reservedOrgSlugRefusal } from "@/lib/routing";
+import {
+  keepStoredNewOrgMarker,
+  recordNewOrgCreated,
+  stampNewOrgMetadata,
+} from "@/lib/billing/pending-org-setup";
 
 /**
  * Capabilities the core injects into the enterprise module. `ee/` queries through
@@ -66,6 +73,31 @@ export interface CoreContext {
    * non-Enterprise org without ee/ importing core billing.
    */
   canOrgCreateTeams: typeof canOrgCreateTeams;
+  /**
+   * Why a slug is reserved (a console route / the marketing zone / a sibling app owns that path),
+   * or null. Injected so the organization plugin's beforeCreateOrganization /
+   * beforeUpdateOrganization hooks refuse a reserved slug SERVER-SIDE — the client checks were the
+   * only enforcement, so a direct `/organization/create` with slug `docs` succeeded (#5445) — without
+   * ee/ importing core's routing table.
+   */
+  reservedOrgSlugRefusal: typeof reservedOrgSlugRefusal;
+  /**
+   * The paid create-a-team setup's two organization-create hooks (#5445): `stampMetadata` keeps the
+   * marker that ties a new org to its charge only for the user who owns that charge's setup record
+   * (and refuses a second org for one charge); `recordCreated` writes the new org onto that record;
+   * `keepStoredMarker` makes an update carry the stored marker, never the request's. Injected so the organization plugin's create hooks can run them without ee/ importing core billing.
+   */
+  /**
+   * Whether a user already holds a membership in an organization. Injected so the organization
+   * plugin's `beforeAcceptInvitation` refuses an invitation accepted by an existing member with a
+   * reason, instead of the raw unique violation the `member` index raises (#5445).
+   */
+  isOrgMember: typeof isMember;
+  newOrgSetup: {
+    stampMetadata: typeof stampNewOrgMetadata;
+    recordCreated: typeof recordNewOrgCreated;
+    keepStoredMarker: typeof keepStoredNewOrgMarker;
+  };
   /**
    * Reconciles an org's per-seat subscription quantity with its billable membership
    * (prorated). Injected so the organization plugin's member lifecycle hooks keep
@@ -207,6 +239,13 @@ function loadEnterprise(): void {
       sendInviteEmail,
       canOrgInvite,
       canOrgCreateTeams,
+      reservedOrgSlugRefusal,
+      isOrgMember: isMember,
+      newOrgSetup: {
+        stampMetadata: stampNewOrgMetadata,
+        recordCreated: recordNewOrgCreated,
+        keepStoredMarker: keepStoredNewOrgMarker,
+      },
       syncOrgSeats,
       emitAlertEvent: emitAlertEventSafe,
       recordActivity,

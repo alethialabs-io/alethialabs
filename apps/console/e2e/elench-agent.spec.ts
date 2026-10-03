@@ -17,8 +17,24 @@
 // reachable from an arbitrary authenticated route rather than only from the home page (#4272).
 // Anything about the panel, the modal, the composer or the threads belongs here, once.
 
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "./fixtures/auth";
+
+/**
+ * The transcript of an open Elench surface: the `role="log"` content of the shared
+ * message scroller that `AgentChat` renders in BOTH the modal and the panel.
+ *
+ * A sent message is not the only place its text appears. The first send creates the thread
+ * lazily and titles it from that message, so the same words also render as chrome: the modal's
+ * rail row (`thread-rail.tsx`), the modal's centred title bar (`elench-modal.tsx`), and the
+ * panel's conversation switcher (`elench-conversation-switcher.tsx`). A bare `getByText` therefore
+ * resolves to several elements and fails strict mode, and `.first()` would be worse: it would pass
+ * on a CHROME title while the transcript had lost the turn, which is the defect these tests guard.
+ * Scope a turn to this, and assert the chrome separately where it means something.
+ */
+function transcript(scope: Locator): Locator {
+	return scope.getByRole("log");
+}
 
 /** Open the Elench surface as a docked panel via the topbar "Ask AI" button. */
 async function openElenchPanel(page: Page): Promise<void> {
@@ -100,19 +116,31 @@ test.describe("Elench agent — modal (org)", () => {
 		const composer = page.getByTestId("elench-composer");
 		await composer.fill("elench e2e ping");
 		await composer.press("Enter");
-		await expect(page.getByText("elench e2e ping")).toBeVisible();
+		const modal = page.getByTestId("elench-modal");
+		await expect(
+			transcript(modal).getByText("elench e2e ping", { exact: true }),
+		).toBeVisible();
+		// The send also created the thread and titled it from the message — the rail says so.
+		await expect(
+			modal.getByTestId("thread-rail-row").filter({ hasText: "elench e2e ping" }),
+		).toHaveCount(1);
 
 		// Minimize to the docked panel — the surface floats over the org home (no route hop).
 		await page.getByRole("button", { name: /minimize to panel/i }).click();
 		const panel = page.getByRole("dialog", { name: /elench assistant/i });
 		await expect(panel).toBeVisible();
 		await expect(page).toHaveURL(new RegExp(`/${orgSlug}(\\?.*)?$`));
-		// The conversation survived the view flip.
-		await expect(panel.getByText("elench e2e ping")).toBeVisible();
+		// The conversation survived the view flip: the TURN is in the panel's transcript, not
+		// merely the thread's title in the panel's switcher.
+		await expect(
+			transcript(panel).getByText("elench e2e ping", { exact: true }),
+		).toBeVisible();
 
-		// Maximize back to the modal — still there.
+		// Maximize back to the modal — the turn is still in its transcript.
 		await page.getByRole("button", { name: /expand to full screen/i }).click();
-		await expect(page.getByText("elench e2e ping")).toBeVisible();
+		await expect(
+			transcript(modal).getByText("elench e2e ping", { exact: true }),
+		).toBeVisible();
 	});
 
 	test("the panel closes", async ({ authedPage: page }) => {
@@ -212,28 +240,38 @@ test.describe("Elench agent — AI-off deterministic flows (org)", () => {
 		).toHaveAttribute("aria-current", "true");
 	});
 
+	// The first send stores the user's turn WITH the thread (`createThread` → `messages`), so the
+	// thread is not empty even though, with AI off, the turn itself fails (503 before any stream).
+	// `listThreads` hides only threads with NO stored message (3bfb88fc4), so this one survives a
+	// reload — and, ending on an unanswered user turn, resumes with the error + Retry (#5414,
+	// maintainer ruling on #5423).
 	test("a sent thread persists across a reload", async ({
 		authedPage: page,
 	}) => {
+		const modal = page.getByTestId("elench-modal");
 		const composer = page.getByTestId("elench-composer");
 		await composer.fill("persisted elench thread");
 		await composer.press("Enter");
-		await expect(page.getByText("persisted elench thread")).toBeVisible();
+		await expect(
+			transcript(modal).getByText("persisted elench thread", { exact: true }),
+		).toBeVisible();
 
 		// The thread is created LAZILY on this first send + titled from it → it shows in the rail.
-		const row = page
+		const row = modal
 			.getByTestId("thread-rail-row")
-			.filter({ hasText: /persisted elench thread/i });
-		await expect(row.first()).toBeVisible();
+			.filter({ hasText: "persisted elench thread" });
+		await expect(row).toHaveCount(1);
 
 		// Reload + reopen → the persisted thread resumes (rail row + message survive).
 		await page.reload();
 		await openElenchModal(page);
+		await expect(row).toHaveCount(1);
 		await expect(
-			page
-				.getByTestId("thread-rail-row")
-				.filter({ hasText: /persisted elench thread/i })
-				.first(),
+			transcript(modal).getByText("persisted elench thread", { exact: true }),
+		).toBeVisible();
+		// The turn was never answered, so the resumed transcript says so and offers a Retry.
+		await expect(
+			transcript(modal).getByRole("button", { name: "Retry", exact: true }),
 		).toBeVisible();
 	});
 

@@ -24,6 +24,7 @@ import {
 	type PaidConversionRefusal,
 	paidConversionStatus,
 } from "@/lib/billing/eligibility";
+import { markPendingOrgSetupDeclared } from "@/lib/billing/pending-org-setup";
 import { getServiceDb } from "@/lib/db";
 import { legalAcceptance, organizationBilling } from "@/lib/db/schema";
 import type { LegalAcceptanceEvidence } from "@/types/jsonb.types";
@@ -340,6 +341,9 @@ export async function declarePayer(
 			authorityAttestation,
 		});
 	}
+	// The last step of a paid create-a-team setup (#5445): a declaration NAMING an org is how that flow
+	// declares, so it closes the caller's setup record for that org, if there is one.
+	if (opts?.orgId) await markPendingOrgSetupDeclared(actor.userId, actor.orgId);
 	return { capacity: parsed.capacity, billingCountry: parsed.billingCountry };
 }
 
