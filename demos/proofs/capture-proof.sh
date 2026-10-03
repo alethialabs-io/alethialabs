@@ -358,18 +358,33 @@ STUB
 	kc_dir="$(ALETHIA_E2E_KUBECONFIG_MINT_SUMMARY="$tmp/kubeconfig-mint.json" _capture kcmint success "$tmp/pass.json" floor)"
 	_t "the kubeconfig-mint summary is folded into the bundle" "kubeconfig-mint-summary.json driver" \
 		"$(jq -r '.driver // "none"' "$kc_dir/kubeconfig-mint-summary.json" 2>/dev/null || echo none)" "runner-channel"
-	if grep -qF "kubeconfig-mint: $kc_line" "$kc_dir/VERDICT.txt" 2>/dev/null; then
+	if grep -qF "kubeaccess-mint: $kc_line" "$kc_dir/VERDICT.txt" 2>/dev/null; then
 		echo "  ✓ VERDICT.txt carries the kubeconfig-mint verdict"
 	else
-		echo "  ✗ VERDICT.txt does not carry the kubeconfig-mint verdict: $(grep '^kubeconfig-mint:' "$kc_dir/VERDICT.txt" 2>/dev/null)" >&2
+		echo "  ✗ VERDICT.txt does not carry the kubeconfig-mint verdict: $(grep '^kubeaccess-mint:' "$kc_dir/VERDICT.txt" 2>/dev/null)" >&2
 		fails=$((fails + 1))
 	fi
-	if [ -e "$pass_dir/kubeconfig-mint-summary.json" ] || ! grep -q '^kubeconfig-mint: n/a' "$pass_dir/VERDICT.txt" 2>/dev/null; then
+	if [ -e "$pass_dir/kubeconfig-mint-summary.json" ] || ! grep -q '^kubeaccess-mint: n/a' "$pass_dir/VERDICT.txt" 2>/dev/null; then
 		echo "  ✗ a bundle with no kubeconfig-mint summary carries one anyway, or does not say n/a" >&2
 		fails=$((fails + 1))
 	else
 		echo "  ✓ no kubeconfig-mint summary: no file, and VERDICT.txt says n/a"
 	fi
+
+	# 10b · THE TRIPWIRE OVER OUR OWN BUNDLES. _capture swallows the capture's exit status, and a
+	#       self-test bundle lives outside demos/proofs/, so when assert_grep_clean fails the capture
+	#       refuses to delete it and exits 1 — the files survive and every check above still passes.
+	#       That is how a `kubeconfig-mint:` VERDICT label (#5334) reached the nightly, where the
+	#       same tripwire withheld every bundle. Run it here, on a bundle with the mint verdict and
+	#       one without, so a label that collides with the denylist fails on every PR.
+	for clean_dir in "$kc_dir" "$pass_dir"; do
+		if assert_grep_clean "$clean_dir" 2>/dev/null; then
+			echo "  ✓ the secret tripwire passes its own bundle ($(basename "$(dirname "$(dirname "$clean_dir")")"))"
+		else
+			echo "  ✗ the secret tripwire REFUSES a self-test bundle a real capture would withhold ($clean_dir)" >&2
+			fails=$((fails + 1))
+		fi
+	done
 
 	if [ "$fails" -ne 0 ]; then
 		echo "capture-proof --self-test: $fails assertion(s) FAILED" >&2
@@ -988,6 +1003,12 @@ else
 EOF
 fi
 
+# Every LABEL below is read by assert_grep_clean like any other `key: value` line, and none of these
+# lines goes through scrub_stream. A label containing a denylisted token (kubeconfig, token, password,
+# …) is therefore "a denylisted key carrying a plaintext value", and the capture deletes the bundle.
+# #5334 shipped `kubeconfig-mint:` here and every bundle that reached capture was withheld, including
+# the `n/a` ones, until it was renamed `kubeaccess-mint:` (the Go package that mints). The self-test
+# runs the tripwire over its own bundles (check 10b) so a colliding label fails on every PR.
 cat >"$out/VERDICT.txt" <<EOF
 $verdict_line
 dimension: ${dimension:-unrecorded}
@@ -998,7 +1019,7 @@ teardown:  destroyed=$destroyed (${resources_destroyed:-?} resources)
 duration:  ${duration_s:-?}s
 soak:      ${soak_verdict:-n/a (A0.3 soak off or not reached)}
 day2-access: ${day2_access_verdict:-n/a (P2-E day-2 access off or not reached)}
-kubeconfig-mint: ${kubeconfig_mint_verdict:-n/a (#5287 kubeconfig mint tiers off or not reached)}
+kubeaccess-mint: ${kubeconfig_mint_verdict:-n/a (#5287 kubeconfig mint tiers off or not reached)}
 day2offer: ${day2_offer_verdict:-n/a (day-2 offer postures off or not reached)}
 fabric-demo: ${fabric_demo_verdict:-n/a (#845 Fabric placement gate off or not reached)}
 acm-cert: ${acm_cert_verdict:-n/a (#1773 ACM certificate gate off or not reached)}
