@@ -25,7 +25,7 @@ vi.mock("ai", () => ({
 		toUIMessageStreamResponse: () => new Response("ok"),
 	})),
 }));
-vi.mock("@/app/server/actions/agent", () => ({ saveThreadMessages: vi.fn() }));
+vi.mock("@/lib/agent/thread-transcript", () => ({ saveThreadTranscript: vi.fn(async () => ({ kind: "saved" })) }));
 vi.mock("@/app/server/actions/resolve", () => ({
 	resolveActiveEnvironmentId: vi.fn(async () => null),
 }));

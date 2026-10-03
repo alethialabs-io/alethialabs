@@ -25,18 +25,21 @@ vi.mock("drizzle-orm", async (importActual) => {
 	};
 });
 
+import * as agentActions from "@/app/server/actions/agent";
 import {
 	createThread,
 	deleteThread,
 	getThread,
 	listThreads,
 	renameThread,
-	saveThreadMessages,
 } from "@/app/server/actions/agent";
 import { MAX_USER_MESSAGE_CHARS } from "@/lib/ai/message-limits";
 import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
-import { eq, isNull } from "drizzle-orm";
+import { eq, isNull, SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { agentThreads } from "@/lib/db/schema";
 
 /**
@@ -53,6 +56,8 @@ function mockChain(rows: unknown[], sequence: unknown[][] = []) {
 		delete: vi.fn(),
 		orderBy: vi.fn(),
 		limit: vi.fn(),
+		onConflictDoNothing: vi.fn(),
+		returning: vi.fn(),
 	};
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
@@ -64,7 +69,14 @@ function mockChain(rows: unknown[], sequence: unknown[][] = []) {
 			calls.values(...a);
 			return db;
 		},
-		returning: () => db,
+		returning: (...a: unknown[]) => {
+			calls.returning(...a);
+			return db;
+		},
+		onConflictDoNothing: (...a: unknown[]) => {
+			calls.onConflictDoNothing(...a);
+			return db;
+		},
 		select: () => db,
 		from: () => db,
 		orderBy: (...a: unknown[]) => {
@@ -335,27 +347,87 @@ describe("renameThread", () => {
 	});
 });
 
-describe("saveThreadMessages", () => {
-	it("persists the transcript (and bumps updated_at) for the thread", async () => {
-		const { calls } = useChain([]);
-		const messages = [
-			{ id: "m-1", role: "user", parts: [] },
-		] as unknown as UIMessage[];
-		await saveThreadMessages("t-9", messages);
-		expect(calls.update).toHaveBeenCalledTimes(1);
-		const setArg = calls.set.mock.calls[0][0];
-		expect(setArg.messages).toBe(messages);
-		expect(setArg.updated_at).toBeDefined();
+// #5423 review (security): `saveThreadMessages` lived in this "use server" file, so Next compiled it
+// into a POST-addressable action — and once it could INSERT, any client could create a thread with
+// an id, kind, project and transcript of its choosing. Every export of this file is reachable from
+// a browser; the transcript write is not one of them.
+describe("the action surface", () => {
+	it("exports no transcript write: only the thread actions a client may call", () => {
+		expect(Object.keys(agentActions).sort()).toEqual([
+			"createThread",
+			"deleteThread",
+			"getThread",
+			"listThreads",
+			"renameThread",
+		]);
+	});
+
+	it("keeps the transcript write in a module that is not a server action and is server-only", () => {
+		const src = readFileSync(
+			path.resolve(__dirname, "../../lib/agent/thread-transcript.ts"),
+			"utf8",
+		);
+		expect(src).not.toMatch(/^\s*["']use server["'];?\s*$/m);
+		expect(src).toMatch(/^import "server-only";$/m);
 	});
 });
 
 describe("deleteThread", () => {
-	it("issues a scoped delete for the given id", async () => {
-		const { calls } = useChain([]);
+	// A late save (a turn still streaming at the delete) must be able to tell the user's delete from
+	// the reap of an empty row, or it recreates the thread the user just deleted (#5423 review).
+	it("replaces the row with a tombstone under the same id, carrying no title and no messages", async () => {
+		const removed = { user_id: "user-1", org_id: "org-1", project_id: "proj-3", kind: "agent" };
+		const { calls } = useChain([], [[removed], []]);
 		await deleteThread("t-1");
 		expect(calls.delete).toHaveBeenCalledTimes(1);
-		expect(calls.where).toHaveBeenCalledTimes(1);
+		expect(calls.insert).toHaveBeenCalledWith(agentThreads);
+		expect(calls.values).toHaveBeenCalledWith({
+			id: "t-1",
+			user_id: "user-1",
+			org_id: "org-1",
+			project_id: "proj-3",
+			kind: "agent",
+			title: "",
+			status: "deleted",
+		});
 		// Owner scope is forwarded.
 		expect(vi.mocked(withOwnerScope).mock.calls[0][0]).toBe("user-1");
+	});
+
+	it("writes no tombstone when there was no live thread to delete", async () => {
+		const { calls } = useChain([], [[]]);
+		await deleteThread("t-none");
+		expect(calls.delete).toHaveBeenCalledTimes(1);
+		expect(calls.insert).not.toHaveBeenCalled();
+	});
+});
+
+describe("a deleted thread's tombstone is no thread", () => {
+	/** The SQL text and params of a recorded `.where()` predicate, as Postgres would receive them. */
+	function compiled(where: unknown): { sql: string; params: unknown[] } {
+		if (!(where instanceof SQL)) throw new Error("not a drizzle predicate");
+		return new PgDialect().sqlToQuery(where);
+	}
+
+	it("getThread and renameThread match only a live row", async () => {
+		const { calls } = useChain([]);
+		await getThread("t-1");
+		await renameThread("t-1", "x");
+		for (const [where] of calls.where.mock.calls) {
+			const q = compiled(where);
+			expect(q.sql).toMatch(/"status" <> \$\d/);
+			expect(q.params).toContain("deleted");
+		}
+		expect(calls.where).toHaveBeenCalledTimes(2);
+	});
+
+	it("listThreads lists only live rows, and reaps a tombstone a day after the delete", async () => {
+		const { calls } = useChain([]);
+		await listThreads();
+		const [reap, list] = calls.where.mock.calls.map(([w]) => compiled(w));
+		expect(reap.sql).toMatch(/"status" = \$\d and "agent_threads"\."updated_at" < now\(\) - interval '1 day'/);
+		// The hourly reap of an EMPTY row never takes a tombstone: it is what a late save reads.
+		expect(reap.sql).toMatch(/"status" <> \$\d and jsonb_array_length/);
+		expect(list.sql).toMatch(/"status" <> \$\d/);
 	});
 });

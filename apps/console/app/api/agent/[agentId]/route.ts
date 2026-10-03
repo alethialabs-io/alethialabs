@@ -9,7 +9,8 @@ import {
 	type UIMessage,
 } from "ai";
 import { and, eq, or } from "drizzle-orm";
-import { saveThreadMessages } from "@/app/server/actions/agent";
+import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
+import { transcriptNotSaved } from "@/lib/ai/transcript-not-saved";
 import { buildAgentSystemPrompt, scopeToolsToAgent } from "@/lib/agent/executor";
 import { textToAiOutput, uiMessagesToAiInput } from "@/lib/ai/ai-observability";
 import { refuseUserMessage } from "@/lib/ai/message-limits";
@@ -195,7 +196,12 @@ export async function POST(
 		return result.toUIMessageStreamResponse({
 			originalMessages: messages,
 			onFinish: ({ messages }) => {
-				if (threadId) void saveThreadMessages(threadId, messages);
+				if (threadId) {
+					void saveThreadTranscript(
+						{ owner: actor.userId, threadId, kind: "agent", projectId: agent.project_id },
+						messages,
+					).catch(transcriptNotSaved(threadId));
+				}
 			},
 		});
 	} catch (e) {

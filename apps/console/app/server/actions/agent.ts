@@ -3,19 +3,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { UIMessage } from "ai";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireOwner } from "@/lib/auth/owner";
 import { MAX_USER_MESSAGE_CHARS } from "@/lib/ai/message-limits";
+import { THREAD_DELETED, threadTitle } from "@/lib/agent/transcript-save";
 import { withOwnerScope } from "@/lib/db";
 import { type AgentThread, agentThreads } from "@/lib/db/schema";
 
-/** Derive a thread title from the first user message (or a default). */
-function titleFrom(firstMessage?: string): string {
-	const t = (firstMessage ?? "").trim().replace(/\s+/g, " ");
-	if (!t) return "New chat";
-	return t.length > 60 ? `${t.slice(0, 57)}…` : t;
-}
+/** A row that is a thread, not the tombstone of a deleted one (`deleteThread`). */
+const live = ne(agentThreads.status, THREAD_DELETED);
 
 /**
  * The user turn that opens a conversation, as the client sends it: the id the chat gives the
@@ -74,6 +71,7 @@ export async function createThread(
 				.where(
 					and(
 						eq(agentThreads.kind, "agent"),
+						live,
 						sql`${agentThreads.messages}->0->>'id' = ${turn.id}`,
 					),
 				)
@@ -81,7 +79,7 @@ export async function createThread(
 			if (existing) {
 				const [rewritten] = await tx
 					.update(agentThreads)
-					.set({ title: titleFrom(title), messages, updated_at: sql`now()` })
+					.set({ title: threadTitle(title), messages, updated_at: sql`now()` })
 					.where(
 						and(
 							eq(agentThreads.id, existing.id),
@@ -97,7 +95,7 @@ export async function createThread(
 			.values({
 				user_id: owner,
 				org_id: owner,
-				title: titleFrom(title),
+				title: threadTitle(title),
 				...(turn ? { messages } : {}),
 				...(projectId ? { project_id: projectId } : {}),
 			})
@@ -112,10 +110,17 @@ export async function createThread(
  * (project_id IS NULL), so the org rail never mixes in project chats.
  *
  * A thread whose first send stored its user turn (`createThread` with `firstTurn`) is never
- * empty, so it is listed even when that turn failed. A row created WITHOUT a turn (today:
- * an artifact opened in a new chat, and every row written before the turn was stored) has
- * zero messages; we never surface those, and reap this owner's stale ones (older than an
- * hour, so a row a turn is about to fill is never swept) on the way through.
+ * empty, so it is listed even when that turn failed. A row created WITHOUT a turn (an artifact
+ * opened in a new chat, and every row written before the turn was stored) has zero messages; we
+ * never surface those, and reap this owner's stale ones (older than an hour, so a row a turn is
+ * about to fill is never swept) on the way through. A turn that finishes into a reaped row
+ * recreates it (`saveThreadTranscript`).
+ *
+ * A deleted thread's tombstone (`deleteThread`) is never listed, and is reaped a day after the
+ * delete — far past the longest a turn that was streaming at the delete can run (the chat routes'
+ * `maxDuration` is 300s), so such a turn's save always finds it. A NEW turn sent into the deleted id
+ * from a tab that still shows the thread is not bounded that way: within the day it is saved into
+ * a "Recovered: …" thread, and after the reap it recreates the thread under its id.
  */
 export async function listThreads(projectId?: string): Promise<AgentThread[]> {
 	const owner = await requireOwner();
@@ -123,10 +128,17 @@ export async function listThreads(projectId?: string): Promise<AgentThread[]> {
 		await tx
 			.delete(agentThreads)
 			.where(
-				and(
-					eq(agentThreads.kind, "agent"),
-					sql`jsonb_array_length(${agentThreads.messages}) = 0`,
-					sql`${agentThreads.created_at} < now() - interval '1 hour'`,
+				or(
+					and(
+						eq(agentThreads.kind, "agent"),
+						live,
+						sql`jsonb_array_length(${agentThreads.messages}) = 0`,
+						sql`${agentThreads.created_at} < now() - interval '1 hour'`,
+					),
+					and(
+						eq(agentThreads.status, THREAD_DELETED),
+						sql`${agentThreads.updated_at} < now() - interval '1 day'`,
+					),
 				),
 			);
 		return tx
@@ -135,6 +147,7 @@ export async function listThreads(projectId?: string): Promise<AgentThread[]> {
 			.where(
 				and(
 					eq(agentThreads.kind, "agent"),
+					live,
 					projectId
 						? eq(agentThreads.project_id, projectId)
 						: isNull(agentThreads.project_id),
@@ -145,14 +158,14 @@ export async function listThreads(projectId?: string): Promise<AgentThread[]> {
 	});
 }
 
-/** Load one thread (with its full message transcript). */
+/** Load one thread (with its full message transcript); null when there is none, or it was deleted. */
 export async function getThread(id: string): Promise<AgentThread | null> {
 	const owner = await requireOwner();
 	return withOwnerScope(owner, async (tx) => {
 		const [thread] = await tx
 			.select()
 			.from(agentThreads)
-			.where(eq(agentThreads.id, id))
+			.where(and(eq(agentThreads.id, id), live))
 			.limit(1);
 		return thread ?? null;
 	});
@@ -165,28 +178,41 @@ export async function renameThread(id: string, title: string): Promise<void> {
 		await tx
 			.update(agentThreads)
 			.set({ title, updated_at: sql`now()` })
-			.where(eq(agentThreads.id, id));
+			.where(and(eq(agentThreads.id, id), live));
 	});
 }
 
-/** Delete a thread. */
+/**
+ * Delete a thread: its row goes (and with it, by cascade, everything hung on it — its widgets and
+ * message feedback), and a TOMBSTONE takes its id — no title, no messages, `status` deleted.
+ *
+ * The tombstone exists for one reader: a turn that was still streaming when the user deleted the
+ * thread. Its route saves the transcript when the turn finishes, and with no row at all that save
+ * cannot tell a delete from the hourly reap of an empty row, which it answers by recreating the row
+ * — undoing the user's delete. Finding the tombstone, it puts the transcript in a new thread instead
+ * (`saveTranscript`). Every other read treats a tombstone as no thread; `listThreads` reaps it.
+ */
 export async function deleteThread(id: string): Promise<void> {
 	const owner = await requireOwner();
 	await withOwnerScope(owner, async (tx) => {
-		await tx.delete(agentThreads).where(eq(agentThreads.id, id));
-	});
-}
-
-/** Persist the full transcript for a thread (called from the streaming route's onFinish). */
-export async function saveThreadMessages(
-	id: string,
-	messages: UIMessage[],
-): Promise<void> {
-	const owner = await requireOwner();
-	await withOwnerScope(owner, async (tx) => {
-		await tx
-			.update(agentThreads)
-			.set({ messages, updated_at: sql`now()` })
-			.where(eq(agentThreads.id, id));
+		const [deleted] = await tx
+			.delete(agentThreads)
+			.where(and(eq(agentThreads.id, id), live))
+			.returning({
+				user_id: agentThreads.user_id,
+				org_id: agentThreads.org_id,
+				project_id: agentThreads.project_id,
+				kind: agentThreads.kind,
+			});
+		if (!deleted) return;
+		await tx.insert(agentThreads).values({
+			id,
+			user_id: deleted.user_id,
+			org_id: deleted.org_id,
+			project_id: deleted.project_id,
+			kind: deleted.kind,
+			title: "",
+			status: THREAD_DELETED,
+		});
 	});
 }
