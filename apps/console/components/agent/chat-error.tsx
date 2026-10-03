@@ -4,18 +4,59 @@
 
 import { isEnumMember } from "@/lib/coerce";
 import { asRecord } from "@/lib/records";
-import { AlertTriangle, KeyRound, RefreshCcw, WifiOff } from "lucide-react";
+import {
+	AlertTriangle,
+	KeyRound,
+	MessageSquareWarning,
+	RefreshCcw,
+	TextCursorInput,
+	WifiOff,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getAiUsageSummary } from "@/app/server/actions/billing";
 import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
+import { MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
 import { formatCountdown } from "@/lib/billing/ai-usage-format";
 import { track } from "@/lib/analytics/track";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 
-type ChatErrorKind = "missing-key" | "budget" | "network";
+type ChatErrorKind =
+	| "missing-key"
+	| "budget"
+	| "too-long"
+	| "unanswered"
+	| "thread-start"
+	| "network";
+
+/**
+ * A transcript that ENDS on a user turn with no reply after it — found on load, not raised by
+ * any request in this session (most often a first turn that failed and was stored by
+ * `createThread`). It is its own class so `classify` recognises it by type rather than by its
+ * text, and so it is never counted as a fresh `elench_error`: nothing failed while the user
+ * watched, and why the original request failed is not known here.
+ */
+export class UnansweredTurnError extends Error {
+	constructor() {
+		super("The reply to this message never arrived.");
+		this.name = "UnansweredTurnError";
+	}
+}
+
+/**
+ * The conversation's thread could not be created on its first send (`startThread` threw), so
+ * NOTHING was sent: a send without a thread id is a reply that is never stored. Raised by
+ * `useElenchSend`, recognised by type like {@link UnansweredTurnError}, and its Retry
+ * re-attempts the thread before sending — the message itself is kept, not lost.
+ */
+export class ThreadStartError extends Error {
+	constructor() {
+		super("The conversation could not be started.");
+		this.name = "ThreadStartError";
+	}
+}
 
 /** The AI budget reasons the 402 body carries (mirrors AiBudgetError.reason; "daily" is
  *  the pre-session-window legacy alias, accepted from in-flight old responses). */
@@ -66,11 +107,17 @@ function parseBudget(error: Error): ParsedBudget | null {
  * Classify a `useChat` error into a UI-actionable kind. The AI SDK sets `error.message`
  * to the streaming route's response body: our 503 says "AI is not configured…", the 402
  * budget response is a JSON blob with a `reason` (parsed by `parseBudget`), and a dropped
- * fetch throws a generic `TypeError`. Everything else falls to network.
+ * fetch throws a generic `TypeError`. An over-limit message is the routes' 413 body, and a
+ * reloaded transcript ending on an unanswered turn is an `UnansweredTurnError`, and a first send
+ * whose thread could not be created is a `ThreadStartError`. Everything else falls to network.
  */
 function classify(error: Error): ChatErrorKind {
+	if (error instanceof UnansweredTurnError) return "unanswered";
+	if (error instanceof ThreadStartError) return "thread-start";
 	if (parseBudget(error)) return "budget";
 	const msg = error.message ?? "";
+	// The chat routes' 413 body, matched exactly — it is a shared constant, not prose.
+	if (msg === MESSAGE_TOO_LONG) return "too-long";
 	if (/not configured|ANTHROPIC_API_KEY/i.test(msg)) return "missing-key";
 	if (/budget|quota|credit|reason|upgradable|"error"/i.test(msg)) return "budget";
 	return "network";
@@ -101,6 +148,23 @@ const COPY: Record<
 		description:
 			"You've reached your AI usage limit. It frees up as the window rolls, or upgrade your AI plan to keep going.",
 	},
+	"too-long": {
+		icon: TextCursorInput,
+		title: "Message too long",
+		description: MESSAGE_TOO_LONG,
+	},
+	unanswered: {
+		icon: MessageSquareWarning,
+		title: "No reply arrived",
+		description:
+			"This message was sent, but the reply never arrived. Retry to send it again.",
+	},
+	"thread-start": {
+		icon: MessageSquareWarning,
+		title: "Could not start the conversation",
+		description:
+			"Your message was not sent. It is still in the box below — retry to start the conversation and send it. Closing this chat or reloading discards it.",
+	},
 	network: {
 		icon: WifiOff,
 		title: "The assistant hit an error",
@@ -110,12 +174,14 @@ const COPY: Record<
 };
 
 /**
- * The transcript's error affordance. Kind-aware (missing-key / budget / network) so a
- * missing gateway key reads as setup rather than failure, and ALWAYS offers a Retry that
- * re-runs the last turn (`regenerate`). For the AI-budget (402) case it parses the real
- * reason + reset time from the response body and shows the tier-aware CTA: top-up packs
- * are PAID-plan-only, so a hit limit offers "Buy credits" only once a best-effort summary
- * fetch confirms a paid tier — free (or unknown) tiers get "Upgrade AI plan".
+ * The transcript's error affordance. Kind-aware (missing-key / budget / too-long / unanswered /
+ * thread-start / network) so a missing gateway key reads as setup rather than failure, and
+ * offers the caller's Retry (`regenerate` for a turn, a thread re-attempt for thread-start) on
+ * every kind but too-long — re-sending the same over-limit message can only be refused again.
+ * For the AI-budget (402) case it parses the real reason + reset time from the response body and
+ * shows the tier-aware CTA: top-up packs are PAID-plan-only, so a hit limit offers "Buy credits"
+ * only once a best-effort summary fetch confirms a paid tier — free (or unknown) tiers get
+ * "Upgrade AI plan".
  */
 export function ChatError({
 	error,
@@ -131,8 +197,12 @@ export function ChatError({
 	// A budget error means a limit is hit — whether "Buy credits" applies depends on the
 	// tier (packs are paid-only). Best-effort: default to the upgrade CTA until known.
 	const [paidTier, setPaidTier] = useState(false);
-	// Report the surfaced error (kind only — never the raw message) once per occurrence.
+	// Report the surfaced error (kind only — never the raw message) once per occurrence. An
+	// unanswered turn is NOT an occurrence: it is a past failure re-read from the stored
+	// transcript every time the thread opens, so counting it would inflate the error rate with
+	// requests this session never made.
 	useEffect(() => {
+		if (kind === "unanswered") return;
 		track("elench_error", { kind });
 	}, [kind]);
 	useEffect(() => {
@@ -179,7 +249,7 @@ export function ChatError({
 							{buyCredits ? "Buy credits" : "Upgrade AI plan"}
 						</Button>
 					)}
-					{onRetry && (
+					{onRetry && kind !== "too-long" && (
 						<Button
 							type="button"
 							variant="outline"

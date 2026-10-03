@@ -5,6 +5,7 @@
 import type { ChatStatus } from "ai";
 import { Sparkles } from "lucide-react";
 import Link from "next/link";
+import type { ReactNode, Ref } from "react";
 import { AlethiaMark } from "@repo/brand/lockup";
 import type { Mention } from "@/lib/ai/mentions";
 import { track } from "@/lib/analytics/track";
@@ -19,7 +20,7 @@ import {
 	EmptyTitle,
 } from "@repo/ui/empty";
 import { cn } from "@repo/ui/utils";
-import { ElenchComposer } from "./elench-composer";
+import { ElenchComposer, type ElenchComposerHandle } from "./elench-composer";
 import type { ElenchSuggestion } from "./elench-suggestions";
 import { SuggestionCarousel } from "./suggestion-carousel";
 
@@ -65,7 +66,8 @@ function ElenchMark({ className }: { className?: string }) {
 }
 
 interface ModalLandingProps {
-	onSend: (text: string, mentions?: Mention[]) => void;
+	/** Resolves false when the message did not go out — the composer then keeps its text. */
+	onSend: (text: string, mentions?: Mention[], state?: string) => void | Promise<boolean>;
 	suggestions: ElenchSuggestion[];
 	/** Recent threads for "Ready to keep going?" (empty → section hidden). */
 	recents: AgentThread[];
@@ -75,6 +77,12 @@ interface ModalLandingProps {
 	/** Org vs project — drives the Try-now prompt + analytics context. */
 	context: ElenchContext;
 	status?: ChatStatus;
+	/** Shown above the composer — a send that did not go out (its error and Retry). */
+	notice?: ReactNode;
+	/** The hero composer's handle — the notice's Retry submits what it holds. */
+	composerRef?: Ref<ElenchComposerHandle>;
+	/** What the hero composer starts from when it mounts (see `ElenchComposer`'s `seed`). */
+	composerSeed?: string | null;
 }
 
 /**
@@ -92,6 +100,9 @@ export function ElenchModalLanding({
 	showModel,
 	context,
 	status,
+	notice,
+	composerRef,
+	composerSeed,
 }: ModalLandingProps) {
 	return (
 		<div className="h-full overflow-y-auto">
@@ -101,11 +112,14 @@ export function ElenchModalLanding({
 				What should we do today?
 			</h1>
 
+			{notice && <div className="mb-4">{notice}</div>}
 			<ElenchComposer
 				onSend={onSend}
 				showModel={showModel}
 				status={status}
 				autoFocus
+				handleRef={composerRef}
+				seed={composerSeed}
 			/>
 
 {/* Paged suggestion carousel — 3 cards × 3 pages, cycled by its own button
