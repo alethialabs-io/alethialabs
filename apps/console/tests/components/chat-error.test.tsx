@@ -199,7 +199,7 @@ describe("ChatError", () => {
 		const onRetry = vi.fn();
 		render(<ChatError error={new ThreadStartError()} onRetry={onRetry} />);
 		expect(screen.getByText("Could not start the conversation")).toBeInTheDocument();
-		expect(screen.getByText(/was not sent, and it has not been lost/)).toBeInTheDocument();
+		expect(screen.getByText(/was not sent. It is still in the box below/)).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: /retry/i }));
 		expect(onRetry).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(track)).toHaveBeenCalledWith("elench_error", { kind: "thread-start" });
