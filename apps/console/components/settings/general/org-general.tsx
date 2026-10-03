@@ -9,8 +9,9 @@
 // Logo upload + ownership transfer are stubbed (tracked in dataroom/spec/features/settings-design-port.md).
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
+import { isOrgSlugAvailable } from "@/app/server/actions/billing";
 import {
   getOrgSettings,
   type OrgPrimaryAddress,
@@ -47,6 +48,10 @@ import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { Skeleton } from "@repo/ui/skeleton";
 import { authClient } from "@/lib/auth/client";
+import {
+  ORG_SLUG_RESERVED_CODE,
+  reservedOrgSlugRefusal,
+} from "@/lib/routing";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { cn } from "@repo/ui/utils";
@@ -58,6 +63,28 @@ const REGIONS = [
   "ap-southeast-1 · Singapore",
 ];
 const ENVS = ["staging", "development", "production"];
+
+/** The sentence for a slug another organization holds — the create-a-team sheet's too. */
+const SLUG_TAKEN = "That slug is taken — try another.";
+/** better-auth's own code for a slug another organization holds (`/organization/update`). */
+const BETTER_AUTH_SLUG_TAKEN = "ORGANIZATION_SLUG_ALREADY_TAKEN";
+
+/**
+ * Why `slug` cannot replace `current` as this org's URL, asked BEFORE the save — or null.
+ *
+ * Reserved first, because it needs no round-trip and its sentence is different: "taken" about a
+ * route sends the user looking for an organization that does not exist. The availability check is
+ * skipped for the org's OWN slug, which `isOrgSlugAvailable` (correctly) reports as in use. The
+ * server refuses both again (ee/'s organization hooks, better-auth's uniqueness check) — this is
+ * the half that answers before a request is made, not the enforcement.
+ */
+async function slugProblem(slug: string, current: string): Promise<string | null> {
+  if (!slug) return "Pick a slug.";
+  const reserved = reservedOrgSlugRefusal(slug);
+  if (reserved) return reserved.message;
+  if (slug !== current && !(await isOrgSlugAvailable(slug))) return SLUG_TAKEN;
+  return null;
+}
 
 /** A compact, human-readable rendering of the org's primary (billing) address. */
 function formatPrimaryAddress(a: OrgPrimaryAddress): string {
@@ -73,10 +100,21 @@ export function OrgGeneral() {
   const fetchWorkspace = useWorkspaceStore((st) => st.fetchWorkspace);
   const [s, setS] = useState<OrgSettings | null>(null);
   const [saving, setSaving] = useState(false);
+  /** The slug as loaded — the one the availability check must not count against this org. */
+  const [savedSlug, setSavedSlug] = useState("");
+  /**
+   * Why the slug was refused, rendered under the slug field. A rename onto a reserved or taken
+   * slug used to reach only a toast at best (#5445): the form checked neither before saving.
+   */
+  const [slugError, setSlugError] = useState<string | null>(null);
+  const slugErrorId = useId();
 
   useEffect(() => {
     getOrgSettings()
-      .then(setS)
+      .then((loaded) => {
+        setS(loaded);
+        if (loaded) setSavedSlug(loaded.slug);
+      })
       .catch(() => toast.error("Couldn't load organization settings."));
   }, []);
 
@@ -87,7 +125,13 @@ export function OrgGeneral() {
   async function save() {
     if (!s || !activeOrgId) return;
     setSaving(true);
+    setSlugError(null);
     try {
+      const problem = await slugProblem(s.slug, savedSlug);
+      if (problem) {
+        setSlugError(problem);
+        return;
+      }
       const { error } = await authClient.organization.update({
         organizationId: activeOrgId,
         data: {
@@ -104,7 +148,20 @@ export function OrgGeneral() {
           },
         },
       });
-      if (error) throw new Error(error.message ?? "Save failed");
+      if (error) {
+        // A slug the server refused (reserved by ee/'s hook, or claimed since the check above)
+        // belongs under the slug field; anything else is not about a field.
+        if (error.code === ORG_SLUG_RESERVED_CODE) {
+          setSlugError(error.message ?? reservedOrgSlugRefusal(s.slug)?.message ?? SLUG_TAKEN);
+          return;
+        }
+        if (error.code === BETTER_AUTH_SLUG_TAKEN) {
+          setSlugError(SLUG_TAKEN);
+          return;
+        }
+        throw new Error(error.message ?? "Save failed");
+      }
+      setSavedSlug(s.slug);
       toast.success("Organization updated.");
       await fetchWorkspace();
     } catch (e) {
@@ -180,13 +237,24 @@ export function OrgGeneral() {
                   <SettingsInput
                     className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
                     value={s.slug}
-                    onChange={(e) => set("slug", slugifyOrEmpty(e.target.value))}
+                    onChange={(e) => {
+                      set("slug", slugifyOrEmpty(e.target.value));
+                      setSlugError(null);
+                    }}
+                    aria-invalid={slugError ? true : undefined}
+                    aria-describedby={slugError ? slugErrorId : undefined}
                     autoComplete="off"
                   />
                 </div>
-                <span className="font-mono text-ui-2xs text-text-tertiary">
-                  Lowercase, numbers and hyphens.
-                </span>
+                {slugError ? (
+                  <p id={slugErrorId} role="alert" className="text-ui-xs text-destructive">
+                    {slugError}
+                  </p>
+                ) : (
+                  <span className="font-mono text-ui-2xs text-text-tertiary">
+                    Lowercase, numbers and hyphens.
+                  </span>
+                )}
               </SettingsField>
               <SettingsField
                 label="Description"

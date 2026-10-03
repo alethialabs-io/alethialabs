@@ -17,6 +17,7 @@ import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
 import { FgaTupleSync } from "./fga-tuple-sync";
 import { resolveInstanceLicense } from "./license";
 import { OpenFgaPdp } from "./openfga-pdp";
+import { orgSlugHooks } from "./org-slug-hooks";
 import { resolveActiveScope } from "./scope";
 
 /** One OpenFGA client when configured (shared by the engine + the dual-write writer). */
@@ -122,6 +123,9 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
         // Sync org membership → PDP grants on every lifecycle event, so the PDP
         // (which authorizes from grants, not member.role) actually grants access.
         organizationHooks: {
+          // A slug a console route / the marketing zone / a sibling app owns is refused HERE, in
+          // the endpoint, so a request that skips the console's forms is refused too (#5445).
+          ...orgSlugHooks(core.reservedOrgSlugRefusal),
           // Pay-to-collaborate: a card-less Pro trial is solo. Block invites until
           // the org is on a paid (or card-backed) subscription — enforced here so
           // it holds regardless of the client (the UI shows the upsell separately).

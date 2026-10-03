@@ -37,6 +37,7 @@ import { resolveOrgEntitlements } from "@/lib/billing/queries";
 import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email/notify-email";
+import { reservedOrgSlugRefusal } from "@/lib/routing";
 
 /**
  * Capabilities the core injects into the enterprise module. `ee/` queries through
@@ -66,6 +67,14 @@ export interface CoreContext {
    * non-Enterprise org without ee/ importing core billing.
    */
   canOrgCreateTeams: typeof canOrgCreateTeams;
+  /**
+   * Why a slug is reserved (a console route / the marketing zone / a sibling app owns that path),
+   * or null. Injected so the organization plugin's beforeCreateOrganization /
+   * beforeUpdateOrganization hooks refuse a reserved slug SERVER-SIDE — the client checks were the
+   * only enforcement, so a direct `/organization/create` with slug `docs` succeeded (#5445) — without
+   * ee/ importing core's routing table.
+   */
+  reservedOrgSlugRefusal: typeof reservedOrgSlugRefusal;
   /**
    * Reconciles an org's per-seat subscription quantity with its billable membership
    * (prorated). Injected so the organization plugin's member lifecycle hooks keep
@@ -207,6 +216,7 @@ function loadEnterprise(): void {
       sendInviteEmail,
       canOrgInvite,
       canOrgCreateTeams,
+      reservedOrgSlugRefusal,
       syncOrgSeats,
       emitAlertEvent: emitAlertEventSafe,
       recordActivity,

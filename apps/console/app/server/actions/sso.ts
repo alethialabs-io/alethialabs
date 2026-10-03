@@ -116,6 +116,28 @@ function providerType(
 	return "unknown";
 }
 
+/**
+ * A refusal from @better-auth/sso the admin can act on, RETURNED rather than thrown (#5445).
+ *
+ * The plugin answers a bad request with a 4xx and a sentence ("Provider not found", a domain whose
+ * TXT record is not there yet, a config it rejects). `callAuth` used to rethrow that sentence out of
+ * a `"use server"` export, and a production build replaced it with a digest — so the SSO form said
+ * nothing an admin could act on. A 5xx is NOT one of these: it is the server failing, the admin
+ * cannot fix it, and it still throws (its redaction is then correct).
+ */
+type SsoRefusal = { ok: false; error: string };
+
+/** A mutation's result: done, or a refusal to show beside the form or action that asked. */
+export type SsoActionResult = { ok: true } | SsoRefusal;
+
+/** {@link requestSsoDomainVerification}'s result: the TXT record to publish, or a refusal. */
+export type SsoDomainTokenResult =
+	| { ok: true; record: string; token: string }
+	| SsoRefusal;
+
+/** {@link verifySsoDomain}'s result: verified, or a refusal (usually: the record is not visible yet). */
+export type SsoVerifyResult = { ok: true; verified: true } | SsoRefusal;
+
 /** Mutations: PDP `manage_members` + the Enterprise `sso` entitlement. Both must pass. */
 async function requireSsoAdmin(): Promise<Actor> {
 	const actor = await authorizeQuiet("manage_members", { type: "member" });
@@ -128,13 +150,18 @@ async function requireSsoAdmin(): Promise<Actor> {
 /**
  * Dispatches a better-auth endpoint through `auth.handler`, forwarding the caller's cookies.
  *
+ * A 4xx comes back as a {@link SsoRefusal} carrying the plugin's own sentence; a 5xx throws.
+ *
  * The SSO endpoints come from the `sso()` plugin, which is loaded through the ee/ seam
  * (getAuthPlugins) — so `auth.api` cannot statically know about them, and the open-core guard
  * forbids importing `@alethia/ee` here to recover the types. `auth.handler` is the typed,
  * cast-free dispatcher, and it still runs better-auth's own middleware (session resolution, the
  * plugin's org-admin `checkProviderAccess`, and the ee entitlement guard).
  */
-async function callAuth(path: string, body: unknown): Promise<Response> {
+async function callAuth(
+	path: string,
+	body: unknown,
+): Promise<{ ok: true; res: Response } | SsoRefusal> {
 	const h = await headers();
 	const origin =
 		process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ??
@@ -151,6 +178,9 @@ async function callAuth(path: string, body: unknown): Promise<Response> {
 	if (!res.ok) {
 		const text = await res.text();
 		let message = text || `SSO request failed (HTTP ${res.status})`;
+		// Whether the body is a better-auth `APIError` — `{ code, message }`, a refusal the plugin
+		// WROTE — rather than whatever an unhandled failure produced.
+		let authored = false;
 		try {
 			const parsed: unknown = JSON.parse(text);
 			if (
@@ -160,13 +190,22 @@ async function callAuth(path: string, body: unknown): Promise<Response> {
 				typeof parsed.message === "string"
 			) {
 				message = parsed.message;
+				authored = "code" in parsed && typeof parsed.code === "string";
 			}
 		} catch {
 			// non-JSON body — keep the raw text
 		}
+		// A refusal is any 4xx, AND an authored non-500. The second half is not decoration: the
+		// plugin answers the commonest verification failure of all — the TXT record is not visible
+		// yet — as a 502 `DOMAIN_VERIFICATION_FAILED` ("Unable to verify domain ownership for
+		// acme.com. Try again later"), and a 4xx-only rule would still have thrown exactly that one.
+		// A 500 is the server failing; it throws, and its redaction is then correct.
+		const refusal =
+			(res.status >= 400 && res.status < 500) || (authored && res.status !== 500);
+		if (refusal) return { ok: false, error: message };
 		throw new Error(message);
 	}
-	return res;
+	return { ok: true, res };
 }
 
 /** Everything the SSO page needs that isn't the provider list. `member:view` gated. */
@@ -294,7 +333,7 @@ export interface SsoUpdateInput {
 export async function updateSsoProvider(
 	id: string,
 	input: SsoUpdateInput,
-): Promise<void> {
+): Promise<SsoActionResult> {
 	const actor = await requireSsoAdmin();
 	const row = await ownedProvider(actor, id);
 
@@ -316,7 +355,8 @@ export async function updateSsoProvider(
 		if (Object.keys(samlConfig).length > 0) body.samlConfig = samlConfig;
 	}
 
-	await callAuth("/sso/update-provider", body);
+	const called = await callAuth("/sso/update-provider", body);
+	if (!called.ok) return called;
 
 	emitAlertEventSafe(actor.orgId, "authz.sso.edit", {
 		title: `SSO provider updated: ${row.providerId}`,
@@ -328,14 +368,16 @@ export async function updateSsoProvider(
 	});
 	recordActivity(actor, "edit", { type: "sso_provider", id });
 	revalidatePath(SSO_PATH, "page");
+	return { ok: true };
 }
 
 /** Removes a provider (its users can no longer sign in through it). */
-export async function deleteSsoProvider(id: string): Promise<void> {
+export async function deleteSsoProvider(id: string): Promise<SsoActionResult> {
 	const actor = await requireSsoAdmin();
 	const row = await ownedProvider(actor, id);
 
-	await callAuth("/sso/delete-provider", { providerId: row.providerId });
+	const called = await callAuth("/sso/delete-provider", { providerId: row.providerId });
+	if (!called.ok) return called;
 
 	emitAlertEventSafe(actor.orgId, "authz.sso.delete", {
 		title: `SSO provider removed: ${row.providerId}`,
@@ -347,34 +389,38 @@ export async function deleteSsoProvider(id: string): Promise<void> {
 	});
 	recordActivity(actor, "destroy", { type: "sso_provider", id });
 	revalidatePath(SSO_PATH, "page");
+	return { ok: true };
 }
 
 /** Mints (or re-mints) the DNS TXT token proving control of the provider's domain. */
 export async function requestSsoDomainVerification(
 	id: string,
-): Promise<{ record: string; token: string }> {
+): Promise<SsoDomainTokenResult> {
 	const actor = await requireSsoAdmin();
 	const row = await ownedProvider(actor, id);
 
-	const res = await callAuth("/sso/request-domain-verification", {
+	const called = await callAuth("/sso/request-domain-verification", {
 		providerId: row.providerId,
 	});
-	const parsed = domainTokenResponse.safeParse(await res.json());
+	if (!called.ok) return called;
+	const parsed = domainTokenResponse.safeParse(await called.res.json());
 	if (!parsed.success) throw new Error("Could not mint a verification token.");
 
 	// The plugin's record name is `_<tokenPrefix>-<providerId>` (RFC 8552 underscore-prefixed).
 	return {
+		ok: true,
 		record: `_alethia-sso-${row.providerId}`,
 		token: parsed.data.domainVerificationToken,
 	};
 }
 
 /** Checks the DNS TXT record and, on success, flips `domain_verified`. */
-export async function verifySsoDomain(id: string): Promise<{ verified: boolean }> {
+export async function verifySsoDomain(id: string): Promise<SsoVerifyResult> {
 	const actor = await requireSsoAdmin();
 	const row = await ownedProvider(actor, id);
 
-	await callAuth("/sso/verify-domain", { providerId: row.providerId });
+	const called = await callAuth("/sso/verify-domain", { providerId: row.providerId });
+	if (!called.ok) return called;
 
 	emitAlertEventSafe(actor.orgId, "authz.sso.domain_verified", {
 		title: `SSO domain verified: ${row.domain}`,
@@ -386,7 +432,7 @@ export async function verifySsoDomain(id: string): Promise<{ verified: boolean }
 	});
 	recordActivity(actor, "edit", { type: "sso_provider", id });
 	revalidatePath(SSO_PATH, "page");
-	return { verified: true };
+	return { ok: true, verified: true };
 }
 
 export interface SsoTestCheck {

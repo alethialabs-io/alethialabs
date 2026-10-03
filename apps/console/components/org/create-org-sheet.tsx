@@ -27,7 +27,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { type UseFormReturn, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -68,7 +68,11 @@ import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { orgHost } from "@/lib/org-url";
-import { RESERVED_SLUGS } from "@/lib/routing";
+import {
+	ORG_SLUG_RESERVED_CODE,
+	ORG_SLUG_RESERVED_MESSAGE,
+	RESERVED_SLUGS,
+} from "@/lib/routing";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
@@ -83,8 +87,9 @@ import {
 
 /** The sentence for a slug that is in use — the same one `configureOnboardingOrg` returns. */
 const SLUG_TAKEN = "That slug is taken — try another.";
-/** The sentence for a slug a console route or sibling app owns — `configureOnboardingOrg`'s too. */
-const SLUG_RESERVED = "That slug is reserved — try another.";
+/** The sentence for a slug a console route or sibling app owns — `configureOnboardingOrg`'s, the
+ *  Settings rename's and the server-side organization hooks' too (one constant, lib/routing.ts). */
+const SLUG_RESERVED = ORG_SLUG_RESERVED_MESSAGE;
 
 const schema = z.object({
 	name: z.string().trim().min(2, "Give your team a name."),
@@ -150,6 +155,14 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	// charge) rather than the payment form. `lastBilling` lets the retry re-run setup.
 	const [needsSetupRetry, setNeedsSetupRetry] = useState(false);
 	const [lastBilling, setLastBilling] = useState<CollectedBilling | null>(null);
+	/**
+	 * The charge went through and THEN the slug was refused at the create — claimed by another team
+	 * while this one paid (#5445). The retry must not re-use the colliding slug, so it asks for a new
+	 * one. No new payment intent is needed for that: the intent carries the org's NAME and the payer
+	 * facts, never its slug, and the org itself is only created after the charge — so changing the
+	 * slug before that create is changing nothing anyone has paid for.
+	 */
+	const [slugClaimedAfterPayment, setSlugClaimedAfterPayment] = useState(false);
 
 	// Invite step.
 	const [isTrialOrg, setIsTrialOrg] = useState(false);
@@ -189,6 +202,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setRefusal(null);
 		setNeedsSetupRetry(false);
 		setLastBilling(null);
+		setSlugClaimedAfterPayment(false);
 		setIsTrialOrg(false);
 		setInviteEmail("");
 		setInviteRole("operator");
@@ -239,6 +253,14 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			slug: data.slug,
 		});
 		if (error || !org) {
+			// The server's reserved-slug hook (ee/) answers with its own code: say RESERVED, not taken.
+			// Checked first because its sentence contains "slug", which the pattern below would read
+			// as a collision.
+			if (error?.code === ORG_SLUG_RESERVED_CODE) {
+				form.setError("slug", { message: SLUG_RESERVED });
+				setShowUrl(true);
+				return null;
+			}
 			if (/slug|unique|exist|taken/i.test(error?.message ?? "")) {
 				form.setError("slug", { message: SLUG_TAKEN });
 				setShowUrl(true);
@@ -413,6 +435,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	async function handlePaid(billing: CollectedBilling) {
 		setBusy(true);
 		setNeedsSetupRetry(false);
+		setSlugClaimedAfterPayment(false);
 		setLastBilling(billing);
 		try {
 			if (!subscriptionId || !customerId) {
@@ -447,7 +470,14 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			let orgId = createdOrgId;
 			if (!orgId) {
 				const org = await createOrg(form.getValues());
-				if (!org) return;
+				if (!org) {
+					// Paid, and the slug was refused at the create. This used to `return` here with the
+					// customer on the payment view and nothing on screen — the refusal was written to a
+					// field on the NAME step, which is not rendered here. Ask for a new slug instead.
+					setSlugClaimedAfterPayment(true);
+					setNeedsSetupRetry(true);
+					return;
+				}
 				orgId = org.id;
 			}
 			await linkSubscriptionToNewOrg({
@@ -487,6 +517,25 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		} finally {
 			setBusy(false);
 		}
+	}
+
+	/**
+	 * The retry after a post-payment slug refusal: re-check the NEW slug (format, reserved, taken)
+	 * and finish setup with it. A slug still refused stays on screen under the field and nothing is
+	 * re-run; no new charge is ever made — `handlePaid` reuses the confirmed subscription.
+	 */
+	async function retryWithNewSlug() {
+		if (busy || !lastBilling) return;
+		setBusy(true);
+		let data: FormData | null = null;
+		try {
+			data = await validate();
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Couldn't check that slug — try again.");
+		} finally {
+			setBusy(false);
+		}
+		if (data) await handlePaid(lastBilling);
 	}
 
 	/** Send one invite into the created (paid) org. Trials are solo (see beforeCreate). */
@@ -546,6 +595,13 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 								submitLabel="Continue to payment"
 								onBack={() => setView("name")}
 								onDeclare={(d) => void handleDeclare(d)}
+							/>
+						) : needsSetupRetry && slugClaimedAfterPayment ? (
+							<RetryWithNewSlug
+								form={form}
+								slug={slug}
+								busy={busy}
+								onRetry={() => void retryWithNewSlug()}
 							/>
 						) : needsSetupRetry ? (
 							<RetrySetup
@@ -650,6 +706,8 @@ function NamePanel({
 	ready: boolean;
 	onContinue: () => void;
 }) {
+	const slugErrorId = useId();
+	const slugError = form.formState.errors.slug?.message;
 	return (
 		<form
 			onSubmit={(e) => {
@@ -693,6 +751,11 @@ function NamePanel({
 								</span>
 								<input
 									aria-label="URL slug"
+									// Tied to the sentence below, so a screen reader landing on the field hears
+									// why it was refused — the alert is announced once, the description every
+									// time the field is focused (#5445).
+									aria-invalid={slugError ? true : undefined}
+									aria-describedby={slugError ? slugErrorId : undefined}
 									className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
 									placeholder="acme-cloud"
 									autoComplete="off"
@@ -706,9 +769,9 @@ function NamePanel({
 								/>
 							</div>
 						)}
-						{form.formState.errors.slug?.message && (
-							<p role="alert" className="text-ui-xs text-destructive">
-								{form.formState.errors.slug.message}
+						{slugError && (
+							<p id={slugErrorId} role="alert" className="text-ui-xs text-destructive">
+								{slugError}
 							</p>
 						)}
 					</>
@@ -774,6 +837,69 @@ function TrialPanel({
 				No charge during the trial · cancel anytime
 			</p>
 		</div>
+	);
+}
+
+/**
+ * Paid, and the slug was claimed by another team before the org could be created (#5445). Says so,
+ * and asks for a new URL in place — the only field that changes; the name and the payment stand.
+ */
+function RetryWithNewSlug({
+	form,
+	slug,
+	busy,
+	onRetry,
+}: {
+	form: UseFormReturn<FormData>;
+	slug: string;
+	busy: boolean;
+	onRetry: () => void;
+}) {
+	const inputId = useId();
+	const errorId = useId();
+	const slugError = form.formState.errors.slug?.message;
+	return (
+		<form
+			className="space-y-3"
+			onSubmit={(e) => {
+				e.preventDefault();
+				onRetry();
+			}}
+		>
+			<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
+				Your payment went through, but your team couldn&apos;t be created at that URL — the
+				reason is below. Choose a different URL to finish setting up; you won&apos;t be charged
+				again.
+			</p>
+			<label htmlFor={inputId} className="block text-ui-md font-medium text-text-primary">
+				Team URL
+			</label>
+			<div className="flex h-9 items-center overflow-hidden rounded-sm border border-input bg-transparent focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+				<span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-ui-sm text-text-tertiary">
+					{orgHost()}/
+				</span>
+				<input
+					id={inputId}
+					aria-invalid={slugError ? true : undefined}
+					aria-describedby={slugError ? errorId : undefined}
+					className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
+					autoComplete="off"
+					value={slug}
+					onChange={(e) =>
+						form.setValue("slug", slugifyOrEmpty(e.target.value), { shouldValidate: true })
+					}
+				/>
+			</div>
+			{slugError && (
+				<p id={errorId} role="alert" className="text-ui-xs text-destructive">
+					{slugError}
+				</p>
+			)}
+			<Button type="submit" className="w-full" disabled={busy}>
+				{busy ? "Finishing…" : "Complete setup"}
+				<ArrowRight size={15} />
+			</Button>
+		</form>
 	);
 }
 
