@@ -2,13 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { UIMessage } from "ai";
+import { generateId, type UIMessage } from "ai";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentArtifactGallery } from "@/components/agent/agent-artifact-gallery";
 import { AgentKnowledgePanel } from "@/components/agent/agent-knowledge-panel";
 import { AgentChat } from "@/components/agent/agent-chat";
 import { ChatSkeleton } from "@/components/agent/chat-skeleton";
+import type { FirstTurn } from "@/app/server/actions/agent";
 import { openArtifactOnGrid } from "@/app/server/actions/artifacts";
 import {
 	getThreadFeedback,
@@ -58,6 +59,11 @@ function takePendingCellTarget(): { x: number; y: number } | null {
 
 const PLACEHOLDER = "Ask Elench, or type @ to tag a resource";
 
+/** The error a resumed transcript shows when it ends on a user turn that was never answered. */
+const UNANSWERED_TURN = new Error(
+	"This message was not answered — the request did not complete.",
+);
+
 export interface ElenchThreadApi {
 	/** False until the initial thread list resolves — the body shows a skeleton meanwhile. */
 	ready: boolean;
@@ -66,8 +72,9 @@ export interface ElenchThreadApi {
 	initialMessages: UIMessage[];
 	selectThread: (id: string) => void;
 	newChat: () => void;
-	/** Lazily persist the ephemeral conversation on its first send; returns the new thread. */
-	startThread: (firstMessage: string) => Promise<AgentThread>;
+	/** Lazily persist the ephemeral conversation on its first send (storing `firstTurn`, the
+	 * user message, with it); returns the new thread. */
+	startThread: (title: string, firstTurn?: FirstTurn) => Promise<AgentThread>;
 	deleteThread: (id: string) => void;
 }
 
@@ -197,7 +204,6 @@ export function ElenchConversation({
 		error,
 		regenerate,
 		stop,
-		resumeStream,
 		addToolResult,
 	} = useAgentChat({
 		api,
@@ -206,16 +212,21 @@ export function ElenchConversation({
 		prepareBody,
 	});
 
-	// Resume an interrupted stream after a reload: if the resumed transcript ends on a
-	// user turn, the assistant reply never landed — try to reconnect once per lineage.
-	// Guarded so a settled thread (last message is the assistant's) never fires a needless
-	// request. Re-armed per epoch since this component is not remounted between threads.
-	const resumedEpoch = useRef<number | null>(null);
-	useEffect(() => {
-		if (resumedEpoch.current === epoch) return;
-		resumedEpoch.current = epoch;
-		if (initialMessages.at(-1)?.role === "user") void resumeStream();
-	}, [epoch, initialMessages, resumeStream]);
+	// A resumed transcript that ENDS on a user turn is a turn whose reply never landed — most
+	// often a first send that failed (AI not configured, budget, provider error): `createThread`
+	// stores that message with the row, and only a successful turn writes a reply after it.
+	// Show it as the failed turn it is, with the transcript's own error + Retry (`regenerate`
+	// re-sends a trailing user turn), until the chat moves on. This used to call
+	// `resumeStream()`, which GETs `<api>/<chatId>/stream` — a route that has never existed —
+	// so it 404'd and surfaced Next's error page as a misclassified chat error.
+	const unanswered =
+		error === undefined &&
+		status === "ready" &&
+		messages.length > 0 &&
+		messages.length === initialMessages.length &&
+		messages.at(-1)?.id === initialMessages.at(-1)?.id &&
+		messages.at(-1)?.role === "user";
+	const shownError = unanswered ? UNANSWERED_TURN : error;
 
 	// The per-chat widget grid: hydrate it for the active thread and auto-pin matching
 	// tool results (registry reads + exploded build_dashboard blocks + pin_widget).
@@ -235,16 +246,23 @@ export function ElenchConversation({
 			setPendingMentions(mentions);
 			// First send of an ephemeral conversation: lazily create+attach the thread so its
 			// id (title derived from `text`) rides this request — prepareBody reads it fresh at
-			// send time, and the route's onFinish persists the transcript to it.
+			// send time, and the route's onFinish persists the transcript to it. The user turn is
+			// stored WITH the row, so a turn that fails before any reply still leaves the message
+			// behind (and the thread listed). Its id is minted here so the stored copy and the one
+			// the chat sends are one message under one id, not two lookalikes.
+			const id = generateId();
 			if (messages.length === 0 && activeId == null) {
-				await startThread(text);
+				await startThread(
+					text,
+					text.trim() ? { id, text } : undefined,
+				);
 			}
 			track("elench_message_sent", {
 				context: isOrg ? "org" : "project",
 				model: useElenchStore.getState().model,
 				project: projectId || undefined,
 			});
-			sendMessage({ text });
+			sendMessage({ id, role: "user", parts: [{ type: "text", text }] });
 		},
 		[messages.length, activeId, startThread, sendMessage, setPendingMentions, isOrg, projectId],
 	);
@@ -399,7 +417,7 @@ export function ElenchConversation({
 				<AgentChat
 					messages={messages}
 					status={status}
-					error={error}
+					error={shownError}
 					onSend={onSend}
 					onRetry={() => void regenerate()}
 					onStop={() => void stop()}

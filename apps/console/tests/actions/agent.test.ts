@@ -155,6 +155,59 @@ describe("createThread", () => {
 		expect(title.startsWith("a".repeat(57))).toBe(true);
 	});
 
+	// #5414 / the #5423 ruling: the assistant reply is persisted only by the streaming route's
+	// onFinish, which never runs when the turn fails (AI off → 503 before any stream). The user's
+	// first message must therefore be stored BY THE INSERT, or the row keeps zero messages,
+	// listThreads hides it, and the typed message vanishes on reload.
+	it("stores the first user turn as the thread's transcript in the same insert", async () => {
+		const { calls } = useChain([{ id: "t-turn" }]);
+		await createThread("persisted elench thread", undefined, {
+			id: "msg-1",
+			text: "persisted elench thread",
+		});
+		expect(calls.insert).toHaveBeenCalledTimes(1);
+		expect(calls.update).not.toHaveBeenCalled();
+		expect(calls.values).toHaveBeenCalledWith({
+			user_id: "user-1",
+			org_id: "user-1",
+			title: "persisted elench thread",
+			messages: [
+				{
+					id: "msg-1",
+					role: "user",
+					parts: [{ type: "text", text: "persisted elench thread" }],
+				},
+			],
+		});
+	});
+
+	it("stores the first turn on a project-scoped thread too", async () => {
+		const { calls } = useChain([{ id: "t-pturn" }]);
+		await createThread("Deploy prod", "proj-9", { id: "msg-2", text: "Deploy prod" });
+		const values = calls.values.mock.calls[0][0];
+		expect(values.project_id).toBe("proj-9");
+		expect(values.messages).toEqual([
+			{ id: "msg-2", role: "user", parts: [{ type: "text", text: "Deploy prod" }] },
+		]);
+	});
+
+	it("leaves the transcript to its column default when no first turn is given", async () => {
+		const { calls } = useChain([{ id: "t-art" }]);
+		await createThread("An artifact", undefined, undefined);
+		expect(calls.values.mock.calls[0][0]).not.toHaveProperty("messages");
+	});
+
+	it("refuses a blank first turn before touching the database", async () => {
+		useChain([{ id: "t-blank" }]);
+		await expect(
+			createThread("x", undefined, { id: "msg-3", text: "   " }),
+		).rejects.toThrow();
+		await expect(
+			createThread("x", undefined, { id: "", text: "hello" }),
+		).rejects.toThrow();
+		expect(withOwnerScope).not.toHaveBeenCalled();
+	});
+
 	it("throws when there is no authenticated owner", async () => {
 		vi.mocked(requireOwner).mockRejectedValue(new Error("Unauthorized"));
 		await expect(createThread("x")).rejects.toThrow(/Unauthorized/);

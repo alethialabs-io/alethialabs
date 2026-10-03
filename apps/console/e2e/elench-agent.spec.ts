@@ -240,46 +240,39 @@ test.describe("Elench agent — AI-off deterministic flows (org)", () => {
 		).toHaveAttribute("aria-current", "true");
 	});
 
-	// THIS USED TO BE "a sent thread persists across a reload", AND WITH AI OFF THAT IS FALSE BY
-	// DECISION. The first send inserts the thread row (`createThread`), but its transcript is written
-	// only by the streaming route's `onFinish` (`saveThreadMessages`) — and with no AI key that route
-	// answers 503 before any stream exists, so the row keeps zero messages. 3bfb88fc4 (2026-07-15,
-	// "drop ghost chats", a week after this test was written in #202) made `listThreads` never
-	// surface a zero-message thread, because an aborted or failed first turn leaves exactly that row
-	// behind. So the old assertion — the rail row back after a reload — asserted the ghost the
-	// product deliberately hides. It never failed on that line only because it never got there: a
-	// bare `getByText` on the first send had already failed strict mode on every run since #4301.
-	//
-	// What AI-off CAN say deterministically is both halves of that decision: the thread is created
-	// lazily on the first send (rail row, title, the turn in the transcript, the 503 error), and a
-	// reload does not resurrect it. That a thread WITH a transcript survives a reload is a claim
-	// only an answered turn can make, and `elench-ai.spec.ts` makes it against the real pipeline.
-	test("a first send that fails creates its thread, and a reload does not resurface it", async ({
+	// The first send stores the user's turn WITH the thread (`createThread` → `messages`), so the
+	// thread is not empty even though, with AI off, the turn itself fails (503 before any stream).
+	// `listThreads` hides only threads with NO stored message (3bfb88fc4), so this one survives a
+	// reload — and, ending on an unanswered user turn, resumes with the error + Retry (#5414,
+	// maintainer ruling on #5423).
+	test("a sent thread persists across a reload", async ({
 		authedPage: page,
 	}) => {
-		const title = "unanswered elench thread";
 		const modal = page.getByTestId("elench-modal");
 		const composer = page.getByTestId("elench-composer");
-		await composer.fill(title);
+		await composer.fill("persisted elench thread");
 		await composer.press("Enter");
-		await expect(transcript(modal).getByText(title, { exact: true })).toBeVisible();
-		// The turn failed — that is what makes this thread a ghost row, not a persisted chat.
-		await expect(modal.getByText(/ai is not configured/i)).toBeVisible();
+		await expect(
+			transcript(modal).getByText("persisted elench thread", { exact: true }),
+		).toBeVisible();
 
 		// The thread is created LAZILY on this first send + titled from it → it shows in the rail.
-		await expect(
-			modal.getByTestId("thread-rail-row").filter({ hasText: title }),
-		).toHaveCount(1);
+		const row = modal
+			.getByTestId("thread-rail-row")
+			.filter({ hasText: "persisted elench thread" });
+		await expect(row).toHaveCount(1);
 
-		// Reload + reopen. The composer renders only once the surface's initial `listThreads`
-		// has settled (the body is a skeleton until then), so waiting for it is what makes the
-		// absence below a MEASUREMENT rather than a read of a rail that has not loaded yet.
+		// Reload + reopen → the persisted thread resumes (rail row + message survive).
 		await page.reload();
 		await openElenchModal(page);
-		await expect(page.getByTestId("elench-composer")).toBeVisible();
-		await expect(modal.getByRole("textbox", { name: "Search chats" })).toBeVisible();
-		// Nowhere in the surface — rail, recents, title bar or transcript — names it again.
-		await expect(modal.getByText(title)).toHaveCount(0);
+		await expect(row).toHaveCount(1);
+		await expect(
+			transcript(modal).getByText("persisted elench thread", { exact: true }),
+		).toBeVisible();
+		// The turn was never answered, so the resumed transcript says so and offers a Retry.
+		await expect(
+			transcript(modal).getByRole("button", { name: "Retry", exact: true }),
+		).toBeVisible();
 	});
 
 	test("sending with no AI key surfaces the 'AI not configured' error + Retry", async ({

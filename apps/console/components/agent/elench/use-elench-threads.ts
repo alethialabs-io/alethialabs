@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	createThread,
 	deleteThread as deleteThreadAction,
+	type FirstTurn,
 	getThread,
 	listThreads,
 } from "@/app/server/actions/agent";
@@ -118,12 +119,14 @@ export function useElenchThreads() {
 	}, [newChatStore]);
 
 	/** Lazily persist the current ephemeral conversation on its first message: inserts the
-	 * thread (title derived from `firstMessage`), adds it to the rail, and attaches its id to
-	 * the store WITHOUT bumping the epoch — so the in-flight send rides the new id and the
-	 * chat instance (with the just-sent message) is not recreated. */
+	 * thread (title derived from `title`), adds it to the rail, and attaches its id to the
+	 * store WITHOUT bumping the epoch — so the in-flight send rides the new id and the chat
+	 * instance (with the just-sent message) is not recreated. `firstTurn` is the user message
+	 * itself, stored with the row so it survives a turn that fails before any reply exists;
+	 * omitted (an artifact opened in a new chat), the thread starts with no transcript. */
 	const startThread = useCallback(
-		async (firstMessage: string): Promise<AgentThread> => {
-			const t = await createThread(firstMessage, projectId);
+		async (title: string, firstTurn?: FirstTurn): Promise<AgentThread> => {
+			const t = await createThread(title, projectId, firstTurn);
 			track("elench_thread_created", { context: projectId ? "project" : "org" });
 			setThreads((prev) => [t, ...prev]);
 			attachStore(t.id);
