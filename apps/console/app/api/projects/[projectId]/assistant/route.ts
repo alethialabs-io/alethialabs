@@ -8,7 +8,8 @@ import {
 	stepCountIs,
 	streamText,
 } from "ai";
-import { saveThreadMessages } from "@/app/server/actions/agent";
+import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
+import { transcriptNotSaved } from "@/lib/ai/transcript-not-saved";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { AGENT_STEP_PART_TYPE, agentStepMarker } from "@/lib/ai/agent-steps";
 import type { CanvasContext } from "@/lib/ai/canvas-context";
@@ -18,6 +19,7 @@ import {
 	type EnvironmentKnowledge,
 } from "@/lib/ai/environment-knowledge";
 import { formatMentionsForPrompt } from "@/lib/ai/mentions";
+import { refuseUserMessage } from "@/lib/ai/message-limits";
 import {
 	type AssistantView,
 	parseProjectAssistantBody,
@@ -193,6 +195,10 @@ export async function POST(
 		environmentId: requestedEnvironmentId,
 		view,
 	} = body.value;
+	// The one per-message limit the composer and `createThread` also enforce — refused here,
+	// still before the budget hold, so an over-limit (or unreadable: 400) turn reserves nothing.
+	const refusal = refuseUserMessage(messages);
+	if (refusal) return refusal;
 
 	// Metered turn: gate on headroom (the real cost-of-serve is settled after it runs). The
 	// deep-reasoning flag no longer affects the charge — Opus just settles its own real cost.
@@ -367,7 +373,12 @@ export async function POST(
 				writer.merge(result.toUIMessageStream());
 			},
 			onFinish: ({ messages: finished }) => {
-				if (threadId) void saveThreadMessages(threadId, finished);
+				if (threadId) {
+					void saveThreadTranscript(
+						{ owner: actor.userId, threadId, kind: "agent", projectId },
+						finished,
+					).catch(transcriptNotSaved(threadId));
+				}
 			},
 		});
 
