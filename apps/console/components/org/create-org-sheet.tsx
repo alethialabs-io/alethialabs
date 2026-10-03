@@ -242,10 +242,16 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		}
 		let active = true;
 		void recoverUnfinishedPaidSetup(stored.kind === "unreadable" ? stored.ids : null).then(
-			(state) => {
+			(found) => {
 				if (!active) return;
-				if (state) {
-					beginRecovery(state);
+				if (found.kind === "found") {
+					beginRecovery(found.state);
+				} else if (found.kind === "unavailable") {
+					// Not "nothing to finish": the check failed, and it may be hiding a payment. Said, so
+					// a customer who just paid does not pay again.
+					toast.error(
+						"We couldn't check whether you have a team setup to finish. If you just paid for a team, don't pay again — reopen Create a team in a moment, or contact support.",
+					);
 				} else if (stored.kind === "unreadable") {
 					// Unreadable, and the server has nothing unfinished under it (or could not be
 					// asked). Said, not dropped: the customer may still hold a receipt for it.
@@ -292,10 +298,13 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		}
 	}
 
-	/** Opens the declaration step for a paid setup the server found with no record in this tab. */
+	/**
+	 * Opens the recovery step for a paid setup the server found with no record in this tab — with the
+	 * slug the customer chose, from the server's record, on screen to confirm or change.
+	 */
 	function beginRecovery(state: NewOrgSetupState) {
 		const name = state.name;
-		const slugIntent = state.org?.slug || slugifyOrEmpty(name);
+		const slugIntent = state.org?.slug || state.slug || slugifyOrEmpty(name);
 		form.reset({ name, slug: slugIntent });
 		setSlugTouched(true);
 		setCheckoutOrgName(name);
@@ -309,12 +318,36 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	}
 
 	/**
-	 * The recovered setup, declared again: builds the record from the server's state and the payer's
-	 * new declaration, and runs the steps. Nothing is re-sent to the Stripe customer — the typed
-	 * billing details went with the lost record, and Stripe has the address from the payment method.
+	 * The recovered setup, declared again: checks the URL (when the team does not exist yet) and asks
+	 * the gate about the new declaration — exactly as a purchase would — then builds the record from
+	 * the server's state and runs the steps. The billing details the server kept (tax id, "use as the
+	 * team's address") are re-sent to the Stripe customer; that write replaces, so a repeat is harmless.
 	 */
 	async function finishRecovered(next: PayerDeclaration) {
-		if (!recovered) return;
+		if (!recovered || busy) return;
+		setBusy(true);
+		setRefusal(null);
+		try {
+			// The URL is the one field on screen when the team does not exist yet; the name is the
+			// server's and is not re-checked here.
+			if (!recovered.org) {
+				if (!(await form.trigger("slug"))) return;
+				if (!(await isOrgSlugAvailable(form.getValues().slug))) {
+					form.setError("slug", { message: SLUG_TAKEN });
+					return;
+				}
+			}
+			const verdict = await payerConversionStatus(next);
+			if (!verdict.allowed) {
+				setRefusal(verdict.message);
+				return;
+			}
+		} catch (e) {
+			setRefusal(e instanceof Error ? e.message : "Couldn't check the declaration — try again.");
+			return;
+		} finally {
+			setBusy(false);
+		}
 		const values = form.getValues();
 		const record: PendingPaidSetup = {
 			subscriptionId: recovered.subscriptionId,
@@ -323,8 +356,8 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			slug: values.slug,
 			currency,
 			declaration: next,
-			billing: null,
-			customerDetailsSaved: true,
+			billing: recovered.billing,
+			customerDetailsSaved: recovered.billing === null,
 			createdOrgId: recovered.org?.id ?? null,
 			createdSlug: recovered.org?.slug ?? "",
 			linked: recovered.linked,
@@ -535,6 +568,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			}
 			const intent = await createNewOrgSubscriptionIntent("team", {
 				orgName: checkoutOrgName,
+				slug: form.getValues().slug,
 				priorSubscriptionId: subscriptionId ?? undefined,
 				customerId: customerId ?? undefined,
 				payer: {
@@ -566,6 +600,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		try {
 			const intent = await createNewOrgSubscriptionIntent("team", {
 				orgName: checkoutOrgName,
+				slug: form.getValues().slug,
 				priorSubscriptionId: subscriptionId ?? undefined,
 				customerId: customerId ?? undefined,
 				currency: next,
@@ -807,10 +842,13 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 								<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
 									We found a payment for a team that isn&apos;t set up yet. Confirm who is
 									paying to finish setting it up — you won&apos;t be charged again.
+									{recovered.billing === null &&
+										" The tax ID from checkout didn't reach us — add it in the team's billing settings once it is set up."}
 								</p>
+								{!recovered.org && <TeamUrlField form={form} slug={slug} />}
 								<PayerDeclarationForm
 									busy={busy}
-									refusal={null}
+									refusal={refusal}
 									submitLabel="Finish setup"
 									onBack={() => handleOpenChange(false)}
 									onDeclare={(d) => void finishRecovered(d)}
@@ -1091,9 +1129,6 @@ function RetryWithNewSlug({
 	busy: boolean;
 	onRetry: () => void;
 }) {
-	const inputId = useId();
-	const errorId = useId();
-	const slugError = form.formState.errors.slug?.message;
 	return (
 		<form
 			className="space-y-3"
@@ -1107,6 +1142,22 @@ function RetryWithNewSlug({
 				reason is below. Choose a different URL to finish setting up; you won&apos;t be charged
 				again.
 			</p>
+			<TeamUrlField form={form} slug={slug} />
+			<Button type="submit" className="w-full" disabled={busy}>
+				{busy ? "Finishing…" : "Complete setup"}
+				<ArrowRight size={15} />
+			</Button>
+		</form>
+	);
+}
+
+/** The "Team URL" field, with the refusal for the slug (if any) under it and tied to it. */
+function TeamUrlField({ form, slug }: { form: UseFormReturn<FormData>; slug: string }) {
+	const inputId = useId();
+	const errorId = useId();
+	const slugError = form.formState.errors.slug?.message;
+	return (
+		<div className="space-y-3">
 			<label htmlFor={inputId} className="block text-ui-md font-medium text-text-primary">
 				Team URL
 			</label>
@@ -1131,11 +1182,7 @@ function RetryWithNewSlug({
 					{slugError}
 				</p>
 			)}
-			<Button type="submit" className="w-full" disabled={busy}>
-				{busy ? "Finishing…" : "Complete setup"}
-				<ArrowRight size={15} />
-			</Button>
-		</form>
+		</div>
 	);
 }
 
@@ -1146,8 +1193,8 @@ function RetryWithNewSlug({
  * and it lives only in the page, so a reload loses it.
  *
  * What it promises is what holds: in this tab (and, with working storage, across a reload) the
- * setup resumes with everything typed. Without that copy, Create a team still finds the payment on
- * the server and asks who is paying again — Stripe's search indexes it within about a minute.
+ * setup resumes with everything typed. Without that copy, Create a team finds the payment in the
+ * server's own record of the setup — at once, from any tab — and asks who is paying again.
  */
 function ConfirmCloseUnfinished({
 	running,
@@ -1172,8 +1219,8 @@ function ConfirmCloseUnfinished({
 				To finish later, open Create a team again — it picks up at the step that has not
 				finished, and you won&apos;t be charged again.{" "}
 				{inPageOnly
-					? "This browser isn't letting the page keep a copy, so after a reload or in another tab it will ask you again who is paying (it can take a minute to find the payment)."
-					: "If you close this browser tab first, it will ask you again who is paying (it can take a minute to find the payment)."}
+					? "This browser isn't letting the page keep a copy, so after a reload or in another tab it will ask you again who is paying."
+					: "If you close this browser tab first, it will ask you again who is paying."}
 			</p>
 			<Button className="w-full" onClick={onStay}>
 				{running ? "Stay while it finishes" : "Finish setup now"}

@@ -38,6 +38,11 @@ import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email/notify-email";
 import { reservedOrgSlugRefusal } from "@/lib/routing";
+import {
+  keepStoredNewOrgMarker,
+  recordNewOrgCreated,
+  stampNewOrgMetadata,
+} from "@/lib/billing/pending-org-setup";
 
 /**
  * Capabilities the core injects into the enterprise module. `ee/` queries through
@@ -75,6 +80,17 @@ export interface CoreContext {
    * ee/ importing core's routing table.
    */
   reservedOrgSlugRefusal: typeof reservedOrgSlugRefusal;
+  /**
+   * The paid create-a-team setup's two organization-create hooks (#5445): `stampMetadata` keeps the
+   * marker that ties a new org to its charge only for the user who owns that charge's setup record
+   * (and refuses a second org for one charge); `recordCreated` writes the new org onto that record;
+   * `keepStoredMarker` makes an update carry the stored marker, never the request's. Injected so the organization plugin's create hooks can run them without ee/ importing core billing.
+   */
+  newOrgSetup: {
+    stampMetadata: typeof stampNewOrgMetadata;
+    recordCreated: typeof recordNewOrgCreated;
+    keepStoredMarker: typeof keepStoredNewOrgMarker;
+  };
   /**
    * Reconciles an org's per-seat subscription quantity with its billable membership
    * (prorated). Injected so the organization plugin's member lifecycle hooks keep
@@ -217,6 +233,11 @@ function loadEnterprise(): void {
       canOrgInvite,
       canOrgCreateTeams,
       reservedOrgSlugRefusal,
+      newOrgSetup: {
+        stampMetadata: stampNewOrgMetadata,
+        recordCreated: recordNewOrgCreated,
+        keepStoredMarker: keepStoredNewOrgMarker,
+      },
       syncOrgSeats,
       emitAlertEvent: emitAlertEventSafe,
       recordActivity,

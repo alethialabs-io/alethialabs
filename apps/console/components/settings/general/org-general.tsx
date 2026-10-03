@@ -145,9 +145,8 @@ export function OrgGeneral() {
             // Preserve the billing-set primary address — it's not edited here, but the
             // metadata write would otherwise drop it.
             ...(s.primaryAddress ? { primaryAddress: s.primaryAddress } : {}),
-            // And the subscription a paid create-a-team setup made this org for: a resumed setup
-            // finds the org by it, so dropping it here would let the resume create a second org.
-            ...(s.newOrgSubscriptionId ? { newOrgSubscriptionId: s.newOrgSubscriptionId } : {}),
+            // The paid create-a-team marker (#5445) is not carried here: the organization plugin's
+            // update hook writes the STORED marker back whatever this blob says.
           },
         },
       });

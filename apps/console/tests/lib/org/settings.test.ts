@@ -48,7 +48,6 @@ import { orgSettingsForOrg, parseMeta } from "@/lib/org/settings";
 const DEFAULTS = {
 	description: "",
 	primaryAddress: null,
-	newOrgSubscriptionId: null,
 	region: "eu-west-1",
 	defaultEnv: "staging",
 	terraformVersion: "1.9.5",

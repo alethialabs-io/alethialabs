@@ -31,6 +31,7 @@ import type {
 // The compat report contract lives in its own file (types/compat.types) to keep the
 // `wave:compat` scope disjoint; re-referenced here only for the ExecutionMetadata field.
 import type { CompatReport } from "@/types/compat.types";
+import type { TaxIdType } from "@/lib/billing/tax-ids";
 
 export type { ServiceBindingKind, ServiceBindingFacet };
 
@@ -1638,4 +1639,24 @@ export interface CliDeviceClientMetadata {
 	client_version: string | null;
 	/** The `user-agent` header on the registration request. */
 	user_agent: string | null;
+}
+
+/**
+ * `pending_org_setups.billing` (#5445) — the billing details a customer typed at the create-a-team
+ * checkout, kept server-side so a setup resumed from ANY tab (or after the tab that paid is gone)
+ * still sends the tax id to the Stripe customer and still honours "use as the team's address".
+ * The same shape as the checkout form's `CollectedBilling`. Nulled once the setup is declared.
+ */
+export interface PendingOrgSetupBilling {
+	name: string;
+	line1: string;
+	line2?: string;
+	city: string;
+	state?: string;
+	postalCode: string;
+	country: string;
+	/** A Stripe tax-id `type` from `lib/billing/tax-ids.ts`. */
+	taxType: TaxIdType;
+	taxValue: string;
+	useAsPrimary: boolean;
 }

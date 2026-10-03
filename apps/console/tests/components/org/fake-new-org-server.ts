@@ -84,6 +84,8 @@ export async function fakeResolve(input: {
 		linked: !!linkedTo && linkedTo === org?.id,
 		declared: false,
 		name: "Acme Cloud",
+		slug: org?.slug ?? "acme-cloud",
+		billing: null,
 		currency: "eur",
 	};
 }

@@ -8,7 +8,7 @@
 // active org — never a client-supplied org id. Stripe then drives the
 // organization_billing record through the webhook; entitlements follow.
 
-import { and, asc, count, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import type Stripe from "stripe";
 import { RESERVED_SLUGS } from "@/lib/routing";
 import {
@@ -59,11 +59,21 @@ import {
 	type LivePlanPriceMap,
 } from "@/lib/billing/pricing";
 import { getStripe } from "@/lib/billing/stripe";
+import { type NewOrgSetupState, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
 import {
-	type NewOrgSetupState,
-	newOrgSubscriptionIdOf,
-	PAID_SUBSCRIPTION_STATUSES,
-} from "@/lib/billing/new-org-setup";
+	findSetupOrg,
+	forgetPendingOrgSetup,
+	markPendingOrgSetupDeclared,
+	markPendingOrgSetupLinked,
+	pendingOrgSetupBillingSchema,
+	pendingOrgSetupFor,
+	pendingOrgSetupSlugSchema,
+	type PendingOrgSetupRow,
+	recordPendingOrgSetup,
+	savePendingOrgSetupDetails,
+	unfinishedPendingOrgSetups,
+} from "@/lib/billing/pending-org-setup";
+import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { mapStatus, syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { computeUsage, type UsageSummary } from "@/lib/billing/usage";
 import {
@@ -1060,6 +1070,8 @@ export async function createNewOrgSubscriptionIntent(
 	plan: PaidPlan,
 	opts: {
 		orgName: string;
+		/** The slug the customer chose, recorded with the subscription so any tab can finish setup. */
+		slug?: string;
 		priorSubscriptionId?: string;
 		customerId?: string;
 		currency?: SupportedCurrency;
@@ -1111,13 +1123,14 @@ export async function createNewOrgSubscriptionIntent(
 		customerId = customer.id;
 	}
 
-	// Cancel the previous incomplete sub from this attempt so it doesn't leak.
+	// Cancel the previous incomplete sub from this attempt so it doesn't leak, and drop its record.
 	if (opts.priorSubscriptionId) {
 		try {
 			await getStripe().subscriptions.cancel(opts.priorSubscriptionId);
 		} catch {
 			// Already gone / expired — nothing to clean up.
 		}
+		await forgetPendingOrgSetup(actor.userId, opts.priorSubscriptionId);
 	}
 	// Belt-and-suspenders: void any other dangling incomplete subs on this customer (e.g. a
 	// prior attempt whose id wasn't threaded back), so they can't accumulate as FAILED draft
@@ -1151,7 +1164,48 @@ export async function createNewOrgSubscriptionIntent(
 	if (!clientSecret) {
 		throw new Error("Stripe did not return a payment client secret.");
 	}
+	// The server-side record of this setup (#5445), written BEFORE the client holds anything it could
+	// pay. From here on a charge is findable by the payer's own id with no browser record and no search
+	// index. If it cannot be written, the subscription is cancelled and nothing is offered for payment:
+	// a charge the server cannot find again is the one outcome this record exists to prevent.
+	const parsedSlug = pendingOrgSetupSlugSchema.safeParse(opts.slug ?? "");
+	try {
+		await recordPendingOrgSetup({
+			userId: actor.userId,
+			subscriptionId: sub.id,
+			customerId,
+			name: opts.orgName,
+			slug: (parsedSlug.success && parsedSlug.data) || slugifyOrEmpty(opts.orgName),
+		});
+	} catch (e) {
+		try {
+			await getStripe().subscriptions.cancel(sub.id);
+		} catch {
+			// Unpaid and never handed out: it expires on its own (Stripe voids an incomplete one in 23h).
+		}
+		throw new Error("Couldn't start the purchase — try again.", { cause: e });
+	}
 	return { clientSecret, subscriptionId: sub.id, customerId, currency };
+}
+
+/**
+ * Saves the slug and the checkout billing details on the caller's record of an unfinished paid setup
+ * (#5445), so a setup finished from another tab — or after this one is gone — still creates the team at
+ * the chosen URL, still sends the tax id, and still honours "use as the team's address". Validated
+ * here: the browser's copy is input. A record that is not the caller's is not touched.
+ */
+export async function saveNewOrgSetupDetails(input: {
+	subscriptionId: string;
+	slug: string;
+	billing: unknown;
+}): Promise<{ ok: true }> {
+	const actor = await currentActor();
+	requireHostedBilling();
+	const slug = pendingOrgSetupSlugSchema.parse(input.slug);
+	const billing =
+		input.billing === null ? null : pendingOrgSetupBillingSchema.parse(input.billing);
+	await savePendingOrgSetupDetails(actor.userId, input.subscriptionId, { slug, billing });
+	return { ok: true };
 }
 
 /**
@@ -1243,74 +1297,111 @@ export async function linkSubscriptionToNewOrg(input: {
 			})
 			.where(eq(organizationBilling.organizationId, input.orgId));
 	}
+
+	// The setup record's link step (#5445). Last, so it says only what has fully happened.
+	await markPendingOrgSetupLinked(actor.userId, input.subscriptionId, input.orgId);
 }
 
 /**
- * The server's own answer to "how far has this paid create-a-team setup got?" (#5445), for a
- * subscription already loaded from Stripe. Null when the subscription was not minted for `userId`, or
- * is linked to an organization `userId` does not own — there is nothing of theirs to resume.
+ * The caller's record of a new-org subscription, BACKFILLED for one minted before the record existed
+ * (#5445) — those have only Stripe's `created_by` to say whose they are. Null for a subscription that
+ * was not minted for `userId`.
+ */
+async function setupRecordFor(
+	sub: Stripe.Subscription,
+	userId: string,
+): Promise<PendingOrgSetupRow | null> {
+	if (sub.metadata?.created_by !== userId) return null;
+	const existing = await pendingOrgSetupFor(userId, sub.id);
+	if (existing) return existing;
+	const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+	const customer = typeof sub.customer === "string" ? null : sub.customer;
+	const name = customer && !customer.deleted ? (customer.name ?? "") : "";
+	await recordPendingOrgSetup({
+		userId,
+		subscriptionId: sub.id,
+		customerId,
+		name,
+		slug: slugifyOrEmpty(name),
+	});
+	return pendingOrgSetupFor(userId, sub.id);
+}
+
+/**
+ * The server's own answer to "how far has this paid create-a-team setup got?" (#5445), from the
+ * subscription (Stripe) and the caller's setup record. Null when the subscription was not minted for
+ * `userId`, or is linked to an organization `userId` is not an owner of — nothing of theirs to resume.
  *
- * The organization is found by the server, never taken from the browser: the one `userId` OWNS whose
- * metadata names this subscription (`NEW_ORG_SUBSCRIPTION_KEY`, written in the same insert as the
- * organization row), or the one the subscription is already linked to. Oldest first, so if two ever
- * existed the resume converges on the first.
+ * The organization is the one the record names or the one carrying the server-stamped marker
+ * (`findSetupOrg`, which does not depend on the owner member row and repairs a missing one), or the
+ * one the subscription is already linked to.
  */
 async function newOrgSetupStateFor(
 	sub: Stripe.Subscription,
 	userId: string,
 ): Promise<NewOrgSetupState | null> {
-	if (sub.metadata?.created_by !== userId) return null;
-	const customer = typeof sub.customer === "string" ? null : sub.customer;
+	const row = await setupRecordFor(sub, userId);
+	if (!row) return null;
 	const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
 	const db = getServiceDb();
-	const owned = await db
-		.select({
-			id: organization.id,
-			slug: organization.slug,
-			metadata: organization.metadata,
-		})
-		.from(member)
-		.innerJoin(organization, eq(member.organizationId, organization.id))
-		.where(and(eq(member.userId, userId), eq(member.role, "owner")))
-		.orderBy(asc(organization.createdAt));
 
 	const linkedTo = sub.metadata?.organization_id ?? null;
-	const row = linkedTo
-		? owned.find((o) => o.id === linkedTo)
-		: owned.find((o) => newOrgSubscriptionIdOf(o.metadata) === sub.id);
-	if (linkedTo && !row) return null;
+	let org = await findSetupOrg(row, userId);
+	if (linkedTo && org?.id !== linkedTo) {
+		const [owned] = await db
+			.select({ id: organization.id, slug: organization.slug })
+			.from(member)
+			.innerJoin(organization, eq(member.organizationId, organization.id))
+			.where(
+				and(
+					eq(member.organizationId, linkedTo),
+					eq(member.userId, userId),
+					eq(member.role, "owner"),
+				),
+			)
+			.limit(1);
+		if (!owned) return null;
+		org = { id: owned.id, slug: owned.slug ?? "" };
+	}
 
 	let declared = false;
-	if (row) {
+	if (org) {
 		const [billing] = await db
 			.select({
 				payerCapacity: organizationBilling.payerCapacity,
 				authorityAttestation: organizationBilling.authorityAttestation,
 			})
 			.from(organizationBilling)
-			.where(eq(organizationBilling.organizationId, row.id))
+			.where(eq(organizationBilling.organizationId, org.id))
 			.limit(1);
 		declared =
 			!!billing?.payerCapacity &&
 			(billing.payerCapacity !== "organization" || !!billing.authorityAttestation);
+		// A declaration that landed but whose stamp did not (a lost response) is recorded now, so the
+		// setup stops being reported as unfinished.
+		if (declared && !row.declared_at && linkedTo === org.id) {
+			await markPendingOrgSetupDeclared(userId, org.id);
+		}
 	}
 	return {
 		subscriptionId: sub.id,
 		customerId,
 		paid: PAID_SUBSCRIPTION_STATUSES.has(sub.status),
-		org: row ? { id: row.id, slug: row.slug ?? "" } : null,
+		org,
 		linked: !!linkedTo,
 		declared,
-		name: customer && !customer.deleted ? (customer.name ?? "") : "",
+		name: row.intended_name,
+		slug: org?.slug || row.intended_slug,
+		billing: row.billing ?? null,
 		currency: sub.currency,
 	};
 }
 
 /**
- * Where a paid create-a-team setup stands, read from Stripe and the database (#5445). The sheet asks
- * this before every run of the post-payment steps, so the browser's copy of the setup is only a hint:
- * an organization created by a request whose response was lost is FOUND here and reused, never
- * created a second time.
+ * Where a paid create-a-team setup stands, read from Stripe and the caller's setup record (#5445). The
+ * sheet asks this before every run of the post-payment steps, so the browser's copy of the setup is
+ * only a hint: an organization created by a request whose response was lost is FOUND here and reused,
+ * never created a second time.
  *
  * Returns null — never throws — when the subscription is not the caller's, so a stale or tampered
  * browser record cannot learn anything about someone else's subscription.
@@ -1332,27 +1423,58 @@ export async function resolveNewOrgSetup(input: {
 		if (isStripeResourceMissing(e)) return null;
 		throw e;
 	}
-	const state = await newOrgSetupStateFor(sub, actor.userId);
-	if (!state || state.customerId !== input.customerId) return null;
-	return state;
+	if (sub.metadata?.created_by !== actor.userId) return null;
+	const subCustomerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+	if (subCustomerId !== input.customerId) return null;
+	return newOrgSetupStateFor(sub, actor.userId);
 }
 
+/** Stripe subscription statuses from which no payment can follow — the record can go. */
+const DEAD_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
+
 /**
- * The caller's paid create-a-team setup that never finished, found WITHOUT any browser record — the
- * record lives in one tab's sessionStorage, and a closed tab, cleared site data or an unreadable copy
- * loses it (#5445). Without this the sheet offered a new purchase to a customer already charged.
+ * The caller's paid create-a-team setup that never finished, found WITHOUT any browser record (#5445):
+ * a closed tab, cleared site data, a crash a second after the charge. Without this the sheet offered a
+ * new purchase to a customer already charged.
  *
- * Unfinished means paid, and either linked to no organization yet, or linked to an organization made
- * by THIS flow (its metadata names the subscription) whose payer declaration is incomplete. An older
- * team linked before that marker existed is never reported: nothing here can tell its state.
+ * Read from the caller's setup records (`declared_at IS NULL`, newest first), each checked against
+ * Stripe by id — a direct read, so a subscription paid a second ago is found. Records of subscriptions
+ * that can no longer be paid (cancelled, expired) are dropped on the way.
  *
- * Uses Stripe's search API, which indexes new objects with a delay of about a minute; a setup
- * abandoned seconds ago may not be found yet. Returns the newest match, or null.
+ * Subscriptions minted before the record existed have none. For those this falls back to Stripe's
+ * search API (which indexes with a delay, irrelevant for a subscription that old) and backfills a
+ * record for the newest PAID one that is linked to no organization. That covers a legacy charge whose
+ * organization was never created or never linked. It does NOT cover a legacy organization that was
+ * created but not linked: nothing marks it, so recovery creates a new one — the old organization is
+ * left as it was, and when the derived slug collides with it the sheet asks for a new URL.
  */
 export async function findUnfinishedNewOrgSetup(): Promise<NewOrgSetupState | null> {
 	const actor = await currentActor();
-	requireHostedBilling();
-	const found = await getStripe().subscriptions.search({
+	// A deployment without Stripe never took a payment, so there is nothing to finish — an answer,
+	// not a failure (the sheet reports a failure as "couldn't check").
+	if (!isStripeConfigured()) return null;
+	const stripe = getStripe();
+	const rows = await unfinishedPendingOrgSetups(actor.userId);
+	for (const row of rows) {
+		let sub: Stripe.Subscription;
+		try {
+			sub = await stripe.subscriptions.retrieve(row.subscription_id, { expand: ["customer"] });
+		} catch (e) {
+			if (!isStripeResourceMissing(e)) throw e;
+			await forgetPendingOrgSetup(actor.userId, row.subscription_id);
+			continue;
+		}
+		if (!PAID_SUBSCRIPTION_STATUSES.has(sub.status)) {
+			if (DEAD_SUBSCRIPTION_STATUSES.has(sub.status)) {
+				await forgetPendingOrgSetup(actor.userId, row.subscription_id);
+			}
+			continue;
+		}
+		const state = await newOrgSetupStateFor(sub, actor.userId);
+		if (state && !(state.linked && state.declared)) return state;
+	}
+	const seen = new Set(rows.map((r) => r.subscription_id));
+	const found = await stripe.subscriptions.search({
 		query: `metadata['created_by']:'${actor.userId}'`,
 		limit: 20,
 		expand: ["data.customer"],
@@ -1360,17 +1482,9 @@ export async function findUnfinishedNewOrgSetup(): Promise<NewOrgSetupState | nu
 	const newestFirst = [...found.data].sort((a, b) => b.created - a.created);
 	for (const sub of newestFirst) {
 		if (!PAID_SUBSCRIPTION_STATUSES.has(sub.status)) continue;
+		if (sub.metadata?.organization_id || seen.has(sub.id)) continue;
 		const state = await newOrgSetupStateFor(sub, actor.userId);
-		if (!state) continue;
-		if (!state.linked) return state;
-		if (!state.declared && state.org) {
-			const [org] = await getServiceDb()
-				.select({ metadata: organization.metadata })
-				.from(organization)
-				.where(eq(organization.id, state.org.id))
-				.limit(1);
-			if (newOrgSubscriptionIdOf(org?.metadata ?? null) === sub.id) return state;
-		}
+		if (state) return state;
 	}
 	return null;
 }

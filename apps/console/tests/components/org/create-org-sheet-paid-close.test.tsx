@@ -28,11 +28,16 @@ const declarePayer = vi.fn();
 
 const findUnfinished = vi.fn();
 const resolveSetup = vi.fn();
+const attachTaxId = vi.fn();
+const saveDetails = vi.fn();
+const conversionStatus = vi.fn();
+const updatePrimaryAddress = vi.fn();
 
 vi.mock("@/app/server/actions/billing", async () => {
 	const fake = await import("./fake-new-org-server");
 	return {
-		attachTaxIdToCustomer: vi.fn(),
+		attachTaxIdToCustomer: (...a: unknown[]) => attachTaxId(...a),
+		saveNewOrgSetupDetails: (...a: unknown[]) => saveDetails(...a),
 		findUnfinishedNewOrgSetup: (...a: unknown[]) => findUnfinished(...a),
 		resolveNewOrgSetup: (input: { subscriptionId: string; customerId: string }) =>
 			resolveSetup(input) ?? fake.fakeResolve(input),
@@ -46,9 +51,11 @@ vi.mock("@/app/server/actions/billing", async () => {
 });
 vi.mock("@/app/server/actions/legal", () => ({
 	declarePayer: (...a: unknown[]) => declarePayer(...a),
-	payerConversionStatus: vi.fn().mockResolvedValue({ allowed: true }),
+	payerConversionStatus: (...a: unknown[]) => conversionStatus(...a),
 }));
-vi.mock("@/app/server/actions/org-settings", () => ({ updateOrgPrimaryAddress: vi.fn() }));
+vi.mock("@/app/server/actions/org-settings", () => ({
+	updateOrgPrimaryAddress: (...a: unknown[]) => updatePrimaryAddress(...a),
+}));
 vi.mock("@/app/server/actions/workspace", () => ({
 	setActiveOrganization: vi.fn().mockResolvedValue(undefined),
 }));
@@ -192,6 +199,10 @@ beforeEach(() => {
 	fakeServer.reset();
 	findUnfinished.mockResolvedValue(null);
 	resolveSetup.mockReturnValue(undefined);
+	attachTaxId.mockResolvedValue({ ok: true });
+	saveDetails.mockResolvedValue({ ok: true });
+	conversionStatus.mockResolvedValue({ allowed: true });
+	updatePrimaryAddress.mockResolvedValue(undefined);
 	inviteMember.mockResolvedValue({ data: {}, error: null });
 	window.sessionStorage.clear();
 	isOrgSlugAvailable.mockResolvedValue(true);
@@ -610,6 +621,8 @@ describe("CreateOrgSheet — the server, not the record, says how far a paid set
 			linked: false,
 			declared: false,
 			name: "Acme Cloud",
+			slug: "acme-cloud",
+			billing: null,
 			currency: "eur",
 		});
 		createOrg.mockResolvedValue({ data: { id: "org-new", slug: "acme-cloud" }, error: null });
@@ -627,5 +640,118 @@ describe("CreateOrgSheet — the server, not the record, says how far a paid set
 			expect.objectContaining({ subscriptionId: "sub_9", customerId: "cus_9", orgId: "org-new" }),
 		);
 		expect(createIntent).not.toHaveBeenCalled();
+	});
+
+	// #5445: recovery used to drop everything typed at checkout — the tax id, "use as the team's
+	// address" and a custom URL — because only the lost tab had them. The server's record keeps them.
+	// Against 49030b809 the sheet ignored them: no tax id was sent and the team was created at the
+	// slug derived from its name.
+	it("a recovered setup restores the chosen URL, the tax id and the primary-address choice from the server's record", async () => {
+		findUnfinished.mockResolvedValue({
+			subscriptionId: "sub_9",
+			customerId: "cus_9",
+			paid: true,
+			org: null,
+			linked: false,
+			declared: false,
+			name: "Acme Cloud",
+			slug: "acme-hq",
+			billing: {
+				name: "Acme GmbH",
+				line1: "Hauptstr. 1",
+				city: "Berlin",
+				postalCode: "10115",
+				country: "DE",
+				taxType: "eu_vat",
+				taxValue: "DE123456789",
+				useAsPrimary: true,
+			},
+			currency: "eur",
+		});
+		createOrg.mockResolvedValue({ data: { id: "org-new", slug: "acme-hq" }, error: null });
+		const user = userEvent.setup();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+
+		expect(await screen.findByLabelText("Team URL")).toHaveValue("acme-hq");
+		expect(screen.queryByText(/tax id from checkout didn.t reach us/i)).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Declare payer" }));
+
+		await vi.waitFor(() => expect(declarePayer).toHaveBeenCalledTimes(1));
+		expect(attachTaxId).toHaveBeenCalledWith({
+			customerId: "cus_9",
+			type: "eu_vat",
+			value: "DE123456789",
+		});
+		expect(createOrg).toHaveBeenCalledWith(expect.objectContaining({ slug: "acme-hq" }));
+		await vi.waitFor(() =>
+			expect(updatePrimaryAddress).toHaveBeenCalledWith(expect.anything(), "org-new"),
+		);
+		expect(createIntent).not.toHaveBeenCalled();
+	});
+
+	it("a recovered setup whose URL was taken since asks for another, with the reason, before anything runs", async () => {
+		findUnfinished.mockResolvedValue({
+			subscriptionId: "sub_9",
+			customerId: "cus_9",
+			paid: true,
+			org: null,
+			linked: false,
+			declared: false,
+			name: "Acme Cloud",
+			slug: "acme-hq",
+			billing: null,
+			currency: "eur",
+		});
+		isOrgSlugAvailable.mockImplementation(async (slug: string) => slug !== "acme-hq");
+		createOrg.mockResolvedValue({ data: { id: "org-new", slug: "acme2" }, error: null });
+		const user = userEvent.setup();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+
+		expect(await screen.findByText(/tax id from checkout didn.t reach us/i)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Declare payer" }));
+		expect(await screen.findByText(/that slug is taken/i)).toBeInTheDocument();
+		expect(createOrg).not.toHaveBeenCalled();
+
+		const field = screen.getByLabelText("Team URL");
+		await user.clear(field);
+		await user.type(field, "acme2");
+		await user.click(screen.getByRole("button", { name: "Declare payer" }));
+		await vi.waitFor(() => expect(declarePayer).toHaveBeenCalledTimes(1));
+		expect(createOrg).toHaveBeenCalledWith(expect.objectContaining({ slug: "acme2" }));
+	});
+
+	it("a recovered declaration is put to the same gate as a purchase; a refused one is said and nothing is declared", async () => {
+		findUnfinished.mockResolvedValue({
+			subscriptionId: "sub_9",
+			customerId: "cus_9",
+			paid: true,
+			org: null,
+			linked: false,
+			declared: false,
+			name: "Acme Cloud",
+			slug: "acme-hq",
+			billing: null,
+			currency: "eur",
+		});
+		conversionStatus.mockResolvedValue({
+			allowed: false,
+			reason: "market_closed",
+			message: "We can't sell to organizations in DE yet.",
+		});
+		const user = userEvent.setup();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+
+		await user.click(await screen.findByRole("button", { name: "Declare payer" }));
+		await vi.waitFor(() => expect(conversionStatus).toHaveBeenCalledTimes(1));
+		expect(createOrg).not.toHaveBeenCalled();
+		expect(declarePayer).not.toHaveBeenCalled();
+	});
+
+	it("when the server cannot be asked, the sheet says so — it does not read the failure as 'nothing to finish'", async () => {
+		findUnfinished.mockRejectedValue(new Error("Stripe is unavailable"));
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+		await vi.waitFor(() =>
+			expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/couldn.t check .* don.t pay again/i)),
+		);
 	});
 });

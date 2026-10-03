@@ -14,21 +14,26 @@
 // runs — and rewritten as each step completes (`customerDetailsSaved`, `createdOrgId`, `linked`). It
 // is removed only once the LAST step, the payer declaration, has succeeded.
 //
-// THE RECORD IS A HINT; THE SERVER IS THE AUTHORITY. Every run starts by asking the server where the
+// THE RECORD IS A HINT; THE SERVER IS THE AUTHORITY. The server keeps its own record of the setup
+// (`pending_org_setups`, lib/billing/pending-org-setup.ts), written when the subscription is minted —
+// before the charge — and stamped as each step lands. Every run starts by asking the server where the
 // setup stands (`resolveNewOrgSetup`): which organization this user already created for the
-// subscription, and whether the subscription is linked to it. The browser cannot know that by
-// itself — a create whose response was lost (a reload, a dropped connection) leaves an organization
-// on the server and `createdOrgId: null` here, and trusting the record created a second one. The
-// organization is found by a marker written IN THE SAME INSERT as the organization row (its
-// metadata names the subscription, lib/billing/new-org-setup.ts), so there is no window in which it
-// exists unmarked. Every step is idempotent against that answer: an org found is reused, a link
-// already written is completed rather than refused, and the declaration is an upsert.
+// subscription, and whether the subscription is linked to it. The browser cannot know that by itself
+// — a create whose response was lost (a reload, a dropped connection) leaves an organization on the
+// server and `createdOrgId: null` here, and trusting the record created a second one. The server finds
+// that organization by its record, or by a marker its own create hook stamps in the same insert as the
+// organization row — never by the owner member row, which better-auth inserts in a SEPARATE statement
+// that can fail; an organization left with no member is repaired with the payer as owner rather than
+// made again. Every step is idempotent against that answer: an org found is reused, a second create for
+// the same charge is refused by the server, a link already written is completed rather than refused,
+// and the declaration is an upsert.
 //
-// What the record still carries that the server does not: the payer's typed attestation and the slug
-// they asked for. When the record is missing or unreadable, the sheet asks the server for an
-// unfinished setup (`findUnfinishedNewOrgSetup`) and asks the payer to declare again — it never offers
-// a new purchase to a customer the server knows has paid.
-//
+// The slug and the billing details typed at checkout are sent to the server record at the start of
+// each run, so a setup finished from ANY tab — `findUnfinishedNewOrgSetup` reads the record by user, no
+// browser copy and no search index involved — still creates at the chosen URL, sends the tax id and
+// honours "use as the team's address". The typed authority attestation is the one thing it does not
+// keep: a recovered setup asks the payer to declare again, through the same gate as a purchase.
+
 // The steps themselves run here, outside the sheet's React state, for the same reason: a close while
 // they are in flight must not orphan them. `finishPaidSetup` keeps one run per subscription, so a
 // reopened sheet attaches to a run still in flight instead of starting a second one beside it. A run
@@ -47,6 +52,7 @@ import {
 	findUnfinishedNewOrgSetup,
 	linkSubscriptionToNewOrg,
 	resolveNewOrgSetup,
+	saveNewOrgSetupDetails,
 	setCustomerBillingAddress,
 } from "@/app/server/actions/billing";
 import { declarePayer } from "@/app/server/actions/legal";
@@ -58,7 +64,11 @@ import {
 } from "@/components/billing/billing-checkout-form";
 import type { PayerDeclaration } from "@/components/billing/payer-declaration-form";
 import { authClient } from "@/lib/auth/client";
-import { NEW_ORG_SUBSCRIPTION_KEY, type NewOrgSetupState } from "@/lib/billing/new-org-setup";
+import {
+	NEW_ORG_SETUP_ORG_EXISTS_CODE,
+	NEW_ORG_SUBSCRIPTION_KEY,
+	type NewOrgSetupState,
+} from "@/lib/billing/new-org-setup";
 import { TAX_ID_TYPES, type TaxIdType } from "@/lib/billing/tax-ids";
 import {
 	ORG_SLUG_RESERVED_CODE,
@@ -228,21 +238,27 @@ function clearPendingPaidSetup(userId: string): void {
 	}
 }
 
+/** What the server said about an unfinished paid setup: one to resume, none, or it could not be asked. */
+export type RecoveredPaidSetup =
+	| { kind: "found"; state: NewOrgSetupState }
+	| { kind: "none" }
+	| { kind: "unavailable" };
+
 /**
  * Asks the server for a paid setup this user never finished, for a sheet opened with no usable
- * record. `ids` (from a record that no longer parses) is asked about directly; without it the server
- * searches. Null when there is nothing unfinished — or when the question itself failed, which leaves
- * the sheet at the name step exactly as before.
+ * record. `ids` (from a record that no longer parses) is asked about directly; without them the server
+ * reads the user's own setup records. A question that FAILED is reported as such, never as "none":
+ * "none" lets the sheet offer a purchase, and the outage may be hiding one already paid.
  */
 export async function recoverUnfinishedPaidSetup(
 	ids: { subscriptionId: string; customerId: string } | null,
-): Promise<NewOrgSetupState | null> {
+): Promise<RecoveredPaidSetup> {
 	try {
 		const state = ids ? await resolveNewOrgSetup(ids) : await findUnfinishedNewOrgSetup();
-		if (!state || !state.paid) return null;
-		return state.linked && state.declared ? null : state;
+		if (!state || !state.paid || (state.linked && state.declared)) return { kind: "none" };
+		return { kind: "found", state };
 	} catch {
-		return null;
+		return { kind: "unavailable" };
 	}
 }
 
@@ -368,6 +384,18 @@ async function runSteps(
 	const ids = { subscriptionId: record.subscriptionId, customerId: record.customerId };
 	let finishedOrgId = "";
 	try {
+		// The slug and the checkout details onto the SERVER's record, so a resume from another tab
+		// restores them. Best-effort: this tab's record still carries them, and the steps below do not
+		// depend on it.
+		try {
+			await saveNewOrgSetupDetails({
+				subscriptionId: record.subscriptionId,
+				slug: record.slug,
+				billing: record.billing,
+			});
+		} catch {
+			// Kept in this tab's record; a resume elsewhere asks for the tax id again.
+		}
 		if (!record.customerDetailsSaved) {
 			if (record.billing) {
 				try {
@@ -431,6 +459,13 @@ async function runSteps(
 				if (again?.org) {
 					orgId = again.org.id;
 					save({ ...record, createdOrgId: again.org.id, createdSlug: again.org.slug });
+				} else if (error?.code === NEW_ORG_SETUP_ORG_EXISTS_CODE) {
+					// The server holds an organization for this charge that this account is not in
+					// (someone else joined it, or it was left to them). Creating another is refused,
+					// by design; this is for support to untangle.
+					throw new SetupStopped(
+						"Your payment went through and a team was already created for it, but this account isn't in it. Contact support with the time of the payment — you won't be charged again.",
+					);
 				} else {
 					const message = slugRefusalOf(error);
 					if (message === null) {

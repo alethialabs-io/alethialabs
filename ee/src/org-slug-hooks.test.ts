@@ -10,8 +10,8 @@
 //      builds around these hooks, called the way a client that skipped the form would call it;
 //   3. the organization plugin AS `register(core)` RETURNS IT, mounted in the same kind of instance
 //      and driven over HTTP. Layers 1 and 2 never touch index.ts, so only layer 3 fails when the
-//      `...orgSlugHooks(...)` line there is deleted — checked by deleting it: both layer-3 cases fail
-//      and the other nine still pass.
+//      `slugHooks` calls there are deleted — checked by deleting them: both layer-3 slug cases fail
+//      and every other case still passes.
 
 import { type BetterAuthPlugin, betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
@@ -125,18 +125,18 @@ describe("orgSlugHooks — inside better-auth's own endpoints", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // The two blocks above build their OWN organization plugin from `orgSlugHooks`. Neither goes
-// through `register(core)`, so they stay green with the `...orgSlugHooks(...)` line deleted from
-// index.ts — the one line that makes production refuse `docs`. This block mounts the organization
-// plugin exactly as `register` returns it and calls better-auth's HTTP endpoints, so removing that
-// line, or adding a later `beforeCreateOrganization` / `beforeUpdateOrganization` key that overrides
-// it, turns these cases red.
+// through `register(core)`, so they stay green with the `slugHooks` calls deleted from
+// index.ts — the calls that make production refuse `docs`. This block mounts the organization
+// plugin exactly as `register` returns it and calls better-auth's HTTP endpoints, so removing those
+// calls, or adding a later `beforeCreateOrganization` / `beforeUpdateOrganization` key that overrides
+// them, turns these cases red.
 
 /**
  * The CoreContext `register` receives, with core's REAL org roles and reserved-slug rule and every
  * runtime-bound member stubbed. OpenFGA is reported off, so `register` builds no FGA client and
  * never touches `db`; the lifecycle hooks the create path fires resolve without doing anything.
  */
-function stubCore(): CoreContext {
+function stubCore(newOrgSetup: CoreContext["newOrgSetup"] = passThroughSetup()): CoreContext {
   const stub = {
     db: {},
     orgAc,
@@ -151,16 +151,50 @@ function stubCore(): CoreContext {
     emitAlertEvent: vi.fn(),
     recordActivity: vi.fn(),
     resolveOrgEntitlements: vi.fn(),
+    newOrgSetup,
     fga: { isEnabled: () => false },
   };
   // A test-only stub: `db` and most of `fga` are never reached with OpenFGA off (see above).
   return stub as unknown as CoreContext;
 }
 
+/** core's paid create-a-team marker capabilities, leaving every payload alone (none carries it). */
+function passThroughSetup(): CoreContext["newOrgSetup"] {
+  return {
+    stampMetadata: vi.fn(async () => null),
+    recordCreated: vi.fn(async () => undefined),
+    keepStoredMarker: vi.fn(async () => null),
+  };
+}
+
+/**
+ * core's marker capabilities as the #5445 cases below need them: any marker is stamped for the
+ * caller, `sub_taken` is refused as already having its org, and an update gets a fixed stored blob.
+ */
+function stubSetup() {
+  return {
+    stampMetadata: vi.fn(async (metadata: unknown, userId: string) => {
+      if (typeof metadata !== "object" || metadata === null) return null;
+      const sub: unknown = Reflect.get(metadata, "newOrgSubscriptionId");
+      if (typeof sub !== "string") return null;
+      if (sub === "sub_taken") {
+        return { refusal: { code: "NEW_ORG_SETUP_ORG_EXISTS", message: "already" } };
+      }
+      return { metadata: { newOrgSubscriptionId: sub, newOrgCreatedBy: userId } };
+    }),
+    recordCreated: vi.fn(async () => undefined),
+    keepStoredMarker: vi.fn(async (_orgId: string, metadata: unknown) =>
+      typeof metadata === "object" && metadata !== null
+        ? { metadata: { stored: "marker-kept" } }
+        : null,
+    ),
+  };
+}
+
 describe("register(core) — the organization plugin production mounts", () => {
   /** A better-auth carrying the plugin `register` returned, a signed-in user, and an HTTP caller. */
-  async function setup() {
-    const mod = register(stubCore());
+  async function setup(newOrgSetup?: CoreContext["newOrgSetup"]) {
+    const mod = register(stubCore(newOrgSetup));
     const orgPlugin = mod.authPlugins?.find((p) => p.id === "organization");
     if (!orgPlugin) throw new Error("register() returned no organization plugin");
     const db: Record<string, Record<string, unknown>[]> = {
@@ -200,7 +234,7 @@ describe("register(core) — the organization plugin production mounts", () => {
           body: JSON.stringify(body),
         }),
       );
-    return { db, post };
+    return { db, post, userId: db.user[0]?.id };
   }
 
   it("refuses POST /organization/create with slug `docs`, and stores no organization", async () => {
@@ -234,5 +268,52 @@ describe("register(core) — the organization plugin production mounts", () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: ORG_SLUG_RESERVED_CODE });
     expect(db.organization[0]).toMatchObject({ slug: "acme" });
+  });
+
+  // #5445: the paid create-a-team marker, through the same mounted plugin. Deleting the
+  // `setupHooks` calls in index.ts turns these red.
+  it("stores the creator the SESSION names beside the marker, over the one the request sent, and records the org", async () => {
+    const marker = stubSetup();
+    const { db, post, userId } = await setup(marker);
+    const res = await post("/organization/create", {
+      name: "Acme",
+      slug: "acme",
+      metadata: { newOrgSubscriptionId: "sub_1", newOrgCreatedBy: "someone-else" },
+    });
+    expect(res.status).toBe(200);
+    const stored = db.organization[0]?.metadata;
+    expect(typeof stored === "string" ? JSON.parse(stored) : stored).toEqual({
+      newOrgSubscriptionId: "sub_1",
+      newOrgCreatedBy: userId,
+    });
+    expect(marker.recordCreated).toHaveBeenCalledWith(db.organization[0]?.id, expect.anything(), userId);
+  });
+
+  it("refuses a create for a charge that already has its org, and stores nothing", async () => {
+    const { db, post } = await setup(stubSetup());
+    const res = await post("/organization/create", {
+      name: "Acme",
+      slug: "acme",
+      metadata: { newOrgSubscriptionId: "sub_taken" },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: "NEW_ORG_SETUP_ORG_EXISTS" });
+    expect(db.organization).toHaveLength(0);
+  });
+
+  it("an update that writes the metadata gets the stored marker from core, not the request's", async () => {
+    const marker = stubSetup();
+    const { db, post } = await setup(marker);
+    const created = await post("/organization/create", { name: "Acme", slug: "acme" });
+    expect(created.status).toBe(200);
+    const orgId = db.organization[0]?.id;
+    const res = await post("/organization/update", {
+      organizationId: orgId,
+      data: { metadata: { newOrgSubscriptionId: "sub_forged" } },
+    });
+    expect(res.status).toBe(200);
+    expect(marker.keepStoredMarker).toHaveBeenCalledWith(orgId, { newOrgSubscriptionId: "sub_forged" });
+    const stored = db.organization[0]?.metadata;
+    expect(typeof stored === "string" ? JSON.parse(stored) : stored).toEqual({ stored: "marker-kept" });
   });
 });
