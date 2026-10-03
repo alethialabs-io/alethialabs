@@ -12,7 +12,7 @@
 // Best-effort match to better-auth 1.6.19's expected shape; reconcile against
 // `npx @better-auth/cli generate` when standing the enterprise build up.
 
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 
 export const organization = pgTable("organization", {
@@ -38,7 +38,12 @@ export const member = pgTable("member", {
 	// PDP grant (no access); reactivating restores it. Drives the Members status column.
 	status: text().default("active").notNull(),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => [
+	// One membership per user per organization. Without it two concurrent inserts for the same pair
+	// (the create-a-team owner repair racing better-auth's own creator insert, #5445) both landed, and
+	// the user counted as two billable seats.
+	uniqueIndex("member_organization_user_unique").on(t.organizationId, t.userId),
+]);
 
 export const invitation = pgTable("invitation", {
 	id: uuid().primaryKey().defaultRandom(),

@@ -13,9 +13,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
 	createProject,
-	destroyProject,
 	getDestroyTree,
-	provisionProject,
+	tryDestroyProject,
+	tryProvisionProject,
 } from "@/app/server/actions/projects";
 import {
 	applyStagedChanges,
@@ -203,9 +203,16 @@ function CanvasInner({
 			if (!projectId) return;
 			try {
 				const activeEnvId = await resolveActiveEnvironmentId(projectId, environmentId);
-				const { jobs } = await destroyProject(projectId, activeEnvId, null, { cascade });
+				const res = await tryDestroyProject(projectId, activeEnvId, null, { cascade });
+				if (!res.ok) {
+					// Returned, not thrown (#5445): a production build reduced a thrown refusal to a digest.
+					toast.error(res.error);
+					return;
+				}
 				toast.success(
-					jobs.length > 1 ? `Destroy queued for ${jobs.length} environments` : "Destroy queued",
+					res.jobs.length > 1
+						? `Destroy queued for ${res.jobs.length} environments`
+						: "Destroy queued",
 				);
 			} catch (e) {
 				toast.error(e instanceof Error ? e.message : "Failed to destroy");
@@ -450,7 +457,13 @@ function CanvasInner({
 				environmentId,
 			);
 			await applyStagedChanges(projectId, activeEnvId, parsed.data);
-			await provisionProject(projectId, undefined, undefined, activeEnvId);
+			const res = await tryProvisionProject(projectId, undefined, undefined, activeEnvId);
+			if (!res.ok) {
+				// The design is saved (applyStagedChanges above); only the deploy was refused, and the
+				// sentence says how to fix it (#5445). The baseline is NOT committed: nothing deployed.
+				toast.error(res.error);
+				return;
+			}
 			track("deploy_queued", { environmentId: activeEnvId });
 			useCanvasStore.getState().commitBaseline();
 			toast.success("Deploy queued");

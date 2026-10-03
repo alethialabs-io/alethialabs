@@ -13,8 +13,8 @@ import { RunMenu } from "@/components/design-project/canvas/run-menu";
 
 const queueEnvironmentAudit = vi.fn();
 const queueClusterProbe = vi.fn();
-const planProject = vi.fn();
-const queueDriftDetection = vi.fn();
+const tryPlanProject = vi.fn();
+const tryQueueDriftDetection = vi.fn();
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
 
@@ -23,8 +23,8 @@ vi.mock("@/app/server/actions/canvas-jobs", () => ({
   queueClusterProbe: (...a: unknown[]) => queueClusterProbe(...a),
 }));
 vi.mock("@/app/server/actions/projects", () => ({
-  planProject: (...a: unknown[]) => planProject(...a),
-  queueDriftDetection: (...a: unknown[]) => queueDriftDetection(...a),
+  tryPlanProject: (...a: unknown[]) => tryPlanProject(...a),
+  tryQueueDriftDetection: (...a: unknown[]) => tryQueueDriftDetection(...a),
 }));
 vi.mock("sonner", () => ({
   toast: {
@@ -56,8 +56,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   queueEnvironmentAudit.mockResolvedValue({ jobId: "job-1" });
   queueClusterProbe.mockResolvedValue({ jobId: "job-2" });
-  planProject.mockResolvedValue({ jobId: "job-3" });
-  queueDriftDetection.mockResolvedValue({ jobId: "job-4" });
+  tryPlanProject.mockResolvedValue({ ok: true, jobId: "job-3" });
+  tryQueueDriftDetection.mockResolvedValue({ ok: true, jobId: "job-4" });
 });
 
 describe("every job the platform can run is reachable from the board", () => {
@@ -89,14 +89,14 @@ describe("every job the platform can run is reachable from the board", () => {
     const user = await openMenu();
     await user.click(screen.getByText("Detect drift"));
 
-    expect(queueDriftDetection).toHaveBeenCalledWith(PROJECT, ENV);
+    expect(tryQueueDriftDetection).toHaveBeenCalledWith(PROJECT, ENV);
   });
 
   it("queues a PLAN scoped to the environment on the board, not the project's default", async () => {
     const user = await openMenu();
     await user.click(screen.getByText("Plan"));
 
-    expect(planProject).toHaveBeenCalledWith(PROJECT, null, ENV);
+    expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, null, ENV);
   });
 });
 
@@ -141,6 +141,39 @@ describe("a refusal explains itself", () => {
     expect(toastError).toHaveBeenCalledWith(
       "A cluster probe is already running for this environment.",
     );
+  });
+});
+
+// #5445 — Plan and Detect drift RETURN their refusals. Thrown (as they were), a production build
+// replaced the sentence with a digest before this menu's toast could show it — the "honest reasons"
+// above reached the user as noise. Against the old menu these fail: it toasted "Plan queued".
+describe("a RETURNED refusal explains itself too", () => {
+  it("toasts the gate's sentence for a refused plan, and does not say it was queued", async () => {
+    const reason =
+      "No cloud account linked to this project. Go to Connectors to connect.";
+    tryPlanProject.mockResolvedValue({ ok: false, error: reason });
+    const onQueued = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <RunMenu projectId={PROJECT} environmentId={ENV} onQueued={onQueued} />,
+    );
+    await openTrigger(user);
+    await user.click(screen.getByText("Plan"));
+
+    expect(toastError).toHaveBeenCalledWith(reason);
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(onQueued).not.toHaveBeenCalled();
+  });
+
+  it("toasts the in-flight conflict for a refused drift check", async () => {
+    const reason =
+      "Environment is not in a valid state for this operation — a job may already be in progress.";
+    tryQueueDriftDetection.mockResolvedValue({ ok: false, error: reason });
+    const user = await openMenu();
+    await user.click(screen.getByText("Detect drift"));
+
+    expect(toastError).toHaveBeenCalledWith(reason);
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 });
 

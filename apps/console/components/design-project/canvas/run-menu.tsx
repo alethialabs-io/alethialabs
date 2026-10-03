@@ -26,9 +26,28 @@ import {
   queueEnvironmentAudit,
 } from "@/app/server/actions/canvas-jobs";
 import {
-  planProject,
-  queueDriftDetection,
+  tryPlanProject,
+  tryQueueDriftDetection,
 } from "@/app/server/actions/projects";
+
+/**
+ * The sentence of a refusal an action RETURNED (`{ ok: false, error }`), or null for any other
+ * result. Plan and drift answer this way (#5445): their refusals used to be thrown, and a production
+ * build replaced each with a digest before this menu's toast could show it.
+ */
+function refusalOf(result: unknown): string | null {
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "ok" in result &&
+    result.ok === false &&
+    "error" in result &&
+    typeof result.error === "string"
+  ) {
+    return result.error;
+  }
+  return null;
+}
 
 /**
  * The Run menu — every job the platform can run against an environment, from the board.
@@ -55,12 +74,18 @@ export function RunMenu({
   ) => {
     setRunning(label);
     try {
-      await fn();
+      const refusal = refusalOf(await fn());
+      if (refusal) {
+        // A refusal the user can act on ("no cloud account linked", "a job is already in
+        // progress"), returned as a value so its sentence survives a production build.
+        toast.error(refusal);
+        return;
+      }
       toast.success(`${label} queued`);
       onQueued?.();
     } catch (e) {
-      // The actions throw for honest reasons — "run a plan first", "already running",
-      // "never deployed". Those messages ARE the answer; show them.
+      // Anything still THROWN is either an action that has not moved to returned refusals yet
+      // (audit, probe) or an unexpected failure, whose message a production build redacts.
       toast.error(e instanceof Error ? e.message : `Could not queue ${label}`);
     } finally {
       setRunning(null);
@@ -92,7 +117,7 @@ export function RunMenu({
 
         <DropdownMenuItem
           onSelect={() =>
-            void run("Plan", () => planProject(projectId, null, environmentId))
+            void run("Plan", () => tryPlanProject(projectId, null, environmentId))
           }
         >
           <SquareCheck className="mr-2 h-4 w-4 text-muted-foreground" />
@@ -115,7 +140,7 @@ export function RunMenu({
         <DropdownMenuItem
           onSelect={() =>
             void run("Drift detection", () =>
-              queueDriftDetection(projectId, environmentId),
+              tryQueueDriftDetection(projectId, environmentId),
             )
           }
         >

@@ -44,7 +44,11 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { projectEnvironments, projects } from "@/lib/db/schema";
 import { getCliConfig } from "@/lib/queries/cli-config";
-import { isProjectNameTaken, ProjectNameTakenError } from "@/lib/queries/projects";
+import {
+	isEnvironmentNameTaken,
+	isProjectNameTaken,
+	ProjectNameTakenError,
+} from "@/lib/queries/projects";
 import { describeIfDb, refusalText } from "./db";
 
 // Two orgs, one user — see the header. Same-org duplicates are refused by the database now, and
@@ -160,6 +164,32 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		expect(err.message).toContain(SHARED_NAME);
 		// The message drizzle would otherwise surface. It is the one this class exists to replace.
 		expect(err.message).not.toMatch(/Failed query|insert into/i);
+	});
+
+	// #5445. The environment-name twin of the predicate above: `addEnvironment` /
+	// `duplicateEnvironment` map the loser of two concurrent adds onto the same refusal as their
+	// pre-check, through `isEnvironmentNameTaken`. Asserted against the REAL unique on
+	// (project_id, name), for the reason the header gives — the constraint's name is read off the
+	// driver error drizzle wraps, and a predicate keyed on a name the database does not use never
+	// fires.
+	it("recognises a second environment of the same name in one project as the env-name violation", async () => {
+		let caught: unknown = null;
+		try {
+			await getServiceDb().insert(projectEnvironments).values({
+				id: randomUUID(),
+				project_id: OLDER,
+				user_id: USER,
+				name: "older-default",
+				stage: "staging",
+				is_default: false,
+			});
+		} catch (err) {
+			caught = err;
+		}
+		expect(caught).not.toBeNull();
+		expect(isEnvironmentNameTaken(caught)).toBe(true);
+		// …and it is not mistaken for the PROJECT-name violation, which maps to a different sentence.
+		expect(isProjectNameTaken(caught)).toBe(false);
 	});
 
 	it("REFUSES a same-org name that differs only in CASE", async () => {
