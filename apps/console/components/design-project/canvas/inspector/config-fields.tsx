@@ -550,11 +550,10 @@ function FieldRow({
 	const unit = resolve(field.unit, ctx);
 	const label = unit ? `${field.label} (${unit})` : field.label;
 	// Resolved here (not inside FieldControl) so the count reflects exactly what the control renders.
-	const provenance = provenanceNote(
-		ctx,
-		field.capabilityAxis,
-		(resolve(field.options, ctx) ?? []).length,
-	);
+	// A field this cell cannot honor renders prose and no options, so it has no list to attribute.
+	const provenance = field.unavailableWhen?.(ctx.config, ctx)
+		? null
+		: provenanceNote(ctx, field.capabilityAxis, (resolve(field.options, ctx) ?? []).length);
 
 	if (field.type === "switch") {
 		// A switch renders here rather than in FieldControl, so it owns both gates itself.

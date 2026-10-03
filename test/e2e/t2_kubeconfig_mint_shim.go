@@ -399,6 +399,22 @@ func (cp *ControlPlane) ensureMintCluster(ctx context.Context, owner, projectID,
 	return clusterID, projectID, nil
 }
 
+// JobProjectEnv reads the project and environment a job names; envID is "" when the job has none. On
+// cli-demo it is how the runner-channel admin mint names the CLI's OWN project and environment rather
+// than the A0.5 graph, which a different person owns.
+func (cp *ControlPlane) JobProjectEnv(ctx context.Context, jobID string) (projectID, envID string, err error) {
+	var env *string
+	if err = cp.pool.QueryRow(ctx,
+		`SELECT project_id::text, environment_id::text FROM public.jobs WHERE id::text = $1`, jobID).
+		Scan(&projectID, &env); err != nil {
+		return "", "", fmt.Errorf("read the deploy job's project: %w", err)
+	}
+	if env != nil {
+		envID = *env
+	}
+	return projectID, envID, nil
+}
+
 // mintEnqueue is one mint the runner-channel driver queues, as the console's request route would.
 type mintEnqueue struct {
 	JobID           string // chosen by the caller, so the state alias exists before the row does

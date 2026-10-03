@@ -168,7 +168,7 @@ function refusalMessage(status: KubeconfigDownloadRefusal, message?: string): st
 		case 409:
 			return "This cluster has not finished provisioning, so there is no kubeconfig to mint yet.";
 		case 422:
-			return "This cluster's cloud cannot mint a kubeconfig through Alethia.";
+			return message ?? "This cluster's cloud cannot mint a kubeconfig through Alethia.";
 		case 429:
 			return "Too many kubeconfig requests. Try again in a few minutes.";
 		case 400:

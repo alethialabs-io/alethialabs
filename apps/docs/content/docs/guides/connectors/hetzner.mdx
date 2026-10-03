@@ -68,7 +68,7 @@ hyperscaler run **in-cluster via Helm** — CloudNativePG (Postgres), Valkey (ca
 
 After you submit, Alethia verifies the cloud identity **instantly, server-side** (no runner): it decrypts
 the stored token and calls a cheap authenticated Hetzner Cloud API endpoint
-(`GET https://api.hetzner.cloud/v1/datacenters`).
+(`GET https://api.hetzner.cloud/v1/locations`).
 
 - `200` → the cloud identity is **Connected**
 - `401` / `403` → the token was rejected (bad or revoked) → **Disconnected**

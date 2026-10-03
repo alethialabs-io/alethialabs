@@ -36,10 +36,9 @@ docker compose up -d --scale app=3
 Each replica connects to the same bundled Postgres and object storage, so the
 replicas are interchangeable for stored state.
 
-> **Rate limiting is per-instance.** The console's built-in sliding-window rate
-> limiter keeps its counters in memory on each instance, with no cross-replica
-> coordination. It still blunts accidental double-submits per replica, but a limit
-> is not shared across the fleet.
+> **Rate limits are shared across replicas.** The console keeps its rate-limit
+> counters in Postgres, so every replica counts against the same limit, and a
+> restart or a deploy does not reset it. Each limit counts in fixed windows.
 
 ## The optional Redis service
 

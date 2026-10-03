@@ -132,11 +132,14 @@ export function AddonStatusBadge({
 export function AddonCompatBadge({
 	addonId,
 	k8sVersion,
+	versionUnknownReason,
 }: {
 	addonId: string;
 	k8sVersion: string | undefined;
+	/** Why `k8sVersion` is unknown when the engine cannot say (BYO-IaC, #5365); shown as the note. */
+	versionUnknownReason?: string;
 }) {
-	const compat = addonCompat(addonId, k8sVersion);
+	const compat = addonCompat(addonId, k8sVersion, versionUnknownReason);
 	if (compat.status === "pass") return null;
 
 	if (compat.status === "fail") {

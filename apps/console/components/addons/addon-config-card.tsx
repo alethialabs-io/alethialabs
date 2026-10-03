@@ -20,6 +20,7 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { Badge } from "@repo/ui/badge";
 import { addonCompat } from "@/lib/compat";
+import { useClusterK8sVersion } from "@/components/design-project/canvas/use-cluster-k8s-version";
 import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
 import { SheetCard } from "@/components/design-project/canvas/cards/sheet-card";
@@ -195,17 +196,14 @@ export function AddonConfigForm({
     values: initialValues(item),
   });
   const mode = form.watch("_mode");
-  // The env's Kubernetes minor, straight from the canvas store — above the early return, since hooks
-  // must run in the same order every render. No cluster / unset version → undefined → the engine
-  // answers `not_evaluable` rather than a false pass.
-  const k8sVersion = useCanvasStore((s) => {
-    const c = s.nodes.find((n) => n.data.kind === "cluster")?.data.config;
-    const v = c && "cluster_version" in c ? c.cluster_version : null;
-    return typeof v === "string" && v ? v : undefined;
-  });
+  // The env's Kubernetes version as it will DEPLOY — above the early return, since hooks must run in
+  // the same order every render. An unset version resolves to the catalog default (#5314); only a
+  // design with no cluster yields undefined → `not_evaluable`, never a false pass. On BYO-IaC an
+  // unset version is the module's to decide, and the hint says so (#5365).
+  const k8s = useClusterK8sVersion();
 
   // Silent when the add-on's recorded window fits — same calm rule as the canvas chip (#1222).
-  const addonVerdict = addonCompat(item.id, k8sVersion);
+  const addonVerdict = addonCompat(item.id, k8s.version, k8s.reason);
   const compat = addonVerdict.status === "pass" ? null : addonVerdict;
   const isInstalled = item.install !== null;
 

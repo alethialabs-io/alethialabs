@@ -33,14 +33,22 @@ export interface AddOnCompat {
  * Note that `not_evaluable` is the COMMON case, not an edge: at the time of writing 9 of the 19
  * catalogued add-ons have no window recorded in `matrix.json` at all. Any UI built on this needs a
  * real third state — a binary compatible/incompatible would be a lie for half the catalogue.
+ *
+ * `versionUnknownReason` says WHY `k8sVersion` is undefined when the engine cannot know (a BYO-IaC
+ * module owns the version, #5365). It replaces the engine's generic note only when the version is
+ * what stopped the check — an add-on with no recorded window keeps "no range recorded", which stays
+ * true whatever the cluster runs.
  */
 export function addonCompat(
 	addonId: string,
 	k8sVersion: string | undefined,
+	versionUnknownReason?: string,
 ): AddOnCompat {
 	const control = evalAddOn(k8sVersion, { id: addonId });
 	const range = MATRIX.addon_k8s[addonId];
 	const window = range ? rangeLabel(range.k8s_min, range.k8s_max) : "any";
+	// A recorded window — an entry with both bounds empty records nothing (the engine says so).
+	const hasWindow = !!range && (range.k8s_min !== "" || range.k8s_max !== "");
 
 	if (control.status === "fail") {
 		return {
@@ -56,7 +64,10 @@ export function addonCompat(
 			status: "not_evaluable",
 			window,
 			// `coverage` is the engine's own honesty field — it says what could not be judged.
-			note: control.coverage ?? "Kubernetes compatibility could not be checked.",
+			note:
+				(hasWindow && k8sVersion === undefined ? versionUnknownReason : undefined) ??
+				control.coverage ??
+				"Kubernetes compatibility could not be checked.",
 		};
 	}
 	return {

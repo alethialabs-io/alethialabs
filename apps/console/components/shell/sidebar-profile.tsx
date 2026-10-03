@@ -22,6 +22,7 @@ import { useState } from "react";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InlineThemeSwitcher } from "@/components/theme-menu";
 import { authClient } from "@/lib/auth/client";
+import { useViewer } from "@/components/providers/viewer-provider";
 import { useAuthPrefsStore } from "@/lib/stores/use-auth-prefs-store";
 import { legalUrl } from "@/lib/legal";
 import { globalHref } from "@/lib/routing";
@@ -60,8 +61,7 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
   const orgSlug = useActiveOrgSlug();
   const { openUpgrade } = useUpgradeSheet();
   const { openPreferences } = useConsent();
-  const { data: session } = authClient.useSession();
-  const user = session?.user ?? null;
+  const { viewer: user } = useViewer();
   const [menuOpen, setMenuOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);

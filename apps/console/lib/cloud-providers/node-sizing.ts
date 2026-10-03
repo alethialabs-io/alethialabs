@@ -12,10 +12,11 @@
 // Go's precedence is "a non-empty instance_types wins, else node_size resolves". Since #5270 every
 // new cluster row is stamped with a default instance type, so a node_size written NEXT to that
 // stamp would be shadowed forever — editable, shown, and ignored. Hence the ONE-WRITER RULE: a
-// write that sets one of the two clears the other in the same write. The canvas inspector and the
-// CLI `--set` both apply it. Rows written before the rule are NEVER rewritten; they keep whatever
-// they hold and Go's precedence decides, which is why the card below resolves with that same
-// precedence rather than preferring node_size.
+// write that sets one of the two clears the other in the same write. The canvas inspector, the
+// CLI `--set` and an accepted AI `update_config` proposal (canvas/ai/apply-proposal.ts) all apply
+// it. Rows written before the rule are NEVER rewritten; they keep whatever they hold and Go's
+// precedence decides, which is why the card below resolves with that same precedence rather than
+// preferring node_size — and the cost estimate prices that same resolution (#5291).
 
 import { formatBytes } from "@repo/format";
 import type { NodeSize } from "@/types/jsonb.types";
@@ -76,11 +77,11 @@ export function describeNodeShape(
 	provider: string | null,
 	cluster: ClusterSizing,
 ): string {
-	if (cluster.instance_types && cluster.instance_types.length > 0) {
-		return cluster.instance_types[0];
-	}
-	if (!cluster.node_size) return "";
+	// The machine comes from resolveInstanceTypes on BOTH arms — the cost estimate prices that same
+	// answer (lib/cost/compute-cost-items.ts), so the card and the estimate cannot disagree (#5291).
 	const [sku] = resolveInstanceTypes(provider, cluster);
+	if (cluster.instance_types && cluster.instance_types.length > 0) return sku;
+	if (!cluster.node_size) return "";
 	const size = formatNodeSize(cluster.node_size);
 	return sku ? `${size} → ${sku}` : size;
 }

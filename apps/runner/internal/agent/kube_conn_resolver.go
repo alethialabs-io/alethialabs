@@ -13,7 +13,7 @@ import (
 )
 
 // azureARMScope is the Azure Resource Manager token scope needed to read a shared-Fabric AKS cluster
-// (ManagedClusters get/list + listClusterUserCredentials). Distinct from kube_token.go's
+// (ManagedClusters get/list + listClusterUserCredential). Distinct from kube_token.go's
 // aksAADServerScope (which is for the kubeconfig exec-plugin's AAD token, not ARM).
 const azureARMScope = "https://management.azure.com/.default"
 

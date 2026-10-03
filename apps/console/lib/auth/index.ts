@@ -224,7 +224,7 @@ export const auth = betterAuth({
 		},
 	}),
 	// DB-backed brute-force throttle for /api/auth/* (sign-in / email-OTP). Replica-
-	// consistent, unlike the per-process lib/rate-limit.ts. See getAuthRateLimit().
+	// consistent; Better Auth's own store, separate from lib/rate-limit.ts. See getAuthRateLimit().
 	rateLimit: getAuthRateLimit(),
 	// UUID ids so user.id populates every `user_id uuid` column + the RLS
 	// backstop (current_setting('app.current_owner')::uuid).

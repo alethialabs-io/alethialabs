@@ -355,6 +355,15 @@ export function orgScopeFor(actor: Actor, credential: CliCredential): OrgScope {
 }
 
 /**
+ * What {@link authorizeCli} hands a route on success. A union on `credential` so the token's own id
+ * exists exactly on the arm it describes: a session has no token id to forget, and a route that needs
+ * one (a state binding, #5310) cannot read it without first asking which kind of bearer this was.
+ */
+export type CliAuthorization =
+	| { actor: Actor; credential: "session"; orgScope: OrgScope }
+	| { actor: Actor; credential: "service_token"; serviceTokenId: string; orgScope: OrgScope };
+
+/**
  * CLI-route authorization: verify the CLI token, resolve the actor, and enforce.
  * Returns `{ actor, credential }` on success or `{ error }` (the Response to return). CLI routes
  * query via getServiceDb() (no RLS), so the caller MUST also scope its query by
@@ -380,10 +389,7 @@ export async function authorizeCli(
 	req: Request,
 	action: Action,
 	resource: { type: Resource; id?: string },
-): Promise<
-	| { actor: Actor; credential: CliCredential; orgScope: OrgScope }
-	| { error: Response }
-> {
+): Promise<CliAuthorization | { error: Response }> {
 	const { payload, error } = await verifyCliToken(req);
 	if (error) return { error };
 	const userId = payload?.sub;
@@ -409,6 +415,14 @@ export async function authorizeCli(
 	// error: it is a wrong answer that looks like a right one.
 	const serviceOrg = payload?.service_token_org_id;
 	if (typeof serviceOrg === "string" && serviceOrg) {
+		// WHICH token, not only that it was one. A route that binds state to the calling credential
+		// (a kubeconfig mint, #5310) needs the token's own id: `actor.userId` is the profile that
+		// minted it and is shared by every token that profile ever minted. verifyCliToken always sets
+		// both; a payload with the org pin but no id is not a token this code issued, so it is refused.
+		const serviceTokenId = payload.service_token_id;
+		if (typeof serviceTokenId !== "string" || !serviceTokenId) {
+			return { error: forbidden() };
+		}
 		if (headerOrg && headerOrg !== serviceOrg) {
 			return { error: forbidden() };
 		}
@@ -435,6 +449,7 @@ export async function authorizeCli(
 		return {
 			actor: serviceActor,
 			credential: "service_token",
+			serviceTokenId,
 			orgScope: orgScopeFor(serviceActor, "service_token"),
 		};
 	}

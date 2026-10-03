@@ -514,6 +514,20 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// write until it was SIGKILLed (PR #4973 review).
 	var runnerLogFile *os.File
 
+	// The hetzner admin kubeconfig is a 1h Talos certificate, and this process runs outside the runner
+	// that re-mints it (#5339). remint mints a fresh one from the state's talosconfig through the built
+	// runner's `talos-kubeconfig` subcommand — MintTalosKubeconfig, SSRF guard included — at every phase
+	// boundary below and on a keep-alive between them. A no-op on every other cloud
+	// (t2_talos_remint.go says why). jobID is read at each mint, so the cli-demo's own job id is used.
+	remint := newT2TalosRemint(provider, func() []byte { return cp.StateSnapshot(jobID) },
+		t2RunnerBinaryMinter(runnerBin), t2RunnerKubeconfigPath(), t.Logf)
+	remintBefore := func(phase string) {
+		t.Helper()
+		if err := remint.Before(ctx, phase); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+
 	// GUARANTEED graceful teardown — registered BEFORE launching the runner so a
 	// mid-deploy failure still tears the cluster down. The workflow's always() cleanup
 	// is the hard guarantee for a killed process; this is the in-process best effort.
@@ -561,7 +575,24 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Logf("──── runner process output ────\n%s", runnerOut.String())
 		}
 
-		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, tdProject, tdEnv, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
+		// ── A FRESH TALOS ADMIN KUBECONFIG FOR THE DESTROY (#5339). ─────────────────────────────────
+		// The keep-alive stops first, so nothing rewrites the file under the destroy. Then one re-mint
+		// here, which is what capture-proof.sh reads if the cluster survives the destroy. RunDestroy
+		// gets the same minter as TalosMint, so its load-balancer release mints its own instead of
+		// falling back to the stored certificate. Neither failure stops the destroy (t.Errorf, never
+		// t.Fatal, which would skip it), and the workflow's scope-locked sweeper runs after this test.
+		remint.Stop()
+		if line, fail := t2TeardownRemintLine(provider, remint.Before(dctx, "the teardown")); fail {
+			t.Errorf("%s", line)
+		} else if line != "" {
+			t.Log(line)
+		}
+		tdMint := &t2TeardownMinter{mint: t2RunnerBinaryMinter(runnerBin)}
+		derr := teardownT2Cluster(dctx, cp.URL(), jobID, tdProject, tdEnv, provider, region, stagedTemplate, tdMint.Mint, t2LogWriter{t})
+		if line := t2TeardownMintFailureLine(provider, tdMint); line != "" {
+			t.Errorf("%s", line)
+		}
+		if derr != nil {
 			// The sweeper NAME follows the provider, and a window that EXPIRED is reported as a
 			// window rather than as a destroy error — the two are opposite findings that arrive
 			// wearing the same `signal: interrupt`. Both live in t2TeardownFailureLine, which is
@@ -658,6 +689,13 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			status, jobFailureDump(ctx, cp, jobID), runnerOut.String())
 	}
 
+	// A FRESH CERTIFICATE BEFORE ANY ASSERTION READS THE CLUSTER (#5339). The runner's last mint was
+	// before the deploy's Vault bootstrap; from here the harness mints its own, and the keep-alive
+	// re-mints whenever the last one is 20 minutes old, so no phase below — the fabric demo reserves
+	// well over an hour — outlives a certificate. Stopped before the teardown's own mint.
+	remintBefore("the post-deploy assertions")
+	t.Cleanup(remint.Keep(ctx, func(err error) { t.Errorf("%v", err) }))
+
 	// TEARDOWN HYGIENE, AND IT MUST COME BEFORE EVERY ASSERTION BELOW.
 	//
 	// #3419 gave the destroy the working credential this process holds. It exports it inside
@@ -742,7 +780,9 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// (5) INDEPENDENT reachability: the runner wrote a host-usable kubeconfig to
 	//     $HOME/.alethia/kubeconfig (ConfigureKubeconfig). Read it and prove a node is
 	//     Ready via a fresh kubectl — the workflow's capture-proof.sh reuses this same
-	//     kubeconfig for the committed proof.
+	//     kubeconfig for the committed proof. On hetzner the file was just rewritten by
+	//     remintBefore with a certificate minted by the runner binary's own `talos-kubeconfig`
+	//     (#5339); the runner's own write is what its deploy steps used, and is exercised there.
 	kc := assertT2KubeconfigNodesReady(t, ctx)
 
 	// (6) GitOps actually CONVERGED (BYOC A0.2): every ArgoCD Application the deploy
@@ -879,6 +919,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		//        ClusterSecretStore, whose apply failed on aws/full run 32883119943 behind a retry
 		//        that swallowed the error (#2652). Every cloud now names the store whose readiness
 		//        discriminates, so this is a no-op on no cloud that provisions `secrets`.
+		remintBefore("the max-config cluster probes")
 		if perr := AssertMaxConfigClusterProbes(ctx, kc, provider, MaxConfigProbeTimeout()); perr != nil {
 			t.Fatalf("FT-5 max-config cluster probe: %v", perr)
 		}
@@ -900,6 +941,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//        REDEPLOYS this same environment with the apps repository re-pointed at starter-apps and
 	//        asserts its root and both overlays. The verdict is written after each phase.
 	if tmplOn {
+		remintBefore("the starter-templates proof")
 		runT2Templates(t, ctx, cp, kc, templatesParams{
 			commits:     tmplCommits,
 			charts:      tmplCharts,
@@ -917,6 +959,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//       AUTHENTICATES and is AUTHORIZED for a real action (`kubectl auth can-i '*' '*'`) — distinct
 	//       from the soak's UNAUTHENTICATED /readyz liveness — over a real node read, and (AWS) the
 	//       ArgoCD URL resolves. Reuses the same kc + metaRaw; runs BEFORE the guaranteed teardown.
+	remintBefore("the day-2 access proof")
 	runT2Day2Access(t, ctx, kc, day2AccessParams{provider: provider, metaRaw: metaRaw})
 
 	// (7.7b) KUBECONFIG MINT tiers (#5287). ON by default (ALETHIA_E2E_KUBECONFIG_MINT=0 turns it
@@ -951,6 +994,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//     DETECT_DRIFT job → honest in-sync posture over the deploy's real state, a 1Gi PVC
 	//     → Bound → a cloud-side sweep-tag hard-fail on the backing volume, and an add-on
 	//     health re-read.
+	remintBefore("the soak")
 	runT2Soak(t, ctx, cp, kc, soakParams{
 		project:      project,
 		env:          env,
@@ -968,6 +1012,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//     reinstalled, hardened per-namespace isolation applied. EVERY cloud (#1389 wired them all;
 	//     the product's own allowlist is the single control and fails an unwired cloud closed).
 	//     Runs BEFORE the guaranteed teardown (registered earlier), reusing the still-running runner.
+	remintBefore("the namespace-placement scenario")
 	runT2NamespaceTenant(t, ctx, cp, kc, namespaceTenantParams{
 		project:     project,
 		env:         env,
@@ -985,6 +1030,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//      DESTROY job deregisters it cleanly (no orphaned registration). EVERY cloud, same reasoning
 	//      as #959. The e2e-vc-* env is disjoint from #959's e2e-ns-*, so the two never collide.
 	//      Runs BEFORE the guaranteed teardown (registered earlier), reusing the still-running runner.
+	remintBefore("the vcluster-placement scenario")
 	runT2VClusterTenant(t, ctx, cp, kc, vclusterTenantParams{
 		project:     project,
 		env:         env,
@@ -1003,6 +1049,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//       then re-proves the Fabric's drift posture and records a machine-readable verdict,
 	//       carrying the Fabric's ALREADY-VERIFIED plan digest (a placement runs no tofu, so it has
 	//       no receipt of its own). Runs BEFORE the guaranteed teardown, reusing the runner.
+	remintBefore("the fabric demo")
 	runT2FabricDemo(t, ctx, cp, kc, fabricDemoParams{
 		project:      project,
 		env:          env,
@@ -1044,6 +1091,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//      and that a placed tenant is still refused (#1306). aws-only today; other clouds record
 	//      BLOCKED with a reason. Runs BEFORE the guaranteed teardown.
 	if xacctOn {
+		remintBefore("the cross-account secrets proof")
 		runT2SecretsXacct(t, ctx, kc, secretsXacctParams{cfg: xacct, metaRaw: metaRaw})
 	}
 
@@ -1064,6 +1112,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//      Runs BEFORE the guaranteed teardown — and last, because its rotation dwell is the longest
 	//      single wait in the suite.
 	if keylessOn {
+		remintBefore("the keyless database proof")
 		runT2KeylessDB(t, ctx, kc, keylessDBParams{
 			cfg:     keyless,
 			dbName:  keyless.snapshotDBName(full),
@@ -1079,6 +1128,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//      ambient laptop credentials, never in-cluster, and never consumed by a pod. Runs BEFORE the
 	//      guaranteed teardown.
 	if registryOn {
+		remintBefore("the cross-account registry proof")
 		runT2XacctRegistry(t, ctx, kc, xacctRegistryParams{cfg: registry, metaRaw: metaRaw})
 	}
 
@@ -1270,7 +1320,11 @@ func seedT2DeployJobWithID(ctx context.Context, cp *ControlPlane, jobID string, 
 // same variables. GUARANTEED: the caller registers it before the deploy. There is no
 // docker-rm fallback (that is a kind-only concept); the workflow's hcloud-cleanup.sh
 // is the belt-and-suspenders for real cloud resources.
-func teardownT2Cluster(ctx context.Context, cpURL, jobID, project, env, provider, region, templatesDir string, out io.Writer) error {
+//
+// talosMint is the hetzner load-balancer release's minter (#5339): with it the release mints a fresh
+// admin kubeconfig from the state's talosconfig, and without it the release falls back to the stored
+// certificate, which has expired on any leg that ran past the hour. Ignored on every other cloud.
+func teardownT2Cluster(ctx context.Context, cpURL, jobID, project, env, provider, region, templatesDir string, talosMint provisioner.TalosconfigMinter, out io.Writer) error {
 	vc := &types.ProjectConfig{
 		ID:               "e2e-" + env,
 		ProjectName:      project,
@@ -1291,6 +1345,7 @@ func teardownT2Cluster(ctx context.Context, cpURL, jobID, project, env, provider
 		Provider:      provider,
 		TemplatesDir:  templatesDir,
 		StateBackend:  backend,
+		TalosMint:     talosMint,
 		Stdout:        out,
 		Stderr:        out,
 	})

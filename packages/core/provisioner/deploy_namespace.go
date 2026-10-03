@@ -104,7 +104,7 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 // Every supported cloud is now wired — the parity follow-ups all landed, so this set has no remaining
 // documented exclusion and only an unrecognized provider fails closed:
 //   - #1127 gcp     — GKE clusters.get + Workload Identity
-//   - #1128 azure   — AKS ManagedClusters.Get (+ listClusterUserCredentials CA) + federated identity
+//   - #1128 azure   — AKS ManagedClusters.Get (+ listClusterUserCredential CA) + federated identity
 //   - #1129 alibaba — ACK DescribeClusterUserKubeconfig + RRSA
 //
 // hetzner-talos is activated via a DIFFERENT mechanism (Talos has no cloud API to re-mint kube access):

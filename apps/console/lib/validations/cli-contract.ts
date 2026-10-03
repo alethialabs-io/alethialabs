@@ -105,11 +105,13 @@ export const clusterGitops = z.object({
 	failure_message: z.string().nullable(),
 });
 
-/** How to get a kubeconfig for the cluster with the caller's own cloud CLI (#5250). Built by
- *  lib/clusters/kubeconfig-access.ts: `command` to run, or `note` saying why there is none, or
- *  both null while the cluster has no name yet. */
+/** How to get a kubeconfig for the cluster (#5250, #5322). Built by lib/clusters/kubeconfig-access.ts:
+ *  `command` (`alethia cluster kubeconfig <selector>`) to run, with `alternative` the cloud-CLI command
+ *  where there is one; or `note` saying why there is no command; or all null while the cluster has no
+ *  name yet. */
 export const clusterKubeconfig = z.object({
 	command: z.string().nullable(),
+	alternative: z.string().nullable(),
 	note: z.string().nullable(),
 });
 

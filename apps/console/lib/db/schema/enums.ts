@@ -394,7 +394,7 @@ export const capabilityLaunchable = pgEnum("capability_launchable", [
 // finite-known-values-are-enums rule) so the one provider-echoed field the pickers render is a bounded
 // enum, never attacker-influenceable free text. Providers map their native signals onto these:
 // Azure restrictions[] reasonCode (NotAvailableForSubscription/QuotaId), Alibaba StatusCategory
-// (SoldOut/Closed*), AWS family-class ListServiceQuotas, Hetzner /datacenters available/supported.
+// (SoldOut/Closed*), AWS family-class ListServiceQuotas, Hetzner /server_types locations[].available.
 export const capabilityLaunchableReason = pgEnum("capability_launchable_reason", [
 	"available", // offered and (where knowable) has quota headroom
 	"region_not_offered", // the type/service is not offered in this region

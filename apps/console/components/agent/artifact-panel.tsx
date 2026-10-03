@@ -27,9 +27,8 @@ import { EmptyState } from "@repo/ui/empty";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
-import { getProvider } from "@/lib/cloud-providers";
-import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
-import { type CostItem, computeCostItems } from "@/lib/cost/compute-cost-items";
+import type { CostItem } from "@/lib/cost/compute-cost-items";
+import { estimateProjectCost } from "@/lib/cost/project-cost";
 import { type CostSummary, parseCostBreakdown } from "@/lib/plan/parse-cost";
 import { type PlanSummary, parsePlanJSON } from "@/lib/plan/parse-plan";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
@@ -99,41 +98,8 @@ export function ArtifactPanel() {
 			const region = detail.project.region;
 			const prices = region ? await getRegionPrices(region) : null;
 			if (cancelled) return;
-			const c = detail.components.cluster;
-			const n = detail.components.network;
-			// All five clouds, not three: the slug now also decides what an EMPTY instance list is
-			// priced as (#5251), so folding hetzner/alibaba into "aws" would price them as aws's default node.
-			const slug = asCloudProviderSlug(detail.cloudProvider);
-			const meta = getProvider(slug);
-			setCost(
-				computeCostItems(
-					{
-						instanceTypes: c?.instance_types ?? [],
-						nodeDesiredSize: c?.node_desired_size ?? 2,
-						singleNatGateway: n?.single_nat_gateway ?? true,
-						databases: (detail.components.databases ?? []).map((d) => ({
-							name: d.name,
-							min_capacity: d.min_capacity,
-							max_capacity: d.max_capacity,
-						})),
-						caches: (detail.components.caches ?? []).map((ch) => ({
-							name: ch.name,
-							node_type: ch.node_type,
-							num_cache_nodes: ch.num_cache_nodes,
-						})),
-						cloudfrontWaf: false,
-						applicationWaf: detail.components.dns?.waf_enabled ?? false,
-						nosqlCount: (detail.components.nosql_tables ?? []).length,
-						secretsCount: (detail.components.secrets ?? []).length,
-					},
-					prices,
-					{
-						clusterService: meta.clusterService,
-						secretsService: meta.secretsService,
-						provider: slug,
-					},
-				),
-			);
+			// The cluster is priced on its OWN cloud, the rest on the project's (#5361).
+			setCost(estimateProjectCost(detail, prices));
 		})();
 		return () => {
 			cancelled = true;

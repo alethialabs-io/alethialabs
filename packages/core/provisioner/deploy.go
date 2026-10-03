@@ -318,6 +318,36 @@ func enabledAddonIDs(addons []types.AddOnInstall) []string {
 	return ids
 }
 
+// compatSubjectFor builds the compat gate's subject for a deploy: the cloud, the Kubernetes version
+// that will DEPLOY (compatK8sVersion), and the resolved add-on set.
+//
+// Components are deliberately unset: the config-time subject omits them too, and component/K8s
+// couplings are covered by the matrix's own drift test. Add-on and K8s-cloud couplings are the
+// apply-gate's fail domain here.
+func compatSubjectFor(byoIac bool, provider string, vc *types.ProjectConfig) compat.Subject {
+	return compat.Subject{
+		Providers:  []string{provider},
+		K8sVersion: compatK8sVersion(byoIac, provider, vc.Cluster.ClusterVersion),
+		AddOns:     compatAddOnRefs(vc.AddOns),
+	}
+}
+
+// compatK8sVersion is the Kubernetes version the compat gate judges: the version that will DEPLOY.
+// On the bundled-template path that is cloud.ResolveK8sVersion — the same call the managed clouds'
+// ProviderTfvars make — so an unset cluster_version is judged as the catalog default it deploys as,
+// instead of "" (not_evaluable, every check skipped, #5314). The value is used for the gate only and
+// is never written back into vc, so the snapshot keeps "unset means follow the catalog".
+//
+// On the BYO-IaC path the customer's module decides the version and ProviderTfvars never runs, so a
+// catalog default would be a version nobody deploys; the raw value is kept and an unset one stays
+// honestly not_evaluable.
+func compatK8sVersion(byoIac bool, provider, configVersion string) string {
+	if byoIac {
+		return configVersion
+	}
+	return cloud.ResolveK8sVersion(provider, configVersion)
+}
+
 // compatAddOnRefs maps the resolved add-on install set to the compat engine's
 // AddOnRef inputs (id + pinned chart/release version) for the apply-time gate.
 func compatAddOnRefs(addons []types.AddOnInstall) []compat.AddOnRef {
@@ -813,15 +843,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 	// deterministic — an unrecorded version yields honest not_evaluable, never a silent
 	// pass — so the report is ALWAYS attached (for both plan and apply jobs; the console
 	// renders it, #1219). The fail-closed ENFORCEMENT happens just before apply, below.
-	compatSubject := compat.Subject{
-		Providers:  []string{params.Provider},
-		K8sVersion: vc.Cluster.ClusterVersion,
-		AddOns:     compatAddOnRefs(vc.AddOns),
-		// Components deliberately unset: the config-time subject omits them too, and
-		// component/K8s couplings are covered by the matrix's own drift test. Add-on and
-		// K8s-cloud couplings are the apply-gate's fail domain here.
-	}
-	crep := compat.Evaluate(compatSubject)
+	crep := compat.Evaluate(compatSubjectFor(byoIac, params.Provider, vc))
 	result.CompatReport = crep
 	fmt.Fprintf(stdout, "Compatibility gate: verdict=%s (pass=%d fail=%d warn=%d not_evaluable=%d, catalog %s)\n",
 		crep.Verdict, crep.Summary.Pass, crep.Summary.Fail, crep.Summary.Warn, crep.Summary.NotEvaluable, crep.CatalogVersion)

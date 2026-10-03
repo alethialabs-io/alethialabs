@@ -30,7 +30,7 @@ func armClientTo(srv *httptest.Server) *http.Client {
 	return &http.Client{Transport: armRewriteTransport{base: base}}
 }
 
-// a minimal AKS user kubeconfig, base64'd as listClusterUserCredentials returns it.
+// a minimal AKS user kubeconfig, base64'd as listClusterUserCredential returns it.
 func aksKubeconfigB64(ca string) string {
 	kc := "apiVersion: v1\nkind: Config\nclusters:\n- name: aks-1\n  cluster:\n    server: https://aks-1.example\n    certificate-authority-data: " + ca + "\n"
 	return base64.StdEncoding.EncodeToString([]byte(kc))
@@ -115,7 +115,14 @@ func TestResolveAKSResourceGroup(t *testing.T) {
 	})
 }
 
-// aksHandler routes the two ARM calls: GET the managed cluster, POST listClusterUserCredentials.
+// aksHandler routes the two ARM calls: GET the managed cluster, POST listClusterUserCredential.
+//
+// The POST path is a literal CAPTURED from Azure, not copied from the resolver: the subscription
+// activity log of cli-demo run 37086387653 records the azurerm provider's successful
+// `.../managedClusters/<name>/listClusterUserCredential?api-version=...` (singular). The resolver
+// once called `listClusterUserCredentials`, and this fixture — written from the resolver — routed the
+// same wrong path, so the test passed while every real call 404'd (#5287). Anything else falls to the
+// default branch, which 404s and fails the test, as ARM does.
 func aksHandler(t *testing.T, mcJSON, credJSON string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer arm-token" {
@@ -125,7 +132,7 @@ func aksHandler(t *testing.T, mcJSON, credJSON string) http.HandlerFunc {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == aksResourcePath:
 			_, _ = w.Write([]byte(mcJSON))
-		case r.Method == http.MethodPost && r.URL.Path == aksResourcePath+"/listClusterUserCredentials":
+		case r.Method == http.MethodPost && r.URL.Path == aksResourcePath+"/listClusterUserCredential":
 			_, _ = w.Write([]byte(credJSON))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)

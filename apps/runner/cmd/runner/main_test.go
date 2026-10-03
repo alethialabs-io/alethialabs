@@ -8,7 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -112,6 +115,25 @@ func TestSubcommandTableCoversEveryLongRunningMode(t *testing.T) {
 		if subcommands[name] == nil {
 			t.Errorf("subcommand %q is not dispatched — its sidecar would boot the agent instead", name)
 		}
+	}
+}
+
+// TestHarnessTalosKubeconfigSubcommandIsDispatched reads the subcommand the T2 e2e harness execs to
+// re-mint a hetzner admin kubeconfig (#5339) out of the harness's own source, and asserts the table
+// dispatches it. Derived from the caller for the same reason as the test below: the harness lives in
+// another module, and a rename on either side would otherwise surface only on a paid nightly, as a
+// runner that tried to boot the agent instead of minting.
+func TestHarnessTalosKubeconfigSubcommandIsDispatched(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "test", "e2e", "t2_talos_remint.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^const t2TalosKubeconfigSubcommand = "([^"]+)"`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("test/e2e/t2_talos_remint.go no longer declares t2TalosKubeconfigSubcommand — this guard reads nothing")
+	}
+	if subcommands[string(m[1])] == nil {
+		t.Errorf("the T2 harness execs `runner %s`, but the table does not dispatch it", m[1])
 	}
 }
 

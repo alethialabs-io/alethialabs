@@ -47,7 +47,14 @@ func (p *gcpProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if err := validateInstanceTypes("gcp", config); err != nil {
 		return err
 	}
-	if err := validateCapacityType(config, "gcp", false); err != nil {
+	// Spot lands on the template's one node pool. An Autopilot cluster has none (the template
+	// renders no node pool under Autopilot), so `gke_spot` would reach nothing there.
+	spotRefusal := ""
+	if gcpAutopilot(config) {
+		spotRefusal = "an Autopilot cluster has no node pool to put on Spot — Autopilot chooses Spot per workload, " +
+			"through a cloud.google.com/gke-spot nodeSelector; use on_demand, or turn Autopilot off"
+	}
+	if err := validateCapacityType(config, spotRefusal); err != nil {
 		return err
 	}
 	return validateNodeDiskSize(config, "gke_disk_size_gb", gcpNodeDiskFloorGB)
@@ -96,7 +103,7 @@ var (
 		"create_memorystore_valkey", "create_pubsub", "custom_secrets", "environment",
 		"firestore_point_in_time_recovery", "gke_cluster_version", "gke_disk_size_gb",
 		"gke_enable_autopilot", "gke_instance_types", "gke_node_desired_size", "gke_node_max_size",
-		"gke_node_min_size", "memorystore_memory_size_gb", "memorystore_redis_version",
+		"gke_node_min_size", "gke_preemptible", "gke_spot", "memorystore_memory_size_gb", "memorystore_redis_version",
 		"memorystore_tier", "memorystore_valkey_engine_version", "memorystore_valkey_replica_count",
 		"memorystore_valkey_shard_count", "network_allowed_cidr_blocks", "network_cidr", "network_id",
 		"project_id", "project_name", "provision_artifact_registry", "provision_gke",
@@ -107,13 +114,18 @@ var (
 		gcpClusterReserved, gcpDNSReserved)
 )
 
-func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
-	enableAutopilot := false
+// gcpAutopilot reports whether the cluster asked for GKE Autopilot through its provider_config.
+func gcpAutopilot(config *types.ProjectConfig) bool {
 	if v, ok := config.Cluster.ProviderConfig["enable_autopilot"]; ok {
 		if b, ok := v.(bool); ok {
-			enableAutopilot = b
+			return b
 		}
 	}
+	return false
+}
+
+func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
+	enableAutopilot := gcpAutopilot(config)
 
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	cloudArmorEnabled := config.DNS.WafEnabled
@@ -161,7 +173,7 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 		// GKE
 		"provision_gke":        true,
-		"gke_cluster_version":  resolveK8sVersion("gcp", config.Cluster.ClusterVersion),
+		"gke_cluster_version":  ResolveK8sVersion("gcp", config.Cluster.ClusterVersion),
 		"gke_enable_autopilot": enableAutopilot,
 
 		// DNS. `cloud_dns_enabled` is the CREATE gate, not "is DNS in play" — bringing a zone you
@@ -349,6 +361,22 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 	}
 	if config.Cluster.NodeDiskSizeGB != nil {
 		tfvars["gke_disk_size_gb"] = *config.Cluster.NodeDiskSizeGB
+	}
+	// The node pool's purchase option (#5315). `capacity_type` owns GKE's interruptible tier: spot
+	// sets `gke_spot`, and both values clear the legacy `gke_preemptible`, which is mutually exclusive
+	// with it (CLUSTER-002). Unset leaves a hand-set passthrough of either key in force, so a cluster
+	// already on Spot is not moved off it.
+	if spot := gcpSpot(config.Cluster.CapacityType); spot != nil {
+		tfvars["gke_spot"] = *spot
+		tfvars["gke_preemptible"] = false
+	} else {
+		// A legacy hand-set passthrough (the legacy capacity passthrough, validate.go).
+		if legacy, isSet := config.Cluster.ProviderConfig["gke_spot"]; isSet {
+			tfvars["gke_spot"] = legacy
+		}
+		if legacy, isSet := config.Cluster.ProviderConfig["gke_preemptible"]; isSet {
+			tfvars["gke_preemptible"] = legacy
+		}
 	}
 
 	if !provisionNetwork && config.Network.NetworkID != "" {
@@ -651,4 +679,20 @@ func gcpMemorystoreValkeyVersion(version string) string {
 		return ""
 	}
 	return "VALKEY_" + major + "_" + minor
+}
+
+// gcpSpot maps the cloud-indifferent node capacity type onto the GKE node pool's `spot` switch.
+// nil for "" (unset, or a value ValidateConfig has already refused): the typed mapping then writes
+// nothing and the template default (false) or a legacy passthrough applies.
+func gcpSpot(capacity types.NodeCapacityType) *bool {
+	var on bool
+	switch capacity {
+	case types.NodeCapacityTypeSpot:
+		on = true
+	case types.NodeCapacityTypeOnDemand:
+		on = false
+	default:
+		return nil
+	}
+	return &on
 }
