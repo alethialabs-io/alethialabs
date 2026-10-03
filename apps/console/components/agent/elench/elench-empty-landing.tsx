@@ -5,7 +5,7 @@
 import type { ChatStatus } from "ai";
 import { Sparkles } from "lucide-react";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { AlethiaMark } from "@repo/brand/lockup";
 import type { Mention } from "@/lib/ai/mentions";
 import { track } from "@/lib/analytics/track";
@@ -20,7 +20,7 @@ import {
 	EmptyTitle,
 } from "@repo/ui/empty";
 import { cn } from "@repo/ui/utils";
-import { ElenchComposer } from "./elench-composer";
+import { ElenchComposer, type ElenchComposerHandle } from "./elench-composer";
 import type { ElenchSuggestion } from "./elench-suggestions";
 import { SuggestionCarousel } from "./suggestion-carousel";
 
@@ -79,6 +79,8 @@ interface ModalLandingProps {
 	status?: ChatStatus;
 	/** Shown above the composer — a send that did not go out (its error and Retry). */
 	notice?: ReactNode;
+	/** The hero composer's handle — the notice's Retry submits what it holds. */
+	composerRef?: Ref<ElenchComposerHandle>;
 }
 
 /**
@@ -97,6 +99,7 @@ export function ElenchModalLanding({
 	context,
 	status,
 	notice,
+	composerRef,
 }: ModalLandingProps) {
 	return (
 		<div className="h-full overflow-y-auto">
@@ -112,6 +115,7 @@ export function ElenchModalLanding({
 				showModel={showModel}
 				status={status}
 				autoFocus
+				handleRef={composerRef}
 			/>
 
 {/* Paged suggestion carousel — 3 cards × 3 pages, cycled by its own button

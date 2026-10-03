@@ -34,7 +34,10 @@ export interface ElenchSend {
 	send: (text: string, mentions?: Mention[]) => Promise<boolean>;
 	/** Why the last send did not go out, or null: a `ThreadStartError`, or the too-long error. */
 	error: Error | null;
-	/** Re-attempt the failed first send (thread, then message), or undefined when none failed. */
+	/** Re-send the failed first turn AS IT WAS (thread, then message), or undefined when none
+	 * failed. Only for a turn the composer does not hold: when it does, Retry submits the composer
+	 * instead — its text may have been edited since, and `send` with that text reuses the same
+	 * pending id. */
 	retry: (() => Promise<boolean>) | undefined;
 	/** Forget the failure and the pending turn — a new conversation starts clean. */
 	reset: () => void;
@@ -46,8 +49,8 @@ export interface ElenchSend {
  * without it is a reply that is never stored — a conversation that looks normal and is gone on
  * reload. So the first send of an ephemeral conversation creates the thread FIRST; if that
  * throws, nothing is sent, the failure is surfaced (`error`, a {@link ThreadStartError}), and
- * the message is kept — the composer keeps its text (`send` resolves false) and `retry`
- * re-sends it.
+ * the message is kept — the composer keeps its text (`send` resolves false), and the next
+ * `send` (Enter, or Retry submitting the composer) re-attempts it, edits included.
  *
  * The first turn's message id is minted once and REUSED by every retry of it, so `createThread`
  * (idempotent on that id) returns the row a lost response already committed instead of

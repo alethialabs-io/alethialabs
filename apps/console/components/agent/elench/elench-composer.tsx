@@ -18,7 +18,14 @@ import {
 	KEY_ENTER_COMMAND,
 } from "lexical";
 import { ArrowUp, Square } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+	type Ref,
+	useCallback,
+	useEffect,
+	useImperativeHandle,
+	useRef,
+	useState,
+} from "react";
 import type { Mention } from "@/lib/ai/mentions";
 import { isMessageTooLong, MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
 import { cn } from "@repo/ui/utils";
@@ -57,6 +64,8 @@ export function ElenchComposer(props: {
 	showModel?: boolean;
 	status?: ChatStatus;
 	autoFocus?: boolean;
+	/** Lets the caller submit the editor's CURRENT content — the error card's Retry. */
+	handleRef?: Ref<ElenchComposerHandle>;
 }) {
 	return (
 		<LexicalComposer initialConfig={EDITOR_CONFIG}>
@@ -75,6 +84,18 @@ export type ElenchComposerSend = (
 	mentions: Mention[],
 ) => void | boolean | Promise<boolean>;
 
+/** What a {@link ElenchComposerHandle.submit} did: nothing to send, sent, or not sent (kept). */
+export type ElenchComposerSubmit = "empty" | "sent" | "not-sent";
+
+/**
+ * The composer, driven from outside. `submit` is EXACTLY what Enter does — read the editor's
+ * current text and mentions, send them, clear only when the send went out — so a Retry sends
+ * what the user is looking at, edits included, and never discards it.
+ */
+export interface ElenchComposerHandle {
+	submit: () => Promise<ElenchComposerSubmit>;
+}
+
 /** Inner body — lives inside the Lexical context so send/Enter can read + clear the editor. */
 function ComposerBody({
 	onSend,
@@ -83,6 +104,7 @@ function ComposerBody({
 	showModel = false,
 	status,
 	autoFocus = false,
+	handleRef,
 }: {
 	onSend: ElenchComposerSend;
 	onStop?: () => void;
@@ -90,6 +112,7 @@ function ComposerBody({
 	showModel?: boolean;
 	status?: ChatStatus;
 	autoFocus?: boolean;
+	handleRef?: Ref<ElenchComposerHandle>;
 }) {
 	const [editor] = useLexicalComposerContext();
 	const [empty, setEmpty] = useState(true);
@@ -108,9 +131,11 @@ function ComposerBody({
 	}, [autoFocus, editor]);
 
 	/** Read the editor → plain text + resolved mentions, send, then clear — unless the send
-	 * reports it did not go out, in which case the text stays for the user to retry. */
-	const submit = useCallback(async () => {
-		if (pending || sendingRef.current) return;
+	 * reports it did not go out, in which case the text stays for the user to retry. Enter, the
+	 * Send button and the caller's {@link ElenchComposerHandle} all come through here. */
+	const submit = useCallback(async (): Promise<ElenchComposerSubmit> => {
+		// Busy is "not sent": the text stays, and the caller must not treat it as empty.
+		if (pending || sendingRef.current) return "not-sent";
 		let text = "";
 		const seen = new Set<string>();
 		const mentions: Mention[] = [];
@@ -129,12 +154,12 @@ function ComposerBody({
 			}
 		});
 		const trimmed = text.trim();
-		if (!trimmed) return;
+		if (!trimmed) return "empty";
 		// Refused here (Enter reaches this even while the button is disabled); the editor is
 		// NOT cleared, and the alert below is already on screen.
 		if (isMessageTooLong(trimmed)) {
 			setTooLong(true);
-			return;
+			return "not-sent";
 		}
 		sendingRef.current = true;
 		let notSent = false;
@@ -143,11 +168,16 @@ function ComposerBody({
 		} finally {
 			sendingRef.current = false;
 		}
-		if (notSent) return;
+		if (notSent) return "not-sent";
+		// Clear only what was sent. A first send awaits its thread, and the editor stays editable
+		// meanwhile: text typed in that window is not in the message, so it must not be erased.
 		editor.update(() => {
-			$getRoot().clear();
+			const root = $getRoot();
+			if (root.getTextContent().trim() === trimmed) root.clear();
 		});
+		return "sent";
 	}, [editor, onSend, pending]);
+	useImperativeHandle(handleRef, () => ({ submit }), [submit]);
 
 	// Enter sends (Shift+Enter = newline). Registered LOW so the mention typeahead (NORMAL) wins
 	// when it has a selectable option — its handler consumes Enter to pick, so this never runs.

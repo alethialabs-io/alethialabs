@@ -71,9 +71,11 @@ const countableMessagesSchema = z.array(
 		role: z.string(),
 		parts: z.array(
 			z
-				// `.optional()` is load-bearing: under a refine, zod 4 treats a bare `z.unknown()`
-				// key as REQUIRED, so every step-start / tool / data part (no `text`) failed and
-				// any second turn after a tool turn was answered 400 (caught by the elench-ai gate).
+				// `.optional()` is load-bearing: in zod 4 an object key whose schema is a bare
+				// `z.unknown()` is REQUIRED (the key must be present, whatever its value) — the refine
+				// below plays no part in that. Without it every step-start / tool / data part (no
+				// `text`) failed, and any second turn after a tool turn was answered 400 (caught by
+				// the elench-ai gate).
 				.looseObject({ type: z.string(), text: z.unknown().optional() })
 				.refine((p) => p.type !== "text" || typeof p.text === "string", {
 					message: "a text part needs a string text",

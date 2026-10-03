@@ -177,10 +177,11 @@ const COPY: Record<
  * The transcript's error affordance. Kind-aware (missing-key / budget / too-long / unanswered /
  * thread-start / network) so a missing gateway key reads as setup rather than failure, and
  * offers the caller's Retry (`regenerate` for a turn, a thread re-attempt for thread-start) on
- * every kind but too-long — re-sending the same over-limit message can only be refused again. For the AI-budget (402) case it parses the real
- * reason + reset time from the response body and shows the tier-aware CTA: top-up packs
- * are PAID-plan-only, so a hit limit offers "Buy credits" only once a best-effort summary
- * fetch confirms a paid tier — free (or unknown) tiers get "Upgrade AI plan".
+ * every kind but too-long — re-sending the same over-limit message can only be refused again.
+ * For the AI-budget (402) case it parses the real reason + reset time from the response body and
+ * shows the tier-aware CTA: top-up packs are PAID-plan-only, so a hit limit offers "Buy credits"
+ * only once a best-effort summary fetch confirms a paid tier — free (or unknown) tiers get
+ * "Upgrade AI plan".
  */
 export function ChatError({
 	error,
