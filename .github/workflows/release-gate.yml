@@ -23,6 +23,11 @@ name: Release gate
 # `BLOCKED`, and can be merged. Read a green promotion as "nothing required was red", never as "the
 # gate passed".
 #
+# ⚠ THE TWO PARAGRAPHS ABOVE ARE A 2026-09-15 MEASUREMENT AND NO LONGER HOLD FOR `main`. Re-read on
+# 2026-10-04 (#5417) with the same `gh api …/rulesets/18465988`: protect-main now requires all seven
+# `Release gate (<leg>)` contexts, so a promotion PR into `main` that is red on a leg is BLOCKED.
+# protect-staging (`/18465989`) and protect-dev (`/18583159`) still require none of them.
+#
 # WHAT DOES STAND BETWEEN A RED LEG AND PRODUCTION is a step in a different workflow.
 # deploy-console.yml's `preflight` job re-derives the leg table below and refuses to deploy unless
 # every leg PASSED on the promotion PR's head; `changes` needs `preflight` and every build job needs
@@ -860,6 +865,108 @@ jobs:
           process.exit(1);
           EOF
 
+  # ── THE LEDGER'S BAR: ZERO `failed`, AND EVERY `{fixme}` CITES AN OPEN ISSUE (#5417) ──────────
+  #
+  # The legs measure a run against apps/console/e2e/gate-baseline.json; this job measures the LEDGER
+  # itself, so it needs no browser and takes seconds. Two questions, each asked by a different step:
+  #
+  #   · ZERO `failed` ENTRIES. The ratchet cannot ask this. A test the ledger records as `failed`
+  #     that still fails is "no regression" to `scripts/e2e-ratchet.mjs`, and a PR that edits a spec
+  #     may re-record that spec's slice (check-gate-baseline-slice-ownership.mjs rule R1) — so a new
+  #     `failed` entry, or a `passed` one turned `failed`, passed every other guard. Asked on EVERY
+  #     non-draft PR: it reads only the tree, so it cannot red a PR for a change made elsewhere.
+  #   · EVERY `{fixme}` CITES AN OPEN ISSUE — scripts/check-gate-fixme-issues.mjs, the instrument the
+  #     daily gate-fixme-currency.yml also runs; exit 1 (a closed issue) and exit 2 (an unanswered
+  #     question) are both red. It reads ISSUE STATE, which changes outside the diff, so on a dev PR
+  #     it is asked only when the PR changes the ledger or the code that decides what a fixme is.
+  #     A fixme can only be added by changing the ledger, so that PR is asked. A promotion PR and a
+  #     dispatch are asked unconditionally: those ship the ledger as it stands.
+  #
+  # NOT A REQUIRED CHECK: no ruleset and nothing in `.mergify.yml` names this job's context (unlike
+  # the seven legs, which protect-main requires). Its red is visible on the PR; nothing enforces it.
+  ledger:
+    name: Gate ledger — zero failed, every fixme cites an open issue
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # `issues: read` is what `gh issue view --json state` needs; nothing else here calls the API.
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      # Depth 2: on a `pull_request` HEAD is the merge commit, and its first parent is the base tip,
+      # so `HEAD^1..HEAD` is exactly what this PR changes.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # `census()` is the ratchet's own counter, imported rather than re-implemented, and it THROWS on
+      # an entry that is none of passed|failed|{fixme}|{skip} — an uncountable entry is red, not zero.
+      - name: Zero `failed` entries in gate-baseline.json
+        run: |
+          node --input-type=module - <<'EOF'
+          import fs from "node:fs";
+          import { census, DEFAULT_BASELINE } from "./scripts/e2e-ratchet.mjs";
+          const doc = JSON.parse(fs.readFileSync(DEFAULT_BASELINE, "utf8"));
+          const c = census(doc);
+          if (c.tests === 0) {
+            console.log(`::error file=${DEFAULT_BASELINE}::the ledger records no tests at all — there is nothing to call zero-failed`);
+            process.exit(1);
+          }
+          if (c.failed === 0) {
+            console.log(`${DEFAULT_BASELINE}: ${c.tests} tests, 0 failed (${c.fixme} fixme, ${c.dataSkip} data-skip).`);
+            process.exit(0);
+          }
+          for (const [project, specs] of Object.entries(doc.projects)) {
+            for (const [spec, tests] of Object.entries(specs)) {
+              for (const [title, outcome] of Object.entries(tests)) {
+                if (outcome === "failed") console.log(`::error file=${DEFAULT_BASELINE}::${project} · ${spec} · "${title}" is recorded failed`);
+              }
+            }
+          }
+          console.log(`${c.failed} failed entr${c.failed === 1 ? "y" : "ies"} in ${DEFAULT_BASELINE}. The bar is zero (TESTING.md): fix the test, or mark it test.fixme(true, "BUG: <what> #<open issue>") and re-record its slice.`);
+          process.exit(1);
+          EOF
+      - name: Self-test the fixme currency check
+        run: node scripts/check-gate-fixme-issues.mjs --self-test
+      # Fails CLOSED: a `git diff` that cannot answer (exit 2+) asks the question rather than skip it.
+      - id: scope
+        name: Does this run ask GitHub about the fixmes?
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -uo pipefail
+          if [ "$EVENT" != "pull_request" ] || [ "$BASE_REF" = "main" ] || [ "$BASE_REF" = "staging" ]; then
+            echo "asked: a ${EVENT} into '${BASE_REF:-n/a}' ships the ledger as it stands"
+            echo "ask=yes" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --quiet HEAD^1 HEAD -- apps/console/e2e/gate-baseline.json scripts/check-gate-fixme-issues.mjs scripts/e2e-ratchet.mjs
+          rc=$?
+          case "$rc" in
+            0)
+              echo "not asked: this dev PR changes neither the ledger nor the code that reads its fixmes; the daily gate-fixme-currency.yml and every promotion PR ask"
+              echo "### Fixme currency: not asked on this PR — it does not change the ledger. The daily cron and every promotion PR ask." >> "$GITHUB_STEP_SUMMARY"
+              echo "ask=no" >> "$GITHUB_OUTPUT" ;;
+            1)
+              echo "asked: this PR changes the ledger or the code that reads its fixmes"
+              echo "ask=yes" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::warning::git diff exited ${rc} — asking anyway"
+              echo "ask=yes" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Every {fixme} in gate-baseline.json cites an OPEN issue
+        if: ${{ steps.scope.outputs.ask == 'yes' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-gate-fixme-issues.mjs
+
   gate:
     name: Release gate (${{ matrix.project }})
     needs: [legs]
@@ -1068,11 +1175,13 @@ jobs:
       # `continue-on-error` IS THE GREEN-BY-RATCHET MECHANISM, not a softened check.
       #
       # Playwright exits non-zero whenever ANY test fails, and the whole premise of this gate is
-      # that a leg is allowed to be red while it is repaired — the baseline records 94 failures
-      # across four legs (console 8, canvas 5, qa 80, audit 1; 429 recorded passes beside them).
-      # Without this, those four can never conclude `success` no matter what
-      # the ratchet says, so the gate could never be required and the ledger below would gate
-      # nothing. Measured: on run 34247389000 the `console` leg's Ratchet step SUCCEEDED
+      # that a leg is allowed to be red while it is repaired. When this was written the baseline
+      # recorded 94 failures across four legs; it now records none (`node scripts/e2e-ratchet.mjs
+      # --census`), and the `ledger` job above reds any PR that adds one. With none recorded, a
+      # failing test is also a ratchet failure (rules 1, 2 and the `{skip}` rule all red a
+      # `failed`), so this flag no longer changes a leg's colour; it is kept so the ratchet stays
+      # the single verdict and the one place that says WHY a leg is red.
+      # Measured when it was added: on run 34247389000 the `console` leg's Ratchet step SUCCEEDED
       # ("no regression against the baseline") and the job was red anyway, on this step. The two
       # legs that passed, `hero` and `elench-ai`, are exactly the two with zero recorded failures.
       #

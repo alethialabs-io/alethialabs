@@ -250,15 +250,34 @@ the **release gate** on the promotion path; one is nightly-only.
 
 Nothing runs nowhere any more — `LOCAL_ONLY_REASON` in `playwright.config.ts` is empty, and
 `assertNoDeadZone()` still reads `.github/workflows/**` on every invocation to keep that true. But
-"this is covered by e2e" still needs the **leg** named: six of the seven gate legs run only on the
-promotion path, so they say nothing about the `dev` PR that changed the code, and an exclusion
-justified by a suite nothing launched on that PR is justified by nothing.
+"this is covered by e2e" still needs the **leg** named: on a `dev` PR a gate leg runs only when the
+PR carries `release-gate:run` / `release-gate:all` or changes that leg's own specs, so an unlabelled
+PR's other legs say nothing about the code it changed, and an exclusion justified by a suite nothing
+launched on that PR is justified by nothing.
 
-**A gate leg passes by ratchet, not by being green.** Each leg fails on regression against
-`apps/console/e2e/gate-baseline.json` — 94 tests are recorded `failed` there today, across the
-`console`, `canvas`, `qa` and `audit` legs. So a green `Release gate (qa)` means "no worse than the
-ledger", never "the QA suite passes". The rules, and how to move the ledger, are in
-`apps/console/e2e/README.md`.
+**A gate leg passes by ratchet, and the ledger's bar is zero failed and zero fixme.** Each leg fails
+on regression against `apps/console/e2e/gate-baseline.json`. That ledger once recorded 94 `failed`
+tests; it now records none, and `node scripts/e2e-ratchet.mjs --census` prints today's counts
+(they are derived, never written down). The rules, and how to move the ledger, are in
+`apps/console/e2e/README.md`. Each part of the bar has its own check, and they run in different
+places:
+
+| rule | enforced by | where it runs |
+|---|---|---|
+| a recorded `passed` still passes; a test the ledger does not know passes; a recorded `failed` that now passes is moved out of the ledger; a skip is recorded as a `{fixme}` or a `{skip}` | `scripts/e2e-ratchet.mjs`, the `Ratchet` step of each `Release gate (<leg>)` | every leg that runs: every promotion PR and dispatch, and a `dev` PR only as above |
+| the ledger holds **no `failed` entry** | the ``Zero `failed` entries in gate-baseline.json`` step of `Gate ledger — zero failed, every fixme cites an open issue` in `release-gate.yml` | every non-draft PR into `dev`, `staging` or `main`, and every dispatch |
+| every `{fixme}` cites exactly one issue, and that issue is **OPEN** (an unreadable state is red, never skipped) | `scripts/check-gate-fixme-issues.mjs` | the same `Gate ledger` job, on a promotion PR, a dispatch, or a `dev` PR that changes the ledger or the code that reads its fixmes; and daily from `gate-fixme-currency.yml` |
+
+Read the two ledger rules precisely. The ratchet cannot enforce zero failed: a recorded `failed` test
+that still fails is "no regression", and a PR that changes a spec may re-record that spec's slice, so
+a new `failed` entry passed every leg before the `Gate ledger` job existed. That job reads only the
+committed ledger, which is why it runs on every PR. The fixme rule reads issue state, which changes
+outside any diff, so on a `dev` PR that changes neither the ledger nor its reader it is not asked; a
+fixme can only be added by changing the ledger, and an issue closed under a fixme already on `dev`
+is caught by the daily run and by the next promotion PR. "Zero fixme" is today's state, not a rule
+any check enforces: a fixme that cites an open issue is allowed. And the `Gate ledger` context is
+required by no ruleset and named nowhere in `.mergify.yml`, so its red is a signal on the PR, not a
+block.
 
 **`chromium` is gone, and it was the mechanism.** It was a DENYLIST over the whole `testDir`, so
 every newly added spec fell into it automatically — and since no workflow ever invoked it, every
@@ -270,7 +289,7 @@ restating a belief about it. The per-project table now lives in `apps/console/e2
 
 Both CI jobs also still guard that the project matches at least one test, because a `--project`
 whose `testMatch` selects zero specs exits 0. Each gate leg carries the same guard with a **floor**
-rather than a bare non-zero: `qa` must list at least 300 tests and `audit-interaction` at least 47,
+rather than a bare non-zero: `qa` must list at least 300 tests and `audit-interaction` at least 70,
 because a leg listing 40 tests is not a smaller suite, it is the wrong one.
 
 ## The production QA pass
@@ -284,11 +303,12 @@ console that works, and **each one can measure something the other two cannot**:
 | 2 · **post-deploy smoke** | the `smoke` job in `deploy-console.yml` → `pnpm -C apps/console run smoke:prod` (10 checks, and a `--list` floor asserting there are still 10) | the public URL answers, and **the build id it serves equals the promoted SHA** — the one assertion that separates a deploy from a deploy that landed | anything behind sign-in; it is unauthenticated by design |
 | 3 · **`/console-prod-qa`** | `.claude/skills/console-prod-qa/SKILL.md` — a witnessed pass in the maintainer's own Chrome, one QA organization, reversible mutations only, every destructive dialog opened and **cancelled** | the signed-in production configuration: entitlement resolution, the real Stripe catalog, the real email sender, storage | the signed-out surface (reported `NOT MEASURED by design`, because layers 1 and 2 own it) and layout regressions (the `audit` leg scores those better) |
 
-**All three layers are on `dev` only.** Measured 2026-09-09: `release-gate.yml`,
+**All three layers have reached `main`.** Measured 2026-10-04: `release-gate.yml`,
 `gate-baseline.json`, `scripts/e2e-ratchet.mjs`, `apps/console/scripts/e2e/post-deploy-smoke.ts` and
-the `console-prod-qa` skill are each absent from `origin/staging` and `origin/main`, and the live
-`protect-main` ruleset requires none of the gate legs. Nothing above guards a promotion until this
-wave rides `dev → staging → main`; `CONTRIBUTING.md`'s promotion checklist carries the detail.
+the `console-prod-qa` skill are each present on `origin/staging` and `origin/main`, and the live
+`protect-main` ruleset requires all seven `Release gate (<leg>)` contexts (protect-staging requires
+none). A change to any of them guards a promotion only once it has ridden `dev → staging → main`;
+`CONTRIBUTING.md`'s promotion checklist carries the detail.
 
 Layer 2 replaced a manual `docker buildx imagetools inspect` in the promotion checklist: the stale
 retag it existed to catch is now an assertion in a job, not a step someone has to remember.
