@@ -121,11 +121,17 @@ test.describe("Onboarding negatives — wizard validation", () => {
 		await toOnboarding(page, "reserved");
 		await page.locator("#org-name").fill(`E2E Reserved ${Date.now()}`);
 		await page.getByRole("button", { name: /customize url/i }).click();
-		// "docs" is a reserved console/sibling segment (lib/routing RESERVED_SLUGS).
-		const slugBox = page.locator('input[autocomplete="off"]').last();
+		// "docs" is a reserved console/sibling segment (lib/routing RESERVED_SLUGS). The field is
+		// addressed by its accessible name, not as "the last autocomplete=off input on the page".
+		const slugBox = page.getByRole("textbox", { name: "URL slug" });
 		await slugBox.fill("docs");
 		await page.getByRole("button", { name: /create organization/i }).click();
-		await expect(page.getByText(/reserved/i)).toBeVisible({ timeout: 15_000 });
+		// The SERVER's sentence, rendered inline. It used to be thrown, which a production build
+		// redacts to a digest + 500, so nothing reached the form (#5415, the #4644 class).
+		await expect(page.getByRole("alert").filter({ hasText: /that slug is reserved/i })).toBeVisible({
+			timeout: 15_000,
+		});
+		await expect(slugBox).toHaveValue("docs");
 		await expect(page).toHaveURL(/\/onboarding/);
 	});
 
