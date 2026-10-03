@@ -450,7 +450,7 @@
 				"Onboarding negatives — login gating › an invalid email format does not advance past the email step": "passed",
 				"Onboarding negatives — OTP code › a wrong 6-digit code is rejected with an inline error": "passed",
 				"Onboarding negatives — OTP code › the code step lets you go back to change the email": "passed",
-				"Onboarding negatives — wizard validation › a reserved slug is rejected": "failed",
+				"Onboarding negatives — wizard validation › a reserved slug is rejected": "passed",
 				"Onboarding negatives — wizard validation › a blank org name keeps the create button disabled": "passed",
 				"Onboarding negatives — create-org sheet › continuing with a blank team name surfaces a validation error": "passed",
 				"Onboarding negatives — invitation accept › an invitation addressed to somebody else is refused for the wrong account": "passed",
