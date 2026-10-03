@@ -6,9 +6,10 @@
 // WHY THIS EXISTS, measured. On 2026-08-25 two hetzner runs died five minutes into a paid
 // apply with `resource is currently unavailable (resource_unavailable)` on every node. The
 // answer was one free API call away: `cx33` is SUPPORTED in nbg1 and AVAILABLE in no
-// datacenter Hetzner operates. Nothing in the type's own metadata says so — it is not
-// deprecated, and it is a real, valid type — so only the per-datacenter availability list
-// can tell you. The obvious next move, which the workflow's `region` input invites, was to
+// location Hetzner operates. Nothing in the type's own metadata says so — it is not
+// deprecated, and it is a real, valid type — so only the per-location availability flag
+// (`server_types[].locations[].available`; it was `/v1/datacenters` until Hetzner removed
+// that endpoint on 2026-10-01) can tell you. The obvious next move, which the workflow's `region` input invites, was to
 // retry in fsn1; fsn1's available list is EMPTY, so that run could not have worked either.
 // Two paid failures and a third avoided, for a GET.
 //
@@ -150,54 +151,61 @@ func renderOffer(available []string) string {
 	return fmt.Sprintf("%s (+%d more)", strings.Join(got[:preflightOfferSample], ", "), len(got)-preflightOfferSample)
 }
 
-// hcloudDatacenter is the subset of `GET /v1/datacenters` the preflight reads.
-type hcloudDatacenter struct {
-	Name     string `json:"name"`
-	Location struct {
-		Name string `json:"name"`
-	} `json:"location"`
-	ServerTypes struct {
-		// Available is the ONLY field that answers the question. `Supported` is a
-		// superset and is what makes this trap invisible: cx33 is supported in nbg1 and
-		// available nowhere, which is exactly why the failure reads `resource_unavailable`
-		// rather than an invalid-type error.
-		Available []int64 `json:"available"`
-		Supported []int64 `json:"supported"`
-	} `json:"server_types"`
-}
-
 // hcloudServerType is the subset of `GET /v1/server_types` the preflight reads.
+//
+// `Locations` replaced `GET /v1/datacenters` as Hetzner's availability source: that endpoint
+// was deprecated on 2026-06-02 and REMOVED on 2026-10-01 (it now answers HTTP 410 Gone), and
+// `server_types[].locations[].available` is the documented replacement for
+// `datacenter.server_types.available`.
 type hcloudServerType struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID        int64                    `json:"id"`
+	Name      string                   `json:"name"`
+	Locations []hcloudServerTypeLocale `json:"locations"`
 }
 
-// hcloudAvailableTypeNames maps the two Hetzner payloads onto the pure decision's input:
-// the NAMES available in one location. Split from the HTTP calls so the id→name join —
-// which is where this is easy to get quietly wrong — is unit-tested without a network.
-//
-// `location` matches either the LOCATION name (nbg1) or the DATACENTER name (nbg1-dc3):
-// the workflow's region input and the template both speak locations, the API answers in
-// datacenters, and a caller should not have to know which.
-//
-// Returns nil (not an empty slice) when no datacenter matched — "we did not find the place
-// you named" is not "the place you named is empty", and the two must not decide alike.
-func hcloudAvailableTypeNames(dcs []hcloudDatacenter, types []hcloudServerType, location string) []string {
-	nameByID := make(map[int64]string, len(types))
-	for _, t := range types {
-		nameByID[t.ID] = t.Name
-	}
+// hcloudServerTypeLocale is one entry of a server type's `locations` list.
+type hcloudServerTypeLocale struct {
+	Name string `json:"name"`
+	// Available is the ONLY field that answers the question. A type being LISTED for a
+	// location is what `supported` used to say, and it is what makes this trap invisible:
+	// cx33 was listed in nbg1 and available nowhere, which is exactly why the failure reads
+	// `resource_unavailable` rather than an invalid-type error.
+	Available bool `json:"available"`
+}
+
+// hcloudLocationName reduces a datacenter-shaped name (nbg1-dc3) to its location (nbg1).
+// The workflow's region input and the template both speak locations, and a caller that
+// still hands a datacenter name should not have to know the API stopped speaking them.
+func hcloudLocationName(location string) string {
 	location = strings.TrimSpace(location)
+	if i := strings.Index(location, "-dc"); i > 0 {
+		return location[:i]
+	}
+	return location
+}
+
+// hcloudAvailableTypeNames maps the Hetzner server-type payload onto the pure decision's
+// input: the NAMES available in one location. Split from the HTTP call so the location
+// join — which is where this is easy to get quietly wrong — is unit-tested without a network.
+//
+// `location` matches the LOCATION name (nbg1); a datacenter name (nbg1-dc3) is reduced to
+// its location first.
+//
+// Returns nil (not an empty slice) when no server type lists the location at all — "we did
+// not find the place you named" is not "the place you named is empty", and the two must not
+// decide alike.
+func hcloudAvailableTypeNames(types []hcloudServerType, location string) []string {
+	location = hcloudLocationName(location)
 	var out []string
 	matched := false
-	for _, dc := range dcs {
-		if dc.Name != location && dc.Location.Name != location {
-			continue
-		}
-		matched = true
-		for _, id := range dc.ServerTypes.Available {
-			if n, ok := nameByID[id]; ok {
-				out = append(out, n)
+	for _, t := range types {
+		for _, loc := range t.Locations {
+			if loc.Name != location {
+				continue
+			}
+			matched = true
+			if loc.Available && t.Name != "" {
+				out = append(out, t.Name)
 			}
 		}
 	}
@@ -244,8 +252,8 @@ const hcloudMaxTypePages = 10
 // hcloudAllServerTypes fetches EVERY server type, following pagination.
 //
 // This is not defensive padding. `GET /v1/server_types` pages at 25 by default and Hetzner
-// already publishes 24, so the very next type they add would truncate page one — and a NAME
-// missing from the id→name map makes its id unresolvable, drops it from the available list, and
+// already publishes 24, so the very next type they add would truncate page one — and a type
+// missing from the list is missing from the available list too, which
 // turns a perfectly provisionable type into a REFUSE that stops a run for no reason. A guard
 // that fails in the direction of blocking good work is not a safer guard.
 //
@@ -278,23 +286,16 @@ func hcloudAllServerTypes(ctx context.Context, token string) ([]hcloudServerType
 // hetznerCapacityPreflight asks Hetzner whether the resolved node type has capacity in the
 // target location, and refuses the run before any spend when it does not.
 func hetznerCapacityPreflight(ctx context.Context, location, wantType string) preflightResult {
-	const probe = "hcloud GET /v1/datacenters + /v1/server_types (server_types.available)"
+	const probe = "hcloud GET /v1/server_types (server_types.locations.available)"
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
 
-	token := os.Getenv("HCLOUD_TOKEN")
-	var dcResp struct {
-		Datacenters []hcloudDatacenter `json:"datacenters"`
-	}
-	if err := hcloudGetJSON(ctx, token, "datacenters", &dcResp); err != nil {
-		return decideTypeAvailability(probe, wantType, location, nil, err)
-	}
-	types, err := hcloudAllServerTypes(ctx, token)
+	types, err := hcloudAllServerTypes(ctx, os.Getenv("HCLOUD_TOKEN"))
 	if err != nil {
 		return decideTypeAvailability(probe, wantType, location, nil, err)
 	}
 	return decideTypeAvailability(probe, wantType, location,
-		hcloudAvailableTypeNames(dcResp.Datacenters, types, location), nil)
+		hcloudAvailableTypeNames(types, location), nil)
 }
 
 // ── The managed clouds ───────────────────────────────────────────────────────────────────────
@@ -358,7 +359,7 @@ func preflightCLIStringsWithin(ctx context.Context, timeout time.Duration, name 
 // node group lands in specific SUBNETS and therefore specific zones, so a type offered somewhere
 // in the region but not in the zone the cluster actually uses passes a region-level check and
 // still fails the apply — the exact failure this preflight exists to prevent, surviving on the
-// one cloud whose check was coarsest. hetzner asks per datacenter, gcp per zone and azure per
+// one cloud whose check was coarsest. hetzner asks per location, gcp per zone and azure per
 // subscription; this brings aws to the same granularity.
 //
 // It does NOT resolve the run's own subnets, which are not known here. So a type offered in SOME
