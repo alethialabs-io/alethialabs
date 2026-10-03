@@ -27,25 +27,20 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { type UseFormReturn, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import {
-	attachTaxIdToCustomer,
 	createNewOrgSubscriptionIntent,
 	getProOffer,
 	isOrgSlugAvailable,
-	linkSubscriptionToNewOrg,
 	type ProOffer,
-	setCustomerBillingAddress,
 	startProTrial,
 } from "@/app/server/actions/billing";
-import { declarePayer, payerConversionStatus } from "@/app/server/actions/legal";
-import { updateOrgPrimaryAddress } from "@/app/server/actions/org-settings";
+import { payerConversionStatus } from "@/app/server/actions/legal";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
 import {
-	billingAddressFrom,
 	BillingCheckoutForm,
 	type CollectedBilling,
 } from "@/components/billing/billing-checkout-form";
@@ -62,8 +57,12 @@ import {
 	type SentInvite,
 } from "@/components/org/org-purchase-ui";
 import {
-	clearPendingPaidSetup,
+	finishPaidSetup,
+	type PaidSetupOutcome,
+	paidSetupInFlight,
+	type PendingPaidSetup,
 	readPendingPaidSetup,
+	SLUG_TAKEN,
 	writePendingPaidSetup,
 } from "@/components/org/pending-paid-setup";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
@@ -90,8 +89,6 @@ import {
 	SheetTitle,
 } from "@repo/ui/sheet";
 
-/** The sentence for a slug that is in use — the same one `configureOnboardingOrg` returns. */
-const SLUG_TAKEN = "That slug is taken — try another.";
 /** The sentence for a slug a console route or sibling app owns — `configureOnboardingOrg`'s, the
  *  Settings rename's and the server-side organization hooks' too (one constant, lib/routing.ts). */
 const SLUG_RESERVED = ORG_SLUG_RESERVED_MESSAGE;
@@ -155,12 +152,21 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const [declaring, setDeclaring] = useState(false);
 	/** The gate's own sentence when it refused this declaration, shown on the declaration step. */
 	const [refusal, setRefusal] = useState<string | null>(null);
-	const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
 	const [createdSlug, setCreatedSlug] = useState("");
-	// Payment succeeded but the org create / link then failed — offer a retry (no second
-	// charge) rather than the payment form. `lastBilling` lets the retry re-run setup.
+	/**
+	 * The paid setup this sheet is finishing — set the moment the charge is confirmed, mirrored from
+	 * the record `finishPaidSetup` persists after each step, and null again only once the payer
+	 * declaration (the last step) succeeded. While it is set, a close is confirmed first.
+	 */
+	const [pending, setPending] = useState<PendingPaidSetup | null>(null);
+	// A post-payment step failed — offer a retry (no second charge) rather than the payment form.
 	const [needsSetupRetry, setNeedsSetupRetry] = useState(false);
-	const [lastBilling, setLastBilling] = useState<CollectedBilling | null>(null);
+	/**
+	 * Bumped by every `reset()`. A run of the post-payment steps outlives a closed sheet on purpose
+	 * (its progress is persisted either way); this is what stops it writing its OUTCOME into a sheet
+	 * that has since been closed or reopened — a reopened sheet attaches to the run instead.
+	 */
+	const generation = useRef(0);
 	/**
 	 * The charge went through and THEN the slug was refused at the create — claimed by another team
 	 * while this one paid (#5445). The retry must not re-use the colliding slug, so it asks for a new
@@ -176,12 +182,6 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * started a new purchase.
 	 */
 	const [confirmingClose, setConfirmingClose] = useState(false);
-	/**
-	 * The subscription is linked to the created org. A retry after a LATER step failed (the payer
-	 * declaration) must not link again: `linkSubscriptionToNewOrg` refuses an already-linked
-	 * subscription, so the retry could never succeed.
-	 */
-	const [linked, setLinked] = useState(false);
 
 	// Invite step.
 	const [isTrialOrg, setIsTrialOrg] = useState(false);
@@ -205,77 +205,58 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		};
 	}, [open]);
 
-	// A paid setup that has not finished is written to the tab's sessionStorage while it is pending,
-	// so closing the sheet (or navigating away inside the console) does not lose the subscription it
-	// is for. Removed once the subscription is linked — see `handlePaid`.
-	useEffect(() => {
-		if (!needsSetupRetry || !viewerId || linked) return;
-		if (!subscriptionId || !customerId || !declaration || !lastBilling) return;
-		writePendingPaidSetup(viewerId, {
-			subscriptionId,
-			customerId,
-			name,
-			slug,
-			currency,
-			declaration,
-			billing: lastBilling,
-			createdOrgId,
-			createdSlug,
-			slugClaimedAfterPayment,
-		});
-	}, [
-		needsSetupRetry,
-		viewerId,
-		subscriptionId,
-		customerId,
-		declaration,
-		lastBilling,
-		name,
-		slug,
-		currency,
-		createdOrgId,
-		createdSlug,
-		slugClaimedAfterPayment,
-		linked,
-	]);
-
-	// Reopening the sheet resumes a pending paid setup on the retry screen instead of starting a new
-	// purchase. Only when nothing is in flight in memory: an open intent of this session wins.
+	// Reopening the sheet resumes a pending paid setup instead of starting a new purchase — at the
+	// first step the record says has not completed. Only when nothing is in flight in memory: an open
+	// intent of this session wins. A run still in flight from before the close is ATTACHED to, never
+	// started a second time beside it.
 	useEffect(() => {
 		if (!open || !viewerId || subscriptionId) return;
-		const pending = readPendingPaidSetup(viewerId);
-		if (!pending) return;
-		form.reset({ name: pending.name, slug: pending.slug });
+		const stored = readPendingPaidSetup(viewerId);
+		if (!stored) return;
+		form.reset({ name: stored.name, slug: stored.slug });
 		setSlugTouched(true);
-		setCheckoutOrgName(pending.name);
-		setSubscriptionId(pending.subscriptionId);
-		setCustomerId(pending.customerId);
-		setCurrency(pending.currency);
-		setDeclaration(pending.declaration);
-		setLastBilling(pending.billing);
-		setCreatedOrgId(pending.createdOrgId);
-		setCreatedSlug(pending.createdSlug);
-		setSlugClaimedAfterPayment(pending.slugClaimedAfterPayment);
-		setNeedsSetupRetry(true);
+		setCheckoutOrgName(stored.name);
+		setSubscriptionId(stored.subscriptionId);
+		setCustomerId(stored.customerId);
+		setCurrency(stored.currency);
+		setDeclaration(stored.declaration);
+		setCreatedSlug(stored.createdSlug);
+		setPending(stored);
+		if (stored.slugRefusal) {
+			form.setError("slug", { message: stored.slugRefusal });
+			setSlugClaimedAfterPayment(true);
+		}
 		setView("pay");
+		const running = paidSetupInFlight(stored.subscriptionId);
+		if (running) {
+			const gen = generation.current;
+			setBusy(true);
+			void running.then((outcome) => {
+				if (generation.current === gen) applyOutcome(outcome);
+			});
+		} else {
+			setNeedsSetupRetry(true);
+		}
 		// `form` is stable for the component's life; re-running on `subscriptionId` would re-read
 		// storage after every intent. The read is for the moment the sheet opens.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open, viewerId]);
 
 	// Closing the TAB is outside the sheet's reach and outside sessionStorage's scope, so while a paid
-	// setup is unfinished the browser is asked to confirm leaving the page.
+	// setup is unfinished — running or failed — the browser is asked to confirm leaving the page.
+	const setupUnfinished = pending !== null;
 	useEffect(() => {
-		if (!needsSetupRetry) return;
+		if (!setupUnfinished) return;
 		/** Asks the browser to confirm leaving while a paid setup is unfinished. */
 		const warn = (e: BeforeUnloadEvent) => {
 			e.preventDefault();
 		};
 		window.addEventListener("beforeunload", warn);
 		return () => window.removeEventListener("beforeunload", warn);
-	}, [needsSetupRetry]);
+	}, [setupUnfinished]);
 
 	function reset() {
+		generation.current += 1;
 		form.reset({ name: "", slug: "" });
 		setSlugTouched(false);
 		setShowUrl(false);
@@ -284,16 +265,14 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setClientSecret(null);
 		setCustomerId(null);
 		setSubscriptionId(null);
-		setCreatedOrgId(null);
 		setCreatedSlug("");
+		setPending(null);
 		setDeclaration(null);
 		setDeclaring(false);
 		setRefusal(null);
 		setNeedsSetupRetry(false);
-		setLastBilling(null);
 		setSlugClaimedAfterPayment(false);
 		setConfirmingClose(false);
-		setLinked(false);
 		setIsTrialOrg(false);
 		setInviteEmail("");
 		setInviteRole("operator");
@@ -305,7 +284,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * (see `confirmingClose`); every other close resets the sheet.
 	 */
 	function handleOpenChange(next: boolean) {
-		if (!next && needsSetupRetry && !confirmingClose) {
+		if (!next && pending && !confirmingClose) {
 			setConfirmingClose(true);
 			return;
 		}
@@ -314,8 +293,9 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	}
 
 	/**
-	 * The confirmed close of an unfinished paid setup. The setup stays in sessionStorage (written by
-	 * the effect above), so reopening the sheet in this tab resumes it on the retry screen.
+	 * The confirmed close of an unfinished paid setup. The record stays in sessionStorage (written
+	 * before the first step and after each one), and a run still in flight keeps running and keeps
+	 * writing it, so reopening the sheet in this tab resumes at the first unfinished step.
 	 */
 	function closeKeepingPaidSetup() {
 		reset();
@@ -350,8 +330,9 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	}
 
 	/**
-	 * Creates the org (with the chosen slug) and scopes the session to it. Returns the
-	 * id + persisted slug, or null when the slug collided (error surfaced inline).
+	 * Creates the TRIAL org (with the chosen slug) and scopes the session to it. Returns the
+	 * id + persisted slug, or null when the slug collided (error surfaced inline). The paid path
+	 * creates its org in `finishPaidSetup`, which persists the id before anything else runs.
 	 */
 	async function createOrg(
 		data: FormData,
@@ -376,7 +357,6 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			}
 			throw new Error(error?.message ?? "Couldn't create the organization");
 		}
-		setCreatedOrgId(org.id);
 		const persisted = org.slug ?? data.slug;
 		setCreatedSlug(persisted);
 		await setActiveOrganization(org.id);
@@ -519,7 +499,6 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				await authClient.organization
 					.delete({ organizationId: org.id })
 					.catch(() => {});
-				setCreatedOrgId(null);
 				setCreatedSlug("");
 				throw trialErr;
 			}
@@ -535,110 +514,88 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	}
 
 	/**
-	 * Card confirmed — persist billing details on the standalone customer, create + link
-	 * the org so its entitlement is live immediately, then move to invite. Idempotent on
-	 * retry via createdOrgId: if a step fails after the charge we keep the refs + offer a
-	 * retry instead of re-charging. Address / tax / primary-address saves are best-effort.
+	 * Card confirmed. The pending record is written HERE, before any post-payment step runs, so a
+	 * close from this moment on — while the steps are still in flight — is confirmed and resumable.
+	 * The steps themselves (customer details → create → link → declare) run in `finishPaidSetup`,
+	 * which persists the record after each one and clears it only after the declaration.
 	 */
 	async function handlePaid(billing: CollectedBilling) {
+		if (!subscriptionId || !customerId || !declaration) {
+			// Unreachable from the UI: the declaration is what opened the intent, and the intent is
+			// what rendered the payment form. Said rather than skipped, because a skip here would be a
+			// charge with nothing tied to it.
+			toast.error(
+				"Your payment went through, but this page lost its reference to it. Contact support — you won't be charged again.",
+			);
+			return;
+		}
+		const values = form.getValues();
+		const record: PendingPaidSetup = {
+			subscriptionId,
+			customerId,
+			name: values.name,
+			slug: values.slug,
+			currency,
+			declaration,
+			billing,
+			customerDetailsSaved: false,
+			createdOrgId: null,
+			createdSlug: "",
+			linked: false,
+			slugRefusal: null,
+		};
+		writePendingPaidSetup(viewerId, record);
+		setPending(record);
+		await runSetup(record);
+	}
+
+	/**
+	 * Runs (or resumes) the post-payment steps for `record`. Their progress is persisted whether or
+	 * not this sheet is still open; only the OUTCOME is applied here, and only if the sheet has not
+	 * been reset since the run started.
+	 */
+	async function runSetup(record: PendingPaidSetup) {
+		const gen = generation.current;
 		setBusy(true);
 		setNeedsSetupRetry(false);
 		setSlugClaimedAfterPayment(false);
-		setLastBilling(billing);
-		try {
-			if (!subscriptionId || !customerId) {
-				throw new Error("Missing payment reference — please retry.");
-			}
-			if (!declaration) {
-				// Unreachable from the UI (the declaration is what opened the intent), and a throw
-				// rather than a silent skip because the alternative is a paid org whose payer was
-				// never recorded — refused at its very next conversion, with nothing to say why.
-				throw new Error("Missing the payer declaration — please retry.");
-			}
-			try {
-				await setCustomerBillingAddress({
-					customerId,
-					address: billingAddressFrom(billing),
-				});
-			} catch {
-				// Non-fatal — Stripe still has the address from the payment method.
-			}
-			if (billing.taxValue.trim()) {
-				try {
-					await attachTaxIdToCustomer({
-						customerId,
-						type: billing.taxType,
-						value: billing.taxValue,
-					});
-				} catch {
-					toast.warning("Couldn't save the tax id — add it later in billing.");
-				}
-			}
+		const outcome = await finishPaidSetup(viewerId, record, {
+			onProgress: (next) => {
+				if (generation.current === gen) setPending(next);
+			},
+			fetchWorkspace,
+		});
+		if (generation.current === gen) applyOutcome(outcome);
+	}
 
-			let orgId = createdOrgId;
-			if (!orgId) {
-				const org = await createOrg(form.getValues());
-				if (!org) {
-					// Paid, and the slug was refused at the create. This used to `return` here with the
-					// customer on the payment view and nothing on screen — the refusal was written to a
-					// field on the NAME step, which is not rendered here. Ask for a new slug instead.
-					setSlugClaimedAfterPayment(true);
-					setNeedsSetupRetry(true);
-					return;
-				}
-				orgId = org.id;
-			}
-			if (!linked) {
-				await linkSubscriptionToNewOrg({
-					orgId,
-					subscriptionId,
-					customerId,
-					payer: {
-						capacity: declaration.capacity,
-						billingCountry: declaration.billingCountry,
-					},
-				});
-				setLinked(true);
-				// Linked: the charge now belongs to an organization, so there is nothing left to resume.
-				if (viewerId) clearPendingPaidSetup(viewerId);
-			}
-			// Completes the record with the attestation, which `linkSubscriptionToNewOrg` does not
-			// carry. NAMED org, never ambient: this sheet is open on a page inside the CURRENT org,
-			// so an ambient declaration would land on the old one — the #4133 failure, which is
-			// silent here because both writes would succeed.
-			await declarePayer(declaration, { orgId });
-			await fetchWorkspace();
-			if (billing.useAsPrimary) {
-				try {
-					// The org just created — ambient here is the page's org, and this `catch` is why
-					// overwriting it was silent.
-					await updateOrgPrimaryAddress(billingAddressFrom(billing), orgId);
-				} catch {
-					// Non-fatal — billing address is still set on the customer.
-				}
-			}
+	/** Shows how a run of the post-payment steps ended: the invite view, a new-slug ask, or the retry. */
+	function applyOutcome(outcome: PaidSetupOutcome) {
+		setBusy(false);
+		if (outcome.kind === "done") {
+			setPending(null);
+			setCreatedSlug(outcome.slug);
 			setIsTrialOrg(false);
-			toast.success("Subscription active — your organization is ready.");
 			setView("invite");
-		} catch (e) {
-			setNeedsSetupRetry(true);
-			toast.error(
-				e instanceof Error
-					? e.message
-					: "Payment succeeded but setup failed — retry, you won't be charged again.",
-			);
-		} finally {
-			setBusy(false);
+			return;
 		}
+		setPending(outcome.record);
+		setCreatedSlug(outcome.record.createdSlug);
+		if (outcome.kind === "slug-refused") {
+			// Paid, and the slug was refused at the create. Asked for in place — the refusal used to be
+			// written to a field on the NAME step, which is not rendered here.
+			form.setError("slug", { message: outcome.message });
+			setSlugClaimedAfterPayment(true);
+		}
+		setNeedsSetupRetry(true);
 	}
 
 	/**
 	 * The retry after a post-payment slug refusal: re-check the NEW slug (format, reserved, taken)
 	 * and finish setup with it. A slug still refused stays on screen under the field and nothing is
-	 * re-run; no new charge is ever made — `handlePaid` reuses the confirmed subscription.
+	 * re-run; no new charge is ever made — the confirmed subscription is reused.
 	 */
 	async function retryWithNewSlug() {
-		if (busy || !lastBilling) return;
+		if (busy || !pending) return;
 		setBusy(true);
 		let data: FormData | null = null;
 		try {
@@ -648,7 +605,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		} finally {
 			setBusy(false);
 		}
-		if (data) await handlePaid(lastBilling);
+		if (data) await runSetup({ ...pending, name: data.name, slug: data.slug });
 	}
 
 	/** Send one invite into the created (paid) org. Trials are solo (see beforeCreate). */
@@ -709,22 +666,24 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 								onBack={() => setView("name")}
 								onDeclare={(d) => void handleDeclare(d)}
 							/>
-						) : needsSetupRetry && confirmingClose ? (
+						) : pending && confirmingClose ? (
 							<ConfirmCloseUnfinished
+								running={busy}
 								onStay={() => setConfirmingClose(false)}
 								onClose={closeKeepingPaidSetup}
 							/>
-						) : needsSetupRetry && slugClaimedAfterPayment ? (
+						) : pending && slugClaimedAfterPayment ? (
 							<RetryWithNewSlug
 								form={form}
 								slug={slug}
 								busy={busy}
 								onRetry={() => void retryWithNewSlug()}
 							/>
-						) : needsSetupRetry ? (
+						) : pending ? (
 							<RetrySetup
 								busy={busy}
-								onRetry={() => lastBilling && void handlePaid(lastBilling)}
+								failed={needsSetupRetry}
+								onRetry={() => void runSetup(pending)}
 							/>
 						) : trialAvailable ? (
 							<TrialPanel
@@ -1023,12 +982,15 @@ function RetryWithNewSlug({
 
 /**
  * Asked before the sheet closes on an unfinished paid setup. States what happens to the payment and
- * where the setup can be finished; "Close for now" keeps it in this tab's sessionStorage.
+ * where the setup can be finished; "Close for now" keeps it in this tab's sessionStorage. `running`
+ * is true while a post-payment step is still in flight — it keeps running after the close.
  */
 function ConfirmCloseUnfinished({
+	running,
 	onStay,
 	onClose,
 }: {
+	running: boolean;
 	onStay: () => void;
 	onClose: () => void;
 }) {
@@ -1038,12 +1000,15 @@ function ConfirmCloseUnfinished({
 				Close before your team is set up?
 			</p>
 			<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
-				Your payment went through and is kept for this team. To finish later, open Create a team
-				again in this browser tab — it picks up here, and you won&apos;t be charged again.
-				Closing the browser tab itself does not keep it.
+				{running
+					? "Your payment went through and setup is still running — closing this panel does not stop it. "
+					: "Your payment went through and is kept for this team. "}
+				To finish later, open Create a team again in this browser tab — it picks up at the step
+				that has not finished, and you won&apos;t be charged again. Closing the browser tab
+				itself does not keep it.
 			</p>
 			<Button className="w-full" onClick={onStay}>
-				Finish setup now
+				{running ? "Stay while it finishes" : "Finish setup now"}
 				<ArrowRight size={15} />
 			</Button>
 			<Button variant="outline" className="w-full" onClick={onClose}>
@@ -1053,13 +1018,25 @@ function ConfirmCloseUnfinished({
 	);
 }
 
-/** Paid, but org create/link failed after the charge — finish setup, no re-charge. */
-function RetrySetup({ busy, onRetry }: { busy: boolean; onRetry: () => void }) {
+/**
+ * Paid, and the post-payment steps are running (`failed` false) or one of them failed (`failed`
+ * true) — finish setup, no re-charge.
+ */
+function RetrySetup({
+	busy,
+	failed,
+	onRetry,
+}: {
+	busy: boolean;
+	failed: boolean;
+	onRetry: () => void;
+}) {
 	return (
 		<div className="space-y-3">
 			<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
-				Your payment went through, but we couldn&apos;t finish setting up the team. You
-				won&apos;t be charged again — retry to complete setup.
+				{failed
+					? "Your payment went through, but we couldn't finish setting up the team. You won't be charged again — retry to complete setup."
+					: "Your payment went through — setting up your team now."}
 			</p>
 			<Button className="w-full" disabled={busy} onClick={onRetry}>
 				{busy ? "Finishing…" : "Complete setup"}

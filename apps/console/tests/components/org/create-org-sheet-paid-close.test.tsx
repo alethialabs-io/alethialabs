@@ -8,10 +8,12 @@
 // and closing it called `reset()`, which cleared the subscription and customer ids. The customer was
 // left charged with no organization, and reopening the sheet started a NEW purchase.
 //
-// Now a close on that screen is confirmed first, and the pending setup is kept in the tab's
-// sessionStorage so reopening resumes it on the retry screen, against the SAME subscription. Against
-// the old sheet the first case fails at once: the Close button calls `onOpenChange(false)` and no
-// confirmation ever renders.
+// Now the pending setup is written to the tab's sessionStorage the moment the charge is confirmed,
+// rewritten after each post-payment step, and cleared only after the last one (the payer declaration).
+// Every close while it exists — the steps still running, or one of them failed — is confirmed first,
+// and reopening resumes at the first unfinished step against the SAME subscription and the SAME org.
+// Against 77f0e9a95 the first case fails at once (no confirmation renders); against 5a9b069e6 the last
+// three fail (a close mid-run, a close after a post-link failure, and a close mid-retry).
 
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -118,6 +120,39 @@ import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { pendingPaidSetupKey } from "@/components/org/pending-paid-setup";
 
 const KEY = pendingPaidSetupKey("user-1");
+
+/** The shape `authClient.organization.create` resolves with. */
+type CreateResult = {
+	data: { id: string; slug: string } | null;
+	error: { message: string; code?: string } | null;
+};
+
+/** A promise the test settles by hand — how a step is held "in flight" across a close. */
+function deferred<T>() {
+	let resolve: (value: T) => void = () => {};
+	const promise = new Promise<T>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
+}
+
+/** Name → declare → pay, stopping as soon as the charge is confirmed (the steps may still be running). */
+async function pay(user: ReturnType<typeof userEvent.setup>, onOpenChange = vi.fn()) {
+	const view = render(<CreateOrgSheet open onOpenChange={onOpenChange} />);
+	await user.type(screen.getByLabelText(/team name/i), "Acme Cloud");
+	const cont = screen.getByRole("button", { name: /continue/i });
+	await vi.waitFor(() => expect(cont).toBeEnabled());
+	await user.click(cont);
+	await user.click(await screen.findByRole("button", { name: "Declare payer" }));
+	await user.click(await screen.findByRole("button", { name: "Pay" }));
+	return view;
+}
+
+/** The stored record, parsed — what a reopened sheet will resume from. */
+function stored(): { createdOrgId: string | null; linked: boolean; declaration: unknown } | null {
+	const raw = window.sessionStorage.getItem(KEY);
+	return raw ? JSON.parse(raw) : null;
+}
 
 /** Name → declare → pay, ending on whichever retry screen the mocked create/link leads to. */
 async function payAndFail(user: ReturnType<typeof userEvent.setup>, onOpenChange = vi.fn()) {
@@ -260,5 +295,114 @@ describe("CreateOrgSheet — closing an unfinished paid setup", () => {
 		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
 		expect(await screen.findByLabelText(/team name/i)).toBeInTheDocument();
 		expect(screen.queryByText(/your payment went through/i)).not.toBeInTheDocument();
+	});
+
+	// The three below are the review's blockers on 5a9b069e6, each reproduced against it.
+
+	it("a close WHILE the first setup is in flight is confirmed; a create that then fails resumes on reopen — no second purchase", async () => {
+		const held = deferred<CreateResult>();
+		createOrg.mockReturnValueOnce(held.promise);
+		const user = userEvent.setup();
+		const onOpenChange = vi.fn();
+		const first = await pay(user, onOpenChange);
+		await vi.waitFor(() => expect(createOrg).toHaveBeenCalledTimes(1));
+
+		// The record exists from the moment the charge was confirmed — before the create returned.
+		expect(stored()).toMatchObject({ createdOrgId: null, linked: false });
+
+		await user.click(screen.getByRole("button", { name: "Close" }));
+		expect(screen.getByText(/setup is still running/i)).toBeInTheDocument();
+		expect(onOpenChange).not.toHaveBeenCalled();
+		await user.click(screen.getByRole("button", { name: /close for now/i }));
+		expect(onOpenChange).toHaveBeenCalledWith(false);
+
+		await act(async () => {
+			held.resolve({ data: null, error: { message: "network unreachable" } });
+		});
+		expect(stored()).toMatchObject({ createdOrgId: null, linked: false });
+
+		first.unmount();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+		expect(await screen.findByText(/couldn.t finish setting up/i)).toBeInTheDocument();
+		createOrg.mockResolvedValue({ data: { id: "org-new", slug: "acme-cloud" }, error: null });
+		await user.click(screen.getByRole("button", { name: /complete setup/i }));
+
+		await vi.waitFor(() => expect(declarePayer).toHaveBeenCalledTimes(1));
+		expect(linkSubscription).toHaveBeenCalledWith(
+			expect.objectContaining({ orgId: "org-new", subscriptionId: "sub_1", customerId: "cus_1" }),
+		);
+		expect(createIntent).toHaveBeenCalledTimes(1);
+		expect(stored()).toBeNull();
+	});
+
+	it("a declaration that fails AFTER the link: close, reopen, and it resumes at the declaration with the typed attestation", async () => {
+		createOrg.mockResolvedValue({ data: { id: "org-made", slug: "acme-cloud" }, error: null });
+		declarePayer.mockRejectedValueOnce(new Error("legal store is down"));
+		const user = userEvent.setup();
+		const first = await payAndFail(user);
+
+		// Linked, not declared: the record is still there, and it says so.
+		expect(stored()).toMatchObject({
+			createdOrgId: "org-made",
+			linked: true,
+			declaration: { authorityAttestation: "CTO" },
+		});
+
+		await user.click(screen.getByRole("button", { name: "Close" }));
+		expect(screen.getByText(/picks up at the step that has not finished/i)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /close for now/i }));
+		first.unmount();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+
+		await user.click(await screen.findByRole("button", { name: /complete setup/i }));
+		await vi.waitFor(() => expect(declarePayer).toHaveBeenCalledTimes(2));
+		expect(declarePayer).toHaveBeenLastCalledWith(
+			{ capacity: "organization", billingCountry: "DE", authorityAttestation: "CTO" },
+			{ orgId: "org-made" },
+		);
+		expect(linkSubscription).toHaveBeenCalledTimes(1);
+		expect(createOrg).toHaveBeenCalledTimes(1);
+		expect(createIntent).toHaveBeenCalledTimes(1);
+		expect(stored()).toBeNull();
+	});
+
+	it("a close while a RETRY is in flight is confirmed, and the reopened sheet attaches to it — never a second org", async () => {
+		// First run: the create fails outright, so the record has no org yet.
+		createOrg.mockResolvedValueOnce({ data: null, error: { message: "network unreachable" } });
+		const user = userEvent.setup();
+		const onOpenChange = vi.fn();
+		const first = await payAndFail(user, onOpenChange);
+
+		// The retry's create is held in flight; when it lands, the link after it fails.
+		const held = deferred<CreateResult>();
+		createOrg.mockReturnValueOnce(held.promise);
+		linkSubscription.mockRejectedValueOnce(new Error("Stripe is unavailable"));
+		await user.click(screen.getByRole("button", { name: /complete setup/i }));
+		await vi.waitFor(() => expect(createOrg).toHaveBeenCalledTimes(2));
+
+		await user.click(screen.getByRole("button", { name: "Close" }));
+		expect(screen.getByText(/setup is still running/i)).toBeInTheDocument();
+		expect(onOpenChange).not.toHaveBeenCalled();
+		await user.click(screen.getByRole("button", { name: /close for now/i }));
+
+		first.unmount();
+		render(<CreateOrgSheet open onOpenChange={vi.fn()} />);
+		// Attached to the run still in flight: no button to start a second one beside it.
+		expect(await screen.findByRole("button", { name: /finishing/i })).toBeDisabled();
+
+		await act(async () => {
+			held.resolve({ data: { id: "org-made", slug: "acme-cloud" }, error: null });
+		});
+		expect(await screen.findByText(/couldn.t finish setting up/i)).toBeInTheDocument();
+		expect(stored()).toMatchObject({ createdOrgId: "org-made", linked: false });
+
+		await user.click(screen.getByRole("button", { name: /complete setup/i }));
+		await vi.waitFor(() => expect(declarePayer).toHaveBeenCalledTimes(1));
+		expect(linkSubscription).toHaveBeenLastCalledWith(
+			expect.objectContaining({ orgId: "org-made", subscriptionId: "sub_1" }),
+		);
+		expect(createOrg).toHaveBeenCalledTimes(2);
+		expect(createIntent).toHaveBeenCalledTimes(1);
+		expect(stored()).toBeNull();
 	});
 });
