@@ -309,7 +309,7 @@ describe.each(["panel", "modal"] as const)("ElenchConversation (%s) — Retry af
 // in the modal an empty conversation is the landing, with its own composer). The remounted
 // composer starts from the failed turn, so the box shows what Retry sends. An edit made AFTER
 // the failure and before the flip is not kept — a remount loses unsent text exactly as it does
-// on dev; keeping it is the draft redesign (#5414 follow-up issue), not this PR.
+// on dev; keeping it is the draft redesign (#5464).
 describe.each([
 	["modal", "minimize"],
 	["panel", "maximize"],
