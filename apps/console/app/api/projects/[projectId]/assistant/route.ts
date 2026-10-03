@@ -18,7 +18,7 @@ import {
 	type EnvironmentKnowledge,
 } from "@/lib/ai/environment-knowledge";
 import { formatMentionsForPrompt } from "@/lib/ai/mentions";
-import { lastUserMessageTooLong, MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
+import { refuseUserMessage } from "@/lib/ai/message-limits";
 import {
 	type AssistantView,
 	parseProjectAssistantBody,
@@ -195,10 +195,9 @@ export async function POST(
 		view,
 	} = body.value;
 	// The one per-message limit the composer and `createThread` also enforce — refused here,
-	// still before the budget hold, so an over-limit turn reserves nothing.
-	if (lastUserMessageTooLong(messages)) {
-		return new Response(MESSAGE_TOO_LONG, { status: 413 });
-	}
+	// still before the budget hold, so an over-limit (or unreadable: 400) turn reserves nothing.
+	const refusal = refuseUserMessage(messages);
+	if (refusal) return refusal;
 
 	// Metered turn: gate on headroom (the real cost-of-serve is settled after it runs). The
 	// deep-reasoning flag no longer affects the charge — Opus just settles its own real cost.

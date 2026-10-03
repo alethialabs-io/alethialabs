@@ -2,16 +2,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Component test for ChatError: it classifies a useChat error into missing-key / budget /
-// too-long / unanswered / network (generic falls to network) and renders the matching title
-// plus a Retry that invokes the callback (on every kind but too-long). On a budget error the CTA is tier-aware (packs are
-// paid-only), so the summary fetch is mocked per test. The analytics track() call in the
-// mount effect is mocked.
+// too-long / unanswered / thread-start / network (generic falls to network) and renders the
+// matching title plus a Retry that invokes the callback (on every kind but too-long). On a
+// budget error the CTA is tier-aware (packs are paid-only), so the summary fetch is mocked per
+// test. The analytics track() call in the mount effect is mocked.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { track } from "@/lib/analytics/track";
-import { ChatError, UnansweredTurnError } from "@/components/agent/chat-error";
+import {
+	ChatError,
+	ThreadStartError,
+	UnansweredTurnError,
+} from "@/components/agent/chat-error";
 import { MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
 
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
@@ -188,6 +192,17 @@ describe("ChatError", () => {
 		render(<ChatError error={new Error(new UnansweredTurnError().message)} />);
 		expect(screen.getByText("The assistant hit an error")).toBeInTheDocument();
 		expect(vi.mocked(track)).toHaveBeenCalledWith("elench_error", { kind: "network" });
+	});
+
+	it("shows a ThreadStartError as an unsent message with a Retry that re-attempts it", async () => {
+		const user = userEvent.setup();
+		const onRetry = vi.fn();
+		render(<ChatError error={new ThreadStartError()} onRetry={onRetry} />);
+		expect(screen.getByText("Could not start the conversation")).toBeInTheDocument();
+		expect(screen.getByText(/was not sent, and it has not been lost/)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /retry/i }));
+		expect(onRetry).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(track)).toHaveBeenCalledWith("elench_error", { kind: "thread-start" });
 	});
 
 	it("classifies the routes' 413 body as too-long, without a Retry that can only fail again", () => {

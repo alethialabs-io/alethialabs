@@ -46,6 +46,15 @@ export type FirstTurn = z.infer<typeof firstTurnSchema>;
  * row kept zero messages, `listThreads` hid it, and the user's typed message vanished on
  * reload. A successful turn later overwrites this with the full transcript, which starts
  * with this same message (same id).
+ *
+ * IDEMPOTENT on `firstTurn.id`. A server action can fail AFTER its insert committed (the
+ * response is lost on the way back), and the client then retries with the SAME client-minted
+ * id. Inserting again would leave two threads holding one message, the first of them never
+ * attached and so never answered. So a row whose stored first turn already carries this id is
+ * returned instead of a new one, with its turn and title rewritten while it holds only that
+ * turn (the retry may carry edited text). This is a read-then-insert, not a constraint: it
+ * covers SEQUENTIAL retries, which is what the client issues — `useElenchSend` never runs two
+ * first sends at once.
  */
 export async function createThread(
 	title?: string,
@@ -58,6 +67,31 @@ export async function createThread(
 		: [];
 	const owner = await requireOwner();
 	return withOwnerScope(owner, async (tx) => {
+		if (turn) {
+			const [existing] = await tx
+				.select()
+				.from(agentThreads)
+				.where(
+					and(
+						eq(agentThreads.kind, "agent"),
+						sql`${agentThreads.messages}->0->>'id' = ${turn.id}`,
+					),
+				)
+				.limit(1);
+			if (existing) {
+				const [rewritten] = await tx
+					.update(agentThreads)
+					.set({ title: titleFrom(title), messages, updated_at: sql`now()` })
+					.where(
+						and(
+							eq(agentThreads.id, existing.id),
+							sql`jsonb_array_length(${agentThreads.messages}) = 1`,
+						),
+					)
+					.returning();
+				return rewritten ?? existing;
+			}
+		}
 		const [thread] = await tx
 			.insert(agentThreads)
 			.values({

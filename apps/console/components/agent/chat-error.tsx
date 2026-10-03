@@ -23,7 +23,13 @@ import { track } from "@/lib/analytics/track";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 
-type ChatErrorKind = "missing-key" | "budget" | "too-long" | "unanswered" | "network";
+type ChatErrorKind =
+	| "missing-key"
+	| "budget"
+	| "too-long"
+	| "unanswered"
+	| "thread-start"
+	| "network";
 
 /**
  * A transcript that ENDS on a user turn with no reply after it — found on load, not raised by
@@ -36,6 +42,19 @@ export class UnansweredTurnError extends Error {
 	constructor() {
 		super("The reply to this message never arrived.");
 		this.name = "UnansweredTurnError";
+	}
+}
+
+/**
+ * The conversation's thread could not be created on its first send (`startThread` threw), so
+ * NOTHING was sent: a send without a thread id is a reply that is never stored. Raised by
+ * `useElenchSend`, recognised by type like {@link UnansweredTurnError}, and its Retry
+ * re-attempts the thread before sending — the message itself is kept, not lost.
+ */
+export class ThreadStartError extends Error {
+	constructor() {
+		super("The conversation could not be started.");
+		this.name = "ThreadStartError";
 	}
 }
 
@@ -89,11 +108,12 @@ function parseBudget(error: Error): ParsedBudget | null {
  * to the streaming route's response body: our 503 says "AI is not configured…", the 402
  * budget response is a JSON blob with a `reason` (parsed by `parseBudget`), and a dropped
  * fetch throws a generic `TypeError`. An over-limit message is the routes' 413 body, and a
- * reloaded transcript ending on an unanswered turn is an `UnansweredTurnError`. Everything
- * else falls to network.
+ * reloaded transcript ending on an unanswered turn is an `UnansweredTurnError`, and a first send
+ * whose thread could not be created is a `ThreadStartError`. Everything else falls to network.
  */
 function classify(error: Error): ChatErrorKind {
 	if (error instanceof UnansweredTurnError) return "unanswered";
+	if (error instanceof ThreadStartError) return "thread-start";
 	if (parseBudget(error)) return "budget";
 	const msg = error.message ?? "";
 	// The chat routes' 413 body, matched exactly — it is a shared constant, not prose.
@@ -139,6 +159,12 @@ const COPY: Record<
 		description:
 			"This message was sent, but the reply never arrived. Retry to send it again.",
 	},
+	"thread-start": {
+		icon: MessageSquareWarning,
+		title: "Could not start the conversation",
+		description:
+			"Your message was not sent, and it has not been lost. Retry to start the conversation and send it.",
+	},
 	network: {
 		icon: WifiOff,
 		title: "The assistant hit an error",
@@ -149,9 +175,9 @@ const COPY: Record<
 
 /**
  * The transcript's error affordance. Kind-aware (missing-key / budget / too-long / unanswered /
- * network) so a missing gateway key reads as setup rather than failure, and offers a Retry that
- * re-runs the last turn (`regenerate`) on every kind but too-long — re-sending the same
- * over-limit message can only be refused again. For the AI-budget (402) case it parses the real
+ * thread-start / network) so a missing gateway key reads as setup rather than failure, and
+ * offers the caller's Retry (`regenerate` for a turn, a thread re-attempt for thread-start) on
+ * every kind but too-long — re-sending the same over-limit message can only be refused again. For the AI-budget (402) case it parses the real
  * reason + reset time from the response body and shows the tier-aware CTA: top-up packs
  * are PAID-plan-only, so a hit limit offers "Buy credits" only once a best-effort summary
  * fetch confirms a paid tier — free (or unknown) tiers get "Upgrade AI plan".

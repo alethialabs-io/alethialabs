@@ -98,3 +98,25 @@ describe("ElenchComposer — the per-message limit", () => {
 		expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
 	});
 });
+
+// #5423 review: a send that did NOT go out (its conversation could not be started) must leave
+// the text in the composer — clearing it first is what lost the message.
+describe("ElenchComposer — a send that did not go out", () => {
+	it("keeps the text when onSend resolves false", async () => {
+		const user = userEvent.setup();
+		const onSend = vi.fn(async () => false);
+		render(<ElenchComposer onSend={onSend} status="ready" />);
+		fill("keep me");
+		await user.click(screen.getByRole("button", { name: "Send" }));
+		expect(onSend).toHaveBeenCalledWith("keep me", []);
+		expect(content()).toBe("keep me");
+	});
+
+	it("clears the text once onSend resolves true", async () => {
+		const user = userEvent.setup();
+		render(<ElenchComposer onSend={vi.fn(async () => true)} status="ready" />);
+		fill("sent");
+		await user.click(screen.getByRole("button", { name: "Send" }));
+		expect(content()).toBe("");
+	});
+});

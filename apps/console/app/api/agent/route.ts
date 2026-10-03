@@ -17,7 +17,7 @@ import {
 	type Mention,
 	mentionsSchema,
 } from "@/lib/ai/mentions";
-import { lastUserMessageTooLong, MESSAGE_TOO_LONG } from "@/lib/ai/message-limits";
+import { refuseUserMessage } from "@/lib/ai/message-limits";
 import {
 	formatContextBlock,
 	readAgentContext,
@@ -156,6 +156,17 @@ export async function POST(req: Request) {
 	}
 
 	const actor = await currentActor();
+	// `AgentBody` is the shape the client sends, not a validated one: a body that is not even
+	// an object is a 400 here rather than a TypeError (a 500) at the destructure below.
+	const body: AgentBody | null = await req.json().catch(() => null);
+	if (body === null || typeof body !== "object") {
+		return new Response("The request body is malformed.", { status: 400 });
+	}
+	// The one per-message limit the composer and `createThread` also enforce, on messages
+	// validated first (400 when malformed) — refused before the budget hold below, so a
+	// malformed or over-limit turn reserves nothing.
+	const refusal = refuseUserMessage(body.messages);
+	if (refusal) return refusal;
 	const {
 		messages,
 		threadId,
@@ -164,14 +175,9 @@ export async function POST(req: Request) {
 		mentions,
 		deepReasoning: deepReasoningRaw,
 		cellTarget: cellTargetRaw,
-	}: AgentBody = await req.json();
+	} = body;
 	const deepReasoning = deepReasoningSchema.parse(deepReasoningRaw);
 	const cellTarget = cellTargetSchema.parse(cellTargetRaw);
-	// The one per-message limit the composer and `createThread` also enforce — refused before
-	// the budget hold below, so an over-limit turn reserves nothing.
-	if (lastUserMessageTooLong(messages)) {
-		return new Response(MESSAGE_TOO_LONG, { status: 413 });
-	}
 
 	// Metered turn: gate on headroom (the real cost-of-serve is settled after it runs). The
 	// deep-reasoning flag no longer affects the charge — Opus just settles its own real cost.
