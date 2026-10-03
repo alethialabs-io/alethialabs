@@ -3,9 +3,10 @@
 // @vitest-environment node
 
 // Hetzner capability lane (#937). Mocks the token decrypt + the hcloud API (fetch) + the service-role DB,
-// and asserts the tri-state launchable from /datacenters: a type in server_types.available → launchable, a
-// type in supported-but-not-available → not_launchable/capacity_blocked. Availability is the launch signal
-// (Hetzner has no queryable quota).
+// and asserts the tri-state launchable from /server_types `locations[]`: a location with available=true →
+// launchable, a listed location with available=false → not_launchable/capacity_blocked. Availability is the
+// launch signal (Hetzner has no queryable quota). The stub answers /datacenters with 410 Gone, exactly as
+// Hetzner has since 2026-10-01, so a regression to the removed endpoint fails the sync.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CapabilityIdentity } from "@/lib/cloud-providers/capabilities/types";
@@ -41,32 +42,47 @@ vi.mock("@/lib/db", () => {
 	return { getServiceDb: () => ({ insert: () => chain() }) };
 });
 
-function hcloudResponse(url: string): unknown {
+/** The fixture hcloud API: the 2026-10 server_types shape, and /datacenters REFUSED with 410 Gone. */
+function hcloudResponse(url: string): { status: number; body: unknown } {
 	const noNext = { meta: { pagination: { next_page: null } } };
 	if (url.includes("/datacenters")) {
-		return {
-			datacenters: [
-				{
-					location: { name: "fsn1" },
-					server_types: { available: [1], supported: [1, 2] },
-				},
-			],
-			...noNext,
-		};
+		return { status: 410, body: { error: { code: "gone", message: "endpoint removed" } } };
 	}
 	if (url.includes("/server_types")) {
 		return {
-			server_types: [
-				{ id: 1, name: "cax21", cores: 4, memory: 8, architecture: "arm" },
-				{ id: 2, name: "cx23", cores: 2, memory: 4, architecture: "x86" },
-			],
-			...noNext,
+			status: 200,
+			body: {
+				server_types: [
+					{
+						id: 1,
+						name: "cax21",
+						cores: 4,
+						memory: 8,
+						architecture: "arm",
+						locations: [
+							{ id: 1, name: "fsn1", recommended: false, available: true, deprecation: null },
+						],
+					},
+					{
+						id: 2,
+						name: "cx23",
+						cores: 2,
+						memory: 4,
+						architecture: "x86",
+						locations: [
+							{ id: 1, name: "fsn1", recommended: false, available: false, deprecation: null },
+							{ id: 2, name: "nbg1", recommended: true, available: true, deprecation: null },
+						],
+					},
+				],
+				...noNext,
+			},
 		};
 	}
 	if (url.includes("/locations")) {
-		return { locations: [{ name: "fsn1" }, { name: "nbg1" }], ...noNext };
+		return { status: 200, body: { locations: [{ name: "fsn1" }, { name: "nbg1" }], ...noNext } };
 	}
-	return { ...noNext };
+	return { status: 200, body: { ...noNext } };
 }
 
 // Tier-1 gate (#938): default every region due, so the verdict assertions below run unchanged.
@@ -97,10 +113,11 @@ beforeEach(() => {
 	h.softRemoves = [];
 	vi.clearAllMocks();
 	vi.spyOn(globalThis, "fetch").mockImplementation(async (input: unknown) => {
-		return {
-			ok: true,
-			json: async () => hcloudResponse(String(input)),
-		} as unknown as Response;
+		const { status, body } = hcloudResponse(String(input));
+		return new Response(JSON.stringify(body), {
+			status,
+			headers: { "Content-Type": "application/json" },
+		});
 	});
 });
 
@@ -117,7 +134,14 @@ describe("syncHetznerCapabilities", () => {
 		expect(h.softRemoves).toContain("cloud_capability_instance_types");
 	});
 
-	it("derives launchable from /datacenters available vs supported", async () => {
+	it("never calls the removed /datacenters endpoint", async () => {
+		await syncHetznerCapabilities(identity);
+		const urls = vi.mocked(globalThis.fetch).mock.calls.map((c) => String(c[0]));
+		expect(urls.some((u) => u.includes("/server_types"))).toBe(true);
+		expect(urls.filter((u) => u.includes("/datacenters"))).toEqual([]);
+	});
+
+	it("derives launchable from /server_types locations[].available", async () => {
 		await syncHetznerCapabilities(identity);
 		const fsn1 = rowsFor("fsn1");
 		// In available[] → launchable, with specs.
@@ -140,5 +164,15 @@ describe("syncHetznerCapabilities", () => {
 				launchable_reason: "capacity_blocked",
 			}),
 		);
+		// The same type is available in another location → launchable there, per location.
+		expect(rowsFor("nbg1")).toContainEqual(
+			expect.objectContaining({
+				native_id: "cx23",
+				launchable: "launchable",
+				launchable_reason: "available",
+			}),
+		);
+		// A type not listed for a location yields no row there at all.
+		expect(rowsFor("nbg1").map((r) => r.native_id)).not.toContain("cax21");
 	});
 });

@@ -11,6 +11,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -105,38 +106,37 @@ func TestDecideTypeAvailabilityVerdictsAreDistinct(t *testing.T) {
 	}
 }
 
-// TestHcloudAvailableTypeNames pins the id→name join and, above all, the SUPPORTED-vs-AVAILABLE
-// distinction — the thing that made this trap invisible. cx33 is supported in nbg1 and available
-// in no datacenter, so a join that read `supported` would have waved through the exact apply
-// that failed.
+// TestHcloudAvailableTypeNames pins the location join and, above all, the LISTED-vs-AVAILABLE
+// distinction — the thing that made this trap invisible. cx33 is listed for nbg1 and available
+// in no location, so a join that read "listed" would have waved through the exact apply that
+// failed. The fixture is the `GET /v1/server_types` shape Hetzner serves since it removed
+// `/v1/datacenters` on 2026-10-01.
 func TestHcloudAvailableTypeNames(t *testing.T) {
 	types := []hcloudServerType{
-		{ID: 114, Name: "cx23"}, {ID: 115, Name: "cx33"},
-		{ID: 109, Name: "cpx22"}, {ID: 110, Name: "cpx32"},
-	}
-	dcs := []hcloudDatacenter{
-		mkDC("nbg1-dc3", "nbg1", []int64{114, 109, 110}, []int64{114, 115, 109, 110}),
-		mkDC("fsn1-dc14", "fsn1", []int64{}, []int64{114, 115}),
+		mkType(114, "cx23", mkLoc("nbg1", true), mkLoc("fsn1", false)),
+		mkType(115, "cx33", mkLoc("nbg1", false), mkLoc("fsn1", false)),
+		mkType(109, "cpx22", mkLoc("nbg1", true)),
+		mkType(110, "cpx32", mkLoc("nbg1", true)),
 	}
 
-	t.Run("reads available, never supported", func(t *testing.T) {
-		got := hcloudAvailableTypeNames(dcs, types, "nbg1")
+	t.Run("reads available, never merely listed", func(t *testing.T) {
+		got := hcloudAvailableTypeNames(types, "nbg1")
 		if contains(got, "cx33") {
-			t.Errorf("cx33 is in nbg1's SUPPORTED list and not its AVAILABLE list; the join must not return it: %v", got)
+			t.Errorf("cx33 is listed for nbg1 with available=false; the join must not return it: %v", got)
 		}
 		if !contains(got, "cpx32") {
 			t.Errorf("cpx32 is available in nbg1 and is missing: %v", got)
 		}
 	})
 
-	t.Run("matches the datacenter name too", func(t *testing.T) {
-		if got := hcloudAvailableTypeNames(dcs, types, "nbg1-dc3"); !contains(got, "cpx32") {
-			t.Errorf("a datacenter-shaped location must match: %v", got)
+	t.Run("a datacenter-shaped name is reduced to its location", func(t *testing.T) {
+		if got := hcloudAvailableTypeNames(types, "nbg1-dc3"); !contains(got, "cpx32") {
+			t.Errorf("a datacenter-shaped location must match its location: %v", got)
 		}
 	})
 
 	t.Run("a matched but empty location returns non-nil, so it REFUSES", func(t *testing.T) {
-		got := hcloudAvailableTypeNames(dcs, types, "fsn1")
+		got := hcloudAvailableTypeNames(types, "fsn1")
 		if got == nil {
 			t.Fatal("fsn1 matched and is genuinely empty — returning nil would report UNKNOWN and let the run spend")
 		}
@@ -149,7 +149,7 @@ func TestHcloudAvailableTypeNames(t *testing.T) {
 	})
 
 	t.Run("an unmatched location returns nil, so it is UNKNOWN", func(t *testing.T) {
-		got := hcloudAvailableTypeNames(dcs, types, "nowhere1")
+		got := hcloudAvailableTypeNames(types, "nowhere1")
 		if got != nil {
 			t.Fatalf("a location we did not find must be nil (unknown), not empty (refuse): %v", got)
 		}
@@ -158,13 +158,28 @@ func TestHcloudAvailableTypeNames(t *testing.T) {
 		}
 	})
 
-	t.Run("an id with no name is dropped rather than invented", func(t *testing.T) {
+	t.Run("a type with no name is dropped rather than invented", func(t *testing.T) {
 		got := hcloudAvailableTypeNames(
-			[]hcloudDatacenter{mkDC("x-dc1", "x", []int64{114, 999}, nil)}, types, "x")
-		if contains(got, "999") || len(got) != 1 {
-			t.Errorf("an unknown server-type id must be dropped: %v", got)
+			[]hcloudServerType{mkType(114, "cx23", mkLoc("x", true)), mkType(999, "", mkLoc("x", true))}, "x")
+		if len(got) != 1 || got[0] != "cx23" {
+			t.Errorf("a nameless server type must be dropped: %v", got)
 		}
 	})
+}
+
+// TestHcloudServerTypeDecodesTheLiveShape decodes a body captured from the real API on
+// 2026-10-03, so a renamed field fails here rather than as a silent UNKNOWN on a paid run.
+func TestHcloudServerTypeDecodesTheLiveShape(t *testing.T) {
+	const body = `{"server_types":[{"id":109,"name":"cpx22","locations":[{"id":1,"name":"fsn1","recommended":false,"available":true,"deprecation":null}]}],"meta":{"pagination":{"next_page":null}}}`
+	var resp struct {
+		ServerTypes []hcloudServerType `json:"server_types"`
+	}
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := hcloudAvailableTypeNames(resp.ServerTypes, "fsn1"); len(got) != 1 || got[0] != "cpx22" {
+		t.Fatalf("the live server_types shape must yield cpx22 available in fsn1, got %v", got)
+	}
 }
 
 func TestRenderOffer(t *testing.T) {
@@ -238,13 +253,14 @@ func TestGCPRegionShapedLocationIsUnknown(t *testing.T) {
 	}
 }
 
-func mkDC(name, location string, available, supported []int64) hcloudDatacenter {
-	var dc hcloudDatacenter
-	dc.Name = name
-	dc.Location.Name = location
-	dc.ServerTypes.Available = available
-	dc.ServerTypes.Supported = supported
-	return dc
+// mkType builds one `GET /v1/server_types` entry with its per-location availability.
+func mkType(id int64, name string, locs ...hcloudServerTypeLocale) hcloudServerType {
+	return hcloudServerType{ID: id, Name: name, Locations: locs}
+}
+
+// mkLoc builds one entry of a server type's `locations` list.
+func mkLoc(name string, available bool) hcloudServerTypeLocale {
+	return hcloudServerTypeLocale{Name: name, Available: available}
 }
 
 // ── The fail-open paths, exercised without a cloud ───────────────────────────────────────────
@@ -256,7 +272,7 @@ func TestHcloudGetJSONRefusesAnEmptyToken(t *testing.T) {
 	// No network is reached: an empty token is refused before the request is built, which is
 	// what keeps a credential-less local run from hanging on a DNS lookup.
 	var out struct{}
-	err := hcloudGetJSON(context.Background(), "  ", "datacenters", &out)
+	err := hcloudGetJSON(context.Background(), "  ", "server_types", &out)
 	if err == nil {
 		t.Fatal("an empty HCLOUD_TOKEN must be an error, not an empty answer")
 	}
