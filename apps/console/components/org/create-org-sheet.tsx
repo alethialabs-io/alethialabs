@@ -61,6 +61,11 @@ import {
 	type Role,
 	type SentInvite,
 } from "@/components/org/org-purchase-ui";
+import {
+	clearPendingPaidSetup,
+	readPendingPaidSetup,
+	writePendingPaidSetup,
+} from "@/components/org/pending-paid-setup";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { authClient } from "@/lib/auth/client";
@@ -118,6 +123,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
 	const { viewer } = useViewer();
 	const ownerEmail = viewer?.email ?? "";
+	const viewerId = viewer?.id ?? "";
 
 	const form = useForm<FormData>({
 		resolver: zodResolver(schema),
@@ -163,6 +169,19 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * slug before that create is changing nothing anyone has paid for.
 	 */
 	const [slugClaimedAfterPayment, setSlugClaimedAfterPayment] = useState(false);
+	/**
+	 * A close was asked for while a paid setup is unfinished. The sheet stays open and asks first:
+	 * closing used to `reset()` the subscription and customer ids — the only link between the charge
+	 * and the team it was for — so the customer was left charged with no organization, and reopening
+	 * started a new purchase.
+	 */
+	const [confirmingClose, setConfirmingClose] = useState(false);
+	/**
+	 * The subscription is linked to the created org. A retry after a LATER step failed (the payer
+	 * declaration) must not link again: `linkSubscriptionToNewOrg` refuses an already-linked
+	 * subscription, so the retry could never succeed.
+	 */
+	const [linked, setLinked] = useState(false);
 
 	// Invite step.
 	const [isTrialOrg, setIsTrialOrg] = useState(false);
@@ -186,6 +205,76 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		};
 	}, [open]);
 
+	// A paid setup that has not finished is written to the tab's sessionStorage while it is pending,
+	// so closing the sheet (or navigating away inside the console) does not lose the subscription it
+	// is for. Removed once the subscription is linked — see `handlePaid`.
+	useEffect(() => {
+		if (!needsSetupRetry || !viewerId || linked) return;
+		if (!subscriptionId || !customerId || !declaration || !lastBilling) return;
+		writePendingPaidSetup(viewerId, {
+			subscriptionId,
+			customerId,
+			name,
+			slug,
+			currency,
+			declaration,
+			billing: lastBilling,
+			createdOrgId,
+			createdSlug,
+			slugClaimedAfterPayment,
+		});
+	}, [
+		needsSetupRetry,
+		viewerId,
+		subscriptionId,
+		customerId,
+		declaration,
+		lastBilling,
+		name,
+		slug,
+		currency,
+		createdOrgId,
+		createdSlug,
+		slugClaimedAfterPayment,
+		linked,
+	]);
+
+	// Reopening the sheet resumes a pending paid setup on the retry screen instead of starting a new
+	// purchase. Only when nothing is in flight in memory: an open intent of this session wins.
+	useEffect(() => {
+		if (!open || !viewerId || subscriptionId) return;
+		const pending = readPendingPaidSetup(viewerId);
+		if (!pending) return;
+		form.reset({ name: pending.name, slug: pending.slug });
+		setSlugTouched(true);
+		setCheckoutOrgName(pending.name);
+		setSubscriptionId(pending.subscriptionId);
+		setCustomerId(pending.customerId);
+		setCurrency(pending.currency);
+		setDeclaration(pending.declaration);
+		setLastBilling(pending.billing);
+		setCreatedOrgId(pending.createdOrgId);
+		setCreatedSlug(pending.createdSlug);
+		setSlugClaimedAfterPayment(pending.slugClaimedAfterPayment);
+		setNeedsSetupRetry(true);
+		setView("pay");
+		// `form` is stable for the component's life; re-running on `subscriptionId` would re-read
+		// storage after every intent. The read is for the moment the sheet opens.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [open, viewerId]);
+
+	// Closing the TAB is outside the sheet's reach and outside sessionStorage's scope, so while a paid
+	// setup is unfinished the browser is asked to confirm leaving the page.
+	useEffect(() => {
+		if (!needsSetupRetry) return;
+		/** Asks the browser to confirm leaving while a paid setup is unfinished. */
+		const warn = (e: BeforeUnloadEvent) => {
+			e.preventDefault();
+		};
+		window.addEventListener("beforeunload", warn);
+		return () => window.removeEventListener("beforeunload", warn);
+	}, [needsSetupRetry]);
+
 	function reset() {
 		form.reset({ name: "", slug: "" });
 		setSlugTouched(false);
@@ -203,15 +292,34 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setNeedsSetupRetry(false);
 		setLastBilling(null);
 		setSlugClaimedAfterPayment(false);
+		setConfirmingClose(false);
+		setLinked(false);
 		setIsTrialOrg(false);
 		setInviteEmail("");
 		setInviteRole("operator");
 		setSent([]);
 	}
 
+	/**
+	 * Opens or closes the sheet. A close while a paid setup is unfinished is held for confirmation
+	 * (see `confirmingClose`); every other close resets the sheet.
+	 */
 	function handleOpenChange(next: boolean) {
+		if (!next && needsSetupRetry && !confirmingClose) {
+			setConfirmingClose(true);
+			return;
+		}
 		if (!next) reset();
 		onOpenChange(next);
+	}
+
+	/**
+	 * The confirmed close of an unfinished paid setup. The setup stays in sessionStorage (written by
+	 * the effect above), so reopening the sheet in this tab resumes it on the retry screen.
+	 */
+	function closeKeepingPaidSetup() {
+		reset();
+		onOpenChange(false);
 	}
 
 	/** Close the sheet and drop the user into their new organization. */
@@ -480,15 +588,20 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				}
 				orgId = org.id;
 			}
-			await linkSubscriptionToNewOrg({
-				orgId,
-				subscriptionId,
-				customerId,
-				payer: {
-					capacity: declaration.capacity,
-					billingCountry: declaration.billingCountry,
-				},
-			});
+			if (!linked) {
+				await linkSubscriptionToNewOrg({
+					orgId,
+					subscriptionId,
+					customerId,
+					payer: {
+						capacity: declaration.capacity,
+						billingCountry: declaration.billingCountry,
+					},
+				});
+				setLinked(true);
+				// Linked: the charge now belongs to an organization, so there is nothing left to resume.
+				if (viewerId) clearPendingPaidSetup(viewerId);
+			}
 			// Completes the record with the attestation, which `linkSubscriptionToNewOrg` does not
 			// carry. NAMED org, never ambient: this sheet is open on a page inside the CURRENT org,
 			// so an ambient declaration would land on the old one — the #4133 failure, which is
@@ -595,6 +708,11 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 								submitLabel="Continue to payment"
 								onBack={() => setView("name")}
 								onDeclare={(d) => void handleDeclare(d)}
+							/>
+						) : needsSetupRetry && confirmingClose ? (
+							<ConfirmCloseUnfinished
+								onStay={() => setConfirmingClose(false)}
+								onClose={closeKeepingPaidSetup}
 							/>
 						) : needsSetupRetry && slugClaimedAfterPayment ? (
 							<RetryWithNewSlug
@@ -900,6 +1018,38 @@ function RetryWithNewSlug({
 				<ArrowRight size={15} />
 			</Button>
 		</form>
+	);
+}
+
+/**
+ * Asked before the sheet closes on an unfinished paid setup. States what happens to the payment and
+ * where the setup can be finished; "Close for now" keeps it in this tab's sessionStorage.
+ */
+function ConfirmCloseUnfinished({
+	onStay,
+	onClose,
+}: {
+	onStay: () => void;
+	onClose: () => void;
+}) {
+	return (
+		<div className="space-y-3">
+			<p className="text-ui-md font-medium text-text-primary">
+				Close before your team is set up?
+			</p>
+			<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
+				Your payment went through and is kept for this team. To finish later, open Create a team
+				again in this browser tab — it picks up here, and you won&apos;t be charged again.
+				Closing the browser tab itself does not keep it.
+			</p>
+			<Button className="w-full" onClick={onStay}>
+				Finish setup now
+				<ArrowRight size={15} />
+			</Button>
+			<Button variant="outline" className="w-full" onClick={onClose}>
+				Close for now
+			</Button>
+		</div>
 	);
 }
 

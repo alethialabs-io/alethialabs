@@ -6,8 +6,10 @@
 // Every SSO mutation goes through `callAuth`, which dispatches the plugin's endpoint and, on a
 // non-2xx, used to `throw new Error(<the plugin's message>)` out of a `"use server"` export. A
 // production build replaces a thrown message with a digest, so "the TXT record is not there yet" or
-// "issuer must be a URL" reached the SSO form as noise. A 4xx is now RETURNED; a 5xx still throws.
-// On the old code every `resolves` below was a rejection.
+// "issuer must be a URL" reached the SSO form as noise. Now RETURNED: any 4xx (a 401/403 from the
+// session / access / entitlement middleware included), and any non-500 5xx carrying a better-auth
+// `code` — the plugin's 502 `DOMAIN_VERIFICATION_FAILED` for a TXT record not visible yet. Still
+// THROWN: a 500, and a 5xx with no `code`. On the old code every `resolves` below was a rejection.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -95,6 +97,27 @@ describe("SSO mutations — a plugin refusal is a value", () => {
 		await expect(requestSsoDomainVerification("sp-1")).resolves.toEqual({
 			ok: false,
 			error: "Provider not found",
+		});
+	});
+
+	it("returns a 401/403 from the middleware in front of the plugin as a refusal too", async () => {
+		// `checkProviderAccess` answers a caller who is not an admin of the provider's org with a 403
+		// FORBIDDEN. The 401 below borrows the plugin's own UNAUTHORIZED sentence for an unverified
+		// domain to stand for any 401 shape; `callAuth` judges the status and the body, not the path.
+		// Both are returned like any other 4xx — not thrown.
+		handler.mockImplementation(async () =>
+			answer(403, { code: "FORBIDDEN", message: "You don't have access to this provider" }),
+		);
+		await expect(deleteSsoProvider("sp-1")).resolves.toEqual({
+			ok: false,
+			error: "You don't have access to this provider",
+		});
+		handler.mockImplementation(async () =>
+			answer(401, { code: "UNAUTHORIZED", message: "Provider domain has not been verified" }),
+		);
+		await expect(updateSsoProvider("sp-1", { issuer: "https://x" })).resolves.toEqual({
+			ok: false,
+			error: "Provider domain has not been verified",
 		});
 	});
 

@@ -3,24 +3,29 @@
 
 // #5445 — a reserved slug is refused by the SERVER, not only by the console's forms.
 //
-// Two layers, because each answers a different question:
+// Three layers, because each answers a different question:
 //   1. the hooks themselves, driven with core's REAL rule (the vitest `@` alias resolves
 //      lib/routing.ts, which is pure), so "reserved" means exactly what the console means by it;
-//   2. a real better-auth instance on its in-memory adapter, with the organization plugin carrying
-//      these hooks, called the way a client that skipped the form would call it. That is the claim
-//      the issue makes — a direct `/organization/create` with slug `docs` succeeded — and on the old
-//      plugin config (no hooks) the create in (2) RESOLVES with an org named `docs`.
+//   2. a real better-auth instance on its in-memory adapter, with an organization plugin this file
+//      builds around these hooks, called the way a client that skipped the form would call it;
+//   3. the organization plugin AS `register(core)` RETURNS IT, mounted in the same kind of instance
+//      and driven over HTTP. Layers 1 and 2 never touch index.ts, so only layer 3 fails when the
+//      `...orgSlugHooks(...)` line there is deleted — checked by deleting it: both layer-3 cases fail
+//      and the other nine still pass.
 
-import { betterAuth } from "better-auth";
+import { type BetterAuthPlugin, betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { APIError } from "better-auth/api";
 import { organization } from "better-auth/plugins/organization";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { orgAc, orgRoles } from "@/lib/authz/org-access-control";
+import type { CoreContext } from "@/lib/enterprise";
 import {
   ORG_SLUG_RESERVED_CODE,
   ORG_SLUG_RESERVED_MESSAGE,
   reservedOrgSlugRefusal,
 } from "@/lib/routing";
+import { register } from "./index";
 import { orgSlugHooks } from "./org-slug-hooks";
 
 const hooks = orgSlugHooks(reservedOrgSlugRefusal);
@@ -114,6 +119,120 @@ describe("orgSlugHooks — inside better-auth's own endpoints", () => {
       }),
     );
     expect(err.body).toMatchObject({ code: ORG_SLUG_RESERVED_CODE });
+    expect(db.organization[0]).toMatchObject({ slug: "acme" });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// The two blocks above build their OWN organization plugin from `orgSlugHooks`. Neither goes
+// through `register(core)`, so they stay green with the `...orgSlugHooks(...)` line deleted from
+// index.ts — the one line that makes production refuse `docs`. This block mounts the organization
+// plugin exactly as `register` returns it and calls better-auth's HTTP endpoints, so removing that
+// line, or adding a later `beforeCreateOrganization` / `beforeUpdateOrganization` key that overrides
+// it, turns these cases red.
+
+/**
+ * The CoreContext `register` receives, with core's REAL org roles and reserved-slug rule and every
+ * runtime-bound member stubbed. OpenFGA is reported off, so `register` builds no FGA client and
+ * never touches `db`; the lifecycle hooks the create path fires resolve without doing anything.
+ */
+function stubCore(): CoreContext {
+  const stub = {
+    db: {},
+    orgAc,
+    orgRoles,
+    reservedOrgSlugRefusal,
+    ensureMemberGrant: vi.fn(async () => undefined),
+    revokeMemberGrant: vi.fn(async () => undefined),
+    sendInviteEmail: vi.fn(async () => undefined),
+    canOrgInvite: vi.fn(async () => true),
+    canOrgCreateTeams: vi.fn(async () => true),
+    syncOrgSeats: vi.fn(async () => undefined),
+    emitAlertEvent: vi.fn(),
+    recordActivity: vi.fn(),
+    resolveOrgEntitlements: vi.fn(),
+    fga: { isEnabled: () => false },
+  };
+  // A test-only stub: `db` and most of `fga` are never reached with OpenFGA off (see above).
+  return stub as unknown as CoreContext;
+}
+
+describe("register(core) — the organization plugin production mounts", () => {
+  /** A better-auth carrying the plugin `register` returned, a signed-in user, and an HTTP caller. */
+  async function setup() {
+    const mod = register(stubCore());
+    const orgPlugin = mod.authPlugins?.find((p) => p.id === "organization");
+    if (!orgPlugin) throw new Error("register() returned no organization plugin");
+    const db: Record<string, Record<string, unknown>[]> = {
+      user: [],
+      session: [],
+      account: [],
+      verification: [],
+      organization: [],
+      member: [],
+      invitation: [],
+      team: [],
+      teamMember: [],
+    };
+    const baseURL = "http://localhost:3000";
+    const auth = betterAuth({
+      secret: "test-secret-test-secret-test-secret-0123",
+      baseURL,
+      database: memoryAdapter(db),
+      emailAndPassword: { enabled: true },
+      // The cast is about TYPES only. `authPlugins` is typed through `CoreContext`, i.e. the
+      // console's better-auth, while this instance is ee's own copy — two installed versions whose
+      // plugin types tsc treats as distinct. The object is the one `register` built with ee's
+      // `organization()`, the same function this instance is built from.
+      plugins: [orgPlugin as unknown as BetterAuthPlugin],
+    });
+    const res = await auth.api.signUpEmail({
+      body: { email: "owner@example.com", password: "a-long-password-1", name: "Owner" },
+      returnHeaders: true,
+    });
+    const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    /** POSTs a JSON body to a better-auth endpoint as the signed-in user, the way a client would. */
+    const post = (path: string, body: unknown): Promise<Response> =>
+      auth.handler(
+        new Request(`${baseURL}/api/auth${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie, origin: baseURL },
+          body: JSON.stringify(body),
+        }),
+      );
+    return { db, post };
+  }
+
+  it("refuses POST /organization/create with slug `docs`, and stores no organization", async () => {
+    const { db, post } = await setup();
+    const res = await post("/organization/create", { name: "Docs", slug: "docs" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: ORG_SLUG_RESERVED_CODE,
+      message: ORG_SLUG_RESERVED_MESSAGE,
+    });
+    expect(db.organization).toHaveLength(0);
+  });
+
+  it("refuses POST /organization/update onto slug `docs`, and keeps the old slug", async () => {
+    const { db, post } = await setup();
+    // The control: an ordinary slug is accepted through the same mounted plugin, so the refusal
+    // below is the slug rule and not a create path that refuses everything.
+    const created = await post("/organization/create", { name: "Acme", slug: "acme" });
+    expect(created.status).toBe(200);
+    const org: unknown = await created.json();
+    const orgId =
+      typeof org === "object" && org !== null && "id" in org && typeof org.id === "string"
+        ? org.id
+        : "";
+    expect(orgId).not.toBe("");
+
+    const res = await post("/organization/update", {
+      organizationId: orgId,
+      data: { slug: "docs" },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: ORG_SLUG_RESERVED_CODE });
     expect(db.organization[0]).toMatchObject({ slug: "acme" });
   });
 });

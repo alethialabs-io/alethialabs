@@ -119,11 +119,15 @@ function providerType(
 /**
  * A refusal from @better-auth/sso the admin can act on, RETURNED rather than thrown (#5445).
  *
- * The plugin answers a bad request with a 4xx and a sentence ("Provider not found", a domain whose
- * TXT record is not there yet, a config it rejects). `callAuth` used to rethrow that sentence out of
- * a `"use server"` export, and a production build replaced it with a digest — so the SSO form said
- * nothing an admin could act on. A 5xx is NOT one of these: it is the server failing, the admin
- * cannot fix it, and it still throws (its redaction is then correct).
+ * The plugin answers a request it will not perform with a status and a sentence: a 4xx for most
+ * ("Provider not found", a config it rejects), and a 502 `DOMAIN_VERIFICATION_FAILED` when the TXT
+ * record is not visible yet. A 401/403 raised by better-auth's middleware in front of the plugin —
+ * no session, "You don't have access to this provider", the ee entitlement guard — is a 4xx too, so
+ * it is returned here as well. `callAuth` used to rethrow every one of these out of a
+ * `"use server"` export, and a production build replaced the sentence with a digest — so the SSO
+ * form said nothing an admin could act on. What still throws is a 500, or a 5xx whose body carries
+ * no better-auth `code`: the server failing, which the admin cannot fix (its redaction is then
+ * correct).
  */
 type SsoRefusal = { ok: false; error: string };
 
@@ -150,7 +154,10 @@ async function requireSsoAdmin(): Promise<Actor> {
 /**
  * Dispatches a better-auth endpoint through `auth.handler`, forwarding the caller's cookies.
  *
- * A 4xx comes back as a {@link SsoRefusal} carrying the plugin's own sentence; a 5xx throws.
+ * Comes back as a {@link SsoRefusal} carrying the plugin's own sentence: ANY 4xx (401/403 from the
+ * session / access / entitlement middleware included), and any 5xx other than 500 whose body is a
+ * better-auth `APIError` with a `code` — the 502 `DOMAIN_VERIFICATION_FAILED` for a TXT record that
+ * is not visible yet is that case. Throws on a 500, and on a 5xx with no `code` in its body.
  *
  * The SSO endpoints come from the `sso()` plugin, which is loaded through the ee/ seam
  * (getAuthPlugins) — so `auth.api` cannot statically know about them, and the open-core guard

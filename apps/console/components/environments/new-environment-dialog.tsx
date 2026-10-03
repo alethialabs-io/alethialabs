@@ -169,7 +169,7 @@ export function NewEnvironmentDialog({
 							autoFocus
 						/>
 						{nameError && (
-							<p id={nameErrorId} role="alert" className="text-xs text-destructive">
+							<p id={nameErrorId} role="alert" className="text-ui-xs text-destructive">
 								{nameError}
 							</p>
 						)}
