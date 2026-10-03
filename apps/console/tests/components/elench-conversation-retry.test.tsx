@@ -270,18 +270,72 @@ describe.each(["panel", "modal"] as const)("ElenchConversation (%s) — Retry af
 		expect(content()).toBe("deploy staging, edited");
 	});
 
-	it("re-sends the failed turn when the composer is empty, and loses nothing", async () => {
+	it("puts a typed failed turn back into an emptied composer and sends nothing", async () => {
 		const { startThread } = renderConversation({ view, failures: 1 });
 		fill("deploy staging");
 		await pressEnter();
 		await screen.findByText(THREAD_START_TITLE);
 
+		// The user emptied the box: Retry must not send words they just erased.
 		fill("");
+		await clickRetry();
+
+		await waitFor(() => expect(content()).toBe("deploy staging"));
+		expect(chat.sent).toHaveLength(0);
+		expect(startThread).toHaveBeenCalledTimes(1);
+		expect(screen.getByText(THREAD_START_TITLE)).toBeTruthy();
+
+		// Now the box holds it, so the next Retry sends it.
+		await clickRetry();
+		await waitFor(() => expect(chat.sent).toHaveLength(1));
+		expect(chat.sent[0].parts).toEqual([{ type: "text", text: "deploy staging" }]);
+	});
+
+	it("re-sends a failed seed prompt (it never lived in the composer) when the box is empty", async () => {
+		const { startThread } = renderConversation({ view, failures: 1 });
+		act(() => useElenchStore.getState().setSeedPrompt("summarise my clusters"));
+		await screen.findByText(THREAD_START_TITLE);
+		expect(content()).toBe("");
+
 		await clickRetry();
 
 		await waitFor(() => expect(chat.sent).toHaveLength(1));
 		expect(startThread).toHaveBeenCalledTimes(2);
+		expect(chat.sent[0].parts).toEqual([{ type: "text", text: "summarise my clusters" }]);
+	});
+});
+
+// A minimize or maximize remounts the composer (ElenchModal and ElenchPanel each wrap the body;
+// in the modal an empty conversation is the landing, with its own composer). The remounted
+// composer starts from the failed turn, so the box shows what Retry sends. An edit made AFTER
+// the failure and before the flip is not kept — a remount loses unsent text exactly as it does
+// on dev; keeping it is the draft redesign (#5414 follow-up issue), not this PR.
+describe.each([
+	["modal", "minimize"],
+	["panel", "maximize"],
+] as const)("ElenchConversation (%s) — a %s after a failed thread start", (view, flip) => {
+	it("remounts the composer holding the failed turn, and Retry sends exactly what it shows", async () => {
+		const { startThread } = renderConversation({ view, failures: 1 });
+		fill("deploy staging");
+		await pressEnter();
+		await screen.findByText(THREAD_START_TITLE);
+		fill("deploy staging, EDITED");
+
+		act(() => useElenchStore.getState()[flip]());
+
+		expect(screen.getByText(THREAD_START_TITLE)).toBeTruthy();
+		await waitFor(() => expect(content()).toBe("deploy staging"));
+		await clickRetry();
+
+		await waitFor(() => expect(chat.sent).toHaveLength(1));
 		expect(chat.sent[0].parts).toEqual([{ type: "text", text: "deploy staging" }]);
+		expect(startThread).toHaveBeenCalledTimes(2);
+		expect(chat.sent[0].id).toBe(startThread.mock.calls[0][1]?.id);
+	});
+
+	it("a composer mounted with no failed send pending starts empty", async () => {
+		renderConversation({ view, failures: 0 });
+		act(() => useElenchStore.getState()[flip]());
 		expect(content()).toBe("");
 	});
 });

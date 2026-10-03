@@ -14,6 +14,9 @@ interface PendingFirstTurn {
 	id: string;
 	text: string;
 	mentions: Mention[];
+	/** The composer's serialized editor state when the turn was typed there (mention pills
+	 * included); undefined for a suggestion card, seed prompt or grid cell. */
+	state?: string;
 }
 
 export interface ElenchSendDeps {
@@ -31,7 +34,7 @@ export interface ElenchSendDeps {
 export interface ElenchSend {
 	/** Send `text`. Resolves `true` when it went out, `false` when it did NOT — the caller (the
 	 * composer) then keeps the text, so a refused or failed send never loses the message. */
-	send: (text: string, mentions?: Mention[]) => Promise<boolean>;
+	send: (text: string, mentions?: Mention[], state?: string) => Promise<boolean>;
 	/** Why the last send did not go out, or null: a `ThreadStartError`, or the too-long error. */
 	error: Error | null;
 	/** Re-send the failed first turn AS IT WAS (thread, then message), or undefined when none
@@ -39,6 +42,10 @@ export interface ElenchSend {
 	 * instead — its text may have been edited since, and `send` with that text reuses the same
 	 * pending id. */
 	retry: (() => Promise<boolean>) | undefined;
+	/** The failed first turn's serialized composer state, while one is pending and it was typed in
+	 * the composer; null otherwise. A composer that MOUNTS while it is pending (a minimize or
+	 * maximize remounts it) starts from this, so the box shows what Retry would send. */
+	failedState: string | null;
 	/** Forget the failure and the pending turn — a new conversation starts clean. */
 	reset: () => void;
 }
@@ -71,7 +78,7 @@ export function useElenchSend({
 	const startingRef = useRef(false);
 
 	const send = useCallback(
-		async (text: string, mentions: Mention[] = []): Promise<boolean> => {
+		async (text: string, mentions: Mention[] = [], state?: string): Promise<boolean> => {
 			// Refused here, before any thread is created: an over-limit first send must not
 			// leave an empty row behind, and the route would only 413 it.
 			if (isMessageTooLong(text)) {
@@ -85,6 +92,7 @@ export function useElenchSend({
 					id: pendingRef.current?.id ?? generateId(),
 					text,
 					mentions,
+					state,
 				};
 				pendingRef.current = turn;
 				startingRef.current = true;
@@ -114,7 +122,7 @@ export function useElenchSend({
 	);
 
 	const retry = pending
-		? () => send(pending.text, pending.mentions)
+		? () => send(pending.text, pending.mentions, pending.state)
 		: undefined;
 
 	const reset = useCallback(() => {
@@ -123,5 +131,5 @@ export function useElenchSend({
 		setError(null);
 	}, []);
 
-	return { send, error, retry, reset };
+	return { send, error, retry, failedState: pending?.state ?? null, reset };
 }
