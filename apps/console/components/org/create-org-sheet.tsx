@@ -525,7 +525,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			// what rendered the payment form. Said rather than skipped, because a skip here would be a
 			// charge with nothing tied to it.
 			toast.error(
-				"Your payment went through, but this page lost its reference to it. Contact support — you won't be charged again.",
+				"Your payment went through, but this page lost its reference to it. Contact support with the time of the payment.",
 			);
 			return;
 		}
