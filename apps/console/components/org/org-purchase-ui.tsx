@@ -282,7 +282,11 @@ export function Field({
 				<div className={labelClass}>{text}</div>
 			)}
 			{typeof children === "function" ? children(id) : children}
-			{error && <p className="text-ui-xs text-destructive">{error}</p>}
+			{error && (
+				<p role="alert" className="text-ui-xs text-destructive">
+					{error}
+				</p>
+			)}
 		</div>
 	);
 }

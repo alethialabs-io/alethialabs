@@ -68,6 +68,7 @@ import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { orgHost } from "@/lib/org-url";
+import { RESERVED_SLUGS } from "@/lib/routing";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
@@ -80,13 +81,23 @@ import {
 	SheetTitle,
 } from "@repo/ui/sheet";
 
+/** The sentence for a slug that is in use — the same one `configureOnboardingOrg` returns. */
+const SLUG_TAKEN = "That slug is taken — try another.";
+/** The sentence for a slug a console route or sibling app owns — `configureOnboardingOrg`'s too. */
+const SLUG_RESERVED = "That slug is reserved — try another.";
+
 const schema = z.object({
 	name: z.string().trim().min(2, "Give your team a name."),
 	slug: z
 		.string()
 		.trim()
 		.min(1, "Pick a slug.")
-		.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and hyphens."),
+		.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and hyphens.")
+		// Checked HERE, not left to `isOrgSlugAvailable`: that action answers one boolean for both
+		// "reserved" and "taken", so a reserved slug ("docs") used to be refused as TAKEN — a sentence
+		// that sends the user looking for an organization that does not exist (#5442). RESERVED_SLUGS
+		// is the same set the action and `configureOnboardingOrg` consult, so the two cannot disagree.
+		.refine((s) => !RESERVED_SLUGS.has(s), SLUG_RESERVED),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -197,12 +208,20 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		else router.refresh();
 	}
 
-	/** Validate the form + slug availability before any Stripe / org work. */
+	/**
+	 * Validate the form + slug availability before any Stripe / org work. A refused slug opens the
+	 * URL editor, so the field the sentence is about is on screen to change — an auto-derived slug
+	 * is otherwise only a line of preview text under the name.
+	 */
 	async function validate(): Promise<FormData | null> {
-		if (!(await form.trigger())) return null;
+		if (!(await form.trigger())) {
+			if (form.getFieldState("slug").invalid) setShowUrl(true);
+			return null;
+		}
 		const data = form.getValues();
 		if (!(await isOrgSlugAvailable(data.slug))) {
-			form.setError("slug", { message: "That slug is taken — try another." });
+			form.setError("slug", { message: SLUG_TAKEN });
+			setShowUrl(true);
 			return null;
 		}
 		return data;
@@ -221,7 +240,8 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		});
 		if (error || !org) {
 			if (/slug|unique|exist|taken/i.test(error?.message ?? "")) {
-				form.setError("slug", { message: "That slug is taken — try another." });
+				form.setError("slug", { message: SLUG_TAKEN });
+				setShowUrl(true);
 				return null;
 			}
 			throw new Error(error?.message ?? "Couldn't create the organization");
@@ -345,10 +365,19 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		if (busy) return;
 		setBusy(true);
 		try {
+			// A slug refused here (claimed since Continue, or at the create itself) is a field error on
+			// the NAME step, so go back to it — on the trial panel it rendered nowhere, and the button
+			// simply stopped doing anything.
 			const data = await validate();
-			if (!data) return;
+			if (!data) {
+				setView("name");
+				return;
+			}
 			const org = await createOrg(data);
-			if (!org) return;
+			if (!org) {
+				setView("name");
+				return;
+			}
 			try {
 				// The org just created, NOT the ambient one — this sheet is open on a page inside the
 				// CURRENT org, so ambient would burn the account's one trial on the wrong org and then
@@ -678,7 +707,7 @@ function NamePanel({
 							</div>
 						)}
 						{form.formState.errors.slug?.message && (
-							<p className="text-ui-xs text-destructive">
+							<p role="alert" className="text-ui-xs text-destructive">
 								{form.formState.errors.slug.message}
 							</p>
 						)}
