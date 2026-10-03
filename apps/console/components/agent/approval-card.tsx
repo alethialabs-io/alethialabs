@@ -4,7 +4,7 @@
 
 import { Check, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
-import { planProject, provisionProject } from "@/app/server/actions/projects";
+import { tryPlanProject, tryProvisionProject } from "@/app/server/actions/projects";
 import { formatMonthlyRate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { track } from "@/lib/analytics/track";
@@ -51,10 +51,18 @@ export function ApprovalCard({
 				op.environmentId ??
 				(ctx.kind === "project" ? ctx.environmentId : null) ??
 				undefined;
-			const { jobId } =
+			const res =
 				op.operation === "plan_project"
-					? await planProject(op.projectId, undefined, envId)
-					: await provisionProject(op.projectId, op.planJobId, undefined, envId);
+					? await tryPlanProject(op.projectId, undefined, envId)
+					: await tryProvisionProject(op.projectId, op.planJobId, undefined, envId);
+			if (!res.ok) {
+				// The gate's own sentence (#5445) — thrown, a production build reduced it to a digest.
+				setPhase("denied");
+				setReason(res.error);
+				onResolve?.({ status: "denied", reason: res.error });
+				return;
+			}
+			const { jobId } = res;
 			open({ projectId: op.projectId, jobId }, "logs");
 			setPhase("done");
 			onResolve?.({
