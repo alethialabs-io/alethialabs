@@ -26,7 +26,7 @@ import (
 //
 // AKS splits the two facts across two ARM REST calls (mirroring `az aks get-credentials`): the API
 // server FQDN + readiness come from ManagedClusters.Get; the cluster CA comes from the kubeconfig that
-// listClusterUserCredentials returns (base64 YAML → clusters[0].cluster.certificate-authority-data). It
+// listClusterUserCredential returns (base64 YAML → clusters[0].cluster.certificate-authority-data). It
 // calls ARM directly with a keyless federated-identity bearer token (the runner's workload-identity ARM
 // token — never a stored key), which keeps this lane dependency-free (stdlib + the already-present
 // yaml.v3 — no cloud SDK added to packages/core/go.mod, so the per-cloud lanes stay disjoint). The
@@ -143,7 +143,7 @@ func armRequestBody(ctx context.Context, client *http.Client, method, rawURL, ar
 	return body, nil
 }
 
-// aksCredentialsResponse is the listClusterUserCredentials response — a list of base64-encoded kubeconfigs.
+// aksCredentialsResponse is the listClusterUserCredential response — a list of base64-encoded kubeconfigs.
 type aksCredentialsResponse struct {
 	Kubeconfigs []struct {
 		Name  string `json:"name"`
@@ -205,17 +205,23 @@ func ResolveAKSClusterConn(
 		)
 	}
 
-	// (2) listClusterUserCredentials → the cluster CA (from the returned kubeconfig).
+	// (2) listClusterUserCredential → the cluster CA (from the returned kubeconfig).
+	// The ARM action is SINGULAR — `listClusterUserCredential` (and `listClusterAdminCredential`). It
+	// used to be spelled `listClusterUserCredentials`, which ARM routes to nothing and answers
+	// `404 {"error":{"code":"BadRequest","message":"404: Page Not Found"}}`. Every azure mint failed on
+	// it as "The cluster was not found" while the cluster was healthy (cli-demo run 37086387653, #5287:
+	// the subscription activity log shows the azurerm provider's singular call Succeeded at 04:11:05
+	// and this resolver's plural call 404'd at 04:17:37 against the same cluster).
 	credURL := fmt.Sprintf(
-		"%s%s/listClusterUserCredentials?api-version=%s", azureARMBase, resourceID, aksAPIVersion,
+		"%s%s/listClusterUserCredential?api-version=%s", azureARMBase, resourceID, aksAPIVersion,
 	)
 	credBody, err := armRequest(ctx, client, http.MethodPost, credURL, armToken)
 	if err != nil {
-		return AKSClusterConn{}, fmt.Errorf("aks listClusterUserCredentials %q: %w", clusterName, err)
+		return AKSClusterConn{}, fmt.Errorf("aks listClusterUserCredential %q: %w", clusterName, err)
 	}
 	ca, err := extractAKSCACert(credBody)
 	if err != nil {
-		return AKSClusterConn{}, fmt.Errorf("aks listClusterUserCredentials %q: %w", clusterName, err)
+		return AKSClusterConn{}, fmt.Errorf("aks listClusterUserCredential %q: %w", clusterName, err)
 	}
 	if ca == "" {
 		return AKSClusterConn{}, fmt.Errorf("%w: %q (empty cluster CA)", ErrAKSClusterNotReady, clusterName)
@@ -307,7 +313,7 @@ func ResolveAKSResourceGroup(
 	return found, nil
 }
 
-// extractAKSCACert decodes the first kubeconfig from a listClusterUserCredentials response and returns
+// extractAKSCACert decodes the first kubeconfig from a listClusterUserCredential response and returns
 // its cluster certificate-authority-data (base64 CA). A public cert — safe to surface.
 func extractAKSCACert(credBody []byte) (string, error) {
 	var creds aksCredentialsResponse
