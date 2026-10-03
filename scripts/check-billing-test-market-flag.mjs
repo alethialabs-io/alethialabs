@@ -33,6 +33,9 @@
 //     when a person writes one down; a deliberate obfuscation is a review question.
 //   · Untracked files.
 //
+// It DOES see a file marked `binary` or `-text` in .gitattributes: `git grep -a` reads every tracked
+// file as text. With `-I` instead, one attribute line hid a planted `.env.example` (#5446 review).
+//
 // Usage:  node scripts/check-billing-test-market-flag.mjs [--self-test]
 
 import { execFileSync } from "node:child_process";
@@ -58,12 +61,14 @@ const ALLOWED = new Map([
 ]);
 
 /**
- * The tracked files under `root` that contain the flag's name. A git failure THROWS: an error
- * reported as "no files" would make every allowlist entry look stale and every zone look clean.
+ * The tracked files under `root` that contain the flag's name, every file read as text (`-a`):
+ * `-I` would skip whatever .gitattributes calls binary, which is one line away from hiding a setter.
+ * A git failure THROWS: an error reported as "no files" would make every allowlist entry look stale
+ * and every zone look clean.
  */
 function filesNamingFlag(root) {
 	try {
-		const out = execFileSync("git", ["grep", "-l", "-z", "-I", "-F", "-e", FLAG], {
+		const out = execFileSync("git", ["grep", "-l", "-z", "-a", "-F", "-e", FLAG], {
 			cwd: root,
 			maxBuffer: 64 * 1024 * 1024,
 			stdio: ["ignore", "pipe", "pipe"],
@@ -166,6 +171,16 @@ function selfTest() {
 			expect(label, m.unexpected.length === 1 && m.unexpected[0] === path, JSON.stringify(m));
 		}
 
+		// A .gitattributes `binary` mark must not hide a setter (the #5446 review's bypass).
+		const b = fixtureRepo({ ...clean, ".env.example": `${FLAG}=1\n`, ".gitattributes": ".env.example binary\n" });
+		dirs.push(b);
+		const bv = check(b);
+		expect(
+			"a setter in a file .gitattributes marks binary",
+			bv.unexpected.length === 1 && bv.unexpected[0] === ".env.example",
+			JSON.stringify(bv),
+		);
+
 		const { [".github/workflows/release-gate.yml"]: _gone, ...noSetter } = clean;
 		const s = fixtureRepo({ ...noSetter, ".github/workflows/release-gate.yml": "env: {}\n" });
 		dirs.push(s);
@@ -190,14 +205,14 @@ function selfTest() {
 		for (const d of dirs) rmSync(d, { recursive: true, force: true });
 	}
 
-	const total = mutations.length + 3;
+	const total = mutations.length + 4;
 	if (failures > 0) {
 		console.error(`\n✗ check-billing-test-market-flag self-test: ${failures}/${total} wrong`);
 		process.exit(1);
 	}
 	console.log(
 		`✓ check-billing-test-market-flag self-test: ${total}/${total} — clean tree passes; ` +
-			`${mutations.length} planted settings, a stale entry and a git error all fail`,
+			`${mutations.length} planted settings, a binary-marked setter, a stale entry and a git error all fail`,
 	);
 }
 
