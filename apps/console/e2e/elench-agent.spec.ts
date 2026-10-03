@@ -17,8 +17,24 @@
 // reachable from an arbitrary authenticated route rather than only from the home page (#4272).
 // Anything about the panel, the modal, the composer or the threads belongs here, once.
 
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { test, expect } from "./fixtures/auth";
+
+/**
+ * The transcript of an open Elench surface: the `role="log"` content of the shared
+ * message scroller that `AgentChat` renders in BOTH the modal and the panel.
+ *
+ * A sent message is not the only place its text appears. The first send creates the thread
+ * lazily and titles it from that message, so the same words also render as chrome: the modal's
+ * rail row (`thread-rail.tsx`), the modal's centred title bar (`elench-modal.tsx`), and the
+ * panel's conversation switcher (`elench-conversation-switcher.tsx`). A bare `getByText` therefore
+ * resolves to several elements and fails strict mode, and `.first()` would be worse: it would pass
+ * on a CHROME title while the transcript had lost the turn, which is the defect these tests guard.
+ * Scope a turn to this, and assert the chrome separately where it means something.
+ */
+function transcript(scope: Locator): Locator {
+	return scope.getByRole("log");
+}
 
 /** Open the Elench surface as a docked panel via the topbar "Ask AI" button. */
 async function openElenchPanel(page: Page): Promise<void> {
@@ -100,19 +116,31 @@ test.describe("Elench agent — modal (org)", () => {
 		const composer = page.getByTestId("elench-composer");
 		await composer.fill("elench e2e ping");
 		await composer.press("Enter");
-		await expect(page.getByText("elench e2e ping")).toBeVisible();
+		const modal = page.getByTestId("elench-modal");
+		await expect(
+			transcript(modal).getByText("elench e2e ping", { exact: true }),
+		).toBeVisible();
+		// The send also created the thread and titled it from the message — the rail says so.
+		await expect(
+			modal.getByTestId("thread-rail-row").filter({ hasText: "elench e2e ping" }),
+		).toHaveCount(1);
 
 		// Minimize to the docked panel — the surface floats over the org home (no route hop).
 		await page.getByRole("button", { name: /minimize to panel/i }).click();
 		const panel = page.getByRole("dialog", { name: /elench assistant/i });
 		await expect(panel).toBeVisible();
 		await expect(page).toHaveURL(new RegExp(`/${orgSlug}(\\?.*)?$`));
-		// The conversation survived the view flip.
-		await expect(panel.getByText("elench e2e ping")).toBeVisible();
+		// The conversation survived the view flip: the TURN is in the panel's transcript, not
+		// merely the thread's title in the panel's switcher.
+		await expect(
+			transcript(panel).getByText("elench e2e ping", { exact: true }),
+		).toBeVisible();
 
-		// Maximize back to the modal — still there.
+		// Maximize back to the modal — the turn is still in its transcript.
 		await page.getByRole("button", { name: /expand to full screen/i }).click();
-		await expect(page.getByText("elench e2e ping")).toBeVisible();
+		await expect(
+			transcript(modal).getByText("elench e2e ping", { exact: true }),
+		).toBeVisible();
 	});
 
 	test("the panel closes", async ({ authedPage: page }) => {
@@ -212,29 +240,46 @@ test.describe("Elench agent — AI-off deterministic flows (org)", () => {
 		).toHaveAttribute("aria-current", "true");
 	});
 
-	test("a sent thread persists across a reload", async ({
+	// THIS USED TO BE "a sent thread persists across a reload", AND WITH AI OFF THAT IS FALSE BY
+	// DECISION. The first send inserts the thread row (`createThread`), but its transcript is written
+	// only by the streaming route's `onFinish` (`saveThreadMessages`) — and with no AI key that route
+	// answers 503 before any stream exists, so the row keeps zero messages. 3bfb88fc4 (2026-07-15,
+	// "drop ghost chats", a week after this test was written in #202) made `listThreads` never
+	// surface a zero-message thread, because an aborted or failed first turn leaves exactly that row
+	// behind. So the old assertion — the rail row back after a reload — asserted the ghost the
+	// product deliberately hides. It never failed on that line only because it never got there: a
+	// bare `getByText` on the first send had already failed strict mode on every run since #4301.
+	//
+	// What AI-off CAN say deterministically is both halves of that decision: the thread is created
+	// lazily on the first send (rail row, title, the turn in the transcript, the 503 error), and a
+	// reload does not resurrect it. That a thread WITH a transcript survives a reload is a claim
+	// only an answered turn can make, and `elench-ai.spec.ts` makes it against the real pipeline.
+	test("a first send that fails creates its thread, and a reload does not resurface it", async ({
 		authedPage: page,
 	}) => {
+		const title = "unanswered elench thread";
+		const modal = page.getByTestId("elench-modal");
 		const composer = page.getByTestId("elench-composer");
-		await composer.fill("persisted elench thread");
+		await composer.fill(title);
 		await composer.press("Enter");
-		await expect(page.getByText("persisted elench thread")).toBeVisible();
+		await expect(transcript(modal).getByText(title, { exact: true })).toBeVisible();
+		// The turn failed — that is what makes this thread a ghost row, not a persisted chat.
+		await expect(modal.getByText(/ai is not configured/i)).toBeVisible();
 
 		// The thread is created LAZILY on this first send + titled from it → it shows in the rail.
-		const row = page
-			.getByTestId("thread-rail-row")
-			.filter({ hasText: /persisted elench thread/i });
-		await expect(row.first()).toBeVisible();
+		await expect(
+			modal.getByTestId("thread-rail-row").filter({ hasText: title }),
+		).toHaveCount(1);
 
-		// Reload + reopen → the persisted thread resumes (rail row + message survive).
+		// Reload + reopen. The composer renders only once the surface's initial `listThreads`
+		// has settled (the body is a skeleton until then), so waiting for it is what makes the
+		// absence below a MEASUREMENT rather than a read of a rail that has not loaded yet.
 		await page.reload();
 		await openElenchModal(page);
-		await expect(
-			page
-				.getByTestId("thread-rail-row")
-				.filter({ hasText: /persisted elench thread/i })
-				.first(),
-		).toBeVisible();
+		await expect(page.getByTestId("elench-composer")).toBeVisible();
+		await expect(modal.getByRole("textbox", { name: "Search chats" })).toBeVisible();
+		// Nowhere in the surface — rail, recents, title bar or transcript — names it again.
+		await expect(modal.getByText(title)).toHaveCount(0);
 	});
 
 	test("sending with no AI key surfaces the 'AI not configured' error + Retry", async ({
