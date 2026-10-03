@@ -994,6 +994,13 @@ jobs:
       STRIPE_PRICE_AI_PLUS: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_AI_PLUS || '' }}
       STRIPE_PRICE_AI_MAX: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_AI_MAX || '' }}
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PUBLISHABLE_KEY || '' }}
+      # The test-mode MARKET waiver (#5412, maintainer ruling 2026-10-03). `PAID_MARKETS` is empty,
+      # so without this the eligibility gate refuses every paid conversion with `market_closed` and
+      # the gate can never reach Stripe Elements, the order summary, the currency toggle or a
+      # hosted Checkout session. `lib/billing/eligibility.ts · testModeMarketOpen` honours it ONLY
+      # beside a `sk_test_` secret key, so it cannot open a live sale. THIS IS THE ONLY PLACE IT IS
+      # SET; it rides the same `stripe` promise as the test keys above.
+      ALETHIA_BILLING_TEST_MARKET: ${{ contains(matrix.capabilities, 'stripe') && '1' || '' }}
     steps:
       # `id:` so the two `!cancelled()` steps at the bottom can ask whether there is a WORKSPACE:
       # the `services:` block starts before this checkout, and a failed image pull skips everything

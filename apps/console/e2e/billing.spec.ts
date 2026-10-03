@@ -8,7 +8,9 @@
 //      a working preview + an authorized PDF route that never 404s for a mirrored invoice.
 //
 // Auth is done via the API (email-OTP → session cookie → create + activate org) rather than
-// the brittle multi-step signup UI: it's faster and deterministic. The OTP is scraped from
+// the brittle multi-step signup UI: it's faster and deterministic. The one step the API cannot
+// stand in for is the clickwrap: since #2447 every private route redirects to /accept-terms until
+// the account has accepted the current Terms, so `apiAuthWithOrg` walks it in the browser. The OTP is scraped from
 // the dev console log (SES-fail dev fallback logs "(sign-in code: NNNNNN)"). Billing +
 // invoice rows are seeded directly in the dev Postgres for the freshly-created org.
 //
@@ -16,6 +18,7 @@
 // BETTER_AUTH_URL (source .env before running: `set -a && . ./.env && set +a`).
 
 import { readFile } from "node:fs/promises";
+import { ACCEPTANCE_LABELS } from "@repo/legal/documents";
 import { expect, type Page, test } from "@playwright/test";
 import postgres from "postgres";
 
@@ -86,7 +89,32 @@ async function apiAuthWithOrg(
 		data: { organizationId: orgId },
 	});
 	expect(activeRes.ok()).toBeTruthy();
+	await acceptCurrentTerms(page);
 	return { orgId, orgSlug };
+}
+
+/**
+ * Walks the post-auth clickwrap (#2372, gated in `(private)/layout.tsx` since #2447) for a
+ * brand-new API-created account.
+ *
+ * Without it every billing route below renders "Accept our Terms" instead of billing — which is
+ * what the gate recorded these three tests failing on. Walked as a person would, not seeded as an
+ * acceptance row, so the gate itself stays exercised. Located by the exported labels, the way
+ * `fixtures/auth.ts` locates them, so a relabel cannot silently break the walk. Kept inline: the
+ * fixtures and helpers directories are release-gate seams.
+ */
+async function acceptCurrentTerms(page: Page): Promise<void> {
+	await page.goto("/accept-terms");
+	const accept = page.getByRole("button", { name: ACCEPTANCE_LABELS.submit });
+	await expect(accept).toBeVisible({ timeout: 30_000 });
+	await expect(accept).toBeDisabled();
+	await page
+		.getByText(new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i"))
+		.first()
+		.click();
+	await expect(accept).toBeEnabled();
+	await accept.click();
+	await expect(accept).toBeHidden({ timeout: 30_000 });
 }
 
 /** Upserts the org's billing row to a chosen state (a stripe_customer_id makes the invoices
@@ -134,7 +162,13 @@ async function seedInvoice(
 test.describe("Billing — plan-state coherence", () => {
 	test.skip(!DB_URL, "source .env (ALETHIA_DATABASE_URL) before running e2e");
 
-	test("a canceled org shows Canceled, no renew/next-charge, and an Upgrade CTA", async ({
+	// RENAMED in #5412 from "a canceled org shows Canceled, no renew/next-charge, and an Upgrade
+	// CTA". A lapsed subscription is written as plan `community` (lib/billing/sync.ts:
+	// `plan: live && plan ? plan : "community"`), and `billing-panel.tsx`'s `isHobby` branch —
+	// added in #114, the same PR as this test — gives a Hobby card no lifecycle badge at all. So
+	// "Canceled" can never render for a real canceled org; the decided shape is the Hobby card with
+	// an upgrade path, which `flows/billing.spec.ts` asserts for a never-subscribed org too.
+	test("a canceled org reads as Hobby — no lifecycle badge, no renew/next-charge, and an Upgrade CTA", async ({
 		page,
 	}) => {
 		const { orgId, orgSlug } = await apiAuthWithOrg(page);
@@ -146,7 +180,9 @@ test.describe("Billing — plan-state coherence", () => {
 
 		await page.goto(`/${orgSlug}/~/settings/billing`);
 
-		await expect(page.getByText("Canceled", { exact: true })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Current plan" })).toBeVisible({ timeout: 30_000 });
+		await expect(page.getByText("Hobby", { exact: true }).first()).toBeVisible();
+		await expect(page.getByText("Canceled", { exact: true })).toHaveCount(0);
 		await expect(
 			page.getByRole("button", { name: /upgrade to pro/i }),
 		).toBeVisible();

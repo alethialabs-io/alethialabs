@@ -18,6 +18,10 @@
 // FAIL-CLOSED everywhere. Every unknown — no acceptance row, no billing country, an unrecognised
 // capacity, an empty PAID_MARKETS — refuses the sale. The failure mode of refusing a lawful sale is
 // a support ticket; the failure mode of allowing an unlawful one is a regulator.
+//
+// ONE waiver, and only of the market check: `testModeMarketOpen` lets a Stripe TEST-mode console
+// with the release gate's flag past `market_closed`, so the gate can exercise the real checkout
+// (#5412). It cannot open a live sale — a live key refuses whatever the flag says.
 
 import { and, eq } from "drizzle-orm";
 import {
@@ -97,6 +101,39 @@ export async function hasAcceptedCurrentDocuments(
 }
 
 /**
+ * The gate-only flag that opens the market check for a Stripe TEST-mode console (#5412).
+ *
+ * Set by `.github/workflows/release-gate.yml` on the legs that promise `stripe`, and nowhere else.
+ */
+export const TEST_MODE_MARKET_FLAG = "ALETHIA_BILLING_TEST_MARKET";
+
+/**
+ * Whether the `market_closed` check is waived because no real money can move (#5412).
+ *
+ * The release gate has to drive the real checkout — the subscription intent, Stripe.js's card
+ * fields, the hosted Checkout session — or the day a market opens is the first day it runs.
+ * `PAID_MARKETS` is empty and must stay empty, so the gate needs a second way past the market check
+ * that cannot open a live sale. BOTH halves are required, and each one closes a different hole:
+ *
+ *  - the key must be a TEST secret (`sk_test_…`). A test-mode Stripe account cannot charge a card,
+ *    so a sale this lets through is not a sale. A live key with the flag set — a copied env, a
+ *    mistaken deploy — still refuses, which is the case the maintainer's ruling names.
+ *  - the flag must be exactly "1". A test key alone is every sandbox env and every developer's
+ *    `.env`; they keep measuring the product as it ships, refusals included.
+ *
+ * Only the MARKET check is waived. Terms acceptance, the payer's declared capacity and the billing
+ * country are still asked first, so the gate run walks the same declaration a customer does. Read
+ * from `process.env` at call time, not at import, so a test can flip it and so `next build` cannot
+ * bake it into a bundle.
+ */
+export function testModeMarketOpen(
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+	const key = env.STRIPE_SECRET_KEY?.trim() ?? "";
+	return key.startsWith("sk_test_") && env[TEST_MODE_MARKET_FLAG] === "1";
+}
+
+/**
  * Refuses the sale unless every commercial precondition holds. Throws
  * PaidConversionNotAllowedError; returns nothing on success, so a caller cannot accidentally use a
  * truthy return as "allowed" while ignoring a rejection.
@@ -128,7 +165,7 @@ export async function assertPaidConversionAllowed(
 			"Add a billing address before subscribing.",
 		);
 	}
-	if (!paidMarketEnabled(country, ctx.capacity)) {
+	if (!paidMarketEnabled(country, ctx.capacity) && !testModeMarketOpen()) {
 		throw new PaidConversionNotAllowedError(
 			"market_closed",
 			"Alethia is not yet able to sell to customers in this country in this capacity. " +
