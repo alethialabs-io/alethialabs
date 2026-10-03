@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.7.0...cli-v0.8.0) (2026-10-03)
+
+
+### Features
+
+* **catalog:** the catalog is the single source of node defaults; --instance-type / --node-size on every create path ([#5266](https://github.com/alethialabs-io/alethialabs/issues/5266), [#5268](https://github.com/alethialabs-io/alethialabs/issues/5268)) ([#5290](https://github.com/alethialabs-io/alethialabs/issues/5290)) ([12d8640](https://github.com/alethialabs-io/alethialabs/commit/12d8640b0057fba0b68b94d2b23e0f76c14a6216))
+* **cli:** `alethia cluster kubeconfig` and `alethia cluster token` with an on-disk credential cache ([#5320](https://github.com/alethialabs-io/alethialabs/issues/5320)) ([0b2c581](https://github.com/alethialabs-io/alethialabs/commit/0b2c581a99dd57dc964ebca5613ddb59845c7205)), closes [#5284](https://github.com/alethialabs-io/alethialabs/issues/5284)
+* **cluster:** carry node_size end to end under a one-writer rule; keep a moved cluster's machine on its new cloud ([#5289](https://github.com/alethialabs-io/alethialabs/issues/5289)) ([0ec4f3e](https://github.com/alethialabs-io/alethialabs/commit/0ec4f3e8d2830c2fda0f0b985ee0f0c1e8013355))
+* **clusters:** serve the kubeconfig command for every cloud from one place; print it in `cluster get` ([#5264](https://github.com/alethialabs-io/alethialabs/issues/5264)) ([70f7d8b](https://github.com/alethialabs-io/alethialabs/commit/70f7d8b1f5937558a43d6d91863e58b4f0f44a65))
+* **kubeaccess:** seams contract for short-lived kubeconfig mints ([#5292](https://github.com/alethialabs-io/alethialabs/issues/5292)) ([30b07f5](https://github.com/alethialabs-io/alethialabs/commit/30b07f524567e7626fd38837f12a97e572e0d3ed))
+* **kubeaccess:** the mint is every cloud's kubeconfig command; refuse shared-cluster mints up front ([#5333](https://github.com/alethialabs-io/alethialabs/issues/5333)) ([e77ffe0](https://github.com/alethialabs-io/alethialabs/commit/e77ffe043589e35fe5a29a80cb03c3ad684d6f8f))
+
+
+### Bug Fixes
+
+* **cli:** alethia logout deletes the kubeconfig credential cache ([#5348](https://github.com/alethialabs-io/alethialabs/issues/5348)) ([36ad973](https://github.com/alethialabs-io/alethialabs/commit/36ad97385ce2cc9678ad4e3f077a7c524da37b09)), closes [#5323](https://github.com/alethialabs-io/alethialabs/issues/5323)
+* **destroy:** refuse to destroy a Fabric owner while tenants are placed on it; --cascade destroys them first ([#5259](https://github.com/alethialabs-io/alethialabs/issues/5259)) ([6faafba](https://github.com/alethialabs-io/alethialabs/commit/6faafba835df44cf35ec72e860813bce2c623e4c))
+* **kubeconfig:** bind a mint to the credential that asked; service tokens mint read-only only ([#5350](https://github.com/alethialabs-io/alethialabs/issues/5350)) ([ba743f0](https://github.com/alethialabs-io/alethialabs/commit/ba743f0464192b3073327b07e9f85795bd8b630e)), closes [#5310](https://github.com/alethialabs-io/alethialabs/issues/5310)
+
 ## [0.7.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.6.1...cli-v0.7.0) (2026-09-24)
 
 
