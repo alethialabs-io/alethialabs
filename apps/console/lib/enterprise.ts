@@ -29,6 +29,7 @@ import { listOrgResourceIds } from "@/lib/authz/resource-tables";
 import { orgAc, orgRoles } from "@/lib/authz/org-access-control";
 import { canOrgCreateTeams, canOrgInvite } from "@/lib/billing/collaboration";
 import { syncOrgSeats } from "@/lib/billing/seats";
+import { roleChangeOwnerRefusal } from "@/lib/authz/active-owner";
 import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import type { TupleSync } from "@/lib/authz/tuple-sync";
@@ -93,6 +94,12 @@ export interface CoreContext {
    * reason, instead of the raw unique violation the `member` index raises (#5445).
    */
   isOrgMember: typeof isMember;
+  /**
+   * Why a member role change would leave the org with no active owner, or null. Injected so the
+   * organization plugin's `beforeUpdateMemberRole` refuses it (#5465) without ee/ importing core's
+   * role reading or the database.
+   */
+  roleChangeOwnerRefusal: typeof roleChangeOwnerRefusal;
   newOrgSetup: {
     stampMetadata: typeof stampNewOrgMetadata;
     recordCreated: typeof recordNewOrgCreated;
@@ -241,6 +248,7 @@ function loadEnterprise(): void {
       canOrgCreateTeams,
       reservedOrgSlugRefusal,
       isOrgMember: isMember,
+      roleChangeOwnerRefusal,
       newOrgSetup: {
         stampMetadata: stampNewOrgMetadata,
         recordCreated: recordNewOrgCreated,
