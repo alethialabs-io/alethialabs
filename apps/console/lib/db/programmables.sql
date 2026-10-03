@@ -1680,6 +1680,16 @@ CREATE POLICY profile_self ON public.profiles FOR ALL
   USING (id = current_setting('app.current_owner', true)::uuid)
   WITH CHECK (id = current_setting('app.current_owner', true)::uuid);
 
+-- pending_org_setups (#5445): a paid create-a-team setup is its payer's alone. Owner-only — no org
+-- arm: the row is written before the organization exists, and must not become readable by that
+-- organization's other members once it does. The server actions reach it through getServiceDb and
+-- filter on the actor's own id; this policy is the backstop for any app-role read.
+ALTER TABLE public.pending_org_setups ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS pending_org_setup_owner ON public.pending_org_setups;
+CREATE POLICY pending_org_setup_owner ON public.pending_org_setups FOR ALL
+  USING (user_id = current_setting('app.current_owner', true)::uuid)
+  WITH CHECK (user_id = current_setting('app.current_owner', true)::uuid);
+
 -- cli_logins: service-role only — RLS enabled with no app policy denies the app role.
 ALTER TABLE public.cli_logins ENABLE ROW LEVEL SECURITY;
 

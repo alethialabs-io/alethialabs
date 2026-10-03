@@ -22,7 +22,12 @@ vi.mock("@/lib/db", () => ({
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
-vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
+// `UsageLimitError` stays REAL: `refusalAsValue` decides by `instanceof`, so a stand-in class would
+// prove only that the test agrees with itself.
+vi.mock("@/lib/billing/usage-guard", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/billing/usage-guard")>()),
+	assertUsageAllowed: vi.fn(),
+}));
 vi.mock("@/lib/authz/tuple-sync", () => ({ mirrorHierarchyEdge: vi.fn() }));
 // The live-tenant READ is mocked (its SQL is exercised against real Postgres in
 // tests/integration/destroy-fabric-tenants.test.ts); the tree ordering and the refusal error stay
@@ -54,6 +59,11 @@ import {
 } from "@/lib/queries/destroy-tree";
 import {
 	addEnvironment,
+	duplicateEnvironment,
+	tryDestroyProject,
+	tryPlanProject,
+	tryProvisionProject,
+	tryQueueDriftDetection,
 	createProject,
 	deleteEnvironment,
 	deleteProject,
@@ -78,7 +88,7 @@ import { PROJECT_NAME_MAX_LENGTH } from "@/lib/validations/project-form.schema";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
-import { assertUsageAllowed } from "@/lib/billing/usage-guard";
+import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import { getServiceDb, withActorScope, withScope } from "@/lib/db";
 import {
@@ -2331,6 +2341,95 @@ describe("planProject — BYO IaC source", () => {
 	});
 });
 
+// #5445 — the console's job buttons call the `try*` wrappers, which RETURN a refusal the user can act
+// on. The gates below are the ones the issue's review listed (projects.ts 1066/1078/1297/1336/1418/
+// 1600) plus the typed refusals that share their path. On the old code `tryPlanProject` did not exist
+// and the console called `planProject`, which REJECTED with each of these — a digest in production.
+describe("try* job actions — a refusal is a value", () => {
+	/** The no-linked-cloud-account project, the commonest refusal a first deploy meets. */
+	const noCloudAccount = () =>
+		snapshotSelect(
+			new Map([
+				[
+					projects,
+					[{ id: "p1", org_id: "org-1", cloud_identity_id: null, region: "x" }],
+				],
+			]),
+		);
+
+	it("returns the no-cloud-account gate's sentence from plan, deploy, destroy and drift", async () => {
+		for (const run of [
+			() => tryPlanProject("p1"),
+			() => tryProvisionProject("p1"),
+			() => tryDestroyProject("p1"),
+			() => tryQueueDriftDetection("p1"),
+		]) {
+			setupDb({ select: noCloudAccount() });
+			await expect(run()).resolves.toEqual({
+				ok: false,
+				error: "No cloud account linked to this project. Go to Connectors to connect.",
+			});
+		}
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("returns the unverified-identity gate's sentence", async () => {
+		setupDb({ select: snapshotSelect(new Map([[cloudIdentities, []]])) });
+		await expect(tryPlanProject("p1")).resolves.toEqual({
+			ok: false,
+			error: "Cloud account is not verified. Go to Connectors to verify.",
+		});
+	});
+
+	it("returns the in-flight conflict (the env refused its CAS) instead of throwing it", async () => {
+		setupDb({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+			envCasUpdated: false,
+		});
+		await expect(tryPlanProject("p1")).resolves.toEqual({
+			ok: false,
+			error: expect.stringMatching(/a job may already be in progress/),
+		});
+	});
+
+	it("returns a usage-cap refusal, which names the way out", async () => {
+		vi.mocked(assertUsageAllowed).mockRejectedValueOnce(
+			new UsageLimitError("Free plan limit reached — upgrade to keep deploying.", true),
+		);
+		setupDb({ select: snapshotSelect() });
+		await expect(tryProvisionProject("p1")).resolves.toEqual({
+			ok: false,
+			error: "Free plan limit reached — upgrade to keep deploying.",
+		});
+	});
+
+	it("passes a queued job through, with ok: true beside the action's own fields", async () => {
+		setupDb({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await expect(tryPlanProject("p1", "runner-9")).resolves.toEqual({
+			ok: true,
+			jobId: "job-1",
+		});
+	});
+
+	it("still THROWS a failure the user cannot act on — an unknown environment id is not advice", async () => {
+		setupDb({
+			select: snapshotSelect(new Map([[projectEnvironments, []]])),
+		});
+		await expect(tryPlanProject("p1", null, "env-gone")).rejects.toThrow(
+			/Environment not found for this project/,
+		);
+	});
+
+	it("leaves planProject itself THROWING, which is what POST /api/jobs relies on", async () => {
+		setupDb({ select: noCloudAccount() });
+		await expect(planProject("p1")).rejects.toThrow(/No cloud account linked/);
+	});
+});
+
 describe("provisionProject", () => {
 	it("queues a DEPLOY job chained to a plan, audits PROVISIONED, and notifies the scaler", async () => {
 		const { valuesSpy, executeSpy } = setupDb({
@@ -3606,26 +3705,98 @@ describe("addEnvironment", () => {
 		// project anywhere still lacked a default.
 		expect(rendered.params).toEqual(["p1"]);
 
-		expect(r).toEqual({ environment: { id: "env-2", name: "my-staging" } });
+		expect(r).toEqual({
+			ok: true,
+			environment: { id: "env-2", name: "my-staging" },
+		});
 	});
 
-	it("rejects a name that slugifies to empty (before any db work)", async () => {
+	// #5445: every refusal below is RETURNED. They used to be thrown, and `"use server"` in a
+	// production build replaces a thrown message with a digest — so the new-environment dialog
+	// toasted a digest for a name the user only had to retype. `resolves` is the assertion that
+	// matters: on the old code each of these REJECTED.
+	it("refuses a name that slugifies to empty (before any db work), as a value", async () => {
 		setupDb({});
 		await expect(
 			addEnvironment("p1", { name: "!!!", stage: "staging" }),
-		).rejects.toThrow(/at least one letter or number/);
+		).resolves.toEqual({
+			ok: false,
+			error: expect.stringMatching(/at least one letter or number/),
+		});
 		expect(withActorScope).not.toHaveBeenCalled();
 	});
 
-	it("rejects a name a console route would shadow, and normalizes one it accepts", async () => {
+	it("refuses a name a console route would shadow, as a value", async () => {
 		// The SHARED env-name rule (lib/validations/names.ts), which `project env add` on the CLI
 		// route now applies too — the two used to disagree about `Prod`, and only this path knew
 		// that `settings` is unreachable forever.
 		setupDb({});
 		await expect(
 			addEnvironment("p1", { name: "Settings", stage: "staging" }),
-		).rejects.toThrow(/reserved by the console/);
+		).resolves.toEqual({
+			ok: false,
+			error: expect.stringMatching(/reserved by the console/),
+		});
 		expect(withActorScope).not.toHaveBeenCalled();
+	});
+
+	it("refuses a name the project already has, naming it, and inserts nothing", async () => {
+		const { insertSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projects, [{ org_id: "org-1" }]],
+				[projectEnvironments, [{ id: "env-1" }]],
+			]),
+		});
+		const r = await addEnvironment("p1", { name: "Staging", stage: "staging" });
+		expect(r).toEqual({
+			ok: false,
+			error: 'This project already has an environment named "staging". Choose another name.',
+		});
+		expect(insertSpy).not.toHaveBeenCalled();
+	});
+
+	it("maps the loser of a concurrent add (a raw 23505 on the name key) onto the same refusal", async () => {
+		// What drizzle actually throws: a wrapper whose `cause` carries the driver's code + constraint.
+		const raced = new Error("Failed query: insert into project_environments …", {
+			cause: Object.assign(new Error("duplicate key value"), {
+				code: "23505",
+				constraint_name: "project_environments_project_id_name_key",
+			}),
+		});
+		setupDb({
+			select: new Map([[projects, [{ org_id: "org-1" }]]]),
+			insert: new Map<unknown, RowsResolver>([
+				[
+					projectEnvironments,
+					() => {
+						throw raced;
+					},
+				],
+			]),
+		});
+		await expect(
+			addEnvironment("p1", { name: "stg", stage: "staging" }),
+		).resolves.toEqual({
+			ok: false,
+			error: 'This project already has an environment named "stg". Choose another name.',
+		});
+	});
+
+	it("still THROWS a failure the user cannot fix (an unrelated driver error is not advice)", async () => {
+		setupDb({
+			select: new Map([[projects, [{ org_id: "org-1" }]]]),
+			insert: new Map<unknown, RowsResolver>([
+				[
+					projectEnvironments,
+					() => {
+						throw new Error("connection reset");
+					},
+				],
+			]),
+		});
+		await expect(
+			addEnvironment("p1", { name: "stg", stage: "staging" }),
+		).rejects.toThrow("connection reset");
 	});
 
 	it("calls notFound() when the project is missing", async () => {
@@ -3634,6 +3805,35 @@ describe("addEnvironment", () => {
 		await expect(
 			addEnvironment("p1", { name: "stg", stage: "staging" }),
 		).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
+	});
+});
+
+describe("duplicateEnvironment — refusals are values (#5445)", () => {
+	it("refuses a name the env-name rule rejects before reading the base", async () => {
+		setupDb({});
+		await expect(duplicateEnvironment("p1", "env-1", "settings")).resolves.toEqual({
+			ok: false,
+			error: expect.stringMatching(/reserved by the console/),
+		});
+		expect(withActorScope).not.toHaveBeenCalled();
+	});
+
+	it("refuses a name the project already has, and copies nothing", async () => {
+		// Every projectEnvironments read answers with a row: the base exists AND the name is taken.
+		const { insertSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[
+					projectEnvironments,
+					[{ id: "env-1", org_id: "org-1", stage: "staging", region: null }],
+				],
+			]),
+		});
+		const r = await duplicateEnvironment("p1", "env-1", "Prod");
+		expect(r).toEqual({
+			ok: false,
+			error: 'This project already has an environment named "prod". Choose another name.',
+		});
+		expect(insertSpy).not.toHaveBeenCalledWith(projectEnvironments);
 	});
 });
 

@@ -107,7 +107,12 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 
 	async function confirmDelete(p: SsoProviderRow) {
 		try {
-			await deleteSsoProvider(p.id);
+			// A plugin refusal is RETURNED (#5445) so its sentence survives a production build.
+			const res = await deleteSsoProvider(p.id);
+			if (!res.ok) {
+				toast.error(res.error);
+				return;
+			}
 			toast.success("Provider removed");
 			setDeleting(null);
 			setSelectedId(null);
@@ -356,7 +361,12 @@ function ProviderDetail({
 	async function getToken() {
 		setBusy("token");
 		try {
-			setDns(await requestSsoDomainVerification(p.id));
+			const res = await requestSsoDomainVerification(p.id);
+			if (!res.ok) {
+				toast.error(res.error);
+				return;
+			}
+			setDns({ record: res.record, token: res.token });
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Couldn't mint a token");
 		} finally {
@@ -367,7 +377,13 @@ function ProviderDetail({
 	async function verify() {
 		setBusy("verify");
 		try {
-			await verifySsoDomain(p.id);
+			// The commonest answer here is a refusal — the TXT record is not visible yet — and it is
+			// the one sentence the admin needs. RETURNED (#5445): thrown, it reached them as a digest.
+			const res = await verifySsoDomain(p.id);
+			if (!res.ok) {
+				toast.error(res.error);
+				return;
+			}
 			toast.success("Domain verified — SSO sign-in is now enabled");
 			onChanged();
 		} catch (e) {

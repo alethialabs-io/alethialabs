@@ -12,12 +12,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/app/server/actions/projects", () => ({
-	planProject: vi.fn(),
-	provisionProject: vi.fn(),
+	tryPlanProject: vi.fn(),
+	tryProvisionProject: vi.fn(),
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 
-import { planProject, provisionProject } from "@/app/server/actions/projects";
+import { tryPlanProject, tryProvisionProject } from "@/app/server/actions/projects";
 import { ApprovalCard } from "@/components/agent/approval-card";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
@@ -58,8 +58,8 @@ function scopeSurface(environmentId: string | null) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(planProject).mockResolvedValue({ jobId: "job-1" });
-	vi.mocked(provisionProject).mockResolvedValue({ jobId: "job-2" });
+	vi.mocked(tryPlanProject).mockResolvedValue({ ok: true, jobId: "job-1" });
+	vi.mocked(tryProvisionProject).mockResolvedValue({ ok: true, jobId: "job-2" });
 	useElenchStore.setState({ ctx: { kind: "org" } });
 });
 
@@ -69,7 +69,7 @@ describe("ApprovalCard — environment", () => {
 		render(<ApprovalCard proposal={plan(PROPOSAL_ENV)} onResolve={onResolve} />);
 		await userEvent.click(screen.getByRole("button", { name: /approve & plan/i }));
 		await waitFor(() =>
-			expect(planProject).toHaveBeenCalledWith(PROJECT, undefined, PROPOSAL_ENV),
+			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, PROPOSAL_ENV),
 		);
 		expect(onResolve).toHaveBeenCalledWith(
 			expect.objectContaining({ status: "approved", environmentId: PROPOSAL_ENV, jobId: "job-1" }),
@@ -80,7 +80,7 @@ describe("ApprovalCard — environment", () => {
 		render(<ApprovalCard proposal={deploy(PROPOSAL_ENV)} />);
 		await userEvent.click(screen.getByRole("button", { name: /approve & deploy/i }));
 		await waitFor(() =>
-			expect(provisionProject).toHaveBeenCalledWith(PROJECT, "job-plan", undefined, PROPOSAL_ENV),
+			expect(tryProvisionProject).toHaveBeenCalledWith(PROJECT, "job-plan", undefined, PROPOSAL_ENV),
 		);
 	});
 
@@ -89,7 +89,7 @@ describe("ApprovalCard — environment", () => {
 		render(<ApprovalCard proposal={plan()} />);
 		await userEvent.click(screen.getByRole("button", { name: /approve & plan/i }));
 		await waitFor(() =>
-			expect(planProject).toHaveBeenCalledWith(PROJECT, undefined, SURFACE_ENV),
+			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, SURFACE_ENV),
 		);
 	});
 
@@ -98,7 +98,7 @@ describe("ApprovalCard — environment", () => {
 		render(<ApprovalCard proposal={deploy(PROPOSAL_ENV)} />);
 		await userEvent.click(screen.getByRole("button", { name: /approve & deploy/i }));
 		await waitFor(() =>
-			expect(provisionProject).toHaveBeenCalledWith(PROJECT, "job-plan", undefined, PROPOSAL_ENV),
+			expect(tryProvisionProject).toHaveBeenCalledWith(PROJECT, "job-plan", undefined, PROPOSAL_ENV),
 		);
 	});
 
@@ -108,8 +108,27 @@ describe("ApprovalCard — environment", () => {
 		render(<ApprovalCard proposal={plan()} onResolve={onResolve} />);
 		await userEvent.click(screen.getByRole("button", { name: /approve & plan/i }));
 		await waitFor(() =>
-			expect(planProject).toHaveBeenCalledWith(PROJECT, undefined, undefined),
+			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, undefined),
 		);
 		expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ environmentId: null }));
+	});
+});
+
+// #5445 — a gate refusal is RETURNED by `tryPlanProject` / `tryProvisionProject`. Thrown, as it was
+// from `planProject`, a production build replaced its sentence with a digest, and the card's "denied"
+// reason read as a digest too.
+describe("ApprovalCard — a refusal the user can act on", () => {
+	it("shows the gate's own sentence as the denial reason and reports it", async () => {
+		const reason = "No cloud account linked to this project. Go to Connectors to connect.";
+		vi.mocked(tryPlanProject).mockResolvedValue({ ok: false, error: reason });
+		const onResolve = vi.fn();
+		render(<ApprovalCard proposal={plan(PROPOSAL_ENV)} onResolve={onResolve} />);
+		await userEvent.click(screen.getByRole("button", { name: /approve & plan/i }));
+
+		expect(await screen.findByText(reason)).toBeInTheDocument();
+		expect(onResolve).toHaveBeenCalledWith({ status: "denied", reason });
+		expect(onResolve).not.toHaveBeenCalledWith(
+			expect.objectContaining({ status: "approved" }),
+		);
 	});
 });

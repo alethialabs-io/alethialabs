@@ -169,4 +169,38 @@ describe("CreateOrgSheet — a slug it refuses", () => {
 		expect(createOrg).toHaveBeenCalledWith({ name: "Acme Cloud", slug: "acme-cloud" });
 		expect(startProTrial).not.toHaveBeenCalled();
 	});
+
+	it("ties the URL field to its refusal: aria-invalid, and described by the sentence (#5445)", async () => {
+		// The alert is announced ONCE; a screen reader that comes back to the field later heard
+		// nothing about why it was refused — it carried neither attribute.
+		const user = userEvent.setup();
+		renderIt();
+
+		await nameAndContinue(user, "Docs");
+
+		const field = await screen.findByRole("textbox", { name: "URL slug" });
+		const alert = screen.getByRole("alert");
+		expect(field).toHaveAttribute("aria-invalid", "true");
+		expect(field).toHaveAttribute("aria-describedby", alert.id);
+		expect(alert.id).not.toBe("");
+	});
+
+	it("calls a slug the SERVER refused as reserved RESERVED — not taken (#5445)", async () => {
+		// ee/'s organization hook answers a reserved slug with its own code. The sentence contains
+		// the word "slug", which the sheet's taken-pattern used to read as a collision.
+		getProOffer.mockResolvedValue({ kind: "trial", trialDays: 30 });
+		isOrgSlugAvailable.mockResolvedValue(true);
+		createOrg.mockResolvedValue({
+			data: null,
+			error: { code: "ORGANIZATION_SLUG_RESERVED", message: RESERVED },
+		});
+		const user = userEvent.setup();
+		renderIt();
+
+		await nameAndContinue(user, "Acme Cloud");
+		await user.click(await screen.findByRole("button", { name: /start 30-day free trial/i }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(RESERVED);
+		expect(screen.getByRole("alert")).not.toHaveTextContent(/taken/);
+	});
 });

@@ -66,6 +66,30 @@ export function parseMeta(metadata: string | null): OrgMeta {
 }
 
 /**
+ * The org metadata JSON with `primaryAddress` replaced and EVERY OTHER KEY KEPT as stored. Not built
+ * from `parseMeta`: that reads only the settings fields, so writing its result back dropped everything
+ * else in the blob — including the paid create-a-team marker (`newOrgSubscriptionId`,
+ * `newOrgCreatedBy`, lib/billing/new-org-setup.ts) that ties the organization to its charge. A blob
+ * that is not a JSON object has nothing to keep and is replaced.
+ */
+export function withPrimaryAddress(metadata: string | null, address: OrgPrimaryAddress): string {
+	let stored: unknown = null;
+	if (metadata) {
+		try {
+			stored = JSON.parse(metadata);
+		} catch {
+			stored = null;
+		}
+	}
+	const kept: Record<string, unknown> = {};
+	if (typeof stored === "object" && stored !== null && !Array.isArray(stored)) {
+		for (const [key, value] of Object.entries(stored)) kept[key] = value;
+	}
+	kept.primaryAddress = address;
+	return JSON.stringify(kept);
+}
+
+/**
  * The General-settings values for a given org id (no session lookup) — the shared read behind
  * both getOrgSettings (web, session-scoped) and the CLI org-settings route (token-scoped). Returns
  * null when the org row is missing. Callers are responsible for the community-mode short-circuit.
