@@ -7,6 +7,7 @@
 // the keys + per-plan price IDs and Stripe drives the organization_billing record.
 // Server-only — never import from a client component.
 
+import { stripeSecretKey } from "@/lib/billing/stripe-key";
 import { typedEntries } from "@/lib/typed-object";
 import { z } from "zod";
 import type { AiTier } from "@/lib/billing/ai-plan";
@@ -67,9 +68,9 @@ export function deploymentMode(): "hosted" | "self-managed" {
 		: "self-managed";
 }
 
-/** Whether Stripe billing is wired (hosted control plane). */
+/** Whether Stripe billing is wired (hosted control plane). A blank key is not a key. */
 export function isStripeConfigured(): boolean {
-	return Boolean(process.env.STRIPE_SECRET_KEY);
+	return stripeSecretKey() !== "";
 }
 
 /**
@@ -96,7 +97,7 @@ let cached: StripeConfig | null = null;
 export function getStripeConfig(): StripeConfig {
 	if (cached) return cached;
 	const parsed = schema.safeParse({
-		secretKey: process.env.STRIPE_SECRET_KEY,
+		secretKey: stripeSecretKey(),
 		webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
 		prices: {
 			team: process.env.STRIPE_PRICE_TEAM,
