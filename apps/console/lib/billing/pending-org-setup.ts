@@ -36,7 +36,7 @@ import {
 import { TAX_ID_TYPES, type TaxIdType } from "@/lib/billing/tax-ids";
 import { getServiceDb } from "@/lib/db";
 import { member, organization, organizationBilling, pendingOrgSetups } from "@/lib/db/schema";
-import { ORG_SLUG_MAX_LENGTH, ORG_SLUG_PATTERN } from "@/lib/validations/org-slug";
+import { ORG_SLUG_MAX_LENGTH, ORG_SLUG_PATTERN } from "@repo/org-slug";
 import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
 
 /** One `pending_org_setups` row. */
@@ -63,7 +63,7 @@ export const pendingOrgSetupBillingSchema = z.object({
 });
 
 /**
- * A slug as the create-a-team form accepts it: the one org-slug rule (lib/validations/org-slug.ts), so
+ * A slug as the create-a-team form accepts it: the one org-slug rule (@repo/org-slug), so
  * `-acme`, `acme-`, `acme--cloud` and "" are refused here on the server's own authority, not only by
  * the form. Reserved and taken slugs are decided later, by the org's own rules.
  */

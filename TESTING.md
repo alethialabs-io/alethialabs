@@ -127,13 +127,13 @@ earned rather than asserted under #2649:
   An include-allowlist is an exclusion with the sign flipped; it now has a comment on every one of
   the 48, and all 180 of their exports (#4104).
 
-**Every project that hides files is now recorded** — four of the six coverage-emitting projects.
+**Every project that hides files is now recorded** — four of the seven coverage-emitting projects.
 `apps/console`, `packages/ui`, `apps/marketing` and `ee` each carry a
 **`coverage-exclusions.yaml`** with one entry per exclusion, and `pnpm check:coverage-exclusions`
-re-reads all four on every PR. `packages/format` and `packages/plan-catalog` hide none — no
+re-reads all four on every PR. `packages/format`, `packages/plan-catalog` and `packages/org-slug` hide none — no
 `exclude:`, a pure-glob `include: ["src/**"]` — and owe no manifest; the guard fails the moment
-either gains an `exclude:` or a hand-listed `include:`. The run prints both numbers
-(`6 coverage-emitting config(s) · 4 manifest(s)`) so the gap is a readout rather than a thing to
+any of them gains an `exclude:` or a hand-listed `include:`. The run prints both numbers
+(`7 coverage-emitting config(s) · 4 manifest(s)`) so the gap is a readout rather than a thing to
 remember. The section
 is the decision — `infrastructural:` (not product code, and the path must match a declared class),
 `tier_separation:` (proven by a named test suite) or `baseline:` (real debt, with an owning issue

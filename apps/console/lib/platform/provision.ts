@@ -16,7 +16,7 @@ import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import { getServiceDb } from "@/lib/db";
 import { invitation, member, organization, user } from "@/lib/db/schema";
 import { RESERVED_SLUGS } from "@/lib/routing";
-import { isOrgSlug } from "@/lib/validations/org-slug";
+import { orgSlugShapeRefusal } from "@repo/org-slug";
 
 /** Days an operator-issued owner invitation stays valid. */
 const INVITE_TTL_DAYS = 14;
@@ -70,7 +70,7 @@ export interface ProvisionOrgResult {
 
 /**
  * Creates an org shell and invites its owner. Validates the slug against the SAME rules the console
- * uses (isOrgSlug + RESERVED_SLUGS + global uniqueness). We ALWAYS invite the owner (never force-add an
+ * uses (@repo/org-slug + RESERVED_SLUGS + global uniqueness). We ALWAYS invite the owner (never force-add an
  * existing account without consent): the grant is wired when they accept, by ee/'s afterAcceptInvitation
  * hook. The owner must sign in with exactly `ownerEmail` to accept (Better Auth checks email match).
  */
@@ -82,7 +82,10 @@ export async function provisionOrg(
 	const ownerEmail = input.ownerEmail.trim().toLowerCase();
 
 	if (name.length < 2) throw new ProvisionError("Org name is too short.");
-	if (!isOrgSlug(slug)) throw new ProvisionError("Invalid slug.");
+	// The refusal names its reason (too long, or the characters), so the operator who typed it knows
+	// what to change — a bare "Invalid slug." did not say a 64-character slug was over by one.
+	const shape = orgSlugShapeRefusal(slug);
+	if (shape) throw new ProvisionError(`Invalid slug: ${shape.message}`);
 	if (RESERVED_SLUGS.has(slug)) throw new ProvisionError("That slug is reserved.");
 	if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ownerEmail)) {
 		throw new ProvisionError("Invalid owner email.");

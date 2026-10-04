@@ -8,7 +8,7 @@
 // did, a value the form let through was refused by the server after the charge, and the details were
 // not kept.
 
-import { ORG_SLUG_MAX_LENGTH } from "@/lib/validations/org-slug";
+import { ORG_SLUG_MAX_LENGTH } from "@repo/org-slug";
 
 /** The maximum length of each checkout billing field, in characters. */
 export const BILLING_FIELD_CAPS = {
@@ -24,7 +24,7 @@ export const BILLING_FIELD_CAPS = {
 
 /**
  * The maximum length of an organization slug — the org-slug rule's own (`ORG_SLUG_MAX_LENGTH`,
- * lib/validations/org-slug.ts), which the create-a-team form's slugifier already cuts to and its
+ * @repo/org-slug), which the create-a-team form's slugifier already cuts to and its
  * schema also checks.
  */
 export const ORG_SLUG_MAX = ORG_SLUG_MAX_LENGTH;

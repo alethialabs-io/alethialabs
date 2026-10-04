@@ -47,6 +47,7 @@ import { getServiceDb } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email/notify-email";
 import { isMember } from "@/lib/platform/provision";
 import { reservedOrgSlugRefusal } from "@/lib/routing";
+import { orgSlugShapeRefusal } from "@repo/org-slug";
 import {
   keepStoredNewOrgMarker,
   recordNewOrgCreated,
@@ -89,6 +90,13 @@ export interface CoreContext {
    * ee/ importing core's routing table.
    */
   reservedOrgSlugRefusal: typeof reservedOrgSlugRefusal;
+  /**
+   * Why a slug breaks the org-slug rule's shape (too long, or its characters), or null — the one
+   * rule every console form checks (@repo/org-slug). Injected for the same two hooks, so a direct
+   * `/organization/create` or `/organization/update` cannot store `-acme` or a 64-character slug
+   * that every form refuses (#5509).
+   */
+  orgSlugShapeRefusal: typeof orgSlugShapeRefusal;
   /**
    * The paid create-a-team setup's two organization-create hooks (#5445): `stampMetadata` keeps the
    * marker that ties a new org to its charge only for the user who owns that charge's setup record
@@ -280,6 +288,7 @@ function loadEnterprise(): void {
       canOrgInvite,
       canOrgCreateTeams,
       reservedOrgSlugRefusal,
+      orgSlugShapeRefusal,
       isOrgMember: isMember,
       roleChangeOwnerRefusal,
       removalOwnerRefusal,

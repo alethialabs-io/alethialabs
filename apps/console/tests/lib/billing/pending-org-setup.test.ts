@@ -264,7 +264,7 @@ describe("recordNewOrgCreated / keepStoredNewOrgMarker", () => {
 
 // #5509: the paid-setup record's slug schema read `^[a-z0-9]*(?:-[a-z0-9]+)*$` — a `*` where every
 // other org-slug check had `+` — so `-acme` and "" were accepted on the server's word alone. It now
-// reads the one org-slug rule (lib/validations/org-slug.ts).
+// reads the one org-slug rule (@repo/org-slug).
 describe("pendingOrgSetupSlugSchema", () => {
 	it.each(["-acme", "acme-", "acme--cloud", "-", ""])("refuses %j", (slug) => {
 		expect(pendingOrgSetupSlugSchema.safeParse(slug).success).toBe(false);

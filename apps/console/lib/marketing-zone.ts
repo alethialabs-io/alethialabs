@@ -8,7 +8,7 @@
 // the routing. The Caddy mirror (deploy/caddy/marketing.caddy.example) and the
 // filesystem (apps/marketing/app/) are kept honest by scripts/check-marketing-routes.mjs.
 
-import { ORG_SLUG_PATTERN } from "@/lib/validations/org-slug";
+import { ORG_SLUG_PATTERN } from "@repo/org-slug";
 import microfrontends from "@/marketing-zones.json";
 
 /** The marketing zone's routing paths, exactly as declared in microfrontends.json
@@ -23,7 +23,7 @@ export const MARKETING_ASSET_PREFIX: string =
 /**
  * The top-level path segments the marketing zone owns, as reservable org slugs. Derived
  * from MARKETING_PATHS: take the first segment of each path, drop the bare root and any
- * token that does not match the org-slug shape (`ORG_SLUG_PATTERN`, lib/validations/org-slug.ts):
+ * token that does not match the org-slug shape (`ORG_SLUG_PATTERN`, @repo/org-slug):
  * params like `:path*`, dotted files like `favicon.ico` — neither can be an org slug, so neither
  * can collide with one. Deduped. Yields e.g. pricing, enterprise, contact, terms, privacy,
  * cookies, acceptable-use, mkt-assets.

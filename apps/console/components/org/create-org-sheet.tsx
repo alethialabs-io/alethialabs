@@ -86,7 +86,7 @@ import {
 	RESERVED_SLUGS,
 } from "@/lib/routing";
 import { finishSlugDraft, slugifyDraft, slugifyOrEmpty } from "@/lib/utils/slugify";
-import { ORG_SLUG_PATTERN } from "@/lib/validations/org-slug";
+import { ORG_SLUG_PATTERN } from "@repo/org-slug";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import {
 	SUPPORTED_CURRENCIES,

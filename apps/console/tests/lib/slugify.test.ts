@@ -20,6 +20,7 @@ import {
 	slugifyOrEmpty,
 } from "@/lib/utils/slugify";
 import { pendingOrgSetupSlugSchema } from "@/lib/billing/pending-org-setup";
+import { ORG_SLUG_MAX_LENGTH } from "@repo/org-slug";
 
 describe("slugifyOrEmpty", () => {
 	it("lowercases, trims, and collapses non-alphanumeric runs to one dash", () => {
@@ -153,11 +154,20 @@ describe("finishSlugDraft", () => {
 });
 
 describe("the server's slug format check — unchanged by #5453", () => {
-	// A trailing dash only: the draft never holds a LEADING one (`slugifyDraft` drops it), and this
-	// schema's `^[a-z0-9]*` accepts `-acme` — it is not the check that refuses that shape.
+	// A trailing dash only: the draft never holds a LEADING one (`slugifyDraft` drops it). (The schema
+	// refuses `-acme` too since #5509, when it began reading @repo/org-slug.)
 	it("still refuses a slug ending in a dash, so an unfinished draft cannot be saved", () => {
 		expect(pendingOrgSetupSlugSchema.safeParse("acme-").success).toBe(false);
 		expect(pendingOrgSetupSlugSchema.safeParse("acme-cloud-").success).toBe(false);
 		expect(pendingOrgSetupSlugSchema.safeParse("acme-cloud").success).toBe(true);
+	});
+});
+
+// #5509: the slugifier cuts to SLUG_MAX_LENGTH and the org-slug rule refuses past ORG_SLUG_MAX_LENGTH.
+// The rule's cap moved into @repo/org-slug, so the two numbers are no longer one constant; were
+// they to differ, the create-a-team form could produce a slug the rule then refuses.
+describe("the slugifier's length is the org-slug rule's", () => {
+	it("cuts to exactly the org-slug cap", () => {
+		expect(SLUG_MAX_LENGTH).toBe(ORG_SLUG_MAX_LENGTH);
 	});
 });

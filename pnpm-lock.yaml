@@ -43,6 +43,9 @@ importers:
       '@repo/email':
         specifier: workspace:*
         version: link:../../packages/email
+      '@repo/org-slug':
+        specifier: workspace:*
+        version: link:../../packages/org-slug
       '@repo/platform':
         specifier: workspace:*
         version: link:../../packages/platform
@@ -329,6 +332,9 @@ importers:
       '@repo/legal':
         specifier: workspace:*
         version: link:../../packages/legal
+      '@repo/org-slug':
+        specifier: workspace:*
+        version: link:../../packages/org-slug
       '@repo/plan-catalog':
         specifier: workspace:*
         version: link:../../packages/plan-catalog
@@ -776,6 +782,9 @@ importers:
       '@alethia/enterprise-api':
         specifier: workspace:*
         version: link:../packages/enterprise-api
+      '@repo/org-slug':
+        specifier: workspace:*
+        version: link:../packages/org-slug
       '@types/node':
         specifier: ^20
         version: 20.19.43
@@ -961,6 +970,27 @@ importers:
       '@repo/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
+      eslint:
+        specifier: ^9.39.5
+        version: 9.39.5(jiti@2.7.0)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@25.0.8)(@vitest/coverage-v8@4.1.11)(jsdom@29.1.1(@noble/hashes@2.4.0))(vite@7.3.3(@types/node@25.0.8)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/org-slug:
+    devDependencies:
+      '@repo/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@vitest/coverage-v8':
+        specifier: ^4.1.11
+        version: 4.1.11(vitest@4.1.11)
       eslint:
         specifier: ^9.39.5
         version: 9.39.5(jiti@2.7.0)
