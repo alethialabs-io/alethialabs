@@ -69,6 +69,12 @@ import {
 	readPaymentAfterCancel,
 } from "@/lib/billing/first-payment";
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
+import {
+	type FirstPaymentRead,
+	type NewOrgPlanState,
+	newOrgPlanState,
+	PAYMENT_DEPENDENT_STATUSES,
+} from "@/lib/billing/new-org-plan-state";
 import { type NewOrgSetupState, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
 import {
 	findSetupOrg,
@@ -1851,7 +1857,7 @@ export async function linkSubscriptionToNewOrg(input: {
 	 * coverage test found exactly that gap.
 	 */
 	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
-}): Promise<void> {
+}): Promise<{ planState: NewOrgPlanState }> {
 	// NAMED, not ambient (#4133). This runs from a sheet on the CURRENT org's page, against the org
 	// just created — so the address and the target genuinely differ, and always did. It used to work
 	// by asking for the verb in the ambient scope and then asserting that scope WAS the new org,
@@ -1922,6 +1928,36 @@ export async function linkSubscriptionToNewOrg(input: {
 
 	// The setup record's link step (#5445). Last, so it says only what has fully happened.
 	await markPendingOrgSetupLinked(actor.userId, input.subscriptionId, input.orgId);
+
+	// What the sheet may say about the plan (#5522): read from the subscription just linked, never
+	// assumed. Stripe keeps it `incomplete` while the first invoice settles, so "active" here would
+	// often be false.
+	return { planState: await readNewOrgPlanState(linked) };
+}
+
+/**
+ * The plan state of a create-a-team subscription (#5522): its status, plus — for `incomplete`,
+ * `canceled` and `incomplete_expired` — what its first invoice's payments show. A failed payments
+ * read is not an error here (the link and the resume must not fail over what they SAY): the state
+ * is then decided without it, which claims least.
+ */
+async function readNewOrgPlanState(sub: Stripe.Subscription): Promise<NewOrgPlanState> {
+	if (!PAYMENT_DEPENDENT_STATUSES.has(sub.status)) return newOrgPlanState(sub.status, null);
+	let payment: FirstPaymentRead | null = null;
+	try {
+		const read = await readPaymentAfterCancel(sub);
+		payment =
+			read.kind === "processing"
+				? "in_flight"
+				: read.kind === "took_money"
+					? "succeeded"
+					: read.kind === "no_money"
+						? "none"
+						: "unrecognised";
+	} catch {
+		payment = null;
+	}
+	return newOrgPlanState(sub.status, payment);
 }
 
 /**
@@ -2009,6 +2045,7 @@ async function newOrgSetupStateFor(
 		subscriptionId: sub.id,
 		customerId,
 		paid: PAID_SUBSCRIPTION_STATUSES.has(sub.status),
+		planState: await readNewOrgPlanState(sub),
 		org,
 		linked: !!linkedTo,
 		declared,

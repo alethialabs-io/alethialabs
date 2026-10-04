@@ -71,6 +71,7 @@ import {
 	watchPaidSetup,
 	writePendingPaidSetup,
 } from "@/components/org/pending-paid-setup";
+import type { NewOrgPlanState } from "@/lib/billing/new-org-plan-state";
 import type { NewOrgSetupState } from "@/lib/billing/new-org-setup";
 import { ORG_SLUG_MAX, tooLongMessage } from "@/lib/billing/billing-field-caps";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
@@ -235,6 +236,9 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 
 	// Invite step.
 	const [isTrialOrg, setIsTrialOrg] = useState(false);
+	// The plan state the server reported when a PAID setup finished (#5522); null for a trial, which
+	// says its own thing, and before a paid setup has finished.
+	const [paidPlanState, setPaidPlanState] = useState<NewOrgPlanState | null>(null);
 	const [inviteEmail, setInviteEmail] = useState("");
 	const [inviteRole, setInviteRole] = useState<Role>("operator");
 	const [sent, setSent] = useState<SentInvite[]>([]);
@@ -510,6 +514,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setSlugClaimedAfterPayment(false);
 		setConfirmingClose(false);
 		setIsTrialOrg(false);
+		setPaidPlanState(null);
 		setInviteEmail("");
 		setInviteRole("operator");
 		setSent([]);
@@ -761,6 +766,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			}
 			await fetchWorkspace();
 			setIsTrialOrg(true);
+			setPaidPlanState(null);
 			toast.success("Trial started — your organization is ready.");
 			setView("invite");
 		} catch (e) {
@@ -843,6 +849,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			setCreatedSlug(outcome.slug);
 			setCreatedOrgId(outcome.orgId);
 			setIsTrialOrg(false);
+			setPaidPlanState(outcome.planState);
 			setView("invite");
 			return;
 		}
@@ -1039,6 +1046,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				{view === "invite" && (
 					<InviteView
 						isTrialOrg={isTrialOrg}
+						paidPlanState={paidPlanState}
 						ownerEmail={ownerEmail}
 						inviteEmail={inviteEmail}
 						setInviteEmail={setInviteEmail}

@@ -18,6 +18,7 @@
 // is proof of who created it for which charge — which is what lets the resume adopt it, and repair
 // its owner membership when better-auth's separate member insert never landed.
 
+import type { NewOrgPlanState } from "@/lib/billing/new-org-plan-state";
 import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
 
 /** The organization-metadata key that names the subscription an organization was created for. */
@@ -73,6 +74,11 @@ export interface NewOrgSetupState {
 	customerId: string;
 	/** Stripe says the first invoice was paid (active, trialing or past_due). */
 	paid: boolean;
+	/**
+	 * What the finished setup may say about the plan (#5522), decided from the subscription and its first
+	 * invoice's payments as the server read them — the sheet shows it instead of assuming "active".
+	 */
+	planState: NewOrgPlanState;
 	/** The organization created for this subscription, if one exists and the caller owns it. */
 	org: { id: string; slug: string } | null;
 	/** The subscription's metadata names `org` — the link step's Stripe writes landed. */

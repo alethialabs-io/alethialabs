@@ -71,6 +71,7 @@ import {
 	NEW_ORG_SUBSCRIPTION_KEY,
 	type NewOrgSetupState,
 } from "@/lib/billing/new-org-setup";
+import { NEW_ORG_PLAN_COPY, type NewOrgPlanState } from "@/lib/billing/new-org-plan-state";
 import { TAX_ID_TYPES, type TaxIdType } from "@/lib/billing/tax-ids";
 import {
 	ORG_SLUG_RESERVED_CODE,
@@ -266,7 +267,13 @@ export async function recoverUnfinishedPaidSetup(
 
 /** How a run of the post-payment steps ended. Every non-`done` outcome carries the record to resume from. */
 export type PaidSetupOutcome =
-	| { kind: "done"; orgId: string; slug: string }
+	| {
+			kind: "done";
+			orgId: string;
+			slug: string;
+			/** What the server says about the plan — the final view and the toast show this, never "active" by default (#5522). */
+			planState: NewOrgPlanState;
+	  }
 	| { kind: "slug-refused"; message: string; record: PendingPaidSetup }
 	| {
 			kind: "failed";
@@ -402,6 +409,9 @@ async function runSteps(
 	save(record);
 	const ids = { subscriptionId: record.subscriptionId, customerId: record.customerId };
 	let finishedOrgId = "";
+	// The plan state the SERVER reported (#5522): from the link, or — when the link already landed —
+	// from the resume lookup. Set on every path that reaches the end of the try below.
+	let planState: NewOrgPlanState = "processing";
 	try {
 		// The slug and the checkout details onto the SERVER's record, so a resume from another tab
 		// restores them. The checkout already saved them before the charge; this run re-saves because the
@@ -457,6 +467,7 @@ async function runSteps(
 				"Your payment went through, but it isn't tied to this account. Contact support with the time of the payment — you won't be charged again.",
 			);
 		}
+		planState = server.planState;
 		let orgId = server.org?.id ?? null;
 		if (server.org) {
 			if (record.createdOrgId !== server.org.id) {
@@ -513,7 +524,7 @@ async function runSteps(
 		if (!record.linked || !linkedOnServer) {
 			// Idempotent for this org: a link whose Stripe writes landed before a failure completes
 			// the billing sync and the payer write instead of being refused.
-			await linkSubscriptionToNewOrg({
+			const link = await linkSubscriptionToNewOrg({
 				orgId,
 				subscriptionId: record.subscriptionId,
 				customerId: record.customerId,
@@ -522,6 +533,7 @@ async function runSteps(
 					billingCountry: record.declaration.billingCountry,
 				},
 			});
+			planState = link.planState;
 			save({ ...record, linked: true });
 		}
 
@@ -555,6 +567,12 @@ async function runSteps(
 			toast.warning("Couldn't save the billing address as the team's address — set it in settings.");
 		}
 	}
-	toast.success("Subscription active — your organization is ready.");
-	return { kind: "done", orgId: finishedOrgId, slug: record.createdSlug };
+	// Says what the server reported, not what a finished setup is assumed to mean (#5522): only an
+	// active plan is announced as one. A state that asks something of the customer stays on screen,
+	// because with the sheet closed the toast is the only place it is said.
+	const copy = NEW_ORG_PLAN_COPY[planState];
+	if (planState === "active") toast.success(copy.toast);
+	else if (planState === "processing") toast.info(copy.toast);
+	else toast.warning(copy.toast, { duration: Number.POSITIVE_INFINITY });
+	return { kind: "done", orgId: finishedOrgId, slug: record.createdSlug, planState };
 }

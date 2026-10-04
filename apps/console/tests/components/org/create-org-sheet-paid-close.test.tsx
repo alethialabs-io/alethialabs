@@ -243,7 +243,7 @@ beforeEach(() => {
 		clientSecret: "pi_secret",
 		currency: "eur",
 	});
-	linkSubscription.mockResolvedValue(undefined);
+	linkSubscription.mockResolvedValue({ planState: "active" });
 	declarePayer.mockResolvedValue(undefined);
 	// The slug was free at Continue; another team created `acme-cloud` while this one paid.
 	createOrg.mockImplementation(async ({ slug }: { slug: string }) =>
