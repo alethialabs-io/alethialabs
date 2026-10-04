@@ -142,3 +142,24 @@ describe("OnboardingForm — a slug the server refuses", () => {
 		expect(screen.queryByRole("alert")).toBeNull();
 	});
 });
+
+// #5453 — the URL field re-slugged its value on every keystroke with `slugifyOrEmpty`, which trims
+// a trailing dash, so a hyphen could not be typed: `my-team` arrived as `myteam`.
+describe("OnboardingForm — typing a hyphen into the URL", () => {
+	it("keeps the typed hyphen, and submits the slug with a trailing one trimmed", async () => {
+		configureOnboardingOrg.mockResolvedValue({ ok: false, error: RESERVED });
+		const user = userEvent.setup();
+		renderIt();
+
+		await user.click(screen.getByRole("button", { name: /customize url/i }));
+		const slugBox = screen.getByRole("textbox", { name: "URL slug" });
+		await user.clear(slugBox);
+		await user.type(slugBox, "my-");
+		expect(slugBox).toHaveValue("my-");
+		await user.type(slugBox, "team-");
+		expect(slugBox).toHaveValue("my-team-");
+		await user.click(screen.getByRole("button", { name: /create organization/i }));
+
+		expect(configureOnboardingOrg).toHaveBeenCalledWith({ name: "Acme", slug: "my-team" });
+	});
+});

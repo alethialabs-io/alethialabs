@@ -82,6 +82,15 @@ describe("configureOnboardingOrg — guards", () => {
 		});
 	});
 
+	// #5453 lets the form hold `acme-` while it is typed; the form finishes it before submitting.
+	// The action must still refuse one that arrives unfinished.
+	it.each(["acme-", "-acme"])("refuses the unfinished slug %j with a readable reason", async (slug) => {
+		expect(await configureOnboardingOrg({ name: "Acme", slug })).toEqual({
+			ok: false,
+			error: expect.stringMatching(/lowercase/),
+		});
+	});
+
 	it.each(["dashboard", "docs", "DOCS", " docs "])(
 		"refuses the reserved slug %j with a readable reason",
 		async (slug) => {

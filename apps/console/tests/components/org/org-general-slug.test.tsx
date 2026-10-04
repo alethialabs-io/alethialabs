@@ -147,3 +147,29 @@ describe("OrgGeneral — a slug it refuses", () => {
 		expect(screen.queryByRole("alert")).toBeNull();
 	});
 });
+
+// #5453 — the URL field re-slugged its value on every keystroke with `slugifyOrEmpty`, which trims
+// a trailing dash, so a hyphen could not be typed: `acme-two` arrived as `acmetwo`.
+describe("OrgGeneral — typing a hyphen into the URL", () => {
+	it("keeps the typed hyphen, so the next letter lands after it", async () => {
+		const user = userEvent.setup();
+		const slug = await renameTo(user, "my-");
+		expect(slug).toHaveValue("my-");
+		await user.type(slug, "t");
+		expect(slug).toHaveValue("my-t");
+	});
+
+	it("trims a trailing hyphen on save, and checks and saves the trimmed slug", async () => {
+		const user = userEvent.setup();
+		const slug = await renameTo(user, "acme-two-");
+		expect(slug).toHaveValue("acme-two-");
+		await save(user);
+
+		await vi.waitFor(() => expect(update).toHaveBeenCalled());
+		expect(isOrgSlugAvailable).toHaveBeenCalledWith("acme-two");
+		expect(update).toHaveBeenCalledWith(
+			expect.objectContaining({ data: expect.objectContaining({ slug: "acme-two" }) }),
+		);
+		expect(slug).toHaveValue("acme-two");
+	});
+});
