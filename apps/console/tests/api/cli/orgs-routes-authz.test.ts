@@ -23,7 +23,13 @@ vi.mock("@/lib/auth/scope", () => ({
 		orgId: orgId ?? userId,
 	})),
 }));
-vi.mock("@/lib/authz/grants", () => ({ revokeMemberGrant: vi.fn() }));
+// Partial: something the routes import reads `ensureMemberGrant` from this module, and a factory that
+// omits an export fails the whole file under the full suite. The two grant writers stay stubbed.
+vi.mock("@/lib/authz/grants", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz/grants")>()),
+	ensureMemberGrant: vi.fn(),
+	revokeMemberGrant: vi.fn(),
+}));
 
 const { CALLER, ORG_B, held, db } = vi.hoisted(() => ({
 	CALLER: "11111111-1111-4111-8111-111111111111",
