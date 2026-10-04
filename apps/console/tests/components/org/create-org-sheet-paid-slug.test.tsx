@@ -174,10 +174,9 @@ describe("CreateOrgSheet — a slug claimed during payment", () => {
 
 		const field = await screen.findByLabelText("Team URL");
 		await user.clear(field);
-		// Pasted, not typed: the URL fields slugify on every keystroke, which trims a trailing dash,
-		// so a hyphen cannot be TYPED into any of them (a pre-existing defect, recorded on the PR).
-		await user.click(field);
-		await user.paste("acme-cloud-eu");
+		// Typed, trailing dash and all: the field keeps a typed hyphen and trims the one left at the
+		// end when the slug is submitted (#5453 — it used to have to be pasted).
+		await user.type(field, "acme-cloud-eu-");
 		await user.click(screen.getByRole("button", { name: /complete setup/i }));
 
 		await vi.waitFor(() =>

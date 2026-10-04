@@ -57,6 +57,38 @@ export function slugifyOrEmpty(raw: string, maxLength: number = SLUG_MAX_LENGTH)
 }
 
 /**
+ * Normalizes what a person is TYPING into a slug field, keystroke by keystroke (#5453).
+ *
+ * The same pipeline as {@link slugifyOrEmpty} — fold accents, lowercase, drop apostrophes,
+ * collapse any non-alphanumeric run to ONE dash, cap — except that it keeps a trailing dash.
+ * {@link slugifyOrEmpty} trims it, and an input that re-slugs its own value on every keystroke
+ * therefore turned `acme-` into `acme` before the next letter arrived: a hyphen could not be typed.
+ *
+ * The result is a DRAFT, not a slug: `acme-` is not a legal one. Whatever submits it must finish
+ * it with {@link finishSlugDraft} first, and the server's format checks refuse it if that is
+ * skipped. A leading dash is still dropped here, because nothing typed after it can make it legal.
+ */
+export function slugifyDraft(raw: string, maxLength: number = SLUG_MAX_LENGTH): string {
+	return raw
+		.normalize("NFKD")
+		.replace(COMBINING_MARKS, "")
+		.toLowerCase()
+		.replace(APOSTROPHES, "")
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+/, "")
+		.slice(0, maxLength);
+}
+
+/**
+ * Finishes a slug field's value for submission: trims the dashes at either end, which
+ * {@link slugifyDraft} leaves in place so a hyphen can be typed. It changes nothing else — a value
+ * that is not slug-shaped for any other reason is left for the form's own format check to refuse.
+ */
+export function finishSlugDraft(draft: string): string {
+	return draft.replace(/^-+|-+$/g, "");
+}
+
+/**
  * Normalizes a free-text name into a slug that is never empty.
  *
  * `fallback` is used when `raw` slugs away entirely (`"@#$%"`, `"''"`, `""`). It is itself
