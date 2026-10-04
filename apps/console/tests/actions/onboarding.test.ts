@@ -91,6 +91,19 @@ describe("configureOnboardingOrg — guards", () => {
 		});
 	});
 
+	// #5509: the shared org-slug rule carries its length. Before it, onboarding checked the shape
+	// alone, so a 64-character slug — longer than any other path into an org slug allows — was written.
+	it("refuses a slug longer than the org-slug limit, saying so rather than blaming the characters", async () => {
+		expect(await configureOnboardingOrg({ name: "Acme", slug: "a".repeat(64) })).toEqual({
+			ok: false,
+			error: "Use at most 63 characters.",
+		});
+		expect(await configureOnboardingOrg({ name: "Acme", slug: "a".repeat(63) })).toEqual({
+			ok: true,
+			slug: "a".repeat(63),
+		});
+	});
+
 	it.each(["dashboard", "docs", "DOCS", " docs "])(
 		"refuses the reserved slug %j with a readable reason",
 		async (slug) => {

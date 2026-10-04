@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Alethia-Commercial
 
 // #5445 — a reserved slug is refused by the SERVER, not only by the console's forms.
+// #5509 — so is a slug that breaks the org-slug shape (`-acme`, a 64-character slug).
 //
 // Three layers, because each answers a different question:
 //   1. the hooks themselves, driven with core's REAL rule (the vitest `@` alias resolves
@@ -25,10 +26,19 @@ import {
   ORG_SLUG_RESERVED_MESSAGE,
   reservedOrgSlugRefusal,
 } from "@/lib/routing";
+import {
+  ORG_SLUG_INVALID_FORMAT_CODE,
+  ORG_SLUG_MAX_LENGTH,
+  ORG_SLUG_TOO_LONG_CODE,
+  orgSlugShapeRefusal,
+} from "@repo/org-slug";
 import { register } from "./index";
 import { orgSlugHooks } from "./org-slug-hooks";
 
-const hooks = orgSlugHooks(reservedOrgSlugRefusal);
+const hooks = orgSlugHooks(reservedOrgSlugRefusal, orgSlugShapeRefusal);
+
+/** One character over the org-slug length cap. */
+const TOO_LONG = "a".repeat(ORG_SLUG_MAX_LENGTH + 1);
 
 /** The APIError a hook threw, or a failure naming what it did instead. */
 async function refusalOf(run: () => Promise<unknown>): Promise<APIError> {
@@ -55,6 +65,27 @@ describe("orgSlugHooks — the rule", () => {
       }
     },
   );
+
+  // #5509: the shape every console form checks, now held by the endpoint too. Each refusal names
+  // its reason, so a client can say which half to fix.
+  it.each([
+    ["-acme", ORG_SLUG_INVALID_FORMAT_CODE],
+    ["acme--cloud", ORG_SLUG_INVALID_FORMAT_CODE],
+    ["", ORG_SLUG_INVALID_FORMAT_CODE],
+    [TOO_LONG, ORG_SLUG_TOO_LONG_CODE],
+  ])("refuses %j on create AND on update, with the shape's reason %s", async (slug, code) => {
+    for (const hook of [hooks.beforeCreateOrganization, hooks.beforeUpdateOrganization]) {
+      const err = await refusalOf(() => hook({ organization: { slug } }));
+      expect(err.statusCode).toBe(400);
+      expect(err.body).toMatchObject({ code });
+    }
+  });
+
+  it("lets a slug at exactly the length cap through", async () => {
+    await expect(
+      hooks.beforeCreateOrganization({ organization: { slug: "a".repeat(ORG_SLUG_MAX_LENGTH) } }),
+    ).resolves.toBeUndefined();
+  });
 
   it("lets an ordinary slug through, and an update that does not touch the slug", async () => {
     await expect(
@@ -132,7 +163,7 @@ describe("orgSlugHooks — inside better-auth's own endpoints", () => {
 // them, turns these cases red.
 
 /**
- * The CoreContext `register` receives, with core's REAL org roles and reserved-slug rule and every
+ * The CoreContext `register` receives, with core's REAL org roles and slug rules and every
  * runtime-bound member stubbed. OpenFGA is reported off, so `register` builds no FGA client and
  * never touches `db`; the lifecycle hooks the create path fires resolve without doing anything.
  */
@@ -149,6 +180,7 @@ function stubCore(
     orgAc,
     orgRoles,
     reservedOrgSlugRefusal,
+    orgSlugShapeRefusal,
     ensureMemberGrant: vi.fn(async () => undefined),
     revokeMemberGrant: vi.fn(async () => undefined),
     sendInviteEmail: vi.fn(async () => undefined),
@@ -308,6 +340,37 @@ describe("register(core) — the organization plugin production mounts", () => {
     });
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: ORG_SLUG_RESERVED_CODE });
+    expect(db.organization[0]).toMatchObject({ slug: "acme" });
+  });
+
+  // #5509: the org-slug SHAPE, through the plugin `register` mounts. Against the previous head the
+  // create answers 200 and stores `-acme`, and the rename stores a 64-character slug.
+  it("refuses POST /organization/create with slug `-acme`, naming the reason, and stores no organization", async () => {
+    const { db, post } = await setup();
+    const res = await post("/organization/create", { name: "Acme", slug: "-acme" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: ORG_SLUG_INVALID_FORMAT_CODE,
+      message: "Use lowercase letters, numbers and hyphens.",
+    });
+    expect(db.organization).toHaveLength(0);
+  });
+
+  it("refuses POST /organization/update onto a 64-character slug, naming the length, and keeps the old slug", async () => {
+    const { db, post } = await setup();
+    const created = await post("/organization/create", { name: "Acme", slug: "acme" });
+    expect(created.status).toBe(200);
+    const orgId = db.organization[0]?.id;
+
+    const res = await post("/organization/update", {
+      organizationId: orgId,
+      data: { slug: TOO_LONG },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: ORG_SLUG_TOO_LONG_CODE,
+      message: "Use at most 63 characters.",
+    });
     expect(db.organization[0]).toMatchObject({ slug: "acme" });
   });
 

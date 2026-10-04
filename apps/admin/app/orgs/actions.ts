@@ -7,10 +7,13 @@
 // from read-only support staff) → withPlatformAudit (committed attempt row + result, required
 // reason) → the act. Billing is written through the CONSOLE (set-plan / the Stripe webhook), never
 // directly, so organization_billing stays single-writer; org creation goes through the console
-// provision-org route, so authz/slug logic stays in the console.
+// provision-org route, so authz and the reserved/taken slug checks stay in the console. The slug's
+// shape is checked here too, from the same package the console reads (@repo/org-slug), so the
+// operator sees the reason before the console is called.
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { orgSlugShapeRefusal } from "@repo/org-slug";
 import { enterpriseContract } from "@repo/platform/schema";
 import { assertPlatformAdmin } from "@/lib/auth/staff";
 import { getServiceDb } from "@/lib/db";
@@ -35,11 +38,15 @@ const contractFields = z.object({
 const grantSchema = contractFields.extend({ orgId: z.string().uuid(), ownerEmail: z.string().email() });
 const createSchema = contractFields.extend({
 	name: z.string().min(2).max(120),
+	// The console's own org-slug rule (@repo/org-slug), so a slug refused there is refused here first,
+	// with the reason: too long (over 63), or the characters.
 	slug: z
 		.string()
-		.min(1)
-		.max(64)
-		.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "lowercase-with-dashes"),
+		.trim()
+		.superRefine((slug, ctx) => {
+			const refusal = orgSlugShapeRefusal(slug);
+			if (refusal) ctx.addIssue({ code: "custom", message: `Slug: ${refusal.message}` });
+		}),
 	ownerEmail: z.string().email(),
 });
 
