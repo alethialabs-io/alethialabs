@@ -39,7 +39,7 @@ output "allow_nested_items_to_be_public" {
   value       = azurerm_storage_account.this.allow_nested_items_to_be_public
 }
 
-# Read off the PLANNED account, for checks_storage_cmek.tftest.hcl at the root. Null when the account
+# Read off the PLANNED account, for checks_customize.tftest.hcl at the root. Null when the account
 # keeps Microsoft-managed keys.
 output "customer_managed_key_id" {
   description = "Key Vault key the account is encrypted with; null under Microsoft-managed keys"

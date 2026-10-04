@@ -18,6 +18,10 @@ module "storage_account" {
 
   # Customer-managed key (below). Empty strings when no container asked for it, which render
   # neither the identity nor the customer_managed_key block — the account plans as it always did.
+  # The BOOLEAN gates the module's identity and customer_managed_key blocks; the ids are unknown
+  # until the key and identity exist, and a block count keyed on an unknown id is unknown on the
+  # very first apply.
+  cmek_enabled     = local.storage_cmek
   cmek_key_id      = local.storage_cmek ? one(azurerm_key_vault_key.storage_cmek[*].versionless_id) : ""
   cmek_identity_id = local.storage_cmek ? one(azurerm_user_assigned_identity.storage_cmek[*].id) : ""
 
@@ -36,7 +40,9 @@ module "storage_account" {
 #   · a user-assigned identity — the account unwraps AS it, and it has to exist (and be granted)
 #     before the account does, which a system-assigned identity cannot;
 #   · "Key Vault Crypto Service Encryption User" for that identity, scoped to THE KEY, not the
-#     vault: exactly keys/read + wrapKey + unwrapKey (get/wrap/unwrap), and on nothing else;
+#     vault. Its DATA actions are exactly keys/read + wrapKey + unwrapKey (get/wrap/unwrap); the
+#     built-in role also carries Event Grid control-plane actions (subscribing to the vault's events),
+#     which reach no key material;
 #   · the provisioner's "Key Vault Crypto Officer" on the vault, to create the key. Shared with the
 #     AKS KMS key in secrets-encryption.tf rather than declared twice: Azure refuses a second,
 #     identical role assignment with 409 RoleAssignmentExists.

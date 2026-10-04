@@ -85,6 +85,11 @@ Set `azure_db_log_exports` on the **database** to send Flexible Server logs to L
 { "azure_db_log_exports": ["PostgreSQLLogs", "PostgreSQLFlexSessions"] }
 ```
 
+Some categories stay empty until you turn on the matching server parameter with `azure_db_database_flags`:
+
+- `MySqlAuditLogs` needs `audit_log_enabled` set to `ON`.
+- `PostgreSQLFlexQueryStoreRuntime` and `PostgreSQLFlexQueryStoreWaitStats` need Query Store on: set `pg_qs.query_capture_mode` to `TOP` or `ALL`.
+
 The logs go to the workspace from control-plane log retention. If the project has no cluster, or does not set `aks_log_retention_days`, also set `azure_db_log_workspace_id` to the resource ID of an existing workspace. The plan fails if the logs have nowhere to go, or if a category belongs to the other engine.
 
 ### Database server parameters
@@ -97,6 +102,12 @@ Set `azure_db_database_flags` on the **database** to change Flexible Server para
 
 The template refuses `require_secure_transport`, `ssl_min_protocol_version` and `tls_version`. Each of these can turn TLS off or allow a version below TLS 1.2, and the server defaults already require TLS 1.2.
 
+<Callout type="warn">
+The template refuses only the TLS parameters. Other parameters can also weaken the server, and the template accepts them. For example, `password_encryption` set to `md5` stores weaker password hashes. Changes to `pgaudit.log`, `log_connections` or `audit_log_enabled` reduce what the server records. `azure.extensions` allows more PostgreSQL extensions. Review each value as you would a change to the server's security settings.
+</Callout>
+
+Some parameters are static. When you change a static parameter, Azure restarts the server to apply it, and the database is unavailable during the restart.
+
 ### Storage encryption with your own key
 
 Set `cmek_enabled` on a **bucket** to encrypt the storage account with a customer-managed key.
@@ -105,7 +116,7 @@ Set `cmek_enabled` on a **bucket** to encrypt the storage account with a custome
 { "cmek_enabled": true }
 ```
 
-Azure encrypts a whole storage account with one key, and a project has one storage account. So when any bucket sets `cmek_enabled`, every container in the account uses the key. The template creates the key in the project's own Key Vault. It also creates a managed identity that the storage account uses to reach the key. That identity has only the Key Vault Crypto Service Encryption User role, on that one key, which allows it to read, wrap and unwrap the key and nothing else.
+Azure encrypts a whole storage account with one key, and a project has one storage account. So when any bucket sets `cmek_enabled`, every container in the account uses the key. The template creates the key in the project's own Key Vault. It also creates a managed identity that the storage account uses to reach the key. That identity has only the Key Vault Crypto Service Encryption User role, on that one key. The role's data actions are exactly read, wrap and unwrap on the key. The built-in role also has Event Grid control-plane actions, which give no access to key material.
 
 Azure accepts the key only from a vault with purge protection, so `key_vault_purge_protection_enabled` must stay `true` (the default).
 

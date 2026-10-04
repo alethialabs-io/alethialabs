@@ -432,7 +432,7 @@ run "a_cmek_container_encrypts_the_account_with_a_key_scoped_identity" {
       azurerm_role_assignment.storage_cmek[0].scope == azurerm_key_vault_key.storage_cmek[0].resource_versionless_id,
       azurerm_role_assignment.storage_cmek[0].principal_id == azurerm_user_assigned_identity.storage_cmek[0].principal_id,
     ])
-    error_message = "The CMEK identity must hold only Key Vault Crypto Service Encryption User (get/wrap/unwrap), scoped to the one key."
+    error_message = "The CMEK identity must hold only Key Vault Crypto Service Encryption User (data actions: keys/read + wrapKey + unwrapKey), scoped to the one key."
   }
 
   assert {

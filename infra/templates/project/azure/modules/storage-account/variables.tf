@@ -62,10 +62,17 @@ variable "tags" {
   default     = {}
 }
 
-# Customer-managed key (CUSTOMIZABILITY-PARITY top gap #8). Set together or not at all; the root
+# Customer-managed key (CUSTOMIZABILITY-PARITY top gap #8). cmek_enabled is the GATE (a value known
+# at plan); the two ids are only carried. Set together or not at all; the root
 # creates both and grants the identity on the key before this account is planned.
+variable "cmek_enabled" {
+  description = "Encrypt the account with cmek_key_id as cmek_identity_id. False keeps Microsoft-managed keys (unchanged)."
+  type        = bool
+  default     = false
+}
+
 variable "cmek_key_id" {
-  description = "Versionless Key Vault key id to encrypt the account with. Empty keeps Microsoft-managed keys (unchanged)."
+  description = "Versionless Key Vault key id to encrypt the account with. Read only when cmek_enabled is true."
   type        = string
   default     = ""
 }

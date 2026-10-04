@@ -195,8 +195,14 @@ variable "secrets_kms_key_id" {
 
 # Root-created Log Analytics workspace (aks_log_retention_days). Empty renders no oms_agent block,
 # which is the shape every cluster had before the knob existed.
+variable "log_analytics_enabled" {
+  type        = bool
+  default     = false
+  description = "Turn on the Container Insights add-on (oms_agent) against log_analytics_workspace_id. False leaves the add-on off."
+}
+
 variable "log_analytics_workspace_id" {
   type        = string
   default     = ""
-  description = "Log Analytics workspace id for the Container Insights add-on (oms_agent). Empty leaves the add-on off."
+  description = "Log Analytics workspace id for the Container Insights add-on (oms_agent). Read only when log_analytics_enabled is true."
 }

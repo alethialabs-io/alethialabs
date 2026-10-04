@@ -51,6 +51,7 @@ module "aks" {
 
   # Container Insights → the workspace below, only when aks_log_retention_days created one. Empty
   # renders no oms_agent block, which is what every cluster carried before the knob existed.
+  log_analytics_enabled      = local.aks_log_retention
   log_analytics_workspace_id = one(azurerm_log_analytics_workspace.aks[*].id) != null ? one(azurerm_log_analytics_workspace.aks[*].id) : ""
 
   tags = local.azure_default_tags

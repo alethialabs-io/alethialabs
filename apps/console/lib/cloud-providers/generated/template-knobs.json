@@ -4672,7 +4672,8 @@
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/azure/variables.tf:693",
 			"readBy": [
-				"azure"
+				"azure",
+				"azure/modules/storage-account"
 			],
 			"reportedByOutput": false,
 			"ceiling": false,
