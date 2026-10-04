@@ -210,15 +210,25 @@ function storedLifecycleRank(slot: SubscriptionSlot): SQL {
  * - WITHOUT one (a server action's sync, #5547): only when it does not LOWER the lifecycle rank.
  *
  * Why a rank guard and not "stamp the action's write with its read time": a read time is on OUR
- * clock while the watermark is Stripe's event `created`, and the webhook's own eventAt is only a
- * LOWER bound on the state it writes (`customer.subscription.*`, `checkout.session.completed` and
- * the invoice events all write a fresh retrieve made after the event was created). An action
- * stamped at its read time would therefore refuse a later-delivered event whose retrieve is newer
- * than the action's read, and a refused webhook is never retried — the row would be stuck until
- * the subscription's next event. The rank guard needs no clock: the stale case it refuses is
- * exactly the one that can happen (`subscriptions.update` returning `incomplete` after the
- * `active` webhook already landed), while a raise (`none` → live, live → `canceled`) and a move
- * within the live band still apply, so a trial start, a link and a real cancellation are unchanged.
+ * clock while the watermark is Stripe's event `created`, and for most webhook events eventAt is
+ * only a LOWER bound on the state written. `customer.subscription.created`/`.updated`,
+ * `checkout.session.completed`, `invoice.payment_succeeded` and `invoice.payment_failed` each
+ * write a fresh `subscriptions.retrieve` made after the event was created; only
+ * `customer.subscription.deleted` writes the event's own snapshot (lib/billing/webhook-handler.ts).
+ * An action stamped at its read time would therefore refuse a later-delivered retrieve-based event
+ * whose state is newer than the action's read, and a refused webhook is never retried — the row
+ * would be stuck until the subscription's next event. The rank guard needs no clock: the stale
+ * case it refuses is exactly the one that can happen (`subscriptions.update` returning
+ * `incomplete` after the `active` webhook already landed), while a raise (`none` → live, live →
+ * `canceled`) and a move within the live band (equal rank, e.g. `past_due` → `active`) still
+ * apply, so a trial start, a link and a real cancellation are unchanged.
+ *
+ * A limit a future caller must know: `mapStatus` (lib/billing/sync.ts) maps every Stripe status it
+ * does not name — `incomplete`, and also `paused` — to `none`, rank 0. A no-time write of a
+ * `paused` subscription over a live row is therefore REFUSED. Pausing is a real transition out of
+ * the live band, not a stale read, so a caller that can observe one must not sync without an event
+ * time: it must pass the time it read the subscription as `eventAt` (and accept the clock caveat
+ * above), or leave the change to the `customer.subscription.updated` webhook, which carries its own.
  */
 function sameSubscriptionMayApply(slot: SubscriptionSlot, incoming: IncomingSubscription): SQL {
 	const notRevived =

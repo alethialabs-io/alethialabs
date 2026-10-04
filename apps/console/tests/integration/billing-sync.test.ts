@@ -270,6 +270,18 @@ describeIfDb("billing sync: one subscription's events cannot overwrite another's
 		expect((await row(org))?.status).toBe("past_due");
 	});
 
+	it("a same-rank re-apply with no event time still applies (past_due → active, both live)", async () => {
+		const org = await freshOrg();
+		const y = subId("y");
+		await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "past_due" }), at(1));
+		const outcome = await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "active" }));
+
+		expect(outcome).toBe("applied");
+		const r = await row(org);
+		expect(r?.status).toBe("active");
+		expect(r?.plan).toBe("team");
+	});
+
 	it("first write with no event time: a trial start creates the row", async () => {
 		const org = await freshOrg();
 		const y = subId("trial");
