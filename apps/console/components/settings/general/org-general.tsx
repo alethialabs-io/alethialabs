@@ -52,7 +52,7 @@ import {
   ORG_SLUG_RESERVED_CODE,
   reservedOrgSlugRefusal,
 } from "@/lib/routing";
-import { slugifyOrEmpty } from "@/lib/utils/slugify";
+import { finishSlugDraft, slugifyDraft } from "@/lib/utils/slugify";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { cn } from "@repo/ui/utils";
 
@@ -126,8 +126,12 @@ export function OrgGeneral() {
     if (!s || !activeOrgId) return;
     setSaving(true);
     setSlugError(null);
+    // The field holds a draft while typed (#5453); what is checked and saved is the finished slug,
+    // and the field is set to it so the screen shows what was saved.
+    const slug = finishSlugDraft(s.slug);
+    if (slug !== s.slug) set("slug", slug);
     try {
-      const problem = await slugProblem(s.slug, savedSlug);
+      const problem = await slugProblem(slug, savedSlug);
       if (problem) {
         setSlugError(problem);
         return;
@@ -136,7 +140,7 @@ export function OrgGeneral() {
         organizationId: activeOrgId,
         data: {
           name: s.name,
-          slug: s.slug,
+          slug,
           metadata: {
             description: s.description,
             region: s.region,
@@ -154,7 +158,7 @@ export function OrgGeneral() {
         // A slug the server refused (reserved by ee/'s hook, or claimed since the check above)
         // belongs under the slug field; anything else is not about a field.
         if (error.code === ORG_SLUG_RESERVED_CODE) {
-          setSlugError(error.message ?? reservedOrgSlugRefusal(s.slug)?.message ?? SLUG_TAKEN);
+          setSlugError(error.message ?? reservedOrgSlugRefusal(slug)?.message ?? SLUG_TAKEN);
           return;
         }
         if (error.code === BETTER_AUTH_SLUG_TAKEN) {
@@ -163,7 +167,7 @@ export function OrgGeneral() {
         }
         throw new Error(error.message ?? "Save failed");
       }
-      setSavedSlug(s.slug);
+      setSavedSlug(slug);
       toast.success("Organization updated.");
       await fetchWorkspace();
     } catch (e) {
@@ -240,9 +244,13 @@ export function OrgGeneral() {
                     className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
                     value={s.slug}
                     onChange={(e) => {
-                      set("slug", slugifyOrEmpty(e.target.value));
+                      // A draft, so a hyphen can be typed: `slugifyOrEmpty` trimmed it on every
+                      // keystroke, and `acme-` became `acme` before the next letter arrived
+                      // (#5453). The dash at the end is trimmed on blur and on save.
+                      set("slug", slugifyDraft(e.target.value));
                       setSlugError(null);
                     }}
+                    onBlur={() => set("slug", finishSlugDraft(s.slug))}
                     aria-invalid={slugError ? true : undefined}
                     aria-describedby={slugError ? slugErrorId : undefined}
                     autoComplete="off"

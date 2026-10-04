@@ -85,7 +85,7 @@ import {
 	ORG_SLUG_RESERVED_MESSAGE,
 	RESERVED_SLUGS,
 } from "@/lib/routing";
-import { slugifyOrEmpty } from "@/lib/utils/slugify";
+import { finishSlugDraft, slugifyDraft, slugifyOrEmpty } from "@/lib/utils/slugify";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import {
 	SUPPORTED_CURRENCIES,
@@ -110,17 +110,39 @@ const schema = z.object({
 	slug: z
 		.string()
 		.trim()
-		.min(1, "Pick a slug.")
-		// The server's cap for the slug it records with a paid setup (billing-field-caps.ts).
-		.max(ORG_SLUG_MAX, tooLongMessage(ORG_SLUG_MAX))
-		.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and hyphens.")
-		// Checked HERE, not left to `isOrgSlugAvailable`: that action answers one boolean for both
-		// "reserved" and "taken", so a reserved slug ("docs") used to be refused as TAKEN — a sentence
-		// that sends the user looking for an organization that does not exist (#5442). RESERVED_SLUGS
-		// is the same set the action and `configureOnboardingOrg` consult, so the two cannot disagree.
-		.refine((s) => !RESERVED_SLUGS.has(s), SLUG_RESERVED),
+		// The field holds a DRAFT while it is typed into (`slugifyDraft`, #5453): `acme-` is the state
+		// it is in between `acme` and `acme-cloud`. The checks below judge the slug that draft will be
+		// submitted as, so a half-typed hyphen is not refused mid-word. `commitSlug` writes the same
+		// finished value back into the form before anything reads it with `getValues`.
+		.transform(finishSlugDraft)
+		.pipe(
+			z
+				.string()
+				.min(1, "Pick a slug.")
+				// The server's cap for the slug it records with a paid setup (billing-field-caps.ts).
+				.max(ORG_SLUG_MAX, tooLongMessage(ORG_SLUG_MAX))
+				.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and hyphens.")
+				// Checked HERE, not left to `isOrgSlugAvailable`: that action answers one boolean for both
+				// "reserved" and "taken", so a reserved slug ("docs") used to be refused as TAKEN — a
+				// sentence that sends the user looking for an organization that does not exist (#5442).
+				// RESERVED_SLUGS is the same set the action and `configureOnboardingOrg` consult, so the
+				// two cannot disagree.
+				.refine((s) => !RESERVED_SLUGS.has(s), SLUG_RESERVED),
+		),
 });
 type FormData = z.infer<typeof schema>;
+
+/**
+ * Writes the finished slug — the typed draft without a dash at either end (#5453) — back into the
+ * form. The schema judges that finished value, but `getValues` returns what is stored, and several
+ * steps send `getValues().slug` to the server (the availability check, the intent, the saved setup).
+ * Run on the slug field's blur and before every validation that precedes one of those reads.
+ */
+function commitSlug(form: UseFormReturn<FormData>) {
+	const draft = form.getValues("slug");
+	const finished = finishSlugDraft(draft.trim());
+	if (finished !== draft) form.setValue("slug", finished, { shouldValidate: true });
+}
 
 type View = "name" | "declare" | "pay" | "invite";
 
@@ -337,6 +359,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			// The URL is the one field on screen when the team does not exist yet; the name is the
 			// server's and is not re-checked here.
 			if (!recovered.org) {
+				commitSlug(form);
 				if (!(await form.trigger("slug"))) return;
 				if (!(await isOrgSlugAvailable(form.getValues().slug))) {
 					form.setError("slug", { message: SLUG_TAKEN });
@@ -528,6 +551,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * is otherwise only a line of preview text under the name.
 	 */
 	async function validate(): Promise<FormData | null> {
+		commitSlug(form);
 		if (!(await form.trigger())) {
 			if (form.getFieldState("slug").invalid) setShowUrl(true);
 			return null;
@@ -1116,10 +1140,14 @@ function NamePanel({
 									value={slug}
 									onChange={(e) => {
 										setSlugTouched(true);
-										form.setValue("slug", slugifyOrEmpty(e.target.value), {
+										// A draft, so a hyphen can be typed: `slugifyOrEmpty` trimmed it on
+										// every keystroke, and `acme-` became `acme` before the next letter
+										// arrived (#5453). The dash at the end is trimmed on blur and submit.
+										form.setValue("slug", slugifyDraft(e.target.value), {
 											shouldValidate: true,
 										});
 									}}
+									onBlur={() => commitSlug(form)}
 								/>
 							</div>
 						)}
@@ -1252,9 +1280,11 @@ function TeamUrlField({ form, slug }: { form: UseFormReturn<FormData>; slug: str
 					className="h-full min-w-0 flex-1 border-0 bg-transparent pl-0.5 pr-3 font-mono text-ui-sm text-text-primary outline-none"
 					autoComplete="off"
 					value={slug}
+					// A draft while typed, finished on blur and submit — see the create step's field (#5453).
 					onChange={(e) =>
-						form.setValue("slug", slugifyOrEmpty(e.target.value), { shouldValidate: true })
+						form.setValue("slug", slugifyDraft(e.target.value), { shouldValidate: true })
 					}
+					onBlur={() => commitSlug(form)}
 				/>
 			</div>
 			{slugError && (
