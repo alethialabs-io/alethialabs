@@ -109,7 +109,15 @@ export async function handleStripeEvent(
 	switch (event.type) {
 		case "customer.subscription.created":
 		case "customer.subscription.updated":
-			await syncSubscriptionToBilling(event.data.object, sync);
+			// Synced from a FRESH retrieve, not the event's snapshot. The row guard can only refuse a
+			// stale snapshot of the subscription it already names; a redelivered `active` snapshot of a
+			// DIFFERENT, since-cancelled subscription would otherwise claim a row holding nothing live,
+			// and stick — every later event for the org's real subscription is then refused. Retrieved,
+			// a dead subscription reads `canceled` and claims nothing (#5518 review).
+			await syncSubscriptionToBilling(
+				await getStripe().subscriptions.retrieve(event.data.object.id),
+				sync,
+			);
 			break;
 		case "customer.subscription.deleted": {
 			const sub = event.data.object;

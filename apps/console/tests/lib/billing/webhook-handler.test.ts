@@ -17,7 +17,10 @@ vi.mock("@/lib/billing/invoices", () => ({
 	setInvoiceStatus: vi.fn(),
 }));
 vi.mock("@/lib/billing/payment-methods", () => ({ attemptBackupPayment: vi.fn() }));
-vi.mock("@/lib/billing/stripe", () => ({ getStripe: vi.fn() }));
+const { retrieve } = vi.hoisted(() => ({ retrieve: vi.fn() }));
+vi.mock("@/lib/billing/stripe", () => ({
+	getStripe: () => ({ subscriptions: { retrieve } }),
+}));
 vi.mock("@/lib/billing/sync", () => ({ syncSubscriptionToBilling: vi.fn() }));
 vi.mock("@/lib/email/billing-email", () => ({
 	sendCreditPackReceiptEmail: vi.fn(),
@@ -75,12 +78,17 @@ describe("handleStripeEvent → syncSubscriptionToBilling (#5514)", () => {
 	});
 
 	it.each(["customer.subscription.created", "customer.subscription.updated"])(
-		"%s syncs with the event's own created time",
+		"%s syncs the FRESHLY retrieved subscription, not the snapshot, at the event's created time",
 		async (type) => {
 			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("applied");
-			const { event, subscription } = subscriptionEvent(type);
+			const { event } = subscriptionEvent(type);
+			// The snapshot says canceled; Stripe now says otherwise. The sync must see Stripe's answer —
+			// a stale `active` snapshot of a dead subscription would otherwise claim an empty row.
+			const fresh = { id: "sub_z", status: "active", metadata: {} };
+			retrieve.mockReset().mockResolvedValue(fresh);
 			await handleStripeEvent(event);
-			expect(syncSubscriptionToBilling).toHaveBeenCalledWith(subscription, {
+			expect(retrieve).toHaveBeenCalledWith("sub_z");
+			expect(syncSubscriptionToBilling).toHaveBeenCalledWith(fresh, {
 				eventAt: new Date(CREATED * 1000),
 			});
 		},
