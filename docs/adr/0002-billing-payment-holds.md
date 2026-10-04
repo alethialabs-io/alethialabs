@@ -4,188 +4,182 @@ issue: "#5506"
 date: 2026-10-04
 ---
 
-# Payment holds: a write-ahead state machine for first-payment uncertainty
+# Payment holds on the first payment of a paid team setup
 
-**Decision (proposed).** Every time a purchase flow is about to make an earlier subscription
-unpayable (void its invoice, cancel it), it first writes a **payment hold** row. The hold is then
-moved through one state machine until a Stripe read proves the subscription is settled. Every hold
-reads only the invoice it was opened on. While a hold in a purchase **scope** is open, that scope
-cannot mint. One function (`advanceHold`) is the only code that moves a hold. Three callers run it,
-each under the payer's lease: the purchase flow (and the create-a-team link), a **required**
-scheduled sweeper, and the operator command. The Stripe webhook only nudges the sweeper (rev 3).
-Only an operator command can release a hold that the machine cannot settle.
+**Decision (proposed).** The paid create-a-team setup is the purchase that charges a card before the
+organization it pays for exists. Before that flow makes an earlier first-payment subscription
+unpayable (voids its invoice or cancels it), it first writes a **payment hold** row. The hold then
+moves through one state machine until a Stripe read proves the subscription settled. Each hold reads
+only the invoice it was opened on. While a hold is open, the same user cannot mint another
+create-a-team subscription. One function, `advanceHold`, is the only code that moves a hold. Three
+callers run it, each under the user's lease: the purchase flow (and the create-a-team link), a
+**required** scheduled sweeper, and the operator command. The Stripe webhook only nudges the
+sweeper. Only an operator command can release a hold that the machine cannot settle.
 
-This replaces the "refuse without memory" behaviour that #5489 shipped. It is written before any
-code, as #5506 requires, and the maintainer reviews it. It meets the ADR bar: a new table and new
-webhook behaviour are hard to reverse. A write-ahead row before a Stripe call is surprising without
-this context. The alternatives (Stripe metadata as the store, holds written after the fact, one
-global hold scope) were real and are recorded below.
+**Scope (rev 5, maintainer decision 2026-10-04).** This design covers holds on the **first payment
+of the paid org-setup path** and nothing else. That means:
+
+- the create-a-team purchase (`createNewOrgSubscriptionIntent`);
+- its server-side record (`pending_org_setups`, migration `0159_ancient_lily_hollister`);
+- the link (`linkSubscriptionToNewOrg`), the resume lookups, and the sheet that runs the
+  post-payment steps;
+- the #5489 fail-closed refuse path **as the create-a-team flow uses it**.
+
+Renewals, plan changes, dunning, and every other purchase flow are out of scope. §7, "Not covered,
+and why", lists each one with the behaviour that handles it today.
+
+This replaces, for create-a-team, the "refuse without memory" behaviour that #5489 shipped. It is
+written before any code, as #5506 requires, and the maintainer reviews it. It meets the ADR bar for
+two reasons. A new table and new webhook behaviour are hard to reverse. And a write-ahead row before a
+Stripe call is surprising without this context. The alternatives (Stripe metadata as the store,
+holds written after the fact) were real and are recorded below.
 
 Every claim about today's code cites `file:line` at `origin/dev` `857794cb9` (#5489 merged). The
-billing code those citations name is unchanged at `fbe2409c8`, the `dev` head this revision was
-rebased onto. **Every path is relative to `apps/console/`**, including `docs/stripe-prod-runbook.md`
-and `scripts/stripe-setup.ts`, which exist only there. The one exception is this ADR's own folder,
+billing code those citations name is unchanged at `7de07b4e8`, the `dev` head this revision was
+checked against. `7de07b4e8` changes only `lib/billing/pending-org-setup.ts` (the slug rule, #5509),
+`lib/billing/billing-field-caps.ts` and `components/org/create-org-sheet.tsx`, and no line cited here
+moved. **Every path is relative to `apps/console/`**, including `docs/stripe-prod-runbook.md` and
+`scripts/stripe-setup.ts`, which exist only there. The one exception is this ADR's own folder,
 `docs/adr/` at the repo root.
 
-**Revision 2 (review of `c08eac188`).** Ten gaps were raised. Each is answered by a concrete change
-below and marked **(rev 2)** where it lands: T3 now matches the post-void state and cancels only
-after a proven void (G1); T11 re-reads before it alerts (G2); `subscription_id` is unique only among
-open holds (G3); scope is classified by (scope, payer) (G4); the client secret leaves the server only
-through a fenced gate (G5); a scheduled sweeper and webhook redelivery make every hold live (G6); a
-refund is done only when Stripe says `succeeded` (G7); every outcome has copy and a carrier (G8); the
-create-a-team link consults holds (G9); and the backfill has no lower bound (G10).
+## Revisions
 
-**Revision 3 (review of `70c5e23b7`).** Five gaps and seven advisories were raised. Each is answered
-below and marked **(rev 3)**: the backfill opens a hold only on a subscription it can prove was a
-checkout attempt that ended unpaid, and lists every other candidate for an operator (§8, H1); every
-open state, `refund_pending` included, has a finite alert bound (I11, §5.4, H2); the link accepts an
-`incomplete` subscription and defers the plan to the webhook instead of refusing it (§5.6, H3); the
-copy is chosen from the hold's last observation as well as its state, so a payment that takes days
-is never told "a few minutes" (§5.5, H4); and the gate covers every payable artifact a flow hands
-out, not only a client secret: a Checkout URL, a trial subscription, and an earlier open Checkout
-Session (I9, §4.4, H5). The advisories: §4.4 rule 3 no longer contradicts rule 1, because the
-close-out is a stated exemption (rule 4); the webhook makes no Stripe call for a hold and holds no
-connection for one, and `HoldDeferred` is gone, so no entitlement sync waits on a hold (§5.3); a
-cancel the machine makes is stamped and sends no "subscription canceled" email (§5.3); the
-reachability of each case is stated (§6); the operator release takes the payer's lease (T16); and
-an adopted subscription gets its receipt (§5.3).
+- **Rev 2** (review of `c08eac188`) closed ten gaps:
+  - T3 voids first and cancels only after a proven void;
+  - T11 re-reads;
+  - `subscription_id` is unique among open holds only;
+  - classification is by payer;
+  - a fenced artifact gate;
+  - a required sweeper;
+  - refunds by status;
+  - copy for every outcome;
+  - the link consults holds;
+  - the backfill has no lower bound.
+- **Rev 3** (review of `70c5e23b7`) closed five gaps:
+  - the backfill holds only a provable never-live checkout;
+  - every open state has an alert bound;
+  - the link defers an `incomplete` subscription instead of refusing it;
+  - copy by last observation;
+  - the gate covers every artifact.
 
-**Revision 4 (review of `c67c284b3`).** Three gaps were raised. Each is answered below and marked
-**(rev 4)**:
+  It also answered seven advisories.
+- **Rev 4** (review of `c67c284b3`) closed three gaps:
+  - J1: the webhook overwrite (#5514);
+  - J2: positive evidence before a release;
+  - J3: hint writes vs state writes.
 
-- **J1, the webhook overwrite.** A second subscription's `created` or `updated` event overwrites a
-  live subscription's org row today, whatever its status. That is a live bug, filed as **#5514**.
-  This design now **depends on #5514 landing first**, and §5.3 (2) states the sync rules it relies
-  on (W1–W5): no replacing a live subscription's row except by its superseder, no regression from a
-  stale or redelivered event, and a cancellation that touches only the subscription it names.
-  Revision 3's claim that a closed-out trial "was never synced to the org" was false, because the
-  webhook syncs a trial on its own `created` event. It is withdrawn, and a gate marker on the trial
-  makes the narrower claim true (§4.4 rule 4).
-- **J2, vacuous releases.** T10 was true with **zero** succeeded PaymentIntents, and sat above T11
-  and T11r, so an empty or lagging payments read released a hold as `already_refunded`. Every
-  release row now needs at least one positively-read terminal payment state. T11r and T11 move above
-  every refund and release row, and T9 accepts only `pay ∈ {awaiting, failed}` (§3.3).
-- **J3, the version compare-and-set against the nudge.** The nudge bumped `version`, so the
-  purchase's own cancel made its release write miss. State writes and hints are now separate
-  columns: only a holder-fenced state write bumps `version`, the nudge writes `nudged_at`, which the
-  compare-and-set ignores, and a refund attempt number is reserved by a write **before**
-  `refunds.create`, so it cannot be lost (§4.1, §3.5).
+  Each change was marked where it landed. Revision 5 drops those marks for the text it removed
+  and keeps them where the text survives.
+- **Revision 5** (review of `7ded56758`, and the maintainer's decision to narrow the scope).
+  The review raised five gaps. Each is re-checked under the narrowed scope:
+
+  | Gap | Thread | Under rev 5 |
+  |---|---|---|
+  | **K1.** The trial's gate marker: a request that dies between the gate and the action's sync leaves a live, marked trial that nothing syncs | `PRRT_kwDOPdRG6s6o0ENN` | **Closed by the narrowing.** `startProTrial` is out of scope (§7), so the trial gate and the gate marker are removed. Today's trial behaviour is unchanged. |
+  | **K2.** W2 and W4: a row whose live Y ends while an unnamed live X exists drops to `community`; an off-Stripe grant is unprotected | `PRRT_kwDOPdRG6s6o0ENR` | **Closed by the narrowing.** Every two-live state the design created came from the org-plan, Checkout or trial flows: adoption beside a live plan (Q8), the Checkout detector, a failed trial close-out. All of them are out of scope. In scope, a new org has exactly one subscription. The live check returns `resume` beside a live create-a-team subscription instead of minting (§4.3). The link now refuses an org whose row already names another subscription (§5.6). The off-Stripe-grant sequence enters through `createSubscriptionIntent` or `startProTrial`, both out of scope. |
+  | **K3.** The owed receipt: the webhook's fallback needs a lease it does not hold, and a T2 run by the purchase or the link never sends the owed receipt | `PRRT_kwDOPdRG6s6o0ENV` | **Addressed.** The owed-receipt mechanism and its two columns are removed. The receipt is decided by the fresh read alone: it is sent unless the subscription is ended (§5.3 (2)). That is sound because void-first means the machine never cancels a subscription whose first invoice is paid. This also answers the advisory about an `incomplete` subscription with no hold. |
+  | **K4.** #5514's "Done when" admits implementations that break W1–W5 | `PRRT_kwDOPdRG6s6o0ENY` | **Addressed within the narrowed scope.** The contract shrinks to three rules on the **one** subscription the new org's row names (N1–N3, §5.3 (2)). It was checked against #5514's PR, #5518 at `4a306a0f6`. N1 and N3 hold and are tested. N2 does **not** hold: a write with no event time skips the order check, so the link's own stale sync can drop a paid org to `community` (C76). §8 step 3 is blocked on it, and #5518 has been told. |
+  | **K5.** The sheet discards what the link returns, and turns every refusal into "Retry to complete setup" | `PRRT_kwDOPdRG6s6o0ENZ` | **Addressed.** The link returns a typed result. The sheet stops **before creating the org** when the resume lookup reports a held or ended setup. A refusal is non-retryable and carries its clause. A deferred plan is shown as processing. `components/org/pending-paid-setup.ts` and `components/org/create-org-sheet.tsx` are now in §8 step 4 and Q7 (§5.6). The success half ("Subscription active" for any state) is a live defect today, with or without holds. It is fixed separately by #5522. |
+
+  The review's two advisories:
+  - The receipt rule for an `incomplete` subscription with no hold is now the same rule as for
+    every other subscription (K3).
+  - W1's Stripe reads inside the webhook transaction are no longer required. The narrowed
+    contract needs no fresh read (§5.3 (2)), and #5518 makes none.
 
 ---
 
 ## 1. Context
 
-### 1.1 What the flow does today (after #5489)
+### 1.1 What the create-a-team flow does today (after #5489)
 
-- **Three embedded purchase flows mint `default_incomplete` subscriptions:**
-  - org plan: `createSubscriptionIntent` → `startOrgSubscription`, `app/server/actions/billing.ts:1172-1251`
-  - create-a-team: `createNewOrgSubscriptionIntent` → `startNewOrgSubscription`, `billing.ts:1557-1745`
-  - AI: `createAiSubscriptionIntent`, `billing.ts:1261-1315`
-
-  Two more paths create subscriptions on the org's customer: hosted Checkout
-  (`createCheckoutSession`, `billing.ts:1117-1155`) and the card-less trial (`startProTrial`,
-  `billing.ts:1329-1398`).
-- **The sweep.** Before minting, the org-plan and create-a-team flows list the customer's
-  `status: "incomplete"` subscriptions (`cancelIncompleteSubscriptions`, `billing.ts:1066-1090`). The
-  list call is `limit: 100` and ignores `has_more` (`billing.ts:1068-1072`). Each subscription is
-  cancelled only when `readFirstPayment` proves it `never_paid`
-  (`lib/billing/first-payment.ts:43-76`). The others are *kept*, and the purchase is refused.
-- **Cancel, then prove.** `cancelNeverPaid` (`billing.ts:1022-1049`) cancels the subscription. When
-  the cancel fails, it re-reads the subscription and counts only `canceled` or `incomplete_expired`
-  as gone (`billing.ts:1002`, `1027-1046`). `settleCancelledSubscription` (`billing.ts:919-999`) then
-  re-reads the payments (`readPaymentAfterCancel`, `first-payment.ts:99-124`) and does one of the
-  following:
-  - voids the invoice when no money moved (`voidPayableInvoice`, `billing.ts:860-893`);
-  - refunds when money was taken (`refundTakenPayment`, `billing.ts:814-829`, with the idempotency
-    key `refund-cancelled-first-payment-<pi>` at `billing.ts:820`);
-  - in every other case, alerts (`alertPaymentNeedsSupport`, `lib/billing/payment-alert.ts:31-57`)
-    and refuses.
+- **The flow.** `createNewOrgSubscriptionIntent` → `startNewOrgSubscription`
+  (`app/server/actions/billing.ts:1557-1745`) mints a `default_incomplete` subscription with
+  `metadata.created_by = <user>` and no `organization_id` (`billing.ts:1704-1714`). There is no org
+  yet. The sheet confirms the card, creates the org, then calls `linkSubscriptionToNewOrg`
+  (`components/org/pending-paid-setup.ts:472`, `:516-525`).
+- **The record.** `pending_org_setups` (`lib/db/schema/pending-org-setups.ts:36-60`, migration
+  `0159_ancient_lily_hollister`) is written before the client secret is returned
+  (`billing.ts:1723-1743`). The customers of a user's unlinked records are reused and swept, capped at
+  5 (`lib/billing/pending-org-setup.ts:212-230`).
+- **The prior.** When the browser passes `priorSubscriptionId`, the flow reads it
+  (`ownNewOrgSubscription`, `billing.ts:1768-1780`). A paid prior returns `resume`
+  (`:1597-1604`). An `incomplete` or `incomplete_expired` prior is cancelled or settled only when
+  `readFirstPayment` proves it `never_paid` (`:1605-1626`). A `canceled` prior has its latest invoice
+  voided, and a void that fails refuses (`:1627-1644`). A `canceled` prior with a **paid** invoice is
+  left alone, and a new subscription is minted.
+- **The sweep.** Before minting, the flow lists the `status: "incomplete"` subscriptions of every
+  customer it uses (`cancelIncompleteSubscriptions`, `billing.ts:1066-1090`, called at `:1686-1693`).
+  The list is `limit: 100` and ignores `has_more` (`:1068-1072`). It lists **every** incomplete
+  subscription on the customer, including an org-plan or AI one when the customer is shared. Each
+  is cancelled only when `readFirstPayment` proves it `never_paid` (`lib/billing/first-payment.ts:43-76`).
+- **Cancel, then prove.** `cancelNeverPaid` (`billing.ts:1022-1049`) cancels, then re-reads, and counts
+  only `canceled` or `incomplete_expired` as gone (`:1002`, `:1027-1046`).
+  `settleCancelledSubscription` (`:919-999`) then re-reads the payments
+  (`readPaymentAfterCancel`, `first-payment.ts:99-124`) and does one of the following:
+  - voids when no money moved (`voidPayableInvoice`, `:860-893`);
+  - refunds when money was taken (`refundTakenPayment`, `:814-829`, with the key
+    `refund-cancelled-first-payment-<pi>` at `:820`);
+  - otherwise alerts (`alertPaymentNeedsSupport`, `lib/billing/payment-alert.ts:31-57`) and refuses.
 - **Nothing is remembered.** The sweep lists only `incomplete`, so a subscription this flow
-  cancelled is invisible to the next request. The `PaymentOutcome` docblock says so: "NOTHING HERE IS
-  REMEMBERED BETWEEN REQUESTS" (`billing.ts:679-698`). Two tests pin the gap: the retry mints
-  (`tests/actions/billing-subscription.test.ts:575-606` for the org plan, and `:1522-1545` for
-  create-a-team).
+  cancelled is invisible to the next request. The `PaymentOutcome` docblock says so (`billing.ts:679-698`).
+  A test pins the gap for create-a-team: `tests/actions/billing-subscription.test.ts:1522-1545`.
 - **Lock.** `withPurchaseLock` (`lib/billing/purchase-lock.ts:32-46`) runs
   `pg_advisory_xact_lock(hashtextextended('purchase:'+key))` in a transaction on a pooled service
-  connection, with `lock_timeout = 30s` (`purchase-lock.ts:22`). The keys are `org-plan:<orgId>`
-  (`billing.ts:1193`) and `new-org:<userId>` (`billing.ts:1576`). The AI flow, hosted Checkout and
-  the trial take no lock. The pool is `poolMax`, default 10 (`lib/config/database.ts:20`,
-  `lib/db/index.ts:22`). Nothing in the repo sets `idle_in_transaction_session_timeout`. A grep of
-  `lib/db`, `lib/config` and `infra/` finds none.
-- **The create-a-team record.** `pending_org_setups` (`lib/db/schema/pending-org-setups.ts:36-60`) is
-  written before the client secret is returned (`billing.ts:1723-1743`). The customers of a user's
-  unlinked records are reused and swept. That list is capped at 5 (`lib/billing/pending-org-setup.ts:212-230`).
-- **A Stripe customer is not 1:1 with a payer (rev 2).** `ensureCustomer` stamps an org's customer
-  with both `organization_id` and `created_by` (`billing.ts:660-664`). Create-a-team reuses any
-  customer whose `created_by` is the caller, from the browser (`billing.ts:1651-1657`) or from a
-  record (`ownedCustomer`, `billing.ts:1751-1761`), and never checks `organization_id`. Linking then
-  rewrites that customer's `organization_id` to the new org (`billing.ts:1897-1900`). So one customer
-  can carry `org_plan` subscriptions for two orgs.
-- **The link does not read subscription status (rev 2).** `linkSubscriptionToNewOrg` retrieves the
-  subscription (`billing.ts:1863`) and checks only its customer and metadata before it rewrites them
-  and syncs the plan (`billing.ts:1863-1907`). `NewOrgSetupState` (`lib/billing/new-org-setup.ts:71-95`)
-  carries `paid` and `linked`, and nothing about a hold.
-- **Scheduled work already exists in-process (rev 2).** `instrumentation.ts:27-60` boots several
-  `setInterval` loops, for example `startConnectionSweeper` (`instrumentation.ts:42-43`,
-  `lib/cloud-providers/sweep.ts:204-212`, every 60s through `registerLoop`). Each has an optional
-  externally-driven twin behind `ALETHIA_CRON_SECRET`
-  (`app/api/internal/connections/sweep/route.ts:1-40`). The first revision's "there is no cron in the
-  console" was wrong.
-- **Webhook redelivery (rev 2).** The route marks an event done only when the handler returns. A
-  thrown handler marks it `error` and returns 500 (`app/api/webhooks/stripe/route.ts:67-74`), and a
-  later delivery of an event that is not `done` runs again (`lib/billing/webhook-events.ts:38-45`).
-  **The handler runs inside one transaction that holds a per-event advisory lock**
-  (`runWebhookEventExactlyOnce`, `webhook-events.ts:92-121`), so any Stripe call made from the
-  handler holds a pooled connection for its duration (rev 3).
-- **Every payable artifact a flow hands out (rev 3).** A client secret from `subscriptions.create`
-  (org plan `billing.ts:1231-1250`, AI `:1293-1314`, create-a-team `:1704-1744`); a hosted Checkout
-  URL (`createCheckoutSession`, `:1138-1154`), whose session stays payable until it expires; and a
-  `trialing` subscription that is live at once and is synced before the action returns
-  (`startProTrial`, `:1381-1391`, with `missing_payment_method: "cancel"` at `:1386`). Three other
-  Stripe artifacts reach the browser and are **not** a second subscription: the credit-pack secret
-  (`:2267-2287`, a one-off invoice, §7), the SetupIntent secret (`:2316-2333`, which saves a card and
-  takes no payment), and the Customer Portal URL (`:2853-2857`, which acts on the existing
-  customer). The mirrored `hosted_invoice_url` (`lib/billing/invoices.ts:91`) is written only for a
-  paid invoice (`mirrorPaidInvoice`, `invoices.ts:64-70`), so it is never payable.
-- **Every subscription event writes the org row (rev 4).** `customer.subscription.created` and
-  `.updated` call `syncSubscriptionToBilling(event.data.object)` with no condition
-  (`lib/billing/webhook-handler.ts:103-105`), and `.deleted` does the same (`:107-109`); all three
-  are subscribed (`scripts/stripe-setup.ts:68-70`). The function upserts `organization_billing` on
-  `organization_id` alone (`lib/billing/sync.ts:131-143` → `lib/billing/queries.ts:90-118`), writing
-  `stripeSubscriptionId = <that subscription>` and, for any status but `active` / `trialing`
-  (`lib/billing/plan.ts:80-82`), `plan = community`. For `active` or `trialing` it also claims the
-  plan welcome (`sync.ts:152-153`). The AI columns are written the same way
-  (`upsertOrgAiSubscription`, `sync.ts:175-180`). The payload is the snapshot taken when the event
-  was created, not a fresh read. So any second subscription on the org, or a stale or redelivered
-  event for an earlier one, overwrites the row of a live one. That is **#5514**, a live bug that this
-  design depends on (§5.3 (2)).
-- **Embedded flows are card-only (rev 3).** The sheet confirms with `stripe.confirmCardPayment`
-  (`components/billing/billing-checkout-form.tsx:8`, `:309`). A `processing` bank debit, and a
-  subscription that goes straight to `active` (S4), reach these flows only through hosted Checkout
-  (when the account enables a bank debit there, a dashboard setting outside this repo) or a payment
+  connection, with `lock_timeout = 30s` (`:22`). The key here is `new-org:<userId>` (`billing.ts:1576`).
+  The pool is `poolMax`, default 10 (`lib/config/database.ts:20`). Nothing in the repo sets
+  `idle_in_transaction_session_timeout`.
+- **A Stripe customer is not 1:1 with a payer.** `ensureCustomer` stamps an org's customer with both
+  `organization_id` and `created_by` (`billing.ts:660-664`). Create-a-team reuses any customer whose
+  `created_by` is the caller, from the browser (`:1651-1657`) or from a record (`ownedCustomer`,
+  `:1751-1761`), and never checks `organization_id`. So the create-a-team sweep can meet, and cancel,
+  an existing org's `incomplete` org-plan or AI subscription. Linking rewrites the customer's
+  `organization_id` to the new org (`:1897-1900`).
+- **The link does not read the subscription's status.** `linkSubscriptionToNewOrg` retrieves the
+  subscription (`billing.ts:1863`), checks only the customer and the metadata, rewrites both, and syncs
+  (`:1863-1907`). It returns `Promise<void>` (`:1854`). It does not check whether the org's billing row
+  already names another subscription.
+- **The sheet discards the link's result (rev 5).** `runSteps` calls the link and ignores its value
+  (`pending-paid-setup.ts:516-525`). It replaces any thrown error other than `SetupStopped` with
+  "Retry to complete setup — you won't be charged again." and `retryable: true` (`:535-545`). Then it
+  toasts "Subscription active — your organization is ready." **whatever the subscription's state**
+  (`:558`). The org is created **before** the link (`:472`). That last line is #5522.
+- **Scheduled work already exists in-process.** `instrumentation.ts:27-60` boots `setInterval` loops,
+  for example `startConnectionSweeper` (`:42-43`, `lib/cloud-providers/sweep.ts:204-212`), each with an
+  optional twin behind `ALETHIA_CRON_SECRET` (`app/api/internal/connections/sweep/route.ts:1-40`).
+- **Webhook redelivery.** A thrown handler marks the event `error` and returns 500
+  (`app/api/webhooks/stripe/route.ts:67-74`), and a later delivery of an event that is not `done`
+  runs again (`lib/billing/webhook-events.ts:38-45`). The handler runs inside one transaction that
+  holds a per-event advisory lock (`runWebhookEventExactlyOnce`, `webhook-events.ts:92-121`).
+- **What the webhook writes for a create-a-team subscription.** `syncSubscriptionToBilling` ignores a
+  subscription with no `metadata.organization_id` (`lib/billing/sync.ts:96-101`). So **before the
+  link**, no event for X writes any org row. **After the link**, every X event writes the new org's
+  row (`webhook-handler.ts:103-109`, `sync.ts:131-143` → `queries.ts:90-118`), as does the link's own
+  sync (`billing.ts:1907`). `invoice.payment_succeeded` sends a receipt for any subscription
+  invoice, whatever its status (`webhook-handler.ts:147-160`). `invoice.payment_failed` runs
+  `attemptBackupPayment` (`:163-180`, `lib/billing/payment-methods.ts:67-…`) on the customer's backup
+  cards. `customer.subscription.deleted` emails "subscription canceled" for any subscription
+  (`:107-113`, `lib/email/billing-email.ts:262`).
+- **The sheet is card-only.** It confirms with `stripe.confirmCardPayment`
+  (`components/billing/billing-checkout-form.tsx:8`, `:309`). A `processing` bank debit, or a
+  subscription that is `active` before it is paid (S4), reaches create-a-team only through a payment
   confirmed outside the sheet.
-- **Machine cancels leave no mark today (rev 3).** Every `subscriptions.cancel` the purchase code
-  has ever made passes only an id: today at `billing.ts:1028` and `:1738`, and in every earlier
-  shape in history (`git log -G'subscriptions\.cancel\('`, from `d975e9018` on). Between
-  `3670dc7c7` (2026-07-04) and `28544dfbb` (2026-07-06) the org-plan flow also cancelled the org
-  row's subscription whenever it was not `active` or `trialing`, `past_due` included. The other
-  cancel in the console is the statutory withdrawal, which refunds a computed part of the payment
-  first and then cancels (`app/server/actions/consumer-rights.ts:178-193`). The ordinary customer
-  cancel is `cancel_at_period_end` (`billing.ts:2478`). The Customer Portal's cancellation mode is a
-  dashboard setting; nothing in this repo fixes it.
+- **Machine cancels leave no mark today.** Every `subscriptions.cancel` the purchase code has made
+  passes only an id (`billing.ts:1028`, `:1738`; `git log -G'subscriptions\.cancel\('` from
+  `d975e9018` on).
 
 ### 1.2 What the reviews found
 
 #5489 had five review rounds, and #5455 had its own. Between them they found a defect in every
-version of a memory-less, or a written-after-the-fact, design. §6 lists all of them. They fall into
-four families:
+version of a memory-less, or a written-after-the-fact, design. §6 lists all of them that are in
+scope. They fall into four families:
 
 1. **Memory.** A refusal is forgotten, and the retry mints beside a payment that is still settling.
-2. **Wrong object.** A hold reads `latest_invoice` and later refunds a *renewal* (blocker
-   4177048230).
-3. **Wrong scope.** An org-plan hold blocks the same user's create-a-team purchase and sends it down
-   the wrong resume path, which refuses it permanently with false copy.
-4. **Faults stacking.** A second failure, such as the hold write failing after the void failed,
+2. **Wrong object.** A hold reads `latest_invoice` and later refunds a renewal (blocker 4177048230).
+3. **Wrong scope.** An org-plan hold blocked a create-a-team purchase and routed it to the wrong
+   resume path. In rev 5 no other flow opens holds, so this family reduces to "the create-a-team sweep
+   must not touch another payer's subscription" (§4.2).
+4. **Faults stacking.** A second failure (for example, the hold write fails after the void failed)
    leaves no memory and no block.
 
 ### 1.3 Facts about Stripe this design relies on
@@ -193,59 +187,43 @@ four families:
 The docs were read on 2026-10-04.
 
 - **S1.** Cancelling a subscription sets `auto_advance=false` on its `open` and `draft` invoices. "You
-  can still manually attempt to collect payment"
-  (docs.stripe.com/billing/subscriptions/cancel, "invoices"). So a stale tab can still pay them.
-  After a cancel, only the `metadata` and `cancellation_details` can be updated (same page).
+  can still manually attempt to collect payment" (docs.stripe.com/billing/subscriptions/cancel,
+  "invoices"). So a stale tab can still pay them. After a cancel, only `metadata` and
+  `cancellation_details` can be updated.
 - **S2.** A `void` invoice is terminal and not payable. Only an `open` or `uncollectible` invoice can
   be voided (docs.stripe.com/invoicing/overview, "Void invoices").
 - **S3.** "Voided invoices don't affect subscription status"
-  (docs.stripe.com/billing/subscriptions/overview). Voiding the first invoice of an `incomplete`
-  subscription leaves it `incomplete` until it expires after about 23h, when Stripe itself voids the
-  invoice.
-- **S4.** A subscription paid with a delayed-notification method (ACH Direct Debit) "can move directly
-  to `active` after creation and bypass `incomplete`. If the payment fails later, Stripe voids the
-  invoice but the subscription remains `active`" (same page). **So `active` does not prove that a
-  first payment was taken**, and the `incomplete`-only sweep never sees such a subscription.
-- **S5.** A PaymentIntent that fails returns to `requires_payment_method`. It can then be confirmed
-  again from any page that holds its client secret.
-- **S6.** An idempotency key replays the first saved result, a failure included, for 24h.
-  `refundTakenPayment`'s own docblock already says this (`billing.ts:806-813`).
-- **S7 (unverified; a §8 step 2 task, rev 3).** Stripe is said to refuse to void an invoice while its payment is
-  `processing`. The reviewers stated it, and I found no doc that says it. **The design does not
-  depend on it.** Every void is followed by a payment re-read.
-- **S8 (rev 2, reviewer-stated, not re-read).** Voiding an invoice cancels its PaymentIntent, so
-  after a void the payments read `canceled` (`pay = failed`), not `awaiting`. **The design does not
-  depend on which one is read:** T3 and T3v treat `awaiting` and `failed` alike.
-- **S9 (rev 2, reviewer-stated, not re-read).** A refund on a bank debit starts `pending` and can
-  later become `failed` (for example, a closed account), while the charge's `amount_refunded` already
-  counts it. **The design reads each refund's `status`**, and only `succeeded` counts (§3.5).
-- **S10 (rev 2, not re-read).** Stripe retries a webhook delivery that did not get a 2xx, with
-  backoff, for a bounded period. **Liveness does not depend on it**: the scheduled sweeper (§5.4)
-  is the backstop, and redelivery only makes the webhook path faster.
+  (docs.stripe.com/billing/subscriptions/overview). A voided first invoice leaves the subscription
+  `incomplete` until it expires after about 23h.
+- **S4.** A subscription paid with a delayed-notification method "can move directly to `active` after
+  creation and bypass `incomplete`" (same page). **`active` does not prove that a first payment was
+  taken.**
+- **S5.** A PaymentIntent that fails returns to `requires_payment_method`, and can be confirmed again
+  from any page that holds its client secret.
+- **S6.** An idempotency key replays the first saved result, a failure included, for 24h
+  (`refundTakenPayment`'s docblock, `billing.ts:806-813`).
+- **S7 (unverified; a §8 step 2 task).** Stripe is said to refuse to void an invoice while its payment
+  is `processing`. **The design does not depend on it.** Every void is followed by a payment re-read.
+- **S8 (reviewer-stated, not re-read).** Voiding an invoice cancels its PaymentIntent, so a void reads
+  `pay = failed`. **The design does not depend on which one is read:** T3 and T3v treat `awaiting` and
+  `failed` alike.
+- **S9 (reviewer-stated, not re-read).** A refund on a bank debit starts `pending` and can later become
+  `failed`, while `amount_refunded` already counts it. **The design reads each refund's `status`.**
+- **S10 (not re-read).** Stripe retries a webhook delivery that did not get a 2xx, for a bounded period.
+  **Liveness does not depend on it** (§5.4).
 
-The following were read from the type definitions of the `stripe` SDK this repo pins (22.6.1,
-`esm/resources/…` in the package) on 2026-10-04 (rev 3):
+From the type definitions of the `stripe` SDK this repo pins (22.6.1):
 
-- **S11.** A subscription's `canceled_at` is the time of the cancellation; "if the subscription was
-  canceled with `cancel_at_period_end`, `canceled_at` will reflect the time of the most recent
-  update request, not the end of the subscription period". `ended_at` is "the date the
-  subscription ended" (`Subscriptions.d.ts:137-139`, `:189-191`). **So the backfill compares a
-  payment with `ended_at`, never `canceled_at`** (§8).
+- **S11.** `canceled_at` is the time of the cancel request. `ended_at` is "the date the subscription
+  ended" (`Subscriptions.d.ts:137-139`, `:189-191`).
 - **S12.** `cancellation_details.reason` is one of `cancellation_requested`, `payment_failed`,
   `payment_disputed`, `canceled_by_retention_policy` (`Subscriptions.d.ts:570`).
-  `subscriptions.cancel` accepts `cancellation_details.comment` (`Subscriptions.d.ts:2709`, `:2728`),
-  and the subscription returns it (`:364`). The design stamps every cancel it makes with it (§5.3).
-- **S13.** An invoice has `billing_reason` (`subscription_create` for a subscription's first
-  invoice, `Invoices.d.ts:474`) and `status_transitions.paid_at` (`Invoices.d.ts:740-743`).
-- **S14.** A Checkout Session's `expires_at` can be set from 30 minutes to 24 hours after creation
-  and defaults to 24 hours (`Checkout/Sessions.d.ts:2225-2227`). `checkout.sessions.list` filters on
-  `customer` and `status` (`:5074` on), and `checkout.sessions.expire` exists (`:42`). That only an
-  `open` session can be expired, and that an expired one cannot be completed, is from Stripe's
-  docs as reviewers stated them, **not re-read**. The design re-reads the session after every
-  expire, so it does not depend on either.
-- **S15 (reviewer-stated, not re-read).** An uncaptured card authorisation (`requires_capture`) is
-  released by Stripe after about 7 days. The design never waits on it (T7 cancels it when the
-  subscription is ended), and the copy for it promises nothing shorter (§5.5).
+  `subscriptions.cancel` accepts `cancellation_details.comment` (`:2709`, `:2728`), and the
+  subscription returns it (`:364`).
+- **S13.** An invoice has `billing_reason` (`subscription_create` for the first invoice,
+  `Invoices.d.ts:474`) and `status_transitions.paid_at` (`:740-743`).
+- **S15 (reviewer-stated, not re-read).** An uncaptured authorisation (`requires_capture`) is released
+  after about 7 days.
 
 ---
 
@@ -253,62 +231,58 @@ The following were read from the type definitions of the `stripe` SDK this repo 
 
 | Term | Meaning |
 |---|---|
-| **Purchase scope** | The product a flow sells, and so the subscriptions it may sweep and the holds it reads: `org_plan`, `new_org`, `ai`. |
-| **Payer key** | Who pays for a scope. `org_plan` and `ai` use the org id. `new_org` uses the user id, because there is no org yet. |
-| **Classification (rev 2)** | The `(scope, payer_key)` a subscription belongs to, read from **its own metadata** (§4.2). A flow sweeps, live-checks and holds only subscriptions whose classification equals its own. A shared customer is never evidence. |
-| **Payment hold** | A row saying that one subscription, which a purchase flow touched, is not yet proven settled. While it is open, it blocks minting in its `(scope, payer_key)`. |
-| **Held invoice** | The invoice the hold was opened on: `latest_invoice` at the moment of the write-ahead. **This is the only invoice a hold ever reads, voids or refunds.** |
-| **Settled** | The held invoice is `void`, or is `paid` and fully refunded. Or the subscription became a live purchase that the product now owns (adopted). |
-| **Live subscription** | Stripe status `active`, `trialing`, `past_due`, `unpaid` or `paused`. A purchase in the same scope must never mint beside one. |
+| **Create-a-team subscription** | A subscription whose own metadata has `created_by` and no `organization_id` (`billing.ts:1711`). It becomes an ordinary org subscription once the link writes `organization_id` (`:1901-1903`). |
+| **Payer** | The user id. There is no org yet, so the user pays. |
+| **Classification** | A subscription belongs to user U's create-a-team flow when **its own metadata** has `created_by = U` and no `organization_id`, or when an open hold opened by U names it (I12). Anything else on the same customer is **not this flow's**: never swept, never held, never counted (§4.2). A shared customer is never evidence. |
+| **Payment hold** | A row saying that one create-a-team subscription, which the flow touched, is not yet proven settled. While it is open, it blocks U's next create-a-team mint. |
+| **Held invoice** | The invoice the hold was opened on: `latest_invoice` at the moment of the write-ahead. **The only invoice a hold ever reads, voids or refunds.** |
+| **Settled** | The held invoice is `void`, or `paid` and fully refunded. Or the subscription became a live purchase that the user now owns (adopted). |
+| **Live subscription** | Stripe status `active`, `trialing`, `past_due`, `unpaid` or `paused`. |
 
 `PAID_SUBSCRIPTION_STATUSES` (`lib/billing/new-org-setup.ts:96-100`) is `active`, `trialing` and
-`past_due`. **Live** is deliberately wider: an `unpaid` or `paused` subscription still exists and can
-come back.
+`past_due`. **Live** is deliberately wider: an `unpaid` or `paused` subscription still exists.
+
+The rev 4 notion of a **purchase scope** (`org_plan`, `new_org`, `ai`) is gone. Only one flow opens
+holds, so a hold is keyed by its payer alone (§4.1). Widening is Q13.
 
 ---
 
 ## 3. The state machine
 
+The machine is flow-agnostic. It is unchanged from rev 4 except where marked **(rev 5)**.
+
 ### 3.1 States
 
-| State | Meaning | Blocks its scope? |
+| State | Meaning | Blocks the payer? |
 |---|---|---|
-| `closing` | Written **before** the void and the cancel (write-ahead). The flow means to make this subscription unpayable, and has not yet proven that it has. | yes |
-| `cancel_unproven` | The void or the cancel failed, and a re-read did not prove it done (rev 2: a failed void now lands here too, with no cancel attempted). The subscription may still be `incomplete`, and its invoice may be payable. T3 or T3v retries on every observe. | yes |
+| `closing` | Written **before** the void and the cancel (write-ahead). | yes |
+| `cancel_unproven` | The void or the cancel failed, and a re-read did not prove it done. The subscription may still be `incomplete`, and its invoice payable. T3 or T3v retries on every observe. | yes |
 | `payment_in_flight` | The subscription is ended, but a PaymentIntent on the held invoice is `processing` or `requires_capture`. | yes |
-| `invoice_payable` | The subscription is ended and no money was taken, but the held invoice is not proven unpayable: a failed void, or a `draft` not yet deleted. | yes |
-| `refund_due` | A PaymentIntent on the held invoice `succeeded` after our cancel, and no refund covering it is created and alive (every refund on it is absent, `failed` or `canceled`). | yes |
-| `refund_pending` (rev 2) | Refunds covering every succeeded PaymentIntent exist, and at least one of them is `pending` or `requires_action`, not yet `succeeded`. | **no** (see below, Q10) |
+| `invoice_payable` | The subscription is ended and no money was taken, but the held invoice is not proven unpayable. | yes |
+| `refund_due` | A PaymentIntent on the held invoice `succeeded` after our cancel, and no live refund covers it. | yes |
+| `refund_pending` | Refunds covering every succeeded PaymentIntent exist, and at least one is `pending` or `requires_action`. | **no** (Q10) |
 | `needs_operator` | The machine cannot settle this hold. Only an operator can release it. | yes |
-| `released` | Terminal for this row. It is kept for audit, with `release_reason`. A later E0 on the same subscription writes a **new** row (§4.1). | no |
+| `released` | Terminal for this row, kept for audit with `release_reason`. A later E0 on the same subscription writes a **new** row. | no |
 
-**Why `refund_pending` does not block (rev 2).** The block exists to stop a *second payment for the
-same product* while an earlier one may still land. In `refund_pending` the earlier payment has
-landed and is on its way back; a new purchase is the one the customer now wants, and blocking it for
-the days a bank refund takes punishes them for our cancel. The risk it leaves is a refund that later
-**fails**: the hold then returns to `refund_due` (T10f) and the machine refunds again, or an operator
-does (T14). The customer is never left with two payments and no live process to return one. Q10 asks
-the maintainer to confirm. **Not blocking is not the same as not watched (rev 3):** a refund that
-neither succeeds nor fails, for example one left in `requires_action`, would otherwise be observed
-every hour indefinitely with nobody told. I11 gives `refund_pending` its own alert bounds (§5.4).
+**Why `refund_pending` does not block.** The block stops a *second payment for the same product*
+while an earlier one may still land. In `refund_pending` the earlier payment has landed and is on its
+way back. A refund that later **fails** returns the hold to `refund_due` (T10f), and the machine
+refunds again, or an operator does (T14). A refund that neither succeeds nor fails reaches an operator
+through I11.
 
-Every open state sets a non-null `next_check_at` when it is entered (rev 2), so the sweeper (§5.4)
-reaches every open hold: `closing` and `cancel_unproven` 5m, `invoice_payable` 15m,
-`payment_in_flight` 1h, `refund_due` the §3.5 backoff, `refund_pending` 1h, `needs_operator` 24h
-(observe only). Every state entry also writes `state_since` (rev 3), and every successful
-observation writes `last_pay` (the `pay` component of O) and, for `refund_pending`,
-`refund_action_since` (the earliest time a covering refund was seen in `requires_action`, null when
-none is). The age alerts (I11) and the copy (§5.5) read those three columns.
+Every open state sets a non-null `next_check_at` when it is entered: `closing` and `cancel_unproven`
+5m, `invoice_payable` 15m, `payment_in_flight` 1h, `refund_due` the §3.5 backoff, `refund_pending` 1h,
+`needs_operator` 24h (observe only). Every state entry writes `state_since`. Every successful
+observation writes `last_pay` and, for `refund_pending`, `refund_action_since`. The age alerts (I11)
+and the copy (§5.5) read those three columns.
 
-`release_reason` is one of the following:
-
-| Reason | When |
+| `release_reason` | When |
 |---|---|
 | `voided_unpaid` | The held invoice is void and no PaymentIntent on it succeeded. |
 | `deleted_draft` | The held invoice was a draft and was deleted. |
-| `refunded` | Refunded in full by this machine, and every refund that covers it reads `succeeded` (rev 2). |
-| `already_refunded` | Stripe reports refunds this hold did not create, and they cover the charge and read `succeeded` (rev 2). |
-| `adopted` | The subscription went live while it was still ours to keep. Only `closing` and `cancel_unproven` can reach this, because an ended subscription never goes live. |
+| `refunded` | Refunded in full by this machine, and every covering refund reads `succeeded`. |
+| `already_refunded` | Refunds this hold did not create cover the charge and read `succeeded`. |
+| `adopted` | The subscription went live while it was still ours to keep. Only `closing` and `cancel_unproven` can reach this. |
 | `expired_unpaid` | `incomplete_expired`, with the held invoice void or unpaid. |
 | `operator` | An operator released it. |
 
@@ -319,210 +293,159 @@ writes `attempts`, `last_error` and `next_check_at`.
 
 | Event | Raised by |
 |---|---|
-| **E0 `open`** | The purchase flow, under the lock, just before it voids or cancels a swept or prior subscription. |
-| **E1 `observe`** | `advanceHold(hold)` reads the subscription, the held invoice, that invoice's payments (each PaymentIntent), and their refunds. It classifies the result as the observation **O** below. Callers, **each holding the payer's lease** (rev 2): (a) a purchase in the hold's scope, for **every** open hold in the scope, and the create-a-team link for a hold on its subscription (§5.6, rev 3); (b) the scheduled sweeper, for every hold that is **due**: `next_check_at <= now()`, or `nudged_at` later than the start of the hold's last observation, `observed_at` (§4.1, §5.4). The webhook makes a hold due by writing `nudged_at = now()` and waking the sweeper (§5.3; rev 3: the webhook itself no longer runs `advanceHold`; rev 4: the nudge is a hint column, not `next_check_at`, and takes no part in the compare-and-set); (c) the operator's `show` and `reconcile` (§5.4). |
+| **E0 `open`** | The create-a-team flow, under the lease, just before it voids or cancels a swept subscription or the prior. |
+| **E1 `observe`** | `advanceHold(hold)` reads the subscription, the held invoice, that invoice's payments, and their refunds, and classifies them as **O** below. Callers, **each holding the user's lease**: (a) the create-a-team flow, for **every** open hold of its user, and the link for a hold on its subscription (§5.6); (b) the scheduled sweeper, for every hold that is **due**: `next_check_at <= now()`, or `nudged_at > observed_at` (§4.1, §5.4); (c) the operator's `show` and `reconcile`. The webhook only nudges (§5.3). |
 | **E2 `operator_release`** | The audited operator command (§5.4). |
 
-**O** is a tuple. Each component is read from Stripe in this request. The reads are sequential, not
-atomic, and run in this order (rev 2): subscription, **invoice, then payments**, then refunds. A
-payment that lands between two reads therefore shows up in the later payments read, not only in the
-invoice. The order narrows the read race; it does not close it, so T11 also re-reads (rev 2).
+**O** is a tuple read in this order: subscription, invoice, payments, refunds. A payment that lands
+between two reads shows up in the later payments read. The order narrows the read race; it does not
+close it, so T11r also re-reads.
 
 - `sub`: `incomplete` · `ended` (`canceled` or `incomplete_expired`) · `live` · `missing`
 - `inv`: `open` · `uncollectible` · `draft` · `void` · `paid` · `none`
-- `pay`: one of the following:
-  - `awaiting`: every PaymentIntent is `requires_payment_method`, `requires_confirmation` or `requires_action`, or there is no payment at all
+- `pay`:
+  - `awaiting`: every PaymentIntent is `requires_payment_method`, `requires_confirmation` or `requires_action`, or there is no payment
   - `failed`: a PaymentIntent is `canceled`, and none is in flight or succeeded
   - `in_flight(pi)`: `processing`
   - `capturable(pi)`: `requires_capture`
   - `succeeded(pis)`
   - `unrecognised`: a payment that is not a PaymentIntent, or the payment list has `has_more`
-- `refund` (rev 2), for each succeeded PaymentIntent, from `refunds.list({ payment_intent })`:
+- `refund`, for each succeeded PaymentIntent, from `refunds.list({ payment_intent })`:
   - `none`: no refund, or every refund is `failed` or `canceled`
-  - `pending`: refunds that are not `failed` or `canceled` cover `amount_received`, and at least one
-    is `pending` or `requires_action`
+  - `pending`: live refunds cover `amount_received`, and at least one is `pending` or `requires_action`
   - `done`: refunds with `status = succeeded` alone cover `amount_received`
-  - `partial`: anything else (live refunds that do not cover the amount)
+  - `partial`: anything else
 
-  `amount_refunded` is **not** read as proof. It counts a refund from the moment it is created (S9).
-
-When the first `observe` of `closing` finds the subscription `incomplete` with `pay = awaiting`, it is
-the normal path. The flow then **voids first, then cancels** (§3.4).
+  `amount_refunded` is **not** read as proof (S9).
 
 ### 3.3 Transition table
 
 The rows are evaluated top to bottom, and the first match wins. "→ act" means `advanceHold` performs
-the Stripe write, then observes again in the same call, up to a bound of 3 steps per call.
+the Stripe write, then observes again in the same call, up to 3 steps per call.
 
-**Positive evidence before any release (rev 4, J2).** A row that releases a hold, or that moves it
-toward a release without a further Stripe write, matches only on a **positively-read terminal
-state**, never on the absence of something. Concretely:
+**Positive evidence before any release.** A row that releases a hold matches only on a
+**positively-read terminal state**, never on the absence of something:
 
-- A release on a refund (T10) or a pending refund (T10p) needs `pay = succeeded(pis)` with `pis`
-  **non-empty**, and the condition on refunds is then about those PaymentIntents. "Every succeeded
-  PaymentIntent is refunded" is never read as true over an empty set.
-- A release with no money taken (T9) needs `inv = void` or `inv = none` **and**
-  `pay ∈ {awaiting, failed}`: a payments read that returned a complete list of recognised
-  PaymentIntents (no `has_more`, nothing that is not a PaymentIntent). `unrecognised` never
-  releases.
-- A release that follows a Stripe write (T8's void, T8d's delete) is positive by its own act: a void
-  that succeeded proves the invoice was not `paid` (S2), and a deleted draft cannot be paid.
-- Every read that is empty, lagging or unrecognised where the invoice says money moved goes to the
-  **re-read-then-hold** rows, T11r and T11, which sit **above** every refund and release row (above
-  T5). They re-read once and match the table again; a second read that still proves nothing goes to
-  `needs_operator`, which alerts and never releases. In revision 3 they sat below T10, so a hold
-  whose invoice read `paid` with an empty payments read released as `already_refunded` with no
-  refund made and no alert.
+- T10 and T10p need `pay = succeeded(pis)` with `pis` **non-empty**.
+- T9 needs `inv ∈ {void, none}` **and** `pay ∈ {awaiting, failed}`, a complete list of recognised
+  PaymentIntents. `unrecognised` never releases.
+- A release after a Stripe write (T8's void, T8d's delete) is positive by its own act.
+- Every read that is empty, lagging or unrecognised where the invoice says money moved goes to T11r
+  and T11, which sit **above** every refund and release row.
 
 | # | From | Observation / event | Action | To |
 |---|---|---|---|---|
 | T0 | — | E0 `open`, and the row is written | — | `closing` |
-| T0f | — | E0 `open`, and the **write fails** | Nothing is voided or cancelled. The purchase is refused (`UNCONFIRMED`, with no promise of a block). The subscription is still `incomplete`, so Stripe remembers it and the next sweep finds it. | (no row) |
-| T0h (rev 3) | — | E0 `open`, and the insert conflicts with an **open** hold on the same subscription (the partial unique index, §4.1). This happens when a subscription changed classification after its hold was opened, for example a `new_org` subscription linked while T4-shaped (§5.6) and then swept as `org_plan`. | No new row, and nothing is voided or cancelled. The flow refuses with that hold's clause (§5.5). It does not advance the hold, whose lease is another payer's; the sweeper does (§5.4). | (the existing row) |
-| T1 | any open state | `sub = missing` (`resource_missing`) | alert | `needs_operator` |
-| T2 | `closing`, `cancel_unproven` | `sub = live` | none. The flow treats it as a live purchase (§4.3). | `released(adopted)` |
-| T3 (rev 2) | `closing`, `cancel_unproven` | `sub = incomplete`, `pay ∈ {awaiting, failed}`, `inv ∈ {open, uncollectible}` | → act: **void the held invoice**, then **re-read it**. **Only when the re-read shows `inv = void`** does the same call go on to cancel (T3v). A void that throws, or a re-read showing anything but `void` (for example `paid`, because the payment just landed), **makes no `subscriptions.cancel` call** and goes to T3a. | the next observe decides |
-| T3v (rev 2) | `closing`, `cancel_unproven` | `sub = incomplete`, `inv = void`, `pay ∈ {awaiting, failed}` | → act: **cancel the subscription**, stamped `cancellation_details.comment = "alethia:checkout_closed:<hold id>"` (rev 3, S12, §5.3), then re-read it. This is the row a hold reaches after a void that succeeded and a cancel that did not (S8: the void cancels the PaymentIntent, so `pay` reads `failed`). A crash between the void and the cancel lands here too. | `ended` → the next observe (T9, `released(voided_unpaid)`); a cancel failure → `cancel_unproven`, which matches T3v again on the next observe |
-| T3a | `closing` | `sub = incomplete`, and the void or the cancel threw, or the void's re-read did not show `void` | **No alert here (rev 2, advisory 5).** Most of these are the benign case of a payment that just landed. `attempts += 1`. | `cancel_unproven` |
-| T3b (rev 2) | `cancel_unproven` | T3 or T3v's act fails a **second** consecutive time (`attempts >= 2`) | alert | `cancel_unproven` |
-| T4 (rev 2) | `closing`, `cancel_unproven` | `sub = incomplete`, `pay ∈ {in_flight, capturable, succeeded}` | Nothing. A payment is under way or has landed, and the subscription will go live (T2) or fall back to `failed` (T3 / T3v). | unchanged (blocks) |
-| T11r (rev 2, moved above T5 in rev 4) | any open state but `needs_operator` (T15) | `inv = paid` and no succeeded PaymentIntent: the payments read is empty, lagging (`awaiting` or `failed`), or shows only PaymentIntents that are not `succeeded` | → act: **re-read the payments once** (R5 advisory 1, now in the observation). The re-read is matched against the table again **with T11r excluded**: a `succeeded` read goes to T5 when ended, T4 or T2 when not; an `unrecognised` read goes to T11. Only a second read with no succeeded PaymentIntent alerts. **Nothing below this row can release a hold whose invoice reads `paid` without a succeeded PaymentIntent** (rev 4, J2). | as matched, else `needs_operator` |
-| T11 (rev 2, moved above T5 in rev 4) | any open state but `needs_operator` (T15) | `pay = unrecognised` (whatever `inv` reads, `void` included) | → act: re-read the payments once, as T11r. A recognised re-read is matched again with T11 and T11r excluded; a second `unrecognised` read alerts, with copy per §5.5 (never "no PaymentIntent took the money"). | as matched, else `needs_operator` |
-| T5 | any of `closing`, `cancel_unproven`, `payment_in_flight`, `invoice_payable`, `refund_due` | `sub = ended`, `pay = succeeded(pis)` with `pis` non-empty, some PaymentIntent with `refund = none` or `partial` | → act: for each such PaymentIntent, **reserve an attempt number first** (a state write, §3.5), then refund the uncovered amount with that number's key | `refund_pending`, or `released(refunded)` when every refund already reads `succeeded`; on failure T13 / T14 |
+| T0f | — | E0 `open`, and the **write fails** | Nothing is voided or cancelled. The purchase is refused (`UNCONFIRMED`, no promise of a block). The subscription is still `incomplete`, so the next sweep finds it. | (no row) |
+| T0h | — | E0 `open`, and the insert conflicts with an **open** hold on the same subscription (the partial unique index, §4.1). **Rev 5:** this now happens only when the backfill (§8) and a purchase meet the same subscription. | No new row, and nothing is voided or cancelled. The flow refuses with that hold's clause (§5.5). | (the existing row) |
+| T1 | any open state | `sub = missing` | alert | `needs_operator` |
+| T2 | `closing`, `cancel_unproven` | `sub = live` | none. The flow treats it as the user's paid setup and returns `resume` (§4.3). | `released(adopted)` |
+| T3 | `closing`, `cancel_unproven` | `sub = incomplete`, `pay ∈ {awaiting, failed}`, `inv ∈ {open, uncollectible}` | → act: **void the held invoice**, then **re-read it**. Only a re-read showing `inv = void` lets the same call go on to cancel (T3v). A void that throws, or a re-read showing anything else, **makes no cancel** and goes to T3a. | the next observe decides |
+| T3v | `closing`, `cancel_unproven` | `sub = incomplete`, `inv = void`, `pay ∈ {awaiting, failed}` | → act: **cancel**, stamped `cancellation_details.comment = "alethia:checkout_closed:<hold id>"` (S12, §5.3 (4)), then re-read. | `ended` → T9; a cancel failure → `cancel_unproven` |
+| T3a | `closing` | `sub = incomplete`, and the void or the cancel threw, or the re-read did not show `void` | No alert. `attempts += 1`. | `cancel_unproven` |
+| T3b | `cancel_unproven` | T3 or T3v fails a **second** consecutive time | alert | `cancel_unproven` |
+| T4 | `closing`, `cancel_unproven` | `sub = incomplete`, `pay ∈ {in_flight, capturable, succeeded}` | Nothing. The subscription will go live (T2) or fall back to `failed` (T3 / T3v). | unchanged (blocks) |
+| T11r | any open state but `needs_operator` | `inv = paid` and no succeeded PaymentIntent | → act: re-read the payments once and match again with T11r excluded. A second read with no succeeded PaymentIntent alerts. | as matched, else `needs_operator` |
+| T11 | any open state but `needs_operator` | `pay = unrecognised` | → act: re-read once, as T11r. A second `unrecognised` read alerts; the copy never says "no PaymentIntent took the money". | as matched, else `needs_operator` |
+| T5 | `closing`, `cancel_unproven`, `payment_in_flight`, `invoice_payable`, `refund_due` | `sub = ended`, `pay = succeeded(pis)` with `pis` non-empty, some PaymentIntent with `refund ∈ {none, partial}` | → act: for each, **reserve an attempt number first** (§3.5), then refund the uncovered amount with that number's key | `refund_pending`, or `released(refunded)`; on failure T13 / T14 |
 | T6 | (same set as T5) | `sub = ended`, `pay = in_flight(pi)` | none | `payment_in_flight` |
-| T7 | (same set as T5) | `sub = ended`, `pay = capturable(pi)` | → act: `paymentIntents.cancel(pi)` (advisory 1 #3) | the next observe decides |
-| T8 | (same set as T5) | `sub = ended`, `pay ∈ {awaiting, failed}`, `inv ∈ {open, uncollectible}` | → act: void (S5: a failed PaymentIntent can be confirmed again, so the void comes **before** the release) | `released(voided_unpaid)`, or on failure `invoice_payable` |
-| T8d | (same set as T5) | `sub = ended`, `inv = draft` | → act: `invoices.del` (a draft cannot be voided, S2) | `released(deleted_draft)`, or on failure `invoice_payable` |
-| T9 (rev 4) | (same set as T5) | `sub = ended`, `inv ∈ {void, none}`, `pay ∈ {awaiting, failed}` (rev 4: was `pay ≠ succeeded ∧ pay ≠ in_flight`, which `unrecognised` matched; T11 now takes that read first) | none | `released(voided_unpaid)`, or `released(expired_unpaid)` when the status is `incomplete_expired` |
-| T10 (rev 2, rev 4) | (same set as T5), `refund_pending` | `sub = ended`, `pay = succeeded(pis)` with `pis` **non-empty**, and every PaymentIntent in `pis` has `refund = done` | none | `released(refunded)` when this hold created the refunds, else `released(already_refunded)` |
-| T10p (rev 2, rev 4) | (same set as T5), `refund_pending` | `sub = ended`, `pay = succeeded(pis)` with `pis` **non-empty**, every PaymentIntent in `pis` has `refund ∈ {pending, done}`, at least one `pending` | none. `next_check_at = now + 1h`. | `refund_pending` |
-| T10f (rev 2) | `refund_pending` | some succeeded PaymentIntent reads `refund ∈ {none, partial}` again (a refund `failed` or was `canceled`) | alert once. No counter write here (rev 4): the next T5 reserves the next attempt number before it calls Stripe. | `refund_due`, which T5 acts on with the next attempt's key (§3.5) |
-| T12 | `invoice_payable` | the void fails | → act: re-read the payments **once** (advisory 3 #3). `succeeded` goes to T5, `in_flight` to T6, anything else stays. | as matched |
-| T13 | `refund_due` | `refunds.create` fails, and the budget is left (§3.5) | `next_check_at = now + backoff`. The attempt number was already consumed by T5's reservation (rev 4), so a lost write here cannot make the next attempt reuse the failed key. | `refund_due` |
-| T14 | `refund_due` | the refund fails and the budget is exhausted (`refund_attempt >= 5` reserved, §3.5) | alert | `needs_operator` |
-| T15 | `needs_operator` | E1 `observe` | Observe and record only. It never auto-releases. | `needs_operator` |
-| T16 | any open state | E2 `operator_release(reason)` | **Under the payer's lease (rev 3)**, taken with up to a 30s wait and refused when still busy, so a sweeper or purchase that is mid-step finishes first (a webhook nudge is a hint write and is not waited for, §4.1). Then the command prints the live Stripe observation (rev 2), so an operator sees an `incomplete` subscription before releasing it, and writes `released_by`, `release_note` and an audit event with a compare-and-set on the row's `version` (§4.1). A write by any holder that read an older `version` changes nothing, so a step already in flight cannot overwrite `released`. | `released(operator)` |
+| T7 | (same set as T5) | `sub = ended`, `pay = capturable(pi)` | → act: `paymentIntents.cancel(pi)` | the next observe decides |
+| T8 | (same set as T5) | `sub = ended`, `pay ∈ {awaiting, failed}`, `inv ∈ {open, uncollectible}` | → act: void, **before** the release (S5) | `released(voided_unpaid)`, or `invoice_payable` |
+| T8d | (same set as T5) | `sub = ended`, `inv = draft` | → act: `invoices.del` | `released(deleted_draft)`, or `invoice_payable` |
+| T9 | (same set as T5) | `sub = ended`, `inv ∈ {void, none}`, `pay ∈ {awaiting, failed}` | none | `released(voided_unpaid)`, or `released(expired_unpaid)` for `incomplete_expired` |
+| T10 | (same set as T5), `refund_pending` | `sub = ended`, `pis` **non-empty**, every one `refund = done` | none | `released(refunded)` when this hold created the refunds, else `released(already_refunded)` |
+| T10p | (same set as T5), `refund_pending` | `sub = ended`, `pis` **non-empty**, every one `refund ∈ {pending, done}`, at least one `pending` | `next_check_at = now + 1h` | `refund_pending` |
+| T10f | `refund_pending` | a succeeded PaymentIntent reads `refund ∈ {none, partial}` again | alert once | `refund_due` |
+| T12 | `invoice_payable` | the void fails | → act: re-read the payments once. `succeeded` → T5, `in_flight` → T6, else stay. | as matched |
+| T13 | `refund_due` | `refunds.create` fails, budget left (§3.5) | `next_check_at = now + backoff` | `refund_due` |
+| T14 | `refund_due` | the refund fails and `refund_attempt >= 5` | alert | `needs_operator` |
+| T15 | `needs_operator` | E1 `observe` | Observe and record only. Never auto-releases. | `needs_operator` |
+| T16 | any open state | E2 `operator_release(reason)` | Under the user's lease (up to 30s wait, refused if still busy). Prints the live observation, then writes `released_by`, `release_note` and an audit event with a compare-and-set on `version`. | `released(operator)` |
 | T17 | any open state | `sub` reads a status outside these rows (`unpaid`, `paused` on an ended sub, an unknown value) | alert | `needs_operator` |
-| T18 | `released` | any event | none (inert). A new E0 on the same subscription opens a new row (§4.1). | `released` |
+| T18 | `released` | any event | none (inert) | `released` |
 
 ### 3.4 Why void before cancel
 
-Today the order is cancel, read, then void (`billing.ts:1028`, then `:925`, then `:940`). Between the
-cancel and the void, the subscription is `canceled` while its invoice is still payable (S1). That
-window is where blockers 4176267018 and 4176778630 live.
+Today the order is cancel, read, then void (`billing.ts:1028`, `:925`, `:940`). Between the cancel
+and the void, the subscription is `canceled` while its invoice is still payable (S1). That window is
+where blockers 4176267018 and 4176778630 live.
 
-The design voids first. Voiding an `incomplete` subscription's invoice does not end the subscription
-(S3), so the cancel still follows. But a stale tab or a 3DS page loses the ability to pay at the
-earliest point. A void that **succeeds** proves the invoice was not `paid` at that instant (S2). If
-S7 is false and a `processing` payment survives the void, the observe after it still sees
-`in_flight` (T6). So that case is handled, not assumed away.
+The design voids first. A void that **succeeds** proves the invoice was not `paid` at that instant
+(S2). If S7 is false and a `processing` payment survives the void, the next observe still sees
+`in_flight` (T6). **A void that fails stops the cancel**: if it failed because the invoice is now
+`paid`, cancelling would end a purchase the customer just completed in another tab.
 
-One consequence for code that already exists: `readFirstPayment` (`first-payment.ts:65-74`) would
-read an `incomplete` subscription whose invoice is `void` and whose PaymentIntent is `canceled` as
-`not_proven_unpaid`, and would keep it for 23h. The design adds one rule to it: invoice `void` and no
-payment succeeded or in flight means `never_paid`.
+**A consequence the receipt rule relies on (rev 5).** The machine cancels only after a void it has
+proven (T3 → T3v). A `paid` invoice cannot be voided (S2). So **the machine never cancels a
+subscription whose first invoice is paid**. A subscription that reads `incomplete` with a paid
+invoice will go `active` (T4, then T2), and it is never ended by us. §5.3 (2) uses this.
 
-**The transition table had its own copy of that misreading (rev 2).** The first revision's T3 required
-`pay = awaiting`, but a void leaves `pay = failed` (S8), so a hold whose void succeeded and whose
-cancel failed fell to T4 and sat for 23h. T3 and T3v now accept `awaiting` and `failed`, and T3v is
-the row that retries the cancel. The other half of that review: **a void that fails stops the
-cancel.** If the void fails because the invoice is now `paid`, cancelling would end a purchase the
-customer just completed in another tab, and T5 would then refund it. T3 cancels only after its
-re-read shows `void`.
+`readFirstPayment` (`first-payment.ts:65-74`) would read `incomplete` + invoice `void` + PaymentIntent
+`canceled` as `not_proven_unpaid`. The design adds one rule to it: invoice `void` and no payment
+succeeded or in flight means `never_paid` (C47).
 
 ### 3.5 Refunds and the 24h idempotency replay (AC2, S6)
 
-- Before every attempt, read `refunds.list({ payment_intent })` and classify it as `refund` in §3.2
-  (rev 2). `done` goes to T10, `pending` to T10p, and only `none` or `partial` creates a refund, for
-  the amount live refunds do not cover. **The read decides, not the key, and the read is of each
-  refund's `status`, never `amount_refunded`** (S9). A refund that is created but has not succeeded
-  is `refund_pending`: it does not release the hold, and it does not produce the "refunded in full"
-  clause (§5.5).
-- A refund that later fails or is cancelled is seen two ways: the sweeper observes `refund_pending`
-  every hour (§3.1), and the webhook handles `charge.refund.updated` for a PaymentIntent that has an
-  open hold (§5.3). Either one fires T10f, which returns the hold to `refund_due` with the next
-  attempt number. `requires_action` (the refund needs the customer's details) counts as `pending`.
-  **Rev 3:** the first revision said the 72h age alert reached a refund left there, but that alert
-  covered blocking states only, and `refund_pending` does not block. Now `refund_pending` has its
-  own two bounds (I11, §5.4): a covering refund in `requires_action` for 24h alerts, because only
-  support can reach the customer for the details, and any `refund_pending` hold older than 14 days
-  alerts. Neither moves the hold: a refund that is still alive is not retried, because a second
-  refund beside a live one could over-refund.
-- The key is `hold-refund-<pi>-<refund_attempt>`. The attempt number goes into the key so that a retry
-  after a *failed* attempt is not replayed as the same failure for 24h. A double refund is
-  impossible: a full refund of an already refunded charge is refused by Stripe
-  (`charge_already_refunded`), and that already maps to `already_refunded` at `billing.ts:824-826`.
-  The read above runs first anyway. After a *failed* refund the charge is not refunded, so the new
-  attempt's full refund is accepted, and the failed one no longer covers anything.
-- **The attempt number is reserved before the call (rev 4, J3).** Revision 3 incremented
-  `refund_attempt` *after* a failed `refunds.create` (T13, T10f). A write that missed, for example
-  on a compare-and-set that a concurrent write made stale, lost the increment, and the next attempt
-  reused the failed key and got the saved failure back for 24h (S6). Now T5 first runs a state write
-  under the lease, `UPDATE … SET refund_attempt = refund_attempt + 1, version = version + 1 WHERE
-  id = $1 AND version = $2 AND <holder fence> RETURNING refund_attempt`, and builds the key from the
-  number it consumed (`n - 1` for the returned `n`, so the first key is still `-0`, C4). **No
-  `refunds.create` is made unless that write returned a row.** A write that returns no row makes no
-  Stripe call and ends the step (§5.2). A crash between the reservation and the call wastes one
-  number, which costs one attempt of the budget and never reuses a key. Because the number is
-  consumed in the database before Stripe ever sees it, no later write can lose it.
-- The budget is 5 attempts with exponential backoff (5m, 30m, 2h, 6h, 24h), then T14. It counts
-  reserved numbers. Q4 asks the
-  maintainer for these numbers.
+- Before every attempt, read `refunds.list({ payment_intent })` and classify it (§3.2). `done` goes
+  to T10, `pending` to T10p, and only `none` or `partial` creates a refund, for the uncovered amount.
+  **The read decides, not the key.**
+- A refund that later fails is seen in two ways: the sweeper observes `refund_pending` hourly, and the
+  webhook nudges on `charge.refund.updated` (§5.3). Either fires T10f.
+- The key is `hold-refund-<pi>-<refund_attempt>`, so a retry after a *failed* attempt is not
+  replayed as the same failure for 24h. A double refund is impossible: Stripe refuses a full refund of
+  a refunded charge (`charge_already_refunded`, mapped at `billing.ts:824-826`), and the read runs
+  first anyway.
+- **The attempt number is reserved before the call.** T5 first runs a fenced state write,
+  `UPDATE … SET refund_attempt = refund_attempt + 1, version = version + 1 WHERE id = $1 AND
+  version = $2 AND <holder fence> RETURNING refund_attempt`, and builds the key from the number it
+  consumed (the first key is still `-0`, C4). **No `refunds.create` is made unless that write returned
+  a row.** A crash after the reservation wastes one number and never reuses a key.
+- The budget is 5 attempts with backoff 5m, 30m, 2h, 6h, 24h, then T14 (Q4).
 
 ### 3.6 Invariants
 
 Each invariant is tested (§6).
 
-- **I1, mint gate.** A purchase in `(scope, payer)` calls `subscriptions.create` only when, under the
-  payer's lease, and **in this order** (rev 2, advisory 3): (a) every hold in `(scope, payer)` is
-  `released` or `refund_pending` after one `advanceHold` pass; (a′, rev 3, `org_plan` only) every
-  `open` Checkout Session classified `(org_plan, payer)` on the payer's customers was expired and
-  re-read as not `open` (§4.4, "Earlier artifacts"); (b) the sweep of the `incomplete`
-  subscriptions **classified** `(scope, payer)` (§4.2), paged in full, left none open; and (c) a list
-  read **after** (a) and (b) finds no live subscription classified `(scope, payer)` on any customer
-  the payer uses (§4.3). Reading (c) last means a subscription that went live during (a), and was
-  adopted, is still seen by (c).
+- **I1, mint gate.** The create-a-team flow calls `subscriptions.create` only when, under the user's
+  lease and **in this order**:
+  - (a) every hold of the user is `released` or `refund_pending` after one `advanceHold` pass;
+  - (b) the sweep of the `incomplete` subscriptions **classified** to the user (§4.2), paged in full,
+    left none open;
+  - (c) a list read **after** (a) and (b) finds no live create-a-team subscription of the user on any
+    customer the user's records name (§4.3).
+
+  Reading (c) last means a subscription adopted during (a) is still seen.
 - **I2, held invoice only.** `advanceHold` reads, voids, deletes and refunds only `hold.invoice_id`,
   never `sub.latest_invoice`. A renewal invoice can never be refunded by a hold.
-- **I3, refund preconditions.** A refund requires all of the following: the PaymentIntent is on the
-  held invoice, its status is `succeeded`, and the subscription reads `ended` in the same observation.
-  `adopted` holds never refund.
-- **I4, write-ahead.** No code path voids or cancels a subscription in a purchase flow unless an open
-  hold row for it was committed first. With this, *two faults in a row* (AC6) cannot leave an ended
-  subscription without memory: the second fault happens with the row already written.
+- **I3, refund preconditions.** A refund requires the PaymentIntent to be on the held invoice, to be
+  `succeeded`, and the subscription to read `ended` in the same observation. `adopted` holds never
+  refund.
+- **I4, write-ahead.** No create-a-team code path voids or cancels a subscription unless an open hold
+  row for it was committed first. The one exception is the close-out of an artifact that never left
+  the server (§4.4 rule 4).
 - **I5, failures don't move state.** A Stripe or DB failure during `observe` never transitions a hold
   and never mints.
-- **I6, release is the only exit.** Rows are never deleted. A released row blocks nothing and is
-  never acted on again. At most one **open** row exists per subscription (rev 2, §4.1); a released
-  row never stops a new one from being opened.
-- **I7, scope and payer isolation.** A flow reads only holds of its own `(scope, payer_key)`. It
-  sweeps, live-checks and routes to resume logic only for subscriptions classified to its own
-  `(scope, payer_key)` (rev 2, §4.2). A subscription on the same customer that is classified to a
-  different payer is never voided, cancelled, held or counted, and is alerted on (§4.2).
+- **I6, release is the only exit.** Rows are never deleted. At most one **open** row exists per
+  subscription.
+- **I7, payer isolation (rev 5).** The create-a-team flow reads only its user's holds. It sweeps,
+  live-checks and holds only subscriptions classified to its user (§4.2). An org-plan or AI subscription
+  on a shared customer, and another user's subscription, is never voided, cancelled, held or counted.
 - **I8, copy is true.** Every customer message is derived from the set of hold states and outcomes in
-  this request, per §5.5. It claims an alert only when `alertPaymentNeedsSupport` returned true
-  (`payment-alert.ts:27-30`). It claims a block only for states that block. It says "refunded" only
-  for a refund that reads `succeeded` (rev 2). Every reachable outcome has a clause, and every
-  response shape that can carry one has a `notice` field (rev 2, §5.5).
-- **I9, the artifact gate (rev 2, widened in rev 3).** No flow hands out a **payable artifact**, or
-  syncs a live subscription to the org row, until a fenced compare-and-set on the lease, made
-  **after** the Stripe call that created the artifact returned, succeeds (§4.4). The artifacts are
-  every one §1.1 lists: a client secret (three flows), a Checkout Session URL, and a `trialing`
-  subscription. A Stripe write cannot be fenced, so the fence is on the things a customer can pay
-  with or already holds. A failed gate closes the artifact before anything is returned (§4.4 rule 4).
-  Together with I1 (a′) and (b), **at most one payable artifact exists per `(scope, payer)` at a
-  time**: an earlier secret's subscription is swept, an earlier Checkout Session is expired.
-- **I10, liveness (rev 2).** Every open hold has a non-null `next_check_at`, and a scheduled sweeper
-  observes every hold whose `next_check_at` has passed (§5.4). No hold depends on a purchase or a
-  webhook delivery to move again.
-- **I11, every open hold is watched (rev 3).** Every open state, blocking or not, has a finite age
-  bound after which the sweeper alerts an operator once per state entry (§5.4). There is no open
-  state, and no observation shape inside one, that the sweeper can observe indefinitely without an
-  operator being told.
-- **I12, a hold's scope is fixed (rev 3).** `scope` and `payer_key` are written at E0 and never
-  change, whatever the subscription's metadata becomes later (a `new_org` subscription linked to an
-  org is `org_plan` from then on, §4.2). The hold keeps blocking the scope it was opened in, and a
-  second flow that meets the same subscription gets T0h, not a second row.
+  this request (§5.5), **and the sheet shows it** (§5.6, rev 5). It claims an alert only when
+  `alertPaymentNeedsSupport` returned true (`payment-alert.ts:27-30`). It says "refunded" only for a
+  refund that reads `succeeded`.
+- **I9, the artifact gate (rev 5: one artifact).** The create-a-team client secret leaves the server
+  only after a fenced compare-and-set on the lease, made **after** `subscriptions.create` returned,
+  succeeds (§4.4). With I1 (b), **at most one payable create-a-team subscription exists per user at a
+  time.**
+- **I10, liveness.** Every open hold has a non-null `next_check_at`, and a scheduled sweeper observes
+  every hold that is due (§5.4).
+- **I11, every open hold is watched.** Every open state has a finite age bound after which the sweeper
+  alerts an operator once per state entry (§5.4).
+- **I12, a hold's payer is fixed.** `payer_key` is written at E0 and never changes. A hold on X keeps
+  blocking U after X is linked to an org.
+- **I13, the link never syncs a setup it refuses, and the sheet never reports a state the server did
+  not return (rev 5).** §5.6.
 
 ---
 
@@ -531,283 +454,138 @@ Each invariant is tested (§6).
 ### 4.1 The `payment_holds` table
 
 The table is new, service-role only, with RLS enabled and no app policy, like the shape in
-`04dee418c`. It has these columns, with the changes from `04dee418c` noted:
+`04dee418c`. Columns:
 
 - `id`
-- `subscription_id`: **unique among open rows only** (rev 2): `CREATE UNIQUE INDEX … ON
-  payment_holds (subscription_id) WHERE state <> 'released'`. A plain unique constraint would turn
-  an operator release of a hold whose subscription is still `incomplete` into a 23h dead end: the
-  next sweep reads it `never_paid`, raises E0, and the insert fails as T0f on every purchase until
-  Stripe expires it. With the partial index, E0 inserts a new row, and the released row stays as
-  history.
+- `subscription_id`: **unique among open rows only**: `CREATE UNIQUE INDEX … ON payment_holds
+  (subscription_id) WHERE state <> 'released'`. A plain unique constraint would turn an operator
+  release of a still-`incomplete` subscription into a 23h dead end (C51).
 - `customer_id`
-- `scope`: `org_plan | new_org | ai`. **New.** It replaces the cross-flow lookup by `user_id`.
-- `payer_key`: the org id or the user id. **New**, NOT NULL. Index on `(scope, payer_key) WHERE state <> 'released'`.
-- `invoice_id`: **new**, the held invoice (I2)
+- `payer_key`: the user id, NOT NULL. Index on `(payer_key) WHERE state <> 'released'`.
+  **Rev 5:** the `scope` column is gone; widening adds it back (Q13).
+- `invoice_id`: the held invoice (I2)
 - `payment_intent_id`: nullable
 - `state`
 - `release_reason`, `released_at`, `released_by` (a user id, or null for the system), `release_note`
 - `refund_attempt`: int, default 0
 - `attempts`, `last_error`, `next_check_at`, `alerted_at`
-- `notice_last_sent_at` (rev 2, was `customer_notified_at`): when a response last **carried** this
-  hold's clause. It never means "delivered" (§5.5).
-- `opened_by_user_id`
-- `opened_by`: `purchase | backfill` (rev 3), and `open_note`: for a backfill row, the evidence
-  the listing matched (§8), so an operator can see why it was opened.
-- `state_since`, `last_pay`, `refund_action_since`, `age_alerted_at` (rev 3): what I11's age alerts
-  and §5.5's clause choice read (§3.1). `age_alerted_at` is cleared on every state change, so each
-  state entry can alert once.
-- `receipt_owed_invoice_id`, `receipt_sent_at` (rev 3): a receipt the webhook held back for a
-  subscription that was not yet live, sent once on adoption (§5.3 (2)).
-- `observed_at` (rev 4): when the observation behind the last state write **started**. Written only
-  by a state write; E0 sets it to the insert time, so a nudge before the first observe is seen.
-- `nudged_at` (rev 4): the webhook's hint that something changed in Stripe (§5.3). Written only by
-  the nudge. A hold is due for the sweeper when `next_check_at <= now()` **or**
-  `nudged_at > observed_at` (§5.4).
-- `version` (rev 3, narrowed in rev 4): the **state version**. It is bumped by state writes only.
+- `notice_last_sent_at`: when a response last **carried** this hold's clause. It never means
+  "delivered".
+- `opened_by_user_id`, `opened_by` (`purchase | backfill`), `open_note`
+- `state_since`, `last_pay`, `refund_action_since`, `age_alerted_at`
+- `observed_at`: when the observation behind the last state write **started**. E0 sets it to the
+  insert time.
+- `nudged_at`: the webhook's hint. A hold is due when `next_check_at <= now()` **or**
+  `nudged_at > observed_at`.
+- `version`: the **state version**, bumped by state writes only.
 - `created_at`, `updated_at`
 
-**Which writes take part in the compare-and-set (rev 4, J3).** Revision 3 said `version` was "bumped
-by every write" and that every update was fenced "in addition to the lease's `holder` fence". Both
-were wrong. The webhook holds no lease, so read literally its nudge could never write, and if it
-bumped `version` anyway, a purchase whose own `subscriptions.cancel` produced the
-`customer.subscription.deleted` event would find its release write stale and refuse a purchase that
-should mint. The rule is now one of two kinds per write:
+**Rev 5:** `receipt_owed_invoice_id` and `receipt_sent_at` are removed (K3, §5.3 (2)).
+
+**Which writes take part in the compare-and-set.**
 
 | Kind | Writes | Columns it may change | Fence |
 |---|---|---|---|
-| **State write** | E0 (insert), every `advanceHold` transition, T5's attempt reservation (§3.5), T16, and the sweeper's age alert (`age_alerted_at`) | `state`, `state_since`, `release_*`, `refund_attempt`, `attempts`, `last_error`, `last_pay`, `refund_action_since`, `observed_at`, `next_check_at`, `alerted_at`, `age_alerted_at`, `receipt_sent_at`, `version` | `WHERE id = $1 AND version = $2`, **and** in the same statement `EXISTS (SELECT 1 FROM purchase_leases WHERE key = $k AND holder = $h AND expires_at > now())`. It sets `version = version + 1`. |
-| **Hint write** | the webhook nudge, and the webhook's `receipt_owed_invoice_id` (§5.3 (2)) | `nudged_at`, `receipt_owed_invoice_id`, `updated_at` and nothing else | No `version` check, no `version` bump and no lease. `WHERE subscription_id = $1 AND state <> 'released'`. `receipt_owed_invoice_id` is set only `WHERE receipt_owed_invoice_id IS NULL`. |
+| **State write** | E0 (insert), every `advanceHold` transition, T5's attempt reservation, T16, the sweeper's age alert | `state`, `state_since`, `release_*`, `refund_attempt`, `attempts`, `last_error`, `last_pay`, `refund_action_since`, `observed_at`, `next_check_at`, `alerted_at`, `age_alerted_at`, `version` | `WHERE id = $1 AND version = $2` **and**, in the same statement, `EXISTS (SELECT 1 FROM purchase_leases WHERE key = $k AND holder = $h AND expires_at > now())`. Sets `version = version + 1`. |
+| **Hint write** | the webhook nudge | `nudged_at`, `updated_at` and nothing else | No `version` check, no bump, no lease. `WHERE subscription_id = $1 AND state <> 'released'`. |
 
-A hint write cannot change a hold's state, its counters or its schedule, so it needs no fence; and
-because it never touches `version`, it can never make a state write miss. A state write's
-`next_check_at` cannot erase a nudge either: a nudge that lands while a step is running has
-`nudged_at` later than that step's `observed_at`, so the hold is due again at once. A state write
-that misses is therefore always a real conflict, another holder after a lost lease or an operator's
-T16, and §5.2's "stale but still open" is right for it.
+A hint write cannot change state, counters or schedule, so it needs no fence. Because it never
+touches `version`, it can never make a state write miss (C74). A nudge that lands during a step has
+`nudged_at` later than that step's `observed_at`, so the hold is due again at once.
 
-There is no FK to `organization` on `payer_key`. A hold is about money and outlives the org.
-`04dee418c` used `set null` for the same reason.
+There is no FK on `payer_key`. A hold is about money and outlives the user's account.
 
-**Why the database and not Stripe metadata.** S1 allows metadata writes after a cancel, so a
-`alethia_hold_*` stamp on the subscription was a real option. It was rejected for four reasons:
+**Why the database and not Stripe metadata.** Discovering a hold from metadata would need
+`subscriptions.list({ status: "canceled" })` paged per customer on every purchase, and the search API
+lags (#5455 blocker 4174185555). An operator release needs audit fields. And the write-ahead (I4) is
+just as atomic in Postgres, where the lease lives.
 
-1. Discovering a hold would need `subscriptions.list({ status: "canceled" })` paged per customer, for
-   every purchase. The search API lags, which is #5455 blocker 4174185555.
-2. An operator release needs audit fields.
-3. Scope and payer queries would be scans.
-4. The write-ahead (I4) is just as atomic in Postgres, and Postgres is where the lock already lives.
+**Why not on `pending_org_setups`.** The record answers "where is my paid setup?", and a hold
+answers "which payment is unsettled?". A record exists for every mint. A hold exists only for a
+subscription the flow is closing, which can be a subscription that has no record: one minted
+before the record existed, or one swept from a recorded customer. They stay separate, joined on
+`subscription_id`.
 
-### 4.2 Scope: which subscriptions belong to which flow
+### 4.2 Classification: what the create-a-team flow may touch
 
-A subscription is classified to a `(scope, payer_key)` from **its own metadata** (rev 2: the payer
-is part of the classification, not only the scope):
+A subscription is user U's when **its own metadata** has `created_by = U` and no
+`organization_id`. The sweep, the hold pass and the live check filter on that. **Rev 5:** this fixes a
+live defect in today's sweep, which lists every `incomplete` subscription on the customer
+(`billing.ts:1068-1072`). On a shared customer it can cancel an existing org's `incomplete`
+org-plan or AI checkout.
 
-| Scope | Metadata | Payer key | Source |
-|---|---|---|---|
-| `ai` | `product_type = "ai_subscription"` | `metadata.organization_id` | `billing.ts:1302` |
-| `org_plan` | `organization_id` set, no `product_type` | `metadata.organization_id` | `billing.ts:1238`, `:1143`, `:1387` |
-| `new_org` | `created_by` set, no `organization_id` | `metadata.created_by` | `billing.ts:1711`. It becomes `org_plan` for the new org once it is linked (`billing.ts:1901-1903`). |
-
-A subscription with none of these shapes is **unclassified**. It is never swept or held, and it is
-alerted on as below.
-
-**Checkout Sessions (rev 3).** Today a session carries the org only inside `subscription_data`
-(`billing.ts:1142-1143`), which a session list does not filter on. `createCheckoutSession` also
-writes the session's own `metadata.organization_id`, and a `mode: "subscription"` session with it is
-classified `(org_plan, organization_id)`. A session without it was created before this release, and
-it is unclassified: it is left alone, and the §7 detector covers it until it expires, at most 24h
-after it was created (S14).
-
-The sweep and the live check filter on the full classification. Today the org-plan sweep cancels and
-keeps the AI flow's `incomplete` subscriptions as well (`billing.ts:1068-1072` lists every
-`incomplete` one on the customer). That is AC11.
-
-**Why the payer, not only the scope (rev 2).** A Stripe customer is not 1:1 with a payer (§1.1). An
-org's customer carries `created_by` (`billing.ts:660-664`), create-a-team reuses any customer whose
-`created_by` is the caller without checking `organization_id` (`billing.ts:1651-1657`, `:1751-1761`),
-and the link rewrites the customer's `organization_id` (`billing.ts:1897-1900`). So customer C can
-hold an `org_plan` subscription for O and another for O2. Filtering on scope alone, O2's live check
-refused on O's plan with false copy, and O2's sweep voided and cancelled O's `incomplete` plan under
-lease `org:O2`, while O's purchase ran under `org:O`. Two changes close it:
-
-1. **Classification by `(scope, payer)`** (I7). On a shared customer, a subscription classified to a
-   different payer is left alone: not swept, not held, not counted by the live check. It is reported
-   to the operator with the subscription as the alert's subject, so the alert rule's throttle
-   collapses repeats for the same one, as `alertPaymentNeedsSupport` already does
-   (`lib/billing/payment-alert.ts:23-25`, `resource_id` at `:50`). Its summary must not reuse that
-   function's fixed "which the purchase flow cancelled or was replacing" (`:38-40`), which would be
-   false here; the alert takes its own summary. A shared customer is then visible to an operator
-   rather than silently skipped. The purchase is **not** refused for it: it
-   cannot double-charge this payer.
-2. **No new sharing.** `ownedCustomer` and the browser-customer branch (`billing.ts:1651-1657`)
-   also require that the customer has **no** `organization_id`. An org's customer is never reused for
-   create-a-team. Existing shared customers are handled by (1).
-
-A hold blocks only its own `(scope, payer_key)`. A payment settling on an AI subscription cannot
-double-charge an org plan. So an AI hold does not block an org-plan purchase, and the reverse holds
-too. An org-plan hold never reaches `createNewOrgSubscriptionIntent` (AC8).
+1. **A subscription that is not U's is left alone.** It is reported to the operator with the
+   subscription as the alert's subject, which the alert rule's throttle collapses
+   (`payment-alert.ts:23-25`, `:50`). The alert has its own summary, not `alertPaymentNeedsSupport`'s
+   fixed "which the purchase flow cancelled or was replacing" (`:38-40`). The purchase is **not**
+   refused for it, because it cannot double-charge U's create-a-team purchase.
+2. **No new sharing.** `ownedCustomer` and the browser-customer branch (`billing.ts:1651-1657`) also
+   require that the customer has **no** `organization_id`. An org's customer, including one a
+   previous link rewrote, is never reused for create-a-team.
 
 ### 4.3 The live check, against webhook lag (AC12)
 
-Before minting, and after the hold pass and the sweep (I1 order), the flow lists
-`subscriptions.list({ customer, status: "all" })`, fully paged, filters it to the flow's
-`(scope, payer_key)` classification (§4.2, rev 2), and refuses on any **live** one. A live
-subscription classified to another payer on a shared customer is not this payer's, and does not
-refuse. This list is used instead of
-`organization_billing.status`, which the webhook writes late. Today the flow checks only that row,
-and only for `active` and `trialing` (`billing.ts:1181-1189`). So a `past_due` org plan can be
-replaced by a second one, and an ACH subscription that went straight to `active` (S4) is invisible
-until its webhook lands.
+Before minting, after the hold pass and the sweep, the flow lists
+`subscriptions.list({ customer, status: "all" })` for every customer U's records name, fully paged,
+and filters to U's create-a-team subscriptions. A **live** one returns `kind: "resume"` through
+`newOrgSetupStateFor` (`billing.ts:1961`), as the paid-prior path does at `:1597-1604`. A linked one
+is no longer U's create-a-team subscription. It belongs to the new org, and its later purchases are
+out of scope (§7).
 
-| Flow | What a live subscription in scope means |
-|---|---|
-| `org_plan` | Refuse with "This organization already has a subscription — change the plan instead." |
-| `ai` | The same, for AI. |
-| `new_org` | A live **unlinked** `new_org` subscription with `created_by = user` returns `kind: "resume"`, through `newOrgSetupStateFor` (`billing.ts:1961`), as the paid-prior path does at `billing.ts:1597-1604`. A live linked one is not in scope (it is `org_plan` now). |
+### 4.4 The lease
 
-### 4.4 The lock
+**Key.** `user:<userId>`, taken by the create-a-team flow, the link, the sweeper and the operator
+command. **Rev 5:** this replaces `new-org:<userId>` (`billing.ts:1576`). The org-plan flow keeps
+`withPurchaseLock` and `org-plan:<orgId>` unchanged (§7).
 
-**Shared keys (AC11).** There is one key per **payer**, not per flow:
+**Pool and timeout budget (the issue's "Also").** Today the lock holds one pooled connection in an
+open transaction for the whole Stripe sequence, plus up to 30s waiting (`purchase-lock.ts:22`,
+`:36-45`). With `poolMax = 10` (`lib/config/database.ts:20`), about 10 waiters starve the holder.
+Nothing sets the Stripe client timeout (`lib/billing/stripe.ts:15-18`). A purchase with *h* open
+holds and *n* swept subscriptions makes up to about 6·(h+n)+4 Stripe calls.
 
-- `org:<orgId>` for the org plan, AI, hosted Checkout and the trial. These share the org's Stripe
-  customer and `ensureCustomer` (`billing.ts:633-677`). Two flows that run it at once on an org with
-  no customer each create a customer, and the later `upsertOrgBilling` wins (`billing.ts:660-675`).
-  One of the two customers is then never swept.
-- `user:<userId>` for create-a-team.
+**Recommendation (Q2):** a lease row, `purchase_leases(key PK, holder uuid, expires_at)`, taken with
+`INSERT … ON CONFLICT (key) DO UPDATE … WHERE purchase_leases.expires_at < now()`. **No connection
+is held** while Stripe is called. The lease lasts 120s, and every hold write checks `holder` (a fencing
+token).
 
-Holds are still per scope (§4.2). The lock is wider than the hold because it also protects
-`ensureCustomer`.
+**The lease can expire mid-purchase, and fencing cannot stop a Stripe write.** With A stalled past its
+lease, B could take over, mint Y and return its secret. A's calls then return, and A mints Z and returns
+its secret: two payable subscriptions. Four rules close it:
 
-**Pool and timeout budget (the issue's "Also").** Today the lock holds 1 pooled connection in an open
-transaction for the whole Stripe sequence, plus up to 30s waiting (`purchase-lock.ts:22`, `:36-45`),
-while `fn` takes other connections from the same pool. With `poolMax = 10`
-(`lib/config/database.ts:20`), about 10 waiters on one key starve the holder. Nothing sets the Stripe
-client timeout (`lib/billing/stripe.ts:15-18`), so the SDK defaults apply.
-
-A purchase with *h* open holds and *n* swept subscriptions makes up to about 6·(h+n)+4 Stripe calls.
-At p99 that is several seconds, and unbounded when Stripe stalls.
-
-**Recommendation (Q2):** replace the transaction-held advisory lock with a **lease row**,
-`purchase_leases(key PK, holder uuid, expires_at)`. The lease is taken with
-`INSERT … ON CONFLICT (key) DO UPDATE … WHERE purchase_leases.expires_at < now()`, and **no
-connection is held** while Stripe is called. The lease is 120s. Every hold write checks `holder` (a
-fencing token).
-
-**The lease can expire mid-purchase, and fencing cannot stop a Stripe write (rev 2).** The 20s × 2
-client timeout bounds one *step*, not the sequence of about 6·(h+n)+4 calls, so a purchase can
-outlive its lease. `subscriptions.create`, `voidInvoice`, `cancel` and `refunds.create` are Stripe
-writes, which no fencing token reaches. And `startOrgSubscription` writes nothing to the database
-between the mint and returning the secret (`billing.ts:1231-1250`), so in the first revision no
-fenced write ever rejected a stale holder. With A stalled past its lease, B could take over, mint Y
-and return its secret, and then A's calls return and A mints Z and returns its secret: two payable
-subscriptions. Four rules close it (rule 4 is rev 3):
-
-1. **Renew before every Stripe write.** Before each Stripe write, the holder runs
-   `UPDATE purchase_leases SET expires_at = now() + 120s WHERE key = $1 AND holder = $2`. Zero rows
-   means the lease is lost: the holder stops, makes no further Stripe write, and refuses with
-   `PURCHASE_IN_PROGRESS`. This bounds what a stale holder can do to one in-flight call.
+1. **Renew before every Stripe write.** `UPDATE purchase_leases SET expires_at = now() + 120s WHERE
+   key = $1 AND holder = $2`. Zero rows means the lease is lost. The holder stops, makes no further
+   Stripe write, and refuses with `PURCHASE_IN_PROGRESS`.
 2. **A mint deadline.** `subscriptions.create` is called only when the renewal just made leaves more
-   than the mint's worst case (2 × 20s) plus a 10s margin. It always does right after a renewal; the
-   rule exists so that no later change can put a slow step between the renewal and the mint.
-3. **The artifact gate (I9, widened in rev 3).** After the Stripe call that creates a payable
-   artifact returns, and before the artifact leaves the server or is synced, the holder runs the
-   same fenced renewal. **Only a renewal that returns a row lets the artifact out.** The gate sits
-   at one point per flow:
+   than the mint's worst case (2 × 20s) plus a 10s margin.
+3. **The artifact gate (I9).** After `subscriptions.create` returns (`billing.ts:1704`), and before
+   `recordPendingOrgSetup` and the return (`:1723-1744`), the holder runs the same fenced renewal.
+   **Only a renewal that returns a row lets the secret out.**
+4. **The close-out exemption.** After a failed gate, the stale holder may make exactly the Stripe
+   writes that close the subscription it created in this request, and nothing else. It voids Z's first
+   invoice, then cancels Z, stamped `alethia:closeout` (S12). It writes **no hold row**: no payment can
+   land on a subscription whose secret never left the server. Z carries no `organization_id`, so none
+   of its events writes any org row (`sync.ts:96-101`, C67). **If the close-out fails**, Z stays
+   `incomplete` with no secret anywhere and is swept by U's next purchase, or expires (S3).
 
-   | Flow | Artifact | The gate runs after | and before |
-   |---|---|---|---|
-   | `createSubscriptionIntent`, `createAiSubscriptionIntent` | client secret | `subscriptions.create` (`billing.ts:1231`, `:1293`) | the secret is returned (`:1246-1250`, `:1310-1314`) |
-   | `createNewOrgSubscriptionIntent` | client secret | `subscriptions.create` (`:1704`) | `recordPendingOrgSetup` and the return (`:1723-1744`) |
-   | `createCheckoutSession` | the session URL | `checkout.sessions.create` (`:1138`), which also sets `expires_at` to creation + 30 minutes (S14), the shortest Stripe allows, so a delivered URL stays payable for as short a time as possible | `session.url` is returned (`:1153-1154`) |
-   | `startProTrial` | a `trialing` subscription, live at once | `subscriptions.create` (`:1381`) | `syncSubscriptionToBilling` (`:1391`) and the trial burn (`:1394-1397`) |
+The idempotency key on `subscriptions.create` is `mint-<lease key>-<holder>`. It differs between
+holders on purpose: a shared key would replay A's subscription to B after B's sweep had cancelled it.
 
-   If the renewal returns no row, another holder has taken the lease and may have handed out an
-   artifact of its own. The stale holder closes what it just created (rule 4) and refuses with
-   `PURCHASE_IN_PROGRESS`. Its artifact never left the server, so nothing can pay it.
-4. **The close-out exemption (rev 3).** Rule 1 forbids a holder that lost its lease any further
-   Stripe write, and every hold write checks `holder`, so the first revision's "open E0 on Z and
-   advance it" could not run as written: the E0 write would be rejected and the void would break
-   rule 1. The close-out is therefore a **stated exemption**, and it is the only one. After a failed
-   gate, the stale holder may make exactly the Stripe writes that close the artifact it created in
-   this request, and nothing else:
-   - a subscription from an embedded flow: void its first invoice, then cancel it, stamped
-     `alethia:closeout` (S12);
-   - a Checkout Session: `checkout.sessions.expire`;
-   - a trial subscription: cancel it, stamped the same way. It took no payment (`missing_payment_method:
-     "cancel"`, `billing.ts:1386`, and a trial invoice is for 0). This is the design's only cancel
-     of a live subscription. Q8's "the machine never cancels a live subscription" is about a
-     subscription a customer holds or has paid for; nobody was told of this one.
-
-     **Rev 4: revision 3 also said it "was never synced to the org", and that was false.** The gate
-     stops only the *action's* sync (`billing.ts:1391`). Stripe emits
-     `customer.subscription.created(Z, trialing)` for the trial on its own, and today's handler syncs
-     it (`webhook-handler.ts:103-105`), a live plan over whatever the row named, with the plan welcome
-     (`sync.ts:152-153`). Two things now make a narrower claim true. First, #5514's W2 (§5.3 (2)):
-     when the row names a live Y, Z's events write nothing. Second, a **gate marker** for the case
-     where the row names no live subscription: `startProTrial` creates its trial with
-     `metadata.alethia_gate = "<lease holder>"`, and the webhook's sync writes nothing for a
-     subscription carrying that key **unless the row already names it**. The action's own sync,
-     which runs only after the gate passed, is the first write to name it; after that the webhook
-     applies its events under W1–W4 as usual. A trial whose gate failed is therefore never named by
-     the row, so neither its `created` event nor its stamped deletion writes the row, and no
-     welcome is claimed for it. If the action's sync throws after the gate passed, the trial is
-     closed out as if the gate had failed and the action refuses, because otherwise no later event
-     could ever name it. The narrower claim is: **a closed-out trial is never synced to the org row,
-     provided #5514 and the marker are both in place.** The marker is this design's (§8 step 5); W2
-     is #5514's.
-
-   It writes **no hold row** and syncs nothing. I4 (write-ahead) does not apply, because I4 exists so
-   that a payment landing after the cancel is remembered, and no payment can land on an artifact
-   whose payable handle never left the server. The exemption cannot harm the new holder: every
-   target is an object only this request created and named, and the new holder never adopts an
-   unpaid subscription of another request as its own purchase. If the new holder's sweep already
-   reached Z, both close it, and a second void or cancel fails harmlessly. **If the close-out
-   fails**, the artifact is still unreachable: Z stays `incomplete` with no secret anywhere and is
-   swept by the next purchase in its scope (or expires after about 23h, S3); an expire that fails
-   leaves a session whose URL nobody holds, which expires at its 30-minute `expires_at`; a trial
-   whose cancel fails is a live subscription, so it is alerted on with the trial as the subject, and
-   the §7 detector reports it too.
-
-**Earlier artifacts (rev 3, I1 (a′)).** The gate stops a stale holder; it does not stop a payable
-artifact handed out by an **earlier**, finished request from being paid beside a new one. For a
-client secret, the sweep already handles that: the earlier subscription is `incomplete`, and the
-sweep voids and cancels it under a hold. A Checkout Session has no subscription until it completes,
-so the sweep cannot see it. So, for `org_plan`, the flow lists the `open` sessions on the payer's
-customers (`checkout.sessions.list({ customer, status: "open" })`, S14) and, for each one classified
-to its own `(org_plan, payer)`, expires it and re-reads it. A re-read that shows `complete` means the
-customer finished it first: its subscription now exists, and the sweep (b) and the live check (c),
-which run after (a′), see it. A re-read that still shows `open` refuses the purchase (`UNSETTLED`).
-This is the same "close the earlier one first" rule as void-first (§3.4), applied to the other
-artifact. Q11 asks the maintainer to confirm that a new purchase may expire a hosted Checkout the
-customer opened earlier, rather than refuse until it expires.
-
-A Stripe call can still complete server-side after the SDK gave up on it. Such a subscription has no
-secret anywhere, and is swept by the next purchase like any other `incomplete` one. **What the design
-guarantees is "at most one payable artifact per `(scope, payer)`" (I9), not "at most one
-`subscriptions.create` call".** The second is not achievable without fencing Stripe, and the first is what stops a double
+**What the design guarantees is "at most one payable subscription per user" (I9), not "at most one
+`subscriptions.create` call".** The second needs fencing Stripe, and the first is what stops a double
 charge.
 
-The idempotency key on `subscriptions.create` is `mint-<lease key>-<holder>`. It only makes the SDK's
-own retry of one call safe. It is not the safety mechanism, and it differs between holders on
-purpose: a shared key would replay A's subscription to B even after B's sweep had cancelled it.
+If the maintainer keeps the advisory lock instead, three things are needed:
 
-If the maintainer keeps the advisory lock instead, the requirements are as follows:
-
-- `idle_in_transaction_session_timeout` must be unset or above the worst-case purchase for the
-  service role. If Postgres kills that session, **the lock is released while `fn` is still
-  running**, and a second purchase can enter.
-- The artifact gate still applies: after the create, a query on the lock's own transaction (for
-  example `SELECT 1`) must succeed before the artifact is returned. A killed session fails it, and
-  the artifact is closed as in rule 4.
-- `poolMax` must be at least 2 × the number of same-key waiters expected per process.
+- `idle_in_transaction_session_timeout` is unset, or above the worst-case purchase.
+- After the create, a query on the lock's own transaction must succeed before the secret is returned.
+- `poolMax` is at least 2 × the number of same-key waiters expected per process.
 
 ### 4.5 Pagination (AC10)
 
-- `subscriptions.list` is paged to the end with `starting_after`, capped at 1000 subscriptions per
-  customer. **Over the cap, the flow refuses** ("could not check every earlier checkout") and alerts.
-- `invoicePayments.list` and `has_more` are already fail-closed (`first-payment.ts:57`, `:111`), and
-  stay as they are.
+- The create-a-team sweep's `subscriptions.list` is paged to the end, capped at 1000 per customer.
+  **Over the cap, the flow refuses** and alerts.
+- `invoicePayments.list` and `has_more` are already fail-closed (`first-payment.ts:57`, `:111`).
 - `unlinkedPendingOrgSetupCustomers` (`pending-org-setup.ts:212-230`, `limit = 5`) moves to keyset
   pages over all of the user's unlinked records, capped at 50 customers. Over the cap, the flow
   refuses.
@@ -816,445 +594,365 @@ If the maintainer keeps the advisory lock instead, the requirements are as follo
 
 ## 5. Failure handling for every external call
 
-### 5.1 Stripe calls inside `advanceHold` and the purchase flow
+### 5.1 Stripe calls inside `advanceHold` and the create-a-team flow
 
-Every read goes through `readTwice` (`billing.ts:836-842`). The second failure is an observation
-failure (I5). Every Stripe **write** below is preceded by the fenced lease renewal (§4.4, rule 1).
+Every read goes through `readTwice` (`billing.ts:836-842`). Every Stripe **write** below is preceded
+by the fenced lease renewal (§4.4, rule 1).
 
 | Call | On error (429, 5xx, network, other) | Never |
 |---|---|---|
 | `subscriptions.list` (sweep and live check) | Refuse the purchase (`UNSETTLED`). | mint |
-| `subscriptions.retrieve` | `resource_missing` → T1. Anything else is an observation failure, and the hold stays. | read as "gone" |
+| `subscriptions.retrieve` | `resource_missing` → T1. Anything else is an observation failure. | read as "gone" |
 | `invoices.retrieve` | Observation failure. | read as "void" |
 | `invoicePayments.list`, `paymentIntents.retrieve` | Observation failure. | read as "unpaid" |
-| `refunds.list` (rev 2) | Observation failure. | read as "refunded" |
-| `invoices.voidInvoice` | Re-read the invoice once. `void` counts as done (a lost response). Otherwise, from `closing` or `cancel_unproven`, T3a **with no cancel** (rev 2). From an ended subscription, `invoice_payable` and T12. | release; cancel |
-| `invoices.del` (draft) | Re-read. If the draft is gone, done. Otherwise `invoice_payable`. | release |
-| `subscriptions.cancel` | Re-read. `ended` counts as done. Otherwise `cancel_unproven`, where T3v retries it (rev 2). | mint |
-| `paymentIntents.cancel` (`requires_capture`) | Re-read the PaymentIntent. `canceled` counts as done. Otherwise stay `payment_in_flight`. | release |
-| `refunds.create` | Re-read the refunds (§3.5). `done` means T10, `pending` means T10p (rev 2). Otherwise T13 or T14. | release |
-| `subscriptions.create`, `checkout.sessions.create` | Throws. No artifact is returned. The lease is released. A successful create whose gate fails is closed by the close-out exemption (§4.4 rules 3–4, rev 3). | return an artifact, or sync a trial, without the gate |
-| `checkout.sessions.list` (rev 3, I1 (a′)) | Refuse the purchase (`UNSETTLED`). | mint |
-| `checkout.sessions.expire` (rev 3) | Re-read the session. Not `open` counts as done (`complete` is then seen by the sweep and the live check). Still `open`, or unreadable, refuses (`UNSETTLED`). | mint |
+| `refunds.list` | Observation failure. | read as "refunded" |
+| `invoices.voidInvoice` | Re-read once. `void` counts as done. Otherwise T3a **with no cancel**, or, on an ended subscription, `invoice_payable` and T12. | release; cancel |
+| `invoices.del` (draft) | Re-read. Gone is done; otherwise `invoice_payable`. | release |
+| `subscriptions.cancel` | Re-read. `ended` is done; otherwise `cancel_unproven`, and T3v retries. | mint |
+| `paymentIntents.cancel` | Re-read. `canceled` is done; otherwise stay `payment_in_flight`. | release |
+| `refunds.create` | Re-read the refunds. `done` → T10, `pending` → T10p, else T13 or T14. | release |
+| `subscriptions.create` | Throws. No secret is returned. A create whose gate fails is closed out (§4.4 rule 4). | return a secret without the gate |
 
 ### 5.2 Database writes
 
 | Write | On error |
 |---|---|
-| E0 hold insert | T0f: nothing is voided or cancelled, and the purchase is refused. The subscription stays `incomplete`, so Stripe keeps the memory. |
-| Hold state update after a Stripe write succeeded | The Stripe write already happened, so the row is stale but **still open**. The next observe re-derives the state from Stripe. Because rows never move on stale data, the result is a delay, never a wrong release. |
-| Lease acquire, or a lease renewal returning no row | Refuse with `PURCHASE_IN_PROGRESS` (`billing.ts:787-788`). After a mint, see §4.4 rule 3. |
-| `recordPendingOrgSetup` after the mint | As today (`billing.ts:1728-1743`): cancel the new subscription, throw, and never hand out the secret. Rev 3: this is a close-out in the sense of §4.4 rule 4, because the secret never left the server: void, then cancel stamped `alethia:closeout`, and no hold row. A close-out that fails leaves the subscription `incomplete` with no secret, which the next sweep closes. |
+| E0 hold insert | T0f: nothing is voided or cancelled, and the purchase is refused. |
+| Hold state update after a Stripe write succeeded | The row is stale but **still open**. The next observe re-derives the state from Stripe. The result is a delay, never a wrong release. |
+| Lease acquire or renewal returning no row | Refuse with `PURCHASE_IN_PROGRESS` (`billing.ts:787-788`). After a mint, §4.4 rule 3. |
+| `recordPendingOrgSetup` after the mint | As today (`billing.ts:1728-1743`), but as a close-out: void, then cancel stamped `alethia:closeout`, no hold row, and the secret is never returned. |
 
 ### 5.3 The webhook (`lib/billing/webhook-handler.ts`)
 
-**The webhook makes no Stripe call for a hold (rev 3).** The handler runs inside
-`runWebhookEventExactlyOnce`'s transaction, which holds a pooled connection and a per-event advisory
-lock until the handler returns (`webhook-events.ts:92-121`). Running `advanceHold` there, as revision
-2 did, held both across up to three steps of Stripe calls, which is the cost §4.4 removes from
-purchases. And revision 2's `HoldDeferred` threw the whole event back to Stripe when the lease was
-busy, which also delayed that event's entitlement sync until the redelivery. Both are replaced by a
-**nudge**: the handler only *reads* holds (one indexed query) and *writes* `nudged_at = now()` (a hint write, §4.1: no `version` bump, no lease) on
-the ones the event names, in the same transaction that marks the event `done`. After the response,
-the route wakes the in-process sweeper (§5.4) without awaiting it. The sweeper advances the hold
-under the payer's lease, outside any transaction, with its own bounds. If this process dies first,
-the next tick on any instance finds `nudged_at > observed_at`. **No event is ever deferred or failed
-because of a hold**, so the entitlement sync for the same event is never delayed by one.
+**The webhook makes no Stripe call for a hold.** The handler runs inside
+`runWebhookEventExactlyOnce`'s transaction (`webhook-events.ts:92-121`). For holds it only *reads*
+holds (one indexed query) and *writes* `nudged_at = now()` (a hint write, §4.1) on the ones the event
+names, in the same transaction that marks the event `done`. After the response, the route wakes the
+in-process sweeper without awaiting it. **No event is ever deferred or failed because of a hold.**
 
-Five changes. Two of them fix cases that today's code reaches with a hold *or* without one:
+Four changes:
 
-1. **No backup-card retry on a held or ended subscription's invoice.** On `invoice.payment_failed`,
-   the handler calls `attemptBackupPayment` (`webhook-handler.ts:163-180`), which runs
-   `invoices.pay(invoiceId, { payment_method })` with each backup card
-   (`lib/billing/payment-methods.ts:67-…`). On a cancelled subscription's still-open invoice (S1), or
-   on an `incomplete` first invoice that a sweep is closing, **that is us charging a checkout we
-   cancelled**. The fix: skip the retry when the subscription is not live, or when an open hold names
-   the invoice. Then nudge.
-2. **No other subscription's event may overwrite the org row, and receipts follow the
-   subscription's state (rev 3, rewritten in rev 4).** `syncSubscriptionToBilling`
-   (`lib/billing/sync.ts:93-160`) upserts `organization_billing` unconditionally on
-   `organization_id` (`lib/billing/queries.ts:90-118`), from every subscription event's payload
-   snapshot (`webhook-handler.ts:103-109`) and from the invoice and Checkout paths' fresh reads
-   (`webhook-handler.ts:47-53`, and the `checkout.session.completed`, `invoice.payment_succeeded` and
-   `invoice.payment_failed` arms at `:121-126`, `:151`, `:169`). Revision 3 guarded only an event
-   for an **ended** subscription. That left the worst case open: the `created` event of a
-   subscription that is not ended. In C52, A's stalled `subscriptions.create` returns after B's Y is
-   live and paid; `customer.subscription.created(Z, incomplete)` then writes `community` naming Z
-   over Y, and A's close-out deletion of Z writes `canceled` / `community`, because the row now names
-   Z. A team that paid for Y sits on `community` with no hold, alert or message, and its next
-   purchase is refused as "already has a subscription". In C62 the `created(Z, trialing)` event
-   syncs Z's trial over Y and can claim the plan welcome (`sync.ts:152-153`). The same happens for an
-   SDK-timeout orphan (§4.4), and for any stale or redelivered `created` / `updated` snapshot of an
-   earlier subscription.
+1. **No backup-card retry on a held or ended create-a-team subscription's invoice.** On
+   `invoice.payment_failed` the handler runs `attemptBackupPayment` (`webhook-handler.ts:163-180`),
+   which `invoices.pay`s the invoice with each of the customer's backup cards. On an `incomplete`
+   first invoice that a hold is closing, or a cancelled subscription's still-open invoice (S1), **that
+   is us charging a checkout we cancelled**. The fix: skip the retry when the subscription is not live,
+   or when an open hold names the invoice. Then nudge. (A renewal's dunning retry is untouched, §7.)
+2. **The receipt and the org row.**
 
-   **This is a live bug in today's code, with or without holds, and it is filed as #5514.** This
-   design does not fix it itself. It **depends on #5514 landing before §8 step 3**, and every claim
-   below that "the row is not overwritten" holds only once #5514 enforces these rules. They are the
-   contract this design reads; how #5514 implements them is its own decision, but an implementation
-   that does not meet all five reopens C52, C62, C67–C69 here:
+   **The receipt (rev 5, K3).** On `invoice.payment_succeeded`, the receipt is decided by the
+   subscription `subForInvoice` just retrieved (`webhook-handler.ts:47-53`):
+   - **ended** (`canceled`, `incomplete_expired`): no receipt. The payment landed after our cancel
+     and is being refunded (T5). The refund is what the customer is told about (§5.5, Q3).
+   - **anything else** (`incomplete`, live): send it, as today. This holds with or without a hold.
 
-   - **W1, decide from a fresh read.** Whether the row is written, and with what, is decided from a
-     fresh `subscriptions.retrieve` of the event's subscription, and of the subscription the row
-     names when that is a different one, never from `event.data.object`. A snapshot is the state
-     when the event was created, so a redelivered or late one is history. (These are sync reads, not
-     hold reads: the "no Stripe call for a hold" rule above is unchanged, and the invoice path
-     already makes the same read today, `webhook-handler.ts:47-53`.)
-   - **W2, a live subscription's row is replaced only by its superseder.** When the row names Y and
-     the event is for a different X, the event writes nothing to the row while Y reads **live**
-     (§2), whatever X's status: `incomplete`, `trialing`, `active` or ended. X **supersedes** Y only
-     when the fresh read shows Y is no longer live. When both are live, the row keeps Y, and the
-     two-live detector (§7) alerts; the machine cancels neither (Q8).
-   - **W3, no regression by ordering.** For the subscription the row already names, the write
-     applies the fresh read (W1), so a redelivered or out-of-order event re-applies the current
-     state rather than an older one. Two handlers that read at different moments must not let the
-     earlier read win: the write is one conditional statement on the row's current
-     `stripeSubscriptionId` and on the time its read was taken (for example a `stripe_read_at`
-     column: a write whose read is older than the stored one changes nothing). #5514 chooses the
-     mechanism; the contract is that an older read never overwrites a newer one.
-   - **W4, a cancellation touches only the subscription it names.** A
-     `customer.subscription.deleted` for X writes the row only when the row names X. A stamped
-     deletion (§5.3 (5)) is no exception: when the row names a stamped X, X was never live (T3v
-     cancels only an `incomplete` subscription, and the close-out only an artifact whose handle never
-     left the server), so the row is already `community` and recording X as `canceled` is true.
-   - **W5, the AI columns follow the same rules** on `aiStripeSubscriptionId`
-     (`upsertOrgAiSubscription`, `sync.ts:175-180`). Today the AI flow has no sweep, so this is
-     latent; C22 gives it one.
+   §3.4 proves why an `incomplete` subscription with a paid invoice is a purchase the customer keeps.
+   The machine cancels only after a void it proved, and a paid invoice cannot be voided (S2). So
+   that subscription goes `active`, and no state the machine can reach takes it back. Revision 4
+   held the receipt back for `incomplete` under a hold and sent it on adoption. That needed a
+   lease-fenced column the webhook could not write, and a send that callers other than the sweeper
+   were never told to make. Both are gone.
 
-   Under W1–W4, C52 ends with the row on Y: Z's `created` event writes nothing (W2, Y is live), and
-   Z's close-out deletion writes nothing (W4, the row names Y). **Revision 3's claim that a
-   closed-out trial "was never synced to the org" was false**, because the webhook syncs a trial on
-   its own `created` event, outside the gate. It is replaced by the narrower claim in §4.4 rule 4,
-   which W2 and a gate marker make true.
+   **The org row: what this design needs from #5514 (rev 5, K4).** Before the link, X has no
+   `organization_id`, so no event for X writes any row (`sync.ts:96-101`). After the link, the new org
+   has exactly one subscription, X. The link refuses an org whose row names another one (§5.6), and
+   every later purchase on that org is out of scope. So of rev 4's W1–W5, only the rules about **one
+   subscription's own events** are needed:
 
-   The receipt is decided by the subscription `subForInvoice` just retrieved from Stripe
-   (`webhook-handler.ts:47-53`), not by whether a
-   hold exists (revision 2 suppressed it for any held subscription, including one the same pass then
-   adopted, so a customer who paid got no receipt):
-   - **live**: send it, as today. This covers a subscription that a hold is about to adopt (T2).
-   - **ended**: no receipt. The payment landed after our cancel and is being refunded (T5); the
-     refund is what the customer is told about (§5.5, Q3).
-   - **`incomplete` with an open hold** (the invoice settled a moment before the subscription
-     turned `active`): no receipt now; write `receipt_owed_invoice_id`. When the hold is released
-     `adopted` (T2), the sweeper sends that receipt once (`receipt_sent_at` is set with a
-     compare-and-set, so two instances cannot both send it). Any other release clears it unsent.
-     **Rev 4:** the owed write is a hint write (§4.1), so it never makes a state write miss. It
-     carries `state <> 'released'`; when it changes no row because the hold was released in the
-     meantime, the handler reads the row, and sends the receipt itself only when the release was
-     `adopted` and `receipt_sent_at` is still null (the same compare-and-set). The T2 write returns
-     `receipt_owed_invoice_id` in the same statement, so an owed write either lands before T2 and is
-     returned by it, or lands after and is refused and handled here.
-3. **Events nudge holds.** The triggers are `invoice.payment_succeeded`, `invoice.payment_failed`,
-   `customer.subscription.updated` and `customer.subscription.deleted`, each for a subscription with
-   an open hold, and (rev 2) `charge.refund.updated` for a PaymentIntent with an open hold.
-4. **Liveness without redelivery (rev 3, replaces rev 2's `HoldDeferred`).** The nudge commits with
-   the `done` mark, so a nudged event is never lost: either both commit, or the handler threw for
-   another reason, the event is not `done`, and Stripe redelivers it (S10). Redelivery is not needed
-   for a hold to move: the sweeper reaches every hold that is due (I10).
-5. **A cancel the machine made sends no "subscription canceled" email (rev 3).** On
-   `customer.subscription.deleted`, the handler syncs, tracks `subscription_canceled` and emails
-   "subscription canceled" (`webhook-handler.ts:107-113`, `lib/email/billing-email.ts:262`). Today
-   that already fires for every never-paid checkout the sweep closes, about a checkout the customer
-   never completed, and the design adds cancel paths (T3v and the close-out). Every cancel the machine makes is stamped in `cancellation_details.comment`
-   (`alethia:checkout_closed:<hold id>` or `alethia:closeout`, S12), and the subscription carries
-   the stamp in the event itself (`Subscriptions.d.ts:364`), so the handler needs no lookup: a
-   stamped deletion writes the row only under W4 (rev 4: only when the row names it) and sends no
-   email and no revenue event. The customer
-   cancel (`cancel_at_period_end`, `billing.ts:2478`) and the withdrawal (`consumer-rights.ts:193`)
-   are not stamped and keep their email.
+   - **N1, no regression by a stale or out-of-order event of the same subscription.** An event older
+     than one already applied for X changes nothing. Two events stamped in the same second, `incomplete`
+     and `active`, delivered in either order, end on `active`.
+   - **N2, a write with no event time does not demote the subscription the row names.** The link's own
+     sync (`billing.ts:1907`) writes the subscription object it read during the link. If X went
+     `active` after that read and the webhook already applied `active`, the link's write must not take
+     the row back to `none` / `community`. It may apply only when it does not lower X's lifecycle stage
+     (`none` < live < ended), or when it carries a read time no older than the stored one.
+   - **N3, a cancellation touches only the row that names it,** and never inserts a row.
 
-`WEBHOOK_EVENTS` (`scripts/stripe-setup.ts:67-75`) already includes the four events in (3), and not
-`charge.refund.updated`. `invoice.voided` is handled (`webhook-handler.ts:193-196`) but not
-subscribed to, and the runbook lists `payment_intent.succeeded` (`docs/stripe-prod-runbook.md:33`),
-which the code does not subscribe to. Q6 asks the maintainer to settle the set.
+   W2 (another live subscription), W5 (the AI columns) and W1's fresh read are **not** needed in this
+   scope. N1 with a same-second tie-break meets the same purpose as W1 for one subscription. Revision
+   4's live set (`unpaid`, `paused`) mattered only for W2.
+
+   **Checked against #5514's implementation, PR #5518 at `4a306a0f6` (2026-10-04).**
+   - **N1 holds.** The event-time watermark has a lifecycle tie-break
+     (`lib/billing/queries.ts`, `sameSubscriptionMayApply`), tested at
+     `tests/integration/billing-sync.test.ts:172` and `:191`.
+   - **N3 holds**, tested at `:149` and `:163`.
+   - **N2 does not hold.** "A write with no event time — a server action's live read — skips that
+     check" (the `queries.ts` block comment). So this sequence drops a paid org to `community`:
+     1. The link's `subscriptions.update` returns X `incomplete`, because the card payment's invoice
+        is still settling (`first-payment.ts:7-10`).
+     2. X goes `active`, and the webhook applies `active` with its event time.
+     3. The link's `syncSubscriptionToBilling(linked)` then writes the `incomplete` snapshot with no
+        event time.
+
+     Nothing repairs it until X's next event, which may be its renewal. Today's code has the same
+     race, because the last write wins. This is C76. **§8 step 3 is blocked until #5518 (or a
+     follow-up) meets N2 with a test for that sequence.** #5518 has a comment naming it.
+3. **Events nudge holds.** `invoice.payment_succeeded`, `invoice.payment_failed`,
+   `customer.subscription.updated` and `customer.subscription.deleted`, each for a subscription with an
+   open hold, and `charge.refund.updated` for a PaymentIntent with an open hold.
+4. **A cancel the machine made sends no "subscription canceled" email.** Today
+   `customer.subscription.deleted` emails "subscription canceled" for every never-paid checkout the
+   sweep closes (`webhook-handler.ts:107-113`, `billing-email.ts:262`). Every machine cancel is
+   stamped in `cancellation_details.comment` (`alethia:checkout_closed:<hold id>` or
+   `alethia:closeout`, S12). The subscription carries the stamp in the event (`Subscriptions.d.ts:364`).
+   A stamped deletion sends no email and no revenue event. An unstamped one keeps both.
+
+`WEBHOOK_EVENTS` (`scripts/stripe-setup.ts:67-75`) already includes the four events in (3), but not
+`charge.refund.updated` (Q6).
 
 ### 5.4 The sweeper and the operator commands
 
-**The sweeper is required (rev 2, was Q5).** `startPaymentHoldSweeper()` is booted from
-`instrumentation.ts` beside `startConnectionSweeper` (`instrumentation.ts:42-43`), with the same
-`registerLoop` / `setInterval` shape (`lib/cloud-providers/sweep.ts:204-212`), every 5 minutes. Each
-tick selects the open holds that are due (`next_check_at <= now()` or `nudged_at > observed_at`, §4.1, rev 4), oldest first, and for each one takes the
-payer's lease with a 0s wait: a busy lease skips that hold for this tick (the holder is a purchase or
-another instance's sweeper, and it will observe the hold itself), and `next_check_at` is left as it
-is, so the next tick tries again. It runs on every app instance; the lease is what serialises them.
-It also has the externally-driven twin the other sweepers have, a `POST` route behind
-`ALETHIA_CRON_SECRET`, on the pattern of `app/api/internal/connections/sweep/route.ts:1-40`. That
-route is optional and nothing has to call it.
+**The sweeper is required.** `startPaymentHoldSweeper()` is booted from `instrumentation.ts`, beside
+`startConnectionSweeper` (`:42-43`) and in the same `registerLoop` shape, every 5 minutes. Each tick:
 
-**Wake-up (rev 3).** `wakePaymentHoldSweeper()` schedules one immediate tick in this process
-(coalesced: a wake during a tick runs one more tick after it). The webhook route calls it after its
-response is decided (§5.3), and it never awaits it. A tick handles at most a fixed number of holds
-(50) and each hold at most 3 steps, with the Stripe client's timeout (§4.4), so a tick is bounded.
+- selects the open holds that are due, oldest first;
+- for each one, takes the user's lease with a 0s wait. A busy lease skips that hold for this tick.
 
-**Age alerts (rev 3, I11, replaces "72h for a blocking state").** Each tick alerts once, per hold and
-per state entry (`age_alerted_at`), when a hold has been in its state longer than the bound below.
-The bound reads the state **and the last observation**, because one state can hold a normal
-multi-day settlement or a stuck machine. Every open state has a row; `needs_operator` alerts on
-entry (T1, T11, T11r, T14, T17), so its age row exists only for an entry whose alert did not reach a
-channel (`alertPaymentNeedsSupport` returned false, `payment-alert.ts:27-30`).
+It runs on every instance, and the lease serialises them. It has the optional twin route behind
+`ALETHIA_CRON_SECRET`. `wakePaymentHoldSweeper()` schedules one immediate, coalesced tick. A tick
+handles at most 50 holds, with at most 3 steps each.
 
-| State | Last observation | Alert after | Why this bound |
-|---|---|---|---|
-| `closing`, `cancel_unproven` | `last_pay ∈ {awaiting, failed}` (the machine is retrying a void or cancel) | 24h | T3b already alerts on the second failed act; 24h catches a retry loop that never acts. |
-| `closing`, `cancel_unproven` | `last_pay = in_flight` (T4 shape) | 14 days | A bank debit can take several business days to settle; this is the longest settlement the design waits on silently. |
-| `closing`, `cancel_unproven` | `last_pay = capturable` (T4 shape) | 8 days | An authorisation is released after about 7 days (S15). |
-| `closing`, `cancel_unproven` | `last_pay = succeeded` (T4 shape: paid, not yet `active`) | 1h | The payment succeeded and only the invoice's settlement is outstanding (`first-payment.ts:7-10`); an hour without `active` is not a bank delay. |
-| `payment_in_flight` | `in_flight` / `capturable` | 14 days / 8 days | As above. |
-| `invoice_payable` | any | 24h | A void retried every 15m for a day is stuck. |
-| `refund_due` | any | the §3.5 budget, then T14 alerts | Already bounded (about 32h). |
-| `refund_pending` | a covering refund in `requires_action` since `refund_action_since` | 24h | Only support can reach the customer for the details the refund needs. |
-| `refund_pending` | any | 14 days | A refund still neither `succeeded` nor `failed` after two weeks needs a person. |
-| `needs_operator` | entry alert not delivered | 24h, then every 7 days | The state exists to reach a person. |
+**Age alerts (I11).** Each tick alerts once per hold and per state entry (`age_alerted_at`) when the
+hold has been in its state longer than:
+
+| State | Last observation | Alert after |
+|---|---|---|
+| `closing`, `cancel_unproven` | `last_pay ∈ {awaiting, failed}` | 24h |
+| `closing`, `cancel_unproven` | `in_flight` | 14 days |
+| `closing`, `cancel_unproven` | `capturable` | 8 days |
+| `closing`, `cancel_unproven` | `succeeded` (paid, not yet `active`) | 1h |
+| `payment_in_flight` | `in_flight` / `capturable` | 14 days / 8 days |
+| `invoice_payable` | any | 24h |
+| `refund_due` | any | the §3.5 budget, then T14 |
+| `refund_pending` | a covering refund in `requires_action` since `refund_action_since` | 24h |
+| `refund_pending` | any | 14 days |
+| `needs_operator` | entry alert not delivered | 24h, then every 7 days |
 
 These numbers are part of Q4.
 
-With the sweeper, every input that used to depend on a later purchase is driven by time:
-`next_check_at` backoff (T13), the refund budget (§3.5), `refund_pending` (T10p, T10f) and the age
-alerts above.
+**Commands.** The script is `scripts/payment-holds.ts`, on the `resync-member-tuples.ts` pattern:
 
-**Commands.** The script is `scripts/payment-holds.ts`. It follows the `resync-member-tuples.ts`
-pattern.
-
-- `list [--open] [--scope …] [--payer …]` and `show <sub>`: read-only. `show` prints the live Stripe
-  observation next to the row.
-- `reconcile [--backfill]`: runs one sweeper pass now, under the same leases. With `--backfill`, it
-  first runs the unbounded backfill listing (§8) and opens a hold for each hit.
-- `release <sub> --reason "<text>" --operator <userId>`: T16. It refuses when there is no reason. It
-  takes the payer's lease (rev 3, waiting up to 30s, refusing if still busy), prints the live
-  observation, then writes, with the `version` compare-and-set, an audit event (`billing.payment_hold.released`) with the
-  before-state. It is the documented way out of `needs_operator` and of the `unpaid` or `paused` dead
-  end (AC9). Releasing a hold whose subscription is still `incomplete` is allowed: the next sweep opens
-  a new row for it (§4.1).
+- `list [--open] [--payer …]` and `show <sub>` are read-only. `show` prints the live observation.
+- `reconcile [--backfill]` runs one sweeper pass now. With `--backfill` it first runs §8's listing.
+- `release <sub> --reason "<text>" --operator <userId>` is T16. It refuses when there is no reason,
+  takes the user's lease, prints the live observation, then writes the `version` compare-and-set and
+  an audit event (`billing.payment_hold.released`). It is the way out of `needs_operator` and of the
+  `unpaid` or `paused` dead end (AC9).
 
 ### 5.5 Customer copy
 
-There is one message per *set*, and every clause in it is true. This covers C26, C29, C31 and C32,
-and replaces "the most serious one wins" (`billing.ts:795-804`).
-
-**A clause is chosen by the hold's state and its last observation (rev 3).** Revision 2 chose by
-state alone, so a `closing` or `cancel_unproven` hold that T4 keeps because a bank debit is
-`processing` said "try again in a few minutes" for days. A hold's `last_pay` (§3.1) now picks the
-clause, and the same payment gets the same words whether it sits on an ended subscription
-(`payment_in_flight`), on an `incomplete` one under a hold (T4 shape) or on one the sweep kept with
-no hold.
+There is one message per *set*, and every clause in it is true. A clause is chosen by the hold's
+state **and** its `last_pay`.
 
 | Present in this request | Clause |
 |---|---|
-| a payment under way: a hold in `payment_in_flight`, or in `closing` / `cancel_unproven` with `last_pay = in_flight`, or a subscription the sweep **kept** with a `processing` payment | "An earlier checkout's payment is still being processed, so nothing new was started. A bank debit can take several business days; you can try again once it settles." This replaces `PAYMENT_MAY_BE_UNDER_WAY` (`billing.ts:740-741`). It is true for as long as the payment takes (I1). |
-| an authorisation: the same states with `last_pay = capturable`, or a kept subscription with a `requires_capture` payment | "An earlier checkout's payment was authorised but not completed, so nothing new was started. Your bank can show the authorisation for up to 7 days before it is released or completed; you can try again once it is." (S15) |
-| `closing` / `cancel_unproven` with `last_pay = succeeded`, or a kept subscription whose payment succeeded | "An earlier checkout's payment has just gone through and is being confirmed, so nothing new was started. Try again in a few minutes." The minutes are true here: only the invoice's settlement is outstanding (§5.4's 1h bound). |
-| `closing` or `cancel_unproven` with `last_pay ∈ {awaiting, failed}` or no observation yet (blocking) | "We could not confirm an earlier checkout was closed, so nothing new was started. Try again in a few minutes." True: the machine retries every 5 minutes, and 24h of failure alerts (§5.4). |
-| a kept subscription with no payment, or with `has_more` (C39) | "An earlier checkout is still open and we could not confirm it is unpaid, so nothing new was started. Try again later; it closes on its own within a day." True: Stripe expires it after about 23h (S3). |
-| `invoice_payable` (rev 2) | "We could not yet close an earlier checkout's invoice, so nothing new was started. Try again in a few minutes." |
+| a payment under way: `payment_in_flight`, or `closing` / `cancel_unproven` with `last_pay = in_flight`, or a subscription the sweep **kept** with a `processing` payment | "An earlier checkout's payment is still being processed, so nothing new was started. A bank debit can take several business days; you can try again once it settles." |
+| an authorisation (`last_pay = capturable`, or a kept `requires_capture`) | "An earlier checkout's payment was authorised but not completed, so nothing new was started. Your bank can show the authorisation for up to 7 days before it is released or completed; you can try again once it is." |
+| `closing` / `cancel_unproven` with `last_pay = succeeded`, or a kept subscription whose payment succeeded | "An earlier checkout's payment has just gone through and is being confirmed, so nothing new was started. Try again in a few minutes." |
+| `closing` or `cancel_unproven` with `last_pay ∈ {awaiting, failed}` or no observation yet | "We could not confirm an earlier checkout was closed, so nothing new was started. Try again in a few minutes." |
+| a kept subscription with no payment, or with `has_more` (C39) | "An earlier checkout is still open and we could not confirm it is unpaid, so nothing new was started. Try again later; it closes on its own within a day." |
+| `invoice_payable` | "We could not yet close an earlier checkout's invoice, so nothing new was started. Try again in a few minutes." |
 | `refund_due` | "An earlier payment went through after that checkout was cancelled. Its refund has not gone through yet; nothing new can be started until it has." |
-| `refund_pending` (rev 2) | "An earlier payment went through after that checkout was cancelled. We have issued its refund, and it is on its way back to you." (No "in full", no "refunded".) |
+| `refund_pending` | "An earlier payment went through after that checkout was cancelled. We have issued its refund, and it is on its way back to you." |
 | `needs_operator` | "…contact support at <email>…", plus "we have raised an alert" **only when alerted**. |
-| `released(refunded)` or `released(already_refunded)` released in the last 14 days (rev 2) | It is **appended** to any of the above, never dropped (C26): "An earlier payment was refunded in full; it can take 5–10 business days to reach you." Reached only once at least one succeeded PaymentIntent was read and every refund covering it reads `succeeded` (T10, rev 4: never over an empty read). |
-| a held new-org setup at link or resume time (rev 2, §5.6) | The clause of that hold's state and last observation, from this table. |
-| a link that succeeded on an `incomplete` subscription (rev 3, §5.6) | "Your team is ready. Its payment is still being processed, and the plan switches on as soon as the payment settles; a bank debit can take several business days. If the payment fails, the team stays on the free plan and nothing is charged." |
-| T0h (rev 3) | The clause of the existing hold, by its state and last observation. |
-| T0f (hold write failed) | `UNCONFIRMED` text. It promises no block and no "won't be charged twice". |
+| `released(refunded)` or `released(already_refunded)` in the last 14 days | **Appended** to any of the above (C26): "An earlier payment was refunded in full; it can take 5–10 business days to reach you." |
+| a link refused on an ended X with no hold (§5.6) | "This checkout was closed before its payment completed, so it was not linked to the new team." |
+| a link that succeeded on an `incomplete` X (§5.6) | "Your team is ready. Its payment is still being processed, and the plan switches on as soon as the payment settles; a bank debit can take several business days. If the payment fails, the team stays on the free plan and nothing is charged." |
+| T0h | The clause of the existing hold. |
+| T0f | `UNCONFIRMED` text, with no promise of a block. |
 
-"You won't be charged twice" appears **nowhere**, including `PAYMENT_MAY_BE_UNDER_WAY`
-(`billing.ts:740-741`), which says it today (C32).
+"You won't be charged twice" appears **nowhere** in the create-a-team flow, its link or its sheet
+(C32). **Rev 5:** that includes the sheet's own sentences (`pending-paid-setup.ts:85-90`, `:454-458`,
+`:535-545`), which say "you won't be charged again" today. Inside this scope they say what is true
+for that outcome instead. The org-plan flow's `PAYMENT_MAY_BE_UNDER_WAY` (`billing.ts:740-741`) is
+out of scope (§7).
 
-**Where a clause travels when the request mints (rev 2).** A refund clause on a request that goes on
-to mint had nowhere to go: `SubscriptionIntent` (`billing.ts:1157-1163`) and the create-a-team
-`{ kind: "intent" }` (`billing.ts:1744`) carry no message. Both gain an optional `notice: string`,
-which the checkout UI shows above the Payment Element. A refusal carries its message as it does
-today.
+**Where a clause travels when the request mints.** The create-a-team `{ kind: "intent" }`
+(`billing.ts:1744`) gains an optional `notice: string`, which the sheet shows above the Payment
+Element. `notice_last_sent_at` means "returned", never "delivered". So the `released(refunded)`
+clause is appended to every create-a-team response of that user for 14 days after `released_at`.
 
-**When `notice_last_sent_at` is written (rev 2).** It is written when a response that carries the
-clause is **returned**, and it means only that. The server cannot know the browser received it, so
-nothing treats it as delivery: the `released(refunded)` clause is appended to every response in that
-`(scope, payer)` for 14 days after `released_at`, not "once". A lost response then costs a repeat of a
-true sentence, never a lost notice. A delivery-guaranteed channel is Stripe's own refund email, or the
-email in Q3.
+### 5.6 The link, the resume lookups and the sheet (rev 5: the sheet is in scope)
 
-### 5.6 The create-a-team link and resume (rev 2)
+**The link consults holds and returns a typed result.** Right after the retrieve
+(`billing.ts:1863`), **under the `user:<userId>` lease**, and **before any Stripe write**:
 
-The blocker 4176267018's create-a-team half: tab 1 pays X after X was cancelled, then calls
-`linkSubscriptionToNewOrg`, which links the `canceled` subscription and syncs a cancelled plan. The
-customer pays and gets no team and no message. Today the link checks the customer and metadata only
-(`billing.ts:1863-1872`) before it rewrites the customer and the subscription (`billing.ts:1897-1903`)
-and syncs (`billing.ts:1907`). With holds, X can be ended with a hold in `payment_in_flight` or
-`refund_due`, for example when ACH confirms as `processing` and the client proceeds.
+| X, and any open hold naming X | The link returns |
+|---|---|
+| X is ended (`canceled` or `incomplete_expired`) | `{ kind: "refused", clause }`: the hold's clause (§5.5), or with no hold, the "closed before its payment completed" clause. X keeps its create-a-team metadata, and its hold keeps the user as payer (I12). |
+| an open hold in `payment_in_flight`, `invoice_payable`, `refund_due`, `refund_pending` or `needs_operator` | `{ kind: "refused", clause }` with that hold's clause. |
+| an open hold in `closing` or `cancel_unproven` | Run `advanceHold` first (the link holds the lease). `released(adopted)`: link as below. A T4-shaped observation that is still open: **link and defer**. Otherwise X was just closed: refused, as in the first row. |
+| **the org's billing row already names a different subscription (rev 5)** | `{ kind: "refused", clause: "This team already has a subscription, so this payment was not linked to it. Contact support with the time of the payment." }`, and an alert with X as the subject. This keeps a new org at one subscription, which the narrowed #5514 contract relies on (§5.3 (2)). The sheet never produces it: each setup record finds its own org by its marker (`NEW_ORG_SUBSCRIPTION_KEY`). |
+| X `incomplete`, no hold | **Link and defer**: `{ kind: "linked", planState: "processing" }`. |
+| X live | Link as today: `{ kind: "linked", planState: "active" }`. |
 
-- **`linkSubscriptionToNewOrg` consults holds, and refuses only an ended subscription (rev 3).**
-  Revision 2 refused whenever X's status was not live. That also refused the normal case: the sheet
-  calls the link right after `confirmCardPayment` resolves (`components/org/pending-paid-setup.ts:516`,
-  after creating the org at `:472`), and Stripe keeps X `incomplete` until its invoice settles
-  (`lib/billing/first-payment.ts:7-10`). Under revision 2 a refused X carried no `organization_id`, so
-  when it went `active` the webhook's sync ignored it (`lib/billing/sync.ts:96-101`), and the team stayed on
-  `community` although the customer had paid. Today's link does not read the status at all, and
-  that is right for an `incomplete` X. The rule is now this. Right after the retrieve
-  (`billing.ts:1863`), **under the `user:<userId>` lease** (the create-a-team key, so the link and
-  that user's sweep cannot interleave), and **before any Stripe write**:
+**Link and defer** is today's link, unchanged: the metadata writes (`billing.ts:1897-1903`), then the
+sync (`:1907`), which keeps the org on `community` while X is not live (`sync.ts:124-130`). X now
+carries `organization_id`, so the webhook that reports X `active` applies the plan. That holds only
+under N2 (§5.3 (2), C76). If X's payment later fails, the hold that names X voids and cancels it.
+With no hold, Stripe expires it (S3). The team stays on `community`, and nothing is charged.
 
-  | X, and any open hold naming X | The link does |
-  |---|---|
-  | X is ended (`canceled` or `incomplete_expired`) | **Refuse.** Copy: that hold's clause (§5.5), or with no hold, "This checkout was closed before its payment completed, so it was not linked to the new team." X keeps `new_org` metadata, so its hold keeps scope `new_org` and the refund still runs (I12 holds either way). |
-  | an open hold in `payment_in_flight`, `invoice_payable`, `refund_due`, `refund_pending` or `needs_operator` | **Refuse** with that hold's clause. Every one of these states but `needs_operator` means X is ended; `needs_operator` waits for a person. |
-  | an open hold in `closing` or `cancel_unproven` | Run `advanceHold` on it first (the link holds the lease). `released(adopted)` (T2): X is live, link as below. Still open with a T4-shaped observation (`last_pay ∈ {in_flight, capturable, succeeded}`): **link and defer**. Otherwise T3 / T3v closed X, which is now ended: refuse as in the first row. |
-  | X `incomplete`, no hold | **Link and defer.** This is the ordinary state right after payment. |
-  | X live | Link, as today. |
+**The resume lookups report a held setup.** `NewOrgSetupState` (`lib/billing/new-org-setup.ts:71-95`)
+gains `hold: { state; notice } | null`, and `resolveNewOrgSetup` (`billing.ts:2031`) and
+`findUnfinishedNewOrgSetup` (`:2082`) fill it. A held setup is never reported as resumable.
 
-  **Link and defer** is today's link, unchanged: the customer and subscription metadata writes
-  (`billing.ts:1897-1903`), then `syncSubscriptionToBilling` (`:1907`), which for a subscription
-  that is not live keeps the org on `community` (`sync.ts:124-130`). What changes is that X now
-  carries `organization_id`, so the webhook that reports X `active` applies the plan (it is
-  ignored only without that metadata, `sync.ts:96-101`). The link returns `planPending: true`, and
-  the sheet shows the §5.5 "link that succeeded on an `incomplete` subscription" clause instead of
-  a paid plan. If X's payment later fails, a hold that names X voids and cancels it (with no hold,
-  Stripe expires it, S3), and the team stays on `community` with nothing charged, as the clause
-  says. A hold on X keeps scope
-  `new_org` and payer U (I12): U's next create-a-team stays blocked while X settles, and the new
-  org's own `org_plan` sweep, which now sees X, keeps it while its payment is under way and, if it
-  later tries to close X, meets T0h rather than opening a second hold.
-- **Reachability.** The sheet is card-only (§1.1), so a T4-shaped X at link time is mostly the
-  seconds between a succeeded card payment and the invoice settling. A `processing` X at link time
-  needs a payment confirmed outside the sheet. The rule does not depend on which.
-- **The resume lookups report a held setup.** `NewOrgSetupState` (`lib/billing/new-org-setup.ts:71-95`)
-  gains `hold: { state; notice } | null`. `resolveNewOrgSetup` (`billing.ts:2031`) and
-  `findUnfinishedNewOrgSetup` (`billing.ts:2082`) fill it from the `new_org` holds of that
-  subscription, and the sheet shows the notice instead of offering to resume. A held setup is never
-  reported as resumable.
+**The sheet (rev 5, K5).** `runSteps` (`components/org/pending-paid-setup.ts`) changes in four places:
+
+1. **Stop before creating the org.** `resolveNewOrgSetup` runs before the org is created (`:454`). When
+   it reports `hold` set, or X ended, the run throws `SetupStopped(notice)` **before**
+   `authClient.organization.create` (`:472`). No team is created for a setup that cannot be linked.
+2. **Render the link's result.** `{ kind: "refused" }` throws `SetupStopped(clause)`: non-retryable,
+   with the clause as the message. The browser record is then cleared, because the server keeps the
+   memory (the hold row and `pending_org_setups`), and a retry would only be refused again. An org
+   created before a racing refusal stays on the free plan, and the clause says so.
+   `{ kind: "linked", planState }` is carried to the outcome.
+3. **No false success.** `done` carries `planState`. The toast and the final view show it (#5522).
+   "Subscription active" appears only for `active`.
+4. **The generic retry text is true only for a thrown error.** "Retry to complete setup" stays for an
+   exception (an outage), and loses "you won't be charged again". A typed refusal never reaches it.
+
+**Reachability.** The sheet is card-only (§1.1), so a T4-shaped X at link time is mostly the seconds
+between a succeeded card payment and the invoice settling. The rules do not depend on which.
+
+---
 
 ## 6. Every case, its transitions, and the test that proves it
 
 Case sources:
-
 - **5506** is the issue body or its comment.
 - **AC n** is #5506 acceptance criterion n.
-- **Rn** is #5489 review round n, and its advisories (R1 `bd6f7c5b0`, R2 `2f86fea6e`, R3 `7cf098978`,
-  R4 `04dee418c`, R5 `5ea1bdaf1`).
-- The thread ids are the #5489 inline comments.
+- **Rn** is #5489 review round n.
+- The thread ids are #5489 inline comments.
 - **P** is a #5455 thread or advisory.
-- **New** marks a case found while writing this, verified in code.
+- **#5511 review n** is the nth review of this ADR.
 
-Test files are within #5506's `scope:`, except where marked †, which needs the scope widened (Q7):
+Test files are within #5506's `scope:`, except those marked †, which need the scope widened (Q7):
 
 - `A` = `tests/actions/billing-subscription.test.ts`
-- `H` = `tests/lib/billing/payment-holds.test.ts`, the pure `advanceHold` table tests with Stripe mocked
+- `H` = `tests/lib/billing/payment-holds.test.ts`, the pure `advanceHold` table tests, with Stripe mocked
 - `W` = `tests/lib/billing/webhook-holds.test.ts`
 - `I` = `tests/integration/payment-holds.test.ts`, against real Postgres
 - `L` = `tests/integration/payment-hold-lease.test.ts`
+- `S†` = `tests/components/org/pending-paid-setup.test.ts`, the sheet's run, with the actions mocked
 
 Every new test must fail on `857794cb9` on its assertion.
 
-**Reachability (rev 3).** The embedded flows are card-only (§1.1). A case that needs a `processing`
-bank debit, or a subscription that is `active` before it is paid (S4), is reached through hosted
-Checkout or a payment confirmed outside the sheet, never through the sheet's own confirm. Those
-rows say so (C1, C9, C43, C61). The tests mock Stripe, so they reach every row regardless.
+**Reachability.** A case that needs a `processing` bank debit, or a subscription that is `active`
+before it is paid (S4), is reached only through a payment confirmed outside the sheet. The tests mock
+Stripe, so they reach every row regardless.
 
-| ID | Case | Source | Transitions | Test (file: what it asserts) |
+| ID | Case | Source | Transitions | Test |
 |---|---|---|---|---|
-| C1 | After the cancel, the PaymentIntent is `processing`, and the retry mints. If the payment succeeds, the customer has paid twice. Reached through hosted Checkout or an out-of-sheet confirm. | 5506; AC1; 4176221898 | T0, then T3, then T6. Retry: E1 on `payment_in_flight`, so I1 refuses. | A: the two-request test at `:575-606`, flipped. The retry is refused and `subscriptions.create` is not called. |
-| C2 | After the cancel, the payments cannot be read, twice. | 5506 | T0, T3, then an observation failure (I5). Stays `closing`. | A: the retry is refused. H: a read failure leaves the state and `updated_at` unchanged except `attempts`. |
-| C3 | After the cancel, the invoice cannot be voided, so it stays payable. | 5506; AC4; 4176267018 | With void-first: T3a to `cancel_unproven`, or on an ended subscription T8 to `invoice_payable`. | A: a void rejection, then the retry is refused. H: `invoice_payable` plus a void success gives `released(voided_unpaid)`. |
-| C4 | After the cancel, the refund fails. | 5506; AC2 | T5 to `refund_due`, then T13. | A: refused. H: the second attempt uses key `-1`. |
-| C5 | A payment that is not a PaymentIntent, or `paid` with no PaymentIntent. | 5506 | T11 to `needs_operator`. `paid` with no PaymentIntent goes through T11r first (rev 2, C50). | H: no refund is called and the copy has no "went through". |
-| C6 | Create-a-team passes the same `priorSubscriptionId`. A `canceled` prior with a `paid` invoice is left alone and a new one is minted. | 5506 | Its hold, opened on the first request, is read by scope (I7), with no reliance on `priorSubscriptionId`. A `canceled`, `paid` prior with **no** hold is a finished purchase that was cancelled later, and is left alone. | A: the prior `canceled` with a hold in `payment_in_flight` is refused. With no hold, it mints (the regression guard). |
-| C7 | A lost read-to-cancel race across retries, tabs and devices, when the browser lost `priorSubscriptionId` and `customerId`. | AC1; P adv 3 | Holds are found by `(scope, payer_key)` from the session (org id or user id), never from browser input. | A: three variants (same args, no prior, no customer). Each is refused. |
-| C8 | The refund's idempotency key replays a saved failure for 24h. | AC2; R2 adv 3 | §3.5: the key carries the attempt number, and the refund read runs first. | H: attempt 0 fails, attempt 1 succeeds, giving `released(refunded)`. A refund already present gives T10 with no `refunds.create`. |
-| C9 | A processing payment later succeeds: refund it, tell the customer the truth, release. Reached through hosted Checkout or an out-of-sheet confirm. | AC3 | T6, then (webhook E1) T5, then `refund_pending` (T10p), then `released(refunded)` (T10) once the refund reads `succeeded` (rev 2). Every response in the scope for 14 days carries the refund clause in `notice` (§5.5, rev 2). | W: `invoice.payment_succeeded` on a held invoice whose subscription is ended sends no receipt and nudges the hold (rev 3: the webhook calls no Stripe write); one sweeper tick then refunds. A: the next purchase mints and its `SubscriptionIntent.notice` has the refund clause; a second purchase within 14 days has it again. |
-| C10 | A processing payment later fails. The PaymentIntent is back at `requires_payment_method`, so the invoice is voided before release. | AC3; 4176267018 | T6, then T8: void, then release. | H: the void is called before the state becomes `released`. A void failure gives `invoice_payable`. |
-| C11 | A stale tab pays a cancelled subscription's open invoice (3DS in progress). | AC4; 4176267018; R3 verified list | Void-first (§3.4). A payment that wins the race is seen as T5. | A: `voidInvoice` is called before `subscriptions.cancel` (call order). |
-| C12 | A payment lands between the read and the void, and the alert says "no PaymentIntent took the money", which is false. | AC4; R5 adv 1; 5506 comment (1) | T12: a void failure triggers a re-read, which goes to T5 (refund). The alert copy never claims "no PaymentIntent". | H: a void failure plus a re-read showing `succeeded` gives a refund. The alert summary does not match `/no PaymentIntent .* took/`. |
-| C13 | The cancel fails on 429, 5xx or a network error, and the flow mints. | AC5; 4176778630 | T3a to `cancel_unproven`, which blocks. | A: kept from #5489 (the cancel rejection is refused), plus a retry that is also refused. |
-| C14 | Retrieve and void errors, each mapped to a state. None maps to mint. | AC5 | §5.1 table. | H: a parameterised table over every call in §5.1 × {429, 500, ECONNRESET}. `subscriptions.create` is never called. |
-| C15 | The hold write fails. Refuse, and promise no block. | AC6; R2 adv 4 | T0f. | A: the insert rejects, and `voidInvoice` and `cancel` are not called. The copy does not match `/blocked|won't be charged/`. |
-| C16 | Two faults in a row (the void fails, then the write fails) lead to a second purchase. | AC6; R3 adv 2 | I4: the write is first, so the second fault is either T0f (nothing done) or a stale-but-open row (§5.2). | I: an update that fails after a successful Stripe void leaves the row open, and the next purchase is refused. |
-| C17 | A held subscription later reads paid and never clears. Later, a cancel-and-resubscribe refunds a renewal. | AC7; 4177048230 | T2 to `released(adopted)`. I2 (held invoice only). I3. | H: `cancel_unproven` with the subscription `active` is `adopted`, with no refund. A: the 4177048230 replay (503 on cancel, then `active`, then `canceled` with a renewal paid) calls no `refunds.create`. |
-| C18 | An org-plan hold blocks create-a-team, or routes it to `resumePaidNewOrgSetup` with the false copy "not an owner", permanently. | AC8; 4177048230 (2); R4 adv 2 | I7: scope isolation. | A: an `org_plan` hold for user U, then U's create-a-team mints. I: the scope index query returns only its scope. |
-| C19 | No operator release. A hold on an `unpaid` or `paused` subscription alerts and refuses forever. | AC9; R4 adv 3 | T17 to `needs_operator`, then T16. | H: `unpaid` gives `needs_operator`. I†: `release` writes `released_by` and the audit row, and needs `--reason`. |
-| C20 | `subscriptions.list({limit:100})` ignores `has_more`. | AC10; R4 adv 4 | §4.5: page fully, fail closed over the cap. | A: page 1 is clean and page 2 holds a `processing` one, so the purchase is refused. Over the cap, refused. |
-| C21 | `unlinkedPendingOrgSetupCustomers` defaults to 5. | AC10; R1 adv 1 | §4.5. | I: 7 unlinked customers are all returned. Over 50, the flow refuses. |
-| C22 | The AI flow shares the customer with no lock, no holds and no sweep, and the org-plan sweep cancels the AI flow's `incomplete` subscriptions. | AC11; R4 adv 5 | §4.2 scope filter. §4.4 shared `org:` key. The AI flow gains a sweep, holds and a live check. | A: the org-plan sweep leaves an AI `incomplete` alone. The AI flow refuses beside its own `processing` one. |
-| C23 | Hosted Checkout (`createCheckoutSession`) takes no lock and does no sweep. Hosted and embedded at once give two subscriptions. | R3 adv 4 | It takes the `org:` lease and runs I1 (a)–(c) before creating a session. Rev 3: a session created earlier is expired by I1 (a′) before any new artifact, and the new URL passes the gate (I9). | A: an open `org_plan` hold refuses `createCheckoutSession`. A (rev 3): an earlier `open` session classified to the org is expired before the embedded flow's `subscriptions.create`; an expire whose re-read shows `open` refuses with no create. |
-| C24 | An `active` subscription not yet seen because of webhook lag, and a second plan is minted. | AC12; R4 adv 1 | §4.3 live check (I1c). | A: `organization_billing` is empty, Stripe lists an `active` `org_plan`, so the flow refuses. |
-| C25 | The lock holds a pooled connection inside a transaction. Pool exhaustion, and `idle_in_transaction_session_timeout`. | 5506 "Also"; R3 adv 1; R4 adv 6; R5 adv 4 | §4.4 lease row with fencing. | L: two holders. The second waits without holding a connection, and an expired lease is taken over. A stale holder's hold write is rejected (fencing). The double-mint case is C52. |
-| C26 | After a refund, the copy still says "may be blocked", and mixed outcomes drop the refund notice. | R1 adv 2; R5 adv 2; 5506 comment (2) | §5.5: the refund clause is appended; a pending refund has its own clause (rev 2). | A: one swept subscription refunded and one `in_flight`. The message contains both clauses. |
-| C27 | `requires_capture` after the cancel: no refund and no PaymentIntent cancel, so the authorisation holds the card until it expires. | R1 adv 3 | T7. | H: `paymentIntents.cancel` is called, then T8 voids. |
-| C28 | Concurrent requests are not serialised (two tabs). | R2 adv 1 | §4.4. Holds are read under the lease. | L, and A's existing `two concurrent org purchases` case, kept. |
-| C29 | `NEEDS_SUPPORT` says "went through" when that is not proven (`unrecognised`, a missing subscription). | R2 adv 2 | T1 and T11 copy, §5.5. | H: the copy for T1 and T11 does not match `/went through/`. |
-| C30 | The `held.paid` branch is unreachable: a cancelled subscription never becomes active. | R2 adv 5 | T2 applies only from `closing` and `cancel_unproven`. Other states cannot read `live`. If one does, T17. | H: `payment_in_flight` with the subscription `active` gives `needs_operator`, with no refund. |
-| C31 | "Our team has been alerted" is false when nothing reached a channel. | 4176778633 | I8. | A: kept from #5489. With the variable unset, the text does not match `/raised an alert/`. |
-| C32 | `PAYMENT_MAY_BE_UNDER_WAY` promises "you won't be charged twice". | R5 adv 3; 5506 comment (3) | §5.5. | A: no refusal text matches `/charged twice/`. |
-| C33 | A `canceled` prior whose latest invoice is `draft` is a dead end on every retry. | R5 adv 5; 5506 comment (4) | T8d: delete the draft. | H: a draft gives `invoices.del` and `released(deleted_draft)`. |
-| C34 | Create-a-team: "canceled + paid + no team → refund" is re-issued through the idempotency replay and refuses for 24h. | #5489 body, "Removed" | Not reintroduced. A refund happens only from a hold (I3), with keys per attempt (§3.5). | A: a `canceled` prior with a `paid` invoice and no hold calls no `refunds.create`. |
-| C35 | `priorSubscriptionId` from the browser: a paid subscription is cancelled and its record deleted. | P 4174412523 | It stays fixed (`ownNewOrgSubscription`, `billing.ts:1768-1780`). Holds open only on server-read, `created_by`-checked subscriptions. | A: kept. Plus a prior minted by another user is never held or cancelled. |
-| C36 | `incomplete` is not "never paid". | P 4174573734 | T3 and T3v act only on `pay ∈ {awaiting, failed}`; T4 keeps everything else (rev 2). | A: kept (`readFirstPayment` cases). |
-| C37 | Search indexing lag offers a charged customer a second purchase. | P 4174185555 | Hold discovery is a DB query by `(scope, payer_key)`. It never uses `subscriptions.search`. | H: a hold lookup makes no search call. |
-| C38 | A lost `customerId` while the first payment is `processing` leads to a fresh customer and a double purchase. | P ac002 adv 5 | Holds are keyed by payer, not customer. The recorded customers are swept in full (§4.5). | A: no `customerId`, and a hold on another customer, so the flow is refused. |
-| C39 | An `incomplete` subscription with zero payments, or with `has_more`, is refused until expiry, and the copy says "a minute". | P adv 4 | The sweep keeps it (T4 equivalent). The copy is the §5.5 "kept" clause (rev 2; no "minute"). | A: a zero-payment `incomplete` is refused, and the copy does not match `/a minute/`. |
-| C40 | Records never dropped hide older ones, and OFFSET paging skips a row. | P adv 6; P ac002 adv 2 | Fixed by keyset paging (#5489). Unchanged here. | I: kept (`pending-org-setups.test.ts`). |
-| C41 | **New.** `invoice.payment_failed` on a held or ended subscription's open invoice runs `attemptBackupPayment`, which `invoices.pay`s it with a backup card. | New: `webhook-handler.ts:163-180`, `payment-methods.ts:67-…` | §5.3 (1). | W: an ended subscription with an open invoice and a ranked backup card calls no `invoices.pay`, and the hold is nudged (`nudged_at` = now, `version` unchanged). |
-| C42 | **New.** A late event for a superseded subscription X overwrites the org row of live Y with `canceled` / `community`, and emails a receipt for X. | New: `sync.ts:93-160`, `queries.ts:90-118`, `webhook-handler.ts:147-160` | §5.3 (2): W2 and W4, delivered by #5514 (rev 4); the receipt rule is this design's. | W: the row names live Y, and `invoice.payment_succeeded`(X ended) leaves the row unchanged and sends no receipt. The row half is #5514's test; this design's W file re-runs it as a precondition of step 3. |
-| C43 | **New.** ACH: the subscription goes straight to `active` (S4), so the `incomplete`-only sweep and the row check both miss it. Reached through hosted Checkout only. | New: S4; `billing.ts:1068-1072`, `:1181-1189` | §4.3 live check. | A: Stripe lists an `active` `org_plan` with an `open`, processing invoice, so the flow refuses. |
-| C44 | **New.** `createSubscriptionIntent` refuses only on `active` / `trialing`, so a `past_due` org mints a second plan. | New: `billing.ts:1182-1185` | §4.3 (live includes `past_due`, `unpaid`, `paused`). | A: a `past_due` org plan refuses. |
-| C45 | **New.** `ensureCustomer` races across the org's flows: two customers, one of which is never swept. | New: `billing.ts:633-677`; the AI flow and Checkout are unlocked (`:1261-1315`, `:1117-1155`) | §4.4 shared `org:` key. | A: concurrent AI and org-plan on an org with no customer call `customers.create` once. |
-| C46 | **New.** The trial (`startProTrial`) mints on the org customer outside the lock and the hold check. | New: `billing.ts:1329-1398` | It takes the `org:` lease and refuses on an open `org_plan` hold or a live `org_plan`. Rev 3: its subscription passes the gate before it is synced. | A: an open hold refuses `startProTrial`. |
-| C47 | **New.** After void-first, `readFirstPayment` reads `incomplete` + `void` + a `canceled` PaymentIntent as `not_proven_unpaid`, which is a 23h dead end. | New: `first-payment.ts:61-74` and §3.4 | The §3.4 rule added to `readFirstPayment`. | new `tests/lib/billing/first-payment.test.ts`: `incomplete`, invoice `void`, PaymentIntent `canceled` gives `never_paid`. |
-| C48 | **Rev 2 (review G1).** The void succeeds and the cancel 503s (or the process dies between them). Every later observe reads `incomplete`, `void`, `pay = failed` (S8), which the first revision sent to T4: blocked about 23h with "try again in a few minutes". | #5511 review | T3v matches `inv = void ∧ pay ∈ {awaiting, failed}` and retries the cancel; then T9. | H: `cancel_unproven` + `incomplete` + `void` + `failed` calls `subscriptions.cancel` and reaches `released(voided_unpaid)`. |
-| C49 | **Rev 2 (review G1).** The void fails because the payment just landed (invoice `paid`), and the cancel then runs anyway: a purchase completed in another tab is cancelled and refunded. | #5511 review | T3 cancels only after its re-read shows `void`; otherwise T3a with no cancel; the next observe sees `live` (T2) or `in_flight` (T4). | H: `voidInvoice` rejects and the re-read shows `paid`: **no** `subscriptions.cancel` call, state `cancel_unproven`. |
-| C50 | **Rev 2 (review G2).** A PaymentIntent succeeds between the payments read and the invoice read: `inv = paid` with no succeeded PI, so T11 sent it to `needs_operator` instead of a refund. | #5511 review; R5 adv 1 | Reads are ordered invoice then payments (§3.2), and T11r re-reads the payments once before alerting. | H: the first payments read is empty and the second shows `succeeded`: T5 runs and no alert is sent. A single-read implementation fails this test. |
-| C51 | **Rev 2 (review G3).** An operator releases a `cancel_unproven` hold whose subscription is still `incomplete`; the next purchase's E0 for it hits the unique `subscription_id` and becomes T0f on every purchase for about 23h. | #5511 review | Partial unique index `WHERE state <> 'released'` (§4.1); E0 inserts a new row. | I: release → sweep → E0 inserts a second row for the same subscription; a second open row for it is refused by the index. |
-| C52 | **Rev 2 (review G5).** The lease expires mid-purchase: B takes over and returns Y's secret, then A's stalled calls return and A mints Z and returns its secret. Two payable subscriptions; no fenced write ever rejected A. | #5511 review; R4 adv 6 (lease analogue) | §4.4 rules 1–4: fenced renewal before every Stripe write, a mint deadline, the artifact gate (I9), and the close-out exemption. Rev 3: A's gate fails, so A voids and cancels Z under the exemption, writes no hold row, and makes no other Stripe write. | L: expire A's lease between its pre-mint checks and `subscriptions.create`; B mints. Exactly **one** client secret is returned across A and B; A's only Stripe writes after the failed gate are `voidInvoice(Z's invoice)` and `subscriptions.cancel(Z)` stamped `alethia:closeout`; A's hold insert is never attempted. A second variant fails A's close-out: Z stays `incomplete`, and B's next purchase sweeps it. |
-| C53 | **Rev 2 (review G6).** A hold in `payment_in_flight` whose ACH debit settles while another tab holds the lease, or while the webhook's `advanceHold` gets a 5xx: the webhook returned 200, nothing ran again, and the customer is never refunded. | #5511 review; AC3 | Rev 3: §5.3's nudge (`nudged_at = now()` committed with the `done` mark; rev 4: not `next_check_at`) and §5.4's wake-up; the required sweeper (I10). `HoldDeferred` is gone. | W: the handler calls no Stripe write for a held subscription, sets `nudged_at` to now without changing `version`, and returns 2xx. I: a hold with a past `next_check_at` and no purchase or webhook is advanced by one sweeper tick. |
-| C54 | **Rev 2 (review G7).** A SEPA refund is created, `amount_refunded` reads full, the hold releases as `refunded` and the customer is told "refunded in full"; the refund then fails. | #5511 review | §3.2 `refund` by status; `refund_pending` (T10p); T10f back to `refund_due`; `charge.refund.updated` (§5.3). | H: a `pending` refund gives `refund_pending` and no "in full" clause; a later `failed` gives `refund_due` with `refund_attempt = 1`; only `succeeded` gives `released(refunded)`. |
-| C55 | **Rev 2 (review G4).** A customer shared by orgs O and O2 (create-a-team reused O's customer, then the link rewrote its `organization_id`): O2's live check refuses on O's plan, and O2's sweep cancels O's `incomplete` plan under the wrong lease. | #5511 review; `billing.ts:660-664`, `:1651-1657`, `:1751-1761`, `:1897-1900` | §4.2: classification by `(scope, payer)` (I7), and no reuse of a customer with `organization_id`. | A: one customer with an `incomplete` and an `active` `org_plan` for O; O2's purchase calls no `voidInvoice` or `cancel` on O's, is not refused for O's `active`, and raises the foreign-payer alert. A: create-a-team does not reuse a customer that has `organization_id`. |
-| C56 | **Rev 2 (review G8).** Three outcomes had no copy: `invoice_payable`, a subscription the sweep kept, and a refund clause on a request that mints (whose response shape had no message field). | #5511 review | §5.5: a clause for each, `notice` on `SubscriptionIntent` and `{ kind: "intent" }`, and `notice_last_sent_at` meaning "returned", not "delivered". | A: each blocking state and the kept outcome produce a non-empty message; a minting response with a refund in the last 14 days carries `notice`. |
-| C57 | **Rev 2 (review G9, the create-a-team half of 4176267018).** Tab 1 pays X after X was ended and then calls `linkSubscriptionToNewOrg`, which links the ended subscription, rewrites it to `org_plan` and syncs a cancelled plan: a team with no plan and no message. | 4176267018; #5511 review | §5.6: the link refuses before any Stripe write when X is ended or an open hold on X is in an ended-subscription state (rev 3: no longer "not live"); the resume lookups report a held setup with its notice. | A: X `canceled` with a `refund_due` hold: the link makes no `customers.update` / `subscriptions.update` and returns the §5.5 clause. A: `findUnfinishedNewOrgSetup` returns the setup with `hold` set and not as resumable. |
+| C1 | After the cancel, the PaymentIntent is `processing`, and the retry mints. If it succeeds, the customer paid twice. | 5506; AC1; 4176221898 | T0, T3, T6. Retry: E1 on `payment_in_flight`, so I1 refuses. | A: the create-a-team gap test at `:1522-1545`, flipped. The retry is refused and `subscriptions.create` is not called. |
+| C2 | After the cancel, the payments cannot be read, twice. | 5506 | T0, T3, then an observation failure (I5). | A: the retry is refused. H: a read failure changes only `attempts`. |
+| C3 | The invoice cannot be voided, so it stays payable. | 5506; AC4; 4176267018 | T3a, or on an ended subscription T8 to `invoice_payable`. | A: a void rejection, then the retry is refused. H: `invoice_payable` plus a void success gives `released(voided_unpaid)`. |
+| C4 | After the cancel, the refund fails. | 5506; AC2 | T5, `refund_due`, T13. | A: refused. H: the second attempt uses key `-1`. |
+| C5 | A payment that is not a PaymentIntent, or `paid` with no PaymentIntent. | 5506 | T11r, then T11 to `needs_operator`. | H: no refund, and the copy has no "went through". |
+| C6 | The same `priorSubscriptionId` again. A `canceled` prior with a `paid` invoice is left alone, and a new one is minted. | 5506 | Its hold is read by payer (I7), not by `priorSubscriptionId`. A `canceled`, `paid` prior with **no** hold is a finished purchase, cancelled later, and is left alone. | A: a prior `canceled` with a `payment_in_flight` hold is refused. With no hold, it mints (regression guard). |
+| C7 | The browser lost `priorSubscriptionId` and `customerId`. | AC1; P adv 3 | Holds are found by the session user, never from browser input. | A: three variants (same args, no prior, no customer), each refused. |
+| C8 | The refund key replays a saved failure for 24h. | AC2; R2 adv 3 | §3.5. | H: attempt 0 fails, attempt 1 succeeds, giving `released(refunded)`. A refund already present gives T10 with no `refunds.create`. |
+| C9 | A processing payment later succeeds: refund, tell the truth, release. | AC3 | T6, (nudge) T5, T10p, T10. The refund clause rides `notice` for 14 days. | W: `invoice.payment_succeeded` on a held invoice of an ended subscription sends no receipt, calls no Stripe write, and nudges. A: the next create-a-team intent carries the refund clause in `notice`. |
+| C10 | A processing payment later fails, and is voided before release. | AC3; 4176267018 | T6, then T8. | H: the void is called before `released`. A void failure gives `invoice_payable`. |
+| C11 | A stale tab pays a cancelled subscription's open invoice. | AC4; 4176267018 | Void-first (§3.4). A payment that wins the race is seen as T5. | A: `voidInvoice` is called before `subscriptions.cancel`. |
+| C12 | A payment lands between the read and the void, and the alert says "no PaymentIntent took the money". | AC4; R5 adv 1 | T12. | H: a void failure plus a re-read showing `succeeded` gives a refund. The alert does not match `/no PaymentIntent .* took/`. |
+| C13 | The cancel fails on 429, 5xx or a network error, and the flow mints. | AC5; 4176778630 | T3a to `cancel_unproven`, which blocks. | A: refused, and a retry is refused too. |
+| C14 | Retrieve and void errors, each mapped to a state. None maps to mint. | AC5 | §5.1. | H: every §5.1 call × {429, 500, ECONNRESET}; `subscriptions.create` is never called. |
+| C15 | The hold write fails. Refuse, and promise no block. | AC6; R2 adv 4 | T0f. | A: the insert rejects; no `voidInvoice` or `cancel`; the copy does not match `/blocked|won't be charged/`. |
+| C16 | Two faults in a row lead to a second purchase. | AC6; R3 adv 2 | I4. | I: an update that fails after a successful void leaves the row open, and the next purchase is refused. |
+| C17 | A held subscription later reads paid and never clears; later a renewal is refunded. | AC7; 4177048230 | T2 to `released(adopted)`. I2, I3. | H: `cancel_unproven` with `active` is `adopted`, with no refund. A: the 4177048230 replay calls no `refunds.create`. |
+| C18 | **Rev 5.** On a shared customer, the create-a-team sweep cancels an existing org's `incomplete` org-plan or AI checkout. | AC8, AC11; 4177048230 (2) | I7, §4.2. | A: a customer with an `incomplete` org-plan subscription and an `incomplete` create-a-team one of U. U's purchase voids and cancels only its own, raises the foreign-subscription alert, and is not refused for it. |
+| C19 | A hold on an `unpaid` or `paused` subscription refuses forever. | AC9; R4 adv 3 | T17, then T16. | H: `unpaid` gives `needs_operator`. I†: `release` writes `released_by` and the audit row, and needs `--reason`. |
+| C20 | `subscriptions.list({limit:100})` ignores `has_more`. | AC10 | §4.5. | A: page 2 holds a `processing` one, so the purchase is refused. Over the cap, refused. |
+| C21 | `unlinkedPendingOrgSetupCustomers` defaults to 5. | AC10; R1 adv 1 | §4.5. | I: 7 unlinked customers are all returned. Over 50, refused. |
+| C24 | An `active` create-a-team subscription not yet seen because of webhook lag (or one that went straight to `active`, S4), and a second is minted. | AC12; R4 adv 1 | §4.3. | A: Stripe lists U's `active` unlinked create-a-team subscription, so the flow returns `resume` and calls no `subscriptions.create`. |
+| C25 | The lock holds a pooled connection inside a transaction. | 5506 "Also"; R3–R5 | §4.4 lease. | L: two holders; the second waits without a connection; an expired lease is taken over; a stale holder's hold write is rejected. |
+| C26 | Mixed outcomes drop the refund notice. | R1 adv 2; R5 adv 2 | §5.5. | A: one swept refunded and one `in_flight`; the message has both clauses. |
+| C27 | `requires_capture` after the cancel holds the card until it expires. | R1 adv 3 | T7. | H: `paymentIntents.cancel`, then T8. |
+| C28 | Two tabs are not serialised. | R2 adv 1 | §4.4. | L, and A's existing concurrency case for create-a-team, kept. |
+| C29 | "went through" when not proven. | R2 adv 2 | T1 and T11 copy. | H: no `/went through/`. |
+| C30 | A cancelled subscription read `live`. | R2 adv 5 | T17. | H: `payment_in_flight` with `active` gives `needs_operator`, with no refund. |
+| C31 | "Our team has been alerted" when nothing reached a channel. | 4176778633 | I8. | A: with the variable unset, the text does not match `/raised an alert/`. |
+| C32 | "You won't be charged twice / again" promised. | R5 adv 3; 5506 comment (3) | §5.5. | A: no create-a-team refusal matches `/charged (twice\|again)/`. S†: no sheet outcome does either. |
+| C33 | A `canceled` prior with a `draft` invoice is a dead end. | R5 adv 5 | T8d. | H: `invoices.del` and `released(deleted_draft)`. |
+| C34 | Create-a-team "canceled + paid + no team → refund" is reissued through the replay. | #5489 body | Not reintroduced. Refunds only from a hold (I3). | A: a `canceled` prior with a `paid` invoice and no hold calls no `refunds.create`. |
+| C35 | `priorSubscriptionId` from the browser cancels someone else's paid subscription. | P 4174412523 | `ownNewOrgSubscription` (`billing.ts:1768-1780`). Holds open only on server-read, `created_by`-checked subscriptions. | A: kept, plus a prior minted by another user is never held or cancelled. |
+| C36 | `incomplete` is not "never paid". | P 4174573734 | T3/T3v act only on `pay ∈ {awaiting, failed}`. | A: kept. |
+| C37 | Search lag offers a charged customer a second purchase. | P 4174185555 | Holds are a DB query by payer. | H: no `subscriptions.search`. |
+| C38 | A lost `customerId` while the first payment is `processing`. | P ac002 adv 5 | Holds keyed by payer; recorded customers swept in full. | A: no `customerId`, a hold on another customer: refused. |
+| C39 | An `incomplete` with zero payments, or `has_more`, says "a minute". | P adv 4 | The "kept" clause. | A: refused; no `/a minute/`. |
+| C40 | OFFSET paging skips a record. | P adv 6 | Fixed by #5489, unchanged. | I: kept (`pending-org-setups.test.ts`). |
+| C41 | `invoice.payment_failed` on a held or ended create-a-team subscription's invoice `invoices.pay`s it with a backup card. | New: `webhook-handler.ts:163-180` | §5.3 (1). | W: an ended subscription with an open invoice and a backup card calls no `invoices.pay`, and the hold is nudged (`version` unchanged). |
+| C47 | After void-first, `readFirstPayment` reads `incomplete` + `void` + `canceled` PI as `not_proven_unpaid`. | New: `first-payment.ts:61-74` | §3.4 rule. | `tests/lib/billing/first-payment.test.ts`: gives `never_paid`. |
+| C48 | The void succeeds and the cancel 503s: blocked 23h. | #5511 review 1 | T3v, then T9. | H: `cancel_unproven` + `incomplete` + `void` + `failed` cancels and reaches `released(voided_unpaid)`. |
+| C49 | The void fails because the payment landed, and the cancel runs anyway. | #5511 review 1 | T3 cancels only after a re-read shows `void`. | H: `voidInvoice` rejects, re-read `paid`: **no** cancel, `cancel_unproven`. |
+| C50 | A PaymentIntent succeeds between two reads. | #5511 review 1 | T11r. | H: first read empty, second `succeeded`: T5, no alert. |
+| C51 | An operator release meets the unique `subscription_id`. | #5511 review 1 | Partial unique index. | I: release, sweep, E0 inserts a second row; a second open row is refused. |
+| C52 | The lease expires mid-purchase: two payable create-a-team subscriptions. | #5511 review 1 | §4.4 rules 1–4. | L: expire A's lease before `subscriptions.create`; B mints. Exactly **one** secret is returned. A's only Stripe writes after the failed gate are `voidInvoice` and a `cancel` stamped `alethia:closeout`; no hold insert. Variant: A's close-out fails, and B's next purchase sweeps Z. |
+| C53 | A settled ACH payment with nothing to run it again. | #5511 review 1; AC3 | §5.3 nudge; §5.4 sweeper (I10). | W: no Stripe write, `nudged_at` set, `version` unchanged, 2xx. I: one sweeper tick advances a due hold. |
+| C54 | A pending SEPA refund is told "refunded in full", then fails. | #5511 review 1 | `refund` by status; T10p; T10f. | H: `pending` gives `refund_pending` and no "in full"; `failed` gives `refund_due`, `refund_attempt = 1`; only `succeeded` gives `released(refunded)`. |
+| C55 | A customer shared with an org is reused for create-a-team. | #5511 review 1; `billing.ts:660-664`, `:1651-1657`, `:1751-1761` | §4.2 (2). | A: create-a-team does not reuse a customer that has `organization_id`, from the browser or a record. |
+| C56 | A refund clause on a request that mints has nowhere to go. | #5511 review 1 | `notice` on `{ kind: "intent" }`. | A: each blocking state and the kept outcome produce a message; a minting response within 14 days of a refund carries `notice`. |
+| C57 | Tab 1 pays X after X was ended, and the link links it and syncs a cancelled plan. | 4176267018; #5511 review 1 | §5.6. | A: X `canceled` with a `refund_due` hold: the link makes no `customers.update` or `subscriptions.update` and returns `{ kind: "refused" }` with the clause. A: `findUnfinishedNewOrgSetup` returns the setup with `hold` set, not resumable. **S† (rev 5):** the run stops, its outcome is `failed`, `retryable: false`, with the clause as the message, and the browser record is cleared. No "Subscription active" toast. |
+| C58 | The backfill refunds legitimate revenue. | #5511 review 2 | §8 B1–B6. | I†: `reconcile --backfill` holds only the never-live checkout; the others are listed. |
+| C59 | A refund in `requires_action` is stuck. | #5511 review 2 | I11. | I: alerts once at 25h, stays `refund_pending`. |
+| C60 | The link refuses a paid `incomplete` X, and the org gets no plan. | #5511 review 2 | Link and defer. | A: X `incomplete`, `processing`, no hold: the link writes `organization_id`, returns `{ kind: "linked", planState: "processing" }`, and the row is `community`; then `updated(X, active)` syncs the plan (W). **S† (rev 5):** the run's `done` carries `planState: "processing"`, and the toast is not "Subscription active". |
+| C61 | A T4-shaped hold says "a few minutes" for days. | #5511 review 2 | §5.5 by `last_pay`; 14-day bound. | A: `/several business days/`, not `/few minutes/`. I: no age alert at 72h; one at 14 days. |
+| C63 | The machine's cancels email "subscription canceled". | #5511 review 2 | §5.3 (4). | W: a stamped `deleted` sends no email and no `subscription_canceled`; an unstamped one does. |
+| C64 | **Rev 5 (K3).** A customer who paid gets no receipt. | #5511 reviews 2 and 4 | §5.3 (2): the receipt follows the fresh read; nothing is owed or deferred. | W: `invoice.payment_succeeded` with the fresh read `incomplete`, with an open `closing` hold, sends one receipt. The same with no hold sends one receipt. With the fresh read `canceled`, it sends none. H: T2 sends nothing, and the table has no receipt column. |
+| C65 | The operator release races a sweeper step. | #5511 review 2 | T16, `version`. | I: a write prepared on `version` n changes no row after a release committed n+1. |
+| C66 | `advanceHold` inside the webhook transaction. | #5511 review 2 | §5.3 nudge. | W: no Stripe write for a held subscription; the sync runs on the first delivery even when the lease is held. |
+| C67 | **Rev 5.** A stale holder's closed-out Z writes an org row. | #5511 review 3 | Z has no `organization_id` (§4.4 rule 4). | W: `created(Z, incomplete)` and a `deleted(Z)` stamped `alethia:closeout`, with no `organization_id`, write no row and send no email. |
+| C69 | **Rev 5 (N1).** A stale or out-of-order event for X after the link. | #5511 reviews 3 and 4 | N1 (#5514). | W, run against #5514's sync as step 3's precondition: the row names X `active`; a stale `updated(X, incomplete)` and a same-second `incomplete` delivered after `active` each leave X `active`. |
+| C71 | An empty payments read released `already_refunded`. | #5511 review 3 | Positive evidence; T11r above T5. | H: as rev 4. |
+| C72 | `unrecognised` on an ended subscription matched T10 or T9. | #5511 review 3 | T9 needs `pay ∈ {awaiting, failed}`. | H: as rev 4. |
+| C73 | A `refund_pending` hold whose payments read is empty. | #5511 review 3 | T11r. | H: as rev 4. |
+| C74 | The nudge made a state write miss. | #5511 review 3 | Hint writes. | I: as rev 4. |
+| C75 | A lost attempt increment reused a failed key. | #5511 review 3 | Reservation before the call. | H and I: as rev 4. |
+| C76 | **Rev 5 (K4, N2).** The link's own sync writes an `incomplete` snapshot after the webhook applied X `active`. A paid org drops to `community`. | #5511 review 4 | N2 (#5514 / #5518). | Integration test in `billing-sync.test.ts` (#5514's file, as step 3's precondition): the row names X `active` with an event time; a write for X `none` with **no** event time leaves X `active`. Fails on `4a306a0f6`. |
+| C77 | **Rev 5 (K2).** A second subscription is linked to an org whose row already names one. | #5511 review 4 | §5.6. | A: the org's row names Y; the link for X returns `{ kind: "refused" }`, makes no Stripe write, writes no row, and alerts with X as the subject. |
+| C78 | **Rev 5 (K5).** The sheet creates a team for a setup that cannot be linked. | #5511 review 4; `pending-paid-setup.ts:454`, `:472` | §5.6 sheet (1). | S†: `resolveNewOrgSetup` reports `hold` set; `authClient.organization.create` is not called; the outcome is `failed`, non-retryable, with the notice. |
+| C79 | **Rev 5 (K5).** A thrown link error is reported as "Retry … you won't be charged again". | #5511 review 4; `pending-paid-setup.ts:535-545` | §5.6 sheet (4). | S†: a thrown link error is `retryable: true`, and its text does not match `/charged again/`. A typed refusal is never retryable. |
 
-| C58 | **Rev 3 (review H1).** The backfill matches a subscription the customer paid for and later cancelled, holds its latest renewal and T5 refunds it: a refund for a period the customer used (4177048230 again). | #5511 review 2 | §8: B1–B6; only a never-activated subscription whose single, first invoice was unpaid when it ended is held. Everything else is listed, not held. | I†: `reconcile --backfill` against a mocked Stripe holding (i) July–September paid, cancelled at period end, (ii) a first invoice paid after `ended_at` on a card, (iii) the same on a bank debit, (iv) a withdrawal, (v) a `past_due` subscription cancelled in July with its renewal paid later. Only (ii) gets a hold; (i), (iii), (iv) and (v) are printed in the review list; no `refunds.create` for any but (ii). |
-| C59 | **Rev 3 (review H2).** A refund stays in `requires_action`: the hold sits in `refund_pending`, observed hourly forever, and no operator is told. | #5511 review 2 | I11; §5.4 age alerts: 24h in `requires_action`, 14 days in `refund_pending`. | I: a `refund_pending` hold with `refund_action_since` 25h ago alerts once on the next tick and stays `refund_pending`; a second tick does not alert again. |
-| C60 | **Rev 3 (review H3).** The link refuses a paid `incomplete` X; the org is created without a plan, and the webhook ignores X because it has no `organization_id`. | #5511 review 2; `pending-paid-setup.ts:472`, `:516`; `sync.ts:96-101` | §5.6: link and defer. | A: X `incomplete` with a `processing` payment and no hold: the link writes `organization_id` to X, returns `planPending: true`, and the org row is `community`; then `customer.subscription.updated` for X `active` syncs the paid plan (W). |
-| C61 | **Rev 3 (review H4).** A T4-shaped hold (`cancel_unproven`, `processing` bank debit) tells every purchase "try again in a few minutes" for days, and the 72h age alert fires on a normal settlement. Reached through hosted Checkout or an out-of-sheet confirm. | #5511 review 2 | §5.5 by `last_pay`; §5.4's 14-day bound for `in_flight`. | A: the refusal for that hold matches `/several business days/` and not `/few minutes/`. I: no age alert at 72h; one at 14 days. |
-| C62 | **Rev 3 (review H5).** A stale holder's `checkout.sessions.create` returns after B handed out Y's secret, and A returns `session.url`: two subscriptions. The same with `startProTrial`, which syncs its trial over B's row. | #5511 review 2; `billing.ts:1138-1154`, `:1381-1391` | I9 widened; §4.4 rules 3–4. | L: A stalls in `checkout.sessions.create`, B mints; A returns no URL and calls `checkout.sessions.expire` on its session. L: the same with `startProTrial`: no `syncSubscriptionToBilling`, no trial burn, and `subscriptions.cancel` on A's trial. |
-| C63 | **Rev 3 (advisory).** The machine's own cancels email "subscription canceled" about a checkout the customer never completed. | #5511 review 2; `webhook-handler.ts:107-113`, `billing-email.ts:262` | §5.3 (5): the stamp. | W: `customer.subscription.deleted` with `cancellation_details.comment` starting `alethia:` sends no email and no `subscription_canceled` event; an unstamped one still does. |
-| C64 | **Rev 3 (advisory).** A subscription adopted by the same pass that suppressed its receipt: the customer paid and gets no receipt. | #5511 review 2 | §5.3 (2): the receipt follows the retrieved subscription; an owed receipt is sent on T2. | W: `invoice.payment_succeeded` with the subscription `active` and an open `closing` hold sends the receipt. H: `incomplete` with an open hold writes `receipt_owed_invoice_id`; T2 sends it once; two concurrent T2s send one. |
-| C65 | **Rev 3 (advisory).** The operator release races an in-flight sweeper step, which overwrites `released`. | #5511 review 2 | T16 under the payer's lease, and the `version` compare-and-set. | I: a sweeper write prepared on `version` n, then a release that commits n+1: the sweeper's write changes no row, and the hold stays `released(operator)`. |
-| C66 | **Rev 3 (advisory).** `advanceHold` inside the webhook's exactly-once transaction holds a pooled connection and an advisory lock across Stripe calls, and `HoldDeferred` delays the event's entitlement sync. | #5511 review 2; `webhook-events.ts:92-121` | §5.3: the nudge; no Stripe call for a hold inside the handler. | W: for an event naming an open hold, the Stripe mock records no write, and `syncSubscriptionToBilling` runs on the first delivery even when the payer's lease is held. |
-| C67 | **Rev 4 (review J1).** A stalled `subscriptions.create` returns after B's Y is live: `customer.subscription.created(Z, incomplete)` writes `community` naming Z over Y, and Z's close-out deletion then writes `canceled`. A paid team sits on `community`. | #5511 review 3; `webhook-handler.ts:103-109`; `sync.ts:131-143`; #5514 | §5.3 (2) W1, W2, W4 (#5514). | W: the row names live Y; `created(Z, incomplete)` and then `deleted(Z)` stamped `alethia:closeout` each leave the row naming Y with its plan. Fails on today's code. |
-| C68 | **Rev 4 (review J1).** The C62 trial variant: `created(Z, trialing)` syncs a live plan over Y and claims the plan welcome. | #5511 review 3; `sync.ts:152-153`; `billing.ts:1381-1391` | W2 (#5514), and the gate marker (§4.4 rule 4). | W: the row names live Y; `created(Z, trialing)` leaves it on Y and `claimPlanWelcome` is not called. |
-| C69 | **Rev 4 (review J1).** A stale or redelivered `customer.subscription.updated(X, incomplete)` snapshot arrives while the row names live Y, or names X after X went `active`. | #5511 review 3; #5514 | W1 (fresh read), W2, W3 (#5514). | W: the payload says `incomplete`, the fresh read says `canceled` for X and `active` for Y: the row is unchanged. A second variant with the row naming X `active` and a stale `incomplete` snapshot leaves X `active`. |
-| C70 | **Rev 4 (review J1).** A trial whose gate failed, on an org whose row names no live subscription: its `created(trialing)` event would sync a plan nobody bought. | #5511 review 3 | The gate marker (§4.4 rule 4). | W: the row names an ended Y; `created(Z, trialing)` with `metadata.alethia_gate` and the row not naming Z writes nothing. A: a passed gate syncs Z from the action, and a later `updated(Z)` then applies. |
-| C71 | **Rev 4 (review J2).** An ended subscription whose invoice reads `paid` with an **empty** payments read matched T10 vacuously (zero succeeded PaymentIntents), released `already_refunded` with no refund, and told every purchase "refunded in full". | #5511 review 3 | Positive evidence (§3.3); T11r above T5; T10 needs non-empty `pis`. | H: `payment_in_flight`, ended, `inv = paid`, first payments read empty, second read `succeeded` → T5 refunds, not `released(already_refunded)`. A second variant where both reads are empty → `needs_operator` with an alert. |
-| C72 | **Rev 4 (review J2).** `pay = unrecognised` on an ended subscription whose invoice is `paid` or `void` matched T10 or T9 before T11. | #5511 review 3 | T9 needs `pay ∈ {awaiting, failed}`; T11 above T5. | H: ended, `inv = void`, `pay = unrecognised` twice → `needs_operator`, never `released(voided_unpaid)`; ended, `inv = paid`, `pay = unrecognised` twice → `needs_operator`, never `released(already_refunded)`. |
-| C73 | **Rev 4 (review J2).** A `refund_pending` hold whose payments read comes back empty. | #5511 review 3 | T11r (it sits above T10 and T10p). | H: `refund_pending`, one empty read then a read with the PaymentIntent and a `succeeded` refund → `released(refunded)`; two empty reads → `needs_operator`. |
-| C74 | **Rev 4 (review J3).** The webhook's nudge for P's own cancel bumped `version`, so P's T9 release write missed and P refused with "We could not confirm an earlier checkout was closed", although it was. | #5511 review 3 | §4.1: the nudge is a hint write on `nudged_at`, with no `version` bump. | I: open H on X, run T3 and T3v, commit a nudge between the cancel and the T9 write: the T9 write changes one row, `released(voided_unpaid)`, and the purchase mints. A second variant: the nudge commits during a step, and the hold is due again at once (`nudged_at > observed_at`). |
-| C75 | **Rev 4 (review J3).** A write that missed between a failed `refunds.create` and `refund_attempt += 1` lost the increment, so the next attempt reused the failed key and got the saved failure back for 24h (S6). | #5511 review 3 | §3.5: the attempt number is reserved by a fenced state write before the call. | H: the reservation write returns no row → no `refunds.create` is made. I: a failed refund whose following T13 write misses still leaves `refund_attempt` incremented, and the next attempt uses key `-1`. |
+**Retired by rev 5.** These were in rev 4's table and are now about flows §7 lists as not covered:
 
-That is 75 cases: 34 from #5489 and #5506, 6 from #5455, 7 found while writing revision 1, 10 from
-the review of revision 1 (C48–C57), 9 from the review of revision 2 (C58–C66), and 9 from the review
-of revision 3 (C67–C75). The review's
-backfill findings (G10, H1) are rollout changes; H1's test is C58, and the rule lives in §8.
+| Case | What it was about | Why it is retired |
+|---|---|---|
+| C22 | the AI flow's sweep, holds and live check | AI subscriptions are not covered |
+| C23 | hosted Checkout's lock, sweep and earlier sessions | hosted Checkout is not covered |
+| C42 | a superseded subscription's late event overwrites a live one | another subscription on the same org; org-plan, not covered. Its receipt half is C64. |
+| C43 | ACH straight to `active` in the org-plan flow | the create-a-team half is C24 |
+| C44 | a `past_due` org mints a second plan | org-plan |
+| C45 | `ensureCustomer` races across the org's flows | org-plan, AI and Checkout |
+| C46 | the trial outside the lock | the trial is not covered |
+| C62 | a stale holder's Checkout URL or trial | Checkout and the trial are not covered |
+| C68, C70 | the trial's `created` event and the gate marker | the trial is not covered (K1) |
+
+That is 63 cases in scope.
 
 ---
 
-## 7. Out of scope
+## 7. Not covered, and why
 
-- **Checkout Sessions created before this release (rev 3).** Rev 3 brings open sessions into scope:
-  I1 (a′) expires an earlier session classified to the same `(org_plan, payer)` before any new
-  artifact (§4.4). What stays out is a session created before the release, which carries no
-  session-level `organization_id` and so cannot be classified (§4.2); it expires within 24h of the
-  release (S14). **A detector is in scope (rev 2, advisory 4), and covers that window:** on
-  `checkout.session.completed` and `customer.subscription.created`, the webhook lists the payer's
-  subscriptions classified to the same `(scope, payer)` and alerts when a second live one exists. It
-  does not cancel anything (the machine never cancels a live subscription, Q8); it makes the known
-  double-charge path visible within one webhook delivery.
-- **AI credit packs** (`createCreditPackIntent`, `billing.ts:2233-2307`). These are one-off invoices
-  with no subscription, so the sweep never touches them, and no hold is opened on them.
-- **Plan changes, cancels and resumes on a live subscription** (`billing.ts:2465-2555`). These are not
-  first payments.
-- **Disputes and chargebacks** on a refunded payment.
-- **Self-hosted or community deployments with no Stripe.** `requireHostedBilling` (`billing.ts:585-591`)
-  refuses before any of this.
-- **Moving `pending_org_setups` into the hold table.** They answer different questions: "where is my
-  paid setup?" and "what payment is unsettled?". They stay separate, and a hold carries the
-  subscription id they share.
-- **Emailing the customer when a hold settles asynchronously.** This is Q3. Without it, the customer
-  learns from the next purchase's `notice` (§5.5) or from Stripe's own receipt or refund email.
+The maintainer narrowed this design to the first payment of the paid org-setup path (2026-10-04).
+Each item below is outside it. The behaviour named is what handles it **today**, at `origin/dev`
+`7de07b4e8`, and stays unchanged by this design.
+
+| Not covered | Why | What handles it today |
+|---|---|---|
+| **Renewals** (`billing_reason = subscription_cycle`) | Not a first payment. A renewal is charged by Stripe on a live subscription, and no purchase flow cancels or voids it. | Stripe collects automatically. `invoice.payment_succeeded` re-syncs the row and sends a receipt (`webhook-handler.ts:147-160`). I2 keeps every hold off a renewal invoice. |
+| **Dunning** (a failed renewal) | Not a first payment. Stripe's retry schedule owns it. | `invoice.payment_failed` re-syncs (`past_due` keeps the org on `community`, `sync.ts:124-130`), tries the backup cards (`attemptBackupPayment`, `webhook-handler.ts:163-180`, unchanged for a live subscription) and emails "payment failed". When dunning ends in `canceled`, `customer.subscription.deleted` writes `canceled` / `community` and emails (`:107-113`). |
+| **Plan changes, cancels and resumes** on a live subscription | Not a first payment. Nothing is minted beside a live subscription. | `changeSubscriptionPlan` (`billing.ts:2492-…`) updates the live subscription with Stripe's proration. `cancelSubscription` sets `cancel_at_period_end` (`:2474-2479`) and `resumeSubscription` clears it (`:2483-2488`). |
+| **The org-plan purchase** (`createSubscriptionIntent`), for an org that already exists | Outside the paid org-setup path the maintainer named. Its holds also need rules this design no longer carries: a superseder rule when two subscriptions name one org (rev 4's W2, K2), the off-Stripe-grant guard, and a live set wider than `PAID_SUBSCRIPTION_STATUSES`. | #5489's memory-less fail-closed path: `withPurchaseLock('org-plan:<org>')`, the `incomplete`-only sweep with `readFirstPayment`, `cancelNeverPaid` / `settleCancelledSubscription` (void, refund, or alert and refuse), and the row check on `active` / `trialing` (`billing.ts:1172-1251`). Its known gaps stay as #5506 lists them, pinned by `billing-subscription.test.ts:575-606`. They include a `past_due` org minting a second plan, a straight-to-`active` ACH subscription unseen until its webhook, and `PAYMENT_MAY_BE_UNDER_WAY`'s "you won't be charged twice". Widening is Q13. |
+| **The AI subscription** (`createAiSubscriptionIntent`) | A separate product on an existing org. | No lock, no sweep, no holds (`billing.ts:1261-1315`). The create-a-team sweep no longer touches its `incomplete` subscriptions (I7, C18). |
+| **Hosted Checkout** (`createCheckoutSession`) | An existing org's purchase. | No lock and no sweep (`billing.ts:1117-1155`). Stripe expires the session after 24h by default. |
+| **The card-less trial** (`startProTrial`), including the create-a-team sheet's trial path | Takes no payment, so there is nothing to hold. | It mints on the org's customer and syncs at once (`billing.ts:1329-1398`). The sheet creates the org, then starts the trial, and rolls the org back if the trial fails (`create-org-sheet.tsx:730-770`). Rev 4's gate and gate marker are withdrawn (K1). |
+| **AI credit packs** (`createCreditPackIntent`) | One-off invoices with no subscription. | `billing.ts:2233-2307`. `invoice.payment_succeeded` grants the credits idempotently. |
+| **Disputes and chargebacks** | Not a first-payment settlement. | Stripe's dispute flow. No handler in this repo. |
+| **Two live subscriptions on one org** (adopted beside a live plan; a Checkout completed beside an embedded purchase) | Produced only by flows not covered. In scope, a new org has one subscription (§5.6). | #5514 (PR #5518) keeps the row on the live one. #5518 names the residual itself: when the row's subscription is cancelled, the other one takes the row only at its next event. No detector exists. Rev 4's §7 detector is withdrawn with the rest of the org-plan scope. |
+| **Self-hosted or community deployments with no Stripe** | No payment. | `requireHostedBilling` (`billing.ts:585-591`) refuses first. |
+| **Emailing the customer when a hold settles asynchronously** | A decision, Q3. | The next create-a-team response's `notice` (§5.5), and Stripe's own receipt and refund emails. |
 
 ---
 
@@ -1262,192 +960,115 @@ backfill findings (G10, H1) are rollout changes; H1's test is C58, and the rule 
 
 Each step is a separate PR into `dev`. A step that adds a migration rebases first (CLAUDE.md §5).
 
-1. **The lease (§4.4).** Add `purchase_leases`, then make `withPurchaseLock`
-   (`purchase-lock.ts:32-46`) a lease under the same signature, so callers do not change. Keys move
-   from `org-plan:<org>` and `new-org:<user>` (`billing.ts:1193`, `:1576`) to `org:<org>` and
-   `user:<user>`. Add the fenced renewal before every Stripe write, the artifact gate and the
-   close-out (§4.4 rules 1–4), and give the purchase-path Stripe client a timeout. Tests: L, C25, C52.
-
-   **Rolling deploy (rev 2, advisory 1).** During this release, old pods take
-   `pg_advisory_xact_lock('purchase:org-plan:<org>')` and new pods take the `org:<org>` lease, and
-   nothing excludes one from the other until the old pods drain. So for this one release the new
-   code takes **both**: the lease, and the old advisory key in a transaction for the duration. The
-   next step's PR removes the advisory half. (Deploying with no overlap is the alternative, and needs
-   the maintainer's deploy settings; taking both needs nothing.)
+1. **The lease (§4.4).** Add `purchase_leases` and a lease helper. The create-a-team flow and the link
+   move from `withPurchaseLock('new-org:<user>')` to the `user:<user>` lease, with the fenced renewal,
+   the artifact gate and the close-out (§4.4 rules 1–4), and a timeout on the Stripe client of the
+   purchase path. `withPurchaseLock` stays for the org-plan flow. **Rolling deploy:** for one release
+   the create-a-team flow takes both the lease and the old advisory key, so old and new pods exclude
+   each other. The next step's PR removes the advisory half. Tests: L, C25, C28, C52.
 2. **The table, the machine and the sweeper, behind no caller.** Add the `payment_holds` migration
-   (with the partial unique index, §4.1), RLS in `programmables.sql`, the store, `advanceHold` as a
-   pure transition function over an injected Stripe reader and writer, and `startPaymentHoldSweeper`
-   (§5.4). With no holds written yet, the sweeper selects nothing. Also settle S7 once in Stripe test
-   mode (an ACH or SEPA test PaymentIntent left `processing`, then `voidInvoice`) and record the
-   answer in §1.3. Nothing is built on it: if Stripe refuses, T3 is a true conditional cancel and
-   `payment_in_flight` becomes rare (rev 3, was Q1). Tests: H (every row of §3.3), I,
-   and the sweeper half of C53.
-3. **The webhook (§5.3), before the purchase flows (rev 2, advisory 2).** **Precondition (rev 4):
-   #5514 has merged**, so W1–W5 of §5.3 (2) hold; this step does not re-implement them, and its W
-   tests C67–C69 run against #5514's sync as a check that the contract still holds. The backup-retry
-   guard and #5514's row guard fix today's code with or without holds, and the first revision's order
-   left `attemptBackupPayment` running on held invoices between the purchase-flow step and this one.
-   It also silences a stamped cancel (§5.3 (5)), and stamps today's two cancels (`billing.ts:1028`,
-   `:1738`), which fixes the email the sweep's closed checkouts send today. The nudges and the owed receipt are inert until holds
-   exist. Tests: W.
-4. **The purchase flows.** In order:
-   - Replace `cancelNeverPaid` and `settleCancelledSubscription` (`billing.ts:919-1049`) with open →
-     advance.
-   - Change `cancelIncompleteSubscriptions` (`:1066-1090`) to classification-filtered (§4.2) and
-     fully paged, and stop create-a-team reusing a customer that has `organization_id`
-     (`:1651-1657`, `:1751-1761`).
-   - Add the live check (§4.3) to the org plan, AI and create-a-team.
-   - Replace the create-a-team `canceled` arm (`:1627-1644`) with the scope's holds.
-   - Add the hold check to `linkSubscriptionToNewOrg` and the resume lookups (§5.6).
-   - Replace `refusalFor` (`:795-804`) with the §5.5 composer, and add `notice` to both intent shapes.
-   - Flip the two gap-pinning tests (`billing-subscription.test.ts:575-606`, `:1522-1545`).
+   (with the partial unique index), RLS in `programmables.sql`, the store, `advanceHold` as a pure
+   transition function over an injected Stripe reader and writer, and `startPaymentHoldSweeper`. With
+   no holds written, the sweeper selects nothing. Also settle S7 once in Stripe test mode and record
+   the answer in §1.3. Tests: H, I, and the sweeper half of C53.
+3. **The webhook (§5.3), before the flow.** **Precondition: #5514 has merged, and its tests include
+   N1–N3, including C76 (N2), which `4a306a0f6` fails.** This step does not re-implement them. Its
+   C69 and C76 checks re-run them against the merged sync. Then add the backup-retry guard, the receipt
+   rule and the stamped-cancel silence. Stamp today's two create-a-team cancels (`billing.ts:1028` as
+   the create-a-team sweep calls it, and `:1738`). The nudges are inert until holds exist. Tests: W.
+4. **The create-a-team flow, the link and the sheet.** In order:
+   - Replace the create-a-team flow's calls to `cancelNeverPaid` and `settleCancelledSubscription`,
+     and its `canceled`-prior arm (`billing.ts:1605-1644`), with open → advance. The org-plan flow
+     keeps calling the old functions.
+   - Classification-filter and fully page the create-a-team sweep. Stop reusing a customer that has
+     `organization_id` (`:1651-1657`, `:1751-1761`).
+   - Add the live check (§4.3).
+   - Make the link typed, hold-aware and one-subscription-per-org, and add `hold` to the resume
+     lookups (§5.6).
+   - Add the §5.5 composer for create-a-team and `notice` on `{ kind: "intent" }`.
+   - **Rev 5:** change `components/org/pending-paid-setup.ts` and `components/org/create-org-sheet.tsx`
+     as §5.6 "The sheet" says. This builds on #5522, which lands first and carries `planState` to the
+     final view.
+   - Flip the create-a-team gap test (`billing-subscription.test.ts:1522-1545`).
 
-   Tests: A.
-5. **The other org flows.** Bring `createAiSubscriptionIntent`, `createCheckoutSession` and
-   `startProTrial` under the `org:` lease, the hold check, the live check and the artifact gate
-   (I9), with the 30-minute session `expires_at` and session-level `organization_id`, add I1 (a′),
-   and add the Checkout detector (§7). `startProTrial` creates its trial with the gate marker
-   `metadata.alethia_gate` (§4.4 rule 4, rev 4), and the webhook sync honours it. Tests: C22, C23,
-   C45, C46, C62, C70.
-6. **Operator script and runbook.** Add `scripts/payment-holds.ts` (needs the scope widened). Add a
-   section to `docs/stripe-prod-runbook.md` covering `list`, `show`, `release` and `reconcile`, and
-   the alert rule `system.platform.payment_needs_support`. Without that rule the alert is only a
-   `console.error` (`payment-alert.ts:41-43`).
+   Tests: A, S†.
+5. **Operator script and runbook.** Add `scripts/payment-holds.ts`, a section of
+   `docs/stripe-prod-runbook.md` covering `list`, `show`, `release` and `reconcile`, and the alert rule
+   `system.platform.payment_needs_support`. Without that rule the alert is only a `console.error`
+   (`payment-alert.ts:41-43`).
 
-**Backfill (rev 2, G10).** None is possible from our own records: the memory-less code left no record
-of the subscriptions it cancelled. The first revision bounded the listing at "since 2026-10-04", and
-that was too narrow twice over. The memory-less era began when the sweep first shipped, not with
-#5489: `cancelIncompleteSubscriptions` arrived in `28544dfbb` (#114, 2026-07-06) and reached `main`
-in `d17e76ea2` (#146) the same day, and before #5489 it cancelled never-paid subscriptions **without**
-voiding their invoices, so a stale tab or a processing-then-succeeded payment could land on a
-cancelled subscription from then on. And 2026-10-04 is #5489's `dev` merge, not a production deploy
-date. A `main` merge is also not proof of a deploy date (the prod deploy history is not in this
-repo), so the listing takes **no lower bound**: listing every ended subscription per customer is a
-one-off paging cost, and a wrong lower bound silently misses money.
+**Backfill.** Our own records cannot supply one: the memory-less code kept no record of what it
+cancelled. The sweep shipped in `28544dfbb` (#114, 2026-07-06), and the create-a-team flow has had
+it since then. So the listing takes **no lower bound**. Before step 4 deploys, an operator runs
+`payment-holds reconcile --backfill`, which is part of step 5's script (so step 5 lands before step 4,
+Q7).
 
-Before step 4 deploys, an operator runs `payment-holds reconcile --backfill` (part of step 6's script,
-so step 6 lands before step 4 if the scope allows, Q7).
+**What the backfill may hold.** It must prove "a checkout attempt that ended before it was ever paid",
+not "paid and cancelled". A subscription is opened as a hold only when **all** of the following
+hold, each read from Stripe:
 
-**What the backfill may hold (rev 3, H1).** Revision 2 opened a hold on any ended subscription whose
-latest or first invoice had a succeeded payment with no succeeded refund. That matches every
-subscription a customer paid for and then cancelled, and E0 holds `latest_invoice`, so T5 would
-refund the last renewal: the 4177048230 defect. It also contradicted C6 and C34. The memory-less
-code left no mark on what it cancelled (§1.1: every cancel passed only an id), so the discriminator
-has to come from Stripe facts, and it has to prove **"a checkout attempt that ended before it was
-ever paid"**, not "paid and cancelled". A subscription is opened as a hold only when **all** of the
-following hold, each read from Stripe:
-
-- **B1, ours.** It is classified to a `(scope, payer)` by its own metadata (§4.2).
-- **B2, ended by a request, not by Stripe's dunning.** `canceled` with
-  `cancellation_details.reason = cancellation_requested` (S12), or `incomplete_expired`. A
-  `payment_failed`, `payment_disputed` or retention-policy cancel is Stripe's own lifecycle on a
-  subscription that was live.
-- **B3, never renewed or changed.** It has exactly **one** invoice (`invoices.list({ subscription })`,
-  paged), with `billing_reason = subscription_create` (S13). A subscription that ever renewed or
-  changed plan has a second invoice. That one invoice is both the first and the latest, so the
-  invoice the listing checked is the invoice E0 holds (I2); revision 2's "latest or first" could
-  check one and hold the other.
-- **B4, unpaid when it ended.** That invoice is `open`, `uncollectible` or `draft`; or it is `paid`
-  with `status_transitions.paid_at` **after** the subscription's `ended_at`; or it has a
-  PaymentIntent that is `processing` or `requires_capture`. `ended_at`, not `canceled_at`: for a
-  `cancel_at_period_end` cancel, `canceled_at` is the time of the request (S11), so a renewal paid
-  between the request and the period end would read as "paid after cancel". A trial's first invoice
-  is paid at creation and fails B4.
+- **B1, a create-a-team subscription (rev 5).** Its metadata has `created_by` and no
+  `organization_id` (§4.2). A linked subscription is an org's, and is not covered. So is any org-plan
+  or AI subscription.
+- **B2, ended by a request.** `canceled` with `cancellation_details.reason = cancellation_requested`
+  (S12), or `incomplete_expired`.
+- **B3, never renewed or changed.** Exactly **one** invoice, with `billing_reason =
+  subscription_create` (S13), so the invoice checked is the invoice E0 holds (I2).
+- **B4, unpaid when it ended.** That invoice is `open`, `uncollectible` or `draft`. Or it is `paid` with
+  `status_transitions.paid_at` **after** `ended_at` (S11). Or it has a PaymentIntent that is
+  `processing` or `requires_capture`.
 - **B5, a card.** Every PaymentIntent on that invoice used a card. A card subscription created
-  `default_incomplete` stays `incomplete` until its first invoice is paid, so B4 then proves it was
-  **never live**: the payment, if one landed, bought no period at all. That is the property a refund
-  needs, and it holds whoever made the cancel. In practice the cancel was our purchase code (the
-  sweep at `billing.ts:1028`, the record-failure cancel at `:1738`, or the 2026-07-04 org-row cancel,
-  §1.1); the customer cancel is `cancel_at_period_end` (`billing.ts:2478`) and cannot end an
-  `incomplete` subscription before Stripe expires it, and an expired one has its invoice voided (S3).
-  A bank debit fails B5 on purpose: it can make a subscription `active` before it is paid (S4), so
-  "unpaid when it ended" no longer proves "never live", and a customer who used such a subscription
-  and then cancelled it at once (the Customer Portal's mode is a dashboard setting, §1.1) would look
-  the same.
-- **B6, not a withdrawal.** No `commerce_order` row names it (`stripe_subscription_id`,
-  `lib/db/schema/legal.ts:180`) with state `withdrawn` or `refunded`. A withdrawal refunds a computed
-  part and keeps the rest (`consumer-rights.ts:166-193`); a hold's full refund would override that.
+  `default_incomplete` stays `incomplete` until its first invoice is paid, so B4 proves it was never
+  live. A bank debit fails B5 on purpose (S4).
+- **B6, not a withdrawal.** No `commerce_order` row names it (`lib/db/schema/legal.ts:180`) with state
+  `withdrawn` or `refunded`.
 
-Each hit is opened as a hold (E0, `opened_by = backfill`, `open_note` naming B1–B6's evidence) and
-advanced at once, so the machine settles it (an ended subscription goes straight to T5, T6, T8 or
-T9), and a hit it cannot settle reaches `needs_operator`.
+Each hit is opened as a hold (`opened_by = backfill`, `open_note` naming the evidence) and advanced at
+once. A hold the machine cannot settle reaches `needs_operator`. **Everything else is listed, never
+held**: printed with the failed test named, and nothing is written for it (Q12).
 
-**Everything else is listed, never held.** A subscription that matches revision 2's broad listing
-(ended, with an open invoice, or a succeeded payment that no succeeded refund covers, or a payment
-still `processing`) but fails any of B1–B6 is printed in a review list, with the failed test named,
-and nothing is written for it: no hold, no void, no refund. The list includes the 2026-07-04 to
-07-06 cancels of `past_due` subscriptions (§1.1), which fail B3 or B5, and bank-debit checkouts,
-which fail B5. Each is an operator's call, made with `show` and, if a refund is owed, the Stripe
-dashboard.
-
-There is no lower date bound, for the reason above. Hits dated before 2026-07-06 are not expected;
-the operator reads any as a sign the listing is wrong.
-
-**After this release** every machine cancel is stamped (§5.3 (5)) and has a hold row, so no later
+**After this release** every create-a-team machine cancel is stamped and has a hold row, so no later
 backfill is needed.
 
-**Rollback.** Steps 1 to 5 are code plus two additive tables. Reverting a step leaves the rows
-unused. A hold left open by a reverted build blocks nothing, because nothing reads it, and the
-sweeper advances it after redeploy.
+**Rollback.** Steps 1 to 5 are code plus two additive tables. A hold left open by a reverted build
+blocks nothing, because nothing reads it, and the sweeper advances it after a redeploy.
 
 ---
 
 ## 9. Open questions for the maintainer
 
-Revision 2 removed Q5 (whether `reconcile` runs on a schedule): it is now a requirement (§5.4, I10).
-Revision 3 removed Q1 (whether Stripe refuses to void while a payment is `processing`): it is a fact
-to look up in test mode, not a decision, and the design is correct either way, so it is a §8 step 2
-task. Every question left is a decision only the maintainer can make, or needs a resource only the
-maintainer has. Each carries a recommended answer.
+Each question carries a recommended answer. Rev 5 removes Q8 (adopted beside a live plan), Q9 (the AI
+lock key) and Q11 (expiring an earlier Checkout Session). Each one asked about a flow §7 no longer
+covers.
 
-- **Q2.** Should the lease row replace the transaction advisory lock, or should the advisory lock
-   stay with the stated `idle_in_transaction_session_timeout` and `poolMax` floor? What is the managed
-   Postgres's current `idle_in_transaction_session_timeout` for the service role? It is not set in
-   this repo. **Recommended:** the lease, with the artifact gate (§4.4). Both options need the gate;
-   only the lease stops holding a pooled connection across Stripe calls.
-- **Q3.** When a hold settles from the webhook or the sweeper (a refund succeeded, or a processing
-   payment failed and was voided), should the customer get an email now, or only the `notice` at
-   their next purchase? **Recommended:** an email on `released(refunded)` and on `refund_pending`'s
-   first entry, because a customer who never buys again otherwise learns of the refund only from
-   their bank, and `notice_last_sent_at` cannot prove delivery (§5.5). The webhook already sends no
-   receipt for a payment that is being refunded (§5.3 (2)), so this email is the only word from us.
-- **Q4.** The numbers: the refund budget before `needs_operator`, and the age-alert bounds of
-   §5.4's table. **Recommended:** 5 attempts over about 32h (5m, 30m, 2h, 6h, 24h), and the table as
-   written: 24h for a stuck retry or a refund in `requires_action`, 1h for a paid-but-not-active
-   subscription, 8 days for an authorisation, 14 days for a bank debit or a pending refund.
-- **Q6.** The webhook event set. Should `invoice.voided` be subscribed to, since it is handled at
-   `webhook-handler.ts:193` but not listed at `scripts/stripe-setup.ts:67-75`? Should the runbook's
-   `payment_intent.succeeded` (`docs/stripe-prod-runbook.md:33`) be added to the code or dropped from
-   the doc? And rev 2 adds `charge.refund.updated` (§5.3), which changes the live endpoint's
-   subscription, an operator action on the Stripe account. **Recommended:** add
-   `charge.refund.updated` and `invoice.voided`; drop `payment_intent.succeeded` from the runbook,
-   since `invoice.payment_succeeded` already carries the first payment.
-- **Q7 (scope).** #5506's `scope:` does not cover the migration and schema (`lib/db/**`),
-   `programmables.sql`, `instrumentation.ts` and the sweeper (rev 2), `scripts/payment-holds.ts`,
-   `scripts/stripe-setup.ts` or `docs/stripe-prod-runbook.md`. Widen it, or split the steps in §8 into
-   issues with their own scopes? **Recommended:** split, one issue per §8 step, chained, so each
-   carries the scope it touches and step 6's script can land before step 4.
-- **Q8.** Should a `released(adopted)` org-plan subscription (C17) whose org already has a different
-   live plan be cancelled for the customer, or alerted on for an operator? The same question covers
-   the Checkout detector (§7) and a trial whose close-out failed (§4.4 rule 4). **Recommended:**
-   alert only. The machine never cancels a live subscription.
-- **Q9.** Is the `org:` lease key acceptable for the AI flow, so that an org-plan purchase and an AI
-   purchase in two tabs run one after the other? Or should the AI flow keep its own key and a
-   separate guard on `ensureCustomer`? **Recommended:** the shared key. The cost is seconds of
-   serialisation on a rare two-tab case; the alternative needs a second guard to stop the
-   two-customer race (C45).
-- **Q10 (rev 2).** Should `refund_pending` block the scope? **Recommended:** no (§3.1). A refund in
-   flight is money going back, not a payment that may land, and a bank refund can take days. A refund
-   that later fails returns the hold to `refund_due` (T10f), and the machine or an operator refunds
-   again, and a refund that neither succeeds nor fails reaches an operator (I11).
-- **Q11 (rev 3).** When a customer starts a purchase while a hosted Checkout Session for the same
-   org plan is still `open` (another tab, or one abandoned up to 30 minutes ago), should the new
-   purchase **expire** that session, or **refuse** until it expires? **Recommended:** expire it
-   (§4.4, "Earlier artifacts"). It is the same rule as void-first: the newest purchase is the one
-   the customer wants, and a session they finished first is seen as a subscription by the sweep and
-   the live check. Refusing would block a customer for up to 30 minutes behind a tab they closed.
-- **Q12 (rev 3).** The backfill's review list (§8) holds the candidates it cannot prove were never
-   live: bank-debit checkouts, and the 2026-07-04 to 07-06 cancels of `past_due` subscriptions. Who
-   works that list, and is a refund for one of them a support decision per case? **Recommended:**
-   yes, per case, by whoever owns Stripe support, with `payment-holds show` as the evidence; the
-   design writes nothing for them.
+- **Q2.** The lease row, or the transaction advisory lock with the stated
+  `idle_in_transaction_session_timeout` and `poolMax` floor? What is the managed Postgres's current
+  `idle_in_transaction_session_timeout` for the service role? **Recommended:** the lease, for the
+  `user:` key only (§4.4).
+- **Q3.** When a hold settles from the webhook or the sweeper, should the customer get an email now, or
+  only the `notice` at their next create-a-team purchase? **Recommended:** an email on
+  `released(refunded)` and on the first entry to `refund_pending`. A customer who never tries again
+  otherwise hears only from their bank.
+- **Q4.** The refund budget and the §5.4 age bounds. **Recommended:** 5 attempts over about 32h, and
+  the table as written.
+- **Q6.** The webhook event set: subscribe `charge.refund.updated` and `invoice.voided`, and drop the
+  runbook's `payment_intent.succeeded` (`docs/stripe-prod-runbook.md:33`)? **Recommended:** yes, all
+  three.
+- **Q7 (scope).** #5506's `scope:` does not cover:
+  - the migration and schema (`lib/db/**`);
+  - `programmables.sql`;
+  - `instrumentation.ts` and the sweeper;
+  - `scripts/payment-holds.ts`;
+  - `scripts/stripe-setup.ts`;
+  - `docs/stripe-prod-runbook.md`;
+  - **(rev 5)** `components/org/pending-paid-setup.ts`, `components/org/create-org-sheet.tsx` and
+    `tests/components/org/**`.
+
+  **Recommended:** split into one issue per §8 step, chained, each with the scope it touches.
+- **Q10.** Should `refund_pending` block? **Recommended:** no (§3.1).
+- **Q12.** Who works the backfill's review list, and is a refund for one of them a support decision per
+  case? **Recommended:** yes, per case, with `payment-holds show` as the evidence.
+- **Q13 (rev 5).** When should the org-plan purchase get holds? **Recommended:** as a separate ADR,
+  after this one ships. It needs the parts of rev 4 this revision removed: the scope column, a
+  superseder rule with a fresh read (W1, W2), the off-Stripe-grant guard, and the two-live detector.
+  Until then, its gaps stay as #5506 lists them.
