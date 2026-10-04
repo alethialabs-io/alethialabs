@@ -328,6 +328,26 @@ describe("a user with NO member row gets no allow grant (#5472)", () => {
 		});
 		expect(none.insertSpy).toHaveBeenCalledTimes(1);
 	});
+
+	it("assignGrant refuses a request with no effect or an unknown principal type, so neither the ceiling nor the member check can be skipped", async () => {
+		const none = mockDb([], new Map([[member, []]]));
+		const noEffect: unknown = {
+			principalType: "user",
+			principalId: "u-1",
+			roleId: BUILTIN_ROLE_IDS.owner,
+			resourceType: "org",
+		};
+		await expect(assignGrant(noEffect)).rejects.toThrow(/Invalid grant request/);
+		const oddPrincipal: unknown = {
+			principalType: "service",
+			principalId: "u-1",
+			effect: "allow",
+			roleId: BUILTIN_ROLE_IDS.owner,
+			resourceType: "org",
+		};
+		await expect(assignGrant(oddPrincipal)).rejects.toThrow(/Invalid grant request/);
+		expect(none.insertSpy).not.toHaveBeenCalled();
+	});
 });
 
 describe("requireAccessAdmin gate", () => {
