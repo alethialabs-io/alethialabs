@@ -176,7 +176,8 @@ else bad "an unparseable registry must refuse (rc=$rc)"; fi
 
 reap "$(fixture empty2 '{}')" "$$" --now --harder
 rc="$RC"
-if [ "$rc" = 1 ] && has "unknown flag"; then ok "an unknown flag is refused, never ignored"
+# Exit 2: a usage error, refused during the argument parse — before anything remote (#5504).
+if [ "$rc" = 2 ] && has "unknown flag"; then ok "an unknown flag is refused, never ignored"
 else bad "unknown flags must be refused (rc=$rc)"; fi
 
 # ── 6. The test seam cannot weaken a real reap. ─────────────────────────────────────────────────

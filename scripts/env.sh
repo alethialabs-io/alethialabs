@@ -22,6 +22,19 @@
 #   env:timer   reap the box automatically once idle   [off|status]
 #   env:box     create or restore the box   [--fresh = ignore snapshots]
 #   env:allow-ip  put this machine's public IP on the box's SSH allowlist (firewall only)
+#
+# Every command also takes:
+#   -h, --help    print this and exit 0. Nothing remote runs: no IP lookup, no tofu, no ssh.
+#   --no-refresh  never refresh the SSH allowlist (no tfvars rewrite, no firewall apply). On an
+#                 IP the box does not admit, env:box refuses before any plan or apply, and every
+#                 other command fails at SSH; `pnpm env:allow-ip` is the refresh on its own.
+#
+# What runs, in order: the arguments are parsed (a bad one stops here, with nothing remote run);
+# then — for a command that SSHes to the box (up push down status verify logs open ssh check test
+# runner) and only if the box is up — this machine's public IP is looked up and, if the box's
+# firewall does not admit it, a plan targeted at hcloud_firewall.sandbox is applied — after
+# rewriting the /32 in infra/sandbox/terraform.tfvars (backup kept) only if tfvars does not already
+# admit the IP. It says which, first.
 set -euo pipefail
 
 # ── $ROOT was doing three jobs at once, and only the first was right ──────────────
@@ -103,6 +116,19 @@ die() {
 }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed."; }
+
+# usage prints the header block at the top of this file: from line 5 to the line before
+# `set -euo pipefail`. Bounded by that line rather than by a second line number, which went stale
+# every time the header grew (it once printed `set -euo pipefail` as if it were usage).
+usage() { sed -n '5,/^set -euo pipefail$/p' "${BASH_SOURCE[0]}" | sed -e '$d' -e 's/^# \{0,1\}//'; }
+
+# usage_error refuses a bad argument with exit 2. Every caller runs during the argument parse,
+# which happens before anything remote (#5504), so a typo never costs an IP lookup or an apply.
+usage_error() {
+  echo "✗ $*" >&2
+  echo "  pnpm env:<command> --help   for usage" >&2
+  exit 2
+}
 
 # ── Identity ──────────────────────────────────────────────────────────────────────
 # The slug is the branch name with the feat/ prefix stripped and anything that is not
@@ -295,8 +321,10 @@ ssh_box() {
 # admitting this IP (firewall_plan_verdict). The saved plan file is what gets applied, so the
 # plan that was checked is the plan that runs.
 #
-# ALETHIA_SANDBOX_NO_IP_REFRESH=1 turns the rewrite off for a caller on a fixed IP. env:box still
-# checks the IP in that mode, and refuses to build a box the caller could not reach.
+# --no-refresh (any command) or ALETHIA_SANDBOX_NO_IP_REFRESH=1 turns the rewrite off for a caller on
+# a fixed IP, or for anyone who wants a command other than env:box / env:reap (which ARE applies) to
+# run no IaC at all (#5504). env:box still checks the IP in that mode, and refuses to build a box the
+# caller could not reach.
 TFVARS="$TF_DIR/terraform.tfvars"
 FIREWALL_ADDR="hcloud_firewall.sandbox"
 FIREWALL_NAME="alethia-sandbox"
@@ -591,14 +619,26 @@ ensure_ssh_allowlist() {
   # No state: nothing to refresh, and require_box explains the real problem.
   [ -s "$TF_DIR/terraform.tfstate" ] || return 0
   [ "${ALETHIA_SANDBOX_NO_IP_REFRESH:-}" = 1 ] && return 0
+  # A box that is not up is not about to be used, so there is nothing to refresh FOR (#5504): the
+  # command's own require_box reports it down. Before this, a check against a reaped box applied
+  # the firewall first and only then said "the box is not up". Read-only: tofu output + hcloud.
+  box_exists || return 0
   need curl
   need jq
   ip="$(caller_ip)" || die "cannot determine this machine's public IPv4 (tried: $IP_ECHO_URLS).
   The box's firewall admits SSH only from ssh_allowed_cidrs, so this refuses rather than guess.
-  On a fixed IP that is already allowlisted:  ALETHIA_SANDBOX_NO_IP_REFRESH=1 pnpm env:<cmd>"
+  On a fixed IP that is already allowlisted:  pnpm env:<cmd> --no-refresh"
   state="$(allowlist_state "$ip")"
   [ "$state" = ok ] && return 0
-  echo "→ this machine's public IP ($ip) is not on the box's SSH allowlist — refreshing it." >&2
+  echo "→ this machine's public IP ($ip) is not on the box's SSH allowlist — refreshing it:" >&2
+  # Say exactly what will be written: tfvars is rewritten only when IT is what fails to admit the IP
+  # (state "tfvars"); when tfvars already admits it and only the live firewall lags ("live"), the
+  # refresh applies the firewall and leaves tfvars alone (refresh_ssh_allowlist, case 10).
+  case "$state" in
+  tfvars) echo "  ssh_allowed_cidrs in $TFVARS does not admit it: rewriting that /32 (backup kept), then applying a plan targeted at $FIREWALL_ADDR." >&2 ;;
+  live) echo "  $TFVARS already admits it; only the live firewall is updated: a plan targeted at $FIREWALL_ADDR, tfvars untouched." >&2 ;;
+  esac
+  echo "  (--no-refresh skips this; the command then fails at SSH instead.)" >&2
   refresh_ssh_allowlist "$ip"
 }
 
@@ -624,7 +664,7 @@ ssh_unreachable_hint() {
     *) echo "    (ssh_allowed_cidrs in $TFVARS could not be read safely)." ;;
     esac
     [ "${ALETHIA_SANDBOX_NO_IP_REFRESH:-}" = 1 ] &&
-      echo "    ALETHIA_SANDBOX_NO_IP_REFRESH=1 is set, so env.sh did not refresh it."
+      echo "    --no-refresh (or ALETHIA_SANDBOX_NO_IP_REFRESH=1) is set, so env.sh did not refresh it."
     echo "    Fix:  pnpm env:allow-ip      then re-run this command."
   } >&2
 }
@@ -662,7 +702,7 @@ ensure_box_allowlist() {
   if [ "${ALETHIA_SANDBOX_NO_IP_REFRESH:-}" = 1 ]; then
     die "refusing to build a box this machine cannot reach: its public IP ($ip) is not in
   ssh_allowed_cidrs ($(printf '%s' "$cidrs" | tr '\n' ' ')) in $TFVARS, and
-  ALETHIA_SANDBOX_NO_IP_REFRESH=1 is set. Unset it (env:box then rewrites the /32), or add \"$ip/32\" by hand."
+  --no-refresh (ALETHIA_SANDBOX_NO_IP_REFRESH=1) is set. Drop it (env:box then rewrites the /32), or add \"$ip/32\" by hand."
   fi
   ALLOWLIST_BACKUP=""
   rewrite_tfvars_cidr "$ip"
@@ -1233,10 +1273,13 @@ cmd_push() {
 # env that can only be seeded proves half the contract. scripts/box/env-mode.sh resolves
 # the flag against the mode it recorded last time; seed_decision() there is the matrix,
 # and `bash scripts/box/env-mode.sh --self-test` exercises it.
-cmd_up() {
-  need jq
-  need rsync
-  local slug_ row cport sport db fresh="" seed="" a
+#
+# up_flags is the parse alone, so the dispatcher can run it BEFORE anything remote (#5504) and
+# cmd_up can run it again for its values. Sets UP_FRESH and UP_SEED; dies on a bad flag.
+UP_FRESH=""
+UP_SEED=""
+up_flags() {
+  local fresh="" seed="" a
   for a in "$@"; do
     case "$a" in
     --fresh) fresh="fresh" ;;
@@ -1244,15 +1287,26 @@ cmd_up() {
     # quietly picking one of them decides the audit's answer for it.
     --empty | --seed)
       [ -z "$seed" ] || [ "$seed" = "${a#--}" ] ||
-        die "--empty and --seed contradict each other."
+        usage_error "--empty and --seed contradict each other."
       seed="${a#--}"
       ;;
     # An unrecognised flag is REFUSED rather than ignored. A silently dropped --empty
     # would hand back a seeded env that the caller believes is empty, and every
     # conclusion drawn from it would be wrong in a way nothing prints.
-    *) die "unknown flag '$a' — env:up takes [--fresh] and one of [--empty|--seed]" ;;
+    *) usage_error "unknown flag '$a' — env:up takes [--fresh] and one of [--empty|--seed]" ;;
     esac
   done
+  UP_FRESH="$fresh"
+  UP_SEED="$seed"
+}
+
+cmd_up() {
+  need jq
+  need rsync
+  local slug_ row cport sport db fresh="" seed=""
+  up_flags "$@"
+  fresh="$UP_FRESH"
+  seed="$UP_SEED"
   slug_="$(slug)"
 
   provision_box
@@ -2064,9 +2118,13 @@ idle_phrase() { # <idle-minutes> <env-count-or-empty>
   fi
 }
 
-cmd_reap() {
-  need jq
-  local idle envs="" now="" include_mine=0 dry="" a
+# reap_flags: the parse alone, for the same reason as up_flags (#5504). Sets REAP_NOW,
+# REAP_INCLUDE_MINE and REAP_DRY; dies on a bad flag.
+REAP_NOW=""
+REAP_INCLUDE_MINE=0
+REAP_DRY=""
+reap_flags() {
+  local now="" include_mine=0 dry="" a
   for a in "$@"; do
     case "$a" in
     --now) now=1 ;;
@@ -2076,9 +2134,21 @@ cmd_reap() {
     --dry-run) dry=1 ;;
     # Refused, never ignored — an unrecognised flag that is silently dropped is how
     # `--include-mine` would look exactly like a reap that was never gated.
-    *) die "unknown flag '$a' — env:reap takes [--now] [--include-mine] [--dry-run]" ;;
+    *) usage_error "unknown flag '$a' — env:reap takes [--now] [--include-mine] [--dry-run]" ;;
     esac
   done
+  REAP_NOW="$now"
+  REAP_INCLUDE_MINE="$include_mine"
+  REAP_DRY="$dry"
+}
+
+cmd_reap() {
+  need jq
+  local idle envs="" now="" include_mine=0 dry=""
+  reap_flags "$@"
+  now="$REAP_NOW"
+  include_mine="$REAP_INCLUDE_MINE"
+  dry="$REAP_DRY"
 
   # The dry run mutates nothing, so it does not need the state file and must work from a
   # worktree — which is where an agent asking "would this be safe?" actually is.
@@ -2276,28 +2346,91 @@ PLIST
   echo "  guarantees a forgotten box dies within ${REAP_AFTER_MIN}m rather than billing all month."
 }
 
-# Every command that SSHes to the box gets the allowlist checked first (#5025). Not box (its own,
-# stricter check runs inside cmd_box), reap (inside cmd_reap, after its flags are parsed, and only
-# for a REAL reap: --dry-run mutates nothing, so it reports a mismatch instead of fixing it), timer
-# (no SSH) or allow-ip (it is the refresh).
-case "${1:-}" in
+# ── Arguments first, then anything remote (#5504) ─────────────────────────────────────────────
+#
+# The allowlist check below used to run on the command NAME alone, before any command had read its
+# arguments — so `pnpm env:check --help` looked up this machine's IP and, when the firewall did not
+# admit it, rewrote terraform.tfvars and applied a targeted firewall plan, and `env:up --bogus`
+# did the same before refusing the flag. Three lanes moved the firewall that way in one day.
+#
+# So the whole argument list is read here, before the first remote call: -h/--help prints usage and
+# exits 0, --no-refresh is taken off the list, and every command's arguments are checked against
+# what it accepts. Only an invocation that has passed all of that reaches ensure_ssh_allowlist.
+# scripts/lib/env-allowlist-test.sh drives every command with --help and with a bad argument, with
+# tofu/curl/ssh/hcloud stubbed, and fails if any of them reached the network or tofu.
+ENV_CMD="${1:-}"
+shift || true
+ENV_ARGS=()
+ENV_NO_REFRESH=""
+for _a in "$@"; do
+  case "$_a" in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --no-refresh) ENV_NO_REFRESH=1 ;;
+  *) ENV_ARGS+=("$_a") ;;
+  esac
+done
+ENV_NARGS=${#ENV_ARGS[@]}
+ENV_ARG1="${ENV_ARGS[0]:-}"
+
+case "$ENV_CMD" in
+help | -h | --help)
+  usage
+  exit 0
+  ;;
+allow-ip)
+  # allow-ip IS the refresh; asking it not to refresh has no reading.
+  [ -z "$ENV_NO_REFRESH" ] || usage_error "env:allow-ip is the refresh itself — it does not take --no-refresh."
+  [ "$ENV_NARGS" = 0 ] || usage_error "env:allow-ip takes no arguments (got: ${ENV_ARGS[*]})"
+  ;;
+down | status | verify | logs | open | ssh | check | runner)
+  [ "$ENV_NARGS" = 0 ] || usage_error "env:$ENV_CMD takes no arguments (got: ${ENV_ARGS[*]})"
+  ;;
+up) up_flags ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} ;;
+push)
+  [ "$ENV_NARGS" = 0 ] || { [ "$ENV_NARGS" = 1 ] && [ "$ENV_ARG1" = --watch ]; } ||
+    usage_error "env:push takes [--watch] (got: ${ENV_ARGS[*]})"
+  ;;
+test)
+  # One optional Playwright argument, passed through (default --project=hero).
+  [ "$ENV_NARGS" -le 1 ] || usage_error "env:test takes at most one Playwright argument, e.g. --project=canvas (got: ${ENV_ARGS[*]})"
+  ;;
+reap) reap_flags ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} ;;
+box)
+  [ "$ENV_NARGS" = 0 ] || { [ "$ENV_NARGS" = 1 ] && [ "$ENV_ARG1" = --fresh ]; } ||
+    usage_error "env:box takes [--fresh] (got: ${ENV_ARGS[*]})"
+  ;;
+timer)
+  [ "$ENV_NARGS" -le 1 ] || usage_error "env:timer takes one of [on|off|status] (got: ${ENV_ARGS[*]})"
+  case "$ENV_ARG1" in "" | on | off | status) ;; *) usage_error "env:timer takes one of [on|off|status] (got: $ENV_ARG1)" ;; esac
+  ;;
+*)
+  usage
+  exit 1
+  ;;
+esac
+
+# Exported as the variable every refresh site already reads, so env:box (which refuses rather than
+# rewrites in this mode) and env:reap honour the flag too.
+[ -z "$ENV_NO_REFRESH" ] || export ALETHIA_SANDBOX_NO_IP_REFRESH=1
+
+# Every command that SSHes to the box gets the allowlist checked first (#5025) — and only now, after
+# its arguments were accepted (#5504), and only if the box is up (ensure_ssh_allowlist's box_exists).
+# Not box (its own, stricter check runs inside cmd_box), reap (inside cmd_reap, and only for a REAL
+# reap: --dry-run mutates nothing, so it reports a mismatch instead of fixing it), timer (no SSH) or
+# allow-ip (it is the refresh).
+case "$ENV_CMD" in
 up | push | down | status | verify | logs | open | ssh | check | test | runner) ensure_ssh_allowlist ;;
 esac
 
-case "${1:-}" in
-box)
-  shift || true
-  cmd_box "$@"
-  ;;
+set -- ${ENV_ARGS[@]+"${ENV_ARGS[@]}"}
+case "$ENV_CMD" in
+box) cmd_box "$@" ;;
 allow-ip) cmd_allow_ip ;;
-up)
-  shift || true
-  cmd_up "$@"
-  ;;
-push)
-  shift || true
-  cmd_push "$@"
-  ;;
+up) cmd_up "$@" ;;
+push) cmd_push "$@" ;;
 down) cmd_down ;;
 status) cmd_status ;;
 verify) cmd_verify ;;
@@ -2305,24 +2438,8 @@ logs) cmd_logs ;;
 open) cmd_open ;;
 ssh) cmd_ssh ;;
 check) cmd_check ;;
-test)
-  shift || true
-  cmd_test "$@"
-  ;;
+test) cmd_test "$@" ;;
 runner) cmd_runner ;;
-reap)
-  shift || true
-  cmd_reap "$@"
-  ;;
-timer)
-  shift || true
-  cmd_timer "$@"
-  ;;
-*)
-  # 5,24 is exactly the header block above (it grew a line when env:reap gained its
-  # flags, and another for env:allow-ip). It read 5,25 once and so printed `set -euo pipefail`
-  # and the first line of the next comment section as if they were usage.
-  sed -n '5,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
-  exit 1
-  ;;
+reap) cmd_reap "$@" ;;
+timer) cmd_timer "$@" ;;
 esac
