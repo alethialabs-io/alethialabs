@@ -239,6 +239,47 @@ describe("remove-member cancels the removed member's pending invitations (#5484)
 	});
 });
 
+// better-auth has already committed the removal when the cancel runs, so a failed cancel must not
+// turn the caller's answer into an error for a removal that succeeded.
+describe("a failed invitation cancel after a committed exit is logged, not answered as an error", () => {
+	it("remove-member still returns better-auth's 200 and logs the failure", async () => {
+		h.byTable.set(member, [{ id: "m-1", status: "active" }]);
+		h.post.mockImplementationOnce(async () =>
+			Response.json({
+				member: { id: "m-9", userId: "user-9", organizationId: "org-1", role: "admin" },
+			}),
+		);
+		h.cancelPendingInvitationsFrom.mockRejectedValueOnce(new Error("db down"));
+		// A rejection is caught and asserted on, so the previous head fails here on the status rather
+		// than on an unhandled error.
+		const res = await POST(orgPost("remove-member", { memberIdOrEmail: "m-9" })).catch(
+			(error: unknown) => error,
+		);
+		expect(res instanceof Response && res.status).toBe(200);
+		if (!(res instanceof Response)) return;
+		expect(await res.json()).toMatchObject({ member: { userId: "user-9" } });
+		expect(console.error).toHaveBeenCalledWith(
+			expect.stringContaining("still pending"),
+			expect.any(Error),
+		);
+	});
+
+	it("leave still returns better-auth's response and logs the failure", async () => {
+		h.byTable.set(member, [{ id: "m-2", status: "active" }]);
+		h.cancelPendingInvitationsFrom.mockRejectedValueOnce(new Error("db down"));
+		const res = await POST(orgPost("leave", { organizationId: "org-1" })).catch(
+			(error: unknown) => error,
+		);
+		expect(res instanceof Response && res.status).toBe(200);
+		if (!(res instanceof Response)) return;
+		expect(await res.text()).toBe("post-handler");
+		expect(console.error).toHaveBeenCalledWith(
+			expect.stringContaining("still pending"),
+			expect.any(Error),
+		);
+	});
+});
+
 describe("a suspended admin may not change the org's SSO providers (#5484)", () => {
 	it.each(["update-provider", "delete-provider", "request-domain-verification", "verify-domain"])(
 		"refuses %s for a provider in an org where the caller is suspended, before the plugin runs",

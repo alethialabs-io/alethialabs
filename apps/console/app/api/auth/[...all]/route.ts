@@ -39,6 +39,23 @@ import {
 
 const handlers = toNextJsHandler(auth);
 
+/**
+ * Cancels the pending invitations a member sent into `orgId`, AFTER better-auth has already
+ * committed their removal. A failure is logged and swallowed: the removal succeeded and the
+ * response says so, and answering 500 for it would tell the caller a committed removal had failed.
+ * The invitations then stay pending, which the log line names.
+ */
+async function cancelInvitationsAfterExit(orgId: string, userId: string): Promise<void> {
+	try {
+		await cancelPendingInvitationsFrom(getServiceDb(), orgId, userId);
+	} catch (error) {
+		console.error(
+			`[auth] member ${userId} left or was removed from ${orgId}, but cancelling their pending invitations failed; they are still pending:`,
+			error,
+		);
+	}
+}
+
 /** Serves Better Auth GET routes after verifying the trusted client-IP contract. */
 export function GET(request: Request): Promise<Response> | Response {
 	return trustedIpFailure(request) ?? handlers.GET(request);
@@ -177,7 +194,7 @@ export async function POST(req: Request): Promise<Response> {
 			const orgId = stringField(body, "organizationId");
 			if (response.ok && orgId) {
 				await revokeMemberGrant(orgId, caller.userId);
-				await cancelPendingInvitationsFrom(getServiceDb(), orgId, caller.userId);
+				await cancelInvitationsAfterExit(orgId, caller.userId);
 			}
 			return response;
 		}
@@ -194,7 +211,7 @@ export async function POST(req: Request): Promise<Response> {
 				);
 				if (removed.success) {
 					const { organizationId, userId } = removed.data.member;
-					await cancelPendingInvitationsFrom(getServiceDb(), organizationId, userId);
+					await cancelInvitationsAfterExit(organizationId, userId);
 				} else {
 					console.error(
 						"[auth] remove-member succeeded but its response named no member; their pending invitations were not cancelled",
