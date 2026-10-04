@@ -7,7 +7,7 @@
 // (raw SQL) — no core runtime import. Standup-verified (needs a running OpenFGA).
 
 import { OpenFgaClient } from "@openfga/sdk";
-import { sql } from "drizzle-orm";
+import { type SQL, sql } from "drizzle-orm";
 import type { FgaTuple, GrantScope } from "@/lib/authz/fga-tuples";
 import type { HierarchyEdge, ScopedGrant, TupleSync } from "@/lib/authz/tuple-sync";
 import type { CoreContext } from "@/lib/enterprise";
@@ -164,6 +164,29 @@ export async function memberTuplesInOrg<T extends string>(
 		out.push(...mine.filter((t) => teams.has(t.object)));
 	}
 	return out;
+}
+
+/** The one capability `isActiveTeamOrgMember` needs: a tagged-SQL runner returning rows. */
+export interface MembershipQueryRunner {
+	execute(query: SQL): Promise<unknown[]>;
+}
+
+/**
+ * Whether `userId` holds an ACTIVE member row in the org that owns team `teamId` (#5484). False for
+ * a suspended member, for a user with no member row there, and for a team that does not exist.
+ */
+export async function isActiveTeamOrgMember(
+	db: MembershipQueryRunner,
+	teamId: string,
+	userId: string,
+): Promise<boolean> {
+	const rows = await db.execute(sql`
+		select 1 as active from team t
+		join member m on m.organization_id = t.organization_id
+		where t.id = ${teamId}::uuid and m.user_id = ${userId}::uuid and m.status = 'active'
+		limit 1
+	`);
+	return rows.length > 0;
 }
 
 /**
@@ -356,7 +379,15 @@ export class FgaTupleSync implements TupleSync {
 		await this.deleteTuples([this.core.fga.hierarchyTuple(edge)]);
 	}
 
+	/**
+	 * Writes the `team:<teamId>#member@user:<userId>` tuple, but only for a user who is an ACTIVE
+	 * member of the team's org (#5484). better-auth adds a SUSPENDED member to a team without reading
+	 * their status, and OpenFGA's instance checks are not bound to an org, so the tuple alone would
+	 * carry the team's grants to them. `syncMemberGrant` writes the org's team tuples back when the
+	 * member is reactivated.
+	 */
 	async syncTeamMember(teamId: string, userId: string): Promise<void> {
+		if (!(await isActiveTeamOrgMember(this.core.db, teamId, userId))) return;
 		await this.writeTuples([this.core.fga.teamMemberTuple(teamId, userId)]);
 	}
 

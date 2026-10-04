@@ -29,6 +29,7 @@
 // stand-ins. A hand-written expander here would prove this file's model of tuple expansion, which
 // is precisely the thing that was wrong: `grantObject` was a second, independent model of it.
 
+import type { SQL } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import {
 	type FgaTuple,
@@ -42,6 +43,7 @@ import { BUILT_IN_ROLES, PERMISSIONS } from "@/lib/authz/registry";
 import {
 	type TupleReader,
 	grantObject,
+	isActiveTeamOrgMember,
 	memberTuplesInOrg,
 	readAllTuples,
 } from "./fga-tuple-sync";
@@ -398,5 +400,47 @@ describe("memberTuplesInOrg — a member's tuples in ONE org", () => {
 		expect(got).toEqual(expect.arrayContaining(inB.filter((t) => !t.object.startsWith("team:"))));
 		expect(got.some((t) => t.object.startsWith("team:"))).toBe(false);
 		expect(got.some((t) => inA.includes(t))).toBe(false);
+	});
+});
+
+// #5484. better-auth adds a SUSPENDED member to a team without reading their status, and
+// `afterAddTeamMember` → `syncTeamMember` wrote the team tuple for them; OpenFGA's instance checks
+// are not bound to an org, so the tuple alone carried the team's grants. `syncTeamMember` now
+// writes only when this answers true. The suite may not instantiate `FgaTupleSync` (see above),
+// so the predicate is tested here; its SQL was run against real Postgres for the PR (suspended →
+// false, reactivated → true).
+describe("isActiveTeamOrgMember", () => {
+	/** Every string literal inside a built `SQL`, joined (the same walk as scope.test.ts). */
+	function queryText(query: SQL): string {
+		const seen = new Set<object>();
+		const parts: string[] = [];
+		const walk = (node: unknown): void => {
+			if (typeof node === "string") parts.push(node);
+			else if (Array.isArray(node)) for (const item of node) walk(item);
+			else if (typeof node === "object" && node !== null && !seen.has(node)) {
+				seen.add(node);
+				const values: unknown[] = Object.values(node);
+				for (const value of values) walk(value);
+			}
+		};
+		walk(query);
+		return parts.join(" ").replace(/\s+/g, " ");
+	}
+
+	const TEAM = "44444444-4444-4444-8444-444444444444";
+
+	it("asks for an ACTIVE member row in the team's org, and answers from whether one came back", async () => {
+		const queries: string[] = [];
+		const answering = (rows: unknown[]) => ({
+			execute: async (query: SQL): Promise<unknown[]> => {
+				queries.push(queryText(query));
+				return rows;
+			},
+		});
+
+		expect(await isActiveTeamOrgMember(answering([]), TEAM, USER)).toBe(false);
+		expect(await isActiveTeamOrgMember(answering([{ active: 1 }]), TEAM, USER)).toBe(true);
+		expect(queries[0]).toContain("join member m on m.organization_id = t.organization_id");
+		expect(queries[0]).toContain("m.status = 'active'");
 	});
 });

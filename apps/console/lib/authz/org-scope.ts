@@ -24,8 +24,8 @@
 // So `currentActor()` prefers this module's answer and falls back to the session only where there
 // is no org in the address — `/dashboard`, `/cli/login`, `/api/**`, the MCP token path.
 //
-// WHAT IS STILL A REFUSAL. A URL that names an org the caller is not a member of yields no id and
-// no fallback: it throws. Falling back to the session there would answer a request for someone
+// WHAT IS STILL A REFUSAL. A URL that names an org the caller is not an active member of yields no
+// id and no fallback: it throws. Falling back to the session there would answer a request for someone
 // else's tenant with the caller's own data — a wrong answer wearing a 200, which is the shape this
 // whole issue is about.
 
@@ -105,6 +105,11 @@ export const urlScopedOrgId = cache(
 				and(
 					eq(member.organizationId, organization.id),
 					eq(member.userId, userId),
+					// Only an ACTIVE row (#5484): the scope resolver no longer lands a suspended member
+					// on the org, so without this `currentActor()` would see it land elsewhere and throw
+					// a ForbiddenError out of every reader on the page — a 500 where this gives the 404
+					// a non-member gets.
+					eq(member.status, "active"),
 				),
 			)
 			.where(eq(organization.slug, slug))
