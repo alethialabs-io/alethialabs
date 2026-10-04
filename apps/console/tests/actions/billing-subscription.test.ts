@@ -3093,10 +3093,19 @@ describe("linkSubscriptionToNewOrg — the plan state it reports (#5522)", () =>
 		expect(stripe.invoicePayments.list).not.toHaveBeenCalled();
 	});
 
-	it("an incomplete subscription whose payment is still settling reports processing", async () => {
+	it("an incomplete subscription whose payment succeeded reports processing", async () => {
 		linkReturns("incomplete");
 		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("succeeded"));
 		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "processing", paymentUrl: null });
+	});
+
+	it("an incomplete subscription whose payment is still in flight reports confirming, not processing", async () => {
+		linkReturns("incomplete");
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("processing"));
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "confirming", paymentUrl: null });
+		linkReturns("incomplete");
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("requires_capture"));
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "confirming", paymentUrl: null });
 	});
 
 	it("an incomplete subscription whose payment awaits the bank reports action needed, with Stripe's page for the open invoice", async () => {
@@ -3111,6 +3120,24 @@ describe("linkSubscriptionToNewOrg — the plan state it reports (#5522)", () =>
 			paymentUrl: "https://invoice.stripe.com/i/acct_1/test_inv",
 		});
 		expect(stripe.invoices.retrieve).toHaveBeenCalledWith("in_1");
+	});
+
+	it("action needed carries no page unless its host is exactly invoice.stripe.com over https", async () => {
+		for (const url of [
+			"https://evil.example/i/acct_1/test_inv",
+			"https://invoice.stripe.com.evil.example/i",
+			"http://invoice.stripe.com/i/acct_1/test_inv",
+			"https://invoice.stripe.com:8443/i",
+			"not a url",
+		]) {
+			linkReturns("incomplete");
+			stripe.invoicePayments.list.mockResolvedValue(invoicePayments("requires_payment_method"));
+			stripe.invoices.retrieve.mockResolvedValueOnce({ status: "open", hosted_invoice_url: url });
+			await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({
+				planState: "action_needed",
+				paymentUrl: null,
+			});
+		}
 	});
 
 	it("action needed carries no page when the invoice is no longer open, or its page is not https", async () => {

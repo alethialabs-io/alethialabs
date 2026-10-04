@@ -940,6 +940,31 @@ describe("CreateOrgSheet — the plan state a finished paid setup shows (#5522)"
 		expect(status).not.toHaveTextContent(/active/i);
 	});
 
+	it("a setup that finished while its payment was settling re-reads the server, and the badge flips to active", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			createOrg.mockImplementation(async ({ slug }: { slug: string }) => ({
+				data: { id: "org-new", slug },
+				error: null,
+			}));
+			// The link reads the subscription while its invoice is still settling; the server's next
+			// answer (the fake resolve) says active, as Stripe would a few seconds later.
+			linkSubscription.mockResolvedValue({ planState: "processing", paymentUrl: null });
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+			await pay(user);
+
+			const status = await screen.findByRole("status");
+			expect(status).toHaveTextContent("Processing");
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3_500);
+			});
+			await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Active"));
+			expect(screen.getByRole("status")).toHaveTextContent(/Your Pro plan is active/);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("an 'action needed' link carries Stripe's payment page through to the final view", async () => {
 		createOrg.mockImplementation(async ({ slug }: { slug: string }) => ({
 			data: { id: "org-new", slug },

@@ -16,10 +16,11 @@
 
 import type { StatusTier } from "@repo/ui/status-badge";
 
-/** The six things a finished paid setup can say about its plan. */
+/** The seven things a finished paid setup can say about its plan. */
 export const NEW_ORG_PLAN_STATES = [
 	"active",
 	"processing",
+	"confirming",
 	"unconfirmed",
 	"action_needed",
 	"not_charged",
@@ -33,7 +34,11 @@ export type NewOrgPlanState = (typeof NEW_ORG_PLAN_STATES)[number];
  * The states that can still change on their own within seconds — the first invoice settling, or a
  * payments read that failed now succeeding — so the sheet re-reads the server while one is shown.
  */
-export const SETTLING_PLAN_STATES: ReadonlySet<NewOrgPlanState> = new Set(["processing", "unconfirmed"]);
+export const SETTLING_PLAN_STATES: ReadonlySet<NewOrgPlanState> = new Set([
+	"processing",
+	"confirming",
+	"unconfirmed",
+]);
 
 /**
  * What the server reports about a finished paid setup's plan: the state, and — only for
@@ -67,9 +72,12 @@ export const PAYMENT_DEPENDENT_STATUSES: ReadonlySet<string> = new Set([
  * read (or could not be): the answer is then the one that claims least.
  *
  * - `active` / `trialing` → `active`: the plan is live.
- * - `incomplete`: a payment that succeeded or is in flight is still settling → `processing`; one
- *   still waiting on the customer or their bank → `action_needed`; a payments read that failed or
- *   could not be understood → `unconfirmed`, which says exactly that and promises nothing.
+ * - `incomplete`: a payment that SUCCEEDED and only awaits the invoice settling → `processing`, the
+ *   one state that may say the payment went through; a payment still IN FLIGHT (`processing`, or an
+ *   authorisation awaiting capture), which can still fail → `confirming`, which claims nothing about
+ *   the outcome; no payment taken and the customer must act (a declined card, or a bank
+ *   confirmation) → `action_needed`; a payments read that failed or could not be understood →
+ *   `unconfirmed`.
  * - `canceled` / `incomplete_expired`: no money moved → `not_charged`; anything else, or unread →
  *   `not_active`, which sends the customer to support rather than claiming they were not charged.
  * - `past_due` / `unpaid` → `action_needed`: the card on file has to be fixed for the plan to apply.
@@ -85,7 +93,8 @@ export function newOrgPlanState(status: string, payment: FirstPaymentRead | null
 			return "action_needed";
 		case "incomplete":
 			if (payment === "none") return "action_needed";
-			if (payment === "succeeded" || payment === "in_flight") return "processing";
+			if (payment === "succeeded") return "processing";
+			if (payment === "in_flight") return "confirming";
 			return "unconfirmed";
 		case "canceled":
 		case "incomplete_expired":
@@ -115,9 +124,17 @@ export const NEW_ORG_PLAN_COPY: Record<NewOrgPlanState, NewOrgPlanCopy> = {
 		label: "Processing",
 		tier: "pending",
 		sentence:
-			"Your payment went through and is being confirmed. The Pro plan switches on as soon as it settles, and there is nothing more for you to do.",
+			"Your payment went through. The Pro plan switches on in a moment, once Stripe finishes recording it — there is nothing more for you to do.",
 		toast:
-			"Your organization is ready. Its payment went through and is being confirmed; the Pro plan switches on as soon as it settles.",
+			"Your organization is ready. Its payment went through, and the Pro plan switches on in a moment.",
+	},
+	confirming: {
+		label: "Confirming",
+		tier: "pending",
+		sentence:
+			"Your payment is being confirmed. Your team is on the free plan until it is; the Pro plan switches on if it completes.",
+		toast:
+			"Your organization is ready. Its payment is being confirmed, and the Pro plan switches on if it completes.",
 	},
 	unconfirmed: {
 		label: "Unconfirmed",
@@ -131,9 +148,9 @@ export const NEW_ORG_PLAN_COPY: Record<NewOrgPlanState, NewOrgPlanCopy> = {
 		label: "Action needed",
 		tier: "pending",
 		sentence:
-			"The payment needs one more step before it completes — usually a confirmation from your bank. Your team is on the free plan until it does.",
+			"The payment did not complete — the card may have been declined, or your bank may need you to confirm it. Your team is on the free plan until it is paid.",
 		toast:
-			"Your organization is ready, but its payment needs one more step before the Pro plan switches on.",
+			"Your organization is ready, but its payment did not complete, so the Pro plan is not on yet.",
 	},
 	not_charged: {
 		label: "Not charged",
@@ -160,6 +177,6 @@ export const NEW_ORG_PLAN_COPY: Record<NewOrgPlanState, NewOrgPlanCopy> = {
  */
 export function actionNeededNextStep(paymentUrl: string | null): string {
 	return paymentUrl
-		? "Complete the payment on the secure payment page."
+		? "Complete the payment on Stripe's secure payment page — you can confirm it or use another card there."
 		: "Contact support with the time of the payment to complete it.";
 }

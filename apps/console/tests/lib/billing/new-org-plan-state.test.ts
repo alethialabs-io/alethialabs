@@ -19,9 +19,9 @@ describe("newOrgPlanState", () => {
 		expect(newOrgPlanState("trialing", null)).toBe("active");
 	});
 
-	it("an incomplete subscription whose payment succeeded or is in flight is processing", () => {
+	it("an incomplete subscription whose payment SUCCEEDED is processing; one still IN FLIGHT is confirming", () => {
 		expect(newOrgPlanState("incomplete", "succeeded")).toBe("processing");
-		expect(newOrgPlanState("incomplete", "in_flight")).toBe("processing");
+		expect(newOrgPlanState("incomplete", "in_flight")).toBe("confirming");
 	});
 
 	it("an incomplete subscription whose payment awaits the customer or their bank needs action", () => {
@@ -49,6 +49,28 @@ describe("newOrgPlanState", () => {
 });
 
 describe("NEW_ORG_PLAN_COPY", () => {
+	it("processing (the payment succeeded) may say it went through and the plan switches on", () => {
+		const { sentence, toast } = NEW_ORG_PLAN_COPY.processing;
+		expect(sentence).toMatch(/payment went through/);
+		expect(toast).toMatch(/payment went through/);
+		expect(`${sentence} ${toast}`).toMatch(/switches on in a moment/);
+	});
+
+	it("confirming (a payment still in flight, which can fail) claims nothing about the outcome", () => {
+		const { sentence, toast } = NEW_ORG_PLAN_COPY.confirming;
+		expect(sentence).toBe(
+			"Your payment is being confirmed. Your team is on the free plan until it is; the Pro plan switches on if it completes.",
+		);
+		expect(`${sentence} ${toast}`).not.toMatch(/went through|succeeded|in a moment|nothing more/);
+	});
+
+	it("action needed names both causes it cannot tell apart — a declined card or a bank confirmation", () => {
+		const { sentence } = NEW_ORG_PLAN_COPY.action_needed;
+		expect(sentence).toMatch(/declined/);
+		expect(sentence).toMatch(/confirm/);
+		expect(sentence).not.toMatch(/usually/);
+	});
+
 	it("an unconfirmed payment says so, and never that there is nothing more to do", () => {
 		const { sentence, toast } = NEW_ORG_PLAN_COPY.unconfirmed;
 		expect(`${sentence} ${toast}`).toMatch(/couldn't confirm/);

@@ -1970,10 +1970,21 @@ async function readNewOrgPlanState(sub: Stripe.Subscription): Promise<NewOrgPlan
 	};
 }
 
+/** True only for a parseable `https:` URL whose host is exactly `invoice.stripe.com`. */
+function isStripeInvoiceUrl(raw: string): boolean {
+	try {
+		const url = new URL(raw);
+		return url.protocol === "https:" && url.host === "invoice.stripe.com";
+	} catch {
+		return false;
+	}
+}
+
 /**
  * Stripe's hosted page for a subscription's first invoice while that invoice is still `open` (so it
  * can be paid or its bank confirmation completed there), or null — when it is not open, has no page,
- * the page is not https, or the read fails. Only ever a URL Stripe returned for this subscription.
+ * the read fails, or the URL is not `https://invoice.stripe.com/…` exactly (parsed, not prefix-matched):
+ * the sheet renders it as a link, so nothing but Stripe's own invoice host may reach it.
  */
 async function openInvoicePaymentUrl(sub: Stripe.Subscription): Promise<string | null> {
 	const invoiceId =
@@ -1982,7 +1993,7 @@ async function openInvoicePaymentUrl(sub: Stripe.Subscription): Promise<string |
 	try {
 		const invoice = await getStripe().invoices.retrieve(invoiceId);
 		const url = invoice.hosted_invoice_url;
-		return invoice.status === "open" && url && url.startsWith("https://") ? url : null;
+		return invoice.status === "open" && url && isStripeInvoiceUrl(url) ? url : null;
 	} catch {
 		return null;
 	}
