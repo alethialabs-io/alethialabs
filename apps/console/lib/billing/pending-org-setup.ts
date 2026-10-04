@@ -23,7 +23,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { and, asc, desc, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { ensureMemberGrant } from "@/lib/authz/grants";
-import { BILLING_FIELD_CAPS, ORG_SLUG_MAX } from "@/lib/billing/billing-field-caps";
+import { BILLING_FIELD_CAPS } from "@/lib/billing/billing-field-caps";
 import type { FirstPayment } from "@/lib/billing/first-payment";
 import {
 	NEW_ORG_CREATED_BY_KEY,
@@ -36,6 +36,7 @@ import {
 import { TAX_ID_TYPES, type TaxIdType } from "@/lib/billing/tax-ids";
 import { getServiceDb } from "@/lib/db";
 import { member, organization, organizationBilling, pendingOrgSetups } from "@/lib/db/schema";
+import { ORG_SLUG_MAX_LENGTH, ORG_SLUG_PATTERN } from "@/lib/validations/org-slug";
 import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
 
 /** One `pending_org_setups` row. */
@@ -61,12 +62,16 @@ export const pendingOrgSetupBillingSchema = z.object({
 	useAsPrimary: z.boolean(),
 });
 
-/** A slug as the create-a-team form accepts it (the org's own rules decide availability later). */
+/**
+ * A slug as the create-a-team form accepts it: the one org-slug rule (lib/validations/org-slug.ts), so
+ * `-acme`, `acme-`, `acme--cloud` and "" are refused here on the server's own authority, not only by
+ * the form. Reserved and taken slugs are decided later, by the org's own rules.
+ */
 export const pendingOrgSetupSlugSchema = z
 	.string()
 	.trim()
-	.max(ORG_SLUG_MAX)
-	.regex(/^[a-z0-9]*(?:-[a-z0-9]+)*$/);
+	.max(ORG_SLUG_MAX_LENGTH)
+	.regex(ORG_SLUG_PATTERN);
 
 /**
  * Stripe statuses under which a new-org subscription MAY never have been paid — a necessary condition

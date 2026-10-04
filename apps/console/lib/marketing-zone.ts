@@ -8,12 +8,8 @@
 // the routing. The Caddy mirror (deploy/caddy/marketing.caddy.example) and the
 // filesystem (apps/marketing/app/) are kept honest by scripts/check-marketing-routes.mjs.
 
+import { ORG_SLUG_PATTERN } from "@/lib/validations/org-slug";
 import microfrontends from "@/marketing-zones.json";
-
-/** A slug-shaped path segment (lowercase a-z/0-9 + single hyphens) — the only thing an
- * org slug can be, and therefore the only thing that can collide with a marketing path.
- * Matches SLUG_RE in app/server/actions/onboarding.ts. */
-const SLUG_SEGMENT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** The marketing zone's routing paths, exactly as declared in microfrontends.json
  * (e.g. "/", "/pricing", "/contact/:path*", "/mkt-assets/:path*", "/favicon.ico"). */
@@ -27,14 +23,15 @@ export const MARKETING_ASSET_PREFIX: string =
 /**
  * The top-level path segments the marketing zone owns, as reservable org slugs. Derived
  * from MARKETING_PATHS: take the first segment of each path, drop the bare root and any
- * non-slug-shaped tokens (params like `:path*`, dotted files like `favicon.ico` — neither
- * can be an org slug). Deduped. Yields e.g. pricing, enterprise, contact, terms, privacy,
+ * token that does not match the org-slug shape (`ORG_SLUG_PATTERN`, lib/validations/org-slug.ts):
+ * params like `:path*`, dotted files like `favicon.ico` — neither can be an org slug, so neither
+ * can collide with one. Deduped. Yields e.g. pricing, enterprise, contact, terms, privacy,
  * cookies, acceptable-use, mkt-assets.
  */
 export const MARKETING_RESERVED_SEGMENTS: string[] = [
 	...new Set(
 		MARKETING_PATHS.map((p) => p.replace(/^\//, "").split("/")[0]).filter((seg) =>
-			SLUG_SEGMENT.test(seg),
+			ORG_SLUG_PATTERN.test(seg),
 		),
 	),
 ];

@@ -22,6 +22,7 @@ import {
 	findSetupOrg,
 	forgetPendingOrgSetup,
 	keepStoredNewOrgMarker,
+	pendingOrgSetupSlugSchema,
 	type PendingOrgSetupRow,
 	recordNewOrgCreated,
 	stampNewOrgMetadata,
@@ -258,5 +259,26 @@ describe("recordNewOrgCreated / keepStoredNewOrgMarker", () => {
 			keepStoredNewOrgMarker("org-2", { newOrgSubscriptionId: "sub_victim", newOrgCreatedBy: "victim" }),
 		).resolves.toEqual({ metadata: {} });
 		await expect(keepStoredNewOrgMarker("org-3", undefined)).resolves.toBeNull();
+	});
+});
+
+// #5509: the paid-setup record's slug schema read `^[a-z0-9]*(?:-[a-z0-9]+)*$` — a `*` where every
+// other org-slug check had `+` — so `-acme` and "" were accepted on the server's word alone. It now
+// reads the one org-slug rule (lib/validations/org-slug.ts).
+describe("pendingOrgSetupSlugSchema", () => {
+	it.each(["-acme", "acme-", "acme--cloud", "-", ""])("refuses %j", (slug) => {
+		expect(pendingOrgSetupSlugSchema.safeParse(slug).success).toBe(false);
+	});
+
+	it("refuses a slug longer than the org-slug limit", () => {
+		expect(pendingOrgSetupSlugSchema.safeParse("a".repeat(64)).success).toBe(false);
+	});
+
+	it.each(["acme", "acme-cloud", "a1-b2-c3", "7", "a".repeat(63)])("accepts %j", (slug) => {
+		expect(pendingOrgSetupSlugSchema.parse(slug)).toBe(slug);
+	});
+
+	it("trims before it judges, as it always has", () => {
+		expect(pendingOrgSetupSlugSchema.parse("  acme-cloud ")).toBe("acme-cloud");
 	});
 });

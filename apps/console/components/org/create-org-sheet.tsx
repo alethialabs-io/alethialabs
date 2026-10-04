@@ -86,6 +86,7 @@ import {
 	RESERVED_SLUGS,
 } from "@/lib/routing";
 import { finishSlugDraft, slugifyDraft, slugifyOrEmpty } from "@/lib/utils/slugify";
+import { ORG_SLUG_PATTERN } from "@/lib/validations/org-slug";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import {
 	SUPPORTED_CURRENCIES,
@@ -121,7 +122,7 @@ const schema = z.object({
 				.min(1, "Pick a slug.")
 				// The server's cap for the slug it records with a paid setup (billing-field-caps.ts).
 				.max(ORG_SLUG_MAX, tooLongMessage(ORG_SLUG_MAX))
-				.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Lowercase letters, numbers and hyphens.")
+				.regex(ORG_SLUG_PATTERN, "Lowercase letters, numbers and hyphens.")
 				// Checked HERE, not left to `isOrgSlugAvailable`: that action answers one boolean for both
 				// "reserved" and "taken", so a reserved slug ("docs") used to be refused as TAKEN — a
 				// sentence that sends the user looking for an organization that does not exist (#5442).

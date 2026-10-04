@@ -21,8 +21,7 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import { RESERVED_SLUGS } from "@/lib/routing";
-
-const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+import { ORG_SLUG_MAX_LENGTH, ORG_SLUG_PATTERN } from "@/lib/validations/org-slug";
 
 /**
  * {@link configureOnboardingOrg}'s result: the persisted slug, or a refusal the user can read.
@@ -62,7 +61,12 @@ export async function configureOnboardingOrg(input: {
 	if (name.length < 2) {
 		return { ok: false, error: "Give your organization a name." };
 	}
-	if (!SLUG_RE.test(slug)) {
+	// The one org-slug rule (lib/validations/org-slug.ts), its two halves refused with their own
+	// sentences: a 64-character slug told "use lowercase letters" has nothing to fix.
+	if (slug.length > ORG_SLUG_MAX_LENGTH) {
+		return { ok: false, error: `Use at most ${ORG_SLUG_MAX_LENGTH} characters.` };
+	}
+	if (!ORG_SLUG_PATTERN.test(slug)) {
 		return { ok: false, error: "Use lowercase letters, numbers and hyphens." };
 	}
 	if (RESERVED_SLUGS.has(slug)) {

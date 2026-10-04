@@ -16,9 +16,7 @@ import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import { getServiceDb } from "@/lib/db";
 import { invitation, member, organization, user } from "@/lib/db/schema";
 import { RESERVED_SLUGS } from "@/lib/routing";
-
-/** org-slug shape: lowercase alphanumeric words joined by single dashes (mirrors onboarding). */
-const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+import { isOrgSlug } from "@/lib/validations/org-slug";
 
 /** Days an operator-issued owner invitation stays valid. */
 const INVITE_TTL_DAYS = 14;
@@ -72,7 +70,7 @@ export interface ProvisionOrgResult {
 
 /**
  * Creates an org shell and invites its owner. Validates the slug against the SAME rules the console
- * uses (SLUG_RE + RESERVED_SLUGS + global uniqueness). We ALWAYS invite the owner (never force-add an
+ * uses (isOrgSlug + RESERVED_SLUGS + global uniqueness). We ALWAYS invite the owner (never force-add an
  * existing account without consent): the grant is wired when they accept, by ee/'s afterAcceptInvitation
  * hook. The owner must sign in with exactly `ownerEmail` to accept (Better Auth checks email match).
  */
@@ -84,7 +82,7 @@ export async function provisionOrg(
 	const ownerEmail = input.ownerEmail.trim().toLowerCase();
 
 	if (name.length < 2) throw new ProvisionError("Org name is too short.");
-	if (!SLUG_RE.test(slug)) throw new ProvisionError("Invalid slug.");
+	if (!isOrgSlug(slug)) throw new ProvisionError("Invalid slug.");
 	if (RESERVED_SLUGS.has(slug)) throw new ProvisionError("That slug is reserved.");
 	if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ownerEmail)) {
 		throw new ProvisionError("Invalid owner email.");
