@@ -11,7 +11,7 @@
 // better-auth is replaced by a handler spy, so "refused" means the request never reached it.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { invitation, member } from "@/lib/db/schema";
+import { invitation, member, ssoProvider } from "@/lib/db/schema";
 
 /** The signed-in caller the session read answers with; null means no session. */
 type Caller = { userId: string; activeOrgId?: string } | null;
@@ -32,6 +32,9 @@ const h = vi.hoisted(() => {
 			async (_org: string, _member: string): Promise<string | null> => null,
 		),
 		revokeMemberGrant: vi.fn(async (_org: string, _user: string) => undefined),
+		cancelPendingInvitationsFrom: vi.fn(
+			async (_db: unknown, _org: string, _user: string) => undefined,
+		),
 	};
 });
 
@@ -54,6 +57,9 @@ vi.mock("@/lib/auth/owner", () => ({
 }));
 vi.mock("@/lib/authz/active-owner", () => ({ removalOwnerRefusal: h.removalOwnerRefusal }));
 vi.mock("@/lib/authz/grants", () => ({ revokeMemberGrant: h.revokeMemberGrant }));
+vi.mock("@/lib/authz/member-exit", () => ({
+	cancelPendingInvitationsFrom: h.cancelPendingInvitationsFrom,
+}));
 vi.mock("@/lib/db", () => ({
 	getServiceDb: () => ({
 		select: () => {
@@ -100,6 +106,15 @@ function mentions(value: unknown, needle: string, seen = new WeakSet<object>()):
 /** A POST to a better-auth organization endpoint with a JSON body. */
 function orgPost(action: string, body: unknown): Request {
 	return new Request(`https://app.test/api/auth/organization/${action}`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(body),
+	});
+}
+
+/** A POST to a @better-auth/sso endpoint with a JSON body. */
+function ssoPost(action: string, body: unknown): Request {
+	return new Request(`https://app.test/api/auth/sso/${action}`, {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify(body),
@@ -180,6 +195,130 @@ describe("leave", () => {
 		h.post.mockImplementationOnce(async () => new Response("{}", { status: 400 }));
 		await POST(orgPost("leave", { organizationId: "org-1" }));
 		expect(h.revokeMemberGrant).not.toHaveBeenCalled();
+	});
+
+	// #5484: left pending, a leaver's invitations become acceptable again if they are re-added.
+	it("cancels the leaver's pending invitations into that org once better-auth has removed them, and not when it refused", async () => {
+		h.byTable.set(member, [{ id: "m-2", status: "active" }]);
+		await POST(orgPost("leave", { organizationId: "org-1" }));
+		expect(h.cancelPendingInvitationsFrom).toHaveBeenCalledWith(
+			expect.anything(),
+			"org-1",
+			"user-1",
+		);
+
+		h.cancelPendingInvitationsFrom.mockClear();
+		h.post.mockImplementationOnce(async () => new Response("{}", { status: 400 }));
+		await POST(orgPost("leave", { organizationId: "org-1" }));
+		expect(h.cancelPendingInvitationsFrom).not.toHaveBeenCalled();
+	});
+});
+
+describe("remove-member cancels the removed member's pending invitations (#5484)", () => {
+	it("cancels them in the org better-auth's response names, for the member it names; nothing when it refused", async () => {
+		h.byTable.set(member, [{ id: "m-1", status: "active" }]);
+		h.post.mockImplementationOnce(async () =>
+			Response.json({
+				member: { id: "m-9", userId: "user-9", organizationId: "org-1", role: "admin" },
+			}),
+		);
+		const res = await POST(orgPost("remove-member", { memberIdOrEmail: "m-9" }));
+		expect(res.status).toBe(200);
+		// The response still reaches the client intact.
+		expect(await res.json()).toMatchObject({ member: { userId: "user-9" } });
+		expect(h.cancelPendingInvitationsFrom).toHaveBeenCalledWith(
+			expect.anything(),
+			"org-1",
+			"user-9",
+		);
+
+		h.cancelPendingInvitationsFrom.mockClear();
+		h.post.mockImplementationOnce(async () => Response.json({ code: "x" }, { status: 400 }));
+		await POST(orgPost("remove-member", { memberIdOrEmail: "m-9" }));
+		expect(h.cancelPendingInvitationsFrom).not.toHaveBeenCalled();
+	});
+});
+
+// better-auth has already committed the removal when the cancel runs, so a failed cancel must not
+// turn the caller's answer into an error for a removal that succeeded.
+describe("a failed invitation cancel after a committed exit is logged, not answered as an error", () => {
+	it("remove-member still returns better-auth's 200 and logs the failure", async () => {
+		h.byTable.set(member, [{ id: "m-1", status: "active" }]);
+		h.post.mockImplementationOnce(async () =>
+			Response.json({
+				member: { id: "m-9", userId: "user-9", organizationId: "org-1", role: "admin" },
+			}),
+		);
+		h.cancelPendingInvitationsFrom.mockRejectedValueOnce(new Error("db down"));
+		// A rejection is caught and asserted on, so the previous head fails here on the status rather
+		// than on an unhandled error.
+		const res = await POST(orgPost("remove-member", { memberIdOrEmail: "m-9" })).catch(
+			(error: unknown) => error,
+		);
+		expect(res instanceof Response && res.status).toBe(200);
+		if (!(res instanceof Response)) return;
+		expect(await res.json()).toMatchObject({ member: { userId: "user-9" } });
+		expect(console.error).toHaveBeenCalledWith(
+			expect.stringContaining("still pending"),
+			expect.any(Error),
+		);
+	});
+
+	it("leave still returns better-auth's response and logs the failure", async () => {
+		h.byTable.set(member, [{ id: "m-2", status: "active" }]);
+		h.cancelPendingInvitationsFrom.mockRejectedValueOnce(new Error("db down"));
+		const res = await POST(orgPost("leave", { organizationId: "org-1" })).catch(
+			(error: unknown) => error,
+		);
+		expect(res instanceof Response && res.status).toBe(200);
+		if (!(res instanceof Response)) return;
+		expect(await res.text()).toBe("post-handler");
+		expect(console.error).toHaveBeenCalledWith(
+			expect.stringContaining("still pending"),
+			expect.any(Error),
+		);
+	});
+});
+
+describe("a suspended admin may not change the org's SSO providers (#5484)", () => {
+	it.each(["update-provider", "delete-provider", "request-domain-verification", "verify-domain"])(
+		"refuses %s for a provider in an org where the caller is suspended, before the plugin runs",
+		async (action) => {
+			h.byTable.set(ssoProvider, [{ organizationId: "org-1" }]);
+			h.byTable.set(member, [{ id: "m-1", status: "suspended" }]);
+			const res = await POST(ssoPost(action, { providerId: "okta" }));
+			expect(res.status).toBe(403);
+			expect(await res.json()).toMatchObject({ code: "MEMBER_NOT_ACTIVE" });
+			expect(h.post).not.toHaveBeenCalled();
+		},
+	);
+
+	it("refuses register into an org the body names; an active admin, a signed-out request and an SSO read reach the plugin", async () => {
+		h.memberByOrg.set("org-1", [{ id: "m-1", status: "suspended" }]);
+		const refused = await POST(ssoPost("register", { organizationId: "org-1", providerId: "okta" }));
+		expect(refused.status).toBe(403);
+		expect(h.post).not.toHaveBeenCalled();
+
+		h.memberByOrg.set("org-1", [{ id: "m-1", status: "active" }]);
+		await POST(ssoPost("register", { organizationId: "org-1", providerId: "okta" }));
+		expect(h.post).toHaveBeenCalledTimes(1);
+
+		h.caller = null;
+		h.memberByOrg.set("org-1", [{ id: "m-1", status: "suspended" }]);
+		await POST(ssoPost("register", { organizationId: "org-1", providerId: "okta" }));
+		expect(h.post).toHaveBeenCalledTimes(2);
+
+		// The sign-in flow is not a management action.
+		h.caller = h.signedIn();
+		await POST(ssoPost("sign-in", { providerId: "okta" }));
+		expect(h.post).toHaveBeenCalledTimes(3);
+	});
+
+	it("answers a 500 and never reaches the plugin when the session read throws", async () => {
+		h.lookupFails = true;
+		const res = await POST(ssoPost("delete-provider", { providerId: "okta" }));
+		expect(res.status).toBe(500);
+		expect(h.post).not.toHaveBeenCalled();
 	});
 });
 

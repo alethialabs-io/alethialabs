@@ -19,17 +19,26 @@ vi.mock("@/lib/authz/guard", () => ({
 	ensureCliOrgAccess: async () => null,
 }));
 vi.mock("@/lib/authz/grants", () => ({ revokeMemberGrant: h.revokeMemberGrant }));
+// The team-row and invitation writes are integration-tested (suspended-member-remaining.test.ts).
+vi.mock("@/lib/authz/member-exit", () => ({
+	cancelPendingInvitationsFrom: async () => undefined,
+	deleteOrgTeamMemberships: async () => undefined,
+}));
 vi.mock("@/lib/db", () => {
 	const chain: Record<string, unknown> = {};
 	for (const m of ["from", "where", "limit"]) chain[m] = () => chain;
 	chain.then = (resolve: (v: unknown) => void) => resolve(h.rows);
+	const writer = {
+		delete: () => {
+			h.deleteSpy();
+			return { where: async () => undefined };
+		},
+	};
 	return {
 		getServiceDb: () => ({
 			select: () => chain,
-			delete: () => {
-				h.deleteSpy();
-				return { where: async () => undefined };
-			},
+			...writer,
+			transaction: async (fn: (tx: typeof writer) => Promise<void>) => fn(writer),
 		}),
 	};
 });
