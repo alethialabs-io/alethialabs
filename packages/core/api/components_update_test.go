@@ -80,3 +80,26 @@ func TestUpdateComponent_ARefusalIsTheServersMessage(t *testing.T) {
 		t.Fatalf("err = %v, want the server's refusal", err)
 	}
 }
+
+// TestUpdateComponent_TransportFailuresAreErrors covers the three ways the request never gets an
+// answer: a body that cannot be encoded, a URL that cannot be built, and a server that is gone.
+func TestUpdateComponent_TransportFailuresAreErrors(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("no request should reach the server")
+	}))
+	if _, err := client.UpdateComponent("shop", "databases", "orders", "", map[string]any{"bad": func() {}}); err == nil || !strings.Contains(err.Error(), "marshal") {
+		t.Errorf("an unencodable body: err = %v", err)
+	}
+
+	broken := *client
+	broken.baseURL = "http://bad host\x7f"
+	if _, err := broken.UpdateComponent("shop", "databases", "orders", "", map[string]any{"port": 1}); err == nil || !strings.Contains(err.Error(), "create request") {
+		t.Errorf("an unbuildable URL: err = %v", err)
+	}
+
+	gone := *client
+	gone.baseURL = "http://127.0.0.1:1/api"
+	if _, err := gone.UpdateComponent("shop", "databases", "orders", "", map[string]any{"port": 1}); err == nil || !strings.Contains(err.Error(), "send request") {
+		t.Errorf("an unreachable server: err = %v", err)
+	}
+}

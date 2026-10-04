@@ -52,30 +52,8 @@ func valuesEqual(a, b any) bool {
 // meaning rather than by its Go type.
 func canonicalValue(v any) any {
 	switch t := v.(type) {
-	case nil, bool, string, float64:
+	case nil, bool, string:
 		return t
-	case int:
-		return float64(t)
-	case int8:
-		return float64(t)
-	case int16:
-		return float64(t)
-	case int32:
-		return float64(t)
-	case int64:
-		return float64(t)
-	case uint:
-		return float64(t)
-	case uint8:
-		return float64(t)
-	case uint16:
-		return float64(t)
-	case uint32:
-		return float64(t)
-	case uint64:
-		return float64(t)
-	case float32:
-		return float64(t)
 	case json.Number:
 		if f, err := t.Float64(); err == nil {
 			return f
@@ -100,14 +78,26 @@ func canonicalValue(v any) any {
 		}
 		return out
 	}
+	// Every Go number kind, by kind rather than by a case per type: YAML hands back int, JSON
+	// float64, and a caller building a map by hand may use any of the others.
+	rv := reflect.ValueOf(v)
+	switch {
+	case rv.CanInt():
+		return float64(rv.Int())
+	case rv.CanUint():
+		return float64(rv.Uint())
+	case rv.CanFloat():
+		return rv.Float()
+	}
 	raw, err := json.Marshal(v)
 	if err != nil {
+		// Not representable as JSON (a func, a channel): compared as itself, so it equals nothing
+		// but an identical value.
 		return v
 	}
+	// Bytes json.Marshal just produced always decode.
 	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return v
-	}
+	_ = json.Unmarshal(raw, &decoded)
 	return canonicalValue(decoded)
 }
 

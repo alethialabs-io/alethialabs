@@ -416,3 +416,76 @@ func TestExecuteApply_ARefusedUpdateIsThatComponentsErrorAndOtherEnvironmentsCar
 		t.Errorf("the held-back deploy is not said:\n%s", out.String())
 	}
 }
+
+// ── the comparison's edges ────────────────────────────────────────────────────────────────
+
+// TestValuesEqual_EveryNumberKindAndTheFallbacks: every Go number kind compares by value with
+// JSON's float64; a typed value with no case of its own compares by its JSON meaning; and a value
+// JSON cannot represent equals nothing else.
+func TestValuesEqual_EveryNumberKindAndTheFallbacks(t *testing.T) {
+	two := float64(2)
+	for name, v := range map[string]any{
+		"int8": int8(2), "int16": int16(2), "int32": int32(2), "int64": int64(2),
+		"uint": uint(2), "uint8": uint8(2), "uint16": uint16(2), "uint32": uint32(2), "uint64": uint64(2),
+		"float32": float32(2), "json.Number": json.Number("2"),
+	} {
+		if !valuesEqual(v, two) {
+			t.Errorf("%s 2 does not equal float64 2", name)
+		}
+	}
+	if !valuesEqual(json.Number("not-a-number"), "not-a-number") {
+		t.Error("a json.Number that is not a float compares as its text")
+	}
+	type size struct {
+		VCPU int `json:"vcpu"`
+	}
+	if !valuesEqual(size{VCPU: 4}, map[string]any{"vcpu": float64(4)}) {
+		t.Error("a struct compares by its JSON meaning")
+	}
+	if valuesEqual(make(chan int), make(chan int)) {
+		t.Error("two values JSON cannot represent must not compare equal")
+	}
+	if got := formatFieldValue(make(chan int)); !strings.HasPrefix(got, "0x") {
+		t.Errorf("an unrepresentable value renders as itself, got %q", got)
+	}
+}
+
+// TestApply_JSONOutputCarriesARefusalBeforeFailing drives the refusal through the real `apply`
+// command and the fake control plane: the PATCH is refused, the run is fatal, and `--output json`
+// still prints the result naming the refused component, so a pipeline can read what happened.
+func TestApply_JSONOutputCarriesARefusalBeforeFailing(t *testing.T) {
+	s := &projServer{
+		envs: []map[string]any{
+			{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+		},
+		comps: []map[string]any{
+			{"id": "c1", "kind": "databases", "name": "orders", "status": "ACTIVE", "config": map[string]any{"engine": "postgres", "engine_version": "15"}},
+		},
+		failOnPost: []string{"/components/databases/orders"},
+	}
+	h := applyEnv(t, s)
+	path := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n    components:\n      databases:\n        - name: orders\n          engine_version: \"16\"\n")
+	read := projCaptureStdout(t)
+	if !h.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input", "--output", "json") {
+		t.Error("a refused update must make apply exit non-zero")
+	}
+	out := read()
+	var got ApplyResult
+	// The result comes first, then the failure line: decode the first JSON value only.
+	if err := json.NewDecoder(strings.NewReader(out)).Decode(&got); err != nil {
+		t.Fatalf("the partial result is not JSON: %v\n%s", err, out)
+	}
+	if len(got.Errors) != 1 || got.Errors[0].Component != "databases/orders" || got.Errors[0].Environment != "production" {
+		t.Errorf("errors = %+v, want the refused databases/orders in production", got.Errors)
+	}
+	if len(got.Jobs) != 0 {
+		t.Errorf("the environment with a refused change was deployed: %+v", got.Jobs)
+	}
+	var methods []string
+	for _, p := range s.posts {
+		methods = append(methods, p.Method+" "+p.Path)
+	}
+	if strings.Join(methods, " ") != "PATCH /api/cli/projects/p1/components/databases/orders" {
+		t.Errorf("requests = %v, want one PATCH of orders", methods)
+	}
+}

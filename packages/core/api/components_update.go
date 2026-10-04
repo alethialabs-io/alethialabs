@@ -32,7 +32,7 @@ func (c *Client) UpdateComponent(project, kind, name, env string, fields map[str
 	return resp.Component, nil
 }
 
-// doPatch sends a JSON PATCH and decodes a 200 into result. Kept here rather than beside doPut in
+// doPatch sends a JSON PATCH and decodes a 200 into result (which every caller supplies). Kept here rather than beside doPut in
 // api.go so this route's client lives in one file.
 func (c *Client) doPatch(endpoint string, payload interface{}, result interface{}) error {
 	body, err := json.Marshal(payload)
@@ -55,8 +55,5 @@ func (c *Client) doPatch(endpoint string, payload interface{}, result interface{
 	if resp.StatusCode != http.StatusOK {
 		return responseError(resp)
 	}
-	if result != nil {
-		return json.NewDecoder(resp.Body).Decode(result)
-	}
-	return nil
+	return json.NewDecoder(resp.Body).Decode(result)
 }
