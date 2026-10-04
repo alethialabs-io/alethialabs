@@ -114,7 +114,17 @@ async function acceptCurrentTerms(page: Page): Promise<void> {
 		.click();
 	await expect(accept).toBeEnabled();
 	await accept.click();
-	await expect(accept).toBeHidden({ timeout: 30_000 });
+	// Wait for the form to LEAVE the gate, not for the button to disappear. While the server action
+	// runs, `AcceptTermsForm` relabels the button "Recording…", so a locator by the submit label goes
+	// hidden the moment the click lands — before the acceptance is stored. The caller's next
+	// `page.goto` then raced the POST: the billing route 307'd back to /accept-terms, which by then
+	// saw the acceptance and sent the page on to /dashboard → /onboarding, so the test asserted
+	// "Active" on the onboarding form (#5483). The form calls `router.replace(next)` only after
+	// `acceptLegalDocuments` resolves, so the URL changing is the signal that the acceptance landed.
+	await page.waitForURL((url) => url.pathname !== "/accept-terms", {
+		timeout: 30_000,
+		waitUntil: "commit",
+	});
 }
 
 /** Upserts the org's billing row to a chosen state (a stripe_customer_id makes the invoices
