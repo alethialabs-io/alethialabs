@@ -11,14 +11,27 @@
 // WHAT IT DOES NOT SEED, AND WHY THAT IS NOT SILENT. Members, connectors, roles and org-level
 // access are not written here: the rows other fixtures already put in the run's org give each of
 // them a narrowing option (measured on run 36052124183), and a second copy would only move counts
-// `inert.spec.ts` reads. The activity feeds (org and project) are not seeded, for two reasons that
-// each suffice: their bar renders no counted facet at all, so no row could make them measurable;
-// and `authz_activity_log` is append-only — a DELETE outside the retention GC raises, so a row
-// written here could never be removed again (measured on run 36055847035). The spec does not
-// guess: a list that still renders fewer than two rows — or a bar with no counted option — is
-// recorded NOT MEASURED naming why, so the gap is a column in the scoreboard rather than a PASS over
-// nothing. Extending coverage is adding a row here, not editing a verdict.
+// `inert.spec.ts` reads. The spec does not guess: a list that still renders fewer than two rows —
+// or a bar with no counted option — is recorded NOT MEASURED naming why, so the gap is a column in
+// the scoreboard rather than a PASS over nothing. Extending coverage is adding a row here, not
+// editing a verdict — and adding the route to `SEEDED_ROUTES` below, which the spec holds to a
+// measured verdict.
 //
+// THE ACTIVITY ROWS ARE THE ONE EXCEPTION TO "EVERY ROW IS REMOVED AGAIN". `authz_activity_log` is
+// append-only: its WORM trigger (`lib/db/programmables.sql`) raises on any DELETE outside the
+// retention GC, so the two rows written for the activity feeds outlive the spec. They are written
+// anyway (#5471) because without them neither feed had a pair: the project feed rendered 0 rows and
+// the org feed's every row belonged to the owner, and whether anything else landed there depended
+// on what earlier specs happened to do. What they leave behind is bounded: two rows in the run's own
+// org, whose project id stops resolving once `cleanFilterFixtures()` deletes the project.
+//
+// NO ROW HERE MAY FEED A BACKGROUND LOOP. The console runs in-process schedulers
+// (`lib/reconcile/loop.ts`) that write rows into the very lists measured here. A successful DEPLOY
+// is the source the drift scheduler (`lib/drift/dispatch.ts`) enqueues a DETECT_DRIFT job from, on
+// a 5-minute tick: a seeded one added a job to `/[org]/~/jobs` mid-measurement whenever that tick
+// fell inside the route's ~10 s window, and the known-PASS jobs surface reported F8 FAIL with
+// `afterReset` one higher than `full` (runs 37124096053 and 37158731650, #5471).
+
 // Invoices are NOT a Stripe object here: the billing UI reads `invoice`, the local mirror the Stripe
 // webhook writes (`lib/db/schema/invoices.ts`), so a plain insert reaches the page. This header said
 // otherwise until #5045, and the page stayed unmeasured on the strength of the sentence.
@@ -26,6 +39,8 @@
 // EVERY ROW IS REMOVED AGAIN. The spec shares an organisation with `inert.spec.ts` (R8), which runs
 // after it in the same `audit-interaction` project and counts the controls each list renders; rows
 // left behind here would move that count. `cleanFilterFixtures()` deletes exactly the ids it wrote.
+
+import { randomUUID } from "node:crypto";
 
 import { db } from "./db";
 import { seedCloudIdentity, seedJob, seedProject, type Owner, type SeededProject } from "./seed";
@@ -45,6 +60,26 @@ export interface FilterFixtures {
 	ssoProviderIds: string[];
 	invoiceIds: string[];
 }
+
+/**
+ * The manifest routes this file seeds a narrowing pair for. `filters.spec.ts` requires every one of
+ * them to come back measured (PASS or FAIL) for F8 and F9: a route listed here that reads NOT
+ * MEASURED means its pair stopped reaching the page, which is a defect in this file, not a gap.
+ */
+export const SEEDED_ROUTES: readonly string[] = [
+	"/[org]/~/jobs",
+	"/[org]/[project]/jobs",
+	"/[org]/~/runners",
+	"/[org]/~/alerts",
+	"/[org]/~/support/my-cases",
+	"/[org]/~/evidence",
+	"/[org]/~/settings/teams",
+	"/[org]/[project]/settings/access",
+	"/[org]/~/settings/sso",
+	"/[org]/~/settings/billing/invoices",
+	"/[org]/~/settings/activity",
+	"/[org]/[project]/settings/activity",
+];
 
 /**
  * Write two rows with differing facet values into every list a plain insert reaches.
@@ -86,8 +121,12 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
 	const sql = db();
 	const { project } = written;
 
-	// Jobs (`/[org]/~/jobs`, `/[org]/[project]/jobs`): differ on STATUS and TYPE.
-	written.jobIds.push((await seedJob(owner, { projectId: project.projectId, envId: project.envId, status: "SUCCESS", jobType: "DEPLOY" })).id);
+	// Jobs (`/[org]/~/jobs`, `/[org]/[project]/jobs`): differ on STATUS and TYPE. The successful one
+	// is a PLAN, never a DEPLOY: each background loop that inserts a job (`lib/reconcile/loop.ts` —
+	// the drift and probe schedulers and the ephemeral reaper) selects its environments by a
+	// successful DEPLOY, and a job it inserted here would land in the list while F8 is counting it —
+	// see the header.
+	written.jobIds.push((await seedJob(owner, { projectId: project.projectId, envId: project.envId, status: "SUCCESS", jobType: "PLAN" })).id);
 	written.jobIds.push(
 		(await seedJob(owner, { projectId: project.projectId, envId: project.envId, status: "FAILED", jobType: "DESTROY", errorMessage: "e2e filter fixture" })).id,
 	);
@@ -228,6 +267,30 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
 	};
 	written.invoiceIds.push(await invoice("a", "paid"));
 	written.invoiceIds.push(await invoice("b", "refunded"));
+
+	// Activity (`/[org]/~/settings/activity`, `/[org]/[project]/settings/activity`): differ on ACTOR,
+	// the bar's first facet, and on DECISION. Both rows name this project as their resource, so the
+	// project feed — scoped to `resource_id` — holds exactly this pair, and the org feed holds it on
+	// top of whatever earlier specs did. One actor is the owner; the other is an id with no user row
+	// and no membership, which the feed renders as a "Former member" option counting one event
+	// (`components/settings/activity/activity-log.tsx`) — narrower than either list. A real second
+	// member would be an account other specs can see and sign in as; an id nobody holds is not.
+	// These two rows are NOT removed: see the header.
+	/** Insert one activity event on this project by the given actor. */
+	const activity = async (actorId: string, action: string, decision: boolean) => {
+		await sql`
+			insert into authz_activity_log ${sql({
+				org_id: owner.orgId,
+				actor_id: actorId,
+				action,
+				resource_type: "project",
+				resource_id: project.projectId,
+				decision,
+				reason: decision ? null : "e2e filter fixture",
+			})}`;
+	};
+	await activity(owner.userId, "update", true);
+	await activity(randomUUID(), "delete", false);
 }
 
 /**
