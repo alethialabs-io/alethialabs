@@ -102,12 +102,9 @@ describe("a finished paid setup reports the plan state the link read (#5522)", (
 			expect(linkSubscriptionToNewOrg).toHaveBeenCalledTimes(1);
 			expect(outcome).toMatchObject({ kind: "done", planState: state });
 			expect(toasted()).toEqual([NEW_ORG_PLAN_COPY[state].toast]);
-			if (state === "active") {
-				expect(toast.success).toHaveBeenCalledWith(NEW_ORG_PLAN_COPY.active.toast);
-			} else {
-				expect(toast.success).not.toHaveBeenCalled();
-				expect(toasted().join(" ")).not.toMatch(/Subscription active/);
-			}
+			// Only an active plan is announced as a success, and only it says "Subscription active".
+			expect(toast.success.mock.calls.length > 0).toBe(state === "active");
+			expect(/Subscription active/.test(toasted().join(" "))).toBe(state === "active");
 		});
 	}
 

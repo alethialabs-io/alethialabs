@@ -52,8 +52,7 @@ describe("NEW_ORG_PLAN_COPY", () => {
 		for (const state of NEW_ORG_PLAN_STATES) {
 			const { toast, sentence, label } = NEW_ORG_PLAN_COPY[state];
 			const says = `${toast} ${sentence} ${label}`;
-			if (state === "active") expect(says).toMatch(/active/i);
-			else expect(says).not.toMatch(/subscription active|plan is active/i);
+			expect(/subscription active|plan is active/i.test(says)).toBe(state === "active");
 		}
 	});
 
@@ -61,7 +60,7 @@ describe("NEW_ORG_PLAN_COPY", () => {
 		for (const state of NEW_ORG_PLAN_STATES) {
 			const { toast, sentence } = NEW_ORG_PLAN_COPY[state];
 			expect(`${toast} ${sentence}`).not.toMatch(/charged (again|twice)/i);
-			if (state !== "not_charged") expect(`${toast} ${sentence}`).not.toMatch(/not charged/i);
+			expect(/not charged/i.test(`${toast} ${sentence}`)).toBe(state === "not_charged");
 		}
 	});
 });

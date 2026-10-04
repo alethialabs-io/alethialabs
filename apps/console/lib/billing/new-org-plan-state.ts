@@ -77,7 +77,7 @@ export function newOrgPlanState(status: string, payment: FirstPaymentRead | null
 }
 
 /** How one plan state is shown: the badge's label and tier, the sentence under it, and the toast. */
-export interface NewOrgPlanCopy {
+interface NewOrgPlanCopy {
 	label: string;
 	tier: StatusTier;
 	sentence: string;

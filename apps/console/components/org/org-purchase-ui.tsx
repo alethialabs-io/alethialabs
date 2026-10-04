@@ -106,7 +106,7 @@ export function PurchaseLayout({
  * The plan state a finished PAID setup reports (#5522) — a status badge and one sentence that is true
  * for that state, from what the server read. It replaces the old blanket "Subscription active".
  */
-export function PaidPlanStatus({ state }: { state: NewOrgPlanState }) {
+function PaidPlanStatus({ state }: { state: NewOrgPlanState }) {
 	const copy = NEW_ORG_PLAN_COPY[state];
 	return (
 		<div role="status" className="flex flex-col gap-1.5 rounded-sm border border-border px-3 py-2.5">
