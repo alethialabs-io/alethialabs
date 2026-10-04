@@ -49,3 +49,63 @@ The AWS template set (`infra/templates/project/aws/`) is the most extensive, wit
 **Karpenter** — Just-in-time node provisioning. Instead of pre-scaling node groups, Karpenter watches for pending pods and launches appropriately-sized EC2 instances within seconds. Supports spot instances and multiple instance families.
 
 **Aurora Serverless v2** — Auto-scaling database with ACU-based capacity (0.5–128 ACUs). Scales to zero-ish (0.5 ACU minimum) during idle periods.
+
+## Karpenter node pool
+
+When Karpenter is on (`enable_karpenter`), the runner applies one Karpenter `NodePool` after the cluster is up. The pool decides which EC2 instances Karpenter can launch. You set its shape on the cluster component: select the cluster on the canvas and open the **Advanced** section of the inspector. Each setting below is a key in the cluster's `provider_config`.
+
+If you set nothing, every default below applies, and the runner renders the same pool as before these settings existed.
+
+| Setting | Default | Allowed values |
+|---------|---------|----------------|
+| `karpenter_capacity_types` | `["on-demand"]` | `spot`, `on-demand`, or both. With both, Karpenter prefers Spot and falls back to on-demand. |
+| `karpenter_architectures` | `["amd64"]` | `amd64`, `arm64`, or both. The node image (`al2023@latest`) serves both, so arm64 (Graviton) needs no other change. |
+| `karpenter_instance_categories` | `["t", "m"]` | EC2 instance categories, such as `c`, `m` or `r`. An empty list removes the category requirement. |
+| `karpenter_instance_families` | `[]` (no requirement) | EC2 instance families, such as `c7g` or `m7g`. Each family must belong to one of the categories, unless the category list is empty. |
+| `karpenter_cpu_limit` | `100` | The total vCPU the pool can launch, a whole number from 1 to 10000. It is the only bound on the size of Karpenter's fleet. |
+| `karpenter_node_labels` | `{}` | Labels on every Karpenter node. Keys in the `kubernetes.io`, `k8s.io`, `karpenter.sh` and `karpenter.k8s.aws` domains are refused, except `node-restriction.kubernetes.io/`. |
+| `karpenter_node_taints` | `[]` | Taints on every Karpenter node, each `{ key, value, effect }`. `value` is optional. `effect` is `NoSchedule`, `PreferNoSchedule` or `NoExecute`. Keys in the reserved domains above are refused. |
+
+The plan refuses a value outside these rules and names what is allowed. The runner checks the same rules again before it applies the pool.
+
+### Example: arm64 Spot nodes for batch work
+
+This `provider_config` lets Karpenter launch Graviton `c7g` and `m7g` instances, on Spot when it can, up to 400 vCPU. It labels and taints the nodes so that only pods that tolerate the `workload=batch` taint run there:
+
+```json
+{
+  "enable_karpenter": true,
+  "karpenter_capacity_types": ["spot", "on-demand"],
+  "karpenter_architectures": ["arm64"],
+  "karpenter_instance_categories": ["c", "m"],
+  "karpenter_instance_families": ["c7g", "m7g"],
+  "karpenter_cpu_limit": 400,
+  "karpenter_node_labels": { "workload": "batch" },
+  "karpenter_node_taints": [
+    { "key": "workload", "value": "batch", "effect": "NoSchedule" }
+  ]
+}
+```
+
+A batch pod then selects and tolerates those nodes:
+
+```yaml
+spec:
+  nodeSelector:
+    workload: batch
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: batch
+      effect: NoSchedule
+```
+
+<Callout type="warn">
+AWS can reclaim a Spot instance with two minutes' notice. Run only work that can stop and restart on Spot, or list both capacity types so that Karpenter can fall back to on-demand.
+</Callout>
+
+<Callout type="info">
+Spot needs the `AWSServiceRoleForEC2Spot` service-linked role in the AWS account. An account that has never used Spot does not have it. Create it once with `aws iam create-service-linked-role --aws-service-name spot.amazonaws.com`, or set `ec2_spot_service_role` to `true` on the cluster to let the template create it.
+</Callout>
+
+Edit these settings on the cluster, not on the `NodePool` in the cluster. The next deploy renders the pool again from the settings and replaces a change made in the cluster.
