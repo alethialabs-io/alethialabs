@@ -195,23 +195,75 @@ describe("resolveStateRequest", () => {
 		expect("error" in r && r.error.status).toBe(409);
 	});
 
+	// ── A runner's state object is the job's only when the runner is (#5481) ─────────────────────
+	// `runnerJob` and the runner rows share one id map: the mock answers a query by the id its
+	// condition names, whichever table it reads.
+	const RUNNER_ID = "a1b2c3d4-e5f6-4890-abcd-ef1234567890";
+	const RUNNER_KEY = runnerStateKey(RUNNER_ID);
+	/** A live runner-lifecycle job filed in org-1 by u-1, naming RUNNER_ID. */
+	const runnerJob = (over: JobRow = {}): JobRow => ({
+		job_type: "DESTROY_RUNNER",
+		project_id: null,
+		environment_id: null,
+		config_snapshot: { runner_id: RUNNER_ID },
+		status: "PROCESSING",
+		org_id: "org-1",
+		user_id: "u-1",
+		...over,
+	});
+
 	it("resolves a runner-lifecycle job to the target-runner state key", async () => {
-		const runnerId = "a1b2c3d4-e5f6-4890-abcd-ef1234567890";
-		const runnerKey = runnerStateKey(runnerId);
-		const tok = await mintStateToken({ jobId: "job-1", stateKey: runnerKey });
+		const tok = await mintStateToken({ jobId: "job-1", stateKey: RUNNER_KEY });
 		const r = await resolve(
 			{
-				"job-1": {
-					job_type: "DEPLOY_RUNNER",
-					project_id: null,
-					environment_id: null,
-					config_snapshot: { runner_id: runnerId },
-					status: "PROCESSING",
-				},
+				"job-1": runnerJob({ job_type: "DEPLOY_RUNNER" }),
+				[RUNNER_ID]: { org_id: "org-1", user_id: "u-2" },
 			},
 			tok,
 		);
-		expect(r).toEqual({ stateKey: runnerKey });
+		expect(r).toEqual({ stateKey: RUNNER_KEY });
+	});
+
+	it("403s a runner-lifecycle job whose target runner is in ANOTHER org", async () => {
+		const tok = await mintStateToken({ jobId: "job-1", stateKey: RUNNER_KEY });
+		const r = await resolve(
+			{
+				"job-1": runnerJob(),
+				[RUNNER_ID]: { org_id: "org-other", user_id: "u-9" },
+			},
+			tok,
+		);
+		expect("error" in r && r.error.status).toBe(403);
+	});
+
+	it("403s a runner-lifecycle job whose target runner no longer exists", async () => {
+		const tok = await mintStateToken({ jobId: "job-1", stateKey: RUNNER_KEY });
+		const r = await resolve({ "job-1": runnerJob() }, tok);
+		expect("error" in r && r.error.status).toBe(403);
+	});
+
+	it("resolves the job creator's own pre-#3874 personal-org runner, filed in the org they act in", async () => {
+		const tok = await mintStateToken({ jobId: "job-1", stateKey: RUNNER_KEY });
+		const r = await resolve(
+			{
+				"job-1": runnerJob(),
+				[RUNNER_ID]: { org_id: "u-1", user_id: "u-1" },
+			},
+			tok,
+		);
+		expect(r).toEqual({ stateKey: RUNNER_KEY });
+	});
+
+	it("403s ANOTHER user's personal-org runner, even when the job's creator names it", async () => {
+		const tok = await mintStateToken({ jobId: "job-1", stateKey: RUNNER_KEY });
+		const r = await resolve(
+			{
+				"job-1": runnerJob(),
+				[RUNNER_ID]: { org_id: "u-9", user_id: "u-9" },
+			},
+			tok,
+		);
+		expect("error" in r && r.error.status).toBe(403);
 	});
 
 	it("400s a runner-lifecycle job whose config_snapshot.runner_id is not a UUID", async () => {

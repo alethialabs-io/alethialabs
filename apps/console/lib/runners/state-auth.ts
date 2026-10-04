@@ -4,9 +4,9 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getServiceDb } from "@/lib/db";
-import { jobs } from "@/lib/db/schema";
+import { jobs, runners } from "@/lib/db/schema";
 import { verifyStateToken } from "@/lib/runners/state-token";
-import { stateKeyForJob } from "@/lib/storage/tofu-state";
+import { runnerStateKey, stateKeyForJob } from "@/lib/storage/tofu-state";
 
 /** The tofu http backend authenticates with HTTP Basic; the state bearer is the password half. */
 function basicAuthPassword(req: Request): string | null {
@@ -21,6 +21,38 @@ function basicAuthPassword(req: Request): string | null {
 	}
 	const idx = decoded.indexOf(":");
 	return idx === -1 ? decoded : decoded.slice(idx + 1);
+}
+
+/**
+ * True when the runner whose state object `stateKey` names belongs to the job's tenant (#5481).
+ *
+ * A runner-lifecycle job keys its state by `config_snapshot.runner_id`, and the key check below
+ * proves only that the token and the job agree on that id — not that the runner is the job's. So a
+ * job whose snapshot named another org's runner would read and write that runner's state. Admitted:
+ *
+ * - the runner's `org_id` is the job's `org_id`;
+ * - the pre-#3874 shape: the runner sits in its owner's personal org (`org_id = user_id`) and the
+ *   job was created by that owner. The jobs route and the console's runner actions file such a
+ *   runner's lifecycle jobs in the org the owner is acting in, so its org differs by construction.
+ *
+ * A key that does not name a runner (a project job's) is not this function's question: it returns
+ * true and the project key's own derivation stands.
+ */
+async function runnerStateInJobTenant(
+	db: ReturnType<typeof getServiceDb>,
+	job: { config_snapshot: Record<string, unknown>; org_id: string | null; user_id: string },
+	stateKey: string,
+): Promise<boolean> {
+	const rid = job.config_snapshot.runner_id;
+	if (typeof rid !== "string" || runnerStateKey(rid) !== stateKey) return true;
+	const [runner] = await db
+		.select({ org_id: runners.org_id, user_id: runners.user_id })
+		.from(runners)
+		.where(eq(runners.id, rid))
+		.limit(1);
+	if (!runner || runner.org_id === null) return false;
+	if (job.org_id !== null && runner.org_id === job.org_id) return true;
+	return runner.org_id === runner.user_id && runner.user_id === job.user_id;
 }
 
 /** Resolved, authorized state request: the server-derived key for the job's state object. */
@@ -80,6 +112,8 @@ export async function resolveStateRequest(
 		environment_id: jobs.environment_id,
 		config_snapshot: jobs.config_snapshot,
 		status: jobs.status,
+		org_id: jobs.org_id,
+		user_id: jobs.user_id,
 	};
 
 	// The AUTHORIZING job is the token's own — the one actually provisioning right now.
@@ -117,6 +151,16 @@ export async function resolveStateRequest(
 		return {
 			error: NextResponse.json(
 				{ error: "State token does not match this job's state" },
+				{ status: 403 },
+			),
+		};
+	}
+
+	// THE TENANT: a runner's state object is the job's only when the runner is (#5481).
+	if (!(await runnerStateInJobTenant(db, tokenJob, stateKey))) {
+		return {
+			error: NextResponse.json(
+				{ error: "State object is not in this job's tenant" },
 				{ status: 403 },
 			),
 		};
