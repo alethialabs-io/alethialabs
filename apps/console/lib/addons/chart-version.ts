@@ -3,8 +3,9 @@
 
 // The ONE definition of what a catalog add-on's chart-version pin may be (#5525).
 //
-// A pin is stored in `project_addons.version` and the runner renders it into the ArgoCD
-// Application's `spec.source.targetRevision`. That makes this check the injection boundary for the
+// A pin is stored in `project_addons.version`; the console's deploy-snapshot builder carries it into
+// the add-on install spec (resolveAddOnInstall), and the runner writes that spec's version into the
+// ArgoCD Application's `spec.source.targetRevision`. That makes this check the injection boundary for the
 // value: the runner marshals the manifest with yaml.v3 (packages/core/argocd/addons.go) rather than
 // interpolating it, but a value that is not a plain version has no business reaching the cluster in
 // any form, and a refusal here is the only place the user can still be told what went wrong.
@@ -32,7 +33,7 @@ const EXACT_SEMVER =
 
 /** The sentence a refused version gets — written for the person who typed it. */
 export const CHART_VERSION_REFUSAL =
-	"A chart version must be one exact version, such as 58.2.1 or v1.4.0-rc.1. Ranges (^58, ~58.2, >=58, *), spaces and quotes are not accepted — leave it empty to use the catalog's default version.";
+	"A chart version must be one exact version, such as 58.2.1. Ranges (^58, ~58.2, >=58, *), spaces and quotes are not accepted — leave it empty to use the catalog's default version.";
 
 /** The sentence an over-long version gets. */
 export const CHART_VERSION_TOO_LONG = `A chart version is at most ${CHART_VERSION_MAX_LENGTH} characters.`;

@@ -105,7 +105,8 @@ export interface ComponentSpec {
 	buckets: { name: string; cost: number }[];
 	registries: { name: string; repository_url: string }[];
 	dns: { enabled: boolean; provider: string; domain_name: string } | null;
-	addons: { addon_id: string; version: string; namespace: string }[];
+	/** `version` is the chart-version PIN (#5525); null = the catalog default, as a fresh enable gets. */
+	addons: { addon_id: string; version: string | null; namespace: string }[];
 	iac: { name: string; repo_url: string; path: string; commit_sha: string } | null;
 }
 
@@ -150,7 +151,7 @@ export const PROJECTS: ProjectSpec[] = [
 			buckets: [{ name: "receipts", cost: 12 }],
 			registries: [{ name: "payments", repository_url: "482913005711.dkr.ecr.eu-west-1.amazonaws.com/payments" }],
 			dns: { enabled: true, provider: "route53", domain_name: "payments.acme.example" },
-			addons: [{ addon_id: "kube-prometheus-stack", version: "62.3.1", namespace: "monitoring" }],
+			addons: [{ addon_id: "kube-prometheus-stack", version: null, namespace: "monitoring" }],
 			iac: null,
 		},
 		environments: [
@@ -181,7 +182,7 @@ export const PROJECTS: ProjectSpec[] = [
 			buckets: [{ name: "assets", cost: 9 }],
 			registries: [{ name: "storefront", repository_url: "europe-west1-docker.pkg.dev/acme-storefront/storefront" }],
 			dns: { enabled: true, provider: "clouddns", domain_name: "shop.acme.example" },
-			addons: [{ addon_id: "kube-prometheus-stack", version: "62.3.1", namespace: "monitoring" }],
+			addons: [{ addon_id: "kube-prometheus-stack", version: null, namespace: "monitoring" }],
 			iac: null,
 		},
 		environments: [
@@ -212,7 +213,7 @@ export const PROJECTS: ProjectSpec[] = [
 			buckets: [{ name: "lakehouse", cost: 21 }],
 			registries: [],
 			dns: null,
-			addons: [{ addon_id: "kube-prometheus-stack", version: "62.3.1", namespace: "monitoring" }],
+			addons: [{ addon_id: "kube-prometheus-stack", version: null, namespace: "monitoring" }],
 			iac: { name: "networking", repo_url: "github.com/acme/infra", path: "stacks/hetzner-network", commit_sha: "9f3c2e14a71b0d55e2c8f4a190bb7e3d6c012a4f" },
 		},
 		environments: [{ stage: "production", isDefault: true, monthlyCost: 214, drifted: 2, verdict: "pass" }],

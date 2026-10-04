@@ -124,7 +124,9 @@ export async function GET(
 				enabled: r.enabled,
 				mode: r.mode,
 				// The EFFECTIVE version — the pin, else the catalog's default — and which of the two it
-				// is (#5525). The runner resolves it the same way (resolveAddOnInstall).
+				// is (#5525). This is the same precedence the console's deploy-snapshot builder applies
+				// through resolveAddOnInstall (lib/addons/catalog.ts); the runner does no resolution of
+				// its own and only writes the snapshot's version into targetRevision.
 				version: r.version ?? getAddOn(r.addon_id)?.version ?? null,
 				version_pinned: r.version !== null,
 				namespace: r.namespace,
