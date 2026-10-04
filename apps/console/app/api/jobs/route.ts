@@ -3,8 +3,9 @@
 
 import { createHash } from "crypto";
 import { signedJob } from "@/lib/db/signed-job";
-import { type SQL, eq, inArray, sql } from "drizzle-orm";
+import { type SQL, and, eq, inArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import {
 	destroyProject,
 	planProject,
@@ -12,6 +13,7 @@ import {
 } from "@/app/server/actions/projects";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
+import { getPdp } from "@/lib/authz";
 import { runWithActor } from "@/lib/authz/actor-context";
 import {
 	assertMintingProfileStillMember,
@@ -36,7 +38,7 @@ import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { EnvStateConflictError } from "@/lib/db/env-status";
 import { FabricHasLiveTenantsError } from "@/lib/queries/destroy-tree";
-import { jobs, runners, projects } from "@/lib/db/schema";
+import { cloudIdentities, jobs, runners, projects } from "@/lib/db/schema";
 import { notifyScaler } from "@/lib/scaler";
 import {
 	cliJobResponse,
@@ -245,10 +247,15 @@ export async function POST(req: Request) {
 			}
 			case "session": {
 				if (scopedOrg) {
+					// `org:view` is the gate here: may this human act in the named org at all.
+					// Each verb then enforces its own permission on `actor`: PLAN/DEPLOY/DESTROY
+					// inside the server action, DESTROY_RUNNER in its branch below.
 					const denied = await ensureCliOrgAccess(
 						actor,
 						caller.credential,
 						scopedOrg,
+						"view",
+						{ type: "org" },
 					);
 					if (denied) return denied;
 				}
@@ -261,6 +268,41 @@ export async function POST(req: Request) {
 		}
 
 		if (jobType === "DESTROY_RUNNER") {
+			// The permission the console's `destroyRunner` action enforces, asked of the actor in the
+			// org this job will be filed in (#5479). The `org:view` gate above admits every role, so
+			// without this a viewer — or a service token one minted — could queue a runner teardown.
+			const decision = await getPdp().can(actor, "destroy", { type: "runner" });
+			if (!decision.allowed) {
+				return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+			}
+			// A caller-supplied identity must be one of THIS org's (#5479). The claim route sends the
+			// job's identity to the runner, so an id from another org would hand that org's
+			// credentials to a job filed here. Not found and another org's answer the same 404.
+			if (cloud_identity_id !== undefined && cloud_identity_id !== null && cloud_identity_id !== "") {
+				const identityId = z.uuid().safeParse(cloud_identity_id);
+				if (!identityId.success) {
+					return NextResponse.json(
+						{ error: "cloud_identity_id must be a UUID" },
+						{ status: 400 },
+					);
+				}
+				const [identity] = await db
+					.select({ id: cloudIdentities.id })
+					.from(cloudIdentities)
+					.where(
+						and(
+							eq(cloudIdentities.id, identityId.data),
+							eq(cloudIdentities.org_id, actor.orgId),
+						),
+					)
+					.limit(1);
+				if (!identity) {
+					return NextResponse.json(
+						{ error: "Cloud identity not found or unauthorized" },
+						{ status: 404 },
+					);
+				}
+			}
 			// Runner teardown has no project config to snapshot — the client sends the
 			// runner descriptor as the snapshot. Fail closed (404) on a cross-org /
 			// non-existent runner so we never queue an unclaimable job.

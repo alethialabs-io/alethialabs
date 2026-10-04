@@ -283,12 +283,16 @@ export async function resolveCliProvider(
 			if (!headerOrg) {
 				return { userId, scope: defaultScope, provider, errorResponse: null };
 			}
-			// A human, so the session arm — `actor.orgId === orgId`, else a membership query. Behaviour
-			// identical to before #4298; what changed is where the kind comes from. It is
+			// A human, so the session arm — `actor.orgId === orgId`, else an ACTIVE membership plus the
+			// named permission in that org (#5479). What #4298 changed is where the kind comes from. It is
 			// `caller.credential` and not the literal `"session"` so the value the guard switches on is
 			// the one this arm was ENTERED on: a literal here would keep saying "human" if the arm
 			// above it ever stopped being the only other one.
-			const denied = await ensureCliOrgAccess(defaultScope, caller.credential, headerOrg);
+			// `org:view` is the gate — may this human act in the named org at all. The provider
+			// permission itself is `enforceProviderPermission`'s, on the scope returned below.
+			const denied = await ensureCliOrgAccess(defaultScope, caller.credential, headerOrg, "view", {
+				type: "org",
+			});
 			if (denied) {
 				return { userId: null, scope: null, provider: null, errorResponse: denied };
 			}

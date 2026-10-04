@@ -48,6 +48,12 @@ vi.mock("@/app/server/actions/projects", () => ({
 	destroyProject: vi.fn(),
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// DESTROY_RUNNER asks the PDP for runner:destroy (#5479). Allowed here: this suite's subject is the
+// org stamp, and the permission is pinned in tests/api/jobs/route.test.ts.
+vi.mock("@/lib/authz", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz")>()),
+	getPdp: () => ({ can: async () => ({ allowed: true }) }),
+}));
 
 import { POST as deployRunnerPost } from "@/app/api/cli/runners/deploy/route";
 import { POST as jobsPost } from "@/app/api/jobs/route";
