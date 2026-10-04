@@ -101,6 +101,42 @@ server that the file does not mention is listed as left alone, not torn down. Wh
 reconcile — an existing environment whose stage or placement differs from the file — is shown and
 refused before a single write.
 
+### Changing a component
+
+Edit a field of a component that already exists, and `plan` and `apply` show the change and make
+it. Each row starts with a mark:
+
+| Mark | Meaning |
+| --- | --- |
+| `+` | It does not exist yet. `apply` creates it. |
+| `~` | It exists, and at least one field the file declares has a different value on the server. `apply` changes those fields. |
+| `=` | It exists, and every field the file declares already matches. `apply` sends nothing for it. |
+
+Under each `~` row, one line names each changed field with the server's value and the file's value.
+Here the file raises `max_capacity` of the `orders` database in `prod` from `4` to `8`:
+
+```
+▸ Reading alethia.yaml · boutique · hetzner/nbg1
+  prod   dedicated  = environment  = cluster  ~ databases/orders
+    ~ databases/orders  max_capacity: 4 → 8
+  dev-1  namespace  = environment  = repositories
+  0 projects to create · 0 environments · 0 components · 1 component to update
+```
+
+`(unset)` means the server has no value for that field.
+
+- **A field you leave out is never cleared.** `apply` compares only the fields the file names, and
+  sends only the ones that changed. To change one field of a database, write that field; the other
+  fields keep their values.
+- **Values compare by meaning.** `2` and `2.0` are the same number. Lists and maps compare item by
+  item, and the order of a list counts.
+- **A refused change does not stop the others.** If the server refuses a change, `apply` reports it
+  for that component, does not deploy that environment, and continues with the other environments.
+  Then it exits with an error that names each refused component.
+
+`apply` changes the component's **settings**. It does not tell you whether the next deploy replaces
+the cloud resource. To see that, read the OpenTofu plan of the deploy: `alethia project plan`.
+
 The runner: `--runner` takes a name or an id. Omitted, the only online runner is used without a
 question; with several online you are asked on a terminal, and under `--no-input` the job is left
 for the server to place.
@@ -115,7 +151,22 @@ for the server to place.
 | Confirm      | Apply without asking (required with --no-input)                                               | `--yes`              |
 | Wait         | Queue the deploys and return instead of waiting for them                                      | `--no-wait`          |
 
-`--output json` prints the plan and the result as typed objects instead of the lines above.
+`--output json` prints the plan and the result as typed objects instead of the lines above. In the
+plan, a component with the action `update` carries a `changes` array, one entry per changed field:
+
+```json
+{
+  "kind": "databases",
+  "name": "orders",
+  "action": "update",
+  "fields": { "engine": "postgres", "max_capacity": 8 },
+  "changes": [{ "field": "max_capacity", "from": 4, "to": 8 }]
+}
+```
+
+`from` is `null` when the server has no value for the field. A `create` or `unchanged` component has
+no `changes` key. In the result, an `errors` array lists each change the server refused, as
+`{ "environment", "component", "error" }`.
 
 ## `alethia up`
 
@@ -167,8 +218,9 @@ the catalog's default machine type for its cloud. The two flags are mutually exc
 
 ## `alethia plan`
 
-The same comparison, with the writes left out: what `apply` would create, what already matches,
-and anything it would refuse. Nothing is written and no job is queued.
+The same comparison, with the writes left out: what `apply` would create, what it would change
+(field by field, as in [Changing a component](#changing-a-component)), what already matches, and
+anything it would refuse. Nothing is written and no job is queued.
 
 ```bash
 alethia plan
