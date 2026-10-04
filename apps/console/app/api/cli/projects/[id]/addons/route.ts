@@ -10,6 +10,7 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { disableAddon, enableAddon } from "@/app/server/actions/addons";
+import { getAddOn } from "@/lib/addons/catalog";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
 import {
@@ -122,7 +123,12 @@ export async function GET(
 				addon_id: r.addon_id,
 				enabled: r.enabled,
 				mode: r.mode,
-				version: r.version,
+				// The EFFECTIVE version — the pin, else the catalog's default — and which of the two it
+				// is (#5525). This is the same precedence the console's deploy-snapshot builder applies
+				// through resolveAddOnInstall (lib/addons/catalog.ts); the runner does no resolution of
+				// its own and only writes the snapshot's version into targetRevision.
+				version: r.version ?? getAddOn(r.addon_id)?.version ?? null,
+				version_pinned: r.version !== null,
 				namespace: r.namespace,
 				status: r.status,
 				health: r.health,
@@ -143,12 +149,15 @@ export async function GET(
  * runs the add-on's own `def.configSchema.safeParse` on it, so each add-on's knobs are validated by
  * the definition that owns them rather than by a second schema here that would drift from the
  * catalog. `values_yaml` is the Advanced raw-Helm escape hatch, parsed and rejected as YAML by the
- * same action. */
+ * same action. `version` pins the chart version: absent keeps the stored pin, `null` or `""` clears it,
+ * and anything else is checked by `lib/addons/chart-version.ts` inside `enableAddon` — one definition
+ * of a valid pin, refused with the same sentence the console shows. */
 const enableAddonBody = z.object({
 	addon_id: z.string().min(1),
 	mode: z.enum(addonMode.enumValues).optional(),
 	values: z.record(z.string(), z.unknown()).optional(),
 	values_yaml: z.string().nullish(),
+	version: z.string().nullish(),
 });
 
 /**
@@ -196,6 +205,7 @@ export async function POST(
 				mode: parsed.data.mode,
 				values: parsed.data.values,
 				valuesYaml: parsed.data.values_yaml ?? null,
+				version: parsed.data.version,
 			}),
 		);
 		return cliJson(cliOkResponse, { ok: true }, { status: 201 });
@@ -258,7 +268,7 @@ export async function DELETE(
  */
 function addonWriteError(err: unknown): NextResponse {
 	const message = err instanceof Error ? err.message : "Internal Server Error";
-	if (/^Unknown add-on:|^Invalid add-on configuration:|values_yaml/i.test(message)) {
+	if (/^Unknown add-on:|^Invalid add-on configuration:|^Invalid chart version:|values_yaml/i.test(message)) {
 		return NextResponse.json({ error: message }, { status: 400 });
 	}
 	if (/forbidden|not authorized|permission/i.test(message)) {

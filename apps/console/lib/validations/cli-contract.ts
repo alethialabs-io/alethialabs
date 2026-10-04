@@ -781,7 +781,10 @@ export const addonWire = z.object({
 	addon_id: z.string(),
 	enabled: z.boolean(),
 	mode: z.string(),
+	/** The effective chart version: the pin, else the catalog default (null for an unknown id). */
 	version: z.string().nullable(),
+	/** Whether `version` is a user pin (true) or the catalog default (false). */
+	version_pinned: z.boolean(),
 	namespace: z.string().nullable(),
 	status: z.string(),
 	health: z.string().nullable(),
