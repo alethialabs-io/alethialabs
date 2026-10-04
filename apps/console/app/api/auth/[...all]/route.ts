@@ -18,11 +18,14 @@
 // flows stay open so a user invited into someone else's PAID org can still participate.
 
 import { auth } from "@/lib/auth";
+import { getOwnerScope } from "@/lib/auth/owner";
 import { trustedIpFailure } from "@/lib/auth/trusted-ip";
 import { getEntitlements } from "@/lib/authz/entitlements";
+import { revokeMemberGrant } from "@/lib/authz/grants";
 import { currentActor } from "@/lib/authz/guard";
 import { runOrgCreate } from "@/lib/billing/pending-org-setup";
 import { toNextJsHandler } from "better-auth/next-js";
+import { orgAction, orgActionRefusal, stringField } from "./member-guards";
 
 const handlers = toNextJsHandler(auth);
 
@@ -48,13 +51,19 @@ const GATED_ORG_ACTIONS = new Set([
 	"update-member-role",
 ]);
 
-/** The `<action>` in /api/auth/organization/<action>, or null if not an org route. */
+/** The entitlement-gated `<action>` in /api/auth/organization/<action>, or null. */
 function gatedOrgAction(pathname: string): string | null {
-	const marker = "/organization/";
-	const i = pathname.indexOf(marker);
-	if (i === -1) return null;
-	const action = pathname.slice(i + marker.length).split(/[/?]/)[0];
-	return GATED_ORG_ACTIONS.has(action) ? action : null;
+	const action = orgAction(pathname);
+	return action !== null && GATED_ORG_ACTIONS.has(action) ? action : null;
+}
+
+/** The signed-in caller's user id and active org, or null when there is no session. */
+async function sessionCaller(): Promise<{ userId: string; activeOrgId?: string } | null> {
+	try {
+		return await getOwnerScope();
+	} catch {
+		return null;
+	}
 }
 
 /** 403 with an upgrade hint — the response an unentitled caller gets. */
@@ -85,6 +94,35 @@ export async function POST(req: Request): Promise<Response> {
 			}
 		} catch {
 			// Unauthenticated (or scope unresolvable) → defer to the auth handler.
+		}
+	}
+	// A caller who is not an active member may not manage the org, and the last active owner may
+	// not leave it (#5472). better-auth reads neither `member.status` nor counts only active owners.
+	// Without a session there is nothing to check; better-auth answers its own 401.
+	const anyOrgAction = orgAction(new URL(req.url).pathname);
+	const caller = anyOrgAction ? await sessionCaller() : null;
+	if (anyOrgAction && caller) {
+		const body: unknown = await req
+			.clone()
+			.json()
+			.catch(() => null);
+		const refusal = await orgActionRefusal(
+			anyOrgAction,
+			body,
+			caller.userId,
+			caller.activeOrgId,
+		);
+		if (refusal) return refusal;
+		// better-auth's leave deletes the member row and fires no organization hook, so nothing
+		// revoked the grants `afterRemoveMember` revokes on a removal. A member who left kept every
+		// grant they held, and got their old scoped grants back if they were ever added again.
+		if (anyOrgAction === "leave") {
+			const response = await handlers.POST(req);
+			const orgId = stringField(body, "organizationId");
+			if (response.ok && orgId) {
+				await revokeMemberGrant(orgId, caller.userId);
+			}
+			return response;
 		}
 	}
 	// An organization create that fails gives back the paid-setup claim it took (#5445), so a retry is

@@ -29,8 +29,12 @@ import { listOrgResourceIds } from "@/lib/authz/resource-tables";
 import { orgAc, orgRoles } from "@/lib/authz/org-access-control";
 import { canOrgCreateTeams, canOrgInvite } from "@/lib/billing/collaboration";
 import { syncOrgSeats } from "@/lib/billing/seats";
-import { roleChangeOwnerRefusal } from "@/lib/authz/active-owner";
-import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
+import { removalOwnerRefusal, roleChangeOwnerRefusal } from "@/lib/authz/active-owner";
+import {
+  ensureMemberGrant,
+  isNonActiveMember,
+  revokeMemberGrant,
+} from "@/lib/authz/grants";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import type { TupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor, Entitlements, Pdp } from "@/lib/authz/types";
@@ -100,6 +104,17 @@ export interface CoreContext {
    * role reading or the database.
    */
   roleChangeOwnerRefusal: typeof roleChangeOwnerRefusal;
+  /**
+   * Why removing a member would leave the org with no active owner, or null. Injected so the
+   * organization plugin's `beforeRemoveMember` refuses it (#5472).
+   */
+  removalOwnerRefusal: typeof removalOwnerRefusal;
+  /**
+   * Whether a user's member row in an org has a status other than `active`. Injected so the
+   * OpenFGA PDP denies a suspended member, whose team tuples outlive the suspension, and so the
+   * organization plugin's `beforeCreateInvitation` refuses a suspended inviter (#5472).
+   */
+  isNonActiveMember: typeof isNonActiveMember;
   newOrgSetup: {
     stampMetadata: typeof stampNewOrgMetadata;
     recordCreated: typeof recordNewOrgCreated;
@@ -249,6 +264,8 @@ function loadEnterprise(): void {
       reservedOrgSlugRefusal,
       isOrgMember: isMember,
       roleChangeOwnerRefusal,
+      removalOwnerRefusal,
+      isNonActiveMember,
       newOrgSetup: {
         stampMetadata: stampNewOrgMetadata,
         recordCreated: recordNewOrgCreated,

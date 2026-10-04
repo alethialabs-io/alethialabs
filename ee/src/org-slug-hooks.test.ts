@@ -140,6 +140,8 @@ function stubCore(
   newOrgSetup: CoreContext["newOrgSetup"] = passThroughSetup(),
   isOrgMember: CoreContext["isOrgMember"] = vi.fn(async () => false),
   roleChangeOwnerRefusal: CoreContext["roleChangeOwnerRefusal"] = vi.fn(async () => null),
+  removalOwnerRefusal: CoreContext["removalOwnerRefusal"] = vi.fn(async () => null),
+  isNonActiveMember: CoreContext["isNonActiveMember"] = vi.fn(async () => false),
 ): CoreContext {
   const stub = {
     db: {},
@@ -158,6 +160,8 @@ function stubCore(
     newOrgSetup,
     isOrgMember,
     roleChangeOwnerRefusal,
+    removalOwnerRefusal,
+    isNonActiveMember,
     fga: { isEnabled: () => false },
   };
   // A test-only stub: `db` and most of `fga` are never reached with OpenFGA off (see above).
@@ -202,11 +206,21 @@ describe("register(core) — the organization plugin production mounts", () => {
   async function setup(
     newOrgSetup?: CoreContext["newOrgSetup"],
     roleChangeOwnerRefusal?: CoreContext["roleChangeOwnerRefusal"],
+    removalOwnerRefusal?: CoreContext["removalOwnerRefusal"],
+    isNonActiveMember?: CoreContext["isNonActiveMember"],
   ) {
     // core's membership read, over this instance's own store.
     const isOrgMember = async (orgId: string, userId: string): Promise<boolean> =>
       db.member.some((m) => m.organizationId === orgId && m.userId === userId);
-    const mod = register(stubCore(newOrgSetup, isOrgMember, roleChangeOwnerRefusal));
+    const mod = register(
+      stubCore(
+        newOrgSetup,
+        isOrgMember,
+        roleChangeOwnerRefusal,
+        removalOwnerRefusal,
+        isNonActiveMember,
+      ),
+    );
     const orgPlugin = mod.authPlugins?.find((p) => p.id === "organization");
     if (!orgPlugin) throw new Error("register() returned no organization plugin");
     const db: Record<string, Record<string, unknown>[]> = {
@@ -435,5 +449,89 @@ describe("register(core) — the organization plugin production mounts", () => {
     });
     expect(refuse).toHaveBeenCalledWith(orgId, "member-last-owner", "viewer");
     expect(db.member.find((m) => m.id === "member-last-owner")?.role).toBe("owner");
+  });
+
+  // #5472: a removal that would leave the org with no ACTIVE owner is refused inside better-auth's
+  // own endpoint, with core's sentence. better-auth's built-in check counts suspended owners as
+  // owners, so against the previous head this answers 200 and deletes the member.
+  it("refuses POST /organization/remove-member when core says it leaves no active owner, and keeps the member", async () => {
+    const refuse = vi.fn(async (_org: string, memberId: string) =>
+      memberId === "member-last-active-owner" ? "only active owner" : null,
+    );
+    const { db, post, signUp } = await setup(undefined, undefined, refuse);
+    const created = await post("/organization/create", { name: "Acme", slug: "acme" });
+    expect(created.status).toBe(200);
+    const orgId = db.organization[0]?.id;
+    const secondOwner = await signUp("second-owner@example.com");
+    const viewer = await signUp("viewer@example.com");
+    db.member.push(
+      {
+        id: "member-last-active-owner",
+        organizationId: orgId,
+        userId: secondOwner.id,
+        role: "owner",
+        createdAt: new Date(),
+      },
+      {
+        id: "member-viewer",
+        organizationId: orgId,
+        userId: viewer.id,
+        role: "viewer",
+        createdAt: new Date(),
+      },
+    );
+
+    // The control: a removal core does not refuse goes through the same endpoint and plugin.
+    const ok = await post("/organization/remove-member", {
+      organizationId: orgId,
+      memberIdOrEmail: "member-viewer",
+    });
+    expect(ok.status).toBe(200);
+    expect(db.member.some((m) => m.id === "member-viewer")).toBe(false);
+
+    const res = await post("/organization/remove-member", {
+      organizationId: orgId,
+      memberIdOrEmail: "member-last-active-owner",
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      code: "ORGANIZATION_NEEDS_AN_ACTIVE_OWNER",
+      message: "only active owner",
+    });
+    expect(refuse).toHaveBeenCalledWith(orgId, "member-last-active-owner");
+    expect(db.member.some((m) => m.id === "member-last-active-owner")).toBe(true);
+  });
+
+  // #5472: an inviter whose membership is not active is refused inside better-auth's own endpoint.
+  // better-auth authorizes the invitation from `member.role` alone, so against the previous head a
+  // suspended owner's invitation is stored.
+  it("refuses POST /organization/invite-member from an inviter core reports as not active, and stores no invitation", async () => {
+    let suspended = true;
+    const nonActive = vi.fn(async (_org: string, _user: string) => suspended);
+    const { db, post, userId } = await setup(undefined, undefined, undefined, nonActive);
+    const created = await post("/organization/create", { name: "Acme", slug: "acme" });
+    expect(created.status).toBe(200);
+    const orgId = db.organization[0]?.id;
+
+    const res = await post("/organization/invite-member", {
+      organizationId: orgId,
+      email: "second@example.com",
+      role: "admin",
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "MEMBER_NOT_ACTIVE" });
+    expect(nonActive).toHaveBeenCalledWith(orgId, userId);
+    expect(db.invitation).toHaveLength(0);
+
+    // The control: the same inviter, active, invites.
+    suspended = false;
+    const ok = await post("/organization/invite-member", {
+      organizationId: orgId,
+      email: "second@example.com",
+      role: "admin",
+    });
+    expect(ok.status).toBe(200);
+    expect(db.invitation).toHaveLength(1);
   });
 });

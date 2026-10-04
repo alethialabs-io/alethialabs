@@ -153,7 +153,19 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
           // Pay-to-collaborate: a card-less Pro trial is solo. Block invites until
           // the org is on a paid (or card-backed) subscription — enforced here so
           // it holds regardless of the client (the UI shows the upsell separately).
-          beforeCreateInvitation: async ({ invitation }) => {
+          //
+          // An inviter whose membership is not active is refused too (#5472): better-auth
+          // authorizes an invitation from `member.role` alone, so a suspended admin could invite a
+          // second account they control and `afterAcceptInvitation` granted it as an active admin.
+          // The auth route refuses this before better-auth runs; this hook holds it inside the
+          // endpoint, whatever path the request took to reach it.
+          beforeCreateInvitation: async ({ invitation, inviter }) => {
+            if (await core.isNonActiveMember(invitation.organizationId, inviter.id)) {
+              throw new APIError("FORBIDDEN", {
+                code: "MEMBER_NOT_ACTIVE",
+                message: "Your membership in this team is not active, so you can't invite.",
+              });
+            }
             if (!(await core.canOrgInvite(invitation.organizationId))) {
               throw new APIError("FORBIDDEN", {
                 message:
@@ -227,9 +239,10 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
               resource_id: user.id,
             });
           },
-          // A role change that would leave the org with no ACTIVE owner is refused (#5465).
-          // better-auth refuses only an owner demoting themselves as the last member whose role
-          // contains `owner`, and it counts suspended owners; core's rule counts active ones.
+          // A role change that would leave the org with no ACTIVE owner is refused (#5465), and so
+          // is one that makes a suspended member an owner (#5472). better-auth refuses only an
+          // owner demoting themselves as the last member whose role contains `owner`, and it
+          // counts suspended owners; core's rule counts active ones.
           beforeUpdateMemberRole: async ({ member, newRole, organization: org }) => {
             const refusal = await core.roleChangeOwnerRefusal(org.id, member.id, newRole);
             if (refusal) {
@@ -257,6 +270,18 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
                 id: user.id,
               },
             );
+          },
+          // A removal that would leave the org with no ACTIVE owner is refused (#5472).
+          // better-auth refuses removing an owner only when no other member's role contains
+          // `owner`, and it counts suspended owners.
+          beforeRemoveMember: async ({ member, organization: org }) => {
+            const refusal = await core.removalOwnerRefusal(org.id, member.id);
+            if (refusal) {
+              throw new APIError("BAD_REQUEST", {
+                code: "ORGANIZATION_NEEDS_AN_ACTIVE_OWNER",
+                message: refusal,
+              });
+            }
           },
           afterRemoveMember: async ({ organization: org, user }) => {
             await core.revokeMemberGrant(org.id, user.id);

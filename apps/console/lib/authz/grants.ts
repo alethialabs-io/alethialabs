@@ -37,16 +37,20 @@ function mirror(run: Promise<void>): void {
  * A member whose `member.status` is anything but `active` gets NO grant either (#5465). The
  * member LIFECYCLE writers come through here — the ee lifecycle hooks (create, add, accept, role
  * change), reactivation in `setMemberSuspended`, onboarding, the paid org setup and the #3754
- * operator command — so the rule holds for all of them. It does NOT cover the explicit grant APIs:
- * `assignGrant` and `POST /api/cli/grants` can still insert an org-wide allow grant for a
- * suspended user principal (tracked in #5472). Before this check,
- * promoting a SUSPENDED member re-wrote their grant and the PDP (which reads grants, not
- * `member.status`) let them back in while the members table still said suspended.
+ * operator command — so the rule holds for all of them. The explicit grant APIs (`assignGrant`,
+ * `POST /api/cli/grants`) do not write through here; they refuse through `isNonActiveMember`
+ * (#5472). Before this check, promoting a SUSPENDED member re-wrote their
+ * grant and the PDP let them back in while the members table still said suspended.
  *
  * The status is read `for update` inside the same transaction as the write, so a suspension that
  * commits while this runs either lands first (and is seen here) or waits for this write and then
- * revokes it. A user with NO member row in the org is granted as before: the personal workspace
- * (`lib/auth/index.ts`) has no member row by design.
+ * revokes it.
+ *
+ * A user with NO member row is granted only in their PERSONAL scope, which is the org whose id is
+ * their own user id (`lib/auth/index.ts` grants it at sign-up; it has no member row by design). In
+ * any other org a missing row means the member was removed, and is refused (#5472): a role change
+ * whose `afterUpdateMemberRole` ran after a concurrent removal deleted the row used to grant the
+ * removed user again here, after `afterRemoveMember` had revoked them.
  */
 export async function ensureMemberGrant(
 	orgId: string,
@@ -69,6 +73,7 @@ export async function ensureMemberGrant(
 			.from(member)
 			.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
 			.for("update");
+		if (!m && orgId !== userId) return "not a member";
 		if (m && m.status !== "active") return m.status;
 		await tx.execute(sql`
 			delete from grants
@@ -84,12 +89,38 @@ export async function ensureMemberGrant(
 	});
 	if (refusedStatus !== null) {
 		console.warn(
-			`[authz] member ${userId} in org ${orgId} is "${refusedStatus}", not active — NO grant ` +
-				`written. Reactivating them (setMemberSuspended) grants their role.`,
+			`[authz] user ${userId} in org ${orgId} is "${refusedStatus}", not an active member — NO ` +
+				`grant written. Reactivating a suspended member (setMemberSuspended) grants their role.`,
 		);
 		return;
 	}
 	mirror(getTupleSync().syncMemberGrant(orgId, userId, resolved));
+}
+
+/** The sentence the grant APIs refuse an allow grant to a member who is not active with. */
+export const INACTIVE_PRINCIPAL_MESSAGE =
+	"That member is not active. Reactivate them before granting access.";
+
+/**
+ * Whether user `userId` holds a member row in org `orgId` whose status is not `active` (#5472). No
+ * member row answers false: the personal scope (org id = user id) has none by design.
+ *
+ * The explicit grant APIs (`assignGrant`, `POST /api/cli/grants`) take a principal id from the
+ * request and refuse an ALLOW grant to such a member, the rule `ensureMemberGrant` applies to the
+ * member lifecycle; a deny grant only removes access, so it is not refused. That is a read before
+ * their insert, not a lock: a suspension that commits between the two leaves an allow row behind,
+ * which neither PDP honours. The ee OpenFGA PDP denies such an actor before it reads a tuple,
+ * because a suspended member's TEAM tuples (`team:T#member@user:U`) survive the suspension and
+ * would otherwise still confer the team's grants; `PostgresRbacPDP.matchingGrants` applies the
+ * same rule in its own query. The ee `beforeCreateInvitation` hook refuses such an inviter.
+ */
+export async function isNonActiveMember(orgId: string, userId: string): Promise<boolean> {
+	const [m] = await getServiceDb()
+		.select({ status: member.status })
+		.from(member)
+		.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
+		.limit(1);
+	return m !== undefined && m.status !== "active";
 }
 
 /**

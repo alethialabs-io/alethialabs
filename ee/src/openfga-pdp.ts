@@ -6,7 +6,6 @@
 // changes. Uses ONLY core's pure helpers (core.fga.*) + the FGA client — no core
 // runtime import. Standup-verified (needs a running OpenFGA + a backfilled store).
 
-import type { OpenFgaClient } from "@openfga/sdk";
 import type { Action, Resource } from "@/lib/authz/registry";
 import type {
 	Actor,
@@ -17,17 +16,48 @@ import type {
 } from "@/lib/authz/types";
 import type { CoreContext } from "@/lib/enterprise";
 
+/** The two OpenFGA reads this engine makes; `OpenFgaClient` provides both. */
+export interface FgaReader {
+	check(request: {
+		user: string;
+		relation: string;
+		object: string;
+	}): Promise<{ allowed?: boolean }>;
+	listObjects(request: {
+		user: string;
+		relation: string;
+		type: string;
+	}): Promise<{ objects?: string[] }>;
+}
+
+/** The core capabilities this engine uses, out of `CoreContext`. */
+export interface PdpCore {
+	isNonActiveMember: CoreContext["isNonActiveMember"];
+	fga: Pick<
+		CoreContext["fga"],
+		"checksFor" | "denyChecksFor" | "enforceDecision" | "listOrgResourceIds"
+	>;
+}
+
 export class OpenFgaPdp implements Pdp {
 	constructor(
-		private readonly core: CoreContext,
-		private readonly client: OpenFgaClient,
+		private readonly core: PdpCore,
+		private readonly client: FgaReader,
 	) {}
 
+	/**
+	 * Decides one check. A member whose row in the org is not `active` is denied before any tuple
+	 * is read (#5472): suspension revokes their own grant tuples, but their team tuples
+	 * (`team:T#member@user:U`) stay, and FGA resolves a team's grants through them.
+	 */
 	async can(
 		actor: Actor,
 		action: Action,
 		resource: ResourceRef,
 	): Promise<Decision> {
+		if (await this.core.isNonActiveMember(actor.orgId, actor.userId)) {
+			return { allowed: false, reason: "no_grant" };
+		}
 		const opts = { id: resource.id, orgId: actor.orgId };
 		const allowChecks = this.core.fga.checksFor(resource.type, action, opts);
 		const denyChecks = this.core.fga.denyChecksFor(resource.type, action, opts);
@@ -75,6 +105,8 @@ export class OpenFgaPdp implements Pdp {
 		action: Action,
 		resourceType: Resource,
 	): Promise<string[]> {
+		// A member who is not active can reach nothing, for the reason `can` states.
+		if (await this.core.isNonActiveMember(actor.orgId, actor.userId)) return [];
 		const user = `user:${actor.userId}`;
 		// Org-wide capability ⇒ every instance of the type in the org (matches the
 		// PostgresRbacPDP org-wide path). This must be DENY-AWARE, exactly like that

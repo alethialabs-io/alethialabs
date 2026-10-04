@@ -16,6 +16,7 @@ import {
 } from "@/lib/authz/registry";
 import { parseGrantResource } from "@/lib/authz/fga-tuples";
 import { resourceIdOf } from "@/lib/authz/grant-scope";
+import { INACTIVE_PRINCIPAL_MESSAGE, isNonActiveMember } from "@/lib/authz/grants";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor } from "@/lib/authz/types";
@@ -143,7 +144,8 @@ export async function GET(req: Request) {
 
 /** Assigns an access grant (mirrors the assignGrant action) and syncs its PDP
  * tuples. Access management is an Enterprise capability — gated on customRoles.
- * Gated on `manage_members` of `member`. */
+ * Gated on `manage_members` of `member`. An allow grant to a user whose member row
+ * in the org is not active is refused. */
 export async function POST(req: Request) {
 	const auth = await authorizeCli(req, "manage_members", { type: "member" });
 	if ("error" in auth) return auth.error;
@@ -192,6 +194,15 @@ export async function POST(req: Request) {
 			{ error: "A grant may not exceed your own permissions." },
 			{ status: 403 },
 		);
+	}
+
+	// A suspended member gets no allow grant (#5472), the same rule `assignGrant` applies.
+	if (
+		input.effect === "allow" &&
+		input.principal_type === "user" &&
+		(await isNonActiveMember(actor.orgId, input.principal_id))
+	) {
+		return NextResponse.json({ error: INACTIVE_PRINCIPAL_MESSAGE }, { status: 400 });
 	}
 
 	const resourceId = resourceIdOf(scope);

@@ -44,6 +44,7 @@ import {
 } from "@/lib/validations/grants";
 import {
 	cloudIdentities,
+	member,
 	projects,
 	runners,
 	team,
@@ -246,6 +247,44 @@ describe("privilege ceiling — a grant above the actor's own permissions is blo
 		});
 		expect(insertSpy).toHaveBeenCalledTimes(1);
 		expect(can).not.toHaveBeenCalled();
+	});
+});
+
+describe("a member who is not active gets no allow grant (#5472)", () => {
+	// `ensureMemberGrant` refuses a suspended member; before #5472 this API was the way around it.
+	it("assignGrant refuses an ALLOW grant to a suspended member and never inserts; a deny and an active member still go through", async () => {
+		const suspended = mockDb([], new Map([[member, [{ status: "suspended" }]]]));
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				roleId: BUILTIN_ROLE_IDS.admin,
+				resourceType: "org",
+			}),
+		).rejects.toThrow(/not active/);
+		expect(suspended.insertSpy).not.toHaveBeenCalled();
+		expect(syncScopedGrant).not.toHaveBeenCalled();
+
+		// A deny only removes access, so it is not refused.
+		await assignGrant({
+			principalType: "user",
+			principalId: "u-1",
+			effect: "deny",
+			permissionKey: "project:view",
+			resourceType: "org",
+		});
+		expect(suspended.insertSpy).toHaveBeenCalledTimes(1);
+
+		const active = mockDb([], new Map([[member, [{ status: "active" }]]]));
+		await assignGrant({
+			principalType: "user",
+			principalId: "u-1",
+			effect: "allow",
+			roleId: BUILTIN_ROLE_IDS.admin,
+			resourceType: "org",
+		});
+		expect(active.insertSpy).toHaveBeenCalledTimes(1);
 	});
 });
 
