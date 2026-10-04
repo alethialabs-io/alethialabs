@@ -95,3 +95,26 @@ describe("ActivityLog — org scope", () => {
 		expect(screen.queryByText(/activity in/i)).toBeNull();
 	});
 });
+
+describe("ActivityLog — busy until it has answered (#5471)", () => {
+	it("declares aria-busy while the first page is in flight, and clears it once the page lands", async () => {
+		// Held open, so the first answer has demonstrably not arrived when the busy state is read.
+		let land: (page: Awaited<ReturnType<typeof getActivityLog>>) => void = () => {};
+		vi.mocked(getActivityLog).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					land = resolve;
+				}),
+		);
+		const { container } = render(<ActivityLog projectId="s1" />);
+
+		await waitFor(() => expect(getActivityLog).toHaveBeenCalled());
+		// Before the first answer the feed shows a skeleton with no count, no table and no empty
+		// state. Without `aria-busy` nothing marks that as "not answered yet".
+		expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+
+		land({ rows: [], nextCursor: null, facets: null });
+		await waitFor(() => expect(container.querySelector('[aria-busy="true"]')).toBeNull());
+		expect(container.querySelector('[aria-busy="false"]')).not.toBeNull();
+	});
+});
