@@ -2298,17 +2298,19 @@ func (c *Client) getProjectProbesPage(project, cursor string) (*struct {
 
 // --- Add-ons ---
 
-// Addon is one installed catalog add-on in an environment.
+// Addon is one installed catalog add-on in an environment. Version is the EFFECTIVE chart version —
+// the environment's pin, else the catalog default — and VersionPinned says which of the two it is.
 type Addon struct {
-	AddonID      string  `json:"addon_id"`
-	Enabled      bool    `json:"enabled"`
-	Mode         string  `json:"mode"`
-	Version      *string `json:"version"`
-	Namespace    *string `json:"namespace"`
-	Status       string  `json:"status"`
-	Health       *string `json:"health"`
-	Sync         *string `json:"sync"`
-	LastSyncedAt *string `json:"last_synced_at"`
+	AddonID       string  `json:"addon_id"`
+	Enabled       bool    `json:"enabled"`
+	Mode          string  `json:"mode"`
+	Version       *string `json:"version"`
+	VersionPinned bool    `json:"version_pinned"`
+	Namespace     *string `json:"namespace"`
+	Status        string  `json:"status"`
+	Health        *string `json:"health"`
+	Sync          *string `json:"sync"`
+	LastSyncedAt  *string `json:"last_synced_at"`
 }
 
 // ProjectAddons is the installed catalog add-ons for one environment.
@@ -2368,6 +2370,11 @@ func (c *Client) getProjectAddonsPage(project, env, cursor string) (*ProjectAddo
 // EnableAddonParams is the payload for EnableAddon. Values is the add-on's own knob map, validated
 // server-side by that add-on's configSchema — the definition that owns them — rather than by a
 // second schema in the CLI that would drift from the catalog.
+//
+// Version is the chart-version pin, and its three states are distinct on the wire: nil leaves the
+// field out of the body (the stored pin is kept), a pointer to "" sends null (the pin is cleared and
+// the catalog default applies again), and anything else is sent as the pin — validated server-side
+// by the one definition of a chart version (apps/console/lib/addons/chart-version.ts).
 type EnableAddonParams struct {
 	Project    string
 	Env        string
@@ -2375,6 +2382,7 @@ type EnableAddonParams struct {
 	Mode       string
 	Values     map[string]interface{}
 	ValuesYAML string
+	Version    *string
 }
 
 // EnableAddon enables (or reconfigures) a catalog add-on in an environment. An empty Env targets the
@@ -2390,6 +2398,13 @@ func (c *Client) EnableAddon(p EnableAddonParams) error {
 	}
 	if p.ValuesYAML != "" {
 		payload["values_yaml"] = p.ValuesYAML
+	}
+	if p.Version != nil {
+		if *p.Version == "" {
+			payload["version"] = nil
+		} else {
+			payload["version"] = *p.Version
+		}
 	}
 	var resp struct {
 		OK bool `json:"ok"`
