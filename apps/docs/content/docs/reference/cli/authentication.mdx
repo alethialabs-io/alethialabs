@@ -134,6 +134,12 @@ refused, not ignored, so a token issued for one organization can never act on an
 It also stops working the moment its creator leaves that organization — membership is re-checked on
 every request, not trusted from when the token was minted.
 
+A service token cannot run [break-glass](/reference/cli/ops). The `alethia ops` verbs need an
+interactive session from `alethia login`, and the server refuses a service token there with a
+`403` — even when the person who created it is a break-glass operator. A token pinned to one
+organization must not carry an identity that acts across every tenant, so no pipeline can run
+an `ops` verb.
+
 ### Minting a token
 
 Run `alethia token create` on a terminal with no flags and it asks for the two things it needs:

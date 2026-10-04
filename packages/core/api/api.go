@@ -2908,9 +2908,11 @@ func (c *Client) GetAgent(id string) (*Agent, error) {
 // --- Break-glass (privileged incident recovery) ---
 //
 // These hit the audited /api/breakglass/* endpoints behind the ALETHIA_BREAKGLASS_ENABLED +
-// BREAKGLASS_OPERATORS gate, using the SAME bearer token as the rest of the CLI. The endpoints are
-// cross-tenant and RLS-bypassing, so they do NOT go through the /api/cli namespace — the operator
-// allowlist (not org membership) is the wall.
+// BREAKGLASS_OPERATORS gate. They send the client's bearer like every other call, but the server
+// accepts only an interactive CLI session (the device-login JWT) there: a service token is refused
+// with 403 even when its minter is an operator (#5496). The endpoints are cross-tenant and
+// RLS-bypassing, so they do NOT go through the /api/cli namespace — the operator allowlist (not org
+// membership) is the wall.
 
 // BreakglassActionInput is the small, explicit per-action input the backend records + validates.
 type BreakglassActionInput struct {

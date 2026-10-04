@@ -7,8 +7,26 @@ description: Break-glass incident-recovery verbs — audited, reason-gated, cros
 
 The `ops` group is the terminal-first **break-glass** surface: privileged incident-recovery
 actions for on-call operators. Every verb hits the same audited `/api/breakglass/*` endpoints as
-the operator UI, with the same bearer [CLI token](/reference/cli/authentication) and the same append-only
-audit trail.
+the operator UI and writes to the same append-only audit trail.
+
+## Signing in for break-glass
+
+Break-glass accepts only an interactive CLI session: the one [`alethia login`](/reference/cli/authentication)
+creates on your terminal. A [service token](/reference/cli/authentication#what-a-service-token-can-do)
+is refused with a `403`, even when the person who minted it is on the operator allowlist. So
+`ALETHIA_TOKEN` and `--token` do not work here, and no CI pipeline can run an `ops` verb.
+
+A service token is pinned to one organization and is handed to that organization's CI. Break-glass
+acts across every tenant. If a pipeline secret could carry it, anyone who can read that secret
+would hold a platform-wide identity.
+
+If `ALETHIA_TOKEN` is set in your shell, unset it before you run an `ops` verb. The CLI sends a
+supplied token in place of your saved session, so the server sees the service token and refuses it.
+
+```bash
+unset ALETHIA_TOKEN
+alethia login
+```
 
 <Callout type="warn">
 The entire surface is gated behind the `ALETHIA_BREAKGLASS_ENABLED` flag **and** the
@@ -27,8 +45,8 @@ Four rules hold for every action.
 - **Typed-confirm.** A mutating action echoes the exact resource id back to the server; a mismatch
   is refused. The CLI sends this confirmation for you.
 - **Confirmed at the terminal.** Every action that changes something names the resource and the
-  consequence and waits for you. `--yes` opts in ahead of time, which is what a runbook or a
-  pipeline passes. With prompts unavailable and no `--yes`, the command exits non-zero having
+  consequence and waits for you. `--yes` opts in ahead of time, which is what a runbook script
+  passes. With prompts unavailable and no `--yes`, the command exits non-zero having
   changed nothing — it never exits `0` having done nothing.
 - **Two-person approval for high-blast actions.** `force-release-lock`, `state-surgery`, and
   `orphan-clean` require an `--approval` token minted by a **different** operator through
@@ -353,6 +371,9 @@ not, so the run that re-sends them is named as such.
 ## Scripting the group
 
 Every field above is settable from the command line, so the whole group works with `--no-input`.
+A script still runs under your own `alethia login` session on your own terminal — see
+[Signing in for break-glass](#signing-in-for-break-glass). It is a runbook you start, not a pipeline
+job.
 The rule is one line: **a value you did not supply is asked for, and if it cannot be asked for the
 command tells you which flag or positional would have answered it, and exits non-zero.** The one
 exception is `state-surgery`'s `--note`, which is optional: an unattended run gets no note rather
@@ -361,7 +382,7 @@ than a refusal.
 Two things a script needs to know:
 
 - `--yes` is required on every mutating verb when prompts are unavailable. Without it the command
-  exits non-zero and changes nothing, which is the safe answer for a pipeline that reached a
+  exits non-zero and changes nothing, which is the safe answer for a script that reached a
   destructive verb it did not mean to.
 - `-o json` prints the payload alone. The styled success line is only rendered for the table
   format, so a break-glass result pipes into `jq` without a sentence in front of it.
