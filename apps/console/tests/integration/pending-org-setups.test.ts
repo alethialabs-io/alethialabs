@@ -17,7 +17,7 @@
 // see APP_ROLE_DISTINCT in ./db. The rest runs through the service role, as the server actions do.
 
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { seedAuthz } from "@/lib/authz/seed";
 import {
@@ -31,7 +31,9 @@ import {
 	recordPendingOrgSetup,
 	savePendingOrgSetupDetails,
 	stampNewOrgMetadata,
+	type UnfinishedSetupCursor,
 	unfinishedPendingOrgSetups,
+	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import {
@@ -93,7 +95,7 @@ describeIfDb("pending_org_setups — the actor's own record, RLS, and the org lo
 	it("reads only the actor's own record: B cannot see A's, by id or in the unfinished list", async () => {
 		expect(await pendingOrgSetupFor(USER_B, SUB_A)).toBeNull();
 		expect((await pendingOrgSetupFor(USER_A, SUB_A))?.intended_slug).toBe("acme");
-		const bList = (await unfinishedPendingOrgSetups(USER_B)).map((r) => r.subscription_id);
+		const bList = (await unfinishedPendingOrgSetups(USER_B)).rows.map((r) => r.subscription_id);
 		expect(bList).toContain(SUB_B);
 		expect(bList).not.toContain(SUB_A);
 	});
@@ -187,7 +189,7 @@ describeIfDb("pending_org_setups — the actor's own record, RLS, and the org lo
 		const closed = await pendingOrgSetupFor(USER_A, SUB_A);
 		expect(closed?.declared_at).toBeInstanceOf(Date);
 		expect(closed?.billing).toBeNull();
-		expect((await unfinishedPendingOrgSetups(USER_A)).map((r) => r.subscription_id)).not.toContain(SUB_A);
+		expect((await unfinishedPendingOrgSetups(USER_A)).rows.map((r) => r.subscription_id)).not.toContain(SUB_A);
 	});
 
 	it.skipIf(!APP_ROLE_DISTINCT)("RLS: through the app role a user reads only their own records", async () => {
@@ -340,5 +342,89 @@ describeIfDb("pending_org_setups — concurrent creates, the owner repair, and c
 		expect(closed?.created_org_id).toBe(ORG_LEGACY);
 		// The other records of the same user are not touched.
 		expect((await pendingOrgSetupFor(RACER, SUB_CLAIM))?.declared_at).toBeNull();
+	});
+});
+
+// #5463: `findUnfinishedNewOrgSetup` deletes expired records from the page it is reading. With OFFSET
+// pages each delete shifted the later rows back into the part already read, so they were skipped. The
+// keyset page starts after the last row's (created_at, id), whatever was deleted. The timestamps sit in
+// one millisecond and a tie, so a cursor rounded to a JS Date, or ordered without the id, would skip.
+describeIfDb("pending_org_setups — keyset pages while records are deleted", () => {
+	const PAGER = randomUUID();
+	const subs = Array.from({ length: 7 }, (_, i) => `sub_page_${i}_${randomUUID().slice(0, 6)}`);
+	const AT = [
+		"2026-10-03 12:00:00.123900+00",
+		"2026-10-03 12:00:00.123800+00",
+		"2026-10-03 12:00:00.123700+00",
+		"2026-10-03 12:00:00.123700+00",
+		"2026-10-03 12:00:00.123600+00",
+		"2026-10-03 12:00:00.123500+00",
+		"2026-10-03 12:00:00.123400+00",
+	];
+
+	beforeAll(async () => {
+		const db = getServiceDb();
+		await db.insert(user).values({ id: PAGER, email: `it-pager-${PAGER}@example.test` });
+		for (const [i, sub] of subs.entries()) {
+			await recordPendingOrgSetup({
+				userId: PAGER,
+				subscriptionId: sub,
+				customerId: i < 4 ? "cus_page_new" : "cus_page_old",
+				name: "Pager",
+				slug: "pager",
+			});
+			await db.execute(
+				sql`update pending_org_setups set created_at = ${AT[i]}::timestamptz where subscription_id = ${sub}`,
+			);
+		}
+	});
+
+	afterAll(async () => {
+		const db = getServiceDb();
+		await db.delete(pendingOrgSetups).where(eq(pendingOrgSetups.user_id, PAGER));
+		await db.delete(user).where(eq(user.id, PAGER));
+	});
+
+	it("reads every record once, newest first, while the first row of each page is deleted", async () => {
+		const read: string[] = [];
+		let after: UnfinishedSetupCursor | undefined;
+		for (let guard = 0; guard < 20; guard += 1) {
+			const page = await unfinishedPendingOrgSetups(PAGER, 2, after);
+			read.push(...page.rows.map((r) => r.subscription_id));
+			const first = page.rows[0];
+			if (first) {
+				await getServiceDb()
+					.delete(pendingOrgSetups)
+					.where(eq(pendingOrgSetups.subscription_id, first.subscription_id));
+			}
+			if (!page.next) break;
+			after = page.next;
+		}
+		expect(read).toHaveLength(subs.length);
+		expect(new Set(read)).toEqual(new Set(subs));
+		expect(read.slice(0, 2)).toEqual([subs[0], subs[1]]);
+	});
+
+	it("lists each unlinked customer once, newest record first, and leaves out one whose setup is linked", async () => {
+		await recordPendingOrgSetup({
+			userId: PAGER,
+			subscriptionId: `sub_page_linked_${randomUUID().slice(0, 6)}`,
+			customerId: "cus_page_linked",
+			name: "Pager",
+			slug: "pager",
+		});
+		await getServiceDb()
+			.update(pendingOrgSetups)
+			.set({ linked_at: new Date() })
+			.where(and(eq(pendingOrgSetups.user_id, PAGER), eq(pendingOrgSetups.customer_id, "cus_page_linked")));
+		await recordPendingOrgSetup({
+			userId: PAGER,
+			subscriptionId: `sub_page_again_${randomUUID().slice(0, 6)}`,
+			customerId: "cus_page_old",
+			name: "Pager",
+			slug: "pager",
+		});
+		// The first test left records of both customers; cus_page_old now has the newest one.
+		expect(await unlinkedPendingOrgSetupCustomers(PAGER)).toEqual(["cus_page_old", "cus_page_new"]);
 	});
 });

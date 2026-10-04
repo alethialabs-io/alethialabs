@@ -382,6 +382,60 @@ describe("register(core) — the organization plugin production mounts", () => {
     expect(db.member.filter((m) => m.userId === invitee.id)).toHaveLength(1);
   });
 
+  // #5463: a SUSPENDED member's row made the accept answer "You're already a member of this team, so
+  // there is nothing to accept." — telling someone who is locked out that they are in. They are now
+  // told their membership is not active and that the invitation does not reactivate it. Against the
+  // previous head this answers 400 with the "already a member" sentence.
+  it("refuses an invitation accepted by a suspended member with that reason, and changes no row", async () => {
+    const isNonActiveMember = async (orgId: string, userId: string): Promise<boolean> =>
+      db.member.some(
+        (m) => m.organizationId === orgId && m.userId === userId && m.status === "suspended",
+      );
+    const { db, post, postAs, signUp } = await setup(
+      undefined,
+      undefined,
+      undefined,
+      isNonActiveMember,
+    );
+    const created = await post("/organization/create", { name: "Acme", slug: "acme" });
+    expect(created.status).toBe(200);
+    const orgId = db.organization[0]?.id;
+    const invitee = await signUp("suspended@example.com");
+    db.member.push({
+      id: "member-suspended",
+      organizationId: orgId,
+      userId: invitee.id,
+      role: "viewer",
+      status: "suspended",
+      createdAt: new Date(),
+    });
+    db.invitation.push({
+      id: "invite-suspended",
+      organizationId: orgId,
+      email: "suspended@example.com",
+      role: "admin",
+      status: "pending",
+      inviterId: db.user[0]?.id,
+      expiresAt: new Date(Date.now() + 86_400_000),
+      createdAt: new Date(),
+    });
+
+    const res = await postAs(invitee.cookie, "/organization/accept-invitation", {
+      invitationId: "invite-suspended",
+    });
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      code: "MEMBER_NOT_ACTIVE",
+      message: expect.stringMatching(/not active/),
+    });
+    expect(body.message).not.toMatch(/already a member/);
+    expect(db.member.filter((m) => m.userId === invitee.id)).toEqual([
+      expect.objectContaining({ id: "member-suspended", role: "viewer", status: "suspended" }),
+    ]);
+  });
+
   it("an update that writes the metadata gets the stored marker from core, not the request's", async () => {
     const marker = stubSetup();
     const { db, post } = await setup(marker);
