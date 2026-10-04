@@ -267,6 +267,16 @@ export async function POST(req: Request) {
 			}
 		}
 
+		// THE SCOPE MUST LAND ON THE ORG THE REQUEST NAMED, for both credential kinds (#5484).
+		// `getActiveScope` treats its org argument as a preference and falls back to another org on a
+		// miss. A service token's pin and a `--org` header are not preferences, so a fallback is
+		// refused here, never served. The case that reached this: a minter SUSPENDED in the pinned
+		// org resolves to one of their other orgs, and every verb below would then authorize and
+		// file its job there, where they hold full rights.
+		if (scopedOrg !== undefined && actor.orgId !== scopedOrg) {
+			return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+		}
+
 		if (jobType === "DESTROY_RUNNER") {
 			// The permission the console's `destroyRunner` action enforces, asked of the actor in the
 			// org this job will be filed in (#5479). The `org:view` gate above admits every role, so

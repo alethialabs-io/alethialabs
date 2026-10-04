@@ -4,6 +4,7 @@
 import { and, eq } from "drizzle-orm";
 import { authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
 import { revokeMemberGrant } from "@/lib/authz/grants";
+import { cancelPendingInvitationsFrom, deleteOrgTeamMemberships } from "@/lib/authz/member-exit";
 import { toPdpRole } from "@/lib/authz/org-access-control";
 import { getServiceDb } from "@/lib/db";
 import { member } from "@/lib/db/schema";
@@ -12,9 +13,13 @@ import { cliJson } from "@/lib/cli/respond";
 import { cliOkResponse } from "@/lib/validations/cli-contract";
 
 /**
- * Removes a member from organization `id`, revoking their PDP grants. An owner is never removed
- * here. "Owner" is read the way the PDP reads it (`toPdpRole`), so `owner,admin` is one (#5472):
- * the old `role === "owner"` let such a member be removed, and with them the org's last owner.
+ * Removes a member from organization `id`, revoking their PDP grants. Their `team_member` rows in
+ * the org's teams go with the member row, as in better-auth's `deleteMember`, and the invitations
+ * they sent that are still pending are cancelled (#5484).
+ *
+ * An owner is never removed here. "Owner" is read the way the PDP reads it (`toPdpRole`), so
+ * `owner,admin` is one (#5472): the old `role === "owner"` let such a member be removed, and with
+ * them the org's last owner.
  */
 export async function DELETE(
 	req: Request,
@@ -47,7 +52,11 @@ export async function DELETE(
 			);
 		}
 
-		await db.delete(member).where(eq(member.id, memberId));
+		await db.transaction(async (tx) => {
+			await tx.delete(member).where(eq(member.id, memberId));
+			await deleteOrgTeamMemberships(tx, id, m.userId);
+			await cancelPendingInvitationsFrom(tx, id, m.userId);
+		});
 		await revokeMemberGrant(id, m.userId);
 
 		return cliJson(cliOkResponse, { ok: true });

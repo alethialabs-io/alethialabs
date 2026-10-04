@@ -125,22 +125,6 @@ function forbidden(): Response {
 	return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
 }
 
-/** True if `userId` has a `member` row in `orgId` (the personal org — orgId === userId
- *  — is always the user's own, so it needs no membership row).
- *
- *  Passing this is NOT the same as being scoped to `orgId`: the personal-org branch is true
- *  for a value every caller can supply about themselves, and #3863 rode exactly that gap.
- *  {@link resolveNamedOrgScope} is what turns a named org into the scope actually served. */
-async function isOrgMember(userId: string, orgId: string): Promise<boolean> {
-	if (orgId === userId) return true;
-	const [m] = await getServiceDb()
-		.select({ id: member.id })
-		.from(member)
-		.where(and(eq(member.userId, userId), eq(member.organizationId, orgId)))
-		.limit(1);
-	return Boolean(m);
-}
-
 /**
  * Resolves `userId`'s scope for an org THE REQUEST NAMED — a CLI `--org` header, a service token's
  * org pin, or the console URL's `{org}` segment (#4133) — and returns null when resolution landed
@@ -153,7 +137,7 @@ async function isOrgMember(userId: string, orgId: string): Promise<boolean> {
  * request, and following the fallback there answers the request from a scope the caller never named.
  *
  * That is #3863: a personal org's id IS the user's id, so `X-Alethia-Org: <own user id>` passed
- * {@link isOrgMember}, found no `member` row, and came back scoped to a TEAM org — on a path
+ * `isOrgMember` (since replaced by {@link isActiveOrgMember}), found no `member` row, and came back scoped to a TEAM org — on a path
  * `jobs cancel --latest` also walks. ee/src/scope.ts now resolves the personal org explicitly, and
  * this refuses whatever else the resolver may substitute rather than serving it.
  *
@@ -281,7 +265,7 @@ export async function authorizeCliOrg(
 			return actor.orgId === orgId ? { actor } : { error: forbidden() };
 		case "session": {
 			if (actor.orgId === orgId) return { actor };
-			if (orgId !== actor.userId && !(await isActiveOrgMember(actor.userId, orgId))) {
+			if (!(await isActiveOrgMember(actor.userId, orgId))) {
 				return { error: forbidden() };
 			}
 			const scoped = await resolveNamedOrgScope(actor.userId, orgId);
@@ -295,8 +279,18 @@ export async function authorizeCliOrg(
 	}
 }
 
-/** True if `userId` has an ACTIVE `member` row in `orgId`. A suspended row is not membership. */
+/**
+ * True if `userId` has an ACTIVE `member` row in `orgId`, or `orgId` is their personal org (its id
+ * IS their user id, and it has no `member` row to read). A suspended row is not membership (#5484):
+ * the scope resolver no longer lands a suspended member on that org, so a check that still counted
+ * the row would admit a caller whom the next step then serves from some other org.
+ *
+ * Passing this is NOT the same as being scoped to `orgId`: the personal-org branch is true for a
+ * value every caller can supply about themselves, and #3863 rode exactly that gap.
+ * {@link resolveNamedOrgScope} is what turns a named org into the scope actually served.
+ */
 async function isActiveOrgMember(userId: string, orgId: string): Promise<boolean> {
+	if (orgId === userId) return true;
 	const [m] = await getServiceDb()
 		.select({ id: member.id })
 		.from(member)
@@ -312,7 +306,7 @@ async function isActiveOrgMember(userId: string, orgId: string): Promise<boolean
 }
 
 /**
- * Is the profile that MINTED a service token still a member of the org the token is pinned to?
+ * Is the profile that MINTED a service token still an ACTIVE member of the org the token is pinned to?
  *
  * The offboarding control, and the reason it is separate from {@link ensureCliOrgAccess}: a token
  * dropped into CI keeps working after its author leaves, because revoking tokens is not part of
@@ -320,10 +314,17 @@ async function isActiveOrgMember(userId: string, orgId: string): Promise<boolean
  * `lib/cli/providers.ts` deliberately bypass `authorizeCli` and so have to ask it themselves.
  *
  * `actor` MUST be the caller's DEFAULT scope, never one resolved from `orgId`. `getActiveScope(userId)`
- * with no org resolves the caller's earliest REMAINING membership, else their personal org — never an
- * org they have been removed from. So a departed member's default can never equal the pin, the query
- * always runs for them, and the answer is a 403; a still-member whose default happens to BE the pin
- * takes the fast path, which is the same answer more cheaply.
+ * with no org resolves the caller's earliest REMAINING ACTIVE membership, else their personal org —
+ * never an org they have been removed from or are suspended in (ee/src/scope.ts, #5484). So a departed
+ * or suspended member's default can never equal the pin, the query always runs for them, and the
+ * answer is a 403; an active member whose default happens to BE the pin takes the fast path, which is
+ * the same answer more cheaply.
+ *
+ * The query counts only an ACTIVE row. Until #5484 it counted any row, which was harmless while the
+ * scope resolver also landed a suspended member on the pin (the PDP then refused, because suspension
+ * revokes the grants). Once the resolver skipped suspended rows, a suspended minter passed this check
+ * and the pinned resolution fell back to another of their orgs. The callers now also refuse a scope
+ * that did not land on the pin, so neither half alone decides it.
  *
  * Absence is not error: a failed lookup propagates rather than being reported as a missing
  * membership, so a database blip surfaces as a 500 and never as a silent refusal.
@@ -333,7 +334,7 @@ export async function assertMintingProfileStillMember(
 	orgId: string,
 ): Promise<Response | null> {
 	if (defaultScope.orgId === orgId) return null;
-	return (await isOrgMember(defaultScope.userId, orgId)) ? null : forbidden();
+	return (await isActiveOrgMember(defaultScope.userId, orgId)) ? null : forbidden();
 }
 
 /**
@@ -488,7 +489,7 @@ export async function authorizeCli(
 		// profile that created it, so it must stop working the moment that profile stops being a
 		// member — otherwise revoking somebody's access would leave their tokens live, which is
 		// exactly the offboarding hole long-lived credentials are known for.
-		if (!(await isOrgMember(userId, serviceOrg))) {
+		if (!(await isActiveOrgMember(userId, serviceOrg))) {
 			return { error: forbidden() };
 		}
 		// The pin is a named org like a header is, so it gets the same treatment: a scope that
@@ -512,7 +513,7 @@ export async function authorizeCli(
 		};
 	}
 
-	if (headerOrg && !(await isOrgMember(userId, headerOrg))) {
+	if (headerOrg && !(await isActiveOrgMember(userId, headerOrg))) {
 		return { error: forbidden() };
 	}
 	// With a header the org is part of the REQUEST, so the resolved scope must BE it (see

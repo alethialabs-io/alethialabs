@@ -334,6 +334,44 @@ describe("resolveCliProvider — organization scoping", () => {
 		expect(pdp.enforce).not.toHaveBeenCalled();
 	});
 
+	// #5484: a minter SUSPENDED in the pinned org passes a membership check that counts any row, and
+	// the scope resolver, which skips suspended rows, then lands on one of their OTHER orgs. The route
+	// would authorize in that org, where they hold full rights. The landing is checked, not trusted.
+	it("refuses a service token whose pinned scope resolved to a different org", async () => {
+		mockedVerify.mockResolvedValue({
+			payload: { sub: "user-123", service_token_org_id: "org-svc" },
+			error: null,
+		});
+		// Once per resolution (the default scope, then the pin), so nothing carries into later tests.
+		mockedScope
+			.mockResolvedValueOnce({ userId: "user-123", orgId: "org-minters-other" })
+			.mockResolvedValueOnce({ userId: "user-123", orgId: "org-minters-other" });
+
+		const result = await resolveCliProvider(req(), Promise.resolve({ provider: "aws" }));
+
+		expect(mockedScope).toHaveBeenCalledWith("user-123", "org-svc");
+		expect(result.errorResponse?.status).toBe(403);
+		expect(result.scope).toBeNull();
+		expect(result.userId).toBeNull();
+		expect(result.provider).toBeNull();
+	});
+
+	it("refuses a session header whose scope resolved to a different org", async () => {
+		mockedVerify.mockResolvedValue(human);
+		mockedScope
+			.mockResolvedValueOnce({ userId: "user-123", orgId: "user-123" })
+			.mockResolvedValueOnce({ userId: "user-123", orgId: "user-123" });
+
+		const result = await resolveCliProvider(
+			req({ "X-Alethia-Org": "org-B" }),
+			Promise.resolve({ provider: "aws" }),
+		);
+
+		expect(mockedScope).toHaveBeenCalledWith("user-123", "org-B");
+		expect(result.errorResponse?.status).toBe(403);
+		expect(result.scope).toBeNull();
+	});
+
 	it("propagates the 403 verifyCliToken raises for a CONFLICTING service-token header", async () => {
 		// The refusal itself lives at the chokepoint (lib/cli/auth.ts) so that every route gets
 		// it, including this one. What this asserts is that the refusal is RETURNED here rather

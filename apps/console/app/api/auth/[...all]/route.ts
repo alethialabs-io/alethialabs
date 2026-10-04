@@ -23,11 +23,38 @@ import { trustedIpFailure } from "@/lib/auth/trusted-ip";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { revokeMemberGrant } from "@/lib/authz/grants";
 import { currentActor } from "@/lib/authz/guard";
+import { cancelPendingInvitationsFrom } from "@/lib/authz/member-exit";
 import { runOrgCreate } from "@/lib/billing/pending-org-setup";
+import { getServiceDb } from "@/lib/db";
 import { toNextJsHandler } from "better-auth/next-js";
-import { isGuardedOrgAction, orgAction, orgActionRefusal, stringField } from "./member-guards";
+import { z } from "zod";
+import {
+	guardedSsoAction,
+	isGuardedOrgAction,
+	orgAction,
+	orgActionRefusal,
+	ssoActionRefusal,
+	stringField,
+} from "./member-guards";
 
 const handlers = toNextJsHandler(auth);
+
+/**
+ * Cancels the pending invitations a member sent into `orgId`, AFTER better-auth has already
+ * committed their removal. A failure is logged and swallowed: the removal succeeded and the
+ * response says so, and answering 500 for it would tell the caller a committed removal had failed.
+ * The invitations then stay pending, which the log line names.
+ */
+async function cancelInvitationsAfterExit(orgId: string, userId: string): Promise<void> {
+	try {
+		await cancelPendingInvitationsFrom(getServiceDb(), orgId, userId);
+	} catch (error) {
+		console.error(
+			`[auth] member ${userId} left or was removed from ${orgId}, but cancelling their pending invitations failed; they are still pending:`,
+			error,
+		);
+	}
+}
 
 /** Serves Better Auth GET routes after verifying the trusted client-IP contract. */
 export function GET(request: Request): Promise<Response> | Response {
@@ -72,6 +99,11 @@ function sessionLookupFailed(): Response {
 	);
 }
 
+/** The part of better-auth's remove-member response that names who was removed, and from where. */
+const removedMemberResponse = z.object({
+	member: z.object({ userId: z.string().min(1), organizationId: z.string().min(1) }),
+});
+
 /** 403 with an upgrade hint — the response an unentitled caller gets. */
 function upgradeRequired(action: string): Response {
 	return Response.json(
@@ -101,6 +133,28 @@ export async function POST(req: Request): Promise<Response> {
 		} catch {
 			// Unauthenticated (or scope unresolvable) → defer to the auth handler.
 		}
+	}
+	// A caller who is not an active member of an org may not change its SSO providers (#5484).
+	// @better-auth/sso reads `member.role` and not `member.status`. As below, no session is left to
+	// the plugin's own 401, and a session that could not be read refuses the request.
+	const ssoAction = guardedSsoAction(new URL(req.url).pathname);
+	if (ssoAction) {
+		let ssoCaller: { userId: string } | null;
+		try {
+			ssoCaller = await findOwnerScope();
+		} catch (error) {
+			console.error("[auth] session lookup failed before an SSO action:", error);
+			return sessionLookupFailed();
+		}
+		if (ssoCaller) {
+			const body: unknown = await req
+				.clone()
+				.json()
+				.catch(() => null);
+			const refusal = await ssoActionRefusal(ssoAction, body, ssoCaller.userId);
+			if (refusal) return refusal;
+		}
+		return handlers.POST(req);
 	}
 	// A caller who is not an active member may not manage the org, and the last active owner may
 	// not leave it (#5472). better-auth reads neither `member.status` nor counts only active owners.
@@ -133,11 +187,36 @@ export async function POST(req: Request): Promise<Response> {
 		// better-auth's leave deletes the member row and fires no organization hook, so nothing
 		// revoked the grants `afterRemoveMember` revokes on a removal. A member who left kept every
 		// grant they held, and got their old scoped grants back if they were ever added again.
+		// The invitations a member sent go with them when they leave or are removed (#5484), as they
+		// do on suspension: left pending, they become acceptable again if the inviter is re-added.
 		if (guardedAction === "leave") {
 			const response = await handlers.POST(req);
 			const orgId = stringField(body, "organizationId");
 			if (response.ok && orgId) {
 				await revokeMemberGrant(orgId, caller.userId);
+				await cancelInvitationsAfterExit(orgId, caller.userId);
+			}
+			return response;
+		}
+		// remove-member's response names the member better-auth removed, so the guard does not have
+		// to re-resolve `memberIdOrEmail` the way better-auth does.
+		if (guardedAction === "remove-member") {
+			const response = await handlers.POST(req);
+			if (response.ok) {
+				const removed = removedMemberResponse.safeParse(
+					await response
+						.clone()
+						.json()
+						.catch(() => null),
+				);
+				if (removed.success) {
+					const { organizationId, userId } = removed.data.member;
+					await cancelInvitationsAfterExit(organizationId, userId);
+				} else {
+					console.error(
+						"[auth] remove-member succeeded but its response named no member; their pending invitations were not cancelled",
+					);
+				}
 			}
 			return response;
 		}

@@ -133,6 +133,20 @@ describe("resolveActiveScope", () => {
 		expect(actor).toEqual({ userId: USER, orgId: USER });
 	});
 
+	// #5484. A suspended member keeps their row, so a probe that does not read `status` resolved
+	// them onto the org, and reads that trust the scope without asking the PDP served its data.
+	// The stub cannot evaluate SQL, so the predicate is asserted on both queries; the same two
+	// queries were run against real Postgres for the PR (a suspended earliest row → the next active
+	// org; reactivated → the org again).
+	it("counts only an ACTIVE member row, in the membership probe and in the primary-membership query", async () => {
+		const { db, queries } = runner({ member: false, primary: TEAM });
+
+		await resolveActiveScope(db, USER, OTHER);
+
+		expect(queries).toHaveLength(2);
+		for (const text of queries) expect(text).toContain("status = 'active'");
+	});
+
 	// AN ERROR IS NOT AN ABSENCE. "No member row" and "the lookup failed" must not render the
 	// same way — reporting a database outage as a missing membership is one blip away from a
 	// silent wrong scope, which is the defect this file exists to close.

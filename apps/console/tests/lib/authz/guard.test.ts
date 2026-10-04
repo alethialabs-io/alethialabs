@@ -15,12 +15,20 @@ vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/authz/actor-context", () => ({ getInjectedActor: vi.fn() }));
 vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
 
-// `isOrgMember` reads the `member` table, and the service-token branch below calls it on EVERY
-// request. vi.hoisted because the factory is hoisted above every const in this file.
-const { dbLimit } = vi.hoisted(() => ({ dbLimit: vi.fn() }));
+// `isActiveOrgMember` reads the `member` table, and the service-token branch below calls it on EVERY
+// request. vi.hoisted because the factory is hoisted above every const in this file. `dbWhere`
+// records each predicate, so a test can ask whether the query counted only an ACTIVE row.
+const { dbLimit, dbWhere } = vi.hoisted(() => ({ dbLimit: vi.fn(), dbWhere: vi.fn() }));
 vi.mock("@/lib/db", () => ({
 	getServiceDb: () => ({
-		select: () => ({ from: () => ({ where: () => ({ limit: dbLimit }) }) }),
+		select: () => ({
+			from: () => ({
+				where: (predicate: unknown) => {
+					dbWhere(predicate);
+					return { limit: dbLimit };
+				},
+			}),
+		}),
 	}),
 }));
 
@@ -30,6 +38,8 @@ import { getPdp } from "@/lib/authz";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { ForbiddenError, type Actor } from "@/lib/authz/types";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { type SQL } from "drizzle-orm";
 
 import {
 	assertMintingProfileStillMember,
@@ -358,6 +368,79 @@ describe("authorizeCliOrg", () => {
 				type: "member",
 			}),
 		).toEqual({ actor: inOther });
+	});
+});
+
+/** Whether a recorded `member` predicate requires `status = 'active'`. */
+function requiresActive(predicate: SQL): boolean {
+	const { sql, params } = new PgDialect().sqlToQuery(predicate);
+	return /"member"\."status" = \$\d+/.test(sql) && params.includes("active");
+}
+
+/**
+ * A member row that is SUSPENDED: a status-blind membership query finds it, a query that counts
+ * only active rows does not. This is the row the scope resolver stopped landing on in #5484.
+ */
+function suspendedRow(): void {
+	dbLimit.mockImplementation(async () => {
+		const last = dbWhere.mock.calls.at(-1)?.[0];
+		return last && requiresActive(last) ? [] : [{ id: "m-suspended" }];
+	});
+}
+
+describe("membership checks count only an ACTIVE member row (#5484)", () => {
+	// The minter is suspended in the pinned org. Their default scope is another org (the resolver
+	// no longer lands on a suspended row), so the fast path does not fire and the query decides.
+	it("assertMintingProfileStillMember refuses a minter SUSPENDED in the pinned org", async () => {
+		suspendedRow();
+		const denied = await assertMintingProfileStillMember(
+			{ userId: "u-minter", orgId: "org-other" },
+			"org-t",
+		);
+		expect(denied?.status).toBe(403);
+	});
+
+	it("authorizeCli refuses a service token whose minter is SUSPENDED in the pinned org", async () => {
+		suspendedRow();
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: {
+				sub: "u-minter",
+				type: "access",
+				service_token_org_id: "org-A",
+				service_token_id: "tok-1",
+			},
+			error: null,
+		});
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-minter", orgId: "org-A" });
+		const result = await authorizeCli(new Request("https://example.test/api/cli"), "manage_tokens", {
+			type: "org",
+		});
+		expect("error" in result && result.error.status).toBe(403);
+		expect(enforce).not.toHaveBeenCalled();
+	});
+
+	it("authorizeCli refuses an X-Alethia-Org header naming an org the caller is SUSPENDED in", async () => {
+		suspendedRow();
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "u-cli", type: "access" },
+			error: null,
+		});
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-cli", orgId: "org-susp" });
+		const result = await authorizeCli(
+			new Request("https://example.test/api/cli", { headers: { "X-Alethia-Org": "org-susp" } }),
+			"view",
+			{ type: "org" },
+		);
+		expect("error" in result && result.error.status).toBe(403);
+		expect(enforce).not.toHaveBeenCalled();
+	});
+
+	it("an ACTIVE row still passes, so the checks did not become refuse-all", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-active" }]);
+		expect(
+			await assertMintingProfileStillMember({ userId: "u-minter", orgId: "org-other" }, "org-t"),
+		).toBeNull();
+		expect(requiresActive(dbWhere.mock.calls.at(-1)?.[0])).toBe(true);
 	});
 });
 

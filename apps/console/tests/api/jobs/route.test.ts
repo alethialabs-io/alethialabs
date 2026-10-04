@@ -489,6 +489,44 @@ describe("POST /api/jobs (CLI queue)", () => {
 		expect(getActiveScope).not.toHaveBeenCalledWith("user-1", "org-other");
 	});
 
+	// #5484: a minter SUSPENDED in the pinned org passes the offboarding check (stubbed to pass here)
+	// and the scope resolver, which skips suspended rows, lands on another of their orgs ("org-1").
+	// Every verb would then authorize and file its job there. The route refuses instead.
+	it("403s a service token whose pinned scope resolved to a different org, for every verb", async () => {
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "user-1", service_token_org_id: "org-pinned" },
+			error: null,
+		});
+		for (const body of [
+			{ job_type: "PLAN", configuration_id: "p1" },
+			{ job_type: "DEPLOY", configuration_id: "p1" },
+			{ job_type: "DESTROY", configuration_id: "p1" },
+			{ job_type: "DESTROY_RUNNER", cloud_identity_id: IDENTITY_ID },
+		]) {
+			setupTx({ select: snapshotSelect() });
+			const { insertValuesSpy } = mockServiceDb({});
+			const res = await post(body);
+			expect({ verb: body.job_type, status: res.status }).toEqual({ verb: body.job_type, status: 403 });
+			expect(getActiveScope).toHaveBeenCalledWith("user-1", "org-pinned");
+			expect(authorize).not.toHaveBeenCalled();
+			expect(pdpCan).not.toHaveBeenCalled();
+			expect(insertValuesSpy).not.toHaveBeenCalled();
+			expect(assertJobQuotaAllowed).not.toHaveBeenCalled();
+		}
+	});
+
+	it("403s a session whose --org scope resolved to a different org", async () => {
+		setupTx({ select: snapshotSelect() });
+		mockServiceDb({});
+		// ensureCliOrgAccess passes (stubbed); the resolver still answered "org-1", not the header.
+		const res = await post(
+			{ job_type: "PLAN", configuration_id: "p1" },
+			{ "X-Alethia-Org": "org-named" },
+		);
+		expect(res.status).toBe(403);
+		expect(authorize).not.toHaveBeenCalled();
+	});
+
 	it("DESTROY_RUNNER keeps the legacy passthrough insert (client-provided snapshot)", async () => {
 		setupTx({});
 		const { insertValuesSpy } = mockServiceDb({
