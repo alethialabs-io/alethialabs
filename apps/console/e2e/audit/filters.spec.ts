@@ -86,7 +86,41 @@ async function auditRoute(route: string, page: Page): Promise<void> {
 		for (const id of ["F8", "F9", "F10"] as const) report.notMeasured({ route, url: route, predicate: id, reason });
 		return;
 	}
-	const result = await measureRoute(page, url, owned.surfaces, () => page.context().newPage());
+	const diag: string[] = [];
+	const pages: Page[] = [page];
+	const watch = (p: Page, tag: string) => {
+		p.on("console", (m) => { if (m.type() === "error" || m.type() === "warning") diag.push(`${tag} console.${m.type()}: ${m.text()}`); });
+		p.on("pageerror", (e) => diag.push(`${tag} pageerror: ${e.message}\n${e.stack ?? ""}`));
+		p.on("response", (r) => { if (r.status() >= 400) diag.push(`${tag} HTTP ${r.status()} ${r.url()}`); });
+	};
+	if (route.includes("activity")) watch(page, "main");
+	const result = await measureRoute(page, url, owned.surfaces, async () => {
+		const np = await page.context().newPage();
+		if (route.includes("activity")) {
+			const tag = `tab${pages.length}`;
+			watch(np, tag);
+			pages.push(np);
+			np.on("load", () => {
+				void (async () => {
+					for (const ms of [1500, 4000]) {
+						await new Promise((r) => setTimeout(r, ms));
+						if (np.isClosed()) return;
+						const text = await np.locator("main").innerText().catch(() => "?");
+						diag.push(`${tag} +${ms}ms url=${np.url()} main=${text.slice(0, 1500)}`);
+					}
+				})();
+			});
+		}
+		return np;
+	});
+	if (route.includes("activity")) {
+		for (const [i, p] of pages.entries()) {
+			if (p.isClosed()) continue;
+			await test.info().attach(`diag-${i}.png`, { body: await p.screenshot({ fullPage: true }), contentType: "image/png" });
+			diag.push(`page ${i} url=${p.url()} main=${(await p.locator("body").innerText().catch(() => "?")).slice(0, 3000)}`);
+		}
+		console.log(`DIAG ${route}\n${diag.join("\n")}`);
+	}
 	recordOutcome(route, url, "F8", result.F8);
 	recordOutcome(route, url, "F9", result.F9);
 	recordOutcome(route, url, "F10", result.F10);
