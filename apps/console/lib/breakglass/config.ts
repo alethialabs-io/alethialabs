@@ -34,9 +34,16 @@ export function isBreakglassOperator(email: string | null | undefined): boolean 
 /**
  * Local-dev fallback identity, mirroring apps/admin's SUPPORT_ADMIN_DEV_EMAIL. Only consulted when
  * no CF-Access header and no CLI bearer are present (no tunnel in front); it must ALSO be in
- * BREAKGLASS_OPERATORS to authorize anything. Never set in production.
+ * BREAKGLASS_OPERATORS to authorize anything.
+ *
+ * Refused outright when `NODE_ENV === "production"` (#5501): the fallback admits a request that
+ * carries no credential at all, so a stray BREAKGLASS_DEV_EMAIL in a production env file would
+ * otherwise make the whole break-glass surface unauthenticated. The console's production images
+ * (apps/console/Dockerfile, Dockerfile.community) set NODE_ENV=production, and `next start` sets it
+ * too, so this holds without any deployment remembering to leave the variable unset.
  */
 export function breakglassDevEmail(): string | null {
+	if (process.env.NODE_ENV === "production") return null;
 	const e = process.env.BREAKGLASS_DEV_EMAIL;
 	return e ? e.trim().toLowerCase() : null;
 }
