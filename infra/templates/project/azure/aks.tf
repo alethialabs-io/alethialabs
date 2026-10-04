@@ -138,7 +138,7 @@ resource "azurerm_monitor_data_collection_rule_association" "aks_container_insig
   count = local.aks_log_retention ? 1 : 0
 
   name                    = "ContainerInsightsExtension"
-  target_resource_id      = module.aks[0].cluster_id
+  target_resource_id      = try(module.aks[0].cluster_id, null) != null ? module.aks[0].cluster_id : ""
   data_collection_rule_id = one(azurerm_monitor_data_collection_rule.aks_container_insights[*].id)
 }
 
@@ -146,7 +146,7 @@ resource "azurerm_monitor_diagnostic_setting" "aks_control_plane" {
   count = local.aks_log_retention ? 1 : 0
 
   name                       = "aks-control-plane-logs"
-  target_resource_id         = module.aks[0].cluster_id
+  target_resource_id         = try(module.aks[0].cluster_id, null) != null ? module.aks[0].cluster_id : ""
   log_analytics_workspace_id = one(azurerm_log_analytics_workspace.aks[*].id)
 
   enabled_log {

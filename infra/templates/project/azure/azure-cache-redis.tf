@@ -73,7 +73,7 @@ resource "azurerm_monitor_diagnostic_setting" "azure_cache" {
   depends_on = [terraform_data.azure_cache_log_guard]
 
   name                       = "azure-cache-logs"
-  target_resource_id         = module.azure_cache[0].database_id
+  target_resource_id         = try(module.azure_cache[0].database_id, null) != null ? module.azure_cache[0].database_id : ""
   log_analytics_workspace_id = local.azure_cache_log_workspace
 
   dynamic "enabled_log" {

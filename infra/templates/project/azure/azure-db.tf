@@ -74,7 +74,7 @@ resource "azurerm_monitor_diagnostic_setting" "azure_db" {
   depends_on = [terraform_data.azure_db_log_exports_guard]
 
   name                       = "azure-db-logs"
-  target_resource_id         = module.azure_db[0].server_id
+  target_resource_id         = try(module.azure_db[0].server_id, null) != null ? module.azure_db[0].server_id : ""
   log_analytics_workspace_id = local.azure_db_log_workspace
 
   dynamic "enabled_log" {
@@ -97,7 +97,7 @@ resource "azurerm_postgresql_flexible_server_configuration" "azure_db" {
   for_each = var.create_azure_db && local.azure_db_is_postgres ? var.azure_db_database_flags : {}
 
   name      = each.key
-  server_id = module.azure_db[0].server_id
+  server_id = try(module.azure_db[0].server_id, null) != null ? module.azure_db[0].server_id : ""
   value     = each.value
 }
 
@@ -106,6 +106,6 @@ resource "azurerm_mysql_flexible_server_configuration" "azure_db" {
 
   name                = each.key
   resource_group_name = azurerm_resource_group.main.name
-  server_name         = module.azure_db[0].server_name
+  server_name         = try(module.azure_db[0].server_name, null) != null ? module.azure_db[0].server_name : ""
   value               = each.value
 }
