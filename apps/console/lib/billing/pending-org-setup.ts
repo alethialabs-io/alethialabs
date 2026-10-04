@@ -160,21 +160,74 @@ export async function pendingOrgSetupFor(
 }
 
 /**
+ * Where the next page of `unfinishedPendingOrgSetups` starts: just after the row with this `created_at`
+ * and `id`. `at` is Postgres's own text of the timestamp, so it keeps the microseconds a JS `Date` would
+ * drop — a cursor rounded to the millisecond skips the rows created later in that same millisecond.
+ */
+export interface UnfinishedSetupCursor {
+	at: string;
+	id: string;
+}
+
+/**
  * One page of the actor's setups whose last step (the payer declaration) has not been recorded, newest
- * first (ties broken by id, so pages neither overlap nor skip).
+ * first (ties broken by id), and the cursor of the page after it — null when this page is the last.
+ *
+ * A KEYSET page (#5463): it starts after `after`'s position in that order, not after a row count, so a
+ * caller that deletes rows from a page it has read (`findUnfinishedNewOrgSetup` drops expired ones)
+ * neither skips a row nor reads one twice. The position does not depend on the cursor's row still
+ * existing.
  */
 export async function unfinishedPendingOrgSetups(
 	userId: string,
 	limit = 10,
-	offset = 0,
-): Promise<PendingOrgSetupRow[]> {
-	return getServiceDb()
-		.select()
+	after?: UnfinishedSetupCursor,
+): Promise<{ rows: PendingOrgSetupRow[]; next: UnfinishedSetupCursor | null }> {
+	const page = await getServiceDb()
+		.select({ row: pendingOrgSetups, at: sql<string>`${pendingOrgSetups.created_at}::text` })
 		.from(pendingOrgSetups)
-		.where(and(eq(pendingOrgSetups.user_id, userId), isNull(pendingOrgSetups.declared_at)))
+		.where(
+			and(
+				eq(pendingOrgSetups.user_id, userId),
+				isNull(pendingOrgSetups.declared_at),
+				after
+					? sql`(${pendingOrgSetups.created_at}, ${pendingOrgSetups.id}) < (${after.at}::timestamptz, ${after.id}::uuid)`
+					: undefined,
+			),
+		)
 		.orderBy(desc(pendingOrgSetups.created_at), desc(pendingOrgSetups.id))
-		.limit(limit)
-		.offset(offset);
+		.limit(limit);
+	const last = page.at(-1);
+	return {
+		rows: page.map((p) => p.row),
+		next: page.length === limit && last ? { at: last.at, id: last.row.id } : null,
+	};
+}
+
+/**
+ * The Stripe customers of the actor's setups that have no organization yet (nothing created, nothing
+ * linked, nothing declared), newest record first, each once. The new-org purchase reuses the first when
+ * the browser lost its `customerId`, and sweeps all of them for a payment still settling (#5463).
+ */
+export async function unlinkedPendingOrgSetupCustomers(
+	userId: string,
+	limit = 5,
+): Promise<string[]> {
+	const rows = await getServiceDb()
+		.select({ customerId: pendingOrgSetups.customer_id })
+		.from(pendingOrgSetups)
+		.where(
+			and(
+				eq(pendingOrgSetups.user_id, userId),
+				isNull(pendingOrgSetups.created_org_id),
+				isNull(pendingOrgSetups.linked_at),
+				isNull(pendingOrgSetups.declared_at),
+			),
+		)
+		.groupBy(pendingOrgSetups.customer_id)
+		.orderBy(desc(sql`max(${pendingOrgSetups.created_at})`))
+		.limit(limit);
+	return rows.map((r) => r.customerId);
 }
 
 /**
