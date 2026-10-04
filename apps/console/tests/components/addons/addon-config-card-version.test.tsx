@@ -48,7 +48,7 @@ const PINNED: AddonInstallState = {
 	values: {},
 	valuesYaml: null,
 	version: "58.2.1",
-	status: "READY",
+	status: "ACTIVE",
 	health: null,
 	sync: null,
 	lastSyncedAt: null,
