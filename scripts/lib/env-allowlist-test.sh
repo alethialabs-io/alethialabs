@@ -35,6 +35,12 @@
 #      string equality, decides "admits")
 #  17  env:reap --dry-run with the IP not admitted → no plan, no apply, tfvars untouched (a dry run
 #      mutates nothing), and the refusal names the IP
+#  18  `--help` / `-h` on EVERY command (and bare `help`), box up and IP not admitted → usage, exit
+#      0, and an EMPTY call log: no curl, no tofu, no hcloud, no ssh, no rsync (#5504)
+#  19  a refused argument on any command → exit 2 with an empty call log: the parse runs first
+#  20  `--no-refresh` with the IP not admitted → no IP lookup, no plan/apply, still reaches SSH
+#  21  the box is down and the IP not admitted → no plan/apply (nothing to refresh FOR), and the
+#      command reports the box down
 #
 # Section M mutates env.sh and requires each mutant to FAIL a named case. An assertion nothing has
 # ever made fail is a claim, not a check.
@@ -116,7 +122,7 @@ cat >"$STUBS/hcloud" <<'STUB'
 echo "hcloud $*" >>"$STUB_LOG"
 case "$*" in
 *"firewall describe"*) [ -n "${STUB_FW_JSON:-}" ] && cat "$STUB_FW_JSON" || exit 1 ;;
-*"server describe"*) echo '{"status":"running"}' ;;
+*"server describe"*) [ "${STUB_SERVER_DOWN:-}" = 1 ] && exit 1; echo '{"status":"running"}' ;;
 esac
 exit 0
 STUB
@@ -131,6 +137,13 @@ cat >"$STUBS/ssh-keygen" <<'STUB'
 #!/usr/bin/env bash
 exit 0
 STUB
+
+# Every other binary a command can reach before or instead of ssh: logged, never real. Without these
+# a help invocation that fell through to env:push would rsync to a real host, and env:open would
+# open a browser — the #5504 cases drive every command, so every exit to the world is stubbed.
+for _b in rsync open fswatch launchctl; do
+	printf '#!/usr/bin/env bash\necho "%s $*" >>"$STUB_LOG"\nexit 0\n' "$_b" >"$STUBS/$_b"
+done
 chmod +x "$STUBS"/*
 
 # ── fixtures ──────────────────────────────────────────────────────────────────────────────────
@@ -240,6 +253,9 @@ case_2() {
 	sed -n "${ap}p" "$LOG" | grep -q -- "$planfile\$" || { echo "  apply is not of the saved plan"; cat "$LOG"; return 1; }
 	sed -n "${ap}p" "$LOG" | grep -q -- '-auto-approve' && { echo "  apply used -auto-approve"; return 1; }
 	[ "$(grep -c '^tofu .* apply' "$LOG")" = 1 ] || { echo "  more than one apply"; return 1; }
+	# It says what it is about to do, and how not to (#5504).
+	printf '%s' "$OUT" | grep -q 'applying a plan targeted at hcloud_firewall.sandbox' || { echo "  no announcement: $OUT"; return 1; }
+	printf '%s' "$OUT" | grep -q -- '--no-refresh skips this' || { echo "  announcement names no opt-out: $OUT"; return 1; }
 	return 0
 }
 
@@ -347,8 +363,83 @@ case_11() {
 	printf '%s' "$OUT" | grep -q 'cannot tell which is this machine' || { echo "  wrong message: $OUT"; return 1; }
 }
 
+# ── #5504: nothing remote before the arguments are accepted ───────────────────────────────────
+# The state these run in is the one that made the bug expensive: the box is up and this machine's
+# IP is NOT admitted, so any path that reaches ensure_ssh_allowlist rewrites tfvars and applies.
+# The assertion is that the call log is EMPTY — not "no apply": an IP lookup is already remote.
+untouched() { # <repo> <before-tfvars> <label>
+	if [ -s "$LOG" ]; then
+		echo "  $3: reached the outside world:"
+		sed 's/^/    /' "$LOG"
+		return 1
+	fi
+	[ "$(cat "$1/infra/sandbox/terraform.tfvars")" = "$2" ] || { echo "  $3: tfvars rewritten"; return 1; }
+	# shellcheck disable=SC2012
+	[ "$(ls "$1"/infra/sandbox/terraform.*.backup.tfvars 2>/dev/null | wc -l | tr -d ' ')" = 0 ] ||
+		{ echo "  $3: left a tfvars backup"; return 1; }
+}
+
+ALL_CMDS="up push down status verify logs open ssh check test runner reap box timer allow-ip"
+
+case_18() { # --help / -h on every command: usage, exit 0, and NOTHING else
+	local r before c h
+	r="$(repo "$1" "\"$OLD_IP/32\"")"
+	before="$(cat "$r/infra/sandbox/terraform.tfvars")"
+	for c in $ALL_CMDS; do
+		for h in --help -h; do
+			STUB_IP=$NEW_IP STUB_FW_JSON="$(fw_json "$OLD_IP/32")" STUB_PLAN_JSON=$PLAN_OK run "$r" "$c" "$h"
+			[ "$RC" = 0 ] || { echo "  env:$c $h: rc=$RC: $OUT"; return 1; }
+			untouched "$r" "$before" "env:$c $h" || return 1
+			printf '%s' "$OUT" | grep -q -- '--no-refresh' || { echo "  env:$c $h: did not print usage: $OUT"; return 1; }
+		done
+	done
+	for h in --help -h help; do
+		STUB_IP=$NEW_IP STUB_FW_JSON="$(fw_json "$OLD_IP/32")" STUB_PLAN_JSON=$PLAN_OK run "$r" "$h"
+		[ "$RC" = 0 ] || { echo "  env.sh $h: rc=$RC"; return 1; }
+		untouched "$r" "$before" "env.sh $h" || return 1
+	done
+}
+
+case_19() { # a refused argument: exit 2, and NOTHING remote before the refusal
+	local r before spec
+	r="$(repo "$1" "\"$OLD_IP/32\"")"
+	before="$(cat "$r/infra/sandbox/terraform.tfvars")"
+	for spec in "check --bogus" "logs extra" "status --verbose" "up --bogus" "up --empty --seed" \
+		"push --bogus" "test a b" "reap --bogus" "box --bogus" "timer bogus" "allow-ip --no-refresh"; do
+		# shellcheck disable=SC2086  # word-splitting the spec IS the argv
+		STUB_IP=$NEW_IP STUB_FW_JSON="$(fw_json "$OLD_IP/32")" STUB_PLAN_JSON=$PLAN_OK run "$r" $spec
+		[ "$RC" = 2 ] || { echo "  env:$spec: rc=$RC (want 2): $OUT"; return 1; }
+		untouched "$r" "$before" "env:$spec" || return 1
+	done
+}
+
+case_20() { # --no-refresh: the read-only path — no IP lookup, no plan, no apply, still reaches SSH
+	local r before
+	r="$(repo "$1" "\"$OLD_IP/32\"")"
+	before="$(cat "$r/infra/sandbox/terraform.tfvars")"
+	STUB_IP=$NEW_IP STUB_FW_JSON="$(fw_json "$OLD_IP/32")" STUB_PLAN_JSON=$PLAN_OK run "$r" logs --no-refresh
+	[ "$RC" = 0 ] || { echo "  rc=$RC: $OUT"; return 1; }
+	has '^curl ' && { echo "  looked up the IP"; return 1; }
+	has '^tofu .* plan' && { echo "  planned"; return 1; }
+	has '^tofu .* apply' && { echo "  applied"; return 1; }
+	[ "$(cat "$r/infra/sandbox/terraform.tfvars")" = "$before" ] || { echo "  tfvars rewritten"; return 1; }
+	has '^ssh ' || { echo "  never reached ssh"; return 1; }
+}
+
+case_21() { # the box is down: nothing to refresh FOR — no plan, no apply, the real cause reported
+	local r before
+	r="$(repo "$1" "\"$OLD_IP/32\"")"
+	before="$(cat "$r/infra/sandbox/terraform.tfvars")"
+	STUB_SERVER_DOWN=1 STUB_IP=$NEW_IP STUB_FW_JSON="$(fw_json "$OLD_IP/32")" STUB_PLAN_JSON=$PLAN_OK run "$r" check
+	[ "$RC" != 0 ] || { echo "  check against a down box succeeded"; return 1; }
+	has '^tofu .* plan' && { echo "  planned against a down box"; return 1; }
+	has '^tofu .* apply' && { echo "  applied against a down box"; return 1; }
+	[ "$(cat "$r/infra/sandbox/terraform.tfvars")" = "$before" ] || { echo "  tfvars rewritten"; return 1; }
+	printf '%s' "$OUT" | grep -q 'The sandbox box is not up' || { echo "  wrong message: $OUT"; return 1; }
+}
+
 echo "# cases against scripts/env.sh"
-for c in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17; do
+for c in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21; do
 	if why="$("case_$c" "$ENV_SH")"; then ok "case $c"; else bad "case $c"$'\n'"$why"; fi
 done
 
@@ -399,6 +490,19 @@ mutant ip-fail-open 6 '/IP_ECHO_URLS)\.$/ s/|| die "/|| return 0; die "/'
 mutant dry-run-refreshes 17 's/^    reg="\$(read_registry)"$/    ensure_ssh_allowlist; reg="$(read_registry)"/'
 # The reap hint is never printed.
 mutant no-reap-hint 9 's/^    ssh_unreachable_hint$/    :/'
+
+# --help falls through to the command instead of exiting (#5504).
+mutant help-falls-through 18 's/^  -h | --help)$/  -h-disabled)/'
+# The refresh runs on the command name, before the arguments are read — the shape #5504 fixed.
+# shellcheck disable=SC2016  # literal $ — a sed program over env.sh's source
+mutant refresh-before-parse 18 's/^ENV_CMD="\${1:-}"$/ENV_CMD="${1:-}"; case "$ENV_CMD" in check) ensure_ssh_allowlist ;; esac/'
+# A no-argument command stops refusing arguments, so a typo reaches the refresh.
+# shellcheck disable=SC2016  # literal $ — a sed program over env.sh's source
+mutant args-unchecked 19 's/^  \[ "\$ENV_NARGS" = 0 \] || usage_error "env:\$ENV_CMD takes/  true || usage_error "env:$ENV_CMD takes/'
+# --no-refresh is accepted and ignored.
+mutant no-refresh-ignored 20 's/^  --no-refresh) ENV_NO_REFRESH=1 ;;$/  --no-refresh) ;;/'
+# A down box gets its firewall applied anyway.
+mutant down-box-refreshes 21 '/^  box_exists || return 0$/d'
 
 echo
 if [ "$fails" -gt 0 ]; then
