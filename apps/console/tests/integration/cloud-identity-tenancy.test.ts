@@ -13,7 +13,10 @@
 //      not use. Since #5481 the identity is the runner row's, never the request body's.
 //   3. POST /api/cli/projects refuses to bind another org's identity to a new project.
 //   4. The read-only count of `personal` identities whose `org_id` is a team org — the rows the
-//      #5481 `scope = 'org'` arm stopped admitting to other members (see LEGACY_COUNT below).
+//      #5481 `scope = 'org'` arm does not admit to other members, and the rows migration 0160
+//      converts to `org` (see legacyCount below). The suite seeds its rows AFTER the migrations
+//      run, so the teammate's row below is still `personal`: the claim arm must hold for any such
+//      row, whether or not 0160 has run.
 //
 // The CLI token, the runner token, the scope resolver and the PDP are stubbed (their own suites pin
 // them); the SQL that decides which identity is found is real, and it is the subject.
@@ -91,9 +94,9 @@ let creatorPersonalIdentity: string;
 /** `org` scope in ORG_B, authored by USER_A: an org USER_A no longer acts in. */
 let creatorForeignOrgIdentity: string;
 /**
- * `personal` scope, authored by USER_B, with `org_id` ORG_A: what the `set_org_id` trigger writes
- * for a personal identity created while acting in ORG_A, and what every pre-0011 row in a team org
- * became when `scope` was added with a `personal` default.
+ * `personal` scope, authored by USER_B, with `org_id` ORG_A: what every pre-0011 row in a team org
+ * became when `scope` was added with a `personal` default. Migration 0160 converts those rows to
+ * `org`; this one is seeded after it, so it stays `personal`.
  */
 let teammatePersonalIdentity: string;
 /** Runners seeded by the DESTROY_RUNNER cases, removed in afterAll. */
@@ -150,7 +153,7 @@ async function destroyRunnerJob(targetId: string): Promise<Response> {
 /**
  * READ-ONLY. The `personal` identities whose `org_id` is not their author's personal org — i.e. a
  * team org. Before #5481 the claim route's org arm handed these to ANY member's job in that org;
- * now only to their author's. `orgId` narrows the count to this suite's fixtures, because other
+ * now only to their author's. Migration 0160 converts exactly these rows to `org`. `orgId` narrows the count to this suite's fixtures, because other
  * suites share the database. The production form drops that one predicate:
  *
  *   select count(*)::int as n from cloud_identities

@@ -12,8 +12,9 @@
 // (lib/db/programmables.sql): an `org` row is shared with its org, a `personal` row belongs to its
 // author alone. A `personal` row still carries an `org_id`: the org it was created in, which the
 // `set_org_id` trigger fills from the session's org when the insert leaves it empty. Every row
-// written before migration 0011 added `scope` was defaulted to `personal`, whatever org it sat in.
-// So matching `org_id` without `scope` admitted another member's personal credential.
+// written before migration 0011 added `scope` was defaulted to `personal`, whatever org it sat in;
+// migration 0160 returns the ones in a team org to `org`, the sharing they had before 0011. Matching
+// `org_id` without `scope` admitted another member's personal credential.
 
 import { and, eq, or, type SQL } from "drizzle-orm";
 import type { getServiceDb } from "@/lib/db";
