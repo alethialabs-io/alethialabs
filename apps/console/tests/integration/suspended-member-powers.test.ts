@@ -94,6 +94,9 @@ describeIfDb("#5472 — a member who is not active keeps no power in the org", (
 		await db.insert(teamMember).values([
 			{ teamId: TEAM, userId: U.suspended },
 			{ teamId: TEAM, userId: U.active },
+			// A removed user whose `team_member` row outlived their member row (the CLI member
+			// DELETE removes only the member row).
+			{ teamId: TEAM, userId: U.removed },
 		]);
 		// The team's org-wide viewer grant: suspension never touches a TEAM principal's row.
 		await db.insert(grants).values({
@@ -186,5 +189,30 @@ describeIfDb("#5472 — a member who is not active keeps no power in the org", (
 		expect(await userGrants(U.removed, U.removed)).toEqual([
 			{ role_id: BUILTIN_ROLE_IDS.owner },
 		]);
+	});
+
+	// Both PDPs now deny an actor with NO member row outside their personal scope. Before, the
+	// Postgres engine refused only the team grant for such an actor and the OpenFGA engine refused
+	// nothing, so a removed user still on a team kept the team's access there.
+	it("grants a user with no member row nothing in the org — not their team's grant, not a leftover user grant — and still everything in their personal scope", async () => {
+		expect(await canView(U.removed)).toBe(false);
+		await getServiceDb().insert(grants).values({
+			org_id: ORG,
+			principal_type: "user",
+			principal_id: U.removed,
+			role_id: BUILTIN_ROLE_IDS.admin,
+			resource_type: "org",
+		});
+		expect(await canView(U.removed)).toBe(false);
+		expect(
+			await pdp.listAccessible({ userId: U.removed, orgId: ORG }, "view", "project"),
+		).toEqual([]);
+
+		// The personal scope (org id = user id) has no member row by design.
+		await ensureMemberGrant(U.removed, U.removed, "owner");
+		expect(
+			(await pdp.can({ userId: U.removed, orgId: U.removed }, "view", { type: "project" }))
+				.allowed,
+		).toBe(true);
 	});
 });

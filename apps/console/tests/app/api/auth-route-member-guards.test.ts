@@ -13,7 +13,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invitation, member } from "@/lib/db/schema";
 
-/** The signed-in caller `getOwnerScope` answers with; null means no session. */
+/** The signed-in caller the session read answers with; null means no session. */
 type Caller = { userId: string; activeOrgId?: string } | null;
 
 const h = vi.hoisted(() => {
@@ -25,7 +25,9 @@ const h = vi.hoisted(() => {
 		signedIn,
 		post: vi.fn(async (_req: Request) => new Response("post-handler")),
 		caller: signedIn(),
+		lookupFails: false,
 		byTable: new Map<unknown, unknown[]>(),
+		memberByOrg: new Map<string, unknown[]>(),
 		removalOwnerRefusal: vi.fn(
 			async (_org: string, _member: string): Promise<string | null> => null,
 		),
@@ -38,8 +40,15 @@ vi.mock("@/lib/auth/trusted-ip", () => ({ trustedIpFailure: () => null }));
 vi.mock("@/lib/authz/entitlements", () => ({ getEntitlements: () => ({ organizations: true }) }));
 vi.mock("@/lib/authz/guard", () => ({ currentActor: async () => ({ orgId: "org-1" }) }));
 vi.mock("@/lib/auth/owner", () => ({
+	// `findOwnerScope` answers null for no session and THROWS when the read failed. The previous
+	// head read `getOwnerScope`, which throws for both; it is mocked to the same answers so a test
+	// that expects a refusal fails on its assertion there, not on a missing mock.
+	findOwnerScope: async () => {
+		if (h.lookupFails) throw new Error("session table unreachable");
+		return h.caller;
+	},
 	getOwnerScope: async () => {
-		if (!h.caller) throw new Error("unauthorized");
+		if (h.lookupFails || !h.caller) throw new Error("unauthorized");
 		return h.caller;
 	},
 }));
@@ -54,9 +63,22 @@ vi.mock("@/lib/db", () => ({
 				table = t;
 				return chain;
 			};
-			chain.where = () => chain;
+			let predicate: unknown;
+			chain.where = (p: unknown) => {
+				predicate = p;
+				return chain;
+			};
 			chain.limit = () => chain;
-			chain.then = (resolve: (v: unknown) => void) => resolve(h.byTable.get(table) ?? []);
+			chain.then = (resolve: (v: unknown) => void) => {
+				// A member read for an org listed in `memberByOrg` answers that org's rows, so a test
+				// can tell WHICH org the guard asked about; otherwise the table's rows.
+				if (table === member) {
+					for (const [org, rows] of h.memberByOrg) {
+						if (mentions(predicate, org)) return resolve(rows);
+					}
+				}
+				resolve(h.byTable.get(table) ?? []);
+			};
 			return chain;
 		},
 	}),
@@ -66,6 +88,14 @@ vi.mock("better-auth/next-js", () => ({
 }));
 
 import { POST } from "@/app/api/auth/[...all]/route";
+
+/** Whether `value` (a drizzle predicate) carries the string `needle` anywhere inside it. */
+function mentions(value: unknown, needle: string, seen = new WeakSet<object>()): boolean {
+	if (value === needle) return true;
+	if (typeof value !== "object" || value === null || seen.has(value)) return false;
+	seen.add(value);
+	return Object.values(value).some((v) => mentions(v, needle, seen));
+}
 
 /** A POST to a better-auth organization endpoint with a JSON body. */
 function orgPost(action: string, body: unknown): Request {
@@ -80,7 +110,10 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	h.post.mockImplementation(async () => new Response("post-handler"));
 	h.caller = h.signedIn();
+	h.lookupFails = false;
 	h.byTable = new Map();
+	h.memberByOrg = new Map();
+	vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 describe("a caller whose membership is not active may not manage the org", () => {
@@ -147,5 +180,42 @@ describe("leave", () => {
 		h.post.mockImplementationOnce(async () => new Response("{}", { status: 400 }));
 		await POST(orgPost("leave", { organizationId: "org-1" }));
 		expect(h.revokeMemberGrant).not.toHaveBeenCalled();
+	});
+});
+
+describe("the guard fails closed when the session cannot be read (#5472)", () => {
+	// Against the previous head a failed read was treated as "no session", the guard skipped, and
+	// the request went to better-auth, whose own session read could then succeed.
+	it.each(["invite-member", "remove-member", "update-member-role", "leave"])(
+		"answers %s with a 500 and never reaches better-auth when the session read throws",
+		async (action) => {
+			h.lookupFails = true;
+			h.byTable.set(member, [{ id: "m-1", status: "suspended" }]);
+			const res = await POST(orgPost(action, { organizationId: "org-1", memberId: "m-2" }));
+			expect(res.status).toBe(500);
+			expect(await res.json()).toMatchObject({ code: "SESSION_LOOKUP_FAILED" });
+			expect(h.post).not.toHaveBeenCalled();
+		},
+	);
+});
+
+describe("update-team targets the org better-auth acts in (#5472)", () => {
+	// better-auth's update-team reads `data.organizationId || activeOrganizationId`, never a top-level
+	// `organizationId`. Against the previous head the guard read the top-level field first, so a body
+	// naming an org the caller has no row in was let through while better-auth renamed a team in B.
+	it("refuses a suspended member of data.organizationId even when a top-level organizationId names another org", async () => {
+		// No row in org-elsewhere (the guard lets a caller with no row through to better-auth);
+		// a SUSPENDED row in org-B, the org better-auth acts in.
+		h.memberByOrg.set("org-elsewhere", []);
+		h.memberByOrg.set("org-B", [{ id: "m-1", status: "suspended" }]);
+		const res = await POST(
+			orgPost("update-team", {
+				organizationId: "org-elsewhere",
+				teamId: "t-1",
+				data: { organizationId: "org-B", name: "renamed" },
+			}),
+		);
+		expect(res.status).toBe(403);
+		expect(h.post).not.toHaveBeenCalled();
 	});
 });

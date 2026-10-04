@@ -89,30 +89,30 @@ export class PostgresRbacPDP implements Pdp {
 		// OpenFGA expander reaches. Both callers (`can`, `listAccessible`) consume the result
 		// identically, through that one helper.
 		//
-		// `member.status` is read here because grants do not carry it (#5472). A member whose row
-		// in the org is not `active` matches nothing: suspension revokes their own grants, but a
-		// grant to a TEAM they belong to is a different row that suspension never touches, so team
-		// grants are honoured only for an ACTIVE member row. A user grant with no member row is
-		// still matched, because the personal scope (org id = user id) has no member row.
+		// `member` is read here because grants do not carry membership (#5472). Outside the
+		// personal scope (org id = user id, which has no member row by design), an actor matches
+		// nothing unless their member row in the org is `active`: suspension and removal revoke
+		// their own grants, but a grant to a TEAM they belong to is a different row that neither
+		// touches, and `team_member` rows can outlive the member row. This is the rule
+		// `lacksActiveMembership` states, and the ee OpenFGA PDP applies it before reading a tuple.
 		return db.execute<GrantRow>(sql`
 			select g.resource_type, g.resource_id, g.effect
 			from grants g
 			left join role_permission rp on rp.role_id = g.role_id
 			where g.org_id = ${actor.orgId}
 			  and (rp.permission_key = ${permKey} or g.permission_key = ${permKey})
-			  and not exists (
-			    select 1 from member m
-			    where m.organization_id = g.org_id and m.user_id = ${actor.userId}
-			      and m.status <> 'active'
+			  and (
+			    g.org_id = ${actor.userId}
+			    or exists (
+			      select 1 from member m
+			      where m.organization_id = g.org_id and m.user_id = ${actor.userId}
+			        and m.status = 'active'
+			    )
 			  )
 			  and (
 			    (g.principal_type = 'user' and g.principal_id = ${actor.userId})
 			    or (g.principal_type = 'team' and g.principal_id in (
 			      select team_id from team_member where user_id = ${actor.userId}
-			    ) and exists (
-			      select 1 from member m
-			      where m.organization_id = g.org_id and m.user_id = ${actor.userId}
-			        and m.status = 'active'
 			    ))
 			  )
 		`);

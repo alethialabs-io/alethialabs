@@ -41,6 +41,11 @@ const STATUS_GATED_ORG_ACTIONS: ReadonlySet<string> = new Set([
 	"delete-role",
 ]);
 
+/** Whether `orgActionRefusal` may refuse `action`, and so needs the signed-in caller to decide. */
+export function isGuardedOrgAction(action: string): boolean {
+	return action === "leave" || STATUS_GATED_ORG_ACTIONS.has(action);
+}
+
 /** The `<action>` in /api/auth/organization/<action>, or null if not an org route. */
 export function orgAction(pathname: string): string | null {
 	const marker = "/organization/";
@@ -57,9 +62,12 @@ export function stringField(value: unknown, key: string): string | null {
 }
 
 /**
- * The org a status-gated action targets, resolved the way better-auth resolves it: the invitation's
- * org for `cancel-invitation`, otherwise `organizationId` from the body (`data.organizationId` for
- * `update-team`), otherwise the session's active org.
+ * The org a status-gated action targets, resolved the way better-auth 1.7 resolves it: the
+ * invitation's org for `cancel-invitation`; for `update-team`, `data.organizationId` and nothing
+ * else from the body (better-auth reads `ctx.body.data.organizationId || activeOrganizationId` and
+ * never a top-level `organizationId`, so honouring one here would let a body name an org the guard
+ * checks while better-auth acts in another); otherwise `organizationId` from the body. Each falls
+ * back to the session's active org.
  */
 async function targetOrgId(
 	action: string,
@@ -76,16 +84,14 @@ async function targetOrgId(
 			.limit(1);
 		return row?.organizationId ?? null;
 	}
-	const data: unknown =
-		typeof body === "object" && body !== null && "data" in body
-			? Reflect.get(body, "data")
-			: null;
-	return (
-		stringField(body, "organizationId") ??
-		stringField(data, "organizationId") ??
-		activeOrgId ??
-		null
-	);
+	if (action === "update-team") {
+		const data: unknown =
+			typeof body === "object" && body !== null && "data" in body
+				? Reflect.get(body, "data")
+				: null;
+		return stringField(data, "organizationId") ?? activeOrgId ?? null;
+	}
+	return stringField(body, "organizationId") ?? activeOrgId ?? null;
 }
 
 /** The caller's member row in an org, or undefined when they have none. */

@@ -142,6 +142,7 @@ function stubCore(
   roleChangeOwnerRefusal: CoreContext["roleChangeOwnerRefusal"] = vi.fn(async () => null),
   removalOwnerRefusal: CoreContext["removalOwnerRefusal"] = vi.fn(async () => null),
   isNonActiveMember: CoreContext["isNonActiveMember"] = vi.fn(async () => false),
+  inviterRefusal: CoreContext["inviterRefusal"] = vi.fn(async () => null),
 ): CoreContext {
   const stub = {
     db: {},
@@ -162,6 +163,7 @@ function stubCore(
     roleChangeOwnerRefusal,
     removalOwnerRefusal,
     isNonActiveMember,
+    inviterRefusal,
     fga: { isEnabled: () => false },
   };
   // A test-only stub: `db` and most of `fga` are never reached with OpenFGA off (see above).
@@ -208,6 +210,7 @@ describe("register(core) — the organization plugin production mounts", () => {
     roleChangeOwnerRefusal?: CoreContext["roleChangeOwnerRefusal"],
     removalOwnerRefusal?: CoreContext["removalOwnerRefusal"],
     isNonActiveMember?: CoreContext["isNonActiveMember"],
+    inviterRefusal?: CoreContext["inviterRefusal"],
   ) {
     // core's membership read, over this instance's own store.
     const isOrgMember = async (orgId: string, userId: string): Promise<boolean> =>
@@ -219,6 +222,7 @@ describe("register(core) — the organization plugin production mounts", () => {
         roleChangeOwnerRefusal,
         removalOwnerRefusal,
         isNonActiveMember,
+        inviterRefusal,
       ),
     );
     const orgPlugin = mod.authPlugins?.find((p) => p.id === "organization");
@@ -533,5 +537,49 @@ describe("register(core) — the organization plugin production mounts", () => {
     });
     expect(ok.status).toBe(200);
     expect(db.invitation).toHaveLength(1);
+  });
+  // #5472: an invitation is honoured only while its inviter is an active member. better-auth's accept
+  // does not re-check the inviter, so against the previous head an invitation sent by an admin who was
+  // then suspended is accepted and the invitee is added at the role the admin chose.
+  it("refuses POST /organization/accept-invitation when core says the inviter is no longer active, and adds no member", async () => {
+    let refusal: string | null = "inviter gone";
+    const inviterRefusal = vi.fn(async (_org: string, _inviter: string) => refusal);
+    const { db, post, postAs, signUp, userId } = await setup(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      inviterRefusal,
+    );
+    const created = await post("/organization/create", { name: "Acme", slug: "acme" });
+    expect(created.status).toBe(200);
+    const orgId = db.organization[0]?.id;
+    const invitee = await signUp("second@example.com");
+    db.invitation.push({
+      id: "invite-from-suspended",
+      organizationId: orgId,
+      email: "second@example.com",
+      role: "admin",
+      status: "pending",
+      inviterId: userId,
+      expiresAt: new Date(Date.now() + 86_400_000),
+      createdAt: new Date(),
+    });
+
+    const res = await postAs(invitee.cookie, "/organization/accept-invitation", {
+      invitationId: "invite-from-suspended",
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: "INVITER_NOT_ACTIVE", message: "inviter gone" });
+    expect(inviterRefusal).toHaveBeenCalledWith(orgId, userId);
+    expect(db.member.filter((m) => m.userId === invitee.id)).toHaveLength(0);
+
+    // The control: the same invitation, its inviter active, is accepted.
+    refusal = null;
+    const ok = await postAs(invitee.cookie, "/organization/accept-invitation", {
+      invitationId: "invite-from-suspended",
+    });
+    expect(ok.status).toBe(200);
+    expect(db.member.filter((m) => m.userId === invitee.id)).toHaveLength(1);
   });
 });

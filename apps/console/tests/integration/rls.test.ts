@@ -20,10 +20,13 @@ import {
 	environmentDrift,
 	grants,
 	jobs,
+	member,
+	organization,
 	permission,
 	projectAddons,
 	projectEnvironments,
 	projects,
+	user,
 } from "@/lib/db/schema";
 import { APP_ROLE_DISTINCT, describeIfDb } from "./db";
 
@@ -386,6 +389,11 @@ describeIfDb("Cross-tenant read of project-child tables (drift + addons)", () =>
 		// The org-blind grants that make authorize("view", project:ANY) succeed.
 		await seedOrgWideViewGrant(DRIFT_ORG_A, DRIFT_ORG_A);
 		await seedOrgWideViewGrant(DRIFT_ORG_TEAM, TEAM_READER);
+		// The PDP grants nothing in a non-personal org to an actor who is not an ACTIVE member of it
+		// (#5472), so the teammate is a member of the Teams org, as they are in production.
+		await db.insert(user).values({ id: TEAM_READER, email: `it-rls-reader-${TEAM_READER}@example.test` });
+		await db.insert(organization).values({ id: DRIFT_ORG_TEAM, name: `rls-team-${DRIFT_ORG_TEAM.slice(0, 8)}` });
+		await db.insert(member).values({ organizationId: DRIFT_ORG_TEAM, userId: TEAM_READER, role: "viewer" });
 	});
 
 	afterAll(async () => {
@@ -404,6 +412,8 @@ describeIfDb("Cross-tenant read of project-child tables (drift + addons)", () =>
 		await db
 			.delete(grants)
 			.where(inArray(grants.org_id, [DRIFT_ORG_A, DRIFT_ORG_TEAM]));
+		await db.delete(organization).where(eq(organization.id, DRIFT_ORG_TEAM));
+		await db.delete(user).where(eq(user.id, TEAM_READER));
 		await db.delete(permission).where(eq(permission.key, "project:view"));
 	});
 

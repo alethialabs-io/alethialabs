@@ -32,9 +32,12 @@ import { syncOrgSeats } from "@/lib/billing/seats";
 import { removalOwnerRefusal, roleChangeOwnerRefusal } from "@/lib/authz/active-owner";
 import {
   ensureMemberGrant,
+  inviterRefusal,
   isNonActiveMember,
+  lacksActiveMembership,
   revokeMemberGrant,
 } from "@/lib/authz/grants";
+import { INSTANCE_TYPES } from "@/lib/authz/fga-hierarchy";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import type { TupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor, Entitlements, Pdp } from "@/lib/authz/types";
@@ -111,10 +114,20 @@ export interface CoreContext {
   removalOwnerRefusal: typeof removalOwnerRefusal;
   /**
    * Whether a user's member row in an org has a status other than `active`. Injected so the
-   * OpenFGA PDP denies a suspended member, whose team tuples outlive the suspension, and so the
    * organization plugin's `beforeCreateInvitation` refuses a suspended inviter (#5472).
    */
   isNonActiveMember: typeof isNonActiveMember;
+  /**
+   * Whether a user is not an active member of an org (a non-active row, or no row outside their
+   * personal scope). Injected so the OpenFGA PDP denies such an actor before reading a tuple, the
+   * rule `PostgresRbacPDP` applies in its own query (#5472).
+   */
+  lacksActiveMembership: typeof lacksActiveMembership;
+  /**
+   * Why an invitation may not be accepted because its inviter is no longer an active member, or
+   * null. Injected so the organization plugin's `beforeAcceptInvitation` refuses it (#5472).
+   */
+  inviterRefusal: typeof inviterRefusal;
   newOrgSetup: {
     stampMetadata: typeof stampNewOrgMetadata;
     recordCreated: typeof recordNewOrgCreated;
@@ -168,6 +181,11 @@ export interface CoreContext {
     denyChecksFor: typeof denyChecksFor;
     enforceDecision: typeof enforceDecision;
     listOrgResourceIds: typeof listOrgResourceIds;
+    /**
+     * The resource kinds with their own per-instance FGA object (each carries a `parent` tuple to
+     * its org). The tuple writer reads them to find which of a user's tuples live in one org.
+     */
+    instanceTypes: typeof INSTANCE_TYPES;
     isEnabled: typeof isOpenFgaEnabled;
     getConfig: typeof getOpenFgaConfig;
   };
@@ -266,6 +284,8 @@ function loadEnterprise(): void {
       roleChangeOwnerRefusal,
       removalOwnerRefusal,
       isNonActiveMember,
+      lacksActiveMembership,
+      inviterRefusal,
       newOrgSetup: {
         stampMetadata: stampNewOrgMetadata,
         recordCreated: recordNewOrgCreated,
@@ -286,6 +306,7 @@ function loadEnterprise(): void {
         denyChecksFor,
         enforceDecision,
         listOrgResourceIds,
+        instanceTypes: INSTANCE_TYPES,
         isEnabled: isOpenFgaEnabled,
         getConfig: getOpenFgaConfig,
       },

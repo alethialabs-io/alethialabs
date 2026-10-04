@@ -142,12 +142,25 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
           // (#5445). better-auth's accept does not check, and `member` is unique on (organization,
           // user) — so the insert failed with a raw unique violation the person saw only as an
           // unexplained error. Before the index it inserted a second row: a second billable seat.
+          //
+          // An invitation whose inviter is no longer an active member of the org is refused too
+          // (#5472): better-auth's accept does not re-check the inviter, so an admin who invited a
+          // second account they control and was then suspended or removed still got it in at the
+          // role they chose. This holds for every invitation that is accepted through better-auth,
+          // including the ones `POST /api/cli/orgs/:id/members` and `provisionOrg` insert directly.
           beforeAcceptInvitation: async ({ invitation, user }) => {
             if (await core.isOrgMember(invitation.organizationId, user.id)) {
               throw new APIError("BAD_REQUEST", {
                 code: "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION",
                 message: "You're already a member of this team, so there is nothing to accept.",
               });
+            }
+            const refusal = await core.inviterRefusal(
+              invitation.organizationId,
+              invitation.inviterId,
+            );
+            if (refusal) {
+              throw new APIError("FORBIDDEN", { code: "INVITER_NOT_ACTIVE", message: refusal });
             }
           },
           // Pay-to-collaborate: a card-less Pro trial is solo. Block invites until
@@ -157,8 +170,13 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
           // An inviter whose membership is not active is refused too (#5472): better-auth
           // authorizes an invitation from `member.role` alone, so a suspended admin could invite a
           // second account they control and `afterAcceptInvitation` granted it as an active admin.
-          // The auth route refuses this before better-auth runs; this hook holds it inside the
-          // endpoint, whatever path the request took to reach it.
+          // The auth route refuses this before better-auth runs; this hook holds it inside
+          // better-auth's create-invitation endpoint, whichever HTTP route reached that endpoint.
+          // It does NOT see an invitation row written outside better-auth: `POST
+          // /api/cli/orgs/:id/members` inserts one directly, and is authorized by `authorizeCliOrg`
+          // (an ACTIVE member row and the route's permission in the path org, #5480) and by the PDP,
+          // which denies a member who is not active. `beforeAcceptInvitation` re-checks the inviter
+          // of every invitation at acceptance, whichever path wrote it.
           beforeCreateInvitation: async ({ invitation, inviter }) => {
             if (await core.isNonActiveMember(invitation.organizationId, inviter.id)) {
               throw new APIError("FORBIDDEN", {

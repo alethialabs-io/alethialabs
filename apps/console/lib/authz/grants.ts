@@ -14,7 +14,7 @@ import { toPdpRole } from "@/lib/authz/org-access-control";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
-import { member } from "@/lib/db/schema";
+import { member, user } from "@/lib/db/schema";
 
 /** Mirror a grant change to OpenFGA, best-effort (Postgres is the source of truth). */
 function mirror(run: Promise<void>): void {
@@ -109,10 +109,8 @@ export const INACTIVE_PRINCIPAL_MESSAGE =
  * request and refuse an ALLOW grant to such a member, the rule `ensureMemberGrant` applies to the
  * member lifecycle; a deny grant only removes access, so it is not refused. That is a read before
  * their insert, not a lock: a suspension that commits between the two leaves an allow row behind,
- * which neither PDP honours. The ee OpenFGA PDP denies such an actor before it reads a tuple,
- * because a suspended member's TEAM tuples (`team:T#member@user:U`) survive the suspension and
- * would otherwise still confer the team's grants; `PostgresRbacPDP.matchingGrants` applies the
- * same rule in its own query. The ee `beforeCreateInvitation` hook refuses such an inviter.
+ * which neither PDP honours (see `lacksActiveMembership`). The ee `beforeCreateInvitation` hook
+ * refuses such an inviter.
  */
 export async function isNonActiveMember(orgId: string, userId: string): Promise<boolean> {
 	const [m] = await getServiceDb()
@@ -121,6 +119,62 @@ export async function isNonActiveMember(orgId: string, userId: string): Promise<
 		.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
 		.limit(1);
 	return m !== undefined && m.status !== "active";
+}
+
+/**
+ * Whether user `userId` may hold NO access in org `orgId` because they are not an active member of
+ * it: true when their member row there is not `active`, and also when they have no member row at
+ * all. The one exception is the personal scope (org id = user id), which has no member row by design
+ * and answers false.
+ *
+ * Both PDPs deny such an actor everything in the org (#5472). `PostgresRbacPDP.matchingGrants`
+ * applies it in its own query; the ee OpenFGA PDP calls this before it reads a tuple. The reason is
+ * the same for both: a suspended or removed member's TEAM membership (`team_member` rows, and the
+ * `team:T#member@user:U` tuples mirrored from them) is not removed by suspension or by every removal
+ * path, and a team's grants are resolved through it. A user grant left behind with no member row is
+ * honoured by neither engine for the same reason: no writer of a grant row in a non-personal org
+ * writes one for a user who is not an active member there (`ensureMemberGrant`, `assignGrant` and
+ * `POST /api/cli/grants` refuse), so such a row is a leftover, not access.
+ */
+export async function lacksActiveMembership(orgId: string, userId: string): Promise<boolean> {
+	if (orgId === userId) return false;
+	const [m] = await getServiceDb()
+		.select({ status: member.status })
+		.from(member)
+		.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
+		.limit(1);
+	return m === undefined || m.status !== "active";
+}
+
+/** The sentence an invitation is refused with when its inviter may no longer invite. */
+export const INVITER_NOT_ACTIVE_MESSAGE =
+	"The person who sent this invitation is no longer an active member of the team, so it can't be accepted. Ask a current admin to invite you again.";
+
+/**
+ * Why invitation into org `orgId` sent by user `inviterId` may not be accepted, or null when it may
+ * (#5472). An invitation is accepted later than it is sent, and better-auth's accept does not
+ * re-check the inviter: an admin who invited a second account they control and was THEN suspended or
+ * removed would still get that account in, at the role they chose. So an invitation is honoured
+ * only while its inviter is an active member of the org.
+ *
+ * The platform system user (`PLATFORM_SYSTEM_USER_EMAIL`) is the exception: it is the inviter on
+ * the owner invitations `provisionOrg` issues and is never a member of any org by design.
+ */
+export async function inviterRefusal(
+	orgId: string,
+	inviterId: string,
+): Promise<string | null> {
+	if (!(await lacksActiveMembership(orgId, inviterId))) return null;
+	const platformEmail = process.env.PLATFORM_SYSTEM_USER_EMAIL?.trim().toLowerCase();
+	if (platformEmail) {
+		const [row] = await getServiceDb()
+			.select({ email: user.email })
+			.from(user)
+			.where(eq(user.id, inviterId))
+			.limit(1);
+		if (row && row.email.trim().toLowerCase() === platformEmail) return null;
+	}
+	return INVITER_NOT_ACTIVE_MESSAGE;
 }
 
 /**

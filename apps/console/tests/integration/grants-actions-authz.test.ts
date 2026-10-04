@@ -30,6 +30,7 @@ import { getServiceDb } from "@/lib/db";
 import {
 	authzActivityLog,
 	grants,
+	member,
 	organization,
 	user,
 } from "@/lib/db/schema";
@@ -111,6 +112,15 @@ describeIfDb("grants server actions — real PDP gate (P0 escalation fix)", () =
 			{ id: TARGET, email: `it-grants-target-${TARGET}@example.test` },
 		]);
 		await db.insert(organization).values({ id: ORG, name: `grants-${ORG.slice(0, 8)}` });
+		// Both PDPs grant nothing in a non-personal org to an actor who is not an ACTIVE member of
+		// it (#5472), so every actor here is a member, as they are in production.
+		await db.insert(member).values([
+			{ organizationId: ORG, userId: OWNER, role: "viewer" },
+			{ organizationId: ORG, userId: ADMIN, role: "viewer" },
+			{ organizationId: ORG, userId: VIEWER, role: "viewer" },
+			{ organizationId: ORG, userId: OUTSIDER, role: "viewer" },
+			{ organizationId: ORG, userId: TARGET, role: "viewer" },
+		]);
 	});
 
 	beforeEach(async () => {

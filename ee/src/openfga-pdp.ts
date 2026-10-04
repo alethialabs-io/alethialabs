@@ -32,7 +32,7 @@ export interface FgaReader {
 
 /** The core capabilities this engine uses, out of `CoreContext`. */
 export interface PdpCore {
-	isNonActiveMember: CoreContext["isNonActiveMember"];
+	lacksActiveMembership: CoreContext["lacksActiveMembership"];
 	fga: Pick<
 		CoreContext["fga"],
 		"checksFor" | "denyChecksFor" | "enforceDecision" | "listOrgResourceIds"
@@ -46,16 +46,18 @@ export class OpenFgaPdp implements Pdp {
 	) {}
 
 	/**
-	 * Decides one check. A member whose row in the org is not `active` is denied before any tuple
-	 * is read (#5472): suspension revokes their own grant tuples, but their team tuples
-	 * (`team:T#member@user:U`) stay, and FGA resolves a team's grants through them.
+	 * Decides one check. An actor who is not an active member of the org — a member row that is not
+	 * `active`, or no member row outside their personal scope — is denied before any tuple is read
+	 * (#5472): suspension and removal revoke their own grant tuples, but team tuples
+	 * (`team:T#member@user:U`) can outlive both, and FGA resolves a team's grants through them.
+	 * `PostgresRbacPDP` applies the same rule in its grant query, so the two engines agree.
 	 */
 	async can(
 		actor: Actor,
 		action: Action,
 		resource: ResourceRef,
 	): Promise<Decision> {
-		if (await this.core.isNonActiveMember(actor.orgId, actor.userId)) {
+		if (await this.core.lacksActiveMembership(actor.orgId, actor.userId)) {
 			return { allowed: false, reason: "no_grant" };
 		}
 		const opts = { id: resource.id, orgId: actor.orgId };
@@ -105,8 +107,8 @@ export class OpenFgaPdp implements Pdp {
 		action: Action,
 		resourceType: Resource,
 	): Promise<string[]> {
-		// A member who is not active can reach nothing, for the reason `can` states.
-		if (await this.core.isNonActiveMember(actor.orgId, actor.userId)) return [];
+		// An actor who is not an active member can reach nothing, for the reason `can` states.
+		if (await this.core.lacksActiveMembership(actor.orgId, actor.userId)) return [];
 		const user = `user:${actor.userId}`;
 		// Org-wide capability ⇒ every instance of the type in the org (matches the
 		// PostgresRbacPDP org-wide path). This must be DENY-AWARE, exactly like that

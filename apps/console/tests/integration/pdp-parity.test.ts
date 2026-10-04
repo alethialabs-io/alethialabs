@@ -30,6 +30,7 @@ import {
 	type FgaTuple,
 } from "@/lib/authz/fga-tuples";
 import { EMPTY_SCOPE_DENIES } from "@/lib/authz/grant-scope";
+import { lacksActiveMembership } from "@/lib/authz/grants";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import type { Action, Resource } from "@/lib/authz/registry";
 import { listOrgResourceIds } from "@/lib/authz/resource-tables";
@@ -38,6 +39,7 @@ import type { Actor } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
 import {
 	grants,
+	member,
 	organization,
 	projects,
 	resourceHierarchy,
@@ -130,9 +132,13 @@ const PROJ_A2 = randomUUID(); // in ORG_A, no scoped grant (org-wide deploy reac
 const PROJ_A3 = randomUUID(); // in ORG_A, org-wide deploy ALLOW + a per-instance deploy DENY
 const PROJ_B1 = randomUUID(); // in ORG_B — the cross-tenant target
 const TEAM_A = randomUUID(); // in ORG_A, USER_A is a member — the team-principal path
+// On TEAM_A and holding a user grant in ORG_A, but with NO member row there (#5472): removed through
+// a path that left their `team_member` row. Both engines must grant them nothing in ORG_A.
+const USER_NR = randomUUID();
 
 const pg = new PostgresRbacPDP();
 const actor: Actor = { userId: USER_A, orgId: ORG_A };
+const noRowActor: Actor = { userId: USER_NR, orgId: ORG_A };
 
 describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 	let storeId = "";
@@ -142,13 +148,23 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		const db = getServiceDb();
 		await seedAuthz(); // permission/role catalog (grants.permission_key FK)
 
-		await db.insert(user).values({ id: USER_A, email: `it-parity-${USER_A}@example.test` });
+		await db.insert(user).values([
+			{ id: USER_A, email: `it-parity-${USER_A}@example.test` },
+			{ id: USER_NR, email: `it-parity-nr-${USER_NR}@example.test` },
+		]);
 		await db.insert(organization).values([
 			{ id: ORG_A, name: `A-${ORG_A.slice(0, 8)}` },
 			{ id: ORG_B, name: `B-${ORG_B.slice(0, 8)}` },
 		]);
+		// USER_A is an ACTIVE member of ORG_A, as every actor resolved into a non-personal org is in
+		// production; both engines grant nothing there to an actor who is not (#5472). USER_NR has
+		// no row, on purpose.
+		await db.insert(member).values({ organizationId: ORG_A, userId: USER_A, role: "viewer" });
 		await db.insert(team).values({ id: TEAM_A, name: "platform", organizationId: ORG_A });
-		await db.insert(teamMember).values({ teamId: TEAM_A, userId: USER_A });
+		await db.insert(teamMember).values([
+			{ teamId: TEAM_A, userId: USER_A },
+			{ teamId: TEAM_A, userId: USER_NR },
+		]);
 		await db.insert(projects).values([
 			mkProject(PROJ_A1, ORG_A),
 			mkProject(PROJ_A2, ORG_A),
@@ -237,6 +253,9 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 				resource_id: PROJ_A1,
 				effect: "deny",
 			}),
+			// G13: an org-wide view grant to USER_NR, who has no member row in ORG_A (#5472). A row a
+			// removal left behind; neither engine may honour it.
+			grantRow({ principal_id: USER_NR, permission_key: "project:view", resource_id: null }),
 		];
 		await db.insert(grants).values(grantRows);
 
@@ -294,6 +313,7 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 			// `expandGrant` can derive from a `grants` row — the dual-write mirrors it separately
 			// (`syncTeamMember`). Without it G8 reaches nobody and its cases would pass vacuously.
 			teamMemberTuple(TEAM_A, USER_A),
+			teamMemberTuple(TEAM_A, USER_NR),
 		];
 		await writeTuples(storeId, tuples);
 	});
@@ -308,19 +328,24 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		await db.delete(organization).where(inArray(organization.id, [ORG_A, ORG_B]));
 		await db.delete(teamMember).where(eq(teamMember.teamId, TEAM_A));
 		await db.delete(team).where(eq(team.id, TEAM_A));
-		await db.delete(user).where(eq(user.id, USER_A));
+		await db.delete(member).where(eq(member.organizationId, ORG_A));
+		await db.delete(user).where(inArray(user.id, [USER_A, USER_NR]));
 		if (storeId) {
 			await fetch(`${FGA_URL}/stores/${storeId}`, { method: "DELETE" }).catch(() => {});
 		}
 	});
 
-	/** The OpenFGA engine's decision, exactly as OpenFgaPdp.can computes it: SOME allow
-	 * check passes AND NO deny check vetoes (explicit-deny-wins). */
-	async function fgaAllowed(action: Action, resource: { type: Resource; id: string }): Promise<boolean> {
-		const opts = { id: resource.id, orgId: actor.orgId };
+	/** What the STORE answers for a check, before OpenFgaPdp's membership gate: SOME allow check
+	 * passes AND NO deny check vetoes (explicit-deny-wins). */
+	async function fgaStoreAllows(
+		action: Action,
+		resource: { type: Resource; id: string },
+		who: Actor = actor,
+	): Promise<boolean> {
+		const opts = { id: resource.id, orgId: who.orgId };
 		const runChecks = (checks: ReturnType<typeof checksFor>) =>
 			Promise.all(
-				checks.map((c) => fgaCheck(storeId, modelId, { user: `user:${USER_A}`, relation: c.relation, object: c.object })),
+				checks.map((c) => fgaCheck(storeId, modelId, { user: `user:${who.userId}`, relation: c.relation, object: c.object })),
 			);
 		const [allowResults, denyResults] = await Promise.all([
 			runChecks(checksFor(resource.type, action, opts)),
@@ -330,12 +355,29 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		return allowResults.some((r) => r);
 	}
 
+	/** The OpenFGA engine's decision, exactly as OpenFgaPdp.can computes it: an actor who is not an
+	 * active member of the org (core's `lacksActiveMembership`, the predicate ee injects) is denied
+	 * before the store is asked; otherwise the store's answer. */
+	async function fgaAllowed(
+		action: Action,
+		resource: { type: Resource; id: string },
+		who: Actor = actor,
+	): Promise<boolean> {
+		if (await lacksActiveMembership(who.orgId, who.userId)) return false;
+		return fgaStoreAllows(action, resource, who);
+	}
+
 	/** The OpenFGA engine's `listAccessible`, mirroring `OpenFgaPdp.listAccessible` exactly
 	 * (same reimplement-and-compare style as `fgaAllowed`). The ORG-WIDE path must be
 	 * deny-aware: org-wide deny ⇒ [], else all org instances MINUS the per-instance denies
 	 * (listObjects `deny_<action>`). The scoped path uses `can_<action>`, itself deny-aware. */
-	async function fgaListAccessible(action: Action, resourceType: Resource): Promise<string[]> {
-		const user = `user:${USER_A}`;
+	async function fgaListAccessible(
+		action: Action,
+		resourceType: Resource,
+		who: Actor = actor,
+	): Promise<string[]> {
+		if (await lacksActiveMembership(who.orgId, who.userId)) return [];
+		const user = `user:${who.userId}`;
 		const listObjects = async (relation: string): Promise<string[]> => {
 			const raw = listObjectsSchema.parse(
 				await post(`/stores/${storeId}/list-objects`, {
@@ -352,17 +394,17 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		const orgAllow = await fgaCheck(storeId, modelId, {
 			user,
 			relation: `${resourceType}_${action}`,
-			object: `org:${actor.orgId}`,
+			object: `org:${who.orgId}`,
 		});
 		if (orgAllow) {
 			const orgDeny = await fgaCheck(storeId, modelId, {
 				user,
 				relation: `${resourceType}_deny_${action}`,
-				object: `org:${actor.orgId}`,
+				object: `org:${who.orgId}`,
 			});
 			if (orgDeny) return [];
 			const [allIds, deniedIds] = await Promise.all([
-				listOrgResourceIds(resourceType, actor.orgId),
+				listOrgResourceIds(resourceType, who.orgId),
 				listObjects(`deny_${action}`),
 			]);
 			const denied = new Set(deniedIds);
@@ -512,6 +554,37 @@ describeParity("PDP engine parity (PostgresRbacPDP vs OpenFGA)", () => {
 		expect(fgaIds).not.toContain(PROJ_A1);
 		expect(fgaIds).not.toContain(PROJ_A3);
 		expect(fgaIds).not.toContain(PROJ_B1);
+	});
+
+	// ── #5472: an actor with NO member row in the org ────────────────────────────────────────
+	// USER_NR is on TEAM_A (G8, plan on PROJ_A1) and holds G13 (org-wide view) in ORG_A, with no
+	// member row there. Before, Postgres refused only the team grant and OpenFGA honoured both: the
+	// team case diverged outright, and the store still answers "allowed" for both today. Both
+	// engines now refuse both, through the same rule (`lacksActiveMembership`).
+	const noRowCases: { name: string; action: Action; id: string }[] = [
+		{ name: "plan on PROJ_A1 through TEAM_A, with no member row", action: "plan", id: PROJ_A1 },
+		{ name: "view on PROJ_A2 through a leftover user grant, with no member row", action: "view", id: PROJ_A2 },
+	];
+	for (const c of noRowCases) {
+		it(`agrees, and DENIES: ${c.name}`, async () => {
+			const pgDecision = await pg.can(noRowActor, c.action, { type: "project", id: c.id });
+			const fgaDecision = await fgaAllowed(c.action, { type: "project", id: c.id }, noRowActor);
+			expect(
+				pgDecision.allowed,
+				`ENGINE DIVERGENCE on ${c.name}: Postgres=${pgDecision.allowed} OpenFGA=${fgaDecision}`,
+			).toBe(fgaDecision);
+			expect(pgDecision.allowed).toBe(false);
+			// Non-vacuity: the store itself still says yes, so the refusal is the membership rule's,
+			// not a fixture that grants nothing.
+			expect(await fgaStoreAllows(c.action, { type: "project", id: c.id }, noRowActor)).toBe(true);
+		});
+	}
+
+	it("listAccessible agrees on an actor with no member row: nothing, on both engines", async () => {
+		const pgIds = await pg.listAccessible(noRowActor, "view", "project");
+		const fgaIds = await fgaListAccessible("view", "project", noRowActor);
+		expect(pgIds).toEqual([]);
+		expect(fgaIds).toEqual([]);
 	});
 });
 
