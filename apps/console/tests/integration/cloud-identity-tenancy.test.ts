@@ -23,7 +23,12 @@ import { describeIfDb } from "./db";
 
 vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
 vi.mock("@/lib/runners/auth", () => ({ verifyRunnerToken: vi.fn() }));
-vi.mock("@/lib/runners/snapshot-sig", () => ({ verifySnapshot: () => true }));
+// Partial: the jobs route signs the snapshot it inserts through this module (lib/db/signed-job.ts);
+// only the claim-side check is stubbed.
+vi.mock("@/lib/runners/snapshot-sig", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/runners/snapshot-sig")>()),
+	verifySnapshot: () => true,
+}));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
 vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(),
@@ -316,7 +321,8 @@ describeIfDb("cloud identity tenancy (#5479)", () => {
 			}),
 		);
 
-		expect(res.status).toBe(201);
+		// The body rides along so a failure names its cause instead of a bare status.
+		expect({ status: res.status, body: await res.text() }).toMatchObject({ status: 201 });
 	});
 
 	// ── 3. The project binding: POST /api/cli/projects ─────────────────────────────────────────
