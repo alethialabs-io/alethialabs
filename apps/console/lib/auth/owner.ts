@@ -87,6 +87,32 @@ export async function getOwnerScope(): Promise<OwnerScope> {
 	};
 }
 
+/**
+ * {@link getOwnerScope} for a caller that must tell "no session" from "the lookup failed": null when
+ * the request carries no session, and a THROW when reading it failed. `getOwnerScope` maps both to
+ * the same `UnauthorizedError`, which is right for a page that redirects to sign-in and wrong for a
+ * guard that skips itself when there is no caller — that guard would then skip on a database error
+ * too, and the request it guards would run unchecked if better-auth's own read succeeded (#5472).
+ */
+export async function findOwnerScope(): Promise<OwnerScope | null> {
+	const injected = getInjectedActor();
+	if (injected) {
+		return {
+			userId: injected.userId,
+			sessionId: "",
+			activeOrgId:
+				injected.orgId === injected.userId ? undefined : injected.orgId,
+		};
+	}
+	const session = await auth.api.getSession({ headers: await headers() });
+	if (!session?.user) return null;
+	return {
+		userId: session.user.id,
+		sessionId: session.session.id,
+		activeOrgId: readActiveOrgId(session.session),
+	};
+}
+
 /** Reads session.activeOrganizationId without assuming the org-plugin types are present. */
 function readActiveOrgId(s: object): string | undefined {
 	if (

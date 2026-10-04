@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { typedKeys } from "@/lib/typed-object";
+import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import { getMembers } from "@/app/server/actions/members";
 import { listCustomRoles } from "@/app/server/actions/roles";
@@ -11,6 +12,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { actorCanGrant } from "@/lib/authz/ceiling";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { grantScopeFromRow, parseGrantResource } from "@/lib/authz/fga-tuples";
+import { INACTIVE_PRINCIPAL_MESSAGE, lacksActiveMembership } from "@/lib/authz/grants";
 import { resourceIdOf } from "@/lib/authz/grant-scope";
 import { authorize } from "@/lib/authz/guard";
 import {
@@ -119,14 +121,36 @@ export interface AssignGrantInput {
 }
 
 /**
- * Writes one access grant, after refusing every request it cannot store faithfully: a caller
+ * The runtime shape of {@link AssignGrantInput}. A server action's argument arrives over the wire,
+ * so the TypeScript type is a claim, not a check: before this, a request that OMITTED `effect`
+ * skipped both the privilege ceiling and the active-member check (each tests `effect === "allow"`)
+ * while the insert fell back to the column default, `allow` (#5478 review). `effect` and
+ * `principalType` are required enums here, so an omitted or unknown value is refused.
+ */
+const assignGrantInputSchema = z.object({
+	principalType: z.enum(["user", "team"]),
+	principalId: z.string().min(1),
+	effect: z.enum(["allow", "deny"]),
+	roleId: z.string().nullish(),
+	permissionKey: z.string().nullish(),
+	resourceType: z.string(),
+	resourceId: z.string().nullish(),
+});
+
+/**
+ * Writes one access grant, after refusing every request it cannot store faithfully: a malformed
+ * request (no `effect`, an unknown `principalType`, …), a caller
  * without `member:manage_members` or the Enterprise entitlement, a role-and-permission pair (or
  * neither), an unknown permission key, the org kind carrying a resource id, an unrecognised
- * resource kind, and an allow-grant that exceeds the grantor's own permissions. Then syncs the
- * grant's PDP tuples and records the security event.
+ * resource kind, an allow-grant that exceeds the grantor's own permissions, and an allow-grant to a
+ * user without an ACTIVE member row in the org — suspended, removed, or never a member (#5472). Then syncs the grant's PDP tuples and records
+ * the security event.
  */
-export async function assignGrant(input: AssignGrantInput): Promise<void> {
+export async function assignGrant(raw: unknown): Promise<void> {
 	const actor = await requireAccessAdmin();
+	const shape = assignGrantInputSchema.safeParse(raw);
+	if (!shape.success) throw new Error("Invalid grant request.");
+	const input: AssignGrantInput = shape.data;
 	const hasRole = Boolean(input.roleId);
 	const hasPerm = Boolean(input.permissionKey);
 	if (hasRole === hasPerm) {
@@ -152,6 +176,16 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 			{ type: "member" },
 			"exceeds_grantor_privilege",
 		);
+	}
+	// A user who is not an active member of the org (suspended, removed, or never a member) gets no
+	// allow grant: the member lifecycle refuses it in `ensureMemberGrant`, and this API must not be
+	// the way around that. A grant planted for a non-member would become live if they later joined.
+	if (
+		input.effect === "allow" &&
+		input.principalType === "user" &&
+		(await lacksActiveMembership(actor.orgId, input.principalId))
+	) {
+		throw new Error(INACTIVE_PRINCIPAL_MESSAGE);
 	}
 	const resourceId = resourceIdOf(scope);
 	const resourceType = scope.resourceType;

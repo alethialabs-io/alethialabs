@@ -44,15 +44,21 @@ import {
 } from "@/lib/validations/grants";
 import {
 	cloudIdentities,
+	member,
 	projects,
 	runners,
 	team,
 } from "@/lib/db/schema";
 
+/** The member row of an active member, the principal every allow-grant case assumes. */
+const ACTIVE_MEMBER = [{ status: "active" }];
+
 /**
  * A drizzle-ish chain: every builder returns the chain; `.then` resolves to the rows
  * registered for the most-recently-`from()`'d table (falling back to `rows`). Also records
- * the `.insert/.values/.delete` writes so we can assert what was persisted.
+ * the `.insert/.values/.delete` writes so we can assert what was persisted. The `member` table
+ * resolves to an ACTIVE member row unless `byTable` names it, because `assignGrant` refuses an
+ * allow grant to a user principal without one (#5472).
  */
 function mockDb(rows: unknown[] = [], byTable?: Map<unknown, unknown[]>) {
 	const valuesSpy = vi.fn();
@@ -79,7 +85,7 @@ function mockDb(rows: unknown[] = [], byTable?: Map<unknown, unknown[]>) {
 				return c;
 			},
 			then: (resolve: (v: unknown) => void) =>
-				resolve(byTable?.get(fromT) ?? rows),
+				resolve(byTable?.get(fromT) ?? (fromT === member ? ACTIVE_MEMBER : rows)),
 		});
 		return c;
 	}
@@ -246,6 +252,101 @@ describe("privilege ceiling — a grant above the actor's own permissions is blo
 		});
 		expect(insertSpy).toHaveBeenCalledTimes(1);
 		expect(can).not.toHaveBeenCalled();
+	});
+});
+
+describe("a member who is not active gets no allow grant (#5472)", () => {
+	// `ensureMemberGrant` refuses a suspended member; before #5472 this API was the way around it.
+	it("assignGrant refuses an ALLOW grant to a suspended member and never inserts; a deny and an active member still go through", async () => {
+		const suspended = mockDb([], new Map([[member, [{ status: "suspended" }]]]));
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				roleId: BUILTIN_ROLE_IDS.admin,
+				resourceType: "org",
+			}),
+		).rejects.toThrow(/not an active member/);
+		expect(suspended.insertSpy).not.toHaveBeenCalled();
+		expect(syncScopedGrant).not.toHaveBeenCalled();
+
+		// A deny only removes access, so it is not refused.
+		await assignGrant({
+			principalType: "user",
+			principalId: "u-1",
+			effect: "deny",
+			permissionKey: "project:view",
+			resourceType: "org",
+		});
+		expect(suspended.insertSpy).toHaveBeenCalledTimes(1);
+
+		const active = mockDb([], new Map([[member, [{ status: "active" }]]]));
+		await assignGrant({
+			principalType: "user",
+			principalId: "u-1",
+			effect: "allow",
+			roleId: BUILTIN_ROLE_IDS.admin,
+			resourceType: "org",
+		});
+		expect(active.insertSpy).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("a user with NO member row gets no allow grant (#5472)", () => {
+	// A grant planted for a non-member would go live the moment they joined the org.
+	it("assignGrant refuses an org-wide or scoped ALLOW grant to a user with no member row and never inserts; a deny still goes through", async () => {
+		const none = mockDb([], new Map([[member, []]]));
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				roleId: BUILTIN_ROLE_IDS.admin,
+				resourceType: "org",
+			}),
+		).rejects.toThrow(/not an active member/);
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				permissionKey: "project:view",
+				resourceType: "project",
+				resourceId: "p-1",
+			}),
+		).rejects.toThrow(/not an active member/);
+		expect(none.insertSpy).not.toHaveBeenCalled();
+		expect(syncScopedGrant).not.toHaveBeenCalled();
+
+		await assignGrant({
+			principalType: "user",
+			principalId: "u-1",
+			effect: "deny",
+			permissionKey: "project:view",
+			resourceType: "org",
+		});
+		expect(none.insertSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("assignGrant refuses a request with no effect or an unknown principal type, so neither the ceiling nor the member check can be skipped", async () => {
+		const none = mockDb([], new Map([[member, []]]));
+		const noEffect: unknown = {
+			principalType: "user",
+			principalId: "u-1",
+			roleId: BUILTIN_ROLE_IDS.owner,
+			resourceType: "org",
+		};
+		await expect(assignGrant(noEffect)).rejects.toThrow(/Invalid grant request/);
+		const oddPrincipal: unknown = {
+			principalType: "service",
+			principalId: "u-1",
+			effect: "allow",
+			roleId: BUILTIN_ROLE_IDS.owner,
+			resourceType: "org",
+		};
+		await expect(assignGrant(oddPrincipal)).rejects.toThrow(/Invalid grant request/);
+		expect(none.insertSpy).not.toHaveBeenCalled();
 	});
 });
 
