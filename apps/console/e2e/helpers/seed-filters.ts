@@ -14,8 +14,10 @@
 // `inert.spec.ts` reads. The spec does not guess: a list that still renders fewer than two rows —
 // or a bar with no counted option — is recorded NOT MEASURED naming why, so the gap is a column in
 // the scoreboard rather than a PASS over nothing. Extending coverage is adding a row here, not
-// editing a verdict — and adding the route to `SEEDED_ROUTES` below, which the spec holds to a
-// measured verdict.
+// editing a verdict — and adding the route to `SEEDED_ROUTES` below. The spec fails a seeded
+// route only when it reads NOT MEASURED while showing the list ANSWERED (a counted list under
+// MIN_ROWS, or options that narrowed nothing); one where no list size was read at all is still a
+// column, not a failure (see `pairMissing` in `filters.spec.ts`).
 //
 // THE ACTIVITY ROWS ARE THE ONE EXCEPTION TO "EVERY ROW IS REMOVED AGAIN". `authz_activity_log` is
 // append-only: its WORM trigger (`lib/db/programmables.sql`) raises on any DELETE outside the
@@ -62,9 +64,12 @@ export interface FilterFixtures {
 }
 
 /**
- * The manifest routes this file seeds a narrowing pair for. `filters.spec.ts` requires every one of
- * them to come back measured (PASS or FAIL) for F8 and F9: a route listed here that reads NOT
- * MEASURED means its pair stopped reaching the page, which is a defect in this file, not a gap.
+ * The manifest routes this file seeds a narrowing pair for. `filters.spec.ts` fails one of them
+ * when it reads NOT MEASURED while the list visibly ANSWERED without a narrowing pair (an answered
+ * count under MIN_ROWS, or options that narrowed nothing) — that means the pair stopped reaching
+ * the page, a defect in this file. A NOT MEASURED where no list size was read (no count pill, no
+ * table, still busy) is let through as a column, not a failure; listing a route here does not by
+ * itself hold it to a measured verdict.
  */
 export const SEEDED_ROUTES: readonly string[] = [
 	"/[org]/~/jobs",
