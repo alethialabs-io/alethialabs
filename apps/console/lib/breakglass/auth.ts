@@ -15,7 +15,8 @@
 //        b. the Cloudflare-Access header (a DEDICATED break-glass Access app fronts the operator UI),
 //           BUT ONLY when the request also carries the shared proxy secret proving it transited that
 //           trusted proxy (see below), or
-//        c. the BREAKGLASS_DEV_EMAIL local-dev fallback (only when neither of the above is present).
+//        c. the BREAKGLASS_DEV_EMAIL local-dev fallback (only when neither of the above is present,
+//           and never when NODE_ENV=production — see `breakglassDevEmail`).
 //   3. that email is on the BREAKGLASS_OPERATORS allowlist.
 //
 // Why the proxy secret (spoofing defense): apps/admin can trust the CF-Access email header because

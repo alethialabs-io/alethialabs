@@ -16,20 +16,25 @@ import (
 )
 
 // opsCmd groups the break-glass (privileged incident recovery) verbs. Every verb hits the SAME
-// audited /api/breakglass/* endpoints as the operator UI, with the SAME bearer auth + append-only
-// audit — terminal-first operators during an incident. The entire surface is gated behind
-// ALETHIA_BREAKGLASS_ENABLED + the BREAKGLASS_OPERATORS allowlist server-side; a non-operator (or a
-// disabled deployment) is refused with 403/404.
+// audited /api/breakglass/* endpoints as the operator UI, with the same append-only audit —
+// terminal-first operators during an incident. The bearer must be an interactive `alethia login`
+// session: the server refuses a service token (ALETHIA_TOKEN / --token) with 403, because a service
+// token is pinned to one org and break-glass is platform-wide (#5496). The entire surface is gated
+// behind ALETHIA_BREAKGLASS_ENABLED + the BREAKGLASS_OPERATORS allowlist server-side; a
+// non-operator (or a disabled deployment) is refused with 403/404.
 var opsCmd = &cobra.Command{
 	Use:   "ops",
 	Short: "Break-glass incident recovery (privileged, audited, gated)",
 	Long: "Break-glass incident-recovery actions for on-call operators.\n\n" +
 		"Every action is audited (append-only, written before the act), requires a --reason, and\n" +
 		"typed-confirms the resource id server-side. Every MUTATING action also asks you to confirm\n" +
-		"it at the terminal, naming the resource and the consequence; --yes is how a runbook or a\n" +
-		"pipeline opts in ahead of time. High-blast actions (force-release-lock, state-surgery,\n" +
-		"orphan-clean) additionally require a two-person --approval token minted by a DIFFERENT\n" +
-		"operator via `alethia ops approve`.",
+		"it at the terminal, naming the resource and the consequence; --yes is how a runbook opts\n" +
+		"in ahead of time. High-blast actions (force-release-lock, state-surgery, orphan-clean)\n" +
+		"additionally require a two-person --approval token minted by a DIFFERENT operator via\n" +
+		"`alethia ops approve`.\n\n" +
+		"Break-glass needs a session from `alethia login`. A service token is refused with 403,\n" +
+		"however it is supplied. A session token is accepted from ALETHIA_TOKEN or --token too,\n" +
+		"so never put an operator's session credentials in CI.",
 	Run: func(cmd *cobra.Command, args []string) {
 		_ = cmd.Help()
 	},
