@@ -68,7 +68,7 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
   core,
 ) => {
   const fgaClient = buildFgaClient(core);
-  const slugHooks = orgSlugHooks(core.reservedOrgSlugRefusal);
+  const slugHooks = orgSlugHooks(core.reservedOrgSlugRefusal, core.orgSlugShapeRefusal);
   const setupHooks = newOrgSetupHooks(core.newOrgSetup);
   const tupleSync = fgaClient ? new FgaTupleSync(core, fgaClient) : undefined;
 
@@ -126,13 +126,14 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
         // Sync org membership → PDP grants on every lifecycle event, so the PDP
         // (which authorizes from grants, not member.role) actually grants access.
         organizationHooks: {
-          // A slug a console route / the marketing zone / a sibling app owns is refused HERE, in
-          // the endpoint, so a request that skips the console's forms is refused too (#5445).
+          // A slug a console route / the marketing zone / a sibling app owns (#5445), or one that
+          // breaks the org-slug shape every form checks (#5509), is refused HERE, in the endpoint,
+          // so a request that skips the console's forms is refused too.
           beforeUpdateOrganization: async (data) => {
             await slugHooks.beforeUpdateOrganization(data);
             return setupHooks.beforeUpdateOrganization(data);
           },
-          // The reserved-slug refusal first; then the paid create-a-team marker is kept only for the
+          // The reserved-slug and slug-shape refusals first; then the paid create-a-team marker is kept only for the
           // user who owns that charge's setup record, and stamped with them (#5445).
           beforeCreateOrganization: async (data) => {
             await slugHooks.beforeCreateOrganization(data);

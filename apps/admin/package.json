@@ -13,6 +13,7 @@
 		"@aws-sdk/client-s3": "^3.1143.0",
 		"@repo/brand": "workspace:*",
 		"@repo/email": "workspace:*",
+		"@repo/org-slug": "workspace:*",
 		"@repo/platform": "workspace:*",
 		"@repo/support": "workspace:*",
 		"@repo/ui": "workspace:*",

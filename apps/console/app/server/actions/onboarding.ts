@@ -21,8 +21,7 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import { RESERVED_SLUGS } from "@/lib/routing";
-
-const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+import { orgSlugShapeRefusal } from "@repo/org-slug";
 
 /**
  * {@link configureOnboardingOrg}'s result: the persisted slug, or a refusal the user can read.
@@ -62,8 +61,11 @@ export async function configureOnboardingOrg(input: {
 	if (name.length < 2) {
 		return { ok: false, error: "Give your organization a name." };
 	}
-	if (!SLUG_RE.test(slug)) {
-		return { ok: false, error: "Use lowercase letters, numbers and hyphens." };
+	// The one org-slug rule (@repo/org-slug), which names which half failed: a 64-character slug
+	// told "use lowercase letters" has nothing to fix.
+	const shape = orgSlugShapeRefusal(slug);
+	if (shape) {
+		return { ok: false, error: shape.message };
 	}
 	if (RESERVED_SLUGS.has(slug)) {
 		return { ok: false, error: "That slug is reserved — try another." };

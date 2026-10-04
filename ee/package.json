@@ -26,6 +26,7 @@
   "devDependencies": {
 		"@vitest/coverage-v8": "^4.1.11",
     "@alethia/enterprise-api": "workspace:*",
+    "@repo/org-slug": "workspace:*",
     "@types/node": "^20",
     "drizzle-orm": "^0.45.3",
     "esbuild": "^0.28.2",

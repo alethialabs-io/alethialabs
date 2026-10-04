@@ -31,7 +31,7 @@ const nextConfig: NextConfig = {
 		"/**/*": ["../../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**"],
 	},
 	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
-	transpilePackages: ["@repo/ui", "@repo/brand", "@repo/email", "@repo/support"],
+	transpilePackages: ["@repo/ui", "@repo/brand", "@repo/email", "@repo/support", "@repo/org-slug"],
 	// The staff dashboard runs on its OWN subdomain behind Cloudflare Access, so it
 	// owns the bare root and needs NO assetPrefix (unlike the marketing child zone).
 };

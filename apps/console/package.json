@@ -129,6 +129,7 @@
     "@repo/format": "workspace:*",
     "@repo/email": "workspace:*",
     "@repo/legal": "workspace:*",
+    "@repo/org-slug": "workspace:*",
     "@repo/plan-catalog": "workspace:*",
     "@repo/platform": "workspace:*",
     "@repo/privacy": "workspace:*",
