@@ -148,8 +148,19 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
           // second account they control and was then suspended or removed still got it in at the
           // role they chose. This holds for every invitation that is accepted through better-auth,
           // including the ones `POST /api/cli/orgs/:id/members` and `provisionOrg` insert directly.
+          //
+          // A member whose row is NOT active (suspended) is refused with that reason instead (#5463):
+          // "already a member, nothing to accept" told them they were in when they are locked out,
+          // and an invitation does not reactivate a membership — reactivating is an admin's action.
           beforeAcceptInvitation: async ({ invitation, user }) => {
             if (await core.isOrgMember(invitation.organizationId, user.id)) {
+              if (await core.isNonActiveMember(invitation.organizationId, user.id)) {
+                throw new APIError("FORBIDDEN", {
+                  code: "MEMBER_NOT_ACTIVE",
+                  message:
+                    "Your membership in this team is not active, and an invitation can't reactivate it. Ask a team admin to reactivate your membership.",
+                });
+              }
               throw new APIError("BAD_REQUEST", {
                 code: "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION",
                 message: "You're already a member of this team, so there is nothing to accept.",

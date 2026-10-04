@@ -42,6 +42,7 @@ import {
 	hasAcceptedCurrentDocuments,
 } from "@/lib/billing/eligibility";
 import type { PayerCapacity } from "@repo/legal/commerce";
+import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { countBillableSeats } from "@/lib/billing/seats";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
 import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
@@ -60,7 +61,14 @@ import {
 	type LivePlanPriceMap,
 } from "@/lib/billing/pricing";
 import { getStripe } from "@/lib/billing/stripe";
-import { type FirstPayment, readFirstPayment } from "@/lib/billing/first-payment";
+import { withPurchaseLock } from "@/lib/billing/purchase-lock";
+import {
+	type FirstPayment,
+	type PaymentAfterCancel,
+	readFirstPayment,
+	readPaymentAfterCancel,
+} from "@/lib/billing/first-payment";
+import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
 import { type NewOrgSetupState, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
 import {
 	findSetupOrg,
@@ -74,7 +82,9 @@ import {
 	REPLACEABLE_SUBSCRIPTION_STATUSES,
 	recordPendingOrgSetup,
 	savePendingOrgSetupDetails,
+	type UnfinishedSetupCursor,
 	unfinishedPendingOrgSetups,
+	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
 import { mapStatus, syncSubscriptionToBilling } from "@/lib/billing/sync";
@@ -667,31 +677,391 @@ async function ensureCustomer(
 }
 
 /**
- * What `cancelIncompleteSubscriptions` did: the subscriptions it cancelled (each with the
- * `readFirstPayment` verdict that allowed it), and the `incomplete` ones it KEPT because their first
- * payment is not provably unpaid — in flight, taken, or unreadable.
+ * What the purchase flow's sweep found about one earlier subscription, as the answer to "may a new one
+ * be minted beside it?" (#5463, #5489). NOTHING HERE IS REMEMBERED BETWEEN REQUESTS: no hold is
+ * recorded, so each outcome is only what THIS request saw. A persisted hold lifecycle is designed
+ * first in #5506 before any of it is built.
+ *   - `settled` — no money is moving: none was taken and the latest invoice can no longer be paid
+ *     (voided, already void, or none), or what was taken is already refunded. Only this one mints;
+ *   - `processing` — an `incomplete` subscription the sweep KEPT because its first payment is not proven
+ *     unpaid. It was not cancelled, so the next purchase's sweep finds it again;
+ *   - `refunded` — money was taken after the cancel, and this request refunded it in full;
+ *   - `unsettled` / `unsettled_alerted` — nothing proves the subscription is closed and unpaid: a payment
+ *     still processing or awaiting capture after the cancel, payments that could not be read (twice), an
+ *     open invoice that could not be voided, or a cancel that could not be confirmed;
+ *   - `needs_support` — money was taken after the cancel and the refund failed;
+ *   - `unconfirmed` / `unconfirmed_alerted` — what was taken cannot be read: payments that are not
+ *     PaymentIntents (or more than one page of them), or an invoice that reads `paid` although no
+ *     PaymentIntent on it took the money.
+ * Every outcome but `settled` and `processing` raises an operator alert (`alertPaymentNeedsSupport`);
+ * the `_alerted` forms mean it reached a channel, which is the only case the customer is told so.
+ */
+type PaymentOutcome =
+	| "settled"
+	| "processing"
+	| "refunded"
+	| "unsettled"
+	| "unsettled_alerted"
+	| "needs_support"
+	| "unconfirmed"
+	| "unconfirmed_alerted";
+
+/** `unsettled`, split by whether the operator alert it raised reached a channel. */
+function unsettled(alerted: boolean): "unsettled" | "unsettled_alerted" {
+	return alerted ? "unsettled_alerted" : "unsettled";
+}
+
+/** `unconfirmed`, split by whether the operator alert it raised reached a channel. */
+function unconfirmed(alerted: boolean): "unconfirmed" | "unconfirmed_alerted" {
+	return alerted ? "unconfirmed_alerted" : "unconfirmed";
+}
+
+/**
+ * What `cancelIncompleteSubscriptions` did: the subscriptions it cancelled as provably unpaid (each
+ * with the `readFirstPayment` verdict that allowed it); the `incomplete` ones it KEPT because their
+ * first payment is not provably unpaid — in flight, taken, or unreadable; and, for each one it tried
+ * to cancel that did not end `cancelled` — a payment found afterwards, or a cancel that could not be
+ * proven (#5489) — what became of it. Anything in `kept` or `unsettled` refuses the purchase.
  */
 interface IncompleteSweep {
 	cancelled: { sub: Stripe.Subscription; firstPayment: FirstPayment }[];
 	kept: Stripe.Subscription[];
+	unsettled: PaymentOutcome[];
 }
 
-/** What a caller tells the customer when a sweep kept a subscription whose payment may be under way. */
+/**
+ * What a caller tells the customer when an `incomplete` subscription's first payment is not proven
+ * unpaid (`processing`): it was kept, not cancelled, so the next purchase's sweep reads it again and
+ * refuses again until it settles.
+ *
+ * It does not promise "a minute" (#5463), and it names no deadline: a bank debit (SEPA, ACH) can take
+ * several business days to settle. An unreadable payment clears on a retry once Stripe answers.
+ */
 const PAYMENT_MAY_BE_UNDER_WAY =
-	"An earlier payment on this checkout is still being processed, or could not be checked. Nothing new was started — try again in a minute. You won't be charged twice.";
+	"An earlier payment on this checkout is still being processed, or could not be checked. Nothing new was started, and you won't be charged twice. If Stripe could not be reached, try again in a few minutes. A bank debit can take several business days to settle, and a new purchase stays blocked until it does.";
+
+/** What a caller tells the customer when this request refunded a payment taken for a cancelled checkout. */
+const EARLIER_PAYMENT_REFUNDED =
+	"An earlier payment on this checkout went through after that checkout had been cancelled, so it has been refunded in full. A refund can take 5–10 business days to reach your account. Nothing new was started — start the purchase again to continue.";
+
+/** Where the customer reaches support from a billing refusal: the operator's published support inbox. */
+const SUPPORT_EMAIL = LEGAL_ENTITY.supportEmail;
+
+/**
+ * What a caller tells the customer when an earlier subscription is not proven closed and unpaid
+ * (`unsettled`). It does NOT say a later purchase stays blocked, or that they won't be charged twice:
+ * nothing records this refusal, and a subscription cancelled while its payment was processing (or
+ * whose invoice could not be voided) is invisible to the next purchase's sweep, which lists only
+ * `incomplete` ones. So it tells the customer the two things that are true — wait and retry, or ask
+ * support first — and it claims no alert (`EARLIER_PAYMENT_UNSETTLED_ALERTED` does, when one reached a
+ * channel).
+ */
+const EARLIER_PAYMENT_UNSETTLED = `We could not confirm that an earlier checkout was closed without taking a payment — its payment may still be processing, or Stripe could not be reached — so nothing new was started. Try again later: a bank debit can take several business days to settle. If you are not sure whether that payment went through, contact support at ${SUPPORT_EMAIL} with the time of the payment before you try again.`;
+
+/** `EARLIER_PAYMENT_UNSETTLED` when the operator alert DID reach a channel (`unsettled_alerted`). */
+const EARLIER_PAYMENT_UNSETTLED_ALERTED = `We could not confirm that an earlier checkout was closed without taking a payment — its payment may still be processing, or Stripe could not be reached — so nothing new was started. We have raised an alert with our team. Try again later: a bank debit can take several business days to settle. If you are not sure whether that payment went through, contact support at ${SUPPORT_EMAIL} with the time of the payment before you try again.`;
+
+/**
+ * What a caller tells the customer when a payment taken for a cancelled checkout could not be refunded
+ * (`needs_support`). It does not say a later purchase is blocked (nothing records it), and it does not
+ * say anyone was alerted: the customer is sent to support before trying again.
+ */
+const EARLIER_PAYMENT_NEEDS_SUPPORT = `An earlier payment on this checkout went through after that checkout had been cancelled, and it could not be refunded automatically. Nothing new was started. Contact support at ${SUPPORT_EMAIL} with the time of the payment before you try again.`;
+
+/**
+ * What a caller tells the customer when nothing proves what an earlier payment took (`unconfirmed`):
+ * a payment that is not a PaymentIntent, or an invoice paid by something other than a PaymentIntent.
+ * It claims neither that money moved nor that a later purchase is blocked, nor that anyone was alerted
+ * (#5489): the alert did not reach a channel, so the customer is the one who has to tell support.
+ */
+const EARLIER_PAYMENT_UNCONFIRMED = `We could not confirm what happened to an earlier payment on this checkout, so nothing new was started. Contact support at ${SUPPORT_EMAIL} with the time of the payment before you try again.`;
+
+/**
+ * `EARLIER_PAYMENT_UNCONFIRMED` when the operator alert DID reach a channel (`unconfirmed_alerted`):
+ * an alert delivery was queued to a channel bound to an enabled rule for the event, so saying it was
+ * raised is true.
+ */
+const EARLIER_PAYMENT_UNCONFIRMED_ALERTED = `We could not confirm what happened to an earlier payment on this checkout, so nothing new was started. We have raised an alert with our team. Contact support at ${SUPPORT_EMAIL} with the time of the payment before you try again.`;
+
+/** What a caller tells the customer when another purchase for the same payer held the lock too long. */
+const PURCHASE_IN_PROGRESS =
+	"Another purchase on this account is being started right now, so nothing new was started. Wait a moment and try again.";
+
+/**
+ * The refusal for a set of `PaymentOutcome`s — the most serious one wins — or null when none refuses.
+ * A form whose alert reached nobody outranks the one whose alert did, so the copy never says "we have
+ * raised an alert" while any of the payments it covers was not alerted on.
+ */
+function refusalFor(outcomes: readonly PaymentOutcome[]): string | null {
+	if (outcomes.includes("needs_support")) return EARLIER_PAYMENT_NEEDS_SUPPORT;
+	if (outcomes.includes("unconfirmed")) return EARLIER_PAYMENT_UNCONFIRMED;
+	if (outcomes.includes("unconfirmed_alerted")) return EARLIER_PAYMENT_UNCONFIRMED_ALERTED;
+	if (outcomes.includes("unsettled")) return EARLIER_PAYMENT_UNSETTLED;
+	if (outcomes.includes("unsettled_alerted")) return EARLIER_PAYMENT_UNSETTLED_ALERTED;
+	if (outcomes.includes("processing")) return PAYMENT_MAY_BE_UNDER_WAY;
+	if (outcomes.includes("refunded")) return EARLIER_PAYMENT_REFUNDED;
+	return null;
+}
+
+/**
+ * Refunds a PaymentIntent in full under an idempotency key derived from it. Within Stripe's 24-hour
+ * idempotency window a repeated request with the same key replays the FIRST request's saved result: a
+ * successful refund is replayed instead of a second one being made, and a refund that failed once
+ * Stripe began executing it is replayed as that same failure — a repeat inside the window cannot
+ * succeed where the first attempt failed. A charge Stripe says is already refunded is
+ * `already_refunded`; any other failure is `failed`, with the error.
+ */
+async function refundTakenPayment(
+	paymentIntentId: string,
+): Promise<{ result: "refunded" | "already_refunded" } | { result: "failed"; error: unknown }> {
+	try {
+		await getStripe().refunds.create(
+			{ payment_intent: paymentIntentId },
+			{ idempotencyKey: `refund-cancelled-first-payment-${paymentIntentId}` },
+		);
+		return { result: "refunded" };
+	} catch (e) {
+		if (typeof e === "object" && e !== null && Reflect.get(e, "code") === "charge_already_refunded") {
+			return { result: "already_refunded" };
+		}
+		return { result: "failed", error: e };
+	}
+}
+
+/**
+ * Runs a Stripe read, and runs it ONCE more if it fails (#5489): a single 429, 5xx or dropped
+ * connection is not allowed to decide a purchase. The second failure is thrown to the caller, which
+ * must treat it as "not proven".
+ */
+async function readTwice<T>(read: () => Promise<T>): Promise<T> {
+	try {
+		return await read();
+	} catch {
+		return read();
+	}
+}
+
+/**
+ * Proves a cancelled subscription's latest invoice can no longer be paid (#5489). Cancelling a
+ * subscription does not void its open invoice — Stripe only stops collecting it automatically — so a
+ * PaymentIntent awaiting the customer (`requires_payment_method`, `requires_confirmation`,
+ * `requires_action`) stays confirmable from any page that still holds its client secret. A voided
+ * invoice is not payable (docs.stripe.com/invoicing/overview, "Void invoices"), and Stripe voids only an
+ * `open` or `uncollectible` invoice, so a void that succeeds also proves the invoice was not paid by
+ * then.
+ *   - `open` / `uncollectible`: voided — `voided`. A void that fails is followed by ONE re-read of the
+ *     invoice: `void` by then (a void whose response was lost) is `voided`, anything else `failed`;
+ *   - `void`, or no invoice at all: `nothing_payable`;
+ *   - `paid`: `paid` — the caller decides what money it did not see means;
+ *   - `draft`, or any status not listed here: `failed` — nothing proves it can never be paid. (An
+ *     `incomplete` subscription's latest invoice is already finalized, so a draft is not expected.)
+ * A read that fails twice (`readTwice`) is `failed`.
+ */
+async function voidPayableInvoice(
+	sub: Pick<Stripe.Subscription, "latest_invoice">,
+): Promise<{ result: "voided" | "nothing_payable" | "paid" } | { result: "failed"; error: unknown }> {
+	const invoiceId =
+		typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
+	if (!invoiceId) return { result: "nothing_payable" };
+	const stripe = getStripe();
+	let status: string | null;
+	try {
+		status = (await readTwice(() => stripe.invoices.retrieve(invoiceId))).status;
+	} catch (e) {
+		return { result: "failed", error: e };
+	}
+	if (status === "void") return { result: "nothing_payable" };
+	if (status === "paid") return { result: "paid" };
+	if (status !== "open" && status !== "uncollectible") {
+		return {
+			result: "failed",
+			error: new Error(`invoice ${invoiceId} is ${status ?? "of no status"}; nothing proves it can never be paid`),
+		};
+	}
+	try {
+		await stripe.invoices.voidInvoice(invoiceId);
+		return { result: "voided" };
+	} catch (voidError) {
+		try {
+			const reread = await stripe.invoices.retrieve(invoiceId);
+			if (reread.status === "void") return { result: "voided" };
+		} catch {
+			// The re-read failed too: nothing proves the void.
+		}
+		return { result: "failed", error: voidError };
+	}
+}
+
+/** The Stripe customer id a subscription hangs off, whether or not `customer` was expanded. */
+function subscriptionCustomerId(sub: Pick<Stripe.Subscription, "customer">): string {
+	return typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+}
+
+/**
+ * Reads a subscription's payments right after the purchase flow cancelled it, and acts on them (#5463).
+ * `customerId` is the Stripe customer it belongs to, named in any operator alert.
+ * `settled` is returned ONLY when the subscription is cancelled (the caller proved that) AND its latest
+ * invoice is voided, already void, or paid and refunded in full (#5489):
+ *   - no money (none taken, or every PaymentIntent failed or was cancelled): its invoice is voided if it
+ *     can still be paid (`voidPayableInvoice`) — `settled`. A void that fails is alerted on —
+ *     `unsettled`. An invoice that reads `paid` although no PaymentIntent took money (a customer
+ *     balance, an out-of-band payment) is alerted on — `unconfirmed`;
+ *   - a PaymentIntent `processing` or awaiting capture: alerted on — `unsettled`;
+ *   - payments that cannot be read, twice (`readTwice`): alerted on — `unsettled`;
+ *   - money taken: each succeeded PaymentIntent is refunded in full (`refundTakenPayment`) — `refunded`,
+ *     or `settled` when Stripe says they were refunded already. A refund that fails is alerted on —
+ *     `needs_support`;
+ *   - payments that are not PaymentIntents, or more than one page of them: alerted on — `unconfirmed`.
+ * Nothing is recorded: the alert is the only trace a person can act on, because the next purchase's
+ * sweep cannot see a cancelled subscription. The refund is issued only here, for a subscription this
+ * request itself cancelled.
+ */
+async function settleCancelledSubscription(
+	sub: Pick<Stripe.Subscription, "id" | "latest_invoice">,
+	customerId: string,
+): Promise<PaymentOutcome> {
+	let read: PaymentAfterCancel;
+	try {
+		read = await readTwice(() => readPaymentAfterCancel(sub));
+	} catch (e) {
+		const alerted = await alertPaymentNeedsSupport({
+			subscriptionId: sub.id,
+			customerId,
+			paymentIntentId: null,
+			detail: "its payments could not be read, twice, after the cancel, so nothing proves it took no money.",
+			error: e,
+		});
+		return unsettled(alerted);
+	}
+	switch (read.kind) {
+		case "no_money": {
+			// No money now — but an open invoice can still be paid from a stale page. It is voided before
+			// this subscription is called settled (#5489).
+			const voided = await voidPayableInvoice(sub);
+			if (voided.result === "failed") {
+				const alerted = await alertPaymentNeedsSupport({
+					subscriptionId: sub.id,
+					customerId,
+					paymentIntentId: null,
+					detail: "its latest invoice could not be voided, so its payment may still be completed from a page that holds it.",
+					error: voided.error,
+				});
+				return unsettled(alerted);
+			}
+			if (voided.result === "paid") {
+				const alerted = await alertPaymentNeedsSupport({
+					subscriptionId: sub.id,
+					customerId,
+					paymentIntentId: null,
+					detail: "its latest invoice reads paid, but no PaymentIntent on it took the money, so what was taken cannot be refunded automatically.",
+				});
+				return unconfirmed(alerted);
+			}
+			return "settled";
+		}
+		case "processing": {
+			const alerted = await alertPaymentNeedsSupport({
+				subscriptionId: sub.id,
+				customerId,
+				paymentIntentId: read.paymentIntentId,
+				detail: "it was cancelled while this payment is processing. Nothing records it: if the payment succeeds, it must be refunded by hand.",
+			});
+			return unsettled(alerted);
+		}
+		case "unrecognised": {
+			const alerted = await alertPaymentNeedsSupport({
+				subscriptionId: sub.id,
+				customerId,
+				paymentIntentId: null,
+				detail: "its invoice carries a payment that is not a PaymentIntent (or more than 100), so what was taken cannot be read or refunded automatically.",
+			});
+			return unconfirmed(alerted);
+		}
+		case "took_money": {
+			let refunded = false;
+			for (const paymentIntentId of read.succeeded) {
+				const refund = await refundTakenPayment(paymentIntentId);
+				if (refund.result === "failed") {
+					await alertPaymentNeedsSupport({
+						subscriptionId: sub.id,
+						customerId,
+						paymentIntentId,
+						detail: "its payment succeeded after the cancel, and the refund failed.",
+						error: refund.error,
+					});
+					return "needs_support";
+				}
+				if (refund.result === "refunded") refunded = true;
+			}
+			return refunded ? "refunded" : "settled";
+		}
+	}
+}
+
+/** Subscription statuses under which Stripe will never collect a payment for it again. */
+const ENDED_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
+
+/**
+ * Cancels a subscription that `readFirstPayment` just read as `never_paid`, then reads its payments
+ * again (#5463). Stripe offers no "cancel only while unpaid", so a customer who completes the payment
+ * between the read and the cancel pays for a subscription that is cancelled. That race is detected here,
+ * not prevented, and acted on by `settleCancelledSubscription`: money taken is refunded; a payment still
+ * processing, unreadable or unrefundable refuses THIS purchase and alerts an operator.
+ *
+ * A cancel that FAILS — a refusal, a 429, a 5xx, a dropped connection — proves nothing (#5489): the
+ * subscription may still be `incomplete` with a PaymentIntent a stale page can confirm. The subscription
+ * is read again once. Only `canceled` or `incomplete_expired` count as gone, and then it is settled like
+ * any cancelled one (its invoice voided). Anything else, or a read that fails, is alerted on —
+ * `unsettled` — and the caller must not mint beside it. It is still `incomplete`, so the next
+ * purchase's sweep finds it and tries again.
+ *
+ * `customerId` is the Stripe customer it belongs to, named in any operator alert. `cancelled` means
+ * gone, provably unpaid or refunded already, and its open invoice voided so no page
+ * holding its client secret can pay it. Every other answer refuses.
+ */
+async function cancelNeverPaid(
+	sub: Stripe.Subscription,
+	customerId: string,
+): Promise<"cancelled" | Exclude<PaymentOutcome, "settled">> {
+	const stripe = getStripe();
+	try {
+		await stripe.subscriptions.cancel(sub.id);
+	} catch (cancelError) {
+		let status: string | null = null;
+		try {
+			status = (await stripe.subscriptions.retrieve(sub.id)).status;
+		} catch {
+			status = null;
+		}
+		if (status === null || !ENDED_SUBSCRIPTION_STATUSES.has(status)) {
+			const alerted = await alertPaymentNeedsSupport({
+				subscriptionId: sub.id,
+				customerId,
+				paymentIntentId: null,
+				detail: `the cancel failed and the subscription reads ${status ?? "unreadable"}, so it may still be paid; nothing new is started beside it.`,
+				error: cancelError,
+			});
+			return unsettled(alerted);
+		}
+	}
+	const outcome = await settleCancelledSubscription(sub, customerId);
+	return outcome === "settled" ? "cancelled" : outcome;
+}
 
 /**
  * Cancels a customer's dangling `incomplete` subscriptions — the never-paid first-invoice
  * subs that a re-opened checkout / upgrade sheet would otherwise pile up (each one Stripe
  * auto-generates a draft invoice for). Stateless: it lists Stripe directly rather than the
  * DB, so it cleans up even the subs that were never persisted to organization_billing — the
- * exact leak the old DB-only guard missed.
+ * exact leak the old DB-only guard missed. A list that fails is thrown, so nothing is minted.
  *
  * `incomplete` is not "never paid": Stripe keeps a subscription `incomplete` while its first payment
  * is `processing`, and until its invoice settles after the payment succeeded. So each one is cancelled
- * only when `readFirstPayment` proves it unpaid; any other — or one whose payment cannot be read — is
- * KEPT and returned, and the caller must not start a second purchase beside it. A cancel that fails is
- * neither (already gone or expired on Stripe's side).
+ * only when `readFirstPayment` proves it unpaid (read twice, `readTwice`); any other — or one whose
+ * payment cannot be read — is KEPT and returned, and the caller must not start a second purchase beside
+ * it. Every one it tried to cancel that did not end `cancelled` (`cancelNeverPaid`) — a payment that
+ * completed between the read and the cancel, or a cancel that could not be proven — is reported in
+ * `unsettled` with what became of it.
  */
 async function cancelIncompleteSubscriptions(customerId: string): Promise<IncompleteSweep> {
 	const stripe = getStripe();
@@ -700,11 +1070,11 @@ async function cancelIncompleteSubscriptions(customerId: string): Promise<Incomp
 		status: "incomplete",
 		limit: 100,
 	});
-	const sweep: IncompleteSweep = { cancelled: [], kept: [] };
+	const sweep: IncompleteSweep = { cancelled: [], kept: [], unsettled: [] };
 	for (const s of subs.data) {
 		let firstPayment: FirstPayment;
 		try {
-			firstPayment = await readFirstPayment(s);
+			firstPayment = await readTwice(() => readFirstPayment(s));
 		} catch {
 			firstPayment = "not_proven_unpaid";
 		}
@@ -712,14 +1082,16 @@ async function cancelIncompleteSubscriptions(customerId: string): Promise<Incomp
 			sweep.kept.push(s);
 			continue;
 		}
-		try {
-			await stripe.subscriptions.cancel(s.id);
-			sweep.cancelled.push({ sub: s, firstPayment });
-		} catch {
-			// Already gone / expired on Stripe's side — ignore.
-		}
+		const outcome = await cancelNeverPaid(s, customerId);
+		if (outcome === "cancelled") sweep.cancelled.push({ sub: s, firstPayment });
+		else sweep.unsettled.push(outcome);
 	}
 	return sweep;
+}
+
+/** A sweep as `PaymentOutcome`s: a kept subscription may be under way; an unsettled one says what became of it. */
+function sweepOutcomes(sweep: IncompleteSweep): PaymentOutcome[] {
+	return [...sweep.unsettled, ...sweep.kept.map((): PaymentOutcome => "processing")];
 }
 
 /**
@@ -816,6 +1188,23 @@ export async function createSubscriptionIntent(
 		};
 	}
 	await gatePaidConversion(actor);
+	// One purchase per org at a time (#5489): two tabs that each read "nothing in flight" before either
+	// minted would otherwise each mint a payable subscription.
+	const locked = await withPurchaseLock(`org-plan:${actor.orgId}`, () =>
+		startOrgSubscription(actor, plan, opts),
+	);
+	return locked.acquired ? locked.value : { error: PURCHASE_IN_PROGRESS };
+}
+
+/**
+ * The body of `createSubscriptionIntent`, run under the org's purchase lock: resolves the customer,
+ * sweeps its `incomplete` subscriptions, and mints the new one.
+ */
+async function startOrgSubscription(
+	actor: { orgId: string; userId: string },
+	plan: PaidPlan,
+	opts: { billingEmail?: string; currency?: SupportedCurrency } | undefined,
+): Promise<SubscriptionIntent | { error: string }> {
 	const customerId = await ensureCustomer(
 		actor.orgId,
 		actor.userId,
@@ -826,7 +1215,8 @@ export async function createSubscriptionIntent(
 	// invoices). Stateless — works even though an incomplete sub is never persisted to the DB,
 	// which is why the old organization_billing-only guard leaked.
 	const swept = await cancelIncompleteSubscriptions(customerId);
-	if (swept.kept.length > 0) return { error: PAYMENT_MAY_BE_UNDER_WAY };
+	const sweptRefusal = refusalFor(sweepOutcomes(swept));
+	if (sweptRefusal) return { error: sweptRefusal };
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
 		: {};
@@ -1093,6 +1483,23 @@ export interface NewOrgSubscriptionIntent extends SubscriptionIntent {
 	customerId: string;
 }
 
+/** What `createNewOrgSubscriptionIntent` takes from the browser. */
+interface NewOrgSubscriptionOpts {
+	orgName: string;
+	/** The slug the customer chose, recorded with the subscription so any tab can finish setup. */
+	slug?: string;
+	priorSubscriptionId?: string;
+	customerId?: string;
+	currency?: SupportedCurrency;
+	/**
+	 * The payer facts, PASSED IN rather than read from the database — this is the one conversion
+	 * path where no organization exists yet, so there is no organization_billing row to declare
+	 * them on. Omitting them refuses the sale exactly as an undeclared org would: the gate's
+	 * inputs are optional here, its verdict is not.
+	 */
+	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
+}
+
 /**
  * What `createNewOrgSubscriptionIntent` hands back: a new intent to pay; or — when the attempt it
  * replaces turns out to be PAID already — that setup to finish, with nothing new to pay; or a refusal
@@ -1112,7 +1519,10 @@ export type NewOrgSubscriptionStart =
  *
  * Idempotent across retries: pass the prior `customerId` to reuse it and `priorSubscriptionId`
  * to replace the previous attempt (e.g. after "← Back" or a currency switch), so a Stripe
- * customer is never duplicated and incomplete subscriptions don't pile up.
+ * customer is never duplicated and incomplete subscriptions don't pile up. When the browser lost the
+ * `customerId` (#5463), the customer of the caller's newest unfinished, unlinked setup record is
+ * reused instead, and the sweep below covers the customers of all of them — so a first purchase whose
+ * payment is still `processing` (SEPA, ACH) on another customer is seen, and blocks a second one.
  *
  * `priorSubscriptionId` comes from the browser, which can be wrong about it — a payment Stripe took
  * whose confirmation never reached the page leaves the pay view on screen with "← Back" and the
@@ -1121,33 +1531,32 @@ export type NewOrgSubscriptionStart =
  *   - one that is `incomplete` / `incomplete_expired` is cancelled and its record dropped ONLY when its
  *     first payment provably never happened (`readFirstPayment`: the PaymentIntent awaits the
  *     customer). One whose payment is `processing`, `succeeded` or `requires_capture` is never
- *     cancelled: nothing new is minted, and the action returns `kind: "refused"` with a retryable
- *     message — a minute later it is paid and resumes;
+ *     cancelled: nothing new is minted, and the action returns `kind: "refused"` — once the payment
+ *     settles it is paid and resumes, and until then every retry is refused. A payment that completes
+ *     between the read and the cancel is caught after the cancel (`cancelNeverPaid`): its record is
+ *     kept, money it took is refunded, and a payment still processing (or one whose refund failed)
+ *     refuses THIS request and alerts an operator. Nothing remembers it: a retry finds the subscription
+ *     `canceled`, which only the `canceled` arm below (its invoice void) can still refuse on;
  *   - one that is PAID is never cancelled and no new subscription is minted: the setup it belongs to is
  *     returned (`kind: "resume"`) and the sheet finishes it. When there is no setup this user can
  *     finish (it is linked to a team they are not an owner of), the action returns `kind: "refused"` —
  *     a second purchase is never minted beside a paid one;
+ *   - one that is `canceled` has its latest invoice voided if it can still be paid; a void that cannot be
+ *     proven refuses and alerts (#5489). One whose invoice reads `paid` is left alone, as before: telling
+ *     a payment that landed after our own cancel from a finished purchase is #5506's design;
  *   - any other status (it was paid once) is left alone.
+ * A cancel that fails is never read as "gone" (#5489): the prior is re-read once, and unless Stripe then
+ * shows it `canceled` or `incomplete_expired` it is alerted on and the action refuses. A first payment
+ * that cannot be read, twice, refuses too. Both leave the prior `incomplete`, so a retry reads it again.
  * The same proof guards the sweep of the customer's other `incomplete` subscriptions: one it cannot
  * prove unpaid is kept, and the action refuses rather than mint beside it.
+ *
+ * The whole of it runs under the caller's purchase lock (`withPurchaseLock`, #5489), so a second request
+ * from another tab waits for this one and then sweeps what it minted.
  */
 export async function createNewOrgSubscriptionIntent(
 	plan: PaidPlan,
-	opts: {
-		orgName: string;
-		/** The slug the customer chose, recorded with the subscription so any tab can finish setup. */
-		slug?: string;
-		priorSubscriptionId?: string;
-		customerId?: string;
-		currency?: SupportedCurrency;
-		/**
-		 * The payer facts, PASSED IN rather than read from the database — this is the one conversion
-		 * path where no organization exists yet, so there is no organization_billing row to declare
-		 * them on. Omitting them refuses the sale exactly as an undeclared org would: the gate's
-		 * inputs are optional here, its verdict is not.
-		 */
-		payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
-	},
+	opts: NewOrgSubscriptionOpts,
 ): Promise<NewOrgSubscriptionStart> {
 	const actor = await currentActor();
 	requireHostedBilling();
@@ -1162,6 +1571,27 @@ export async function createNewOrgSubscriptionIntent(
 	};
 	await assertPaidConversionAllowed(newOrgContext);
 
+	// One create-a-team purchase per user at a time (#5489): two tabs that each read "nothing in flight"
+	// before either minted would otherwise each mint a payable subscription.
+	const locked = await withPurchaseLock(`new-org:${actor.userId}`, () =>
+		startNewOrgSubscription(actor, plan, opts),
+	);
+	return locked.acquired ? locked.value : { kind: "refused", message: PURCHASE_IN_PROGRESS };
+}
+
+/**
+ * The body of `createNewOrgSubscriptionIntent`, run under the user's purchase lock: replaces the prior
+ * attempt, resolves the customer, sweeps, mints, and records the setup.
+ */
+async function startNewOrgSubscription(
+	actor: { userId: string },
+	plan: PaidPlan,
+	opts: NewOrgSubscriptionOpts,
+): Promise<NewOrgSubscriptionStart> {
+	// The Stripe customers of the caller's own unfinished setup records (server-written, keyed on the
+	// session user): reused when the browser lost its `customerId`, and swept below (#5463).
+	const recordedCustomers = await unlinkedPendingOrgSetupCustomers(actor.userId);
+
 	if (opts.priorSubscriptionId) {
 		const prior = await ownNewOrgSubscription(opts.priorSubscriptionId, actor.userId);
 		if (prior && PAID_SUBSCRIPTION_STATUSES.has(prior.status)) {
@@ -1173,27 +1603,50 @@ export async function createNewOrgSubscriptionIntent(
 					"Your earlier payment went through, but it is linked to a team you are not an owner of, so it can't be finished here and nothing new was started. Contact support with the time of the payment — you won't be charged again.",
 			};
 		} else if (prior && REPLACEABLE_SUBSCRIPTION_STATUSES.has(prior.status)) {
-			// An outage reading the payment throws: it may be the paid one.
-			const firstPayment = await readFirstPayment(prior);
+			let firstPayment: FirstPayment;
+			try {
+				firstPayment = await readTwice(() => readFirstPayment(prior));
+			} catch {
+				// It may be the paid one (#5489). It was not cancelled, so a retry reads it again.
+				return { kind: "refused", message: PAYMENT_MAY_BE_UNDER_WAY };
+			}
 			if (firstPayment !== "never_paid") {
 				return { kind: "refused", message: PAYMENT_MAY_BE_UNDER_WAY };
 			}
-			let gone = prior.status === "incomplete_expired";
-			if (!gone) {
-				try {
-					await getStripe().subscriptions.cancel(prior.id);
-					gone = true;
-				} catch {
-					// Not cancelled — its record stays, and `findUnfinishedNewOrgSetup` drops it once
-					// Stripe expires the subscription.
-				}
+			// Gone is PROVEN, never assumed (#5489): an `incomplete` prior must be cancelled, and an
+			// `incomplete_expired` one — which Stripe already ended — still has its latest invoice checked and
+			// voided if it can be paid. Anything short of that refuses, and its record stays.
+			const outcome =
+				prior.status === "incomplete"
+					? await cancelNeverPaid(prior, subscriptionCustomerId(prior))
+					: await settleCancelledSubscription(prior, subscriptionCustomerId(prior));
+			if (outcome !== "cancelled" && outcome !== "settled") {
+				return { kind: "refused", message: refusalFor([outcome]) ?? PAYMENT_MAY_BE_UNDER_WAY };
 			}
-			if (gone) await forgetPendingOrgSetup(actor.userId, prior, firstPayment);
+			await forgetPendingOrgSetup(actor.userId, prior, firstPayment);
+		} else if (prior && prior.status === "canceled") {
+			// Cancelled already — by an earlier request, or after it was paid once. Its latest invoice is
+			// still checked (#5489): cancelling never voids it, so an open one is voided before anything new
+			// is minted. A void that cannot be proven refuses. A paid one is left alone, as before this
+			// change: telling a payment that landed after our own cancel from a finished purchase needs the
+			// hold lifecycle designed in #5506.
+			const voided = await voidPayableInvoice(prior);
+			if (voided.result === "failed") {
+				const alerted = await alertPaymentNeedsSupport({
+					subscriptionId: prior.id,
+					customerId: subscriptionCustomerId(prior),
+					paymentIntentId: null,
+					detail: "its latest invoice could not be voided, so its payment may still be completed from a page that holds it.",
+					error: voided.error,
+				});
+				return { kind: "refused", message: refusalFor([unsettled(alerted)]) ?? EARLIER_PAYMENT_UNSETTLED };
+			}
 		}
 	}
 
-	// Reuse the customer from a prior attempt only if this user owns it; otherwise mint
-	// a fresh bare customer (no organization_id until the org exists and is linked).
+	// Reuse the customer from a prior attempt only if this user owns it: the one the browser passed,
+	// else the one on the caller's newest unfinished setup record (the browser can lose its copy, #5463).
+	// Otherwise mint a fresh bare customer (no organization_id until the org exists and is linked).
 	let customerId: string | null = null;
 	if (opts.customerId) {
 		const existing = await getStripe().customers.retrieve(opts.customerId);
@@ -1203,6 +1656,9 @@ export async function createNewOrgSubscriptionIntent(
 		) {
 			customerId = existing.id;
 		}
+	}
+	if (!customerId && recordedCustomers[0]) {
+		customerId = await ownedCustomer(recordedCustomers[0], actor.userId);
 	}
 	if (!customerId) {
 		const [u] = await getServiceDb()
@@ -1222,11 +1678,20 @@ export async function createNewOrgSubscriptionIntent(
 	// prior attempt whose id wasn't threaded back), so they can't accumulate as FAILED draft
 	// invoices — and drop their records, under the same guard as the prior one above. One whose
 	// payment may be under way is kept, and nothing new is minted beside it.
-	const swept = await cancelIncompleteSubscriptions(customerId);
-	for (const { sub: cancelled, firstPayment } of swept.cancelled) {
-		await forgetPendingOrgSetup(actor.userId, cancelled, firstPayment);
+	// Every customer the caller's unfinished records name is swept too, not only the one reused: a
+	// purchase still settling on any of them blocks a second one.
+	// A subscription the sweep cancelled whose payment then turned up is refunded, or refuses this
+	// purchase (`cancelNeverPaid`), and its record is kept.
+	const sweptOutcomes: PaymentOutcome[] = [];
+	for (const sweepCustomer of new Set([customerId, ...recordedCustomers])) {
+		const swept = await cancelIncompleteSubscriptions(sweepCustomer);
+		for (const { sub: cancelled, firstPayment } of swept.cancelled) {
+			await forgetPendingOrgSetup(actor.userId, cancelled, firstPayment);
+		}
+		sweptOutcomes.push(...sweepOutcomes(swept));
 	}
-	if (swept.kept.length > 0) return { kind: "refused", message: PAYMENT_MAY_BE_UNDER_WAY };
+	const sweptRefusal = refusalFor(sweptOutcomes);
+	if (sweptRefusal) return { kind: "refused", message: sweptRefusal };
 
 	const taxParam: Partial<Stripe.SubscriptionCreateParams> = isStripeTaxEnabled()
 		? { automatic_tax: { enabled: true } }
@@ -1277,6 +1742,22 @@ export async function createNewOrgSubscriptionIntent(
 		throw new Error("Couldn't start the purchase — try again.", { cause: e });
 	}
 	return { kind: "intent", clientSecret, subscriptionId: sub.id, customerId, currency };
+}
+
+/**
+ * `customerId` when Stripe has it, it is not deleted, and `userId` minted it; else null. A missing
+ * customer is null; any other failure is thrown.
+ */
+async function ownedCustomer(customerId: string, userId: string): Promise<string | null> {
+	let existing: Stripe.Customer | Stripe.DeletedCustomer;
+	try {
+		existing = await getStripe().customers.retrieve(customerId);
+	} catch (e) {
+		if (isStripeResourceMissing(e)) return null;
+		throw e;
+	}
+	if (existing.deleted || existing.metadata?.created_by !== userId) return null;
+	return existing.id;
 }
 
 /**
@@ -1583,7 +2064,13 @@ const UNFINISHED_PAGE = 10;
  * on the way only when Stripe says its subscription expired and its first payment never happened
  * (`forgetPendingOrgSetup`'s guard, on `readFirstPayment`'s verdict); one that
  * was cancelled, or that Stripe cannot find, is skipped and KEPT — a cancelled subscription may have
- * been paid first, and a missing one is not proof of anything.
+ * been paid first, and a missing one is not proof of anything. An expired one whose payments cannot be
+ * read is skipped and kept as well (#5463): that one record could not be checked, which is no reason to
+ * fail the whole lookup.
+ *
+ * The pages are KEYSET pages (after the last row's `created_at`, `id`), not OFFSET pages (#5463):
+ * dropping a record shifted every later row back by one, so an OFFSET window skipped the row that
+ * moved into the part already read.
  *
  * Subscriptions minted before the record existed have none. For those this falls back to Stripe's
  * search API (which indexes with a delay, irrelevant for a subscription that old) and backfills a
@@ -1602,9 +2089,10 @@ export async function findUnfinishedNewOrgSetup(): Promise<NewOrgSetupState | nu
 	// good (a subscription cancelled after payment, or one Stripe cannot find — both kept) never fill
 	// the window and hide an older unfinished paid one behind them.
 	const seen = new Set<string>();
-	for (let offset = 0; ; offset += UNFINISHED_PAGE) {
-		const rows = await unfinishedPendingOrgSetups(actor.userId, UNFINISHED_PAGE, offset);
-		for (const row of rows) {
+	let after: UnfinishedSetupCursor | undefined;
+	for (;;) {
+		const page = await unfinishedPendingOrgSetups(actor.userId, UNFINISHED_PAGE, after);
+		for (const row of page.rows) {
 			seen.add(row.subscription_id);
 			let sub: Stripe.Subscription;
 			try {
@@ -1615,14 +2103,21 @@ export async function findUnfinishedNewOrgSetup(): Promise<NewOrgSetupState | nu
 			}
 			if (!PAID_SUBSCRIPTION_STATUSES.has(sub.status)) {
 				if (sub.status === "incomplete_expired") {
-					await forgetPendingOrgSetup(actor.userId, sub, await readFirstPayment(sub));
+					let firstPayment: FirstPayment;
+					try {
+						firstPayment = await readFirstPayment(sub);
+					} catch {
+						continue;
+					}
+					await forgetPendingOrgSetup(actor.userId, sub, firstPayment);
 				}
 				continue;
 			}
 			const state = await newOrgSetupStateFor(sub, actor.userId);
 			if (state && !(state.linked && state.declared)) return state;
 		}
-		if (rows.length < UNFINISHED_PAGE) break;
+		if (!page.next) break;
+		after = page.next;
 	}
 	const found = await stripe.subscriptions.search({
 		query: `metadata['created_by']:'${actor.userId}'`,
