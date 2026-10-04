@@ -40,10 +40,26 @@
 //
 // ── WHAT THIS DOES NOT DO ─────────────────────────────────────────────────────────────────────────
 //
-// It never edits the ledger and never edits the ratchet. It does not run on PRs: an issue closing is
-// a state change in GitHub, not in the diff, so it would red PRs that touched nothing. It runs daily
-// from `.github/workflows/gate-fixme-currency.yml`; wiring it into the release gate is a separate
-// unit of epic #4264.
+// It never edits the ledger and never edits the ratchet.
+//
+// ── WHERE IT RUNS ─────────────────────────────────────────────────────────────────────────────────
+//
+// On PRs, in the release gate's `Gate ledger` job (`.github/workflows/release-gate.yml`, #5417),
+// which runs on every non-draft PR and on `workflow_dispatch`:
+//
+//   · `--self-test` runs on every one of those runs.
+//   · The live check (the one that asks GitHub) runs unconditionally on a PR into `main` or `staging`
+//     and on a dispatch, because those ship the ledger as it stands. On a PR into `dev` it runs only
+//     when the PR changes `apps/console/e2e/gate-baseline.json`, this script, or
+//     `scripts/e2e-ratchet.mjs`: an issue closing is a state change in GitHub, not in the diff, so
+//     asking on every dev PR would red PRs that touched nothing.
+//
+// That job is NOT a required check — no ruleset and nothing in `.mergify.yml` names it — so its red
+// is visible on the PR and nothing enforces it.
+//
+// Daily, from `.github/workflows/gate-fixme-currency.yml` — but only once that workflow is on `main`.
+// A `schedule:` runs the default branch's copy of the workflow, so until it has ridden
+// dev → staging → main the daily run does not happen at all, and afterwards it checks main's ledger.
 //
 //   node scripts/check-gate-fixme-issues.mjs                    # live: asks GitHub (needs gh + token)
 //   node scripts/check-gate-fixme-issues.mjs --self-test        # hermetic: fixtures + a mutation control
