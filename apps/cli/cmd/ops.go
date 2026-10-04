@@ -32,8 +32,9 @@ var opsCmd = &cobra.Command{
 		"in ahead of time. High-blast actions (force-release-lock, state-surgery, orphan-clean)\n" +
 		"additionally require a two-person --approval token minted by a DIFFERENT operator via\n" +
 		"`alethia ops approve`.\n\n" +
-		"Break-glass needs an interactive session from `alethia login`. A service token\n" +
-		"(ALETHIA_TOKEN or --token) is refused with 403, so no CI pipeline can run these verbs.",
+		"Break-glass needs a session from `alethia login`. A service token is refused with 403,\n" +
+		"however it is supplied. A session token is accepted from ALETHIA_TOKEN or --token too,\n" +
+		"so never put an operator's session credentials in CI.",
 	Run: func(cmd *cobra.Command, args []string) {
 		_ = cmd.Help()
 	},

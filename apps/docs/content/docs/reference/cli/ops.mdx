@@ -13,12 +13,15 @@ the operator UI and writes to the same append-only audit trail.
 
 Break-glass accepts only an interactive CLI session: the one [`alethia login`](/reference/cli/authentication)
 creates on your terminal. A [service token](/reference/cli/authentication#what-a-service-token-can-do)
-is refused with a `403`, even when the person who minted it is on the operator allowlist. So
-`ALETHIA_TOKEN` and `--token` do not work here, and no CI pipeline can run an `ops` verb.
+is refused with a `403`, even when the person who minted it is on the operator allowlist.
+
+The server checks the credential, not how it arrived. A session token is accepted whether it comes
+from your saved login, `ALETHIA_TOKEN` or `--token`. So a CI job that holds an operator's session
+credentials (`credentials.json`, which carries a refresh token) can run `ops` verbs. Never put an
+operator's session credentials in CI.
 
 A service token is pinned to one organization and is handed to that organization's CI. Break-glass
-acts across every tenant. If a pipeline secret could carry it, anyone who can read that secret
-would hold a platform-wide identity.
+acts across every tenant, so a service token is never accepted for it.
 
 If `ALETHIA_TOKEN` is set in your shell, unset it before you run an `ops` verb. The CLI sends a
 supplied token in place of your saved session, so the server sees the service token and refuses it.
