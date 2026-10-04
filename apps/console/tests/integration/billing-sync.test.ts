@@ -214,6 +214,116 @@ describeIfDb("billing sync: one subscription's events cannot overwrite another's
 		expect(r?.plan).toBe("community");
 	});
 
+	// ── A write with NO event time — a server action's sync (#5547) ─────────────────────────────
+	// The create-a-team link and the trial start sync what Stripe returned to THEIR call, with no
+	// event time. That read can be older than a webhook that already landed, so without a time it
+	// may hold or raise the subscription's lifecycle rank (none < live < canceled), never lower it.
+
+	it("C76: a link's stale `incomplete` with no event time cannot demote the `active` webhook already applied", async () => {
+		const org = await freshOrg();
+		const y = subId("y");
+		// The `customer.subscription.updated(active)` webhook lands first, with its event time…
+		await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "active", seats: 5 }), at(1));
+		// …then the link writes the `incomplete` its own `subscriptions.update` returned earlier.
+		const outcome = await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "incomplete" }));
+
+		expect(outcome).toBe("ignored");
+		const r = await row(org);
+		expect(r?.stripeSubscriptionId).toBe(y);
+		expect(r?.status).toBe("active");
+		expect(r?.plan).toBe("team");
+		expect(r?.seats).toBe(5);
+	});
+
+	it("C76, AI columns: a stale `incomplete` with no event time cannot lapse a live AI subscription", async () => {
+		const org = await freshOrg();
+		const y = subId("aiy");
+		await syncSubscriptionToBilling(
+			subscription({ id: y, orgId: org, status: "active", priceId: PRICE_AI_PLUS }),
+			at(1),
+		);
+		await syncSubscriptionToBilling(
+			subscription({ id: y, orgId: org, status: "incomplete", priceId: PRICE_AI_PLUS }),
+		);
+		const r = await row(org);
+		expect(r?.aiSubscriptionStatus).toBe("active");
+		expect(r?.aiTier).toBe("ai_plus");
+	});
+
+	it("`canceled` with no event time still ends the subscription the row names", async () => {
+		const org = await freshOrg();
+		const y = subId("y");
+		await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "active" }), at(1));
+		const outcome = await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "canceled" }));
+
+		expect(outcome).toBe("applied");
+		const r = await row(org);
+		expect(r?.status).toBe("canceled");
+		expect(r?.plan).toBe("community");
+	});
+
+	it("a move within the live band with no event time still applies (active → past_due)", async () => {
+		const org = await freshOrg();
+		const y = subId("y");
+		await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "active" }), at(1));
+		await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "past_due" }));
+		expect((await row(org))?.status).toBe("past_due");
+	});
+
+	it("a same-rank re-apply with no event time still applies (past_due → active, both live)", async () => {
+		const org = await freshOrg();
+		const y = subId("y");
+		await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "past_due" }), at(1));
+		const outcome = await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "active" }));
+
+		expect(outcome).toBe("applied");
+		const r = await row(org);
+		expect(r?.status).toBe("active");
+		expect(r?.plan).toBe("team");
+	});
+
+	it("first write with no event time: a trial start creates the row", async () => {
+		const org = await freshOrg();
+		const y = subId("trial");
+		const outcome = await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "trialing" }));
+
+		expect(outcome).toBe("applied");
+		const r = await row(org);
+		expect(r?.stripeSubscriptionId).toBe(y);
+		expect(r?.status).toBe("trialing");
+		expect(r?.plan).toBe("team");
+		expect(r?.stripeSubscriptionEventAt).toBeNull();
+	});
+
+	it("first write with no event time: a link's `incomplete` creates the row, and its `active` then raises it", async () => {
+		const org = await freshOrg();
+		const y = subId("link");
+		await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "incomplete" }));
+		let r = await row(org);
+		expect(r?.stripeSubscriptionId).toBe(y);
+		expect(r?.status).toBe("none");
+		expect(r?.plan).toBe("community");
+
+		await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "active" }));
+		r = await row(org);
+		expect(r?.status).toBe("active");
+		expect(r?.plan).toBe("team");
+	});
+
+	it("first write with no event time: a row naming nothing live is taken by the new subscription", async () => {
+		const org = await freshOrg();
+		const x = subId("x");
+		const y = subId("y");
+		await syncSubscriptionToBilling(subscription({ id: x, orgId: org, status: "active" }), at(1));
+		await syncSubscriptionToBilling(subscription({ id: x, orgId: org, status: "canceled" }), at(2));
+		await syncSubscriptionToBilling(subscription({ id: y, orgId: org, status: "trialing" }));
+
+		const r = await row(org);
+		expect(r?.stripeSubscriptionId).toBe(y);
+		expect(r?.status).toBe("trialing");
+		expect(r?.plan).toBe("team");
+	});
+
 	it("a PAID superseder replaces a canceled Y, and Y's late events then cannot reclaim the row", async () => {
 		const org = await freshOrg();
 		const y = subId("y");
