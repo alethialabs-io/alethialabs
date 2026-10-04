@@ -92,7 +92,11 @@ export interface SyncOptions {
 	 * Stripe's `created` time of the event that carried (or triggered the retrieval of) this
 	 * subscription. It is the out-of-order watermark: an event older than the newest one already
 	 * applied for the same subscription is refused. Omitted by server actions, which read the
-	 * subscription live from Stripe and so cannot be stale relative to a delivered event.
+	 * subscription live from Stripe — but a live read CAN be stale by the time it is written (the
+	 * create-a-team link's `subscriptions.update` returns `incomplete` while the `active` webhook
+	 * lands first). Without an event time the write may therefore only hold or raise the row's
+	 * lifecycle rank for the subscription it already names, never lower it (#5547, see
+	 * `sameSubscriptionMayApply` in lib/billing/queries.ts).
 	 */
 	eventAt?: Date;
 }
