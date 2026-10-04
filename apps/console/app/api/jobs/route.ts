@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { createHash } from "crypto";
-import { signedJob } from "@/lib/db/signed-job";
-import { type SQL, and, eq, inArray, sql } from "drizzle-orm";
+import { type SQL, eq, inArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
@@ -11,6 +10,7 @@ import {
 	planProject,
 	provisionProject,
 } from "@/app/server/actions/projects";
+import { destroyRunner } from "@/app/server/actions/runners";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
@@ -19,13 +19,13 @@ import {
 	assertMintingProfileStillMember,
 	authorizeCli,
 	ensureCliOrgAccess,
+	userIdIsTheCaller,
 } from "@/lib/authz/guard";
 import {
 	assertRunnerInOrg,
 	personalRunnerArm,
 } from "@/lib/authz/runner-org";
 import { ForbiddenError } from "@/lib/authz/types";
-import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { verifyCliToken } from "@/lib/cli/auth";
 import {
 	type CursorScope,
@@ -39,7 +39,7 @@ import { getServiceDb } from "@/lib/db";
 import { EnvStateConflictError } from "@/lib/db/env-status";
 import { FabricHasLiveTenantsError } from "@/lib/queries/destroy-tree";
 import { cloudIdentities, jobs, runners, projects } from "@/lib/db/schema";
-import { notifyScaler } from "@/lib/scaler";
+import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import {
 	cliJobResponse,
 	cliJobsPageResponse,
@@ -80,6 +80,43 @@ function scopedOrgOf(caller: CliCaller, req: Request): string | undefined {
 	}
 }
 
+/**
+ * Loads the runner a CLI `DESTROY_RUNNER` names, or null when this caller may not destroy it.
+ *
+ * Admitted: a self-operated runner of the active org, or — when `personalOrgId` is passed — the
+ * caller's own pre-#3874 runner, stamped into their personal org (`org_id = user_id = caller`).
+ * A managed runner (no org) is the platform's and is never a target. `legacyPersonal` says which
+ * arm admitted it, because the executor check reads it.
+ */
+async function loadDestroyTarget(
+	db: ReturnType<typeof getServiceDb>,
+	runnerId: string,
+	orgId: string,
+	personalOrgId: string | undefined,
+): Promise<{ cloud_identity_id: string | null; legacyPersonal: boolean } | null> {
+	const [row] = await db
+		.select({
+			org_id: runners.org_id,
+			user_id: runners.user_id,
+			cloud_identity_id: runners.cloud_identity_id,
+		})
+		.from(runners)
+		.where(eq(runners.id, runnerId))
+		.limit(1);
+	if (!row || row.org_id === null) return null;
+	if (row.org_id === orgId) {
+		return { cloud_identity_id: row.cloud_identity_id, legacyPersonal: false };
+	}
+	if (
+		personalOrgId !== undefined &&
+		row.org_id === personalOrgId &&
+		row.user_id === personalOrgId
+	) {
+		return { cloud_identity_id: row.cloud_identity_id, legacyPersonal: true };
+	}
+	return null;
+}
+
 /** Narrows an untrusted body value to a CreatableJobType (no cast). */
 function parseJobType(v: unknown): CreatableJobType | null {
 	switch (v) {
@@ -104,8 +141,9 @@ function parseJobType(v: unknown): CreatableJobType | null {
  * ProjectConfig — a nested, placement-resolved snapshot, not a flat per-table row.
  *
  * TENANCY (#3874). Every verb resolves the caller's org before it branches, and the
- * DESTROY_RUNNER insert stamps `jobs.org_id` EXPLICITLY rather than letting the
- * `set_org_id_from_project` trigger fall through. On `getServiceDb()` — a role that
+ * DESTROY_RUNNER job is stamped with `jobs.org_id` EXPLICITLY (the console's `destroyRunner`
+ * action writes `actor.orgId`) rather than letting the `set_org_id_from_project` trigger fall
+ * through. On `getServiceDb()` — a role that
  * bypasses RLS and sets no `app.current_org` — that fallback stamps `NEW.user_id`, so a
  * member of a Teams org filed runner jobs into a personal tenancy nobody looks at. The
  * stamp is always the active org. `claim_next_job` carries the narrow compatibility for
@@ -131,7 +169,6 @@ export async function POST(req: Request) {
 		const {
 			job_type,
 			configuration_id,
-			cloud_identity_id,
 			config_snapshot,
 			assigned_runner_id,
 			plan_job_id,
@@ -285,24 +322,51 @@ export async function POST(req: Request) {
 			if (!decision.allowed) {
 				return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 			}
-			// A caller-supplied identity must be one of THIS org's (#5479). The claim route sends the
-			// job's identity to the runner, so an id from another org would hand that org's
-			// credentials to a job filed here. Not found and another org's answer the same 404.
-			if (cloud_identity_id !== undefined && cloud_identity_id !== null && cloud_identity_id !== "") {
-				const identityId = z.uuid().safeParse(cloud_identity_id);
-				if (!identityId.success) {
-					return NextResponse.json(
-						{ error: "cloud_identity_id must be a UUID" },
-						{ status: 400 },
-					);
-				}
+			// THE CLIENT NAMES THE RUNNER AND NOTHING ELSE (#5481). This branch used to persist the
+			// body's `config_snapshot`, `cloud_identity_id` and `plan_job_id` as sent. The snapshot's
+			// `runner_id` keys the job's tofu state (lib/storage/tofu-state.ts), so a caller could
+			// aim a teardown at a runner that was not theirs. Now `config_snapshot.runner_id` — the
+			// one field the CLI sends — picks the runner, and the snapshot, the identity and the
+			// executor checks are derived from that runner's row. A runner-lifecycle job has no
+			// plan, so `plan_job_id` is never set; the body's other fields are ignored.
+			const targetId = z
+				.uuid()
+				.safeParse(
+					config_snapshot && typeof config_snapshot === "object"
+						? Reflect.get(config_snapshot, "runner_id")
+						: undefined,
+				);
+			if (!targetId.success) {
+				return NextResponse.json(
+					{ error: "config_snapshot.runner_id must name the runner to destroy (a UUID)" },
+					{ status: 400 },
+				);
+			}
+			const target = await loadDestroyTarget(
+				db,
+				targetId.data,
+				actor.orgId,
+				personalRunnerArm(actor, caller.credential),
+			);
+			// Not found, managed, and another org's all answer the same 404.
+			if (!target) {
+				return NextResponse.json(
+					{ error: "Runner not found or unauthorized" },
+					{ status: 404 },
+				);
+			}
+			// The runner's identity must be one this caller may use (#5479, #5481): an `org` identity
+			// of this org, or a session's own `personal` one. The claim route sends the job's identity
+			// to the runner, so another org's — or another member's personal one — must not ride here.
+			if (target.cloud_identity_id) {
 				const [identity] = await db
 					.select({ id: cloudIdentities.id })
 					.from(cloudIdentities)
 					.where(
-						and(
-							eq(cloudIdentities.id, identityId.data),
-							eq(cloudIdentities.org_id, actor.orgId),
+						actorIdentityWhere(
+							target.cloud_identity_id,
+							actor.orgId,
+							userIdIsTheCaller(caller.credential) ? actor.userId : undefined,
 						),
 					)
 					.limit(1);
@@ -313,23 +377,21 @@ export async function POST(req: Request) {
 					);
 				}
 			}
-			// Runner teardown has no project config to snapshot — the client sends the
-			// runner descriptor as the snapshot. Fail closed (404) on a cross-org /
-			// non-existent runner so we never queue an unclaimable job.
-			//
-			// Keep the job in the active tenant. Pre-#3874 caller-owned runners are admitted
-			// only by claim_next_job's lifecycle-only compatibility predicate.
 			if (assigned_runner_id) {
 				try {
-					// The caller's personal id admits only their own pre-#3874 runner row — and
-					// only for a SESSION. For a service token that id is the minter's, and
-					// admitting their personal runner would put the executor outside the pin
-					// (#4298).
+					// THE LEGACY PERSONAL-ORG EXECUTOR ARM (#5481). A caller's personal-org runner may
+					// execute this teardown only when the runner being destroyed is ALSO in that
+					// personal org — the pre-#3874 shape the arm exists for. Destroying a runner of the
+					// active org on a personal executor would put that org's job, and the identity the
+					// claim route sends with it, on a machine outside the org. Never for a service
+					// token (#4298): `personalRunnerArm` returns undefined there.
 					await assertRunnerInOrg(
 						db,
 						assigned_runner_id,
 						actor.orgId,
-						personalRunnerArm(actor, caller.credential),
+						target.legacyPersonal
+							? personalRunnerArm(actor, caller.credential)
+							: undefined,
 					);
 				} catch (e: unknown) {
 					if (e instanceof ForbiddenError) {
@@ -341,32 +403,35 @@ export async function POST(req: Request) {
 					throw e;
 				}
 			}
-			await assertJobQuotaAllowed(actor.orgId);
 
+			// The console's own action builds the job from the runner row: the descriptor snapshot,
+			// the runner's identity, no plan, the active org's stamp, the quota check, and the refusal
+			// of a second in-flight lifecycle job on the same runner.
+			let queued: { jobId: string };
+			try {
+				queued = await runWithActor(actor, () =>
+					destroyRunner(targetId.data, assigned_runner_id || null),
+				);
+			} catch (e: unknown) {
+				if (e instanceof ForbiddenError) {
+					return NextResponse.json(
+						{ error: "Runner not found or unauthorized" },
+						{ status: 404 },
+					);
+				}
+				throw e;
+			}
 			const [job] = await db
-				.insert(jobs)
-				.values(
-					signedJob({
-						user_id: userId,
-						// Explicit, so the set_org_id_from_project trigger's `NEW.org_id IS NULL`
-						// fallback (→ `NEW.user_id`, since getServiceDb() sets no app.current_org GUC
-						// and this row has no project) never runs. That fallback IS the defect.
-						org_id: actor.orgId,
-						environment_id: null,
-						cloud_identity_id: cloud_identity_id || null,
-						job_type: jobType,
-						initiated_by: "user",
-						project_id: null,
-						config_snapshot: config_snapshot || {},
-						configuration_hash: null,
-						status: "QUEUED",
-						assigned_runner_id: assigned_runner_id || null,
-						plan_job_id: plan_job_id || null,
-					}),
-				)
-				.returning();
-
-			notifyScaler();
+				.select()
+				.from(jobs)
+				.where(eq(jobs.id, queued.jobId))
+				.limit(1);
+			if (!job) {
+				return NextResponse.json(
+					{ error: "Job not found after queue" },
+					{ status: 500 },
+				);
+			}
 			return cliJson(cliJobResponse, { job }, { status: 201 });
 		}
 

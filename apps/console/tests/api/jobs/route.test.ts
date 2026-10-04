@@ -13,7 +13,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/authz/guard", () => ({
+vi.mock("@/lib/authz/guard", async (importOriginal) => ({
+	// Real: the pure credential → "is userId the caller" mapping the DESTROY_RUNNER branch reads.
+	userIdIsTheCaller: (await importOriginal<typeof import("@/lib/authz/guard")>())
+		.userIdIsTheCaller,
 	authorize: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),
 	// The service-token arm asks this one instead (#4298) — "is the MINTER still a member".
@@ -168,22 +171,34 @@ function mockServiceDb(rows: {
 	insertRows?: Rows;
 	runnerOrgId?: string | null;
 	runnerMissing?: boolean;
-	/** What the DESTROY_RUNNER identity lookup (id AND the actor's org) finds. Default: one row. */
+	/** What the DESTROY_RUNNER identity lookup (id AND the actor's tenancy) finds. Default: one row. */
 	identityRows?: Rows;
+	/**
+	 * Runner rows BY ID, for the DESTROY_RUNNER branch, which reads two runners — the target and the
+	 * executor — through the same chain. When set it replaces `runnerOrgId`/`runnerMissing`; an id
+	 * absent from the map is a missing row.
+	 */
+	runnersById?: Record<string, RunnerRow>;
 }) {
 	const insertValuesSpy = vi.fn();
 	const updateSetSpy = vi.fn();
 	const runnerOrgId = rows.runnerOrgId === undefined ? "org-1" : rows.runnerOrgId;
+	const runnerRows = (cond: unknown): Rows => {
+		if (rows.runnersById) {
+			const id = idIn(cond, Object.keys(rows.runnersById));
+			const row = id ? rows.runnersById[id] : undefined;
+			return row ? [row] : [];
+		}
+		return rows.runnerMissing ? [] : [{ org_id: runnerOrgId }];
+	};
 	const db = {
 		select: () => ({
 			from: (t: unknown) => ({
-				where: () => ({
+				where: (cond: unknown) => ({
 					limit: () =>
 						Promise.resolve(
 							t === runners
-								? rows.runnerMissing
-									? []
-									: [{ org_id: runnerOrgId }]
+								? runnerRows(cond)
 								: t === cloudIdentities
 									? (rows.identityRows ?? [{ id: IDENTITY_ID }])
 									: (rows.selectRows ?? []),
@@ -210,6 +225,29 @@ function mockServiceDb(rows: {
 	return { insertValuesSpy, updateSetSpy };
 }
 
+/** A `runners` row as the DESTROY_RUNNER branch's service-db reads see it. */
+interface RunnerRow {
+	org_id: string | null;
+	user_id?: string | null;
+	cloud_identity_id?: string | null;
+}
+
+/** Recovers which of `known` ids a drizzle `eq(runners.id, <id>)` condition names. */
+function idIn(cond: unknown, known: string[]): string | null {
+	const seen = new Set<unknown>();
+	const walk = (n: unknown): string | null => {
+		if (typeof n === "string") return known.includes(n) ? n : null;
+		if (!n || typeof n !== "object" || seen.has(n)) return null;
+		seen.add(n);
+		for (const v of Object.values(n)) {
+			const hit = walk(v);
+			if (hit) return hit;
+		}
+		return null;
+	};
+	return walk(cond);
+}
+
 /** Select map sufficient for the real buildConfigSnapshot to freeze an aws snapshot. */
 function snapshotSelect(overrides?: Map<unknown, RowsResolver>) {
 	const m = new Map<unknown, RowsResolver>([
@@ -230,6 +268,13 @@ const USER_ID = "33333333-3333-4333-8333-333333333333";
 const PROJECT_ID = "44444444-4444-4444-8444-444444444444";
 const ORG_ID = "22222222-2222-4222-8222-222222222222";
 const IDENTITY_ID = "55555555-5555-4555-8555-555555555555";
+/** The runner a DESTROY_RUNNER tears down. */
+const TARGET_ID = "66666666-6666-4666-8666-666666666666";
+/** The runner that executes the teardown. */
+const EXECUTOR_ID = "77777777-7777-4777-8777-777777777777";
+/** A plan id and an identity id the CLIENT sends, which the route must not persist. */
+const CLIENT_PLAN_ID = "88888888-8888-4888-8888-888888888888";
+const CLIENT_IDENTITY_ID = "99999999-9999-4999-8999-999999999999";
 
 /** A full jobs row that passes the CLI wire contract (uuid ids). */
 function wireJob(overrides: Parameters<typeof makeJob>[0] = {}) {
@@ -501,7 +546,7 @@ describe("POST /api/jobs (CLI queue)", () => {
 			{ job_type: "PLAN", configuration_id: "p1" },
 			{ job_type: "DEPLOY", configuration_id: "p1" },
 			{ job_type: "DESTROY", configuration_id: "p1" },
-			{ job_type: "DESTROY_RUNNER", cloud_identity_id: IDENTITY_ID },
+			{ job_type: "DESTROY_RUNNER", config_snapshot: { runner_id: TARGET_ID } },
 		]) {
 			setupTx({ select: snapshotSelect() });
 			const { insertValuesSpy } = mockServiceDb({});
@@ -527,30 +572,6 @@ describe("POST /api/jobs (CLI queue)", () => {
 		expect(authorize).not.toHaveBeenCalled();
 	});
 
-	it("DESTROY_RUNNER keeps the legacy passthrough insert (client-provided snapshot)", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-		});
-
-		const res = await post({
-			job_type: "DESTROY_RUNNER",
-			cloud_identity_id: IDENTITY_ID,
-			config_snapshot: { runner_name: "r1" },
-		});
-
-		expect(res.status).toBe(201);
-		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({
-				job_type: "DESTROY_RUNNER",
-				cloud_identity_id: IDENTITY_ID,
-				config_snapshot: { runner_name: "r1" },
-				project_id: null,
-			}),
-		);
-		expect(notifyScaler).toHaveBeenCalledTimes(1);
-	});
-
 	it("404s (defense-in-depth) when a delegated PLAN names a runner in another org", async () => {
 		const { valuesSpy } = setupTx({
 			select: snapshotSelect(),
@@ -570,138 +591,268 @@ describe("POST /api/jobs (CLI queue)", () => {
 		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
 	});
 
-	// ── #3874: the org the DESTROY_RUNNER row is STAMPED with ──────────────────────────────
+	// ── DESTROY_RUNNER: everything but the runner's id comes from the runner's row (#5481) ───────
 	//
-	// The insert runs on getServiceDb() — no RLS, no `app.current_org` — and carries no
-	// project, so `set_org_id_from_project` used to fall through to `NEW.user_id` and file the
-	// job in the caller's PERSONAL org. It is now stamped explicitly, and stamped from the
-	// RUNNER rather than from the actor, because `claim_next_job` compares
-	// `j.org_id = v_runner_org_id` as a hard equality and #3874 ships no backfill. The real
-	// stamp is proven against Postgres in tests/integration/cli-enqueue-org.test.ts; these two
-	// pin the active-tenant value the route passes, in the suite that runs on every PR.
-	it("keeps an assigned legacy DESTROY_RUNNER job in the active org", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-			// The runner carries the deployer's personal org (user-1), not the active org
-			// (org-1) — every runner the CLI deployed before #3874.
-			runnerOrgId: "user-1",
+	// The branch runs the console's `destroyRunner` action under the CLI actor, so the job row is
+	// written through `withActorScope` (setupTx), and the descriptor is the action's, built from the
+	// runner's `metadata.deploy_config`. The route's own reads — the target, the executor, the
+	// identity — go through getServiceDb (mockServiceDb). The real org stamp is proven against
+	// Postgres in tests/integration/cli-enqueue-org.test.ts.
+
+	/** The target runner as the action's RLS-scoped read sees it. */
+	function destroyTx(over: { cloud_identity_id?: string | null } = {}) {
+		return setupTx({
+			select: new Map<unknown, RowsResolver>([
+				[
+					runners,
+					[
+						{
+							id: TARGET_ID,
+							name: "r-target",
+							cloud_identity_id:
+								over.cloud_identity_id === undefined ? IDENTITY_ID : over.cloud_identity_id,
+							metadata: {
+								deploy_config: {
+									region: "eu-west-1",
+									cloud_provider: "aws",
+									image_tag: "v1.2.3",
+								},
+							},
+						},
+					],
+				],
+				[cloudIdentities, [{ provider: "aws" }]],
+				// assertNoActiveLifecycleJob: nothing in flight.
+				[jobs, []],
+			]),
+			insert: new Map([[jobs, [{ id: JOB_ID }]]]),
 		});
+	}
+
+	/** Service-db rows for a DESTROY_RUNNER: the target in org-1 unless overridden, plus the job read. */
+	function destroyDb(runnersById: Record<string, RunnerRow> = {}, identityRows?: Rows) {
+		return mockServiceDb({
+			selectRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
+			runnersById: {
+				[TARGET_ID]: { org_id: "org-1", user_id: "user-2", cloud_identity_id: IDENTITY_ID },
+				...runnersById,
+			},
+			identityRows,
+		});
+	}
+
+	it("DESTROY_RUNNER builds the descriptor, identity and plan from the runner row, not the body", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb();
+
+		const res = await post({
+			job_type: "DESTROY_RUNNER",
+			cloud_identity_id: CLIENT_IDENTITY_ID,
+			plan_job_id: CLIENT_PLAN_ID,
+			config_snapshot: {
+				runner_id: TARGET_ID,
+				runner_name: "client-name",
+				region: "client-region",
+				cloud_provider: "gcp",
+			},
+		});
+
+		expect(res.status).toBe(201);
+		const jobVals = valuesFor(valuesSpy, jobs);
+		expect(jobVals).toMatchObject({
+			job_type: "DESTROY_RUNNER",
+			org_id: "org-1",
+			user_id: "user-1",
+			cloud_identity_id: IDENTITY_ID,
+		});
+		expect(jobVals.plan_job_id ?? null).toBeNull();
+		expect(jobVals.config_snapshot).toMatchObject({
+			runner_id: TARGET_ID,
+			runner_name: "r-target",
+			region: "eu-west-1",
+			cloud_provider: "aws",
+		});
+		expect(JSON.stringify(jobVals)).not.toContain("client-");
+		expect(authorize).toHaveBeenCalledWith("destroy", { type: "runner", id: TARGET_ID });
+		expect(assertJobQuotaAllowed).toHaveBeenCalledWith("org-1");
+		expect(notifyScaler).toHaveBeenCalledTimes(1);
+	});
+
+	it("400s a DESTROY_RUNNER whose config_snapshot names no runner", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb();
 
 		const res = await post({
 			job_type: "DESTROY_RUNNER",
 			config_snapshot: { runner_name: "r1" },
-			assigned_runner_id: "runner-legacy",
+		});
+
+		expect(res.status).toBe(400);
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
+
+	it("404s a DESTROY_RUNNER whose target runner is in another org", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb({ [TARGET_ID]: { org_id: "org-other", user_id: "user-9" } });
+
+		const res = await post({
+			job_type: "DESTROY_RUNNER",
+			config_snapshot: { runner_id: TARGET_ID },
+		});
+
+		expect(res.status).toBe(404);
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("404s a DESTROY_RUNNER whose target is a managed runner (no org)", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb({ [TARGET_ID]: { org_id: null, user_id: null } });
+
+		const res = await post({
+			job_type: "DESTROY_RUNNER",
+			config_snapshot: { runner_id: TARGET_ID },
+		});
+
+		expect(res.status).toBe(404);
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
+
+	it("404s a DESTROY_RUNNER whose runner's identity is not one the caller may use", async () => {
+		const { valuesSpy } = destroyTx();
+		// The lookup is by id AND (this org's `org` identity, or the caller's own `personal` one).
+		destroyDb({}, []);
+
+		const res = await post({
+			job_type: "DESTROY_RUNNER",
+			config_snapshot: { runner_id: TARGET_ID },
+		});
+
+		expect(res.status).toBe(404);
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
+
+	it("404s a team-org runner's teardown assigned to the caller's PERSONAL-org runner", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb({ [EXECUTOR_ID]: { org_id: "user-1", user_id: "user-1" } });
+
+		const res = await post({
+			job_type: "DESTROY_RUNNER",
+			config_snapshot: { runner_id: TARGET_ID },
+			assigned_runner_id: EXECUTOR_ID,
+		});
+
+		expect(res.status).toBe(404);
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
+
+	it("queues a legacy personal-org runner's teardown on the caller's personal-org runner, in the active org", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb({
+			[TARGET_ID]: { org_id: "user-1", user_id: "user-1", cloud_identity_id: IDENTITY_ID },
+			[EXECUTOR_ID]: { org_id: "user-1", user_id: "user-1" },
+		});
+
+		const res = await post({
+			job_type: "DESTROY_RUNNER",
+			config_snapshot: { runner_id: TARGET_ID },
+			assigned_runner_id: EXECUTOR_ID,
 		});
 
 		expect(res.status).toBe(201);
-		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ org_id: "org-1" }),
-		);
-		// The quota is counted against the org the row is stamped with, not the caller's
-		// personal org — checking one tenant and inserting into another measures nothing.
-		expect(assertJobQuotaAllowed).toHaveBeenCalledWith("org-1");
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({
+			org_id: "org-1",
+			assigned_runner_id: EXECUTOR_ID,
+		});
 	});
 
-	it("DESTROY_RUNNER for a runner in the ACTOR's org gets the actor's org, resolved from the header", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-			runnerOrgId: "org-1",
+	it("404s a service token naming its minter's personal-org runner as the target", async () => {
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "user-1", service_token_org_id: "org-1", service_token_id: "st-1" },
+			error: null,
 		});
+		const { valuesSpy } = destroyTx();
+		destroyDb({ [TARGET_ID]: { org_id: "user-1", user_id: "user-1" } });
+
+		const res = await post({
+			job_type: "DESTROY_RUNNER",
+			config_snapshot: { runner_id: TARGET_ID },
+		});
+
+		expect(res.status).toBe(404);
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
+
+	it("DESTROY_RUNNER resolves its org from the header and queues on an executor in that org", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb({ [EXECUTOR_ID]: { org_id: "org-1", user_id: "user-2" } });
 
 		const res = await post(
 			{
 				job_type: "DESTROY_RUNNER",
-				config_snapshot: { runner_name: "r1" },
-				assigned_runner_id: "runner-modern",
+				config_snapshot: { runner_id: TARGET_ID },
+				assigned_runner_id: EXECUTOR_ID,
 			},
 			{ "X-Alethia-Org": "org-1" },
 		);
 
 		expect(res.status).toBe(201);
-		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ org_id: "org-1", user_id: "user-1" }),
-		);
-		// The scope resolution was HOISTED above this branch (#3874): before, DESTROY_RUNNER —
-		// the verb that destroys a runner — honoured neither `X-Alethia-Org` nor a service
-		// token's org pin, while its three siblings did.
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ org_id: "org-1", user_id: "user-1" });
+		// The scope resolution was HOISTED above this branch (#3874).
 		expect(getActiveScope).toHaveBeenCalledWith("user-1", "org-1");
 		expect(ensureCliOrgAccess).toHaveBeenCalled();
-		// The quota's subject is the org being STAMPED — here distinguishable from the caller's
-		// personal org ("user-1"), which is what it used to be counted against.
-		expect(assertJobQuotaAllowed).toHaveBeenCalledWith("org-1");
-		expect(assertJobQuotaAllowed).not.toHaveBeenCalledWith("user-1");
 	});
 
-	it("DESTROY_RUNNER with no assigned runner falls back to the ACTOR's org", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-		});
+	it("DESTROY_RUNNER may be executed by a MANAGED runner (org_id NULL)", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb({ [EXECUTOR_ID]: { org_id: null, user_id: null } });
 
 		const res = await post({
 			job_type: "DESTROY_RUNNER",
-			config_snapshot: { runner_name: "r1" },
+			config_snapshot: { runner_id: TARGET_ID },
+			assigned_runner_id: EXECUTOR_ID,
 		});
 
 		expect(res.status).toBe(201);
-		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ org_id: "org-1" }),
-		);
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ org_id: "org-1" });
 	});
 
-	it("DESTROY_RUNNER pinned to a MANAGED runner (org_id NULL) falls back to the actor's org", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-			// A managed runner belongs to no tenant; claim_next_job admits it for any org
-			// (`v_operator = 'managed'`), so the job takes the actor's org, not NULL.
-			runnerOrgId: null,
-		});
+	it("404s (defense-in-depth) when DESTROY_RUNNER assigns an executor in another org", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb({ [EXECUTOR_ID]: { org_id: "org-other", user_id: "user-9" } });
 
 		const res = await post({
 			job_type: "DESTROY_RUNNER",
-			config_snapshot: { runner_name: "r1" },
-			assigned_runner_id: "runner-managed",
-		});
-
-		expect(res.status).toBe(201);
-		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ org_id: "org-1" }),
-		);
-	});
-
-	it("404s (defense-in-depth) when DESTROY_RUNNER names a runner in another org", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-			// Neither the caller's active org (org-1) nor their personal org (user-1), so the
-			// transitional personal-org admission does not reach it.
-			runnerOrgId: "org-other",
-		});
-
-		const res = await post({
-			job_type: "DESTROY_RUNNER",
-			cloud_identity_id: IDENTITY_ID,
-			config_snapshot: { runner_name: "r1" },
-			assigned_runner_id: "runner-x",
+			config_snapshot: { runner_id: TARGET_ID },
+			assigned_runner_id: EXECUTOR_ID,
 		});
 
 		expect(res.status).toBe(404);
-		expect(insertValuesSpy).not.toHaveBeenCalled();
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
 	});
 
-	// ── #5479: DESTROY_RUNNER asks the console's `destroyRunner` permission, and binds the identity ──
-	it("403s DESTROY_RUNNER when the actor lacks runner:destroy in the resolved org (a viewer)", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
+	it("404s a NON-EXISTENT executor with the same response as a cross-org one (no disclosure)", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb();
+
+		const res = await post({
+			job_type: "DESTROY_RUNNER",
+			config_snapshot: { runner_id: TARGET_ID },
+			assigned_runner_id: EXECUTOR_ID,
 		});
+
+		expect(res.status).toBe(404);
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
+
+	// ── #5479: DESTROY_RUNNER asks the console's `destroyRunner` permission ──────────────────────
+	it("403s DESTROY_RUNNER when the actor lacks runner:destroy in the resolved org (a viewer)", async () => {
+		const { valuesSpy } = destroyTx();
+		destroyDb();
 		pdpCan.mockResolvedValue({ allowed: false, reason: "viewer" });
 
 		const res = await post(
-			{ job_type: "DESTROY_RUNNER", config_snapshot: { runner_name: "r1" } },
+			{ job_type: "DESTROY_RUNNER", config_snapshot: { runner_id: TARGET_ID } },
 			{ "X-Alethia-Org": "org-1" },
 		);
 
@@ -711,102 +862,25 @@ describe("POST /api/jobs (CLI queue)", () => {
 			"destroy",
 			{ type: "runner" },
 		);
-		expect(insertValuesSpy).not.toHaveBeenCalled();
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
 		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 
 	it("403s DESTROY_RUNNER from a service token whose actor lacks runner:destroy", async () => {
-		setupTx({});
 		vi.mocked(verifyCliToken).mockResolvedValue({
-			payload: { sub: "user-1", service_token_org_id: "org-1" },
+			payload: { sub: "user-1", service_token_org_id: "org-1", service_token_id: "st-1" },
 			error: null,
 		});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-		});
+		const { valuesSpy } = destroyTx();
+		destroyDb();
 		pdpCan.mockResolvedValue({ allowed: false, reason: "viewer" });
 
 		const res = await post({
 			job_type: "DESTROY_RUNNER",
-			config_snapshot: { runner_name: "r1" },
+			config_snapshot: { runner_id: TARGET_ID },
 		});
 
 		expect(res.status).toBe(403);
-		expect(insertValuesSpy).not.toHaveBeenCalled();
-	});
-
-	it("queues DESTROY_RUNNER when the actor holds runner:destroy", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-		});
-
-		const res = await post({
-			job_type: "DESTROY_RUNNER",
-			cloud_identity_id: IDENTITY_ID,
-			config_snapshot: { runner_name: "r1" },
-		});
-
-		expect(res.status).toBe(201);
-		expect(pdpCan).toHaveBeenCalledWith(
-			expect.objectContaining({ orgId: "org-1" }),
-			"destroy",
-			{ type: "runner" },
-		);
-		expect(insertValuesSpy).toHaveBeenCalledWith(
-			expect.objectContaining({ cloud_identity_id: IDENTITY_ID, org_id: "org-1" }),
-		);
-	});
-
-	it("404s DESTROY_RUNNER naming a cloud identity that is not in the actor's org", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-			// The lookup is by id AND actor.orgId, so another org's identity reads as no row.
-			identityRows: [],
-		});
-
-		const res = await post({
-			job_type: "DESTROY_RUNNER",
-			cloud_identity_id: IDENTITY_ID,
-			config_snapshot: { runner_name: "r1" },
-		});
-
-		expect(res.status).toBe(404);
-		expect(insertValuesSpy).not.toHaveBeenCalled();
-		expect(notifyScaler).not.toHaveBeenCalled();
-	});
-
-	it("400s DESTROY_RUNNER whose cloud_identity_id is not a UUID", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-		});
-
-		const res = await post({
-			job_type: "DESTROY_RUNNER",
-			cloud_identity_id: { id: IDENTITY_ID },
-			config_snapshot: { runner_name: "r1" },
-		});
-
-		expect(res.status).toBe(400);
-		expect(insertValuesSpy).not.toHaveBeenCalled();
-	});
-
-	it("404s a NON-EXISTENT runner with the same response as a cross-org one (no disclosure)", async () => {
-		setupTx({});
-		const { insertValuesSpy } = mockServiceDb({
-			insertRows: [wireJob({ job_type: "DESTROY_RUNNER", project_id: null })],
-			runnerMissing: true,
-		});
-
-		const res = await post({
-			job_type: "DESTROY_RUNNER",
-			config_snapshot: { runner_name: "r1" },
-			assigned_runner_id: "runner-gone",
-		});
-
-		expect(res.status).toBe(404);
-		expect(insertValuesSpy).not.toHaveBeenCalled();
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
 	});
 });
