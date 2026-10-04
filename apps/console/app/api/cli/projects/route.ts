@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
@@ -117,7 +117,14 @@ export async function POST(req: Request) {
 			const [ci] = await db
 				.select({ id: cloudIdentities.id, provider: cloudIdentities.provider })
 				.from(cloudIdentities)
-				.where(eq(cloudIdentities.id, body.cloud_identity_id))
+				// By id AND org (#5479). The comment above always said this; the query matched by id
+				// alone, so another org's identity could be bound to a project here.
+				.where(
+					and(
+						eq(cloudIdentities.id, body.cloud_identity_id),
+						eq(cloudIdentities.org_id, actor.orgId),
+					),
+				)
 				.limit(1);
 			if (!ci) {
 				return NextResponse.json(

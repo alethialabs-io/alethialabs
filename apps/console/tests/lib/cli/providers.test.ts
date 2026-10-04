@@ -202,6 +202,9 @@ describe("resolveCliProvider — organization scoping", () => {
 			// membership query. A token reaching this call would be the defect.
 			"session",
 			"org-B",
+			// #5479: the guard now authorizes a permission in the named org, not membership alone.
+			"view",
+			{ type: "org" },
 		);
 	});
 

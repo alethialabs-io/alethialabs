@@ -236,21 +236,79 @@ export async function authorizeInOrg(
  * merge was the bug underneath the bug: this one is handed an actor resolved from the pin, so its
  * equality fast path is sound; that one is handed the caller's DEFAULT scope precisely so the fast
  * path cannot fire, because the input under test is the pin itself.
+ *
+ * WHY IT TAKES `action` AND `resource` (#5479). A session's cross-org arm used to admit anyone with
+ * a `member` row in the path org — any role, any status. The route's permission had been enforced
+ * by `authorizeCli` in the caller's RESOLVED scope, which is a different org on exactly this arm,
+ * and every user holds an org-wide owner grant in their own personal org (lib/authz/seed.ts). So the check passed in one org
+ * and the write landed in another. The arm now authorizes the route's own permission against the
+ * path org, for an ACTIVE membership. See {@link authorizeCliOrg}, which this wraps.
  */
 export async function ensureCliOrgAccess(
 	actor: Actor,
 	credential: CliCredential,
 	orgId: string,
+	action: Action,
+	resource: { type: Resource; id?: string },
 ): Promise<Response | null> {
+	const result = await authorizeCliOrg(actor, credential, orgId, action, resource);
+	return "error" in result ? result.error : null;
+}
+
+/**
+ * {@link ensureCliOrgAccess}, returning the actor scoped to the PATH org on success — for a route
+ * that has a further question to ask in that org (the invite route's role ceiling).
+ *
+ * - service token: equality with the pin, and nothing else. `authorizeCli` already enforced the
+ *   route's permission on an actor resolved from that pin, so on success `actor` IS the path org.
+ * - session, `actor.orgId === orgId`: the same — `authorizeCli` enforced `action` in this org.
+ * - session, any other org: the member row must be `active` (the caller's personal org has no row
+ *   and needs none), the resolved scope must land on the path org, and `action` on `resource` must
+ *   be allowed THERE. `can()`, not `enforce()`: this is the gate, and `authorizeCli` has already
+ *   recorded the call.
+ */
+export async function authorizeCliOrg(
+	actor: Actor,
+	credential: CliCredential,
+	orgId: string,
+	action: Action,
+	resource: { type: Resource; id?: string },
+): Promise<{ actor: Actor } | { error: Response }> {
 	switch (credential) {
 		case "service_token":
 			// Equality only. A closed union and a `switch` rather than a ternary, so a third
 			// credential kind is a type error here instead of falling into the wide arm.
-			return actor.orgId === orgId ? null : forbidden();
-		case "session":
-			if (actor.orgId === orgId) return null;
-			return (await isOrgMember(actor.userId, orgId)) ? null : forbidden();
+			return actor.orgId === orgId ? { actor } : { error: forbidden() };
+		case "session": {
+			if (actor.orgId === orgId) return { actor };
+			if (orgId !== actor.userId && !(await isActiveOrgMember(actor.userId, orgId))) {
+				return { error: forbidden() };
+			}
+			const scoped = await resolveNamedOrgScope(actor.userId, orgId);
+			if (!scoped) return { error: forbidden() };
+			const decision = await getPdp().can(scoped, action, {
+				type: resource.type,
+				id: resource.id,
+			});
+			return decision.allowed ? { actor: scoped } : { error: forbidden() };
+		}
 	}
+}
+
+/** True if `userId` has an ACTIVE `member` row in `orgId`. A suspended row is not membership. */
+async function isActiveOrgMember(userId: string, orgId: string): Promise<boolean> {
+	const [m] = await getServiceDb()
+		.select({ id: member.id })
+		.from(member)
+		.where(
+			and(
+				eq(member.userId, userId),
+				eq(member.organizationId, orgId),
+				eq(member.status, "active"),
+			),
+		)
+		.limit(1);
+	return Boolean(m);
 }
 
 /**

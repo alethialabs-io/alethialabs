@@ -26,7 +26,7 @@ export async function GET(
 	const { actor, credential } = auth;
 	const { id } = await params;
 
-	const denied = await ensureCliOrgAccess(actor, credential, id);
+	const denied = await ensureCliOrgAccess(actor, credential, id, "view", { type: "member" });
 	if (denied) return denied;
 
 	try {
@@ -58,7 +58,9 @@ export async function POST(
 	const { actor, credential } = auth;
 	const { id } = await params;
 
-	const denied = await ensureCliOrgAccess(actor, credential, id);
+	const denied = await ensureCliOrgAccess(actor, credential, id, "manage_members", {
+		type: "member",
+	});
 	if (denied) return denied;
 
 	const parsed = createTeamBody.safeParse(await req.json().catch(() => null));
