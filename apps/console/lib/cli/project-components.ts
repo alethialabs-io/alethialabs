@@ -937,6 +937,42 @@ export async function insertProjectComponent(
 	return rowToComponentWire(kind, row);
 }
 
+/** Updates the settable fields of ONE named (multi-kind) component in ONE environment, and returns
+ * its wire — or null when no component of that name exists there (the caller's 404).
+ *
+ * `values` must already have passed {@link validateComponentFields}, the same check `add` runs, so
+ * "settable" has one definition for both writes. Only the keys in `values` are written; every
+ * other column keeps what it holds, which is what lets `alethia apply` send just the fields that
+ * changed. The row is matched on `(project_id, environment_id, name)` — the table's own unique —
+ * through {@link componentScope}, the helper the delete uses, so a sibling environment's row of
+ * the same name is never touched.
+ *
+ * Singletons are refused rather than handled: they have no name to address and `add` upserts
+ * them, so a second write path for them would only be a second set of rules. */
+export async function updateProjectComponent(
+	kind: string,
+	projectId: string,
+	environmentId: string,
+	name: string,
+	values: Record<string, unknown>,
+): Promise<ComponentWire | null> {
+	const def = getKindDef(kind);
+	if (!def) throw new Error(`Unknown component kind "${kind}"`);
+	if (def.singleton) throw new Error(`${kind} is a singleton — it is updated by add`);
+	if (Object.keys(values).length === 0) {
+		throw new Error("updateProjectComponent: no fields to update");
+	}
+	const cols = getTableColumns(def.table);
+	if (!cols.name) throw new Error(`${kind} has no name column`);
+	const db = getServiceDb();
+	const [row] = await db
+		.update(def.table)
+		.set({ ...values, updated_at: new Date() })
+		.where(and(componentScope(cols, projectId, environmentId), eq(cols.name, name)))
+		.returning();
+	return row ? rowToComponentWire(kind, row) : null;
+}
+
 /** Deletes a component within ONE environment. Singletons delete that environment's single row;
  * multi kinds delete the named row in it. Returns whether a row was removed (false → 404).
  *
