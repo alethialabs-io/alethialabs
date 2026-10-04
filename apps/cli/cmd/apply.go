@@ -779,14 +779,17 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 					return nil, fmt.Errorf("%s/%s: %w", e.Name, comp.Kind, err)
 				}
 			case ActionUpdate:
-				// A named component is PATCHED with only the fields that changed. A singleton has
-				// no name to address and the server upserts it, so its declared fields are sent
-				// through the add route as before.
+				// ONLY the fields that changed are sent, for every kind. A named component is
+				// PATCHED; a singleton has no name to address, so it goes through the add route,
+				// whose ON CONFLICT arm sets exactly the keys it is given. Re-sending an unchanged
+				// field is not harmless: the cluster's one-writer rule turns a re-sent `node_size`
+				// into `instance_types: []`, clearing a field the file never touched.
+				changed := changedFields(comp.Changes)
 				var err error
 				if comp.Name != "" {
-					_, err = c.UpdateComponent(result.ProjectID, comp.Kind, comp.Name, e.Name, changedFields(comp.Changes))
+					_, err = c.UpdateComponent(result.ProjectID, comp.Kind, comp.Name, e.Name, changed)
 				} else {
-					_, err = c.AddComponent(result.ProjectID, comp.Kind, "", e.Name, comp.Fields)
+					_, err = c.AddComponent(result.ProjectID, comp.Kind, "", e.Name, changed)
 				}
 				if err != nil {
 					// The refusal belongs to THIS component. Recorded and reported, and the

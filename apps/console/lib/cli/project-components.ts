@@ -56,6 +56,7 @@ import {
 	projectStorageBuckets,
 	projectTopics,
 } from "@/lib/db/schema";
+import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { appsPathSchema } from "@/lib/validations/apps-path";
 import {
 	clusterNodeSizingBounds,
@@ -935,6 +936,35 @@ export async function insertProjectComponent(
 	}
 	const [row] = await db.insert(def.table).values(insertValues).returning();
 	return rowToComponentWire(kind, row);
+}
+
+/**
+ * Whether a component write may carry the `cloud_identity_id` in `values`.
+ *
+ * True when the write names no identity (the key absent, or `null` to re-inherit the project's),
+ * or names one the caller may use: an `org`-scoped identity of `orgId`, or — when a person is
+ * calling, `personalAuthorId` — that person's own `personal` identity. This is
+ * {@link actorIdentityWhere}, the predicate the project create route binds its identity with
+ * (#5479, #5481).
+ *
+ * The column is only a foreign key to `cloud_identities.id`, and CLI routes run on the
+ * service-role db with no RLS, so without this an `add` or an update could point a component at
+ * ANOTHER org's identity by guessing its id. Both component write routes call it before writing.
+ */
+export async function componentIdentityAllowed(
+	values: Record<string, unknown>,
+	orgId: string,
+	personalAuthorId: string | undefined,
+): Promise<boolean> {
+	const id = values.cloud_identity_id;
+	if (id === undefined || id === null) return true;
+	if (typeof id !== "string") return false;
+	const [row] = await getServiceDb()
+		.select({ id: cloudIdentities.id })
+		.from(cloudIdentities)
+		.where(actorIdentityWhere(id, orgId, personalAuthorId))
+		.limit(1);
+	return Boolean(row);
 }
 
 /** Updates the settable fields of ONE named (multi-kind) component in ONE environment, and returns

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { z } from "zod";
-import { authorizeCli } from "@/lib/authz/guard";
+import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
 import {
+	componentIdentityAllowed,
 	deleteProjectComponent,
 	getKindDef,
 	isSingletonKind,
@@ -84,6 +85,17 @@ export async function PATCH(
 			new URL(req.url).searchParams.get("env"),
 		);
 		if (!target.ok) return cliEnvironmentError(target);
+		// The identity is bound to the caller's org like the project is: a foreign one is "not
+		// found", exactly as a foreign project id is.
+		if (
+			!(await componentIdentityAllowed(
+				validated.values,
+				actor.orgId,
+				userIdIsTheCaller(auth.credential) ? actor.userId : undefined,
+			))
+		) {
+			return NextResponse.json({ error: "Cloud identity not found" }, { status: 404 });
+		}
 		const component = await updateProjectComponent(
 			kind,
 			project.id,

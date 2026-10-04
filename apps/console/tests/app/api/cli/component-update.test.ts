@@ -27,6 +27,25 @@ const ORG_A = "org-a";
 const ORG_B = "org-b";
 const PROJECT_ID = "44444444-4444-4444-8444-444444444444";
 const ENV_ID = "55555555-5555-4555-8555-555555555555";
+const OTHER_PROJECT_ID = "66666666-6666-4666-8666-666666666666";
+const OTHER_ENV_ID = "77777777-7777-4777-8777-777777777777";
+const IDENTITY_A = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
+const IDENTITY_B = "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2";
+const IDENTITY_A_SOMEONE_ELSES = "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3";
+const IDENTITY_A_MINE = "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4";
+
+/** Environments, each under ONE project. `prod` exists in both; only ours may be written. */
+const ENVS = [
+	{ id: ENV_ID, project_id: PROJECT_ID, name: "prod", stage: "production" },
+	{ id: OTHER_ENV_ID, project_id: OTHER_PROJECT_ID, name: "prod", stage: "production" },
+];
+/** Cloud identities: an org one in each org, and two personal ones in org A. */
+const IDENTITIES = [
+	{ id: IDENTITY_A, org_id: ORG_A, scope: "org", user_id: "u-admin" },
+	{ id: IDENTITY_B, org_id: ORG_B, scope: "org", user_id: "u-outsider" },
+	{ id: IDENTITY_A_SOMEONE_ELSES, org_id: ORG_A, scope: "personal", user_id: "u-viewer" },
+	{ id: IDENTITY_A_MINE, org_id: ORG_A, scope: "personal", user_id: "u-editor" },
+];
 
 /** Who each test user is: their home org and their built-in role in it. */
 const USERS: Record<string, { org: string; role: "owner" | "operator" | "viewer" }> = {
@@ -88,37 +107,85 @@ vi.mock("@/lib/authz", async () => {
 		}),
 	};
 });
-// The member table (read by `isActiveOrgMember` for an X-Alethia-Org header) holds no row for the
-// outsider in org A; the update chain records what `updateProjectComponent` writes.
-vi.mock("@/lib/db", () => ({
-	getServiceDb: () => ({
-		select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }),
-		update: () => ({
-			set: (values: Record<string, unknown>) => {
-				dbUpdate.set(values);
-				return {
+// The service-role db, answering each SELECT from fixtures by reading the predicate's bound params:
+// the member table (read by `isActiveOrgMember`) holds each user in their home org only, so the
+// outsider has no row in org A; environments are found only under the project the query names; identities only
+// when the predicate's tenancy admits them. The update chain records what `updateProjectComponent`
+// writes.
+vi.mock("@/lib/db", async () => {
+	const { cloudIdentities, member, projectEnvironments } = await import("@/lib/db/schema");
+	const { PgDialect: Dialect } = await import("drizzle-orm/pg-core");
+	/** The rows a SELECT on `table` filtered by `predicate` returns, from the fixtures above. */
+	const rowsFor = (table: unknown, predicate: SQL): unknown[] => {
+		const params = new Dialect().sqlToQuery(predicate).params;
+		if (table === member) {
+			// and(userId = $1, organizationId = $2, status = 'active'): each user is a member of
+			// their home org only.
+			return USERS[String(params[0])]?.org === params[1] ? [{ id: `m-${String(params[0])}` }] : [];
+		}
+		if (table === projectEnvironments) {
+			// and(project_id = $1, or(id/name/stage = …))
+			return ENVS.filter(
+				(e) => e.project_id === params[0] && params.slice(1).some((p) => p === e.id || p === e.name || p === e.stage),
+			);
+		}
+		if (table === cloudIdentities) {
+			// actorIdentityWhere: id = $1 AND ((org_id = $2 AND scope = 'org') [OR (user_id = $4 AND scope = 'personal')])
+			return IDENTITIES.filter(
+				(i) =>
+					i.id === params[0] &&
+					((i.scope === "org" && i.org_id === params[1]) ||
+						(params.length > 3 && i.scope === "personal" && i.user_id === params[3])),
+			);
+		}
+		return [];
+	};
+	return {
+		getServiceDb: () => ({
+			select: () => ({
+				from: (table: unknown) => ({
 					where: (predicate: SQL) => {
-						dbUpdate.where(predicate);
-						return { returning: async () => dbUpdate.rows };
+						const limit = async () => rowsFor(table, predicate);
+						return { limit, orderBy: () => ({ limit }) };
 					},
-				};
-			},
+				}),
+			}),
+			update: () => ({
+				set: (values: Record<string, unknown>) => {
+					dbUpdate.set(values);
+					return {
+						where: (predicate: SQL) => {
+							dbUpdate.where(predicate);
+							return { returning: async () => dbUpdate.rows };
+						},
+					};
+				},
+			}),
 		}),
-	}),
-}));
-vi.mock("@/lib/cli/resolve-project", () => ({
-	// Org-bound: the project exists in org A and nowhere else.
-	resolveCliProject: vi.fn(async (orgId: string) => (orgId === ORG_A ? { id: PROJECT_ID } : null)),
-	resolveCliWriteEnvironment: vi.fn(),
-}));
+	};
+});
+// Org-bound: the project exists in org A and nowhere else. The environment resolver is REAL, so an
+// `?env=` naming another project's environment is refused by the query it actually runs.
+vi.mock("@/lib/cli/resolve-project", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@/lib/cli/resolve-project")>();
+	return {
+		...actual,
+		resolveCliProject: vi.fn(async (orgId: string) => (orgId === ORG_A ? { id: PROJECT_ID } : null)),
+	};
+});
 vi.mock("@/lib/cli/project-components", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@/lib/cli/project-components")>();
-	return { ...actual, updateProjectComponent: vi.fn() };
+	return { ...actual, updateProjectComponent: vi.fn(), insertProjectComponent: vi.fn() };
 });
 
 import { PATCH } from "@/app/api/cli/projects/[id]/components/[kind]/[name]/route";
-import { updateProjectComponent } from "@/lib/cli/project-components";
-import { resolveCliProject, resolveCliWriteEnvironment } from "@/lib/cli/resolve-project";
+import { POST } from "@/app/api/cli/projects/[id]/components/[kind]/route";
+import {
+	insertProjectComponent,
+	updateProjectComponent,
+	validateComponentFields,
+} from "@/lib/cli/project-components";
+import { resolveCliProject } from "@/lib/cli/resolve-project";
 
 const WIRE = {
 	id: "c1",
@@ -153,8 +220,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	state.user = "u-editor";
 	dbUpdate.rows = [];
-	vi.mocked(resolveCliWriteEnvironment).mockResolvedValue({ ok: true, id: ENV_ID, name: "prod" });
 	vi.mocked(updateProjectComponent).mockResolvedValue(WIRE);
+	vi.mocked(insertProjectComponent).mockResolvedValue(WIRE);
 });
 
 describe("PATCH /api/cli/projects/:id/components/:kind/:name", () => {
@@ -164,7 +231,6 @@ describe("PATCH /api/cli/projects/:id/components/:kind/:name", () => {
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ component: WIRE });
 		expect(resolveCliProject).toHaveBeenCalledWith(ORG_A, PROJECT_ID);
-		expect(resolveCliWriteEnvironment).toHaveBeenCalledWith(PROJECT_ID, "prod");
 		expect(updateProjectComponent).toHaveBeenCalledWith("databases", PROJECT_ID, ENV_ID, "orders", {
 			max_capacity: 8,
 		});
@@ -210,10 +276,22 @@ describe("PATCH /api/cli/projects/:id/components/:kind/:name", () => {
 	});
 
 	it("404: an unknown ?env= is named rather than falling back to the default", async () => {
-		vi.mocked(resolveCliWriteEnvironment).mockResolvedValue({ ok: false, reason: "not-found", requested: "qa" });
 		const res = await patch({ fields: { max_capacity: 8 } }, { env: "qa" });
 		expect(res.status).toBe(404);
 		expect(updateProjectComponent).not.toHaveBeenCalled();
+	});
+
+	it("404: ?env= naming ANOTHER project's environment is refused, by id", async () => {
+		const res = await patch({ fields: { max_capacity: 8 } }, { env: OTHER_ENV_ID });
+		expect(res.status).toBe(404);
+		expect(updateProjectComponent).not.toHaveBeenCalled();
+	});
+
+	it("?env=prod resolves to THIS project's prod, never the other project's of the same name", async () => {
+		await patch({ fields: { max_capacity: 8 } });
+		expect(updateProjectComponent).toHaveBeenCalledWith("databases", PROJECT_ID, ENV_ID, "orders", {
+			max_capacity: 8,
+		});
 	});
 
 	it("403: a viewer of the project's own org cannot edit it", async () => {
@@ -245,6 +323,80 @@ describe("PATCH /api/cli/projects/:id/components/:kind/:name", () => {
 		const res = await patch({ fields: { max_capacity: 8 } });
 		expect(res.status).toBe(401);
 		expect(updateProjectComponent).not.toHaveBeenCalled();
+	});
+});
+
+/** Calls POST .../components/:kind as `alethia project component add` would. */
+function post(kind: string, body: unknown) {
+	return POST(
+		new Request(`https://console.local/api/cli/projects/${PROJECT_ID}/components/${kind}?env=prod`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json", Authorization: "Bearer t" },
+			body: JSON.stringify(body),
+		}),
+		{ params: Promise.resolve({ id: PROJECT_ID, kind }) },
+	);
+}
+
+// The cloud identity a component names is bound to the caller's org, like the project: on both
+// write routes, a foreign identity is "not found" and nothing is written.
+describe("cloud_identity_id is bound to the caller's org", () => {
+	it.each([
+		["another org's identity", IDENTITY_B],
+		["another member's personal identity", IDENTITY_A_SOMEONE_ELSES],
+		["an identity that does not exist", "e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5"],
+	])("PATCH 404s %s", async (_label, identity) => {
+		const res = await patch({ fields: { cloud_identity_id: identity } });
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toBe("Cloud identity not found");
+		expect(updateProjectComponent).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["another org's identity", IDENTITY_B],
+		["another member's personal identity", IDENTITY_A_SOMEONE_ELSES],
+	])("POST 404s %s", async (_label, identity) => {
+		const res = await post("databases", { name: "orders", fields: { cloud_identity_id: identity } });
+		expect(res.status).toBe(404);
+		expect((await res.json()).error).toBe("Cloud identity not found");
+		expect(insertProjectComponent).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["the org's identity", IDENTITY_A],
+		["the caller's own personal identity", IDENTITY_A_MINE],
+		["null, to re-inherit the project's", null],
+	])("PATCH and POST accept %s", async (_label, identity) => {
+		expect((await patch({ fields: { cloud_identity_id: identity } })).status).toBe(200);
+		expect(updateProjectComponent).toHaveBeenCalledTimes(1);
+		expect((await post("databases", { name: "orders", fields: { cloud_identity_id: identity } })).status).toBe(201);
+		expect(insertProjectComponent).toHaveBeenCalledTimes(1);
+	});
+
+	it("a SERVICE token cannot use a personal identity, even its minter's", async () => {
+		const { verifyCliToken } = await import("@/lib/cli/auth");
+		vi.mocked(verifyCliToken).mockResolvedValueOnce({
+			payload: { sub: "u-editor", service_token_org_id: ORG_A, service_token_id: "st-1" },
+			error: null,
+		});
+		const res = await patch({ fields: { cloud_identity_id: IDENTITY_A_MINE } });
+		expect(res.status).toBe(404);
+		expect(updateProjectComponent).not.toHaveBeenCalled();
+	});
+});
+
+// Why `apply` sends a singleton ONLY the fields that changed: the server's one-writer rule turns a
+// cluster write that names `node_size` into one that also clears `instance_types`. A write that
+// does not name either sizing field leaves both alone, so an unchanged size must not be re-sent.
+describe("the cluster's sizing one-writer rule, as the add route applies it", () => {
+	it("a write without node_size touches neither sizing field", () => {
+		const r = validateComponentFields("cluster", { node_max_size: 5 });
+		expect(r).toEqual({ ok: true, values: { node_max_size: 5 } });
+	});
+
+	it("a write that re-sends node_size clears instance_types", () => {
+		const r = validateComponentFields("cluster", { node_size: { vcpu: 4, memory_gb: 16 }, node_max_size: 5 });
+		expect(r.ok && r.values.instance_types).toEqual([]);
 	});
 });
 

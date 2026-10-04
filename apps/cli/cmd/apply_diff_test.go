@@ -272,6 +272,34 @@ func TestComputePlan_ADifferingSingletonIsAnUpdateWithItsDiff(t *testing.T) {
 	}
 }
 
+// TestExecuteApply_ASingletonUpdateSendsOnlyWhatChanged: the file declares the cluster's node_size
+// (unchanged) and node_max_size (changed). Only node_max_size may be sent. Re-sending node_size
+// would make the server's one-writer rule write `instance_types: []` — clearing a field nobody
+// changed — so the unchanged field must not reach the wire at all.
+func TestExecuteApply_ASingletonUpdateSendsOnlyWhatChanged(t *testing.T) {
+	f := &diffFake{
+		envs: []api.Environment{{ID: "e1", Name: "prod", Stage: "production", PlacementMode: "dedicated"}},
+		comps: map[string][]api.Component{"prod": {
+			{ID: "c0", Kind: "cluster", Name: "cluster", Config: map[string]any{
+				"node_size":     map[string]any{"vcpu": float64(4), "memory_gb": float64(16)},
+				"node_max_size": float64(3),
+			}},
+		}},
+	}
+	m := diffManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: prod\n    stage: production\n    components:\n      cluster:\n        node_size:\n          vcpu: 4\n          memory_gb: 16\n        node_max_size: 5\n")
+	plan, err := computePlan(f, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+		t.Fatal(err)
+	}
+	want := []diffCall{{"add", "cluster", "", "prod", map[string]any{"node_max_size": 5}}}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Errorf("calls = %+v, want only the changed node_max_size: %+v", f.calls, want)
+	}
+}
+
 func TestComputePlan_CloudIdentityIsComparedFromItsOwnWireField(t *testing.T) {
 	id := "ci-1"
 	f := &diffFake{

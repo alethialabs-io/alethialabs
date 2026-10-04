@@ -126,8 +126,11 @@ Here the file raises `max_capacity` of the `orders` database in `prod` from `4` 
 `(unset)` means the server has no value for that field.
 
 - **A field you leave out is never cleared.** `apply` compares only the fields the file names, and
-  sends only the ones that changed. To change one field of a database, write that field; the other
-  fields keep their values.
+  sends only the ones that changed. This is true for every kind: a named component such as a
+  database, and a one-per-environment kind such as `cluster`. To change one field of a database,
+  write that field; the other fields keep their values.
+- **A `cloud_identity_id` must be one you can use.** It must name a cloud account of your
+  organization, or your own personal one. Any other id is refused as `Cloud identity not found`.
 - **Values compare by meaning.** `2` and `2.0` are the same number. Lists and maps compare item by
   item, and the order of a list counts.
 - **A refused change does not stop the others.** If the server refuses a change, `apply` reports it
