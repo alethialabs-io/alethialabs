@@ -1875,7 +1875,7 @@ export async function linkSubscriptionToNewOrg(input: {
 	// leaves a subscription that already names this org. A retry used to be refused here as "already
 	// linked", for ever, with the customer charged and no way to finish. Now a subscription that
 	// already names THIS org, stamped by THIS user, skips the Stripe writes and re-runs the rest
-	// (both of which converge: the sync upserts on organization_id, the payer write is an update).
+	// (both of which converge: the sync re-applies the same subscription, the payer write is an update).
 	// A subscription naming a DIFFERENT org is still refused.
 	const linkedTo = sub.metadata?.organization_id;
 	let linked: Stripe.Subscription;
