@@ -16,8 +16,8 @@ module "storage_account" {
   replication_type    = var.storage_account_replication
   containers          = var.storage_containers
 
-  # Customer-managed key (below). Empty strings when no container asked for it, which render
-  # neither the identity nor the customer_managed_key block — the account plans as it always did.
+  # Customer-managed key (below). When no container asked for it, cmek_enabled is false and the ids
+  # are empty strings, so neither block renders and the account plans as it always did.
   # The BOOLEAN gates the module's identity and customer_managed_key blocks; the ids are unknown
   # until the key and identity exist, and a block count keyed on an unknown id is unknown on the
   # very first apply.

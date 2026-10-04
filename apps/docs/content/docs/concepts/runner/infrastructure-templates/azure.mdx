@@ -88,7 +88,8 @@ Set `azure_db_log_exports` on the **database** to send Flexible Server logs to L
 Some categories stay empty until you turn on the matching server parameter with `azure_db_database_flags`:
 
 - `MySqlAuditLogs` needs `audit_log_enabled` set to `ON`.
-- `PostgreSQLFlexQueryStoreRuntime` and `PostgreSQLFlexQueryStoreWaitStats` need Query Store on: set `pg_qs.query_capture_mode` to `TOP` or `ALL`.
+- `PostgreSQLFlexQueryStoreRuntime` needs Query Store on: set `pg_qs.query_capture_mode` to `TOP` or `ALL`.
+- `PostgreSQLFlexQueryStoreWaitStats` needs Query Store on as above, and wait sampling on: also set `pgms_wait_sampling.query_capture_mode` to `all` (it defaults to `none`).
 
 The logs go to the workspace from control-plane log retention. If the project has no cluster, or does not set `aks_log_retention_days`, also set `azure_db_log_workspace_id` to the resource ID of an existing workspace. The plan fails if the logs have nowhere to go, or if a category belongs to the other engine.
 

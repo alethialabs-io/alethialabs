@@ -193,8 +193,8 @@ variable "secrets_kms_key_id" {
   description = "Key Vault key id for KMS etcd encryption of Kubernetes Secrets. Empty leaves Secrets under the platform key."
 }
 
-# Root-created Log Analytics workspace (aks_log_retention_days). Empty renders no oms_agent block,
-# which is the shape every cluster had before the knob existed.
+# Root-created Log Analytics workspace (aks_log_retention_days). log_analytics_enabled gates the
+# oms_agent block; false renders none, which is the shape every cluster had before the knob existed.
 variable "log_analytics_enabled" {
   type        = bool
   default     = false
