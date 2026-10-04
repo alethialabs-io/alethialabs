@@ -114,7 +114,7 @@ export function ActivityLog({
 	const set = useActivityFilters((s) => s.set);
 	const patch = useActivityFilters((s) => s.patch);
 	const reset = useActivityFilters((s) => s.reset);
-	useFilterUrlSync(useActivityFilters, DEFAULT_ACTIVITY_FILTERS);
+	const urlRead = useFilterUrlSync(useActivityFilters, DEFAULT_ACTIVITY_FILTERS);
 	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
 
 	// The default window is resolved ONCE. Resolving it per render would move `to` forward
@@ -182,6 +182,14 @@ export function ActivityLog({
 	// skeleton. `isPlaceholderData` is true for exactly the window between the filter change
 	// and the new page landing.
 	const stale = activity.isPlaceholderData;
+	// The feed is BUSY while what it shows may not answer the URL and the bar: before the link has
+	// been read into the store, before the first answer, while the rows are the previous query's
+	// placeholder, and while a typed search is still inside its debounce — the jobs and runners
+	// lists' rule (#4980, #5045). Before the first answer this feed renders a skeleton with no count,
+	// no table and no empty state, which nothing else on screen tells apart from a page that failed
+	// to render a list; `aria-busy` says which, for assistive tech and for the audit's F8–F9 read,
+	// which took two such reads for the list's answer (#5471).
+	const busy = !urlRead || activity.isPending || stale || filters.search !== debouncedSearch;
 
 	/** Fetch the next page (older rows); TanStack appends it to `pages`. */
 	const onLoadMore = useCallback(async () => {
@@ -283,7 +291,7 @@ export function ActivityLog({
 	const projectName = projectId ? lookups.projectName.get(projectId) : undefined;
 
 	return (
-		<div>
+		<div aria-busy={busy}>
 			{projectId && (
 				<p className="mb-3 text-ui-md text-text-tertiary">
 					Activity in{" "}
