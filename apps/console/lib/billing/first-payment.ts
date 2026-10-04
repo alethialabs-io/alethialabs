@@ -74,3 +74,51 @@ export async function readFirstPayment(
 	}
 	return "never_paid";
 }
+
+/**
+ * What a CANCELLED subscription's latest invoice shows about money (#5463). Stripe has no conditional
+ * cancel, so a payment the customer completed between a `never_paid` read and the cancel is only
+ * visible afterwards, which is when this is read:
+ *   - `unrecognised`: a payment that is not a PaymentIntent, or more payments than one page — nothing
+ *     proves what was taken;
+ *   - `processing`: a PaymentIntent `processing` or `requires_capture` — money may still move;
+ *   - `took_money`: one or more PaymentIntents `succeeded`, listed for the caller to refund;
+ *   - `no_money`: every PaymentIntent awaits the customer or is `canceled`, or there is no invoice or
+ *     no payment at all. Cancelling leaves the invoice open (Stripe stops automatic collection, it does
+ *     not void it), so the caller still has to make it unpayable.
+ * The first that applies wins, in that order. A failure to read Stripe is thrown, never read as
+ * "unpaid".
+ */
+export type PaymentAfterCancel =
+	| { kind: "unrecognised" }
+	| { kind: "processing"; paymentIntentId: string }
+	| { kind: "took_money"; succeeded: string[] }
+	| { kind: "no_money" };
+
+/** Reads `PaymentAfterCancel` for a subscription that has been cancelled. */
+export async function readPaymentAfterCancel(
+	sub: Pick<Stripe.Subscription, "id" | "latest_invoice">,
+): Promise<PaymentAfterCancel> {
+	const invoiceId =
+		typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
+	if (!invoiceId) return { kind: "no_money" };
+	const stripe = getStripe();
+	const payments = await stripe.invoicePayments.list({
+		invoice: invoiceId,
+		limit: 100,
+		expand: ["data.payment.payment_intent"],
+	});
+	if (payments.has_more) return { kind: "unrecognised" };
+	let processing: string | null = null;
+	const succeeded: string[] = [];
+	for (const p of payments.data) {
+		const intent = p.payment.payment_intent;
+		if (p.payment.type !== "payment_intent" || !intent) return { kind: "unrecognised" };
+		const read = typeof intent === "string" ? await stripe.paymentIntents.retrieve(intent) : intent;
+		if (read.status === "succeeded") succeeded.push(read.id);
+		else if (read.status === "processing" || read.status === "requires_capture") processing ??= read.id;
+	}
+	if (processing) return { kind: "processing", paymentIntentId: processing };
+	if (succeeded.length > 0) return { kind: "took_money", succeeded };
+	return { kind: "no_money" };
+}

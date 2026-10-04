@@ -44,8 +44,33 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 		recordPendingOrgSetup: vi.fn(),
 		savePendingOrgSetupDetails: vi.fn(),
 		unfinishedPendingOrgSetups: vi.fn(),
+		unlinkedPendingOrgSetupCustomers: vi.fn(),
 	};
 });
+// `alertPaymentNeedsSupport` awaits `emitAlertEvent` and reports whether a delivery was queued (#5489).
+// Default: nothing was queued — no rule is bound to a channel — so no copy may claim an alert was raised.
+vi.mock("@/lib/alerts/emit", () => ({ emitAlertEvent: vi.fn(async () => 0), emitAlertEventSafe: vi.fn() }));
+// The purchase lock (#5489) is a Postgres advisory lock, tested against real Postgres in
+// tests/integration/purchase-lock.test.ts. Here it is an in-memory mutex per key with the same
+// contract — calls with one key run one after another — so a test can run two purchases at once and
+// see whether the action took the lock around the right steps.
+const purchaseLockTails = vi.hoisted(() => new Map<string, Promise<void>>());
+vi.mock("@/lib/billing/purchase-lock", () => ({
+	withPurchaseLock: vi.fn(async <T,>(key: string, fn: () => Promise<T>) => {
+		const prior = purchaseLockTails.get(key) ?? Promise.resolve();
+		let release: () => void = () => undefined;
+		const mine = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		purchaseLockTails.set(key, prior.then(() => mine));
+		await prior;
+		try {
+			return { acquired: true, value: await fn() };
+		} finally {
+			release();
+		}
+	}),
+}));
 vi.mock("@/lib/billing/seats", () => ({ countBillableSeats: vi.fn() }));
 vi.mock("@/lib/billing/collaboration", () => ({ canOrgInvite: vi.fn() }));
 // The paid-conversion gate is MOCKED OPEN here, deliberately.
@@ -134,8 +159,10 @@ import {
 	recordPendingOrgSetup,
 	savePendingOrgSetupDetails,
 	unfinishedPendingOrgSetups,
+	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
 import { countBillableSeats } from "@/lib/billing/seats";
+import { emitAlertEvent } from "@/lib/alerts/emit";
 import { canOrgInvite } from "@/lib/billing/collaboration";
 import {
 	isStripeConfigured,
@@ -201,10 +228,17 @@ function makeStripe() {
 		checkout: { sessions: { create: vi.fn() } },
 		billingPortal: { sessions: { create: vi.fn() } },
 		paymentIntents: { create: vi.fn(), retrieve: vi.fn() },
+		refunds: { create: vi.fn() },
 		invoicePayments: { list: vi.fn() },
 		setupIntents: { create: vi.fn() },
 		paymentMethods: { list: vi.fn(), retrieve: vi.fn(), detach: vi.fn() },
-		invoices: { list: vi.fn(), create: vi.fn(), finalizeInvoice: vi.fn() },
+		invoices: {
+			list: vi.fn(),
+			create: vi.fn(),
+			finalizeInvoice: vi.fn(),
+			retrieve: vi.fn(),
+			voidInvoice: vi.fn(),
+		},
 		invoiceItems: { create: vi.fn() },
 		charges: { list: vi.fn() },
 	};
@@ -231,6 +265,7 @@ let db: ReturnType<typeof makeDb>;
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	purchaseLockTails.clear();
 	stripe = makeStripe();
 	db = makeDb();
 	vi.mocked(getStripe).mockReturnValue(stripe as never);
@@ -239,6 +274,12 @@ beforeEach(() => {
 	stripe.subscriptions.list.mockResolvedValue({ data: [] } as never);
 	// Default: an `incomplete` subscription's first payment awaits the customer — provably unpaid.
 	stripe.invoicePayments.list.mockResolvedValue(invoicePayments("requires_payment_method"));
+	// Default: a cancelled subscription's latest invoice is still `open` (cancelling does not void it),
+	// and voiding it succeeds.
+	stripe.invoices.retrieve.mockResolvedValue({ status: "open" });
+	stripe.invoices.voidInvoice.mockResolvedValue({ status: "void" });
+	// Default: the caller has no earlier unfinished setup record, so no customer to reuse or sweep.
+	vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue([]);
 	// Default: a real org with the manage_billing permission.
 	authz.mockResolvedValue({ orgId: "org-1", userId: "user-1" } as never);
 	authzInOrg.mockResolvedValue({ orgId: "org-1", userId: "user-1" } as never);
@@ -478,6 +519,368 @@ describe("createSubscriptionIntent", () => {
 			/did not return a payment client secret/,
 		);
 	});
+	// #5463: the refusal said "try again in a minute", then "up to 23 hours". A payment that is not proven
+	// unpaid blocks a new purchase until it settles, and a bank debit can take several business days.
+	it("the refusal says the block lasts until the payment settles, and promises neither a minute nor 23 hours", async () => {
+		orgBilling.mockResolvedValue(null);
+		stripe.customers.create.mockResolvedValue({ id: "cus_1" });
+		stripe.subscriptions.list.mockResolvedValue({
+			data: [{ id: "sub_inflight", status: "incomplete", latest_invoice: "in_1" }],
+		});
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("processing"));
+
+		const r = await createSubscriptionIntent("team");
+
+		expect(r).toEqual({ error: expect.stringMatching(/several business days to settle, and a new purchase stays blocked until it does/) });
+		expect(r).not.toEqual({ error: expect.stringMatching(/in a minute/) });
+		expect(r).not.toEqual({ error: expect.stringMatching(/23 hours/) });
+	});
+
+	// #5463: Stripe has no conditional cancel. A payment completed between the read that proved the
+	// subscription unpaid and the cancel was cancelled after it was taken, and a second purchase minted
+	// beside it. It is now read again after the cancel: the taken payment is refunded under an
+	// idempotency key, and nothing new is minted.
+	it("a first payment that succeeds between the read and the cancel is refunded once, and nothing new is minted", async () => {
+		orgBilling.mockResolvedValue(null);
+		stripe.customers.create.mockResolvedValue({ id: "cus_1" });
+		stripe.subscriptions.list.mockResolvedValue({
+			data: [{ id: "sub_racing", status: "incomplete", latest_invoice: "in_1" }],
+		});
+		stripe.invoicePayments.list
+			.mockResolvedValueOnce(invoicePayments("requires_payment_method"))
+			.mockResolvedValueOnce(invoicePayments("succeeded"));
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_second",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
+		});
+
+		await expect(createSubscriptionIntent("team")).resolves.toEqual({
+			error: expect.stringMatching(/refunded in full/),
+		});
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_racing");
+		expect(stripe.refunds.create).toHaveBeenCalledTimes(1);
+		expect(stripe.refunds.create).toHaveBeenCalledWith(
+			{ payment_intent: "pi_1" },
+			{ idempotencyKey: "refund-cancelled-first-payment-pi_1" },
+		);
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	// #5463: a payment that starts processing between the read that proved the subscription unpaid and
+	// the cancel refuses THAT purchase and alerts an operator. Nothing records the refusal (the hold
+	// lifecycle is designed first, #5506): the retry finds the subscription `canceled`, which the
+	// sweep (it lists `incomplete` only) cannot see, and mints — exactly what origin/dev did on the FIRST
+	// request. This pins that gap so the design issue's fix flips it, and pins that the refusal copy
+	// promises neither a block nor "won't be charged twice".
+	it("a payment that starts processing between the read and the cancel refuses that purchase and alerts; the retry is not remembered", async () => {
+		vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		vi.mocked(countBillableSeats).mockResolvedValue(1);
+		const racing = { id: "sub_racing", status: "incomplete", latest_invoice: "in_1" };
+		stripe.subscriptions.list
+			.mockResolvedValueOnce({ data: [racing] })
+			.mockResolvedValue({ data: [] });
+		stripe.subscriptions.retrieve.mockResolvedValue({ ...racing, status: "canceled" });
+		stripe.invoicePayments.list
+			.mockResolvedValueOnce(invoicePayments("requires_payment_method"))
+			.mockResolvedValue(invoicePayments("processing"));
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_second",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
+		});
+
+		const first = await createSubscriptionIntent("team");
+		expect(first).toEqual({ error: expect.stringMatching(/could not confirm that an earlier checkout was closed/) });
+		expect(first).toEqual({ error: expect.stringMatching(/Try again later.*contact support at support@alethialabs\.io/) });
+		expect(first).not.toEqual({ error: expect.stringMatching(/stays blocked|won't be charged twice/) });
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		expect(emitAlertEvent).toHaveBeenCalledWith(
+			"org-platform",
+			"system.platform.payment_needs_support",
+			expect.objectContaining({ resource_id: "sub_racing", summary: expect.stringContaining("refunded by hand") }),
+		);
+
+		// The retry: nothing remembers the refusal, so it mints (#5506).
+		await expect(createSubscriptionIntent("team")).resolves.toMatchObject({ subscriptionId: "sub_second" });
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledTimes(1);
+		vi.unstubAllEnvs();
+	});
+
+	// #5489 review blocker: cancelling a subscription leaves its open invoice payable. A tab still showing
+	// the cancelled subscription's PaymentElement could confirm it after the sweep minted a second one,
+	// and the customer paid twice. The invoice is now voided before the subscription counts as settled.
+	it("voids the open invoice of a never-paid subscription the sweep cancels, before minting, so a stale tab cannot pay it", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		vi.mocked(countBillableSeats).mockResolvedValue(1);
+		stripe.subscriptions.list.mockResolvedValue({
+			data: [{ id: "sub_stale", status: "incomplete", latest_invoice: "in_stale" }],
+		});
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_second",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
+		});
+
+		await expect(createSubscriptionIntent("team")).resolves.toMatchObject({ subscriptionId: "sub_second" });
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_stale");
+		expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_stale");
+		expect(stripe.invoices.voidInvoice.mock.invocationCallOrder[0]).toBeLessThan(
+			stripe.subscriptions.create.mock.invocationCallOrder[0],
+		);
+	});
+
+	it("an invoice that is no longer payable (already void) is not voided again, and the purchase goes ahead", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		vi.mocked(countBillableSeats).mockResolvedValue(1);
+		stripe.subscriptions.list.mockResolvedValue({
+			data: [{ id: "sub_stale", status: "incomplete", latest_invoice: "in_stale" }],
+		});
+		stripe.invoices.retrieve.mockResolvedValue({ status: "void" });
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_second",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
+		});
+
+		await expect(createSubscriptionIntent("team")).resolves.toMatchObject({ subscriptionId: "sub_second" });
+		expect(stripe.invoices.voidInvoice).not.toHaveBeenCalled();
+	});
+
+	it("a void that fails alerts and refuses — nothing is minted beside an invoice a stale tab could still pay", async () => {
+		vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		vi.mocked(countBillableSeats).mockResolvedValue(1);
+		const stale = { id: "sub_stale", status: "incomplete", latest_invoice: "in_stale" };
+		stripe.subscriptions.list.mockResolvedValue({ data: [stale] });
+		stripe.invoices.voidInvoice.mockRejectedValue(new Error("Stripe is unavailable"));
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_second",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
+		});
+
+		await expect(createSubscriptionIntent("team")).resolves.toEqual({
+			error: expect.stringMatching(/could not confirm that an earlier checkout was closed/),
+		});
+		expect(emitAlertEvent).toHaveBeenCalledWith(
+			"org-platform",
+			"system.platform.payment_needs_support",
+			expect.objectContaining({ resource_id: "sub_stale", summary: expect.stringContaining("could not be voided") }),
+		);
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		vi.unstubAllEnvs();
+	});
+
+	// #5489 advisory: two tabs that opened the upgrade sheet at once each read "nothing in flight" and
+	// each minted a payable subscription. The purchase now runs under a per-org lock, so the second
+	// request sweeps (and voids) the first one's subscription instead of minting beside it.
+	it("two purchases started at once leave ONE payable subscription: the second sweeps and voids the first", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		vi.mocked(countBillableSeats).mockResolvedValue(1);
+		const live = new Map<string, { id: string; status: string; latest_invoice: string }>();
+		let minted = 0;
+		stripe.subscriptions.create.mockImplementation(async () => {
+			minted += 1;
+			const id = `sub_${minted}`;
+			live.set(id, { id, status: "incomplete", latest_invoice: `in_${id}` });
+			return { id, latest_invoice: { confirmation_secret: { client_secret: `cs_${id}` } } };
+		});
+		stripe.subscriptions.list.mockImplementation(async () => ({
+			data: [...live.values()].filter((sub) => sub.status === "incomplete"),
+		}));
+		stripe.subscriptions.cancel.mockImplementation(async (id: string) => {
+			const sub = live.get(id);
+			if (sub) sub.status = "canceled";
+			return sub;
+		});
+
+		const [first, second] = await Promise.all([
+			createSubscriptionIntent("team"),
+			createSubscriptionIntent("team"),
+		]);
+
+		expect(first).toMatchObject({ subscriptionId: "sub_1" });
+		expect(second).toMatchObject({ subscriptionId: "sub_2" });
+		expect([...live.values()].filter((sub) => sub.status === "incomplete").map((sub) => sub.id)).toEqual([
+			"sub_2",
+		]);
+		expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_sub_1");
+	});
+
+	// #5489 advisory: the support copy said the payment "went through" when nothing proved it.
+	it("a payment that is not a PaymentIntent is reported as unconfirmed, not as one that went through", async () => {
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+		stripe.subscriptions.list.mockResolvedValue({
+			data: [{ id: "sub_racing", status: "incomplete", latest_invoice: "in_1" }],
+		});
+		stripe.invoicePayments.list
+			.mockResolvedValueOnce(invoicePayments("requires_payment_method"))
+			.mockResolvedValue({
+				has_more: false,
+				data: [{ status: "paid", payment: { type: "charge", charge: "ch_1" } }],
+			});
+
+		const r = await createSubscriptionIntent("team");
+
+		expect(r).toEqual({ error: expect.stringMatching(/could not confirm what happened to an earlier payment/) });
+		expect(r).not.toEqual({ error: expect.stringMatching(/went through/) });
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	// #5489 review blocker (fail closed): a cancel that failed — a 429, a 5xx, a dropped connection — was
+	// read as "already gone", and a second subscription was minted beside one whose PaymentIntent a stale
+	// tab could still confirm. It is now re-read once, and unless Stripe shows it ended the purchase is
+	// refused. It is still `incomplete`, so the next purchase's sweep finds it again.
+	describe("a sweep cancel that fails is never read as gone", () => {
+		const stale = { id: "sub_stale", status: "incomplete", latest_invoice: "in_stale" };
+		beforeEach(() => {
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+			vi.mocked(countBillableSeats).mockResolvedValue(1);
+			stripe.subscriptions.create.mockResolvedValue({
+				id: "sub_second",
+				latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
+			});
+		});
+		afterEach(() => {
+			vi.unstubAllEnvs();
+		});
+
+		it("a 429 on the cancel, and a re-read that still shows it incomplete: alerted, refused, nothing minted", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			stripe.subscriptions.list.mockResolvedValue({ data: [stale] });
+			stripe.subscriptions.cancel.mockRejectedValue(
+				Object.assign(new Error("Too many requests"), { statusCode: 429 }),
+			);
+			stripe.subscriptions.retrieve.mockResolvedValue(stale);
+
+			const r = await createSubscriptionIntent("team");
+
+			expect(r).toEqual({ error: expect.stringMatching(/nothing new was started/) });
+			expect(r).not.toEqual({ error: expect.stringMatching(/stays blocked|won't be charged twice/) });
+			expect(stripe.subscriptions.retrieve).toHaveBeenCalledWith("sub_stale");
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({ resource_id: "sub_stale", summary: expect.stringContaining("reads incomplete") }),
+			);
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+
+		it("a cancel that fails and a re-read that fails too: refused, nothing minted", async () => {
+			stripe.subscriptions.list.mockResolvedValue({ data: [stale] });
+			stripe.subscriptions.cancel.mockRejectedValue(new Error("socket hang up"));
+			stripe.subscriptions.retrieve.mockRejectedValue(new Error("socket hang up"));
+
+			await expect(createSubscriptionIntent("team")).resolves.toEqual({
+				error: expect.stringMatching(/nothing new was started/),
+			});
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+
+		it("a cancel whose response was lost — the re-read shows it canceled — is settled like any cancel: voided, then minted", async () => {
+			stripe.subscriptions.list.mockResolvedValue({ data: [stale] });
+			stripe.subscriptions.cancel.mockRejectedValue(new Error("socket hang up"));
+			stripe.subscriptions.retrieve.mockResolvedValue({ ...stale, status: "canceled" });
+
+			await expect(createSubscriptionIntent("team")).resolves.toMatchObject({ subscriptionId: "sub_second" });
+			expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_stale");
+			expect(stripe.invoices.voidInvoice.mock.invocationCallOrder[0]).toBeLessThan(
+				stripe.subscriptions.create.mock.invocationCallOrder[0],
+			);
+		});
+
+		it("the next purchase's sweep finds the still-incomplete one again, cancels it once that lands, voids its invoice, and only then mints", async () => {
+			stripe.subscriptions.list.mockResolvedValue({ data: [stale] });
+			stripe.subscriptions.cancel
+				.mockRejectedValueOnce(Object.assign(new Error("Stripe is unavailable"), { statusCode: 503 }))
+				.mockResolvedValue({ ...stale, status: "canceled" });
+			stripe.subscriptions.retrieve.mockResolvedValue(stale);
+
+			await expect(createSubscriptionIntent("team")).resolves.toEqual({
+				error: expect.stringMatching(/nothing new was started/),
+			});
+
+			await expect(createSubscriptionIntent("team")).resolves.toMatchObject({ subscriptionId: "sub_second" });
+			expect(stripe.subscriptions.cancel).toHaveBeenCalledTimes(2);
+			expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_stale");
+			expect(stripe.subscriptions.create).toHaveBeenCalledTimes(1);
+		});
+
+		it("a void that fails but whose re-read shows the invoice void is proven, and the purchase goes ahead", async () => {
+			stripe.subscriptions.list.mockResolvedValue({ data: [stale] });
+			stripe.invoices.retrieve.mockResolvedValueOnce({ status: "open" }).mockResolvedValue({ status: "void" });
+			stripe.invoices.voidInvoice.mockRejectedValue(new Error("socket hang up"));
+
+			await expect(createSubscriptionIntent("team")).resolves.toMatchObject({ subscriptionId: "sub_second" });
+		});
+
+		it("an invoice that reads paid although no PaymentIntent took money is refused, never minted beside", async () => {
+			stripe.subscriptions.list.mockResolvedValue({ data: [stale] });
+			stripe.invoices.retrieve.mockResolvedValue({ status: "paid" });
+
+			await expect(createSubscriptionIntent("team")).resolves.toEqual({
+				error: expect.stringMatching(/could not confirm what happened to an earlier payment/),
+			});
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+	});
+
+	// #5489 review blocker: the customer was told "Our team has been alerted" whether or not any alert
+	// reached anyone. It is said only when a delivery was queued to a bound channel.
+	describe("the unconfirmed-payment copy claims an alert only when one was delivered", () => {
+		beforeEach(() => {
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+			stripe.subscriptions.list.mockResolvedValue({
+				data: [{ id: "sub_racing", status: "incomplete", latest_invoice: "in_1" }],
+			});
+			stripe.invoicePayments.list
+				.mockResolvedValueOnce(invoicePayments("requires_payment_method"))
+				.mockResolvedValue({
+					has_more: false,
+					data: [{ status: "paid", payment: { type: "charge", charge: "ch_1" } }],
+				});
+		});
+		afterEach(() => {
+			vi.unstubAllEnvs();
+		});
+
+		it("no operator org configured: no alert is claimed, and the customer is sent to the support inbox", async () => {
+			const r = await createSubscriptionIntent("team");
+
+			expect(r).toEqual({ error: expect.stringMatching(/Contact support at support@alethialabs\.io/) });
+			expect(r).not.toEqual({ error: expect.stringMatching(/alert/i) });
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+		});
+
+		it("an operator org with no rule bound to a channel (nothing queued): no alert is claimed", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(0);
+
+			const r = await createSubscriptionIntent("team");
+
+			expect(emitAlertEvent).toHaveBeenCalled();
+			expect(r).toEqual({ error: expect.stringMatching(/Contact support at support@alethialabs\.io/) });
+			expect(r).not.toEqual({ error: expect.stringMatching(/alert/i) });
+		});
+
+		it("an alert emit that throws: no alert is claimed, and nothing is thrown at the customer", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockRejectedValue(new Error("database is down"));
+
+			const r = await createSubscriptionIntent("team");
+
+			expect(r).toEqual({ error: expect.stringMatching(/Contact support at support@alethialabs\.io/) });
+			expect(r).not.toEqual({ error: expect.stringMatching(/alert/i) });
+		});
+
+		it("a delivery queued to a bound channel: the copy says an alert was raised", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+
+			const r = await createSubscriptionIntent("team");
+
+			expect(r).toEqual({ error: expect.stringMatching(/We have raised an alert with our team/) });
+			expect(r).toEqual({ error: expect.stringMatching(/support@alethialabs\.io/) });
+		});
+	});
+
 });
 
 // ── startProTrial ────────────────────────────────────────────────────────────
@@ -671,7 +1074,12 @@ describe("createNewOrgSubscriptionIntent", () => {
 		expect(stripe.customers.create).toHaveBeenCalled();
 	});
 
-	it("cancels a prior incomplete subscription; one whose cancel fails keeps its record", async () => {
+	// #5489 review blocker: a prior whose cancel FAILED was minted beside — still `incomplete`, its
+	// PaymentIntent confirmable from the old sheet, so the customer could pay both. A failed cancel is now
+	// re-read once; still not ended, it is alerted on and refused. It stays `incomplete`, so a retry
+	// reads it again.
+	it("a prior whose cancel fails and still reads incomplete is refused — nothing new is minted, its record kept", async () => {
+		vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
 		db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
 		stripe.subscriptions.retrieve.mockResolvedValue(
 			newOrgSub({ created_by: "user-1" }, "incomplete", "sub_old") as never,
@@ -688,9 +1096,16 @@ describe("createNewOrgSubscriptionIntent", () => {
 				orgName: "NewCo",
 				priorSubscriptionId: "sub_old",
 			}),
-		).resolves.toMatchObject({ kind: "intent", subscriptionId: "sub_5" });
+		).resolves.toEqual({ kind: "refused", message: expect.stringMatching(/nothing new was started/) });
 		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_old");
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
 		expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
+		expect(emitAlertEvent).toHaveBeenCalledWith(
+			"org-platform",
+			"system.platform.payment_needs_support",
+			expect.objectContaining({ resource_id: "sub_old", summary: expect.stringContaining("the cancel failed") }),
+		);
+		vi.unstubAllEnvs();
 	});
 
 	// #5445 review blocker: `priorSubscriptionId` is the BROWSER's, and a payment Stripe took whose
@@ -867,6 +1282,10 @@ describe("createNewOrgSubscriptionIntent", () => {
 		stripe.subscriptions.retrieve.mockResolvedValue(
 			newOrgSub({ created_by: "user-1" }, "canceled", "sub_was_paid") as never,
 		);
+		// Its invoice is paid and its setup record names the team it bought: a purchase that finished.
+		stripe.invoices.retrieve.mockResolvedValue({ status: "paid" });
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("succeeded"));
+		vi.mocked(pendingOrgSetupFor).mockResolvedValue({ created_org_id: "org-bought", linked_at: new Date() } as never);
 		stripe.customers.create.mockResolvedValue({ id: "cus_new" } as never);
 		stripe.subscriptions.create.mockResolvedValue({
 			id: "sub_10",
@@ -878,6 +1297,9 @@ describe("createNewOrgSubscriptionIntent", () => {
 			priorSubscriptionId: "sub_was_paid",
 		});
 		expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
+		expect(stripe.refunds.create).not.toHaveBeenCalled();
+		expect(stripe.invoices.voidInvoice).not.toHaveBeenCalled();
+		expect(stripe.subscriptions.create).toHaveBeenCalled();
 		expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
 	});
 
@@ -970,6 +1392,293 @@ describe("createNewOrgSubscriptionIntent", () => {
 			createNewOrgSubscriptionIntent("team" as never, { orgName: "NewCo" }),
 		).rejects.toThrow(/did not return an invoice/);
 	});
+	// #5463: the prior was read as never paid, then the customer completed the payment before the
+	// cancel landed. Its record was forgotten anyway; now the post-cancel read keeps it and refuses.
+	it("a prior whose payment starts processing between the read and the cancel keeps its record, and nothing new is minted", async () => {
+		db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+		stripe.subscriptions.retrieve.mockResolvedValue(
+			newOrgSub({ created_by: "user-1" }, "incomplete", "sub_racing"),
+		);
+		stripe.invoicePayments.list
+			.mockResolvedValueOnce(invoicePayments("requires_payment_method"))
+			.mockResolvedValueOnce(invoicePayments("processing"));
+		stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_second",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
+		});
+
+		const r = await createNewOrgSubscriptionIntent("team", {
+			orgName: "NewCo",
+			priorSubscriptionId: "sub_racing",
+		});
+
+		expect(r).toEqual({
+			kind: "refused",
+			message: expect.stringMatching(/could not confirm that an earlier checkout was closed/),
+		});
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_racing");
+		expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
+		// Processing is not refundable yet; it is left to support, with its record kept.
+		expect(stripe.refunds.create).not.toHaveBeenCalled();
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	// #5463: the browser lost the `customerId` while the first purchase's SEPA/ACH payment was still
+	// processing. A new customer was minted, the sweep saw only that one, and a second purchase started
+	// beside the first. The customer is now taken from the caller's own unfinished setup records.
+	it("with no customerId, reuses the customer of the caller's unfinished setup and refuses beside its processing payment", async () => {
+		db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue(["cus_first"]);
+		stripe.customers.retrieve.mockResolvedValue({
+			id: "cus_first",
+			deleted: false,
+			metadata: { created_by: "user-1" },
+		});
+		stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+		stripe.subscriptions.list.mockImplementation(async ({ customer }: { customer: string }) => ({
+			data: customer === "cus_first" ? [newOrgSub({ created_by: "user-1" }, "incomplete", "sub_first")] : [],
+		}));
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("processing"));
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_second",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
+		});
+
+		const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo" });
+
+		expect(r).toEqual({ kind: "refused", message: expect.stringMatching(/still being processed/) });
+		expect(stripe.customers.create).not.toHaveBeenCalled();
+		expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	it("with no customerId and nothing in flight, mints on the recorded customer rather than a new one", async () => {
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue(["cus_first"]);
+		stripe.customers.retrieve.mockResolvedValue({
+			id: "cus_first",
+			deleted: false,
+			metadata: { created_by: "user-1" },
+		});
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_2",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_2" } },
+		});
+
+		await expect(createNewOrgSubscriptionIntent("team", { orgName: "NewCo" })).resolves.toMatchObject({
+			kind: "intent",
+			customerId: "cus_first",
+		});
+		expect(stripe.customers.create).not.toHaveBeenCalled();
+	});
+
+	it("sweeps every recorded customer, not only the one passed: a payment settling on an older one refuses", async () => {
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue(["cus_older"]);
+		stripe.customers.retrieve.mockResolvedValue({
+			id: "cus_prior",
+			deleted: false,
+			metadata: { created_by: "user-1" },
+		});
+		stripe.subscriptions.list.mockImplementation(async ({ customer }: { customer: string }) => ({
+			data: customer === "cus_older" ? [newOrgSub({ created_by: "user-1" }, "incomplete", "sub_older")] : [],
+		}));
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("processing"));
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_2",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_2" } },
+		});
+
+		await expect(
+			createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_prior" }),
+		).resolves.toMatchObject({ kind: "refused" });
+		expect(stripe.subscriptions.list).toHaveBeenCalledWith(expect.objectContaining({ customer: "cus_older" }));
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+	});
+
+	// #5463: a prior cancelled by this request whose payment then turns up.
+	describe("a payment that turns up after the cancel", () => {
+		const opts = { orgName: "NewCo", priorSubscriptionId: "sub_racing" };
+		/** The prior reads `incomplete` and unpaid, is cancelled, and then reads `canceled`; every payment read after the first answers `status()`. */
+		function raceThen(status: () => string) {
+			stripe.subscriptions.retrieve
+				.mockResolvedValueOnce(newOrgSub({ created_by: "user-1" }, "incomplete", "sub_racing"))
+				.mockResolvedValue(newOrgSub({ created_by: "user-1" }, "canceled", "sub_racing"));
+			stripe.invoicePayments.list
+				.mockResolvedValueOnce(invoicePayments("requires_payment_method"))
+				.mockImplementation(async () => invoicePayments(status()));
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+			stripe.subscriptions.create.mockResolvedValue({
+				id: "sub_second",
+				latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
+			});
+		}
+
+		afterEach(() => {
+			vi.unstubAllEnvs();
+		});
+
+		// Refused WITHOUT memory (#5506): nothing records this refusal. The retry passes the same prior,
+		// now `canceled`, so the only thing between it and a mint is its invoice void.
+		it("still processing: refused and alerted; the retry voids the prior's invoice before it mints, and is not otherwise remembered", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			raceThen(() => "processing");
+
+			const first = await createNewOrgSubscriptionIntent("team", opts);
+			expect(first).toEqual({
+				kind: "refused",
+				message: expect.stringMatching(/could not confirm that an earlier checkout was closed/),
+			});
+			expect(first).not.toEqual({ kind: "refused", message: expect.stringMatching(/stays blocked|won't be charged twice/) });
+			expect(stripe.refunds.create).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({ resource_id: "sub_racing", summary: expect.stringContaining("pi_1") }),
+			);
+
+			await expect(createNewOrgSubscriptionIntent("team", opts)).resolves.toMatchObject({
+				kind: "intent",
+				subscriptionId: "sub_second",
+			});
+			expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_sub_racing");
+			expect(stripe.invoices.voidInvoice.mock.invocationCallOrder[0]).toBeLessThan(
+				stripe.subscriptions.create.mock.invocationCallOrder[0],
+			);
+		});
+
+		it("two create-a-team purchases started at once run one after the other under the user's lock", async () => {
+			let inside = 0;
+			let overlapped = false;
+			vi.mocked(unlinkedPendingOrgSetupCustomers).mockImplementation(async () => {
+				inside += 1;
+				if (inside > 1) overlapped = true;
+				return [];
+			});
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+			stripe.subscriptions.create.mockImplementation(async () => ({
+				id: "sub_second",
+				latest_invoice: { confirmation_secret: { client_secret: "cs_second" } },
+			}));
+			vi.mocked(recordPendingOrgSetup).mockImplementation(async () => {
+				inside -= 1;
+			});
+
+			await Promise.all([
+				createNewOrgSubscriptionIntent("team", { orgName: "NewCo" }),
+				createNewOrgSubscriptionIntent("team", { orgName: "NewCo" }),
+			]);
+
+			expect(overlapped).toBe(false);
+			expect(stripe.subscriptions.create).toHaveBeenCalledTimes(2);
+		});
+
+		it("a refund that fails raises an operator alert and tells the customer to contact support, claiming no block and no alert", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			raceThen(() => "succeeded");
+			stripe.refunds.create.mockRejectedValue(new Error("Stripe is unavailable"));
+
+			const r = await createNewOrgSubscriptionIntent("team", opts);
+			expect(r).toEqual({
+				kind: "refused",
+				message: expect.stringMatching(/could not be refunded automatically.*Contact support/),
+			});
+			expect(r).not.toEqual({ kind: "refused", message: expect.stringMatching(/stays blocked|alert/) });
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({
+					severity: "critical",
+					resource_id: "sub_racing",
+					summary: expect.stringContaining("pi_1"),
+				}),
+			);
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+	});
+	// #5489 root rule: a prior is replaced only when it is PROVEN ended and its latest invoice voided, or
+	// paid and refunded. Each of these was minted beside before #5489.
+	describe("the prior subscription is replaced only once it is proven settled", () => {
+		const mint = () =>
+			stripe.subscriptions.create.mockResolvedValue({
+				id: "sub_new",
+				latest_invoice: { confirmation_secret: { client_secret: "cs_new" } },
+			});
+
+		it("a first payment that cannot be read, twice, is refused — not thrown, nothing minted", async () => {
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			stripe.subscriptions.retrieve.mockResolvedValue(newOrgSub({ created_by: "user-1" }, "incomplete", "sub_prior"));
+			stripe.invoicePayments.list.mockRejectedValue(new Error("Stripe is unavailable"));
+			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+			mint();
+
+			await expect(
+				createNewOrgSubscriptionIntent("team", { orgName: "NewCo", priorSubscriptionId: "sub_prior" }),
+			).resolves.toEqual({ kind: "refused", message: expect.stringMatching(/Nothing new was started/) });
+			expect(stripe.invoicePayments.list).toHaveBeenCalledTimes(2);
+			expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+
+		it("an incomplete_expired prior still has its open invoice voided before anything is minted", async () => {
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			stripe.subscriptions.retrieve.mockResolvedValue(
+				newOrgSub({ created_by: "user-1" }, "incomplete_expired", "sub_prior"),
+			);
+			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+			mint();
+
+			await expect(
+				createNewOrgSubscriptionIntent("team", { orgName: "NewCo", priorSubscriptionId: "sub_prior" }),
+			).resolves.toMatchObject({ kind: "intent", subscriptionId: "sub_new" });
+			expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_sub_prior");
+			expect(stripe.invoices.voidInvoice.mock.invocationCallOrder[0]).toBeLessThan(
+				stripe.subscriptions.create.mock.invocationCallOrder[0],
+			);
+		});
+
+		it("an incomplete_expired prior whose invoice cannot be voided is refused, its record kept", async () => {
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			stripe.subscriptions.retrieve.mockResolvedValue(
+				newOrgSub({ created_by: "user-1" }, "incomplete_expired", "sub_prior"),
+			);
+			stripe.invoices.voidInvoice.mockRejectedValue(new Error("Stripe is unavailable"));
+			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+			mint();
+
+			await expect(
+				createNewOrgSubscriptionIntent("team", { orgName: "NewCo", priorSubscriptionId: "sub_prior" }),
+			).resolves.toEqual({
+				kind: "refused",
+				message: expect.stringMatching(/could not confirm that an earlier checkout was closed/),
+			});
+			expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+
+		it("a canceled prior whose open invoice cannot be voided is refused", async () => {
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			stripe.subscriptions.retrieve.mockResolvedValue(newOrgSub({ created_by: "user-1" }, "canceled", "sub_prior"));
+			stripe.invoices.voidInvoice.mockRejectedValue(new Error("Stripe is unavailable"));
+			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+			mint();
+
+			await expect(
+				createNewOrgSubscriptionIntent("team", { orgName: "NewCo", priorSubscriptionId: "sub_prior" }),
+			).resolves.toEqual({
+				kind: "refused",
+				message: expect.stringMatching(/could not confirm that an earlier checkout was closed/),
+			});
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+
+	});
+
 });
 
 // ── linkSubscriptionToNewOrg ─────────────────────────────────────────────────
@@ -1141,6 +1850,14 @@ function setupRow(overrides: Partial<PendingOrgSetupRow> = {}): PendingOrgSetupR
 	};
 }
 
+/** One page of `unfinishedPendingOrgSetups`: the rows, and the cursor of the next page (null: last). */
+function page(
+	rows: PendingOrgSetupRow[],
+	next: { at: string; id: string } | null = null,
+): Awaited<ReturnType<typeof unfinishedPendingOrgSetups>> {
+	return { rows, next };
+}
+
 /** A Stripe subscription for the new-org flow, customer expanded. */
 function newOrgSub(metadata: Record<string, string>, status = "active", id = "sub_1") {
 	return {
@@ -1269,7 +1986,7 @@ describe("findUnfinishedNewOrgSetup", () => {
 	// within the minute Stripe's search has not indexed the subscription yet. Against 49030b809 this
 	// answered null (the search found nothing) and the sheet offered a SECOND purchase.
 	it("a charge made a second ago is found from the caller's own record by a direct read — no search, so no indexing lag", async () => {
-		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue([setupRow({ subscription_id: "sub_now" })]);
+		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue(page([setupRow({ subscription_id: "sub_now" })]));
 		vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ subscription_id: "sub_now" }));
 		vi.mocked(findSetupOrg).mockResolvedValue(null);
 		stripe.subscriptions.retrieve.mockResolvedValue(
@@ -1282,19 +1999,21 @@ describe("findUnfinishedNewOrgSetup", () => {
 			paid: true,
 			linked: false,
 		});
-		expect(unfinishedPendingOrgSetups).toHaveBeenCalledWith("user-1", 10, 0);
+		expect(unfinishedPendingOrgSetups).toHaveBeenCalledWith("user-1", 10, undefined);
 		expect(stripe.subscriptions.retrieve).toHaveBeenCalledWith("sub_now", { expand: ["customer"] });
 		expect(search).not.toHaveBeenCalled();
 	});
 
 	it("skips an unpaid record, drops an expired-unpaid one, KEEPS a cancelled and a missing one, and returns the paid one", async () => {
-		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue([
-			setupRow({ subscription_id: "sub_unpaid" }),
-			setupRow({ subscription_id: "sub_dead" }),
-			setupRow({ subscription_id: "sub_cancelled" }),
-			setupRow({ subscription_id: "sub_missing" }),
-			setupRow({ subscription_id: "sub_paid" }),
-		]);
+		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue(
+			page([
+				setupRow({ subscription_id: "sub_unpaid" }),
+				setupRow({ subscription_id: "sub_dead" }),
+				setupRow({ subscription_id: "sub_cancelled" }),
+				setupRow({ subscription_id: "sub_missing" }),
+				setupRow({ subscription_id: "sub_paid" }),
+			]),
+		);
 		vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ subscription_id: "sub_paid" }));
 		vi.mocked(findSetupOrg).mockResolvedValue(null);
 		const dead = newOrgSub({ created_by: "user-1" }, "incomplete_expired", "sub_dead");
@@ -1316,9 +2035,10 @@ describe("findUnfinishedNewOrgSetup", () => {
 	// setup, and the search fallback skipped it as "seen". It is read past them now.
 	it("reads past a full page of dead records to an older unfinished paid one", async () => {
 		const dead = Array.from({ length: 10 }, (_, i) => setupRow({ subscription_id: `sub_dead_${i}` }));
+		const cursor = { at: "2026-10-03 12:00:00.123456+00", id: "row-dead-9" };
 		vi.mocked(unfinishedPendingOrgSetups)
-			.mockResolvedValueOnce(dead)
-			.mockResolvedValueOnce([setupRow({ subscription_id: "sub_old_paid" })]);
+			.mockResolvedValueOnce(page(dead, cursor))
+			.mockResolvedValueOnce(page([setupRow({ subscription_id: "sub_old_paid" })]));
 		vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ subscription_id: "sub_old_paid" }));
 		vi.mocked(findSetupOrg).mockResolvedValue(null);
 		stripe.subscriptions.retrieve.mockImplementation(async (id: string) =>
@@ -1326,12 +2046,12 @@ describe("findUnfinishedNewOrgSetup", () => {
 		);
 
 		await expect(findUnfinishedNewOrgSetup()).resolves.toMatchObject({ subscriptionId: "sub_old_paid", paid: true });
-		expect(unfinishedPendingOrgSetups).toHaveBeenNthCalledWith(2, "user-1", 10, 10);
+		expect(unfinishedPendingOrgSetups).toHaveBeenNthCalledWith(2, "user-1", 10, cursor);
 		expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
 	});
 
 	it("with no record, falls back to the search for a legacy PAID, UNLINKED subscription and backfills its record", async () => {
-		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue([]);
+		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue(page([]));
 		search.mockResolvedValue({
 			data: [
 				{ ...newOrgSub({ created_by: "user-1", organization_id: "org-x" }, "active", "sub_linked"), created: 3 },
@@ -1363,13 +2083,70 @@ describe("findUnfinishedNewOrgSetup", () => {
 	});
 
 	it("throws when Stripe cannot be read, rather than answering 'nothing unfinished'", async () => {
-		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue([setupRow()]);
+		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue(page([setupRow()]));
 		stripe.subscriptions.retrieve.mockRejectedValue(new Error("Stripe is unavailable"));
 		await expect(findUnfinishedNewOrgSetup()).rejects.toThrow(/unavailable/);
 	});
 
+	// #5463: the lookup paged with OFFSET while it deleted expired records, so every drop shifted the
+	// later rows back and the next OFFSET window skipped as many of them. Here three of the first ten are
+	// dropped, and the paid setup is the eleventh record — the one an OFFSET of 10 jumped over.
+	it("a record dropped on one page does not make the next page skip a row", async () => {
+		const store = Array.from({ length: 12 }, (_, i) =>
+			setupRow({
+				id: `row-${i}`,
+				subscription_id: i < 3 ? `sub_expired_${i}` : i === 10 ? "sub_paid_old" : `sub_cancelled_${i}`,
+				created_at: new Date(Date.UTC(2026, 9, 3, 12, 0, 59 - i)),
+			}),
+		);
+		vi.mocked(unfinishedPendingOrgSetups).mockImplementation(async (_userId, limit = 10, after) => {
+			const rows = store
+				.filter((r) => !after || r.created_at.getTime() < Date.parse(after.at))
+				.slice(0, limit);
+			const last = rows.at(-1);
+			return {
+				rows,
+				next: rows.length === limit && last ? { at: last.created_at.toISOString(), id: last.id } : null,
+			};
+		});
+		vi.mocked(forgetPendingOrgSetup).mockImplementation(async (_userId, sub) => {
+			const at = store.findIndex((r) => r.subscription_id === sub.id);
+			if (at >= 0) store.splice(at, 1);
+			return true;
+		});
+		vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ subscription_id: "sub_paid_old" }));
+		vi.mocked(findSetupOrg).mockResolvedValue(null);
+		stripe.subscriptions.retrieve.mockImplementation(async (id: string) =>
+			newOrgSub(
+				{ created_by: "user-1" },
+				id.startsWith("sub_expired") ? "incomplete_expired" : id === "sub_paid_old" ? "active" : "canceled",
+				id,
+			),
+		);
+
+		await expect(findUnfinishedNewOrgSetup()).resolves.toMatchObject({ subscriptionId: "sub_paid_old", paid: true });
+		expect(forgetPendingOrgSetup).toHaveBeenCalledTimes(3);
+	});
+
+	// #5463: one expired record whose payments Stripe could not return threw the whole lookup, so the
+	// customer got no recovery state at all — not even the paid setup listed after it.
+	it("an expired record whose payments cannot be read is skipped and kept; the lookup still finds the paid one", async () => {
+		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue(
+			page([setupRow({ subscription_id: "sub_expired" }), setupRow({ subscription_id: "sub_paid" })]),
+		);
+		vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ subscription_id: "sub_paid" }));
+		vi.mocked(findSetupOrg).mockResolvedValue(null);
+		stripe.subscriptions.retrieve
+			.mockResolvedValueOnce(newOrgSub({ created_by: "user-1" }, "incomplete_expired", "sub_expired"))
+			.mockResolvedValueOnce(newOrgSub({ created_by: "user-1" }, "active", "sub_paid"));
+		stripe.invoicePayments.list.mockRejectedValue(new Error("Stripe is unavailable"));
+
+		await expect(findUnfinishedNewOrgSetup()).resolves.toMatchObject({ subscriptionId: "sub_paid" });
+		expect(forgetPendingOrgSetup).not.toHaveBeenCalled();
+	});
+
 	it("never reports an older team that is already linked", async () => {
-		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue([]);
+		vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue(page([]));
 		search.mockResolvedValue({
 			data: [newOrgSub({ created_by: "user-1", organization_id: "org-legacy" }, "active", "sub_legacy")],
 		});
