@@ -52,6 +52,10 @@ alethia addon list -p my-project -o json
 Columns: **Add-on** (the catalog id), **Enabled** (✓ / —), **Mode** (`managed` | `gitops`),
 **Version**, **Status**, **Sync**, **Health**, **Last synced**.
 
+**Version** is the chart version the add-on deploys with: your pin if you set one with
+`addon enable --version`, otherwise the catalog default. In `-o json`, `version_pinned` is `true`
+for a pin and `false` for the catalog default.
+
 **Sync, not Health, is the column to read first.** Health is the workload's own report — a chart
 with no readiness probe reports `Healthy` the moment its pods schedule. Sync is whether ArgoCD has
 applied the manifest the control plane asked for at all, so an add-on stuck `OutOfSync` is the
@@ -81,6 +85,12 @@ alethia addon enable falco -p my-project --mode gitops
 
 # Advanced: a raw Helm values override
 alethia addon enable loki -p my-project --values-file ./loki-values.yaml
+
+# Pin the chart version in one environment
+alethia addon enable kube-prometheus-stack -p my-project -e staging --version 58.2.1
+
+# Remove the pin: the catalog default version applies again
+alethia addon enable kube-prometheus-stack -p my-project -e staging --version ""
 ```
 
 | Argument / Flag | Required | Description |
@@ -91,6 +101,7 @@ alethia addon enable loki -p my-project --values-file ./loki-values.yaml
 | `--mode` | No | Delivery mode: `managed` (Alethia applies it) or `gitops` (written to your apps repo). |
 | `--set` `key=value` | No | An add-on setting. Repeatable; values are JSON-typed when they parse. |
 | `--values-file` | No | Path to a raw Helm values YAML override (Advanced). |
+| `--version` | No | Pin the chart version, for example `58.2.1`. `--version ""` removes the pin. Omit it to keep the current pin. |
 
 `--mode` is checked against the `addon_mode` database enum before anything is sent, so a typo is
 refused by name instead of costing a round trip; the two spellings are matched case-insensitively.
@@ -98,6 +109,29 @@ refused by name instead of costing a round trip; the two spellings are matched c
 Re-running `enable` on an installed add-on **updates** it. Settings are merged over what is stored,
 so you can change one value without restating the rest — and a secret you do not resend is
 preserved rather than blanked.
+
+### Pin the chart version
+
+By default an add-on deploys the chart version the catalog pins. To deploy a different version in
+one environment, pass `--version` with an exact chart version:
+
+```bash
+alethia addon enable kube-prometheus-stack -p my-project -e staging --version 58.2.1
+```
+
+- The version must be one exact version, such as `58.2.1` or `v1.4.0-rc.1`. Ranges (`^58`,
+  `~58.2`, `>=58`, `*`) are refused with a 400, because a range lets the deployed chart change
+  without you.
+- A later `enable` without `--version` keeps the pin.
+- `--version ""` removes the pin, and the catalog default applies again on the next apply.
+- The console sets the same pin: the **Chart version** field on the add-on's configure card.
+
+<Callout type="warn">
+A pinned chart is not checked against the catalog's default values. The catalog's settings and
+defaults are written for the catalog's version, so a major-version jump can rename or remove the
+chart values they set and break the add-on. Read the chart's upgrade notes before you pin a new
+major version.
+</Callout>
 
 Each add-on's settings are validated against **that add-on's own schema**, server-side, so an
 unknown key or a mistyped value is a clear 400 rather than a failure mid-deploy. The add-on reaches
