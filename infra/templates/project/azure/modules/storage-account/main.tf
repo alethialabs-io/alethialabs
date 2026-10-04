@@ -51,6 +51,31 @@ resource "azurerm_storage_account" "this" {
   # back into a private one while the canvas still shows the switch as on.
   allow_nested_items_to_be_public = local.allow_public_blobs
 
+  # CMEK (cmek_enabled on any container, aggregated at the root). Both blocks render only when the
+  # root passed a key: with no key the account keeps Microsoft-managed encryption and no identity,
+  # exactly the shape it had before the knob existed. The identity is user-assigned and created
+  # (and granted on the key) by the root BEFORE this account exists — a system-assigned identity
+  # would not exist until the account did, and the account cannot be created against a key it
+  # cannot yet unwrap.
+  dynamic "identity" {
+    for_each = var.cmek_key_id != "" ? [1] : []
+    content {
+      type         = "UserAssigned"
+      identity_ids = [var.cmek_identity_id]
+    }
+  }
+
+  dynamic "customer_managed_key" {
+    for_each = var.cmek_key_id != "" ? [1] : []
+    content {
+      # VERSIONLESS, so Azure Storage follows the key's current version — a rotation in the vault
+      # takes effect without a plan, instead of pinning the account to the version that existed at
+      # create time.
+      key_vault_key_id          = var.cmek_key_id
+      user_assigned_identity_id = var.cmek_identity_id
+    }
+  }
+
   blob_properties {
     # Neither this nor the block is ForceNew (azurerm 4.x: TypeBool, Optional, Default false), so
     # toggling it updates the account in place. It cannot replace the account, which matters here

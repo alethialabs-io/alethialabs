@@ -38,3 +38,15 @@ output "allow_nested_items_to_be_public" {
   description = "Whether the account permits public containers — a public container is inert without it"
   value       = azurerm_storage_account.this.allow_nested_items_to_be_public
 }
+
+# Read off the PLANNED account, for checks_storage_cmek.tftest.hcl at the root. Null when the account
+# keeps Microsoft-managed keys.
+output "customer_managed_key_id" {
+  description = "Key Vault key the account is encrypted with; null under Microsoft-managed keys"
+  value       = one(azurerm_storage_account.this.customer_managed_key[*].key_vault_key_id)
+}
+
+output "customer_managed_key_identity_id" {
+  description = "User-assigned identity the account unwraps its customer-managed key as; null under Microsoft-managed keys"
+  value       = one(azurerm_storage_account.this.customer_managed_key[*].user_assigned_identity_id)
+}

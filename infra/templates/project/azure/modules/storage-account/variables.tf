@@ -51,6 +51,7 @@ variable "containers" {
     access_type        = optional(string, "private")
     versioning_enabled = optional(bool, false)
     cors_origins       = optional(list(string), [])
+    cmek_enabled       = optional(bool, false)
   }))
   default = []
 }
@@ -59,4 +60,25 @@ variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
+}
+
+# Customer-managed key (CUSTOMIZABILITY-PARITY top gap #8). Set together or not at all; the root
+# creates both and grants the identity on the key before this account is planned.
+variable "cmek_key_id" {
+  description = "Versionless Key Vault key id to encrypt the account with. Empty keeps Microsoft-managed keys (unchanged)."
+  type        = string
+  default     = ""
+}
+
+variable "cmek_identity_id" {
+  description = "User-assigned identity resource id the account unwraps cmek_key_id as. Required when cmek_key_id is set."
+  type        = string
+  default     = ""
+
+  validation {
+    # Not cross-checked against cmek_key_id (a validation may not read a second variable on the
+    # runner's tofu); the root always sets both or neither.
+    condition     = var.cmek_identity_id == "" || can(regex("(?i)/providers/Microsoft\\.ManagedIdentity/userAssignedIdentities/[^/]+$", var.cmek_identity_id))
+    error_message = "cmek_identity_id must be a user-assigned identity resource id."
+  }
 }

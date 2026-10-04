@@ -58,6 +58,19 @@ resource "azurerm_kubernetes_cluster" "this" {
     }
   }
 
+  # Container Insights (aks_log_retention_days at the root). Rendered only when the root created a
+  # Log Analytics workspace: an oms_agent block with an empty id is not "off", it is an invalid
+  # binding — and with no block the cluster renders exactly as it did before the knob existed.
+  # Managed-identity auth, not the retired shared-key agent auth; the root pairs it with the data
+  # collection rule that MSI-mode Container Insights reads its configuration from.
+  dynamic "oms_agent" {
+    for_each = var.log_analytics_workspace_id != "" ? [1] : []
+    content {
+      log_analytics_workspace_id      = var.log_analytics_workspace_id
+      msi_auth_for_monitoring_enabled = true
+    }
+  }
+
   workload_identity_enabled = true
   oidc_issuer_enabled       = true
 
