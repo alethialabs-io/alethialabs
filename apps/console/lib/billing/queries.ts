@@ -6,7 +6,7 @@
 // service connection (bypasses RLS) and the org boundary is enforced by the caller
 // passing the resolved actor.orgId — never user input.
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, type SQL, sql } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
 import {
 	organizationBilling,
@@ -18,6 +18,7 @@ import type { AiTier } from "@/lib/billing/ai-plan";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import {
 	COMMUNITY_ENTITLEMENTS,
+	isBillingActive,
 	isManualGrantExpired,
 	resolvePlanEntitlements,
 } from "./plan";
@@ -82,10 +83,12 @@ export function toValidDate(v: unknown): Date | null {
 }
 
 /**
- * Upserts an org's billing record (one row per org). The single write path for
- * Stripe webhook events — idempotent on organization_id, so replayed events converge
- * to the same state. Entitlements then resolve from the new plan + status on the next
- * request (no cache to invalidate — getActiveScope reads it fresh).
+ * Upserts an org's billing record (one row per org) UNCONDITIONALLY — the off-Stripe write path:
+ * the operator plane's plan grant (lib/platform/provision.ts) and the customer-id stamp in
+ * `ensureCustomer`. It is NOT the Stripe subscription-event path; that is
+ * `applySubscriptionToBilling` below, which refuses to let one subscription's event overwrite a
+ * row naming another live one (#5514). Entitlements then resolve from the new plan + status on
+ * the next request (no cache to invalidate — getActiveScope reads it fresh).
  */
 export async function upsertOrgBilling(input: BillingUpsert): Promise<void> {
 	const now = new Date();
@@ -119,42 +122,248 @@ export async function upsertOrgBilling(input: BillingUpsert): Promise<void> {
 		});
 }
 
-/** Fields the Stripe webhook writes for an org's STANDALONE AI subscription. */
-export interface AiSubscriptionUpsert {
-	organizationId: string;
-	aiTier: AiTier;
-	aiSubscriptionStatus: BillingStatus;
-	aiStripeSubscriptionId: string | null;
+// ── The Stripe subscription write path (#5514) ──────────────────────────────────────────────
+//
+// `organization_billing` is ONE row per org, but an org can have more than one Stripe
+// subscription in flight: a fresh purchase beside a `past_due` one, an `incomplete` attempt the
+// purchase sweep has not cancelled yet, a trial started over an off-Stripe grant. Every
+// subscription's events arrive here. Upserting on `organization_id` alone let the LAST event to
+// arrive win, whichever subscription it was for — so a second subscription Z overwrote the row
+// naming the org's live subscription Y, and Z's later cancellation wrote `canceled`/`community`
+// onto an org that was still paying for Y.
+//
+// The rule, decided inside the statement (the row is read and written by the same `INSERT … ON
+// CONFLICT DO UPDATE … WHERE` / `UPDATE … WHERE`, so two racing deliveries cannot both act on a
+// stale read):
+//   - SAME subscription as the row: applies unless the event is OLDER than the newest one already
+//     applied for it (the event-time watermark; a write with no event time — a server action's
+//     live read — skips that check), or it would bring a `canceled` row back to life
+//     (`canceled`/`incomplete_expired` are terminal in Stripe, so only a stale event can say so).
+//   - A DIFFERENT subscription: applies only when the row holds nothing live (its status is `none`
+//     or `canceled`), or when the incoming one is PAID (active/trialing) and the row holds either
+//     an unpaid `past_due` subscription or no subscription id at all (an off-Stripe grant, which a
+//     Stripe purchase has always been able to replace). That second clause is the superseder.
+//   - An ENDED event (`canceled`) touches only the row naming that same subscription. It never
+//     creates a row and never lands on a row naming another subscription.
+// Anything refused leaves the row byte-for-byte unchanged and the write reports `false`.
+
+/** The billing statuses under which a subscription still holds the org's row. */
+const LIVE_STATUSES = ["active", "trialing", "past_due"] as const;
+
+/**
+ * Where a status sits in ONE subscription's lifecycle — incomplete (`none`) → live → ended. Breaks
+ * a tie between two events stamped in the same second (Stripe's `created` has one-second
+ * resolution): the later lifecycle stage wins, so `incomplete` cannot follow `active` on a tie.
+ */
+function lifecycleRank(status: BillingStatus): number {
+	if (status === "none") return 0;
+	if (status === "canceled") return 2;
+	return 1;
+}
+
+/** The three columns that describe one subscription slot on the row (org plan, or AI). */
+interface SubscriptionSlot {
+	subscriptionId: typeof organizationBilling.stripeSubscriptionId | typeof organizationBilling.aiStripeSubscriptionId;
+	status: typeof organizationBilling.status | typeof organizationBilling.aiSubscriptionStatus;
+	eventAt:
+		| typeof organizationBilling.stripeSubscriptionEventAt
+		| typeof organizationBilling.aiStripeSubscriptionEventAt;
+}
+
+const PLAN_SLOT: SubscriptionSlot = {
+	subscriptionId: organizationBilling.stripeSubscriptionId,
+	status: organizationBilling.status,
+	eventAt: organizationBilling.stripeSubscriptionEventAt,
+};
+
+const AI_SLOT: SubscriptionSlot = {
+	subscriptionId: organizationBilling.aiStripeSubscriptionId,
+	status: organizationBilling.aiSubscriptionStatus,
+	eventAt: organizationBilling.aiStripeSubscriptionEventAt,
+};
+
+/** One subscription event as the guard sees it. */
+interface IncomingSubscription {
+	subscriptionId: string;
+	status: BillingStatus;
+	/** Stripe's event `created` time; null when the caller has no event (a server action). */
+	eventAt: Date | null;
+}
+
+/** The event time as a SQL timestamptz parameter (NULL when there is none). */
+function eventAtParam(eventAt: Date | null): SQL {
+	return sql`${eventAt ? eventAt.toISOString() : null}::timestamptz`;
 }
 
 /**
- * Upserts ONLY the standalone-AI columns on an org's billing record, leaving the org-plan
- * columns (plan/status/seats/…) untouched — the AI product is orthogonal to the org plan,
- * so an org can be e.g. community plan + AI Plus. Creates the row (plan defaults to
- * community) if the org has none. Idempotent on organization_id (webhook-safe).
+ * The predicate, over the EXISTING row, under which an event for the row's OWN subscription may
+ * be applied: not older than the watermark (a same-second tie goes to the later lifecycle stage),
+ * and never reviving an ended subscription. An event with no time skips the watermark check.
  */
-export async function upsertOrgAiSubscription(
-	input: AiSubscriptionUpsert,
-): Promise<void> {
+function sameSubscriptionMayApply(slot: SubscriptionSlot, incoming: IncomingSubscription): SQL {
+	const notRevived =
+		incoming.status === "canceled" ? sql`true` : sql`${slot.status} <> 'canceled'`;
+	const at = eventAtParam(incoming.eventAt);
+	const fresh = incoming.eventAt
+		? sql`(${slot.eventAt} IS NULL OR ${slot.eventAt} < ${at} OR (${slot.eventAt} = ${at} AND ${lifecycleRank(incoming.status)} >= (CASE ${slot.status} WHEN 'none' THEN 0 WHEN 'canceled' THEN 2 ELSE 1 END)))`
+		: sql`true`;
+	return sql`(${slot.subscriptionId} = ${incoming.subscriptionId} AND ${notRevived} AND ${fresh})`;
+}
+
+/**
+ * The full ON CONFLICT predicate for a non-ended event: the same-subscription rule, or a different
+ * subscription taking over a row that holds nothing live, or a PAID one superseding an unpaid /
+ * subscription-less row. See the block comment above for why each clause exists.
+ */
+function subscriptionMayApply(slot: SubscriptionSlot, incoming: IncomingSubscription): SQL {
+	const live = sql.join(
+		LIVE_STATUSES.map((s) => sql`${s}`),
+		sql`, `,
+	);
+	const supersedes = isBillingActive(incoming.status)
+		? sql` OR ${slot.subscriptionId} IS NULL OR ${slot.status} = 'past_due'`
+		: sql``;
+	return sql`(${sameSubscriptionMayApply(slot, incoming)} OR (${slot.subscriptionId} IS DISTINCT FROM ${incoming.subscriptionId} AND (${slot.status}::text NOT IN (${live})${supersedes})))`;
+}
+
+/**
+ * The watermark to store when an event applies: the newer of the stored and incoming times when
+ * it is the same subscription, otherwise the incoming time (a new subscription starts its own).
+ */
+function nextEventAt(slot: SubscriptionSlot, incoming: IncomingSubscription): SQL {
+	const at = eventAtParam(incoming.eventAt);
+	return sql`CASE WHEN ${slot.subscriptionId} IS NOT DISTINCT FROM ${incoming.subscriptionId} THEN GREATEST(${slot.eventAt}, ${at}) ELSE ${at} END`;
+}
+
+/** One Stripe subscription's state, as the webhook sync writes it onto the org-plan columns. */
+export interface SubscriptionBillingWrite {
+	organizationId: string;
+	plan: BillingPlan;
+	status: BillingStatus;
+	stripeCustomerId: string;
+	stripeSubscriptionId: string;
+	seats: number | null;
+	currentPeriodEnd: Date | null;
+	/** Stripe's event `created` time; null from a server action that read the subscription live. */
+	eventAt: Date | null;
+}
+
+/**
+ * Applies one Stripe subscription's state to the org-plan columns, IF the guard above allows it,
+ * and returns whether it did. The check and the write are one statement, so it is atomic against a
+ * concurrent delivery. This — not `upsertOrgBilling` — is the write path for Stripe subscription
+ * events (lib/billing/sync.ts).
+ */
+export async function applySubscriptionToBilling(
+	input: SubscriptionBillingWrite,
+): Promise<boolean> {
 	const now = new Date();
-	await getServiceDb()
+	const incoming: IncomingSubscription = {
+		subscriptionId: input.stripeSubscriptionId,
+		status: input.status,
+		eventAt: input.eventAt,
+	};
+	const fields = {
+		plan: input.plan,
+		status: input.status,
+		stripeCustomerId: input.stripeCustomerId,
+		stripeSubscriptionId: input.stripeSubscriptionId,
+		seats: input.seats,
+		currentPeriodEnd: toValidDate(input.currentPeriodEnd),
+		updatedAt: now,
+	};
+	const db = getServiceDb();
+	if (input.status === "canceled") {
+		// An ended subscription touches only the row that names it — never inserts, never lands on a
+		// row naming another subscription.
+		const rows = await db
+			.update(organizationBilling)
+			.set({ ...fields, stripeSubscriptionEventAt: nextEventAt(PLAN_SLOT, incoming) })
+			.where(
+				and(
+					eq(organizationBilling.organizationId, input.organizationId),
+					sameSubscriptionMayApply(PLAN_SLOT, incoming),
+				),
+			)
+			.returning({ id: organizationBilling.id });
+		return rows.length > 0;
+	}
+	const rows = await db
 		.insert(organizationBilling)
 		.values({
 			organizationId: input.organizationId,
-			aiTier: input.aiTier,
-			aiSubscriptionStatus: input.aiSubscriptionStatus,
-			aiStripeSubscriptionId: input.aiStripeSubscriptionId,
-			updatedAt: now,
+			...fields,
+			stripeSubscriptionEventAt: input.eventAt,
 		})
 		.onConflictDoUpdate({
 			target: organizationBilling.organizationId,
-			set: {
-				aiTier: input.aiTier,
-				aiSubscriptionStatus: input.aiSubscriptionStatus,
-				aiStripeSubscriptionId: input.aiStripeSubscriptionId,
-				updatedAt: now,
-			},
-		});
+			set: { ...fields, stripeSubscriptionEventAt: nextEventAt(PLAN_SLOT, incoming) },
+			setWhere: subscriptionMayApply(PLAN_SLOT, incoming),
+		})
+		.returning({ id: organizationBilling.id });
+	return rows.length > 0;
+}
+
+/** One STANDALONE AI subscription's state, as the webhook sync writes it onto the AI columns. */
+export interface AiSubscriptionWrite {
+	organizationId: string;
+	aiTier: AiTier;
+	aiSubscriptionStatus: BillingStatus;
+	aiStripeSubscriptionId: string;
+	/** Stripe's event `created` time; null from a server action that read the subscription live. */
+	eventAt: Date | null;
+}
+
+/**
+ * Applies a standalone AI subscription's state to ONLY the AI columns, under the same guard as
+ * `applySubscriptionToBilling` (over the AI subscription id, status and watermark), and returns
+ * whether it did. The org-plan columns are never touched — the AI product is orthogonal, so an org
+ * can be e.g. community plan + AI Plus. Creates the row (plan defaults to community) if the org has
+ * none, except for an ended subscription, which only ever updates the row naming it.
+ */
+export async function applyAiSubscriptionToBilling(
+	input: AiSubscriptionWrite,
+): Promise<boolean> {
+	const now = new Date();
+	const incoming: IncomingSubscription = {
+		subscriptionId: input.aiStripeSubscriptionId,
+		status: input.aiSubscriptionStatus,
+		eventAt: input.eventAt,
+	};
+	const fields = {
+		aiTier: input.aiTier,
+		aiSubscriptionStatus: input.aiSubscriptionStatus,
+		aiStripeSubscriptionId: input.aiStripeSubscriptionId,
+		updatedAt: now,
+	};
+	const db = getServiceDb();
+	if (input.aiSubscriptionStatus === "canceled") {
+		const rows = await db
+			.update(organizationBilling)
+			.set({ ...fields, aiStripeSubscriptionEventAt: nextEventAt(AI_SLOT, incoming) })
+			.where(
+				and(
+					eq(organizationBilling.organizationId, input.organizationId),
+					sameSubscriptionMayApply(AI_SLOT, incoming),
+				),
+			)
+			.returning({ id: organizationBilling.id });
+		return rows.length > 0;
+	}
+	const rows = await db
+		.insert(organizationBilling)
+		.values({
+			organizationId: input.organizationId,
+			...fields,
+			aiStripeSubscriptionEventAt: input.eventAt,
+		})
+		.onConflictDoUpdate({
+			target: organizationBilling.organizationId,
+			set: { ...fields, aiStripeSubscriptionEventAt: nextEventAt(AI_SLOT, incoming) },
+			setWhere: subscriptionMayApply(AI_SLOT, incoming),
+		})
+		.returning({ id: organizationBilling.id });
+	return rows.length > 0;
 }
 
 /**

@@ -3,7 +3,8 @@
 
 // The Stripe webhook event dispatcher, extracted from app/api/webhooks/stripe/route.ts so it can be
 // re-run by the break-glass "replay webhook" recovery action against the exact same idempotent code
-// path. State writes here are idempotent (subscription sync upserts on organization_id; credit
+// path. State writes here are idempotent (subscription sync is a guarded upsert carrying the
+// event's `created` time, so a replayed event older than the row's watermark is refused; credit
 // grants are idempotent on the invoice id) — the ONLY non-idempotent side effect is the branded
 // emails, which is why the live webhook guards on stripe_webhook_event. A replay passes
 // `suppressEmails: true` so re-dispatching an already-delivered event never re-mails the customer.
@@ -99,14 +100,24 @@ export async function handleStripeEvent(
 		}
 	};
 
+	// Every subscription sync carries the event's own time. For a subscription.* event it is the
+	// time of the snapshot in `data.object`; for an event that RETRIEVES the subscription it is a
+	// lower bound on the retrieved state's age — so a stale or redelivered event (including a
+	// break-glass replay) is refused rather than regressing the row (#5514).
+	const sync = { eventAt: new Date(event.created * 1000) };
+
 	switch (event.type) {
 		case "customer.subscription.created":
 		case "customer.subscription.updated":
-			await syncSubscriptionToBilling(event.data.object);
+			await syncSubscriptionToBilling(event.data.object, sync);
 			break;
 		case "customer.subscription.deleted": {
 			const sub = event.data.object;
-			await syncSubscriptionToBilling(sub);
+			// A deletion the row refused is a subscription the org is NOT on (an `incomplete` attempt
+			// the purchase sweep cancelled, or a second subscription beside the live one). Telling the
+			// customer "your subscription was canceled" then would be false, so only the applied
+			// deletion reports and mails.
+			if ((await syncSubscriptionToBilling(sub, sync)) !== "applied") break;
 			await trackRevenue(sub, "subscription_canceled");
 			await safeEmail("subscription canceled", () =>
 				sendSubscriptionCanceledEmail(sub),
@@ -124,6 +135,7 @@ export async function handleStripeEvent(
 			if (typeof session.subscription === "string") {
 				await syncSubscriptionToBilling(
 					await getStripe().subscriptions.retrieve(session.subscription),
+					sync,
 				);
 			}
 			break;
@@ -148,7 +160,7 @@ export async function handleStripeEvent(
 			// Subscription renewal / first payment: re-sync (status active) + receipt w/ PDF.
 			const sub = await subForInvoice(invoice);
 			if (sub) {
-				await syncSubscriptionToBilling(sub);
+				await syncSubscriptionToBilling(sub, sync);
 				const orgId = sub.metadata?.organization_id;
 				if (orgId) await safeMirror(invoice, orgId);
 				await trackRevenue(sub, "subscription_active", {
@@ -166,7 +178,7 @@ export async function handleStripeEvent(
 			const invoice = event.data.object;
 			const sub = await subForInvoice(invoice);
 			if (sub) {
-				await syncSubscriptionToBilling(sub);
+				await syncSubscriptionToBilling(sub, sync);
 				const customerId =
 					typeof sub.customer === "string" ? sub.customer : sub.customer.id;
 				const failedPm = paymentMethodIdOf(invoice);
