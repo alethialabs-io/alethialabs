@@ -22,3 +22,12 @@ output "primary_access_key" {
   value       = azurerm_managed_redis.this.default_database[0].primary_access_key
   sensitive   = true
 }
+
+output "database_id" {
+  description = "Resource id of the Managed Redis default database — the resource that emits ConnectionEvents, and the target of the root's diagnostic setting"
+  # Composed from the cluster id rather than read off default_database[0].id. They are the same
+  # string — Managed Redis has exactly one database and Azure names it "default" — but the nested
+  # block's id has no shape under a mocked provider (a block cannot be given a mock default while the
+  # config also sets it), and a target the root's tofu test cannot plan is a target nothing tests.
+  value = "${azurerm_managed_redis.this.id}/databases/default"
+}

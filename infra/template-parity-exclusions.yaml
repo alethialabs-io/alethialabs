@@ -113,6 +113,11 @@ baseline:
     off: "alibaba,aws,gcp,hetzner"
     state: unreviewed
     issue: "#2004"
+  - variable: aks_log_retention_days
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
   - variable: aks_node_desired_size
     on: "azure"
     off: "alibaba,aws,gcp,hetzner"
@@ -223,6 +228,16 @@ baseline:
     off: "alibaba,aws,gcp,hetzner"
     state: unreviewed
     issue: "#2004"
+  - variable: azure_cache_log_categories
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_cache_log_workspace_id
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
   - variable: azure_cache_multi_az
     on: "azure"
     off: "alibaba,aws,gcp,hetzner"
@@ -248,6 +263,11 @@ baseline:
     off: "alibaba,aws,gcp,hetzner"
     state: unreviewed
     issue: "#2004"
+  - variable: azure_db_database_flags
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
   - variable: azure_db_engine
     on: "azure"
     off: "alibaba,aws,gcp,hetzner"
@@ -264,6 +284,16 @@ baseline:
     state: unreviewed
     issue: "#2004"
   - variable: azure_db_iam_auth
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_log_exports
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_log_workspace_id
     on: "azure"
     off: "alibaba,aws,gcp,hetzner"
     state: unreviewed

@@ -53,3 +53,80 @@ The Azure template set (`infra/templates/project/azure/`) provides Azure-native 
 **The firewall binds to the gateway** — On Azure a firewall policy attaches to an Application Gateway, not to an `Ingress` annotation. Turning the firewall on therefore also provisions a gateway (on the WAF\_v2 tier, which the association requires) and binds the policy to it, so every request the gateway serves is inspected.
 
 **The gateway is opt-in** — An Application Gateway bills per hour for as long as it exists, whether or not you have published anything through it. It is created when you turn the firewall on, or when you set `azure_application_gateway_enabled` to `true`. It needs a dedicated subnet, so the template must be creating your virtual network. Without a gateway, expose services with the `ingress-nginx` add-on instead.
+
+## Operational settings
+
+The settings below are off by default. A project that sets none of them gets the same infrastructure as before, and pays for nothing new. Each one is a template variable that you set on the component it belongs to. In the console, open the component on the canvas and set the value on its template settings card. The examples show the component's `provider_config` that the card writes.
+
+<Callout type="warn">
+A Log Analytics workspace bills per GB of data it ingests. Control-plane log retention, database log exports and cache logging all send data to a workspace, so each one adds cost when you turn it on.
+</Callout>
+
+### Control-plane log retention
+
+Set `aks_log_retention_days` on the **cluster** to keep AKS control-plane logs. Use a whole number of days from 30 to 730.
+
+```json
+{ "aks_log_retention_days": 90 }
+```
+
+The template then creates a Log Analytics workspace with that retention. It turns on the AKS monitoring add-on (Container Insights) and sends the `kube-apiserver` and `kube-audit-admin` logs to the workspace. Container logs use the same retention. The database and cache settings below also use this workspace when it exists.
+
+### Database log exports
+
+Set `azure_db_log_exports` on the **database** to send Flexible Server logs to Log Analytics. The categories depend on the engine:
+
+| Engine | Categories |
+|--------|------------|
+| PostgreSQL | `PostgreSQLLogs`, `PostgreSQLFlexSessions`, `PostgreSQLFlexQueryStoreRuntime`, `PostgreSQLFlexQueryStoreWaitStats`, `PostgreSQLFlexTableStats`, `PostgreSQLFlexDatabaseXacts` |
+| MySQL | `MySqlSlowLogs`, `MySqlAuditLogs` |
+
+```json
+{ "azure_db_log_exports": ["PostgreSQLLogs", "PostgreSQLFlexSessions"] }
+```
+
+Some categories stay empty until you turn on the matching server parameter with `azure_db_database_flags`:
+
+- `MySqlAuditLogs` needs `audit_log_enabled` set to `ON`.
+- `PostgreSQLFlexQueryStoreRuntime` needs Query Store on: set `pg_qs.query_capture_mode` to `TOP` or `ALL`.
+- `PostgreSQLFlexQueryStoreWaitStats` needs Query Store on as above, and wait sampling on: also set `pgms_wait_sampling.query_capture_mode` to `all` (it defaults to `none`).
+
+The logs go to the workspace from control-plane log retention. If the project has no cluster, or does not set `aks_log_retention_days`, also set `azure_db_log_workspace_id` to the resource ID of an existing workspace. The plan fails if the logs have nowhere to go, or if a category belongs to the other engine.
+
+### Database server parameters
+
+Set `azure_db_database_flags` on the **database** to change Flexible Server parameters. Each entry becomes one server parameter on the engine you provisioned. Values are strings.
+
+```json
+{ "azure_db_database_flags": { "max_connections": "200", "log_min_duration_statement": "500" } }
+```
+
+The template refuses `require_secure_transport`, `ssl_min_protocol_version` and `tls_version`. Each of these can turn TLS off or allow a version below TLS 1.2, and the server defaults already require TLS 1.2.
+
+<Callout type="warn">
+The template refuses only the TLS parameters. Other parameters can also weaken the server, and the template accepts them. For example, `password_encryption` set to `md5` stores weaker password hashes. Changes to `pgaudit.log`, `log_connections` or `audit_log_enabled` reduce what the server records. `azure.extensions` allows more PostgreSQL extensions. Review each value as you would a change to the server's security settings.
+</Callout>
+
+Some parameters are static. When you change a static parameter, Azure restarts the server to apply it, and the database is unavailable during the restart.
+
+### Storage encryption with your own key
+
+Set `cmek_enabled` on a **bucket** to encrypt the storage account with a customer-managed key.
+
+```json
+{ "cmek_enabled": true }
+```
+
+Azure encrypts a whole storage account with one key, and a project has one storage account. So when any bucket sets `cmek_enabled`, every container in the account uses the key. The template creates the key in the project's own Key Vault. It also creates a managed identity that the storage account uses to reach the key. That identity has only the Key Vault Crypto Service Encryption User role, on that one key. The role's data actions are exactly read, wrap and unwrap on the key. The built-in role also has Event Grid control-plane actions, which give no access to key material.
+
+Azure accepts the key only from a vault with purge protection, so `key_vault_purge_protection_enabled` must stay `true` (the default).
+
+### Cache logging
+
+Set `azure_cache_log_categories` on the **cache** to send Azure Managed Redis connection logs to Log Analytics. Managed Redis has one log category, `ConnectionEvents`.
+
+```json
+{ "azure_cache_log_categories": ["ConnectionEvents"] }
+```
+
+The destination works the same way as database log exports: the template's workspace when there is one, otherwise the workspace in `azure_cache_log_workspace_id`. The plan fails if neither exists.
