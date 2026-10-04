@@ -159,16 +159,22 @@ be the same machine. Browsers and their OS libraries install on first run, then 
   but `env:box` then refuses to build a box this machine could not reach. Details: `infra/sandbox/README.md`.
 - **What `pnpm env:check` touches, in order** (#5504). (1) Its arguments are parsed first:
   `--help`/`-h` prints usage and exits 0, and a bad argument exits 2. Neither runs anything remote.
-  (2) If the box is up, it looks up this Mac's public IP (an HTTPS call to ipify/icanhazip) and
-  reads the box's firewall (`hcloud`). If the firewall does not admit the IP, it says so and then
-  **rewrites the gitignored `terraform.tfvars` under `infra/sandbox/` in the main checkout** (leaving a
-  `terraform.<timestamp>.backup.tfvars`) and **applies a plan targeted at `hcloud_firewall.sandbox`**.
+  (2) It asks whether the box is up, read-only: a `tofu output` of the server IP and an
+  `hcloud server describe`. If the box is down, it stops there and refreshes nothing. If it is up, it
+  looks up this Mac's public IP (an HTTPS call to ipify/icanhazip) and reads the box's firewall
+  (`hcloud`). If the firewall does not admit the IP, it says what it will do and then **applies a
+  plan targeted at `hcloud_firewall.sandbox`**. It first **rewrites the `/32` in the gitignored
+  `terraform.tfvars` under `infra/sandbox/` in the main checkout** (leaving a
+  `terraform.<timestamp>.backup.tfvars`) only when tfvars itself does not admit the IP. When tfvars
+  already admits it, only the live firewall is updated and tfvars is untouched.
   With `--no-refresh` this step does none of that; on an IP the firewall does not admit, the run
-  then fails at SSH, and `pnpm env:allow-ip` is the refresh on its own.
+  then fails at SSH, and `pnpm env:allow-ip` is the refresh on its own. (`env:box --no-refresh`
+  instead refuses before any plan or apply.)
   (3) It rsyncs your worktree to the box, rebuilds the `@alethia/ee` build there, and runs `check-types`, `lint`
   and vitest in your env's directory on the box. `up`, `push`, `down`, `status`, `verify`, `logs`,
   `open`, `ssh`, `test` and `runner` share steps 1 and 2. `scripts/lib/env-allowlist-test.sh`
-  (CI) fails if `--help` or a bad argument on any of them reaches the IP lookup, `tofu` or `ssh`.
+  (CI) drives `--help` and a bad argument on every `env:*` command and fails if any of them
+  reaches the IP lookup, `hcloud`, `tofu` or `ssh`.
 - **"box: down" from a worktree used to be a lie.** State is gitignored and lives only in
   the main checkout; `env.sh` now resolves it there. If you ever see a state-read error,
   that is a bug in the script, not something to work around.

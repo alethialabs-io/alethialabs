@@ -37,10 +37,13 @@
 #      mutates nothing), and the refusal names the IP
 #  18  `--help` / `-h` on EVERY command (and bare `help`), box up and IP not admitted → usage, exit
 #      0, and an EMPTY call log: no curl, no tofu, no hcloud, no ssh, no rsync (#5504)
-#  19  a refused argument on any command → exit 2 with an empty call log: the parse runs first
+#  19  a refused argument on EVERY command (all fifteen) → exit 2 with an empty call log: the parse
+#      runs first
 #  20  `--no-refresh` with the IP not admitted → no IP lookup, no plan/apply, still reaches SSH
 #  21  the box is down and the IP not admitted → no plan/apply (nothing to refresh FOR), and the
 #      command reports the box down
+#  22  `env:box --no-refresh`, IP not admitted → refused before any plan or apply
+#  23  `env:reap --now --no-refresh`, SSH refused → no plan/apply/snapshot/destroy, names env:allow-ip
 #
 # Section M mutates env.sh and requires each mutant to FAIL a named case. An assertion nothing has
 # ever made fail is a claim, not a check.
@@ -254,7 +257,7 @@ case_2() {
 	sed -n "${ap}p" "$LOG" | grep -q -- '-auto-approve' && { echo "  apply used -auto-approve"; return 1; }
 	[ "$(grep -c '^tofu .* apply' "$LOG")" = 1 ] || { echo "  more than one apply"; return 1; }
 	# It says what it is about to do, and how not to (#5504).
-	printf '%s' "$OUT" | grep -q 'applying a plan targeted at hcloud_firewall.sandbox' || { echo "  no announcement: $OUT"; return 1; }
+	printf '%s' "$OUT" | grep -q 'rewriting that /32 (backup kept), then applying a plan targeted at hcloud_firewall.sandbox' || { echo "  no announcement: $OUT"; return 1; }
 	printf '%s' "$OUT" | grep -q -- '--no-refresh skips this' || { echo "  announcement names no opt-out: $OUT"; return 1; }
 	return 0
 }
@@ -331,6 +334,10 @@ case_10() {
 	# shellcheck disable=SC2012
 	[ "$(ls "$r"/infra/sandbox/terraform.*.backup.tfvars 2>/dev/null | wc -l | tr -d ' ')" = 0 ] ||
 		{ echo "  rewrote a tfvars that already admitted the IP"; return 1; }
+	# …and says so, rather than announcing a rewrite it does not do (#5504).
+	printf '%s' "$OUT" | grep -q 'only the live firewall is updated' || { echo "  wrong announcement: $OUT"; return 1; }
+	printf '%s' "$OUT" | grep -q 'rewriting that /32' && { echo "  announced a tfvars rewrite it did not do"; return 1; }
+	return 0
 }
 
 case_16() {
@@ -404,8 +411,12 @@ case_19() { # a refused argument: exit 2, and NOTHING remote before the refusal
 	local r before spec
 	r="$(repo "$1" "\"$OLD_IP/32\"")"
 	before="$(cat "$r/infra/sandbox/terraform.tfvars")"
-	for spec in "check --bogus" "logs extra" "status --verbose" "up --bogus" "up --empty --seed" \
-		"push --bogus" "test a b" "reap --bogus" "box --bogus" "timer bogus" "allow-ip --no-refresh"; do
+	# At least one per command — all fifteen in ALL_CMDS. A command missing here can accept any
+	# argument and stay green; the per-command mutants in section M prove each line is load-bearing.
+	for spec in "check --bogus" "logs extra" "status --verbose" "down extra" "verify extra" \
+		"open extra" "ssh extra" "runner extra" "up --bogus" "up --empty --seed" \
+		"push --bogus" "test a b" "reap --bogus" "box --bogus" "timer bogus" "allow-ip extra" \
+		"allow-ip --no-refresh"; do
 		# shellcheck disable=SC2086  # word-splitting the spec IS the argv
 		STUB_IP=$NEW_IP STUB_FW_JSON="$(fw_json "$OLD_IP/32")" STUB_PLAN_JSON=$PLAN_OK run "$r" $spec
 		[ "$RC" = 2 ] || { echo "  env:$spec: rc=$RC (want 2): $OUT"; return 1; }
@@ -438,8 +449,34 @@ case_21() { # the box is down: nothing to refresh FOR — no plan, no apply, the
 	printf '%s' "$OUT" | grep -q 'The sandbox box is not up' || { echo "  wrong message: $OUT"; return 1; }
 }
 
+case_22() { # env:box --no-refresh, IP not admitted → the flag reaches env:box: refused before any plan
+	local r before
+	r="$(repo "$1" "\"$OLD_IP/32\"")"
+	before="$(cat "$r/infra/sandbox/terraform.tfvars")"
+	STUB_IP=$NEW_IP STUB_PLAN_JSON=$PLAN_OK run "$r" box --no-refresh
+	[ "$RC" != 0 ] || { echo "  env:box --no-refresh succeeded"; return 1; }
+	has '^tofu .* plan' && { echo "  planned before refusing"; cat "$LOG"; return 1; }
+	has '^tofu .* apply' && { echo "  applied"; return 1; }
+	[ "$(cat "$r/infra/sandbox/terraform.tfvars")" = "$before" ] || { echo "  tfvars rewritten"; return 1; }
+	printf '%s' "$OUT" | grep -q 'refusing to build a box this machine cannot reach' || { echo "  wrong message: $OUT"; return 1; }
+}
+
+case_23() { # env:reap --now --no-refresh, SSH refused → no plan/apply, fails closed, names the fix
+	local r before
+	r="$(repo "$1" "\"$OLD_IP/32\"")"
+	before="$(cat "$r/infra/sandbox/terraform.tfvars")"
+	STUB_SSH_RC=255 STUB_IP=$NEW_IP STUB_FW_JSON="$(fw_json "$OLD_IP/32")" STUB_PLAN_JSON=$PLAN_OK run "$r" reap --now --no-refresh
+	[ "$RC" != 0 ] || { echo "  reap succeeded with SSH down"; return 1; }
+	has '^tofu .* plan' && { echo "  planned"; return 1; }
+	has '^tofu .* apply' && { echo "  applied"; return 1; }
+	has 'create-image' && { echo "  snapshotted"; return 1; }
+	has '^tofu .* destroy' && { echo "  destroyed"; return 1; }
+	[ "$(cat "$r/infra/sandbox/terraform.tfvars")" = "$before" ] || { echo "  tfvars rewritten"; return 1; }
+	printf '%s' "$OUT" | grep -q 'pnpm env:allow-ip' || { echo "  does not name the fix: $OUT"; return 1; }
+}
+
 echo "# cases against scripts/env.sh"
-for c in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21; do
+for c in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23; do
 	if why="$("case_$c" "$ENV_SH")"; then ok "case $c"; else bad "case $c"$'\n'"$why"; fi
 done
 
@@ -503,6 +540,15 @@ mutant args-unchecked 19 's/^  \[ "\$ENV_NARGS" = 0 \] || usage_error "env:\$ENV
 mutant no-refresh-ignored 20 's/^  --no-refresh) ENV_NO_REFRESH=1 ;;$/  --no-refresh) ;;/'
 # A down box gets its firewall applied anyway.
 mutant down-box-refreshes 21 '/^  box_exists || return 0$/d'
+# --no-refresh is parsed but never exported, so env:box and env:reap do not see it.
+# shellcheck disable=SC2016  # literal $ — a sed program over env.sh's source
+mutant no-refresh-not-exported 22 's/^\[ -z "\$ENV_NO_REFRESH" \] || export ALETHIA_SANDBOX_NO_IP_REFRESH=1$/:/'
+# EACH no-argument command, on its own, starts accepting any argument: case 19 must catch every one
+# (a command with no bad-argument line would let its mutant through).
+for _c in down status verify logs open ssh check runner; do
+	_rest="$(printf '%s\n' down status verify logs open ssh check runner | grep -vx "$_c" | paste -sd'|' - | sed 's/|/ | /g')"
+	mutant "args-accepted-by-$_c" 19 "s/^down | status | verify | logs | open | ssh | check | runner)\$/$_c) : ;; $_rest)/"
+done
 
 echo
 if [ "$fails" -gt 0 ]; then

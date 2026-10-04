@@ -26,14 +26,15 @@
 # Every command also takes:
 #   -h, --help    print this and exit 0. Nothing remote runs: no IP lookup, no tofu, no ssh.
 #   --no-refresh  never refresh the SSH allowlist (no tfvars rewrite, no firewall apply). On an
-#                 IP the box does not admit, the command then fails at SSH;
-#                 `pnpm env:allow-ip` is the refresh on its own.
+#                 IP the box does not admit, env:box refuses before any plan or apply, and every
+#                 other command fails at SSH; `pnpm env:allow-ip` is the refresh on its own.
 #
 # What runs, in order: the arguments are parsed (a bad one stops here, with nothing remote run);
 # then — for a command that SSHes to the box (up push down status verify logs open ssh check test
 # runner) and only if the box is up — this machine's public IP is looked up and, if the box's
-# firewall does not admit it, ssh_allowed_cidrs in infra/sandbox/terraform.tfvars is rewritten
-# (backup kept) and a plan targeted at hcloud_firewall.sandbox is applied. It says so first.
+# firewall does not admit it, a plan targeted at hcloud_firewall.sandbox is applied — after
+# rewriting the /32 in infra/sandbox/terraform.tfvars (backup kept) only if tfvars does not already
+# admit the IP. It says which, first.
 set -euo pipefail
 
 # ── $ROOT was doing three jobs at once, and only the first was right ──────────────
@@ -630,7 +631,13 @@ ensure_ssh_allowlist() {
   state="$(allowlist_state "$ip")"
   [ "$state" = ok ] && return 0
   echo "→ this machine's public IP ($ip) is not on the box's SSH allowlist — refreshing it:" >&2
-  echo "  rewriting ssh_allowed_cidrs in $TFVARS and applying a plan targeted at $FIREWALL_ADDR." >&2
+  # Say exactly what will be written: tfvars is rewritten only when IT is what fails to admit the IP
+  # (state "tfvars"); when tfvars already admits it and only the live firewall lags ("live"), the
+  # refresh applies the firewall and leaves tfvars alone (refresh_ssh_allowlist, case 10).
+  case "$state" in
+  tfvars) echo "  ssh_allowed_cidrs in $TFVARS does not admit it: rewriting that /32 (backup kept), then applying a plan targeted at $FIREWALL_ADDR." >&2 ;;
+  live) echo "  $TFVARS already admits it; only the live firewall is updated: a plan targeted at $FIREWALL_ADDR, tfvars untouched." >&2 ;;
+  esac
   echo "  (--no-refresh skips this; the command then fails at SSH instead.)" >&2
   refresh_ssh_allowlist "$ip"
 }
