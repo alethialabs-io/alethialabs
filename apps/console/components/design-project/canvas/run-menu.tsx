@@ -31,23 +31,11 @@ import {
 } from "@/app/server/actions/projects";
 
 /**
- * The sentence of a refusal an action RETURNED (`{ ok: false, error }`), or null for any other
- * result. Plan and drift answer this way (#5445): their refusals used to be thrown, and a production
- * build replaced each with a digest before this menu's toast could show it.
+ * What every Run menu action answers: the queued job, or a refusal to show. Plan and drift (#5445)
+ * and audit and probe (#5454) all RETURN their refusals — thrown, a production build replaced each
+ * sentence with a digest before this menu's toast could show it.
  */
-function refusalOf(result: unknown): string | null {
-  if (
-    typeof result === "object" &&
-    result !== null &&
-    "ok" in result &&
-    result.ok === false &&
-    "error" in result &&
-    typeof result.error === "string"
-  ) {
-    return result.error;
-  }
-  return null;
-}
+type RunResult = { ok: true } | { ok: false; error: string };
 
 /**
  * The Run menu — every job the platform can run against an environment, from the board.
@@ -70,22 +58,23 @@ export function RunMenu({
   /** Queue a job, and say what happened either way. A silent failure here is a lie about the env. */
   const run = async (
     label: string,
-    fn: () => Promise<{ jobId: string } | unknown>,
+    fn: () => Promise<RunResult>,
   ) => {
     setRunning(label);
     try {
-      const refusal = refusalOf(await fn());
-      if (refusal) {
-        // A refusal the user can act on ("no cloud account linked", "a job is already in
-        // progress"), returned as a value so its sentence survives a production build.
-        toast.error(refusal);
+      const result = await fn();
+      if (!result.ok) {
+        // A refusal the user can act on ("no cloud account linked", "run a plan first", "a probe
+        // is already running"), returned as a value so its sentence survives a production build.
+        toast.error(result.error);
         return;
       }
       toast.success(`${label} queued`);
       onQueued?.();
     } catch (e) {
-      // Anything still THROWN is either an action that has not moved to returned refusals yet
-      // (audit, probe) or an unexpected failure, whose message a production build redacts.
+      // Anything still THROWN is not a refusal the user can act on — an authorization failure, an
+      // environment that is not this project's, or an unexpected error — and a production build
+      // redacts its message.
       toast.error(e instanceof Error ? e.message : `Could not queue ${label}`);
     } finally {
       setRunning(null);

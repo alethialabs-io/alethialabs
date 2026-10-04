@@ -65,6 +65,19 @@ export function PromoteDialog({
 	const [diff, setDiff] = useState<PromotionDiff | null>(null);
 	const [previewing, setPreviewing] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
+	// The sentence of a refusal `promoteEnvironment` RETURNED (#5454), shown in the dialog beside the
+	// button that was pressed. Stored with the request it answered, and shown only while the pair
+	// and the removals choice are still that request; closing the dialog drops it.
+	const [refused, setRefused] = useState<{ request: string; error: string } | null>(null);
+	const refusalId = useId();
+	const request = `${sourceId}|${targetId}|${includeRemovals}`;
+	const refusal = refused?.request === request ? refused.error : null;
+
+	/** Forwards an open/close to the caller, and drops a shown refusal when the dialog closes. */
+	function handleOpenChange(v: boolean) {
+		if (!v) setRefused(null);
+		onOpenChange(v);
+	}
 
 	// Live diff preview whenever the pair or removal preference changes.
 	useEffect(() => {
@@ -97,12 +110,21 @@ export function PromoteDialog({
 	async function submit() {
 		if (!sourceId || !targetId) return;
 		setSubmitting(true);
+		setRefused(null);
 		try {
-			await promoteEnvironment(projectId, sourceId, targetId, { includeRemovals });
+			const res = await promoteEnvironment(projectId, sourceId, targetId, { includeRemovals });
+			if (!res.ok) {
+				// A refusal the user can act on — returned, so its sentence survives a production
+				// build. It stays in the dialog, where the pair can be changed and Promote pressed again.
+				setRefused({ request, error: res.error });
+				return;
+			}
 			toast.success("Promotion queued");
-			onOpenChange(false);
+			handleOpenChange(false);
 			await onPromoted();
 		} catch (err) {
+			// Anything still thrown is not a refusal the user can act on (authorization, an unknown
+			// environment, an unexpected failure), and a production build redacts its message.
 			toast.error(err instanceof Error ? err.message : "Failed to promote");
 		} finally {
 			setSubmitting(false);
@@ -110,7 +132,7 @@ export function PromoteDialog({
 	}
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		<Dialog open={open} onOpenChange={handleOpenChange}>
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
 					<DialogTitle>Promote environment</DialogTitle>
@@ -243,12 +265,23 @@ export function PromoteDialog({
 					</div>
 				)}
 
+				{refusal && (
+					<p
+						id={refusalId}
+						role="alert"
+						className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive"
+					>
+						{refusal}
+					</p>
+				)}
+
 				<DialogFooter>
-					<Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+					<Button variant="outline" onClick={() => handleOpenChange(false)} disabled={submitting}>
 						Cancel
 					</Button>
 					<Button
 						onClick={submit}
+						aria-describedby={refusal ? refusalId : undefined}
 						disabled={submitting || !sourceId || !targetId || sourceId === targetId || nothingToDo}
 					>
 						{submitting ? (
