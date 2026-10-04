@@ -304,6 +304,11 @@ func TestKarpenterNodePool_RendererRefusesWhatTheTemplateRefuses(t *testing.T) {
 		{"label in k8s.io", "labels", map[string]interface{}{"kops.k8s.io/instancegroup": "x"}, "reserved domain"},
 		{"label in karpenter.sh", "labels", map[string]interface{}{"karpenter.sh/nodepool": "other"}, "reserved domain"},
 		{"label in karpenter.k8s.aws", "labels", map[string]interface{}{"karpenter.k8s.aws/instance-family": "c7g"}, "reserved domain"},
+		{"label in a domain merely ending in kubernetes.io", "labels", map[string]interface{}{"examplekubernetes.io/x": "y"}, "reserved domain"},
+		{"label prefix over 253 characters", "labels", map[string]interface{}{strings.Repeat("a.", 127) + "io/x": "y"}, "is not a Kubernetes key"},
+		{"label prefix with a DNS label over 63", "labels", map[string]interface{}{strings.Repeat("a", 64) + ".com/x": "y"}, "is not a Kubernetes key"},
+		{"label name over 63", "labels", map[string]interface{}{"example.com/" + strings.Repeat("a", 64): "y"}, "is not a Kubernetes key"},
+		{"taint in a domain merely ending in k8s.io", "taints", []interface{}{map[string]interface{}{"key": "examplek8s.io/x", "effect": "NoSchedule"}}, "reserved domain"},
 		{"label value with YAML in it", "labels", map[string]interface{}{"workload": "batch\"\n  injected: \"yes"}, "has value"},
 		{"label key with YAML in it", "labels", map[string]interface{}{"a\": \"b": "c"}, "is not a Kubernetes key"},
 		{"label value not a string", "labels", map[string]interface{}{"workload": float64(1)}, "is not a string"},
@@ -365,9 +370,10 @@ func TestKarpenterNodePool_AllowedEdges(t *testing.T) {
 	nodePool["instance_families"] = []interface{}{"c7g", "m7i-flex"}
 	nodePool["cpu_limit"] = float64(10000)
 	nodePool["labels"] = map[string]interface{}{
-		"node-restriction.kubernetes.io/pool": "batch",
-		"example.com/team":                    "",
-		"kubernetes.io.example.com/x":         "y", // a domain that merely CONTAINS kubernetes.io
+		"node-restriction.kubernetes.io/pool":                       "batch",
+		"example.com/team":                                          "",
+		"kubernetes.io.example.com/x":                               "y", // a domain that merely CONTAINS kubernetes.io
+		strings.Repeat("a", 63) + ".com/" + strings.Repeat("b", 63): "y", // 63-character DNS label and name
 	}
 	nodePool["taints"] = []interface{}{
 		map[string]interface{}{"key": "dedicated", "effect": "NoSchedule"},
@@ -377,7 +383,7 @@ func TestKarpenterNodePool_AllowedEdges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extractKarpenterNodePool refused an allowed NodePool: %v", err)
 	}
-	if pool.CPULimit != 10000 || len(pool.Labels) != 3 || len(pool.Taints) != 2 || pool.Taints[0].HasValue {
+	if pool.CPULimit != 10000 || len(pool.Labels) != 4 || len(pool.Taints) != 2 || pool.Taints[0].HasValue {
 		t.Errorf("extracted NodePool = %#v", pool)
 	}
 	// One attribute omitted keeps its default (a template that predates a knob).

@@ -319,8 +319,10 @@ var (
 	k8sQualifiedKeyPattern = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$`)
 	// k8sLabelValuePattern is a Kubernetes label (and taint) value; length is checked separately.
 	k8sLabelValuePattern = regexp.MustCompile(`^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$`)
-	// reservedKeyDomainPattern matches a key prefix in a domain Kubernetes or Karpenter owns.
-	reservedKeyDomainPattern = regexp.MustCompile(`(^|\.)(kubernetes\.io|k8s\.io|karpenter\.sh|karpenter\.k8s\.aws)$`)
+	// reservedKeyDomainPattern matches a key prefix in a domain Kubernetes or Karpenter owns. There is
+	// deliberately NO dot boundary: Karpenter's NodePool CRD tests `endsWith("kubernetes.io")` on the
+	// prefix, so `examplekubernetes.io/x` is refused at apply, and this guard must refuse it at plan.
+	reservedKeyDomainPattern = regexp.MustCompile(`(kubernetes\.io|k8s\.io|karpenter\.sh|karpenter\.k8s\.aws)$`)
 	// labelDomainExceptionPattern is the one reserved subdomain a user label may use. Kubernetes
 	// documents node-restriction.kubernetes.io/ for exactly this (labels a kubelet cannot set on its
 	// own node), and Karpenter's NodePool CRD admits it. node-role.kubernetes.io is NOT admitted.
@@ -347,10 +349,19 @@ func keyDomain(key string) string {
 	return ""
 }
 
-// validateQualifiedKey checks a label or taint key's syntax and length.
+// validateQualifiedKey checks a label or taint key's syntax and lengths: a prefix of at most 253
+// characters whose dot-separated DNS labels are at most 63 each, and a name of at most 63 (the
+// pattern bounds the name).
 func validateQualifiedKey(what, key string) error {
-	if len(key) > 317 || !k8sQualifiedKeyPattern.MatchString(key) {
-		return fmt.Errorf("%s key %q is not a Kubernetes key: use [prefix/]name, with a name of up to 63 letters, digits, '-', '_' or '.'", what, key)
+	bad := !k8sQualifiedKeyPattern.MatchString(key)
+	if prefix := keyDomain(key); !bad && prefix != "" {
+		bad = len(prefix) > 253
+		for _, label := range strings.Split(prefix, ".") {
+			bad = bad || len(label) > 63
+		}
+	}
+	if bad {
+		return fmt.Errorf("%s key %q is not a Kubernetes key: use [prefix/]name, with a DNS prefix of up to 253 characters (63 per label) and a name of up to 63 letters, digits, '-', '_' or '.'", what, key)
 	}
 	return nil
 }

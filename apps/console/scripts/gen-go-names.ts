@@ -213,6 +213,11 @@ const CENSUS_EXCEPTIONS: Record<string, string> = {
 		"Preview namespace/subdomain validation. dns1123Subdomain is a SUBDOMAIN (dot-separated " +
 		"labels), a grammar names.IsNamespace does not express; the label rule it shares now comes " +
 		"from names.NamespacePattern.",
+	"packages/core/provisioner/karpenter.go":
+		"Kubernetes label/taint KEY and VALUE grammars (a qualified name: DNS-subdomain prefix + 63-char " +
+		"name) and EC2 instance category/family shapes, used to VALIDATE what a user set for the " +
+		"Karpenter NodePool before the runner applies it (#5527). They derive no name from a display " +
+		"name and produce no slug; the grammars are Kubernetes' and AWS's, not an org slug.",
 	"apps/console/lib/validations/preview.ts":
 		"The TypeScript mirror of preview_validate.go, whose contract is that file's grammar.",
 	"apps/console/components/design-project/canvas/inspector/config-schema.ts":

@@ -59,7 +59,7 @@ If you set nothing, every default below applies, and the runner renders the same
 | Setting | Default | Allowed values |
 |---------|---------|----------------|
 | `karpenter_capacity_types` | `["on-demand"]` | `spot`, `on-demand`, or both. With both, Karpenter prefers Spot and falls back to on-demand. |
-| `karpenter_architectures` | `["amd64"]` | `amd64`, `arm64`, or both. The node image (`al2023@latest`) serves both, so arm64 (Graviton) needs no other change. |
+| `karpenter_architectures` | `["amd64"]` | `amd64`, `arm64`, or both. The node image (`al2023@latest`) serves both. Read the arm64 warning below before you add `arm64`. |
 | `karpenter_instance_categories` | `["t", "m"]` | EC2 instance categories, such as `c`, `m` or `r`. An empty list removes the category requirement. |
 | `karpenter_instance_families` | `[]` (no requirement) | EC2 instance families, such as `c7g` or `m7g`. Each family must belong to one of the categories, unless the category list is empty. |
 | `karpenter_cpu_limit` | `100` | The total vCPU the pool can launch, a whole number from 1 to 10000. It is the only bound on the size of Karpenter's fleet. |
@@ -101,7 +101,11 @@ spec:
 ```
 
 <Callout type="warn">
-AWS can reclaim a Spot instance with two minutes' notice. Run only work that can stop and restart on Spot, or list both capacity types so that Karpenter can fall back to on-demand.
+An arm64 node runs only arm64 or multi-architecture images. The managed node group stays x86_64, and an image built for amd64 alone crashes on an arm64 node with `exec format error`. Before you add `arm64`, make sure that every workload that can schedule on Karpenter nodes has a multi-architecture image, or keep those workloads off the arm64 nodes with a taint and a node selector.
+</Callout>
+
+<Callout type="warn">
+AWS can reclaim a Spot instance with two minutes' notice. Karpenter receives that notice through the interruption queue the template creates (an SQS queue fed by EventBridge rules), then cordons and drains the node before AWS reclaims it. Run only work that can stop and restart on Spot, or list both capacity types so that Karpenter can fall back to on-demand.
 </Callout>
 
 <Callout type="info">

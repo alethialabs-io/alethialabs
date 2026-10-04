@@ -854,17 +854,17 @@ variable "karpenter_node_labels" {
 
   validation {
     condition = alltrue([for k, v in var.karpenter_node_labels :
-      length(k) <= 317 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(split("/", k)[0]) <= 253 && alltrue([for l in split(".", split("/", k)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
       length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
     ])
-    error_message = "karpenter_node_labels keys must be Kubernetes label keys ([prefix/]name, name up to 63 characters) and values must be up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+    error_message = "karpenter_node_labels keys must be Kubernetes label keys ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and values must be up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
   }
 
   validation {
     condition = alltrue([for k, v in var.karpenter_node_labels :
-      !strcontains(k, "/") || can(regex("(^|\\.)node-restriction\\.kubernetes\\.io$", split("/", k)[0])) || !can(regex("(^|\\.)(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws)$", split("/", k)[0]))
+      !strcontains(k, "/") || can(regex("(^|\\.)node-restriction\\.kubernetes\\.io$", split("/", k)[0])) || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws)$", split("/", k)[0]))
     ])
-    error_message = "karpenter_node_labels keys may not use the reserved kubernetes.io, k8s.io, karpenter.sh or karpenter.k8s.aws domains (node-restriction.kubernetes.io/ is allowed). Kubernetes and Karpenter own those labels."
+    error_message = "karpenter_node_labels keys may not use the reserved kubernetes.io, k8s.io, karpenter.sh or karpenter.k8s.aws domains (node-restriction.kubernetes.io/ is allowed). Kubernetes and Karpenter own those labels; any prefix ending in one of them is refused, as Karpenter's NodePool admission does."
   }
 }
 
@@ -884,15 +884,15 @@ variable "karpenter_node_taints" {
 
   validation {
     condition = alltrue([for t in var.karpenter_node_taints :
-      length(t.key) <= 317 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      length(split("/", t.key)[0]) <= 253 && alltrue([for l in split(".", split("/", t.key)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
       (t.value == null ? true : length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
     ])
-    error_message = "karpenter_node_taints key must be a Kubernetes key ([prefix/]name, name up to 63 characters) and value, when set, up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+    error_message = "karpenter_node_taints key must be a Kubernetes key ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and value, when set, up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
   }
 
   validation {
     condition = alltrue([for t in var.karpenter_node_taints :
-      !strcontains(t.key, "/") || !can(regex("(^|\\.)(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws)$", split("/", t.key)[0]))
+      !strcontains(t.key, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws)$", split("/", t.key)[0]))
     ])
     error_message = "karpenter_node_taints keys may not use the reserved kubernetes.io, k8s.io, karpenter.sh or karpenter.k8s.aws domains. Kubernetes and Karpenter set those taints themselves."
   }

@@ -322,6 +322,24 @@ run "refuses_a_label_in_the_karpenter_k8s_aws_domain" {
   expect_failures = [var.karpenter_node_labels]
 }
 
+# No dot boundary, matching Karpenter's NodePool CRD (`endsWith("kubernetes.io")` on the prefix):
+# a prefix that merely ends in a reserved domain is refused at apply, so it is refused here.
+run "refuses_a_label_in_a_domain_merely_ending_in_kubernetes_io" {
+  command = plan
+  variables {
+    karpenter_node_labels = { "examplekubernetes.io/x" = "y" }
+  }
+  expect_failures = [var.karpenter_node_labels]
+}
+
+run "refuses_a_label_prefix_with_a_dns_label_over_63" {
+  command = plan
+  variables {
+    karpenter_node_labels = { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/x" = "y" }
+  }
+  expect_failures = [var.karpenter_node_labels]
+}
+
 run "refuses_a_malformed_label_value" {
   command = plan
   variables {
