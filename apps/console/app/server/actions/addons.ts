@@ -20,6 +20,7 @@ import {
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { ADDON_CATALOG, getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
+import { chartVersionIntent } from "@/lib/addons/chart-version";
 import {
 	generateAddonSecrets,
 	mergeAddonSecrets,
@@ -40,6 +41,8 @@ export interface AddonInstallState {
 	values: AddOnValues;
 	/** Raw Helm-values YAML override (Advanced), or null. */
 	valuesYaml: string | null;
+	/** The pinned chart version, or null when the catalog's default version applies. */
+	version: string | null;
 	status: ComponentStatus;
 	health: string | null;
 	sync: string | null;
@@ -97,6 +100,7 @@ export async function getProjectAddons(
 			mode: projectAddons.mode,
 			values: projectAddons.values,
 			values_yaml: projectAddons.values_yaml,
+			version: projectAddons.version,
 			status: projectAddons.status,
 			health: projectAddons.health,
 			sync_status: projectAddons.sync_status,
@@ -136,6 +140,7 @@ export async function getProjectAddons(
 					// Secrets redacted for the client — a set/unset marker, never the stored ciphertext.
 					values: redactAddonSecrets(def, row.values ?? {}),
 					valuesYaml: row.values_yaml,
+					version: row.version,
 					status: row.status,
 					health: row.health,
 					sync: row.sync_status,
@@ -166,6 +171,10 @@ export async function getProjectAddons(
  * Enables (or reconfigures) an add-on on an environment: validates the knobs against the
  * add-on's Zod schema, then upserts the project_addons row as PENDING so the next DEPLOY
  * applies it. Re-enabling an existing add-on resets it to PENDING with the new config.
+ *
+ * `version` pins the chart version (#5525): omitted keeps whatever pin is stored, `null` or `""`
+ * clears it so the catalog default applies again, and anything else must be an exact chart version
+ * (`lib/addons/chart-version.ts`) — it is rendered into the ArgoCD Application's targetRevision.
  */
 export async function enableAddon(input: {
 	projectId: string;
@@ -175,6 +184,8 @@ export async function enableAddon(input: {
 	values?: AddOnValues;
 	/** Raw Helm-values YAML override (Advanced). Validated as YAML here. */
 	valuesYaml?: string | null;
+	/** Chart version pin: undefined keeps the stored pin, null or "" clears it. */
+	version?: string | null;
 }): Promise<{ ok: true }> {
 	const actor = await authorize("edit", {
 		type: "project",
@@ -204,6 +215,14 @@ export async function enableAddon(input: {
 			"Advanced values must be valid YAML describing a mapping (key: value).",
 		);
 	}
+	// Refused here, before anything is written — this is the injection boundary for targetRevision.
+	const versionIntent = chartVersionIntent(input.version);
+	// `keep` writes nothing: a fresh row gets NULL (the catalog default), an existing one keeps its
+	// pin because the column is absent from the conflict update.
+	const versionWrite =
+		versionIntent.kind === "keep"
+			? {}
+			: { version: versionIntent.kind === "set" ? versionIntent.version : null };
 	const envId = await resolveActiveEnvironmentId(
 		input.projectId,
 		input.environmentId,
@@ -246,6 +265,7 @@ export async function enableAddon(input: {
 				mode,
 				values: storedValues,
 				values_yaml: valuesYaml,
+				...versionWrite,
 				namespace: def.namespace,
 				status: "PENDING",
 			})
@@ -260,6 +280,7 @@ export async function enableAddon(input: {
 					mode,
 					values: storedValues,
 					values_yaml: valuesYaml,
+					...versionWrite,
 					status: "PENDING",
 					updated_at: new Date(),
 				},
