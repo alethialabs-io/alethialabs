@@ -146,11 +146,6 @@ func TestKarpenterNodePool_EachKnobGolden(t *testing.T) {
 			from: `values: ["on-demand"]`, to: `values: ["spot"]`,
 		},
 		{
-			name: "arm64",
-			key:  "architectures", val: []interface{}{"arm64"},
-			from: `values: ["amd64"]`, to: `values: ["arm64"]`,
-		},
-		{
 			name: "instance categories",
 			key:  "instance_categories", val: []interface{}{"c", "r"},
 			from: `values: ["t", "m"]`, to: `values: ["c", "r"]`,
@@ -209,14 +204,14 @@ func TestKarpenterNodePool_EachKnobGolden(t *testing.T) {
 	}
 }
 
-// TestKarpenterNodePool_ArmSpotGolden is the documented example end to end: an arm64 Spot pool on
-// Graviton c/m families with more headroom, labels and a taint — the whole NodePool, exactly.
-func TestKarpenterNodePool_ArmSpotGolden(t *testing.T) {
+// TestKarpenterNodePool_SpotBatchGolden is the documented example end to end: a Spot-first pool on
+// c/m families with more headroom, labels and a taint — the whole NodePool, exactly.
+func TestKarpenterNodePool_SpotBatchGolden(t *testing.T) {
 	got := renderFromOutputs(t, nodePoolOutputs(map[string]interface{}{
 		"capacity_types":      []interface{}{"spot", "on-demand"},
-		"architectures":       []interface{}{"arm64"},
+		"architectures":       []interface{}{"amd64"},
 		"instance_categories": []interface{}{"c", "m"},
-		"instance_families":   []interface{}{"c7g", "m7g"},
+		"instance_families":   []interface{}{"c7i", "m7i"},
 		"cpu_limit":           float64(400),
 		"labels":              map[string]interface{}{"workload": "batch"},
 		"taints":              []interface{}{map[string]interface{}{"key": "workload", "value": "batch", "effect": "NoSchedule"}},
@@ -241,13 +236,13 @@ spec:
           values: ["spot", "on-demand"]
         - key: kubernetes.io/arch
           operator: In
-          values: ["arm64"]
+          values: ["amd64"]
         - key: karpenter.k8s.aws/instance-category
           operator: In
           values: ["c", "m"]
         - key: karpenter.k8s.aws/instance-family
           operator: In
-          values: ["c7g", "m7g"]
+          values: ["c7i", "m7i"]
         - key: karpenter.k8s.aws/instance-generation
           operator: Gt
           values: ["2"]
@@ -263,7 +258,7 @@ spec:
 `
 	_, nodePool, found := strings.Cut(got, "---\n")
 	if !found || nodePool != wantNodePool {
-		t.Errorf("arm64 Spot NodePool:\n--- got ---\n%s\n--- want ---\n%s", nodePool, wantNodePool)
+		t.Errorf("Spot batch NodePool:\n--- got ---\n%s\n--- want ---\n%s", nodePool, wantNodePool)
 	}
 	// And it is the YAML a Kubernetes API server would read: labels and taints at the right paths.
 	np := findDoc(decodeDocs(t, got), "NodePool")
@@ -296,7 +291,9 @@ func TestKarpenterNodePool_RendererRefusesWhatTheTemplateRefuses(t *testing.T) {
 		{"malformed family", "instance_families", []interface{}{"c7g.large"}, `instance family "c7g.large" is not valid`},
 		{"family outside every category", "instance_families", []interface{}{"c7g"}, `belongs to none of the instance categories`},
 		{"cpu limit zero", "cpu_limit", float64(0), "out of range"},
-		{"cpu limit above the ceiling", "cpu_limit", float64(10001), "out of range"},
+		{"cpu limit above the ceiling", "cpu_limit", float64(1001), "out of range"},
+		{"arm64 alone", "architectures", []interface{}{"arm64"}, "separate, tainted NodePool, tracked in #5534"},
+		{"arm64 mixed with amd64", "architectures", []interface{}{"amd64", "arm64"}, "separate, tainted NodePool, tracked in #5534"},
 		{"fractional cpu limit", "cpu_limit", float64(1.5), "not a whole number"},
 		{"label in kubernetes.io", "labels", map[string]interface{}{"kubernetes.io/arch": "arm64"}, "reserved domain"},
 		{"label in a kubernetes.io subdomain", "labels", map[string]interface{}{"topology.kubernetes.io/zone": "a"}, "reserved domain"},
@@ -365,10 +362,10 @@ func TestKarpenterNodePool_RendererRefusesWhatTheTemplateRefuses(t *testing.T) {
 func TestKarpenterNodePool_AllowedEdges(t *testing.T) {
 	nodePool := defaultNodePoolOutput()
 	nodePool["capacity_types"] = []interface{}{"on-demand", "spot"}
-	nodePool["architectures"] = []interface{}{"amd64", "arm64"}
+	nodePool["architectures"] = []interface{}{"amd64"}
 	nodePool["instance_categories"] = []interface{}{}
 	nodePool["instance_families"] = []interface{}{"c7g", "m7i-flex"}
-	nodePool["cpu_limit"] = float64(10000)
+	nodePool["cpu_limit"] = float64(1000)
 	nodePool["labels"] = map[string]interface{}{
 		"node-restriction.kubernetes.io/pool":                       "batch",
 		"example.com/team":                                          "",
@@ -383,7 +380,7 @@ func TestKarpenterNodePool_AllowedEdges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extractKarpenterNodePool refused an allowed NodePool: %v", err)
 	}
-	if pool.CPULimit != 10000 || len(pool.Labels) != 4 || len(pool.Taints) != 2 || pool.Taints[0].HasValue {
+	if pool.CPULimit != 1000 || len(pool.Labels) != 4 || len(pool.Taints) != 2 || pool.Taints[0].HasValue {
 		t.Errorf("extracted NodePool = %#v", pool)
 	}
 	// One attribute omitted keeps its default (a template that predates a knob).

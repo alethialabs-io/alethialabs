@@ -329,6 +329,17 @@ var (
 	labelDomainExceptionPattern = regexp.MustCompile(`(^|\.)node-restriction\.kubernetes\.io$`)
 )
 
+// karpenterMaxCPULimit is the highest limits.cpu a user may set. Karpenter launches EC2 outside
+// OpenTofu, so no plan-time cost guard sees its fleet; this cap is the bound that remains.
+const karpenterMaxCPULimit = 1000
+
+// karpenterArm64Refusal says why the ONE NodePool this renderer applies takes amd64 only. The
+// managed node group is x86_64 and the images Alethia builds (kaniko) are single-arch amd64, so an
+// arm64 node in the only pool would take any of them and crash it with `exec format error`. A taint
+// would not help either: on the only pool it would strand every untolerated pod on the fixed-size
+// managed group. arm64 belongs on an additional, tainted pool (#5534).
+const karpenterArm64Refusal = "the default Karpenter NodePool accepts amd64 only, because the managed node group is x86_64 and the images Alethia builds are amd64-only, so they would crash on an arm64 node with exec format error. arm64 needs a separate, tainted NodePool, tracked in #5534"
+
 // karpenterTaintEffects are the taint effects Kubernetes defines.
 var karpenterTaintEffects = map[string]bool{"NoSchedule": true, "PreferNoSchedule": true, "NoExecute": true}
 
@@ -417,7 +428,12 @@ func (p karpenterNodePool) validate() error {
 	if err := validateEnumList("capacity type", p.CapacityTypes, "spot", "on-demand"); err != nil {
 		return err
 	}
-	if err := validateEnumList("architecture", p.Architectures, "amd64", "arm64"); err != nil {
+	for _, a := range p.Architectures {
+		if a == "arm64" {
+			return fmt.Errorf("karpenter architecture \"arm64\" is refused: %s", karpenterArm64Refusal)
+		}
+	}
+	if err := validateEnumList("architecture", p.Architectures, "amd64"); err != nil {
 		return err
 	}
 	if err := validatePatternList("instance category", p.InstanceCategories, karpenterCategoryPattern, `"c", "m" or "r"`); err != nil {
@@ -437,8 +453,8 @@ func (p karpenterNodePool) validate() error {
 			}
 		}
 	}
-	if p.CPULimit < 1 || p.CPULimit > 10000 {
-		return fmt.Errorf("karpenter cpu limit %d is out of range: use a whole number of vCPU from 1 to 10000", p.CPULimit)
+	if p.CPULimit < 1 || p.CPULimit > karpenterMaxCPULimit {
+		return fmt.Errorf("karpenter cpu limit %d is out of range: use a whole number of vCPU from 1 to %d", p.CPULimit, karpenterMaxCPULimit)
 	}
 	for _, l := range p.Labels {
 		if err := validateQualifiedKey("karpenter node label", l.Key); err != nil {

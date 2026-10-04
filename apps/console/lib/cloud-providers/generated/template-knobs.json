@@ -2415,7 +2415,7 @@
 			"kind": "list",
 			"typeExpr": "list(string)",
 			"required": false,
-			"description": "CPU architectures Karpenter may launch: any of \"amd64\" and \"arm64\" (Graviton). The default AMI alias al2023@latest serves both.",
+			"description": "CPU architectures the default Karpenter NodePool may launch. Only \"amd64\" is accepted: arm64 needs a separate, tainted NodePool (#5534).",
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/aws/variables.tf:806",
 			"readBy": [
@@ -2459,7 +2459,7 @@
 			"kind": "number",
 			"typeExpr": "number",
 			"required": false,
-			"description": "The most vCPU the Karpenter NodePool may launch in total, from 1 to 10000. It is the only bound on the size of Karpenter's fleet.",
+			"description": "The most vCPU the Karpenter NodePool may launch in total, from 1 to 1000. It is the only bound on the size of Karpenter's fleet: Karpenter launches EC2 outside OpenTofu, so plan-time cost guards do not see it.",
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/aws/variables.tf:839",
 			"readBy": [

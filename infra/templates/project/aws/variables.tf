@@ -806,11 +806,11 @@ variable "karpenter_capacity_types" {
 variable "karpenter_architectures" {
   type        = list(string)
   default     = ["amd64"]
-  description = "CPU architectures Karpenter may launch: any of \"amd64\" and \"arm64\" (Graviton). The default AMI alias al2023@latest serves both."
+  description = "CPU architectures the default Karpenter NodePool may launch. Only \"amd64\" is accepted: arm64 needs a separate, tainted NodePool (#5534)."
 
   validation {
-    condition     = length(var.karpenter_architectures) > 0 && length(distinct(var.karpenter_architectures)) == length(var.karpenter_architectures) && alltrue([for a in var.karpenter_architectures : contains(["amd64", "arm64"], a)])
-    error_message = "karpenter_architectures must list \"amd64\", \"arm64\" or both, each at most once."
+    condition     = length(var.karpenter_architectures) > 0 && length(distinct(var.karpenter_architectures)) == length(var.karpenter_architectures) && alltrue([for a in var.karpenter_architectures : a == "amd64"])
+    error_message = "karpenter_architectures must be [\"amd64\"]. arm64 is not offered on the default Karpenter NodePool: the managed node group is x86_64 and most images Alethia builds are amd64-only, so an arm64 node in the only pool would crash them with exec format error. arm64 needs a separate, tainted NodePool, tracked in #5534."
   }
 }
 
@@ -839,11 +839,11 @@ variable "karpenter_instance_families" {
 variable "karpenter_cpu_limit" {
   type        = number
   default     = 100
-  description = "The most vCPU the Karpenter NodePool may launch in total, from 1 to 10000. It is the only bound on the size of Karpenter's fleet."
+  description = "The most vCPU the Karpenter NodePool may launch in total, from 1 to 1000. It is the only bound on the size of Karpenter's fleet: Karpenter launches EC2 outside OpenTofu, so plan-time cost guards do not see it."
 
   validation {
-    condition     = var.karpenter_cpu_limit >= 1 && var.karpenter_cpu_limit <= 10000 && floor(var.karpenter_cpu_limit) == var.karpenter_cpu_limit
-    error_message = "karpenter_cpu_limit must be a whole number of vCPU from 1 to 10000."
+    condition     = var.karpenter_cpu_limit >= 1 && var.karpenter_cpu_limit <= 1000 && floor(var.karpenter_cpu_limit) == var.karpenter_cpu_limit
+    error_message = "karpenter_cpu_limit must be a whole number of vCPU from 1 to 1000."
   }
 }
 

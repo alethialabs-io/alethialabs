@@ -160,9 +160,9 @@ run "every_knob_reaches_the_runner" {
 
   variables {
     karpenter_capacity_types      = ["spot", "on-demand"]
-    karpenter_architectures       = ["arm64"]
+    karpenter_architectures       = ["amd64"]
     karpenter_instance_categories = ["c", "m"]
-    karpenter_instance_families   = ["c7g", "m7g"]
+    karpenter_instance_families   = ["c7i", "m7i"]
     karpenter_cpu_limit           = 400
     karpenter_node_labels         = { "workload" = "batch", "node-restriction.kubernetes.io/pool" = "batch" }
     karpenter_node_taints = [
@@ -173,11 +173,11 @@ run "every_knob_reaches_the_runner" {
 
   assert {
     condition = jsonencode(output.karpenter_nodepool) == jsonencode({
-      architectures       = ["arm64"]
+      architectures       = ["amd64"]
       capacity_types      = ["spot", "on-demand"]
       cpu_limit           = 400
       instance_categories = ["c", "m"]
-      instance_families   = ["c7g", "m7g"]
+      instance_families   = ["c7i", "m7i"]
       labels              = { "node-restriction.kubernetes.io/pool" = "batch", "workload" = "batch" }
       taints = [
         { effect = "NoSchedule", key = "dedicated", value = "batch" },
@@ -231,6 +231,24 @@ run "refuses_an_unknown_architecture" {
   expect_failures = [var.karpenter_architectures]
 }
 
+# arm64 is refused on the default pool, alone or mixed: the managed node group is x86_64 and the
+# images Alethia builds are amd64-only. It needs a separate, tainted NodePool (#5534).
+run "refuses_arm64_alone" {
+  command = plan
+  variables {
+    karpenter_architectures = ["arm64"]
+  }
+  expect_failures = [var.karpenter_architectures]
+}
+
+run "refuses_arm64_mixed_with_amd64" {
+  command = plan
+  variables {
+    karpenter_architectures = ["amd64", "arm64"]
+  }
+  expect_failures = [var.karpenter_architectures]
+}
+
 run "refuses_a_malformed_instance_category" {
   command = plan
   variables {
@@ -250,7 +268,7 @@ run "refuses_a_malformed_instance_family" {
 run "refuses_a_cpu_limit_above_the_ceiling" {
   command = plan
   variables {
-    karpenter_cpu_limit = 10001
+    karpenter_cpu_limit = 1001
   }
   expect_failures = [var.karpenter_cpu_limit]
 }
