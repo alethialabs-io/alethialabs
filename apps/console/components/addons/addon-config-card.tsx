@@ -43,6 +43,7 @@ import {
 import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
 import type { AddonMarketItem } from "@/app/server/actions/addons";
+import { chartVersionError } from "@/lib/addons/chart-version";
 import { REQUIREMENT_HINTS } from "@/lib/addons/requirements";
 import type { AddOnField, AddOnMode } from "@/lib/addons/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers/generated/catalog";
@@ -57,6 +58,8 @@ import { AddonIcon, AddonStatusBadge } from "./addon-visuals";
 type FormShape = Record<string, unknown> & {
   _mode: AddOnMode;
   _valuesYaml: string;
+  /** The chart-version pin; "" = no pin, the catalog default applies. */
+  _version: string;
 };
 
 /**
@@ -94,11 +97,15 @@ function seedField(f: AddOnField, stored: unknown): unknown {
   return stored ?? f.default;
 }
 
-/** Builds the form's default values: the add-on knobs + mode + raw YAML (existing install wins). */
+/**
+ * Builds the form's default values: the add-on knobs + mode + raw YAML + chart-version pin
+ * (existing install wins).
+ */
 function initialValues(item: AddonMarketItem): FormShape {
   const out: FormShape = {
     _mode: item.install?.mode ?? "managed",
     _valuesYaml: item.install?.valuesYaml ?? "",
+    _version: item.install?.version ?? "",
   };
   for (const f of item.fields) {
     out[f.key] = seedField(f, item.install?.values?.[f.key]);
@@ -208,7 +215,7 @@ export function AddonConfigForm({
   const isInstalled = item.install !== null;
 
   const onSubmit = form.handleSubmit(async (values) => {
-    const { _mode, _valuesYaml, ...knobs } = values;
+    const { _mode, _valuesYaml, _version, ...knobs } = values;
     try {
       await enable.mutateAsync({
         projectId,
@@ -217,6 +224,9 @@ export function AddonConfigForm({
         mode: _mode,
         values: knobs,
         valuesYaml: _valuesYaml,
+        // An empty field is a reset, not "unchanged": the card always shows the stored pin, so
+        // clearing it is the user saying "use the catalog default again".
+        version: _version === "" ? null : _version,
       });
       toast.success(
         isInstalled
@@ -498,6 +508,33 @@ export function AddonConfigForm({
               // dictates their key names, and nobody has an opinion about a CSRF key's value.
               .filter((f) => !f.generated)
               .map((f) => renderField(f, f.key, item.install?.values?.[f.key]))}
+
+            {/* Chart version pin (#5525) — empty means the catalog's default version. */}
+            <div className="space-y-2">
+              <Label htmlFor="addon-chart-version">Chart version</Label>
+              <Input
+                id="addon-chart-version"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={item.version}
+                aria-invalid={form.formState.errors._version ? true : undefined}
+                aria-describedby="addon-chart-version-help"
+                className="font-mono"
+                {...form.register("_version", {
+                  validate: (v) => chartVersionError(v) ?? true,
+                })}
+              />
+              {form.formState.errors._version?.message && (
+                <p role="alert" className="text-xs text-destructive">
+                  {form.formState.errors._version.message}
+                </p>
+              )}
+              <p id="addon-chart-version-help" className="text-xs text-muted-foreground">
+                Leave empty to use the catalog&apos;s default ({item.version}). A pinned chart is
+                not checked against the catalog&apos;s settings, so a major-version jump can break
+                the options above.
+              </p>
+            </div>
 
             {/* Advanced — raw Helm values */}
             <Collapsible>
