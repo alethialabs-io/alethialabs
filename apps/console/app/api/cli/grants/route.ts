@@ -16,7 +16,7 @@ import {
 } from "@/lib/authz/registry";
 import { parseGrantResource } from "@/lib/authz/fga-tuples";
 import { resourceIdOf } from "@/lib/authz/grant-scope";
-import { INACTIVE_PRINCIPAL_MESSAGE, isNonActiveMember } from "@/lib/authz/grants";
+import { INACTIVE_PRINCIPAL_MESSAGE, lacksActiveMembership } from "@/lib/authz/grants";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor } from "@/lib/authz/types";
@@ -196,11 +196,12 @@ export async function POST(req: Request) {
 		);
 	}
 
-	// A suspended member gets no allow grant (#5472), the same rule `assignGrant` applies.
+	// A user who is not an active member of the org (suspended, removed, or never a member) gets no
+	// allow grant (#5472), the same rule `assignGrant` applies.
 	if (
 		input.effect === "allow" &&
 		input.principal_type === "user" &&
-		(await isNonActiveMember(actor.orgId, input.principal_id))
+		(await lacksActiveMembership(actor.orgId, input.principal_id))
 	) {
 		return NextResponse.json({ error: INACTIVE_PRINCIPAL_MESSAGE }, { status: 400 });
 	}

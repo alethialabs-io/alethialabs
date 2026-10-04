@@ -38,8 +38,8 @@ function mirror(run: Promise<void>): void {
  * member LIFECYCLE writers come through here — the ee lifecycle hooks (create, add, accept, role
  * change), reactivation in `setMemberSuspended`, onboarding, the paid org setup and the #3754
  * operator command — so the rule holds for all of them. The explicit grant APIs (`assignGrant`,
- * `POST /api/cli/grants`) do not write through here; they refuse through `isNonActiveMember`
- * (#5472). Before this check, promoting a SUSPENDED member re-wrote their
+ * `POST /api/cli/grants`) do not write through here; they refuse an allow grant to a user who
+ * is not an active member through `lacksActiveMembership` (#5472). Before this check, promoting a SUSPENDED member re-wrote their
  * grant and the PDP let them back in while the members table still said suspended.
  *
  * The status is read `for update` inside the same transaction as the write, so a suspension that
@@ -97,20 +97,16 @@ export async function ensureMemberGrant(
 	mirror(getTupleSync().syncMemberGrant(orgId, userId, resolved));
 }
 
-/** The sentence the grant APIs refuse an allow grant to a member who is not active with. */
+/** The sentence the grant APIs refuse an allow grant to a user who is not an active member with. */
 export const INACTIVE_PRINCIPAL_MESSAGE =
-	"That member is not active. Reactivate them before granting access.";
+	"That user is not an active member of this organization. Grant access only to active members.";
 
 /**
  * Whether user `userId` holds a member row in org `orgId` whose status is not `active` (#5472). No
- * member row answers false: the personal scope (org id = user id) has none by design.
- *
- * The explicit grant APIs (`assignGrant`, `POST /api/cli/grants`) take a principal id from the
- * request and refuse an ALLOW grant to such a member, the rule `ensureMemberGrant` applies to the
- * member lifecycle; a deny grant only removes access, so it is not refused. That is a read before
- * their insert, not a lock: a suspension that commits between the two leaves an allow row behind,
- * which neither PDP honours (see `lacksActiveMembership`). The ee `beforeCreateInvitation` hook
- * refuses such an inviter.
+ * member row answers false, so this is NOT the rule for a principal taken from a request: the grant
+ * APIs use `lacksActiveMembership`, which also refuses a user with no member row. Its caller is the
+ * ee `beforeCreateInvitation` hook, which refuses such an inviter; an inviter with no member row is
+ * refused at acceptance by `inviterRefusal`.
  */
 export async function isNonActiveMember(orgId: string, userId: string): Promise<boolean> {
 	const [m] = await getServiceDb()
@@ -132,9 +128,14 @@ export async function isNonActiveMember(orgId: string, userId: string): Promise<
  * the same for both: a suspended or removed member's TEAM membership (`team_member` rows, and the
  * `team:T#member@user:U` tuples mirrored from them) is not removed by suspension or by every removal
  * path, and a team's grants are resolved through it. A user grant left behind with no member row is
- * honoured by neither engine for the same reason: no writer of a grant row in a non-personal org
- * writes one for a user who is not an active member there (`ensureMemberGrant`, `assignGrant` and
- * `POST /api/cli/grants` refuse), so such a row is a leftover, not access.
+ * honoured by neither engine.
+ *
+ * The explicit grant APIs (`assignGrant`, `POST /api/cli/grants`) take a principal id from the
+ * request and refuse an ALLOW grant to a user for whom this answers true, so an allow grant cannot
+ * be planted for a non-member and go live when they later join; a deny grant only removes access,
+ * so it is not refused, and a team principal is not checked here. That is a read before their
+ * insert, not a lock: a suspension or removal that commits between the two leaves an allow row
+ * behind, which neither PDP honours because both apply this rule when they authorize.
  */
 export async function lacksActiveMembership(orgId: string, userId: string): Promise<boolean> {
 	if (orgId === userId) return false;

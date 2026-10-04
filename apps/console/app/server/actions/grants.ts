@@ -11,7 +11,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { actorCanGrant } from "@/lib/authz/ceiling";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { grantScopeFromRow, parseGrantResource } from "@/lib/authz/fga-tuples";
-import { INACTIVE_PRINCIPAL_MESSAGE, isNonActiveMember } from "@/lib/authz/grants";
+import { INACTIVE_PRINCIPAL_MESSAGE, lacksActiveMembership } from "@/lib/authz/grants";
 import { resourceIdOf } from "@/lib/authz/grant-scope";
 import { authorize } from "@/lib/authz/guard";
 import {
@@ -155,12 +155,13 @@ export async function assignGrant(input: AssignGrantInput): Promise<void> {
 			"exceeds_grantor_privilege",
 		);
 	}
-	// A suspended member gets no allow grant: the member lifecycle refuses it in
-	// `ensureMemberGrant`, and this API must not be the way around that.
+	// A user who is not an active member of the org (suspended, removed, or never a member) gets no
+	// allow grant: the member lifecycle refuses it in `ensureMemberGrant`, and this API must not be
+	// the way around that. A grant planted for a non-member would become live if they later joined.
 	if (
 		input.effect === "allow" &&
 		input.principalType === "user" &&
-		(await isNonActiveMember(actor.orgId, input.principalId))
+		(await lacksActiveMembership(actor.orgId, input.principalId))
 	) {
 		throw new Error(INACTIVE_PRINCIPAL_MESSAGE);
 	}

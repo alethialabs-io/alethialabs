@@ -50,10 +50,15 @@ import {
 	team,
 } from "@/lib/db/schema";
 
+/** The member row of an active member, the principal every allow-grant case assumes. */
+const ACTIVE_MEMBER = [{ status: "active" }];
+
 /**
  * A drizzle-ish chain: every builder returns the chain; `.then` resolves to the rows
  * registered for the most-recently-`from()`'d table (falling back to `rows`). Also records
- * the `.insert/.values/.delete` writes so we can assert what was persisted.
+ * the `.insert/.values/.delete` writes so we can assert what was persisted. The `member` table
+ * resolves to an ACTIVE member row unless `byTable` names it, because `assignGrant` refuses an
+ * allow grant to a user principal without one (#5472).
  */
 function mockDb(rows: unknown[] = [], byTable?: Map<unknown, unknown[]>) {
 	const valuesSpy = vi.fn();
@@ -80,7 +85,7 @@ function mockDb(rows: unknown[] = [], byTable?: Map<unknown, unknown[]>) {
 				return c;
 			},
 			then: (resolve: (v: unknown) => void) =>
-				resolve(byTable?.get(fromT) ?? rows),
+				resolve(byTable?.get(fromT) ?? (fromT === member ? ACTIVE_MEMBER : rows)),
 		});
 		return c;
 	}
@@ -262,7 +267,7 @@ describe("a member who is not active gets no allow grant (#5472)", () => {
 				roleId: BUILTIN_ROLE_IDS.admin,
 				resourceType: "org",
 			}),
-		).rejects.toThrow(/not active/);
+		).rejects.toThrow(/not an active member/);
 		expect(suspended.insertSpy).not.toHaveBeenCalled();
 		expect(syncScopedGrant).not.toHaveBeenCalled();
 
@@ -285,6 +290,43 @@ describe("a member who is not active gets no allow grant (#5472)", () => {
 			resourceType: "org",
 		});
 		expect(active.insertSpy).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("a user with NO member row gets no allow grant (#5472)", () => {
+	// A grant planted for a non-member would go live the moment they joined the org.
+	it("assignGrant refuses an org-wide or scoped ALLOW grant to a user with no member row and never inserts; a deny still goes through", async () => {
+		const none = mockDb([], new Map([[member, []]]));
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				roleId: BUILTIN_ROLE_IDS.admin,
+				resourceType: "org",
+			}),
+		).rejects.toThrow(/not an active member/);
+		await expect(
+			assignGrant({
+				principalType: "user",
+				principalId: "u-1",
+				effect: "allow",
+				permissionKey: "project:view",
+				resourceType: "project",
+				resourceId: "p-1",
+			}),
+		).rejects.toThrow(/not an active member/);
+		expect(none.insertSpy).not.toHaveBeenCalled();
+		expect(syncScopedGrant).not.toHaveBeenCalled();
+
+		await assignGrant({
+			principalType: "user",
+			principalId: "u-1",
+			effect: "deny",
+			permissionKey: "project:view",
+			resourceType: "org",
+		});
+		expect(none.insertSpy).toHaveBeenCalledTimes(1);
 	});
 });
 

@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @vitest-environment node
 
-// POST /api/cli/grants refuses an ALLOW grant to a member who is not active (#5472). The member
-// lifecycle (`ensureMemberGrant`) refuses a suspended member since #5465; before this, the CLI
-// grant API inserted an org-wide allow grant for one and answered 201.
+// POST /api/cli/grants refuses an ALLOW grant to a user who is not an active member of the org
+// (#5472): a suspended member, and a user with no member row at all. The member lifecycle
+// (`ensureMemberGrant`) refuses a suspended member since #5465; before this, the CLI grant API
+// inserted an org-wide allow grant for one and answered 201, and an allow grant for a user with no
+// member row was inserted too, to go live if they later joined.
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -80,7 +82,7 @@ describe("POST /api/cli/grants — a member who is not active (#5472)", () => {
 		);
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({
-			error: "That member is not active. Reactivate them before granting access.",
+			error: "That user is not an active member of this organization. Grant access only to active members.",
 		});
 		expect(suspended.insertSpy).not.toHaveBeenCalled();
 
@@ -108,5 +110,39 @@ describe("POST /api/cli/grants — a member who is not active (#5472)", () => {
 		);
 		expect(ok.status).toBe(201);
 		expect(active.insertSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("answers 400 to an ALLOW grant, org-wide or scoped, for a user with NO member row and inserts nothing; a deny for them is created", async () => {
+		const none = makeDb([]);
+		const orgWide = await POST(
+			req({ principal_type: "user", principal_id: PRINCIPAL, effect: "allow", role_id: ROLE }),
+		);
+		expect(orgWide.status).toBe(400);
+		const scoped = await POST(
+			req({
+				principal_type: "user",
+				principal_id: PRINCIPAL,
+				effect: "allow",
+				permission_key: "project:view",
+				resource_type: "project",
+				resource_id: "22222222-2222-4222-8222-222222222222",
+			}),
+		);
+		expect(scoped.status).toBe(400);
+		expect(await scoped.json()).toEqual({
+			error: "That user is not an active member of this organization. Grant access only to active members.",
+		});
+		expect(none.insertSpy).not.toHaveBeenCalled();
+
+		const deny = await POST(
+			req({
+				principal_type: "user",
+				principal_id: PRINCIPAL,
+				effect: "deny",
+				permission_key: "project:view",
+			}),
+		);
+		expect(deny.status).toBe(201);
+		expect(none.insertSpy).toHaveBeenCalledTimes(1);
 	});
 });
