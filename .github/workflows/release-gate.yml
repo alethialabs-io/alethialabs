@@ -948,8 +948,11 @@ jobs:
             echo "ask=yes" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git diff --quiet HEAD^1 HEAD -- apps/console/e2e/gate-baseline.json scripts/check-gate-fixme-issues.mjs scripts/e2e-ratchet.mjs
-          rc=$?
+          # The step runs under `bash -e`, and `set -uo pipefail` does not clear `-e`: a bare
+          # `git diff --quiet` exiting 1 ("this PR changes the ledger") would end the step red here,
+          # before the `case` reads it. `|| rc=$?` captures the code without tripping `-e`.
+          rc=0
+          git diff --quiet HEAD^1 HEAD -- apps/console/e2e/gate-baseline.json scripts/check-gate-fixme-issues.mjs scripts/e2e-ratchet.mjs || rc=$?
           case "$rc" in
             0)
               echo "not asked: this dev PR changes neither the ledger nor the code that reads its fixmes; every promotion PR asks (the daily gate-fixme-currency.yml runs only once it reaches main)"

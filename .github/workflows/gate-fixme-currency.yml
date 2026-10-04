@@ -8,9 +8,10 @@
 # that can say the skip is over, and nothing compared it with the issue's state.
 # scripts/check-gate-fixme-issues.mjs asks; this runs it daily.
 #
-# EXPECTED RED ON LANDING. On origin/dev @ 95a82e64b (2026-10-03) all four fixmes in the ledger cite
-# closed issues (#4633 ×3, #4612 ×1). The red is the finding, not a broken workflow; it clears when
-# those ledger entries are moved (a separate unit — this one never edits the ledger).
+# When this was written (origin/dev @ 95a82e64b, 2026-10-03) all four fixmes in the ledger cited
+# closed issues (#4633 ×3, #4612 ×1). Those entries have since been moved: on origin/dev @ 214d3e4b3
+# (2026-10-04) the ledger carries no {fixme}, and the check says so in its own words rather than
+# reporting green as if it had checked something. This workflow never edits the ledger.
 #
 # THREE OUTCOMES, all on the job's colour:
 #   0  every cited issue is OPEN (or there is no fixme, stated as such) → green
@@ -18,12 +19,18 @@
 #   2  the instrument could not answer (unreadable state, unparseable fixme, unreadable ledger) → red.
 #      "I did not check" must never render as "fine".
 #
-# NOT on pull_request: an issue closing is a state change in GitHub, not in the diff, so this would
-# red PRs that touched nothing. Wiring it into the release gate's PR path is unit 7 of #4264.
+# THIS WORKFLOW has no pull_request trigger, but the check DOES run on PRs: the release gate's
+# `Gate ledger` job (.github/workflows/release-gate.yml, #5417) runs the same script on every
+# non-draft PR. There `--self-test` always runs; the live check runs unconditionally on a PR into
+# main or staging and on a dispatch, and on a PR into dev only when the PR changes
+# apps/console/e2e/gate-baseline.json, scripts/check-gate-fixme-issues.mjs or scripts/e2e-ratchet.mjs
+# — an issue closing is a state change in GitHub, not in the diff, so asking on every dev PR would
+# red PRs that touched nothing. That job is not a required check.
 #
-# WARNING: `schedule:` fires the DEFAULT branch's copy of this file and of the script and ledger it
-# reads. Until this has ridden dev → staging → main it runs on no schedule at all, and afterwards it
-# measures main's ledger. `workflow_dispatch` against a branch exercises it before then.
+# WARNING: the daily schedule runs only once this workflow is on `main`. `schedule:` fires the
+# DEFAULT branch's copy of this file and of the script and ledger it reads, so until this has ridden
+# dev → staging → main it runs on no schedule at all, and afterwards it measures main's ledger.
+# `workflow_dispatch` against a branch exercises it before then.
 
 name: Gate fixme currency
 
