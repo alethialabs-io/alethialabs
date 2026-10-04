@@ -23,10 +23,11 @@ func TestRunAddonEnable(t *testing.T) {
 	t.Run("forwards every field", func(t *testing.T) {
 		var buf bytes.Buffer
 		f := &fakeClient{}
+		yaml := "loki:\n  auth_enabled: false\n"
 		p := api.EnableAddonParams{
 			Project: "shop", Env: "staging", AddonID: "loki", Mode: "managed",
 			Values:     map[string]interface{}{"retention_days": float64(7)},
-			ValuesYAML: "loki:\n  auth_enabled: false\n",
+			ValuesYAML: &yaml,
 		}
 		if err := runAddonEnable(f, &buf, p); err != nil {
 			t.Fatalf("runAddonEnable: %v", err)
@@ -104,41 +105,6 @@ func TestRunAddonDisable(t *testing.T) {
 	})
 }
 
-func TestReadAddonValuesFile(t *testing.T) {
-	t.Run("no path yields no override", func(t *testing.T) {
-		got, err := readAddonValuesFile("")
-		if err != nil || got != "" {
-			t.Fatalf("readAddonValuesFile(\"\") = (%q, %v)", got, err)
-		}
-	})
-
-	t.Run("reads the file verbatim", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "values.yaml")
-		content := "loki:\n  auth_enabled: false\n"
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-		got, err := readAddonValuesFile(path)
-		if err != nil {
-			t.Fatalf("readAddonValuesFile: %v", err)
-		}
-		// Verbatim, NOT parsed: the server validates it as a YAML mapping through the same action the
-		// console uses, and a local pre-parse would be a second opinion that can disagree with the one
-		// that decides.
-		if got != content {
-			t.Errorf("content altered:\n got %q\nwant %q", got, content)
-		}
-	})
-
-	t.Run("a missing file is a clear error", func(t *testing.T) {
-		_, err := readAddonValuesFile(filepath.Join(t.TempDir(), "nope.yaml"))
-		if err == nil || !strings.Contains(err.Error(), "--values-file") {
-			t.Fatalf("want an error naming the flag, got %v", err)
-		}
-	})
-}
-
 // addonEnv stands up isolated credentials and a fake control plane serving the addons collection,
 // recording the last request so a test can assert the method and body the CLI actually sent.
 func addonEnv(t *testing.T, status int) (func(args ...string) error, *addonRec) {
@@ -170,6 +136,9 @@ func addonEnv(t *testing.T, status int) (func(args ...string) error, *addonRec) 
 		addonEnableMode, addonEnableSet, addonEnableValuesFile, addonDisableYes = prevMode, prevSet, prevFile, prevYes
 	})
 	addonEnableMode, addonEnableSet, addonEnableValuesFile, addonDisableYes = "", nil, "", false
+	// --values-file is three-state on its Changed bit (#5545), which cobra never resets either: a
+	// test that passed the flag would otherwise make the next one send an explicit clear.
+	resetFlagChanged(t, addonEnableCmd, "values-file")
 	// cobra never resets a PERSISTENT flag between Execute calls, so without this one test's
 	// --project leaks into the next and the "no project" arm becomes unreachable.
 	resetAddonPersistentFlags(t)
@@ -320,6 +289,9 @@ func TestAddonWritesRequireAuth(t *testing.T) {
 			isolatedHome(t) // no credentials written
 			t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
 			addonEnableMode, addonEnableSet, addonEnableValuesFile, addonDisableYes = "", nil, "", false
+			// --values-file is three-state on its Changed bit (#5545), which cobra never resets either: a
+			// test that passed the flag would otherwise make the next one send an explicit clear.
+			resetFlagChanged(t, addonEnableCmd, "values-file")
 			run := func(a ...string) error {
 				execRootArgs(a)
 				return rootCmd.Execute()

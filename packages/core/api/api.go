@@ -2375,13 +2375,19 @@ func (c *Client) getProjectAddonsPage(project, env, cursor string) (*ProjectAddo
 // field out of the body (the stored pin is kept), a pointer to "" sends null (the pin is cleared and
 // the catalog default applies again), and anything else is sent as the pin — validated server-side
 // by the one definition of a chart version (apps/console/lib/addons/chart-version.ts).
+//
+// ValuesYAML is the Advanced raw Helm-values override and follows the same three states (#5545): nil
+// leaves it out (the stored override is kept), a pointer to "" sends null (the override is removed),
+// and anything else replaces the stored override whole. Values is merged key by key over the stored
+// knobs server-side; a key whose value is nil is sent as JSON null, which resets that knob to the
+// add-on's default.
 type EnableAddonParams struct {
 	Project    string
 	Env        string
 	AddonID    string
 	Mode       string
 	Values     map[string]interface{}
-	ValuesYAML string
+	ValuesYAML *string
 	Version    *string
 }
 
@@ -2396,8 +2402,12 @@ func (c *Client) EnableAddon(p EnableAddonParams) error {
 	if len(p.Values) > 0 {
 		payload["values"] = p.Values
 	}
-	if p.ValuesYAML != "" {
-		payload["values_yaml"] = p.ValuesYAML
+	if p.ValuesYAML != nil {
+		if *p.ValuesYAML == "" {
+			payload["values_yaml"] = nil
+		} else {
+			payload["values_yaml"] = *p.ValuesYAML
+		}
 	}
 	if p.Version != nil {
 		if *p.Version == "" {
