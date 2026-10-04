@@ -18,11 +18,14 @@
 // flows stay open so a user invited into someone else's PAID org can still participate.
 
 import { auth } from "@/lib/auth";
+import { findOwnerScope } from "@/lib/auth/owner";
 import { trustedIpFailure } from "@/lib/auth/trusted-ip";
 import { getEntitlements } from "@/lib/authz/entitlements";
+import { revokeMemberGrant } from "@/lib/authz/grants";
 import { currentActor } from "@/lib/authz/guard";
 import { runOrgCreate } from "@/lib/billing/pending-org-setup";
 import { toNextJsHandler } from "better-auth/next-js";
+import { isGuardedOrgAction, orgAction, orgActionRefusal, stringField } from "./member-guards";
 
 const handlers = toNextJsHandler(auth);
 
@@ -48,13 +51,25 @@ const GATED_ORG_ACTIONS = new Set([
 	"update-member-role",
 ]);
 
-/** The `<action>` in /api/auth/organization/<action>, or null if not an org route. */
+/** The entitlement-gated `<action>` in /api/auth/organization/<action>, or null. */
 function gatedOrgAction(pathname: string): string | null {
-	const marker = "/organization/";
-	const i = pathname.indexOf(marker);
-	if (i === -1) return null;
-	const action = pathname.slice(i + marker.length).split(/[/?]/)[0];
-	return GATED_ORG_ACTIONS.has(action) ? action : null;
+	const action = orgAction(pathname);
+	return action !== null && GATED_ORG_ACTIONS.has(action) ? action : null;
+}
+
+/**
+ * The 500 an organization action gets when the session could not be READ (as opposed to there being
+ * none). The member guards below cannot run without the caller, and skipping them would hand the
+ * request to better-auth unchecked, so the request is refused instead (#5472).
+ */
+function sessionLookupFailed(): Response {
+	return Response.json(
+		{
+			code: "SESSION_LOOKUP_FAILED",
+			message: "We couldn't check your session. Try again in a moment.",
+		},
+		{ status: 500 },
+	);
 }
 
 /** 403 with an upgrade hint — the response an unentitled caller gets. */
@@ -85,6 +100,46 @@ export async function POST(req: Request): Promise<Response> {
 			}
 		} catch {
 			// Unauthenticated (or scope unresolvable) → defer to the auth handler.
+		}
+	}
+	// A caller who is not an active member may not manage the org, and the last active owner may
+	// not leave it (#5472). better-auth reads neither `member.status` nor counts only active owners.
+	// Without a session there is nothing to check; better-auth answers its own 401. A session that
+	// could not be READ is not "no session": for an action the guards may refuse, the route fails
+	// closed on it rather than skipping them. Other organization actions do not read the session here.
+	const requested = orgAction(new URL(req.url).pathname);
+	const guardedAction = requested !== null && isGuardedOrgAction(requested) ? requested : null;
+	let caller: { userId: string; activeOrgId?: string } | null = null;
+	if (guardedAction) {
+		try {
+			caller = await findOwnerScope();
+		} catch (error) {
+			console.error("[auth] session lookup failed before an organization action:", error);
+			return sessionLookupFailed();
+		}
+	}
+	if (guardedAction && caller) {
+		const body: unknown = await req
+			.clone()
+			.json()
+			.catch(() => null);
+		const refusal = await orgActionRefusal(
+			guardedAction,
+			body,
+			caller.userId,
+			caller.activeOrgId,
+		);
+		if (refusal) return refusal;
+		// better-auth's leave deletes the member row and fires no organization hook, so nothing
+		// revoked the grants `afterRemoveMember` revokes on a removal. A member who left kept every
+		// grant they held, and got their old scoped grants back if they were ever added again.
+		if (guardedAction === "leave") {
+			const response = await handlers.POST(req);
+			const orgId = stringField(body, "organizationId");
+			if (response.ok && orgId) {
+				await revokeMemberGrant(orgId, caller.userId);
+			}
+			return response;
 		}
 	}
 	// An organization create that fails gives back the paid-setup claim it took (#5445), so a retry is

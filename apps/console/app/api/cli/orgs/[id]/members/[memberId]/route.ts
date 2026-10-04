@@ -4,13 +4,18 @@
 import { and, eq } from "drizzle-orm";
 import { authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
 import { revokeMemberGrant } from "@/lib/authz/grants";
+import { toPdpRole } from "@/lib/authz/org-access-control";
 import { getServiceDb } from "@/lib/db";
 import { member } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliOkResponse } from "@/lib/validations/cli-contract";
 
-/** Removes a member from organization `id`, revoking their PDP grants. */
+/**
+ * Removes a member from organization `id`, revoking their PDP grants. An owner is never removed
+ * here. "Owner" is read the way the PDP reads it (`toPdpRole`), so `owner,admin` is one (#5472):
+ * the old `role === "owner"` let such a member be removed, and with them the org's last owner.
+ */
 export async function DELETE(
 	req: Request,
 	{ params }: { params: Promise<{ id: string; memberId: string }> },
@@ -35,7 +40,7 @@ export async function DELETE(
 		if (!m) {
 			return NextResponse.json({ error: "Member not found" }, { status: 404 });
 		}
-		if (m.role === "owner") {
+		if (toPdpRole(m.role) === "owner") {
 			return NextResponse.json(
 				{ error: "The owner can't be removed." },
 				{ status: 400 },

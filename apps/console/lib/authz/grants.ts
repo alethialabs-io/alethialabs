@@ -14,7 +14,7 @@ import { toPdpRole } from "@/lib/authz/org-access-control";
 import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { getTupleSync } from "@/lib/authz/tuple-sync";
 import { getServiceDb } from "@/lib/db";
-import { member } from "@/lib/db/schema";
+import { member, user } from "@/lib/db/schema";
 
 /** Mirror a grant change to OpenFGA, best-effort (Postgres is the source of truth). */
 function mirror(run: Promise<void>): void {
@@ -37,16 +37,20 @@ function mirror(run: Promise<void>): void {
  * A member whose `member.status` is anything but `active` gets NO grant either (#5465). The
  * member LIFECYCLE writers come through here — the ee lifecycle hooks (create, add, accept, role
  * change), reactivation in `setMemberSuspended`, onboarding, the paid org setup and the #3754
- * operator command — so the rule holds for all of them. It does NOT cover the explicit grant APIs:
- * `assignGrant` and `POST /api/cli/grants` can still insert an org-wide allow grant for a
- * suspended user principal (tracked in #5472). Before this check,
- * promoting a SUSPENDED member re-wrote their grant and the PDP (which reads grants, not
- * `member.status`) let them back in while the members table still said suspended.
+ * operator command — so the rule holds for all of them. The explicit grant APIs (`assignGrant`,
+ * `POST /api/cli/grants`) do not write through here; they refuse an allow grant to a user who
+ * is not an active member through `lacksActiveMembership` (#5472). Before this check, promoting a SUSPENDED member re-wrote their
+ * grant and the PDP let them back in while the members table still said suspended.
  *
  * The status is read `for update` inside the same transaction as the write, so a suspension that
  * commits while this runs either lands first (and is seen here) or waits for this write and then
- * revokes it. A user with NO member row in the org is granted as before: the personal workspace
- * (`lib/auth/index.ts`) has no member row by design.
+ * revokes it.
+ *
+ * A user with NO member row is granted only in their PERSONAL scope, which is the org whose id is
+ * their own user id (`lib/auth/index.ts` grants it at sign-up; it has no member row by design). In
+ * any other org a missing row means the member was removed, and is refused (#5472): a role change
+ * whose `afterUpdateMemberRole` ran after a concurrent removal deleted the row used to grant the
+ * removed user again here, after `afterRemoveMember` had revoked them.
  */
 export async function ensureMemberGrant(
 	orgId: string,
@@ -69,6 +73,7 @@ export async function ensureMemberGrant(
 			.from(member)
 			.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
 			.for("update");
+		if (!m && orgId !== userId) return "not a member";
 		if (m && m.status !== "active") return m.status;
 		await tx.execute(sql`
 			delete from grants
@@ -84,12 +89,93 @@ export async function ensureMemberGrant(
 	});
 	if (refusedStatus !== null) {
 		console.warn(
-			`[authz] member ${userId} in org ${orgId} is "${refusedStatus}", not active — NO grant ` +
-				`written. Reactivating them (setMemberSuspended) grants their role.`,
+			`[authz] user ${userId} in org ${orgId} is "${refusedStatus}", not an active member — NO ` +
+				`grant written. Reactivating a suspended member (setMemberSuspended) grants their role.`,
 		);
 		return;
 	}
 	mirror(getTupleSync().syncMemberGrant(orgId, userId, resolved));
+}
+
+/** The sentence the grant APIs refuse an allow grant to a user who is not an active member with. */
+export const INACTIVE_PRINCIPAL_MESSAGE =
+	"That user is not an active member of this organization. Grant access only to active members.";
+
+/**
+ * Whether user `userId` holds a member row in org `orgId` whose status is not `active` (#5472). No
+ * member row answers false, so this is NOT the rule for a principal taken from a request: the grant
+ * APIs use `lacksActiveMembership`, which also refuses a user with no member row. Its caller is the
+ * ee `beforeCreateInvitation` hook, which refuses such an inviter; an inviter with no member row is
+ * refused at acceptance by `inviterRefusal`.
+ */
+export async function isNonActiveMember(orgId: string, userId: string): Promise<boolean> {
+	const [m] = await getServiceDb()
+		.select({ status: member.status })
+		.from(member)
+		.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
+		.limit(1);
+	return m !== undefined && m.status !== "active";
+}
+
+/**
+ * Whether user `userId` may hold NO access in org `orgId` because they are not an active member of
+ * it: true when their member row there is not `active`, and also when they have no member row at
+ * all. The one exception is the personal scope (org id = user id), which has no member row by design
+ * and answers false.
+ *
+ * Both PDPs deny such an actor everything in the org (#5472). `PostgresRbacPDP.matchingGrants`
+ * applies it in its own query; the ee OpenFGA PDP calls this before it reads a tuple. The reason is
+ * the same for both: a suspended or removed member's TEAM membership (`team_member` rows, and the
+ * `team:T#member@user:U` tuples mirrored from them) is not removed by suspension or by every removal
+ * path, and a team's grants are resolved through it. A user grant left behind with no member row is
+ * honoured by neither engine.
+ *
+ * The explicit grant APIs (`assignGrant`, `POST /api/cli/grants`) take a principal id from the
+ * request and refuse an ALLOW grant to a user for whom this answers true, so an allow grant cannot
+ * be planted for a non-member and go live when they later join; a deny grant only removes access,
+ * so it is not refused, and a team principal is not checked here. That is a read before their
+ * insert, not a lock: a suspension or removal that commits between the two leaves an allow row
+ * behind, which neither PDP honours because both apply this rule when they authorize.
+ */
+export async function lacksActiveMembership(orgId: string, userId: string): Promise<boolean> {
+	if (orgId === userId) return false;
+	const [m] = await getServiceDb()
+		.select({ status: member.status })
+		.from(member)
+		.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
+		.limit(1);
+	return m === undefined || m.status !== "active";
+}
+
+/** The sentence an invitation is refused with when its inviter may no longer invite. */
+export const INVITER_NOT_ACTIVE_MESSAGE =
+	"The person who sent this invitation is no longer an active member of the team, so it can't be accepted. Ask a current admin to invite you again.";
+
+/**
+ * Why invitation into org `orgId` sent by user `inviterId` may not be accepted, or null when it may
+ * (#5472). An invitation is accepted later than it is sent, and better-auth's accept does not
+ * re-check the inviter: an admin who invited a second account they control and was THEN suspended or
+ * removed would still get that account in, at the role they chose. So an invitation is honoured
+ * only while its inviter is an active member of the org.
+ *
+ * The platform system user (`PLATFORM_SYSTEM_USER_EMAIL`) is the exception: it is the inviter on
+ * the owner invitations `provisionOrg` issues and is never a member of any org by design.
+ */
+export async function inviterRefusal(
+	orgId: string,
+	inviterId: string,
+): Promise<string | null> {
+	if (!(await lacksActiveMembership(orgId, inviterId))) return null;
+	const platformEmail = process.env.PLATFORM_SYSTEM_USER_EMAIL?.trim().toLowerCase();
+	if (platformEmail) {
+		const [row] = await getServiceDb()
+			.select({ email: user.email })
+			.from(user)
+			.where(eq(user.id, inviterId))
+			.limit(1);
+		if (row && row.email.trim().toLowerCase() === platformEmail) return null;
+	}
+	return INVITER_NOT_ACTIVE_MESSAGE;
 }
 
 /**

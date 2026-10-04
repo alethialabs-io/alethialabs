@@ -18,7 +18,13 @@ vi.mock("@/lib/auth", () => ({ auth: { api: { getSession: mocks.getSession } } }
 vi.mock("@/lib/authz/actor-context", () => ({ getInjectedActor: mocks.getInjectedActor }));
 
 import { UnauthorizedError } from "@/lib/auth/errors";
-import { getOwner, getOwnerScope, getViewer, requireOwner } from "@/lib/auth/owner";
+import {
+	findOwnerScope,
+	getOwner,
+	getOwnerScope,
+	getViewer,
+	requireOwner,
+} from "@/lib/auth/owner";
 
 const createdAt = new Date("2026-01-02T03:04:05Z");
 
@@ -108,5 +114,25 @@ describe("getOwnerScope", () => {
 	it("throws Unauthorized with no session", async () => {
 		mocks.getSession.mockResolvedValue(null);
 		await expect(getOwnerScope()).rejects.toBeInstanceOf(UnauthorizedError);
+	});
+});
+
+describe("findOwnerScope — no session vs a failed lookup (#5472)", () => {
+	it("is null with no session, and THROWS when the lookup fails, so a guard can fail closed", async () => {
+		mocks.getSession.mockResolvedValue(null);
+		expect(await findOwnerScope()).toBeNull();
+		mocks.getSession.mockRejectedValue(new Error("session table unreachable"));
+		await expect(findOwnerScope()).rejects.toThrow(/unreachable/);
+	});
+
+	it("reads the session user, session id and active org; an injected actor needs no session", async () => {
+		mocks.getSession.mockResolvedValue(sessionWith({ id: "s-1", activeOrganizationId: "org-9" }));
+		expect(await findOwnerScope()).toEqual({
+			userId: "user-1",
+			sessionId: "s-1",
+			activeOrgId: "org-9",
+		});
+		mocks.getInjectedActor.mockReturnValue({ userId: "u-2", orgId: "org-3" });
+		expect(await findOwnerScope()).toEqual({ userId: "u-2", sessionId: "", activeOrgId: "org-3" });
 	});
 });

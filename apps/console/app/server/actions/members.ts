@@ -229,7 +229,8 @@ export async function getInvitations(): Promise<InvitationRow[]> {
 
 /**
  * Suspends or reactivates a member. Suspending keeps the member row + role but revokes
- * their PDP grant (no access); reactivating restores the grant. Owner-gated; refuses on
+ * their PDP grant (no access) and cancels the invitations they sent that are still pending;
+ * reactivating restores the grant. Owner-gated; refuses on
  * members from a different org, and refuses to SUSPEND any owner.
  *
  * "Owner" is read the way the PDP reads it (`toPdpRole`): any comma-joined part that is
@@ -266,6 +267,20 @@ export async function setMemberSuspended(
 
 	if (suspended) {
 		await revokeMemberGrant(m.orgId, m.userId);
+		// The member's pending invitations into this org are cancelled with them (#5472): an
+		// admin who invited a second account they control should not see that account get in after
+		// the suspension. `beforeAcceptInvitation` refuses such an invitation at acceptance anyway;
+		// this takes it off the pending list, and reactivating does not bring it back.
+		await db
+			.update(invitation)
+			.set({ status: "canceled" })
+			.where(
+				and(
+					eq(invitation.organizationId, m.orgId),
+					eq(invitation.inviterId, m.userId),
+					eq(invitation.status, "pending"),
+				),
+			);
 	} else {
 		await ensureMemberGrant(m.orgId, m.userId, m.role);
 	}

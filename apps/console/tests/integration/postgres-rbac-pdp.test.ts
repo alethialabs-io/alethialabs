@@ -20,6 +20,7 @@ import { getServiceDb } from "@/lib/db";
 import {
 	authzActivityLog,
 	grants,
+	member,
 	organization,
 	projects,
 	resourceHierarchy,
@@ -33,6 +34,7 @@ import { describeIfDb, purgeAuthzActivityLog } from "./db";
 const ORG = randomUUID();
 const USER = randomUUID(); // the actor
 const OUTSIDER = randomUUID(); // a user in the org with no grants / not on the team
+const NO_ROW = randomUUID(); // on the team and granted, but with NO member row in the org (#5472)
 const TEAM = randomUUID();
 const PROJ_A = randomUUID(); // child of ORG in the hierarchy
 const PROJ_B = randomUUID(); // NOT under ORG in the hierarchy (a sibling, no edge)
@@ -73,10 +75,20 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 		await db.insert(user).values([
 			{ id: USER, email: `it-pdp-actor-${USER}@example.test` },
 			{ id: OUTSIDER, email: `it-pdp-outsider-${OUTSIDER}@example.test` },
+			{ id: NO_ROW, email: `it-pdp-norow-${NO_ROW}@example.test` },
 		]);
 		await db.insert(organization).values({ id: ORG, name: `pdp-${ORG.slice(0, 8)}` });
+		// Both PDPs grant nothing in a non-personal org to an actor who is not an ACTIVE member of
+		// it (#5472), so the actor and the outsider are members, as they are in production.
+		await db.insert(member).values([
+			{ organizationId: ORG, userId: USER, role: "viewer" },
+			{ organizationId: ORG, userId: OUTSIDER, role: "viewer" },
+		]);
 		await db.insert(team).values({ id: TEAM, name: "platform", organizationId: ORG });
-		await db.insert(teamMember).values({ teamId: TEAM, userId: USER });
+		await db.insert(teamMember).values([
+			{ teamId: TEAM, userId: USER },
+			{ teamId: TEAM, userId: NO_ROW },
+		]);
 		// Two projects in the org. PROJ_A is a hierarchy child of ORG; PROJ_B has no edge.
 		await db.insert(projects).values([
 			{
@@ -119,9 +131,10 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 			.where(inArray(resourceHierarchy.parent_id, [ORG]));
 		await db.delete(teamMember).where(eq(teamMember.teamId, TEAM));
 		await db.delete(team).where(eq(team.id, TEAM));
+		await db.delete(member).where(eq(member.organizationId, ORG));
 		await db.delete(projects).where(eq(projects.org_id, ORG));
 		await db.delete(organization).where(eq(organization.id, ORG));
-		await db.delete(user).where(inArray(user.id, [USER, OUTSIDER]));
+		await db.delete(user).where(inArray(user.id, [USER, OUTSIDER, NO_ROW]));
 	});
 
 	it("default-denies (no_grant) when the actor has no grants", async () => {
@@ -385,6 +398,33 @@ describeIfDb("PostgresRbacPDP (community RBAC over Postgres)", () => {
 		);
 		expect(outsider.allowed).toBe(false);
 		expect(outsider.reason).toBe("no_grant");
+	});
+
+	// #5472: outside the personal scope an actor with NO member row holds nothing — neither the
+	// team's grant (their `team_member` row can outlive the member row) nor a user grant left behind.
+	// Before, this engine honoured the user grant, and the OpenFGA engine honoured both.
+	it("grants nothing to an actor with no member row in the org, through a team or a user grant", async () => {
+		await seedGrant({
+			principal_type: "team",
+			principal_id: TEAM,
+			permission_key: "project:view",
+			resource_type: "project",
+			resource_id: null,
+		});
+		await seedGrant({
+			principal_type: "user",
+			principal_id: NO_ROW,
+			permission_key: "project:view",
+			resource_type: "project",
+			resource_id: null,
+		});
+		const noRow: Actor = { userId: NO_ROW, orgId: ORG };
+		const d = await pdp.can(noRow, "view", { type: "project", id: PROJ_A });
+		expect(d.allowed).toBe(false);
+		expect(d.reason).toBe("no_grant");
+		expect(await pdp.listAccessible(noRow, "view", "project")).toEqual([]);
+		// The control: the same grants reach USER, an active member on the same team.
+		expect((await pdp.can(actor, "view", { type: "project", id: PROJ_A })).allowed).toBe(true);
 	});
 
 	it("scopes by org_id — a grant in another org does not apply", async () => {

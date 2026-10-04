@@ -6,7 +6,6 @@
 // changes. Uses ONLY core's pure helpers (core.fga.*) + the FGA client — no core
 // runtime import. Standup-verified (needs a running OpenFGA + a backfilled store).
 
-import type { OpenFgaClient } from "@openfga/sdk";
 import type { Action, Resource } from "@/lib/authz/registry";
 import type {
 	Actor,
@@ -17,17 +16,50 @@ import type {
 } from "@/lib/authz/types";
 import type { CoreContext } from "@/lib/enterprise";
 
+/** The two OpenFGA reads this engine makes; `OpenFgaClient` provides both. */
+export interface FgaReader {
+	check(request: {
+		user: string;
+		relation: string;
+		object: string;
+	}): Promise<{ allowed?: boolean }>;
+	listObjects(request: {
+		user: string;
+		relation: string;
+		type: string;
+	}): Promise<{ objects?: string[] }>;
+}
+
+/** The core capabilities this engine uses, out of `CoreContext`. */
+export interface PdpCore {
+	lacksActiveMembership: CoreContext["lacksActiveMembership"];
+	fga: Pick<
+		CoreContext["fga"],
+		"checksFor" | "denyChecksFor" | "enforceDecision" | "listOrgResourceIds"
+	>;
+}
+
 export class OpenFgaPdp implements Pdp {
 	constructor(
-		private readonly core: CoreContext,
-		private readonly client: OpenFgaClient,
+		private readonly core: PdpCore,
+		private readonly client: FgaReader,
 	) {}
 
+	/**
+	 * Decides one check. An actor who is not an active member of the org — a member row that is not
+	 * `active`, or no member row outside their personal scope — is denied before any tuple is read
+	 * (#5472): suspension and removal revoke their own grant tuples, but team tuples
+	 * (`team:T#member@user:U`) can outlive both, and FGA resolves a team's grants through them.
+	 * `PostgresRbacPDP` applies the same rule in its grant query, so the two engines agree.
+	 */
 	async can(
 		actor: Actor,
 		action: Action,
 		resource: ResourceRef,
 	): Promise<Decision> {
+		if (await this.core.lacksActiveMembership(actor.orgId, actor.userId)) {
+			return { allowed: false, reason: "no_grant" };
+		}
 		const opts = { id: resource.id, orgId: actor.orgId };
 		const allowChecks = this.core.fga.checksFor(resource.type, action, opts);
 		const denyChecks = this.core.fga.denyChecksFor(resource.type, action, opts);
@@ -75,6 +107,8 @@ export class OpenFgaPdp implements Pdp {
 		action: Action,
 		resourceType: Resource,
 	): Promise<string[]> {
+		// An actor who is not an active member can reach nothing, for the reason `can` states.
+		if (await this.core.lacksActiveMembership(actor.orgId, actor.userId)) return [];
 		const user = `user:${actor.userId}`;
 		// Org-wide capability ⇒ every instance of the type in the org (matches the
 		// PostgresRbacPDP org-wide path). This must be DENY-AWARE, exactly like that
