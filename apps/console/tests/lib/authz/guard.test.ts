@@ -35,6 +35,7 @@ import {
 	assertMintingProfileStillMember,
 	authorize,
 	authorizeCli,
+	authorizeCliOrg,
 	ensureCliOrgAccess,
 	orgScopeFor,
 	userIdIsTheCaller,
@@ -243,12 +244,15 @@ describe("userIdIsTheCaller", () => {
 });
 
 describe("ensureCliOrgAccess", () => {
+	const MANAGE = ["manage_members", { type: "member" }] as const;
+
 	it("admits a service token to the org it is pinned to", async () => {
 		expect(
 			await ensureCliOrgAccess(
 				{ userId: "u-minter", orgId: "org-t" },
 				"service_token",
 				"org-t",
+				...MANAGE,
 			),
 		).toBeNull();
 		expect(dbLimit).not.toHaveBeenCalled();
@@ -262,39 +266,98 @@ describe("ensureCliOrgAccess", () => {
 			{ userId: "u-minter", orgId: "org-t" },
 			"service_token",
 			"org-u",
+			...MANAGE,
 		);
 		expect(denied?.status).toBe(403);
 	});
 
 	// …and it must not even ASK. A membership query whose answer is ignored is a query that the
 	// next edit will start trusting.
-	it("does not consult membership at all for a service token", async () => {
+	it("does not consult membership or the PDP at all for a service token", async () => {
 		dbLimit.mockResolvedValue([{ id: "m-minter-in-org-u" }]);
 		await ensureCliOrgAccess(
 			{ userId: "u-minter", orgId: "org-t" },
 			"service_token",
 			"org-u",
+			...MANAGE,
 		);
 		expect(dbLimit).not.toHaveBeenCalled();
+		expect(can).not.toHaveBeenCalled();
 	});
 
 	it("admits a session to its own resolved org without a query", async () => {
 		expect(
-			await ensureCliOrgAccess(CLI_ACTOR, "session", "org-cli"),
+			await ensureCliOrgAccess(CLI_ACTOR, "session", "org-cli", ...MANAGE),
 		).toBeNull();
 		expect(dbLimit).not.toHaveBeenCalled();
 	});
 
-	it("admits a session to another org it is a member of", async () => {
+	it("admits a session to another org where it is an active member holding the permission", async () => {
 		dbLimit.mockResolvedValue([{ id: "m-1" }]);
-		expect(await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other")).toBeNull();
-		expect(dbLimit).toHaveBeenCalled();
+		const inOther: Actor = { userId: "u-cli", orgId: "org-other" };
+		vi.mocked(getActiveScope).mockResolvedValue(inOther);
+		expect(await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other", ...MANAGE)).toBeNull();
+		// The permission is asked of the PATH org's scope, not of the caller's resolved one.
+		expect(getActiveScope).toHaveBeenCalledWith("u-cli", "org-other");
+		expect(can).toHaveBeenCalledWith(inOther, "manage_members", {
+			type: "member",
+			id: undefined,
+		});
 	});
 
-	it("refuses a session an org it is not a member of", async () => {
-		dbLimit.mockResolvedValue([]);
-		const denied = await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other");
+	// #5479. A member row was the whole test, so the route's permission was checked in one org and
+	// the write landed in another.
+	it("refuses a session member of another org who lacks the permission there", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-viewer" }]);
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-cli", orgId: "org-other" });
+		can.mockResolvedValue({ allowed: false });
+		const denied = await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other", ...MANAGE);
 		expect(denied?.status).toBe(403);
+	});
+
+	// The shape the defect was reached by: a caller in their PERSONAL scope, where they own
+	// everything, naming an org they are an ordinary member of.
+	it("does not let a personal-scope caller carry its own-org permission into another org", async () => {
+		const personal: Actor = { userId: "u-p", orgId: "u-p" };
+		dbLimit.mockResolvedValue([{ id: "m-viewer" }]);
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-p", orgId: "org-b" });
+		can.mockImplementation(async (a: Actor) => ({ allowed: a.orgId === "u-p" }));
+		const denied = await ensureCliOrgAccess(personal, "session", "org-b", ...MANAGE);
+		expect(denied?.status).toBe(403);
+	});
+
+	it("refuses a session with no ACTIVE member row in that org, without asking the PDP", async () => {
+		dbLimit.mockResolvedValue([]);
+		const denied = await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other", ...MANAGE);
+		expect(denied?.status).toBe(403);
+		expect(can).not.toHaveBeenCalled();
+	});
+
+	it("refuses when the scope resolver lands on a different org than the path names", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-1" }]);
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-cli", orgId: "org-third" });
+		const denied = await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other", ...MANAGE);
+		expect(denied?.status).toBe(403);
+		expect(can).not.toHaveBeenCalled();
+	});
+
+	it("admits a session to its own personal org with no member row", async () => {
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-cli", orgId: "u-cli" });
+		expect(await ensureCliOrgAccess(CLI_ACTOR, "session", "u-cli", ...MANAGE)).toBeNull();
+		expect(dbLimit).not.toHaveBeenCalled();
+	});
+});
+
+describe("authorizeCliOrg", () => {
+	it("returns the actor scoped to the PATH org for a cross-org session", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-1" }]);
+		const inOther: Actor = { userId: "u-cli", orgId: "org-other" };
+		vi.mocked(getActiveScope).mockResolvedValue(inOther);
+		expect(
+			await authorizeCliOrg(CLI_ACTOR, "session", "org-other", "manage_members", {
+				type: "member",
+			}),
+		).toEqual({ actor: inOther });
 	});
 });
 

@@ -20,7 +20,9 @@ export async function DELETE(
 	const { actor, credential } = auth;
 	const { id, memberId } = await params;
 
-	const denied = await ensureCliOrgAccess(actor, credential, id);
+	const denied = await ensureCliOrgAccess(actor, credential, id, "manage_members", {
+		type: "member",
+	});
 	if (denied) return denied;
 
 	try {

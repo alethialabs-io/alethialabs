@@ -245,10 +245,15 @@ export async function POST(req: Request) {
 			}
 			case "session": {
 				if (scopedOrg) {
+					// `org:view` is the gate here: may this human act in the named org at all.
+					// PLAN/DEPLOY/DESTROY enforce their own permission below, on `actor`, inside
+					// the server action.
 					const denied = await ensureCliOrgAccess(
 						actor,
 						caller.credential,
 						scopedOrg,
+						"view",
+						{ type: "org" },
 					);
 					if (denied) return denied;
 				}
