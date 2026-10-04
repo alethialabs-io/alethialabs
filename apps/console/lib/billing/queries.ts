@@ -136,9 +136,10 @@ export async function upsertOrgBilling(input: BillingUpsert): Promise<void> {
 // CONFLICT DO UPDATE … WHERE` / `UPDATE … WHERE`, so two racing deliveries cannot both act on a
 // stale read):
 //   - SAME subscription as the row: applies unless the event is OLDER than the newest one already
-//     applied for it (the event-time watermark; a write with no event time — a server action's
-//     live read — skips that check), or it would bring a `canceled` row back to life
+//     applied for it (the event-time watermark), or it would bring a `canceled` row back to life
 //     (`canceled`/`incomplete_expired` are terminal in Stripe, so only a stale event can say so).
+//     A write with NO event time (a server action's read) has no place on the watermark, so it may
+//     only hold or RAISE the lifecycle rank (`none` < live < `canceled`), never lower it (#5547).
 //   - A DIFFERENT subscription: applies only when the row holds nothing live (its status is `none`
 //     or `canceled`), or when the incoming one is PAID (active/trialing) and the row holds either
 //     an unpaid `past_due` subscription or no subscription id at all (an off-Stripe grant, which a
@@ -195,18 +196,48 @@ function eventAtParam(eventAt: Date | null): SQL {
 	return sql`${eventAt ? eventAt.toISOString() : null}::timestamptz`;
 }
 
+/** `lifecycleRank` of the slot's STORED status, as SQL — the same three bands, in the database. */
+function storedLifecycleRank(slot: SubscriptionSlot): SQL {
+	return sql`(CASE ${slot.status} WHEN 'none' THEN 0 WHEN 'canceled' THEN 2 ELSE 1 END)`;
+}
+
 /**
  * The predicate, over the EXISTING row, under which an event for the row's OWN subscription may
- * be applied: not older than the watermark (a same-second tie goes to the later lifecycle stage),
- * and never reviving an ended subscription. An event with no time skips the watermark check.
+ * be applied: never reviving an ended subscription, and then —
+ *
+ * - WITH an event time: not older than the watermark (a same-second tie goes to the later
+ *   lifecycle stage).
+ * - WITHOUT one (a server action's sync, #5547): only when it does not LOWER the lifecycle rank.
+ *
+ * Why a rank guard and not "stamp the action's write with its read time": a read time is on OUR
+ * clock while the watermark is Stripe's event `created`, and for most webhook events eventAt is
+ * only a LOWER bound on the state written. `customer.subscription.created`/`.updated`,
+ * `checkout.session.completed`, `invoice.payment_succeeded` and `invoice.payment_failed` each
+ * write a fresh `subscriptions.retrieve` made after the event was created; only
+ * `customer.subscription.deleted` writes the event's own snapshot (lib/billing/webhook-handler.ts).
+ * An action stamped at its read time would therefore refuse a later-delivered retrieve-based event
+ * whose state is newer than the action's read, and a refused webhook is never retried — the row
+ * would be stuck until the subscription's next event. The rank guard needs no clock: the stale
+ * case it refuses is exactly the one that can happen (`subscriptions.update` returning
+ * `incomplete` after the `active` webhook already landed), while a raise (`none` → live, live →
+ * `canceled`) and a move within the live band (equal rank, e.g. `past_due` → `active`) still
+ * apply, so a trial start, a link and a real cancellation are unchanged.
+ *
+ * A limit a future caller must know: `mapStatus` (lib/billing/sync.ts) maps every Stripe status it
+ * does not name — `incomplete`, and also `paused` — to `none`, rank 0. A no-time write of a
+ * `paused` subscription over a live row is therefore REFUSED. Pausing is a real transition out of
+ * the live band, not a stale read, so a caller that can observe one must not sync without an event
+ * time: it must pass the time it read the subscription as `eventAt` (and accept the clock caveat
+ * above), or leave the change to the `customer.subscription.updated` webhook, which carries its own.
  */
 function sameSubscriptionMayApply(slot: SubscriptionSlot, incoming: IncomingSubscription): SQL {
 	const notRevived =
 		incoming.status === "canceled" ? sql`true` : sql`${slot.status} <> 'canceled'`;
 	const at = eventAtParam(incoming.eventAt);
+	const rank = lifecycleRank(incoming.status);
 	const fresh = incoming.eventAt
-		? sql`(${slot.eventAt} IS NULL OR ${slot.eventAt} < ${at} OR (${slot.eventAt} = ${at} AND ${lifecycleRank(incoming.status)} >= (CASE ${slot.status} WHEN 'none' THEN 0 WHEN 'canceled' THEN 2 ELSE 1 END)))`
-		: sql`true`;
+		? sql`(${slot.eventAt} IS NULL OR ${slot.eventAt} < ${at} OR (${slot.eventAt} = ${at} AND ${rank} >= ${storedLifecycleRank(slot)}))`
+		: sql`(${rank} >= ${storedLifecycleRank(slot)})`;
 	return sql`(${slot.subscriptionId} = ${incoming.subscriptionId} AND ${notRevived} AND ${fresh})`;
 }
 
