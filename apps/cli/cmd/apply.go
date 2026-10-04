@@ -164,6 +164,11 @@ func runApply(_ *cobra.Command, client applyClient, token string, o applyOptions
 	}
 	result, err := executeApply(client, os.Stdout, o.format, plan, runnerID, !o.noWait)
 	if err != nil {
+		// A partial result is still the record of what happened; a machine reader gets it before
+		// the failure rather than losing it.
+		if result != nil && o.format != ui.FormatTable {
+			_ = ui.Render(os.Stdout, o.format, ui.TableSpec{}, result)
+		}
 		fail(err)
 	}
 	if o.format != ui.FormatTable {
@@ -226,10 +231,11 @@ type Action string
 const (
 	// ActionCreate — it does not exist and will be created.
 	ActionCreate Action = "create"
-	// ActionUpdate — it exists and its fields will be sent again (a singleton component, which
-	// the server upserts).
+	// ActionUpdate — it exists and at least one field the file declares differs from the
+	// server's value. ComponentPlan.Changes lists them.
 	ActionUpdate Action = "update"
-	// ActionUnchanged — it exists and is left as it is.
+	// ActionUnchanged — it exists, every field the file declares already matches, and it is left
+	// as it is.
 	ActionUnchanged Action = "unchanged"
 )
 
@@ -272,6 +278,9 @@ type ComponentPlan struct {
 	Name   string         `json:"name,omitempty"`
 	Action Action         `json:"action"`
 	Fields map[string]any `json:"fields,omitempty"`
+	// Changes are the declared fields whose value differs from the server's, one per field, for
+	// an `update`. Empty for `create` (everything is new) and `unchanged` (nothing differs).
+	Changes []FieldChange `json:"changes,omitempty"`
 }
 
 // applyClient is the slice of the API the plan and the apply need. Narrow so the tests can fake
@@ -285,6 +294,7 @@ type applyClient interface {
 	CreateProject(params api.CreateProjectParams) (*api.Project, error)
 	AddEnvironment(params api.AddEnvironmentParams) (*api.Environment, error)
 	AddComponent(project, kind, name, env string, fields map[string]interface{}) (*api.Component, error)
+	UpdateComponent(project, kind, name, env string, fields map[string]interface{}) (*api.Component, error)
 	QueueJobWithParams(params api.QueueJobParams) (*api.ProvisionJob, error)
 	GetJob(jobID string) (*api.ProvisionJob, error)
 	GetRunners() ([]api.Runner, error)
@@ -414,16 +424,19 @@ func computePlan(c applyClient, m *manifest.Manifest) (*ApplyPlan, error) {
 		for _, kind := range env.Components {
 			for _, entry := range kind.Entries {
 				cp := ComponentPlan{Kind: kind.Kind, Name: entry.Name, Action: ActionCreate, Fields: entry.Fields}
+				name := ""
 				if kind.List {
-					if hasComponent(existingComps, kind.Kind, entry.Name) {
-						// A named component has no update route; the server would refuse a
-						// second row of the same name. Reported rather than retried.
-						cp.Action = ActionUnchanged
+					name = entry.Name
+				}
+				if current, ok := findComponent(existingComps, kind.Kind, name); ok {
+					// Only the fields the FILE declares are compared: an omitted field is left
+					// as the server has it, never cleared. Equal everywhere is `unchanged` and
+					// apply sends nothing; any difference is an `update` carrying the diff.
+					cp.Changes = diffFields(entry.Fields, componentValues(current))
+					cp.Action = ActionUnchanged
+					if len(cp.Changes) > 0 {
+						cp.Action = ActionUpdate
 					}
-				} else if hasComponent(existingComps, kind.Kind, "") {
-					// A singleton is UPSERTED by the server, so sending its fields again is
-					// how the file's values reach an existing row.
-					cp.Action = ActionUpdate
 				}
 				ep.Components = append(ep.Components, cp)
 			}
@@ -439,17 +452,31 @@ func computePlan(c applyClient, m *manifest.Manifest) (*ApplyPlan, error) {
 	return plan, nil
 }
 
-// hasComponent reports whether a component of the kind (and name, for a multi kind) exists.
-func hasComponent(comps []api.Component, kind, name string) bool {
+// findComponent returns the existing component of the kind (and name, for a multi kind).
+func findComponent(comps []api.Component, kind, name string) (api.Component, bool) {
 	for _, c := range comps {
 		if c.Kind != kind {
 			continue
 		}
 		if name == "" || c.Name == name {
-			return true
+			return c, true
 		}
 	}
-	return false
+	return api.Component{}, false
+}
+
+// componentValues is the server's current value of every settable field of a component, keyed
+// the way a manifest names them. `cloud_identity_id` travels as its own wire field rather than in
+// Config, so it is folded back in for the comparison.
+func componentValues(c api.Component) map[string]any {
+	out := make(map[string]any, len(c.Config)+1)
+	for k, v := range c.Config {
+		out[k] = v
+	}
+	if c.CloudIdentityID != nil {
+		out["cloud_identity_id"] = *c.CloudIdentityID
+	}
+	return out
 }
 
 // restrictTo narrows the deploy to the named environments. Creation is NOT narrowed: the file
@@ -507,19 +534,31 @@ func (p *ApplyPlan) refusal() error {
 	return fmt.Errorf("%s cannot be applied as written:\n  - %s", manifest.FileName, strings.Join(lines, "\n  - "))
 }
 
-// counts summarises what apply will create.
-func (p *ApplyPlan) counts() (envs, comps int) {
+// counts summarises what apply will create and what it will change.
+func (p *ApplyPlan) counts() (envs, comps, updates int) {
 	for _, e := range p.Environments {
 		if e.Action == ActionCreate {
 			envs++
 		}
 		for _, c := range e.Components {
-			if c.Action != ActionUnchanged {
+			switch c.Action {
+			case ActionCreate:
 				comps++
+			case ActionUpdate:
+				updates++
+			case ActionUnchanged:
 			}
 		}
 	}
-	return envs, comps
+	return envs, comps, updates
+}
+
+// componentLabel is `kind` for a singleton and `kind/name` for a named component.
+func componentLabel(c ComponentPlan) string {
+	if c.Name != "" {
+		return c.Kind + "/" + c.Name
+	}
+	return c.Kind
 }
 
 // renderPlan prints the plan for a person: one line per environment, then the totals.
@@ -541,11 +580,7 @@ func renderPlan(out io.Writer, p *ApplyPlan) {
 	for _, e := range p.Environments {
 		var cells []string
 		for _, c := range e.Components {
-			label := c.Kind
-			if c.Name != "" {
-				label += "/" + c.Name
-			}
-			cells = append(cells, glyphFor(c.Action)+" "+label)
+			cells = append(cells, glyphFor(c.Action)+" "+componentLabel(c))
 		}
 		line := fmt.Sprintf("  %-*s  %-9s  %s environment", width, e.Name, e.Placement, glyphFor(e.Action))
 		if len(cells) > 0 {
@@ -555,6 +590,12 @@ func renderPlan(out io.Writer, p *ApplyPlan) {
 			line += ui.MutedStyle.Render("  (not deployed: --env)")
 		}
 		fmt.Fprintln(out, line)
+		for _, c := range e.Components {
+			for _, ch := range c.Changes {
+				fmt.Fprintf(out, "    %s %s  %s: %s → %s\n", glyphFor(ActionUpdate), componentLabel(c),
+					ch.Field, formatFieldValue(ch.From), formatFieldValue(ch.To))
+			}
+		}
 		for _, why := range e.Problems {
 			fmt.Fprintf(out, "    %s %s\n", ui.WarningStyle.Render(ui.SymbolError), why)
 		}
@@ -562,13 +603,17 @@ func renderPlan(out io.Writer, p *ApplyPlan) {
 	for _, name := range p.Unmanaged {
 		fmt.Fprintln(out, ui.MutedStyle.Render(fmt.Sprintf("  %s is on the server and not in the file — left alone", name)))
 	}
-	envs, comps := p.counts()
+	envs, comps, updates := p.counts()
 	projects := 0
 	if p.ProjectID == "" {
 		projects = 1
 	}
-	fmt.Fprintln(out, ui.MutedStyle.Render(fmt.Sprintf("  %s to create · %s · %s",
-		plural(projects, "project"), plural(envs, "environment"), plural(comps, "component"))))
+	summary := fmt.Sprintf("  %s to create · %s · %s",
+		plural(projects, "project"), plural(envs, "environment"), plural(comps, "component"))
+	if updates > 0 {
+		summary += fmt.Sprintf(" · %s to update", plural(updates, "component"))
+	}
+	fmt.Fprintln(out, ui.MutedStyle.Render(summary))
 }
 
 // glyphFor renders an action as the diff marks a person reads at a glance.
@@ -602,6 +647,17 @@ type ApplyResult struct {
 	ProjectID string      `json:"project_id"`
 	Created   []string    `json:"created"`
 	Jobs      []DeployJob `json:"jobs"`
+	// Errors are the component updates the server refused. Each one keeps its environment from
+	// being deployed — a deploy would ship the configuration the person asked to change — and
+	// leaves every other environment to carry on.
+	Errors []ComponentError `json:"errors,omitempty"`
+}
+
+// ComponentError is one component the server refused to update.
+type ComponentError struct {
+	Environment string `json:"environment"`
+	Component   string `json:"component"`
+	Error       string `json:"error"`
 }
 
 // DeployJob is one environment's DEPLOY job.
@@ -711,17 +767,35 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 		}
 	}
 
+	refused := map[string]bool{}
 	for _, e := range p.Environments {
 		for _, comp := range e.Components {
-			if comp.Action == ActionUnchanged {
+			label := componentLabel(comp)
+			switch comp.Action {
+			case ActionUnchanged:
 				continue
-			}
-			if _, err := c.AddComponent(result.ProjectID, comp.Kind, comp.Name, e.Name, comp.Fields); err != nil {
-				return nil, fmt.Errorf("%s/%s: %w", e.Name, comp.Kind, err)
-			}
-			label := comp.Kind
-			if comp.Name != "" {
-				label += "/" + comp.Name
+			case ActionCreate:
+				if _, err := c.AddComponent(result.ProjectID, comp.Kind, comp.Name, e.Name, comp.Fields); err != nil {
+					return nil, fmt.Errorf("%s/%s: %w", e.Name, comp.Kind, err)
+				}
+			case ActionUpdate:
+				// A named component is PATCHED with only the fields that changed. A singleton has
+				// no name to address and the server upserts it, so its declared fields are sent
+				// through the add route as before.
+				var err error
+				if comp.Name != "" {
+					_, err = c.UpdateComponent(result.ProjectID, comp.Kind, comp.Name, e.Name, changedFields(comp.Changes))
+				} else {
+					_, err = c.AddComponent(result.ProjectID, comp.Kind, "", e.Name, comp.Fields)
+				}
+				if err != nil {
+					// The refusal belongs to THIS component. Recorded and reported, and the
+					// environment is held back from its deploy; the other environments carry on.
+					refused[names.NormalizeEnvironmentName(e.Name)] = true
+					result.Errors = append(result.Errors, ComponentError{Environment: e.Name, Component: label, Error: err.Error()})
+					say(fmt.Sprintf("  %s %s in %s was not updated: %v", ui.ErrorStyle.Render(ui.SymbolError), label, e.Name, err))
+					continue
+				}
 			}
 			result.Created = append(result.Created, e.Name+" "+label)
 			say(fmt.Sprintf("  %s %s %s in %s", ui.SymbolSuccess, pastOf(comp.Action), label, e.Name))
@@ -754,6 +828,10 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 		if !e.Deploy {
 			continue
 		}
+		if refused[names.NormalizeEnvironmentName(e.Name)] {
+			say(ui.MutedStyle.Render(fmt.Sprintf("  %s not deployed: a component update was refused", e.Name)))
+			continue
+		}
 		envID, ok := ids[names.NormalizeEnvironmentName(e.Name)]
 		if !ok {
 			return nil, fmt.Errorf("environment %s was declared but the server does not list it after apply", e.Name)
@@ -776,6 +854,14 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 			dj.Status = "SUCCESS"
 		}
 		result.Jobs = append(result.Jobs, dj)
+	}
+	if len(result.Errors) > 0 {
+		lines := make([]string, len(result.Errors))
+		for i, ce := range result.Errors {
+			lines[i] = fmt.Sprintf("%s %s: %s", ce.Environment, ce.Component, ce.Error)
+		}
+		return result, fmt.Errorf("%s not updated:\n  - %s",
+			plural(len(result.Errors), "component"), strings.Join(lines, "\n  - "))
 	}
 	return result, nil
 }
