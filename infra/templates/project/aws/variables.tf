@@ -781,6 +781,123 @@ variable "ec2_spot_service_role" {
   description = "Configure EC2 spot service role provisioning."
 }
 
+# ── The Karpenter NodePool (#5527) ───────────────────────────────────────────────────────────────
+#
+# None of these builds an AWS resource. Karpenter's NodePool is a Kubernetes object the RUNNER applies
+# after the cluster is up (packages/core/provisioner/karpenter.go), so they are gathered into
+# `local.karpenter_nodepool` (karpenter.tf) and handed to it through the `karpenter_nodepool` output.
+#
+# Every default is the literal the runner hard-coded before these existed, so a cluster that sets
+# nothing renders a byte-identical NodePool. The runner re-checks every value before it applies the
+# manifest with cluster-admin rights, because a validation that lives only here is bypassed by a
+# hand-edited state or output.
+
+variable "karpenter_capacity_types" {
+  type        = list(string)
+  default     = ["on-demand"]
+  description = "Karpenter capacity types: any of \"spot\" and \"on-demand\". With both, Karpenter prefers Spot and falls back to on-demand."
+
+  validation {
+    condition     = length(var.karpenter_capacity_types) > 0 && length(distinct(var.karpenter_capacity_types)) == length(var.karpenter_capacity_types) && alltrue([for c in var.karpenter_capacity_types : contains(["spot", "on-demand"], c)])
+    error_message = "karpenter_capacity_types must list \"spot\", \"on-demand\" or both, each at most once."
+  }
+}
+
+variable "karpenter_architectures" {
+  type        = list(string)
+  default     = ["amd64"]
+  description = "CPU architectures Karpenter may launch: any of \"amd64\" and \"arm64\" (Graviton). The default AMI alias al2023@latest serves both."
+
+  validation {
+    condition     = length(var.karpenter_architectures) > 0 && length(distinct(var.karpenter_architectures)) == length(var.karpenter_architectures) && alltrue([for a in var.karpenter_architectures : contains(["amd64", "arm64"], a)])
+    error_message = "karpenter_architectures must list \"amd64\", \"arm64\" or both, each at most once."
+  }
+}
+
+variable "karpenter_instance_categories" {
+  type        = list(string)
+  default     = ["t", "m"]
+  description = "EC2 instance categories Karpenter may launch (the letters before the generation: \"c\", \"m\", \"r\", \"t\", ...). An empty list puts no category requirement on the NodePool."
+
+  validation {
+    condition     = length(distinct(var.karpenter_instance_categories)) == length(var.karpenter_instance_categories) && alltrue([for c in var.karpenter_instance_categories : can(regex("^[a-z]{1,8}$", c))])
+    error_message = "karpenter_instance_categories entries must be lowercase EC2 instance categories such as \"c\", \"m\" or \"r\" (1-8 letters), each at most once."
+  }
+}
+
+variable "karpenter_instance_families" {
+  type        = list(string)
+  default     = []
+  description = "EC2 instance families Karpenter may launch, for example [\"c7g\", \"m7g\"]. Empty (the default) puts no family requirement on the NodePool. Each family must belong to one of karpenter_instance_categories, unless that list is empty."
+
+  validation {
+    condition     = length(distinct(var.karpenter_instance_families)) == length(var.karpenter_instance_families) && alltrue([for f in var.karpenter_instance_families : can(regex("^[a-z][a-z0-9-]{0,15}$", f))])
+    error_message = "karpenter_instance_families entries must be EC2 instance families such as \"c7g\" or \"m7i-flex\" (lowercase letters, digits and hyphens, starting with a letter), each at most once."
+  }
+}
+
+variable "karpenter_cpu_limit" {
+  type        = number
+  default     = 100
+  description = "The most vCPU the Karpenter NodePool may launch in total, from 1 to 10000. It is the only bound on the size of Karpenter's fleet."
+
+  validation {
+    condition     = var.karpenter_cpu_limit >= 1 && var.karpenter_cpu_limit <= 10000 && floor(var.karpenter_cpu_limit) == var.karpenter_cpu_limit
+    error_message = "karpenter_cpu_limit must be a whole number of vCPU from 1 to 10000."
+  }
+}
+
+variable "karpenter_node_labels" {
+  type        = map(string)
+  default     = {}
+  description = "Labels on every node Karpenter launches. Keys in the kubernetes.io, k8s.io, karpenter.sh and karpenter.k8s.aws domains are refused, except node-restriction.kubernetes.io/."
+
+  validation {
+    condition = alltrue([for k, v in var.karpenter_node_labels :
+      length(k) <= 317 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    ])
+    error_message = "karpenter_node_labels keys must be Kubernetes label keys ([prefix/]name, name up to 63 characters) and values must be up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue([for k, v in var.karpenter_node_labels :
+      !strcontains(k, "/") || can(regex("(^|\\.)node-restriction\\.kubernetes\\.io$", split("/", k)[0])) || !can(regex("(^|\\.)(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws)$", split("/", k)[0]))
+    ])
+    error_message = "karpenter_node_labels keys may not use the reserved kubernetes.io, k8s.io, karpenter.sh or karpenter.k8s.aws domains (node-restriction.kubernetes.io/ is allowed). Kubernetes and Karpenter own those labels."
+  }
+}
+
+variable "karpenter_node_taints" {
+  type = list(object({
+    key    = string
+    value  = optional(string)
+    effect = string
+  }))
+  default     = []
+  description = "Taints on every node Karpenter launches, so only pods that tolerate them schedule there. effect is one of NoSchedule, PreferNoSchedule and NoExecute."
+
+  validation {
+    condition     = alltrue([for t in var.karpenter_node_taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in var.karpenter_node_taints : "${t.key}:${t.effect}"])) == length(var.karpenter_node_taints)
+    error_message = "karpenter_node_taints effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once."
+  }
+
+  validation {
+    condition = alltrue([for t in var.karpenter_node_taints :
+      length(t.key) <= 317 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+    ])
+    error_message = "karpenter_node_taints key must be a Kubernetes key ([prefix/]name, name up to 63 characters) and value, when set, up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue([for t in var.karpenter_node_taints :
+      !strcontains(t.key, "/") || !can(regex("(^|\\.)(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws)$", split("/", t.key)[0]))
+    ])
+    error_message = "karpenter_node_taints keys may not use the reserved kubernetes.io, k8s.io, karpenter.sh or karpenter.k8s.aws domains. Kubernetes and Karpenter set those taints themselves."
+  }
+}
+
 ################################################################################
 # Custom Secrets Variables - Alethia tf-module-awssm-passgen
 ################################################################################

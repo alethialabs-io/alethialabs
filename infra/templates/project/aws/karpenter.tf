@@ -29,3 +29,27 @@ module "karpenter" {
   create_access_entry = false
 }
 
+
+# The Karpenter NodePool the runner renders after the cluster is up (#5527). Nothing here builds an
+# AWS resource: the NodePool is a Kubernetes object, so the values travel to the runner through the
+# `karpenter_nodepool` output (outputs.tf) and packages/core/provisioner/karpenter.go applies them.
+# They are gathered in one local so the output and its precondition read one value.
+locals {
+  karpenter_nodepool = {
+    capacity_types      = var.karpenter_capacity_types
+    architectures       = var.karpenter_architectures
+    instance_categories = var.karpenter_instance_categories
+    instance_families   = var.karpenter_instance_families
+    cpu_limit           = var.karpenter_cpu_limit
+    labels              = var.karpenter_node_labels
+    taints              = var.karpenter_node_taints
+  }
+
+  # Families whose name starts with none of the chosen categories. Karpenter ANDs the two
+  # requirements, so a family outside every category ("c7g" against the default ["t", "m"]) leaves
+  # the NodePool with no instance type it can launch — a pool that looks healthy and never scales.
+  karpenter_families_outside_categories = length(var.karpenter_instance_categories) == 0 ? [] : [
+    for f in var.karpenter_instance_families : f
+    if !anytrue([for c in var.karpenter_instance_categories : startswith(f, c)])
+  ]
+}
