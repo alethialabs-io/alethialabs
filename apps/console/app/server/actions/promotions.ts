@@ -46,8 +46,8 @@ import type {
 } from "@/types/jsonb.types";
 import {
 	getProjectAsFormData,
-	planProject,
 	reconcileEnvironmentComponents,
+	tryPlanProject,
 } from "./projects";
 
 /** Stage rank — promotions may only move to an equal or higher stage. */
@@ -58,20 +58,41 @@ const STAGE_ORDER: Record<EnvironmentStage, number> = {
 };
 
 /**
+ * What {@link promoteEnvironment} answers: the promotion and its PLAN job, or a refusal the user can
+ * act on, as a VALUE.
+ *
+ * WHY A VALUE (#5454). Every refusal here used to be THROWN, and the promote dialog toasted
+ * `err.message`. In a production build Next replaces a message thrown out of a `"use server"` export
+ * with a digest, so "a promotion can only target an equal or higher stage", "already in progress"
+ * and every deploy-time gate the PLAN runs (no cloud account linked, the free daily job quota, a job
+ * already in flight…) reached the user as noise. "Environment not found for this project" and an
+ * authorization failure still throw: neither is something the person in the dialog can fix.
+ */
+export type PromoteResult =
+	| { ok: true; promotionId: string; planJobId: string }
+	| { ok: false; error: string };
+
+/**
  * Promotes `sourceEnvId`'s structural design onto `targetEnvId`: writes the merged candidate into the
  * target (preserving the target's sizing/placement), records the promotion, and queues a PLAN. Gates
- * are evaluated when the PLAN completes (advancePromotionOnPlan). Returns the promotion + plan job ids.
+ * are evaluated when the PLAN completes (advancePromotionOnPlan). Returns the promotion + plan job ids,
+ * or a refusal (see {@link PromoteResult}).
+ *
+ * When the PLAN itself is refused, the promotion is marked FAILED with the reason and the target's
+ * previous design is written back. Before #5454 the refusal was thrown after both writes, which left
+ * the promotion PENDING_PLAN with no plan job — holding the one-in-flight-per-target slot — and the
+ * target already carrying the source's design, so a retry found "no structural changes to promote".
  */
 export async function promoteEnvironment(
 	projectId: string,
 	sourceEnvId: string,
 	targetEnvId: string,
 	opts?: { includeRemovals?: boolean; runnerId?: string | null },
-): Promise<{ promotionId: string; planJobId: string }> {
+): Promise<PromoteResult> {
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	const owner = actor.userId;
 	if (sourceEnvId === targetEnvId)
-		throw new Error("Source and target environments must differ");
+		return { ok: false, error: "Source and target environments must differ." };
 
 	// Validate both environments belong to the project + check stage order and target state.
 	const { source, target } = await withActorScope(actor, async (tx) => {
@@ -92,9 +113,15 @@ export async function promoteEnvironment(
 	if (!source || !target)
 		throw new Error("Environment not found for this project");
 	if (STAGE_ORDER[target.stage] < STAGE_ORDER[source.stage])
-		throw new Error("A promotion can only target an equal or higher stage");
+		return {
+			ok: false,
+			error: "A promotion can only target an equal or higher stage.",
+		};
 	if (["QUEUED", "PROVISIONING", "DESTROYING", "DESTROYED"].includes(target.status))
-		throw new Error(`Target environment is ${target.status.toLowerCase()} — try again later`);
+		return {
+			ok: false,
+			error: `Target environment is ${target.status.toLowerCase()} — try again later.`,
+		};
 
 	// Compute the diff + candidate from the two designs.
 	const sourceDesign = (await getProjectAsFormData(projectId, sourceEnvId)).formData;
@@ -102,7 +129,10 @@ export async function promoteEnvironment(
 	const includeRemovals = opts?.includeRemovals ?? false;
 	const diff = diffDesigns(sourceDesign, targetDesign, includeRemovals);
 	if (diffIsEmpty(diff))
-		throw new Error("No structural changes to promote between these environments");
+		return {
+			ok: false,
+			error: "No structural changes to promote between these environments.",
+		};
 	const merged = mergeChangeset(sourceDesign, targetDesign, includeRemovals);
 	const candidateHash = structuralHash(sourceDesign);
 
@@ -128,21 +158,44 @@ export async function promoteEnvironment(
 		});
 	} catch (err) {
 		if (err instanceof Error && /unique|duplicate|one_active_per_target/i.test(err.message))
-			throw new Error("A promotion into this environment is already in progress");
+			return {
+				ok: false,
+				error: "A promotion into this environment is already in progress.",
+			};
 		throw err;
 	}
 
 	// Write the candidate design into the target env, then queue the PLAN for it.
 	await reconcileEnvironmentComponents(projectId, targetEnvId, merged);
-	const { jobId } = await planProject(projectId, opts?.runnerId ?? null, targetEnvId);
+	const planned = await tryPlanProject(projectId, opts?.runnerId ?? null, targetEnvId);
+	if (!planned.ok) {
+		// Release the target's in-flight slot first, so a failure writing the design back cannot
+		// leave the promotion holding it.
+		await withActorScope(actor, (tx) =>
+			tx
+				.update(environmentPromotions)
+				.set({
+					status: "FAILED",
+					error_message: `The plan was refused: ${planned.error}`,
+					completed_at: new Date(),
+					updated_at: new Date(),
+				})
+				.where(eq(environmentPromotions.id, promotion.id)),
+		);
+		await reconcileEnvironmentComponents(projectId, targetEnvId, targetDesign);
+		return {
+			ok: false,
+			error: `${planned.error} The promotion was stopped and ${target.name} was left as it was.`,
+		};
+	}
 	await withActorScope(actor, (tx) =>
 		tx
 			.update(environmentPromotions)
-			.set({ plan_job_id: jobId, updated_at: new Date() })
+			.set({ plan_job_id: planned.jobId, updated_at: new Date() })
 			.where(eq(environmentPromotions.id, promotion.id)),
 	);
 
-	return { promotionId: promotion.id, planJobId: jobId };
+	return { ok: true, promotionId: promotion.id, planJobId: planned.jobId };
 }
 
 /** Computes (without side effects) the promotable diff from source→target, for the promote dialog. */
