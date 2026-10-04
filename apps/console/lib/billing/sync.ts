@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The single write path that maps a Stripe subscription onto an org's
-// organization_billing record (the row that decides entitlements). Idempotent on
-// organization_id, so a replayed webhook event and the synchronous post-payment link
-// step both converge to the same state. Shared by the Stripe webhook
+// organization_billing record (the row that decides entitlements). Idempotent per
+// subscription, so a replayed webhook event and the synchronous post-payment link step both
+// converge to the same state — and guarded across subscriptions, so one subscription's events
+// cannot overwrite a row naming another live one (#5514, lib/billing/queries.ts). Shared by the Stripe webhook
 // (app/api/webhooks/stripe/route.ts) and the new-org link action (server/actions/billing).
 
 import type Stripe from "stripe";
@@ -13,9 +14,9 @@ import { aiTierForPriceId, planForPriceId } from "@/lib/billing/config";
 import { ensureIncludedCredit } from "@/lib/billing/credit-grants";
 import { isBillingActive } from "@/lib/billing/plan";
 import {
+	applyAiSubscriptionToBilling,
+	applySubscriptionToBilling,
 	claimPlanWelcome,
-	upsertOrgAiSubscription,
-	upsertOrgBilling,
 } from "@/lib/billing/queries";
 import { sendPlanWelcomeEmail } from "@/lib/email/billing-email";
 import { billingPlan } from "@/lib/db/schema/enums";
@@ -85,20 +86,42 @@ export function planItem(
 	return sub.items.data.find((i) => i.price.recurring?.usage_type !== "metered");
 }
 
+/** How a sync call was sourced. */
+export interface SyncOptions {
+	/**
+	 * Stripe's `created` time of the event that carried (or triggered the retrieval of) this
+	 * subscription. It is the out-of-order watermark: an event older than the newest one already
+	 * applied for the same subscription is refused. Omitted by server actions, which read the
+	 * subscription live from Stripe and so cannot be stale relative to a delivered event.
+	 */
+	eventAt?: Date;
+}
+
+/** Whether a sync wrote the row, or was refused by the guard in lib/billing/queries.ts. */
+export type SyncOutcome = "applied" | "ignored";
+
 /**
  * Applies a subscription's current state to its org's billing record, resolving the
  * org from `subscription.metadata.organization_id`. Events without it are ignored
  * (logged), so a stray Stripe object can never mutate the wrong tenant.
+ *
+ * The write is CONDITIONAL (#5514, see `applySubscriptionToBilling`): it is refused when the row
+ * names a different live subscription this one does not supersede, when this is an ended
+ * subscription the row does not name, or when the event is older than one already applied. A
+ * refused sync has no side effects — no included credit, no welcome email — because the org is
+ * not on this subscription.
  */
 export async function syncSubscriptionToBilling(
 	sub: Stripe.Subscription,
-): Promise<void> {
+	opts: SyncOptions = {},
+): Promise<SyncOutcome> {
+	const eventAt = opts.eventAt ?? null;
 	const orgId = sub.metadata?.organization_id;
 	if (!orgId) {
 		console.warn(
 			`[stripe] subscription ${sub.id} has no organization_id metadata — ignored`,
 		);
-		return;
+		return "ignored";
 	}
 	const item = planItem(sub);
 	if (!item && sub.items.data.length > 0) {
@@ -115,8 +138,7 @@ export async function syncSubscriptionToBilling(
 	// plan. Route it to the AI columns only (never touch plan/seats), then return.
 	const aiTier = priceId ? aiTierForPriceId(priceId) : null;
 	if (aiTier) {
-		await syncAiSubscriptionToBilling(orgId, sub, aiTier);
-		return;
+		return syncAiSubscriptionToBilling(orgId, sub, aiTier, eventAt);
 	}
 
 	const plan = planFromSubscription(sub, priceId);
@@ -128,7 +150,7 @@ export async function syncSubscriptionToBilling(
 	// isBillingActive). We still retain stripeSubscriptionId/seats so the panel can show
 	// and clean up a pending sub; Stripe auto-expires an abandoned incomplete one.
 	const live = isBillingActive(status);
-	await upsertOrgBilling({
+	const applied = await applySubscriptionToBilling({
 		organizationId: orgId,
 		plan: live && plan ? plan : "community",
 		status,
@@ -140,7 +162,12 @@ export async function syncSubscriptionToBilling(
 			live && item?.current_period_end
 				? new Date(item.current_period_end * 1000)
 				: null,
+		eventAt,
 	});
+	if (!applied) {
+		warnNotApplied(orgId, sub.id, status);
+		return "ignored";
+	}
 
 	// Grant the plan's monthly included usage credit for this period (idempotent,
 	// best-effort). Runs on activation + each renewal sync.
@@ -158,24 +185,46 @@ export async function syncSubscriptionToBilling(
 			}
 		}
 	}
+	return "applied";
+}
+
+/**
+ * Says, loudly, that an event did not reach the row. Not an error — a second subscription's events
+ * are expected to be refused — but a reader looking at a row that disagrees with Stripe needs to
+ * be able to find out why.
+ */
+function warnNotApplied(orgId: string, subId: string, status: BillingStatus): void {
+	console.warn(
+		`[stripe] subscription ${subId} (${status}) not applied to org ${orgId}: the billing row ` +
+			"names a different live subscription it does not supersede, or this event is older than " +
+			"one already applied",
+	);
 }
 
 /**
  * Applies a standalone AI subscription's state to its org's AI columns only. A live
  * (active/trialing) subscription keeps the paid `ai_tier`; anything else lapses the org
  * back to `ai_free` (effectiveAiTier) while retaining the subscription id so the panel can
- * show/clean up a pending sub. The org plan is untouched — AI is orthogonal.
+ * show/clean up a pending sub. The org plan is untouched — AI is orthogonal. Guarded exactly as
+ * the plan write is, over the AI subscription columns.
  */
 async function syncAiSubscriptionToBilling(
 	orgId: string,
 	sub: Stripe.Subscription,
 	tier: "ai_plus" | "ai_max",
-): Promise<void> {
+	eventAt: Date | null,
+): Promise<SyncOutcome> {
 	const status = mapStatus(sub.status);
-	await upsertOrgAiSubscription({
+	const applied = await applyAiSubscriptionToBilling({
 		organizationId: orgId,
 		aiTier: effectiveAiTier(tier, status),
 		aiSubscriptionStatus: status,
 		aiStripeSubscriptionId: sub.id,
+		eventAt,
 	});
+	if (!applied) {
+		warnNotApplied(orgId, sub.id, status);
+		return "ignored";
+	}
+	return "applied";
 }

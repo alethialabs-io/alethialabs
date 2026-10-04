@@ -1,0 +1,2 @@
+ALTER TABLE "organization_billing" ADD COLUMN "stripe_subscription_event_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "organization_billing" ADD COLUMN "ai_stripe_subscription_event_at" timestamp with time zone;
