@@ -54,8 +54,8 @@ async function openMenu() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  queueEnvironmentAudit.mockResolvedValue({ jobId: "job-1" });
-  queueClusterProbe.mockResolvedValue({ jobId: "job-2" });
+  queueEnvironmentAudit.mockResolvedValue({ ok: true, jobId: "job-1" });
+  queueClusterProbe.mockResolvedValue({ ok: true, jobId: "job-2" });
   tryPlanProject.mockResolvedValue({ ok: true, jobId: "job-3" });
   tryQueueDriftDetection.mockResolvedValue({ ok: true, jobId: "job-4" });
 });
@@ -100,14 +100,16 @@ describe("every job the platform can run is reachable from the board", () => {
   });
 });
 
-// The actions throw for HONEST reasons — "run a plan first", "already running", "never deployed".
+// The actions refuse for HONEST reasons — "run a plan first", "already running", "never deployed".
 // Those messages are the answer, and swallowing them would leave the user staring at a menu that
-// silently did nothing.
+// silently did nothing. Since #5454 audit and probe RETURN them, like Plan and drift below: thrown,
+// a production build replaced each sentence with a digest before the toast could show it.
 describe("a refusal explains itself", () => {
   it("surfaces why an audit can't run yet", async () => {
-    queueEnvironmentAudit.mockRejectedValue(
-      new Error("Run a plan first — there's nothing to audit yet."),
-    );
+    queueEnvironmentAudit.mockResolvedValue({
+      ok: false,
+      error: "Run a plan first — there's nothing to audit yet.",
+    });
     const user = await openMenu();
     await user.click(screen.getByText("Audit"));
 
@@ -118,29 +120,32 @@ describe("a refusal explains itself", () => {
   });
 
   it("surfaces why a probe can't run on an undeployed environment", async () => {
-    queueClusterProbe.mockRejectedValue(
-      new Error(
+    queueClusterProbe.mockResolvedValue({
+      ok: false,
+      error:
         "This environment has never been deployed, so there's no cluster to probe.",
-      ),
-    );
+    });
     const user = await openMenu();
     await user.click(screen.getByText("Probe cluster"));
 
     expect(toastError).toHaveBeenCalledWith(
       "This environment has never been deployed, so there's no cluster to probe.",
     );
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("surfaces a duplicate-job refusal rather than queueing a second one", async () => {
-    queueClusterProbe.mockRejectedValue(
-      new Error("A cluster probe is already running for this environment."),
-    );
+    queueClusterProbe.mockResolvedValue({
+      ok: false,
+      error: "A cluster probe is already running for this environment.",
+    });
     const user = await openMenu();
     await user.click(screen.getByText("Probe cluster"));
 
     expect(toastError).toHaveBeenCalledWith(
       "A cluster probe is already running for this environment.",
     );
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 });
 
@@ -191,7 +196,7 @@ describe("the caller is told when a job lands", () => {
   });
 
   it("does not notify when the job was refused", async () => {
-    queueEnvironmentAudit.mockRejectedValue(new Error("nope"));
+    queueEnvironmentAudit.mockResolvedValue({ ok: false, error: "nope" });
     const onQueued = vi.fn();
     const user = userEvent.setup();
     render(
@@ -200,6 +205,21 @@ describe("the caller is told when a job lands", () => {
     await openTrigger(user);
     await user.click(screen.getByText("Audit"));
 
+    expect(onQueued).not.toHaveBeenCalled();
+  });
+
+  it("does not notify, and does not say it was queued, when the action throws", async () => {
+    queueClusterProbe.mockRejectedValue(new Error("boom"));
+    const onQueued = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <RunMenu projectId={PROJECT} environmentId={ENV} onQueued={onQueued} />,
+    );
+    await openTrigger(user);
+    await user.click(screen.getByText("Probe cluster"));
+
+    expect(toastError).toHaveBeenCalledWith("boom");
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(onQueued).not.toHaveBeenCalled();
   });
 });
