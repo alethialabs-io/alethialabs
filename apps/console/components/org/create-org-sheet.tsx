@@ -68,10 +68,11 @@ import {
 	readStoredPaidSetup,
 	recoverUnfinishedPaidSetup,
 	SLUG_TAKEN,
+	pollSettlingPlanState,
 	watchPaidSetup,
 	writePendingPaidSetup,
 } from "@/components/org/pending-paid-setup";
-import type { NewOrgPlanState } from "@/lib/billing/new-org-plan-state";
+import type { NewOrgPlanReport } from "@/lib/billing/new-org-plan-state";
 import type { NewOrgSetupState } from "@/lib/billing/new-org-setup";
 import { ORG_SLUG_MAX, tooLongMessage } from "@/lib/billing/billing-field-caps";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
@@ -238,7 +239,9 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	const [isTrialOrg, setIsTrialOrg] = useState(false);
 	// The plan state the server reported when a PAID setup finished (#5522); null for a trial, which
 	// says its own thing, and before a paid setup has finished.
-	const [paidPlanState, setPaidPlanState] = useState<NewOrgPlanState | null>(null);
+	const [paidPlan, setPaidPlan] = useState<
+		(NewOrgPlanReport & { subscriptionId: string; customerId: string }) | null
+	>(null);
 	const [inviteEmail, setInviteEmail] = useState("");
 	const [inviteRole, setInviteRole] = useState<Role>("operator");
 	const [sent, setSent] = useState<SentInvite[]>([]);
@@ -489,6 +492,26 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		};
 	}, [watchedSubscription]);
 
+	// A paid setup that finished while its payment was still settling re-reads the server for a
+	// minute, so the badge flips to active when Stripe settles the invoice (#5522). Armed once per
+	// charge — the poll follows later answers itself, so its one-minute bound is never re-started.
+	const settlingSub = open && paidPlan ? paidPlan.subscriptionId : null;
+	const settlingCustomer = paidPlan?.customerId ?? null;
+	const armedState = useRef(paidPlan?.planState ?? null);
+	armedState.current = paidPlan?.planState ?? null;
+	useEffect(() => {
+		const initial = armedState.current;
+		if (!settlingSub || !settlingCustomer || !initial) return;
+		return pollSettlingPlanState(
+			{ subscriptionId: settlingSub, customerId: settlingCustomer },
+			initial,
+			(report) =>
+				setPaidPlan((prev) =>
+					prev && prev.subscriptionId === settlingSub ? { ...prev, ...report } : prev,
+				),
+		);
+	}, [settlingSub, settlingCustomer]);
+
 	function reset() {
 		generation.current += 1;
 		// Unregistered NOW, not on the next render: a run ending in between must see no sheet
@@ -514,7 +537,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		setSlugClaimedAfterPayment(false);
 		setConfirmingClose(false);
 		setIsTrialOrg(false);
-		setPaidPlanState(null);
+		setPaidPlan(null);
 		setInviteEmail("");
 		setInviteRole("operator");
 		setSent([]);
@@ -766,7 +789,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			}
 			await fetchWorkspace();
 			setIsTrialOrg(true);
-			setPaidPlanState(null);
+			setPaidPlan(null);
 			toast.success("Trial started — your organization is ready.");
 			setView("invite");
 		} catch (e) {
@@ -849,7 +872,12 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			setCreatedSlug(outcome.slug);
 			setCreatedOrgId(outcome.orgId);
 			setIsTrialOrg(false);
-			setPaidPlanState(outcome.planState);
+			setPaidPlan({
+				planState: outcome.planState,
+				paymentUrl: outcome.paymentUrl,
+				subscriptionId: outcome.subscriptionId,
+				customerId: outcome.customerId,
+			});
 			setView("invite");
 			return;
 		}
@@ -1046,7 +1074,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				{view === "invite" && (
 					<InviteView
 						isTrialOrg={isTrialOrg}
-						paidPlanState={paidPlanState}
+						paidPlan={paidPlan}
 						ownerEmail={ownerEmail}
 						inviteEmail={inviteEmail}
 						setInviteEmail={setInviteEmail}

@@ -79,6 +79,8 @@ export interface NewOrgSetupState {
 	 * invoice's payments as the server read them — the sheet shows it instead of assuming "active".
 	 */
 	planState: NewOrgPlanState;
+	/** Stripe's hosted page to complete an `action_needed` payment; null otherwise. */
+	paymentUrl: string | null;
 	/** The organization created for this subscription, if one exists and the caller owns it. */
 	org: { id: string; slug: string } | null;
 	/** The subscription's metadata names `org` — the link step's Stripe writes landed. */

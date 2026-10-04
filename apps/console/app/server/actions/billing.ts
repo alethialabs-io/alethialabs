@@ -71,7 +71,7 @@ import {
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
 import {
 	type FirstPaymentRead,
-	type NewOrgPlanState,
+	type NewOrgPlanReport,
 	newOrgPlanState,
 	PAYMENT_DEPENDENT_STATUSES,
 } from "@/lib/billing/new-org-plan-state";
@@ -1857,7 +1857,7 @@ export async function linkSubscriptionToNewOrg(input: {
 	 * coverage test found exactly that gap.
 	 */
 	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
-}): Promise<{ planState: NewOrgPlanState }> {
+}): Promise<NewOrgPlanReport> {
 	// NAMED, not ambient (#4133). This runs from a sheet on the CURRENT org's page, against the org
 	// just created — so the address and the target genuinely differ, and always did. It used to work
 	// by asking for the verb in the ambient scope and then asserting that scope WAS the new org,
@@ -1932,17 +1932,23 @@ export async function linkSubscriptionToNewOrg(input: {
 	// What the sheet may say about the plan (#5522): read from the subscription just linked, never
 	// assumed. Stripe keeps it `incomplete` while the first invoice settles, so "active" here would
 	// often be false.
-	return { planState: await readNewOrgPlanState(linked) };
+	return readNewOrgPlanState(linked);
 }
 
 /**
  * The plan state of a create-a-team subscription (#5522): its status, plus — for `incomplete`,
  * `canceled` and `incomplete_expired` — what its first invoice's payments show. A failed payments
  * read is not an error here (the link and the resume must not fail over what they SAY): the state
- * is then decided without it, which claims least.
+ * is then decided without it (`unconfirmed` for an `incomplete` one), which claims least.
+ *
+ * For `action_needed` it also returns Stripe's hosted page for the open first invoice, where the
+ * customer can complete the payment — Billing has no control that finishes a first payment, so the
+ * sheet must not send them there.
  */
-async function readNewOrgPlanState(sub: Stripe.Subscription): Promise<NewOrgPlanState> {
-	if (!PAYMENT_DEPENDENT_STATUSES.has(sub.status)) return newOrgPlanState(sub.status, null);
+async function readNewOrgPlanState(sub: Stripe.Subscription): Promise<NewOrgPlanReport> {
+	if (!PAYMENT_DEPENDENT_STATUSES.has(sub.status)) {
+		return { planState: newOrgPlanState(sub.status, null), paymentUrl: null };
+	}
 	let payment: FirstPaymentRead | null = null;
 	try {
 		const read = await readPaymentAfterCancel(sub);
@@ -1957,7 +1963,29 @@ async function readNewOrgPlanState(sub: Stripe.Subscription): Promise<NewOrgPlan
 	} catch {
 		payment = null;
 	}
-	return newOrgPlanState(sub.status, payment);
+	const planState = newOrgPlanState(sub.status, payment);
+	return {
+		planState,
+		paymentUrl: planState === "action_needed" ? await openInvoicePaymentUrl(sub) : null,
+	};
+}
+
+/**
+ * Stripe's hosted page for a subscription's first invoice while that invoice is still `open` (so it
+ * can be paid or its bank confirmation completed there), or null — when it is not open, has no page,
+ * the page is not https, or the read fails. Only ever a URL Stripe returned for this subscription.
+ */
+async function openInvoicePaymentUrl(sub: Stripe.Subscription): Promise<string | null> {
+	const invoiceId =
+		typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
+	if (!invoiceId) return null;
+	try {
+		const invoice = await getStripe().invoices.retrieve(invoiceId);
+		const url = invoice.hosted_invoice_url;
+		return invoice.status === "open" && url && url.startsWith("https://") ? url : null;
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -2045,7 +2073,7 @@ async function newOrgSetupStateFor(
 		subscriptionId: sub.id,
 		customerId,
 		paid: PAID_SUBSCRIPTION_STATUSES.has(sub.status),
-		planState: await readNewOrgPlanState(sub),
+		...(await readNewOrgPlanState(sub)),
 		org,
 		linked: !!linkedTo,
 		declared,

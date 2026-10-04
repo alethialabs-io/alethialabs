@@ -922,3 +922,37 @@ describe("CreateOrgSheet — a charge the page never heard about is not replaced
 		expect(window.sessionStorage.getItem(KEY)).toBeNull();
 	});
 });
+
+describe("CreateOrgSheet — the plan state a finished paid setup shows (#5522)", () => {
+	it("a link that reports 'not charged' reaches the final view as that state — not as active", async () => {
+		createOrg.mockImplementation(async ({ slug }: { slug: string }) => ({
+			data: { id: "org-new", slug },
+			error: null,
+		}));
+		linkSubscription.mockResolvedValue({ planState: "not_charged", paymentUrl: null });
+		const user = userEvent.setup();
+		await pay(user);
+
+		await screen.findByLabelText("Invite by email");
+		const status = await screen.findByRole("status");
+		expect(status).toHaveTextContent("Not charged");
+		expect(status).toHaveTextContent(/you were not charged/);
+		expect(status).not.toHaveTextContent(/active/i);
+	});
+
+	it("an 'action needed' link carries Stripe's payment page through to the final view", async () => {
+		createOrg.mockImplementation(async ({ slug }: { slug: string }) => ({
+			data: { id: "org-new", slug },
+			error: null,
+		}));
+		linkSubscription.mockResolvedValue({
+			planState: "action_needed",
+			paymentUrl: "https://invoice.stripe.com/i/acct_1/test_inv",
+		});
+		const user = userEvent.setup();
+		await pay(user);
+
+		const link = await screen.findByRole("link", { name: /complete the payment/i });
+		expect(link).toHaveAttribute("href", "https://invoice.stripe.com/i/acct_1/test_inv");
+	});
+});

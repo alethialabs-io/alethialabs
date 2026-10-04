@@ -71,7 +71,13 @@ import {
 	NEW_ORG_SUBSCRIPTION_KEY,
 	type NewOrgSetupState,
 } from "@/lib/billing/new-org-setup";
-import { NEW_ORG_PLAN_COPY, type NewOrgPlanState } from "@/lib/billing/new-org-plan-state";
+import {
+	actionNeededNextStep,
+	NEW_ORG_PLAN_COPY,
+	type NewOrgPlanReport,
+	type NewOrgPlanState,
+	SETTLING_PLAN_STATES,
+} from "@/lib/billing/new-org-plan-state";
 import { TAX_ID_TYPES, type TaxIdType } from "@/lib/billing/tax-ids";
 import {
 	ORG_SLUG_RESERVED_CODE,
@@ -273,6 +279,11 @@ export type PaidSetupOutcome =
 			slug: string;
 			/** What the server says about the plan — the final view and the toast show this, never "active" by default (#5522). */
 			planState: NewOrgPlanState;
+			/** Stripe's hosted page to complete an `action_needed` payment; null otherwise. */
+			paymentUrl: string | null;
+			/** The charge's ids, so the sheet can re-read a settling state from the server. */
+			subscriptionId: string;
+			customerId: string;
 	  }
 	| { kind: "slug-refused"; message: string; record: PendingPaidSetup }
 	| {
@@ -410,8 +421,9 @@ async function runSteps(
 	const ids = { subscriptionId: record.subscriptionId, customerId: record.customerId };
 	let finishedOrgId = "";
 	// The plan state the SERVER reported (#5522): from the link, or — when the link already landed —
-	// from the resume lookup. Set on every path that reaches the end of the try below.
-	let planState: NewOrgPlanState = "processing";
+	// from the resume lookup. Null until the server has said; a run that somehow ends without an
+	// answer says `unconfirmed`, never a state nobody read.
+	let report: NewOrgPlanReport | null = null;
 	try {
 		// The slug and the checkout details onto the SERVER's record, so a resume from another tab
 		// restores them. The checkout already saved them before the charge; this run re-saves because the
@@ -467,7 +479,7 @@ async function runSteps(
 				"Your payment went through, but it isn't tied to this account. Contact support with the time of the payment — you won't be charged again.",
 			);
 		}
-		planState = server.planState;
+		report = { planState: server.planState, paymentUrl: server.paymentUrl };
 		let orgId = server.org?.id ?? null;
 		if (server.org) {
 			if (record.createdOrgId !== server.org.id) {
@@ -533,7 +545,7 @@ async function runSteps(
 					billingCountry: record.declaration.billingCountry,
 				},
 			});
-			planState = link.planState;
+			report = link;
 			save({ ...record, linked: true });
 		}
 
@@ -570,9 +582,73 @@ async function runSteps(
 	// Says what the server reported, not what a finished setup is assumed to mean (#5522): only an
 	// active plan is announced as one. A state that asks something of the customer stays on screen,
 	// because with the sheet closed the toast is the only place it is said.
+	const planState = report?.planState ?? "unconfirmed";
+	const paymentUrl = report?.paymentUrl ?? null;
 	const copy = NEW_ORG_PLAN_COPY[planState];
 	if (planState === "active") toast.success(copy.toast);
-	else if (planState === "processing") toast.info(copy.toast);
-	else toast.warning(copy.toast, { duration: Number.POSITIVE_INFINITY });
-	return { kind: "done", orgId: finishedOrgId, slug: record.createdSlug, planState };
+	else if (SETTLING_PLAN_STATES.has(planState)) toast.info(copy.toast);
+	else {
+		const next = planState === "action_needed" ? ` ${actionNeededNextStep(paymentUrl)}` : "";
+		toast.warning(`${copy.toast}${next}`, { duration: Number.POSITIVE_INFINITY });
+	}
+	return {
+		kind: "done",
+		orgId: finishedOrgId,
+		slug: record.createdSlug,
+		planState,
+		paymentUrl,
+		subscriptionId: record.subscriptionId,
+		customerId: record.customerId,
+	};
+}
+
+/** How often, and for how long, a settling plan state is re-read from the server. */
+const PLAN_STATE_POLL = { intervalMs: 3_000, timeoutMs: 60_000 } as const;
+
+/**
+ * Re-reads a finished setup's plan state from the server while it is settling (`processing` or
+ * `unconfirmed`, #5522), so the view flips to `active` once Stripe settles the first invoice — every
+ * `intervalMs` for at most `timeoutMs`, then it stops and the last true state stays on screen.
+ * `onReport` is called with every answer that differs from the last; polling stops as soon as one is
+ * no longer settling. A failed read is skipped (the next tick asks again). Returns the stop function.
+ */
+export function pollSettlingPlanState(
+	ids: { subscriptionId: string; customerId: string },
+	initial: NewOrgPlanState,
+	onReport: (report: NewOrgPlanReport) => void,
+	opts: { intervalMs: number; timeoutMs: number } = PLAN_STATE_POLL,
+): () => void {
+	if (!SETTLING_PLAN_STATES.has(initial)) return () => {};
+	let last = initial;
+	let stopped = false;
+	let inFlight = false;
+	const deadline = Date.now() + opts.timeoutMs;
+	const stop = () => {
+		stopped = true;
+		clearInterval(timer);
+	};
+	const timer = setInterval(() => {
+		if (stopped || inFlight) return;
+		if (Date.now() > deadline) {
+			stop();
+			return;
+		}
+		inFlight = true;
+		void resolveNewOrgSetup(ids)
+			.then((state) => {
+				if (stopped || !state) return;
+				if (state.planState !== last) {
+					last = state.planState;
+					onReport({ planState: state.planState, paymentUrl: state.paymentUrl });
+				}
+				if (!SETTLING_PLAN_STATES.has(state.planState)) stop();
+			})
+			.catch(() => {
+				// Skipped: the next tick asks again, and the screen keeps the last true state.
+			})
+			.finally(() => {
+				inFlight = false;
+			});
+	}, opts.intervalMs);
+	return stop;
 }

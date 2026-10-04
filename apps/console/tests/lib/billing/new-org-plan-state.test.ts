@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+	actionNeededNextStep,
 	NEW_ORG_PLAN_COPY,
 	NEW_ORG_PLAN_STATES,
 	newOrgPlanState,
@@ -41,13 +42,33 @@ describe("newOrgPlanState", () => {
 		expect(newOrgPlanState("paused", null)).toBe("not_active");
 	});
 
-	it("an unread or unrecognised payment on an incomplete subscription claims only 'being confirmed'", () => {
-		expect(newOrgPlanState("incomplete", null)).toBe("processing");
-		expect(newOrgPlanState("incomplete", "unrecognised")).toBe("processing");
+	it("a payments read that failed, or could not be understood, is unconfirmed — never 'processing'", () => {
+		expect(newOrgPlanState("incomplete", null)).toBe("unconfirmed");
+		expect(newOrgPlanState("incomplete", "unrecognised")).toBe("unconfirmed");
 	});
 });
 
 describe("NEW_ORG_PLAN_COPY", () => {
+	it("an unconfirmed payment says so, and never that there is nothing more to do", () => {
+		const { sentence, toast } = NEW_ORG_PLAN_COPY.unconfirmed;
+		expect(`${sentence} ${toast}`).toMatch(/couldn't confirm/);
+		expect(`${sentence} ${toast}`).not.toMatch(/nothing more/);
+	});
+
+	it("action needed does not send the customer to Billing, which has nothing to finish it with", () => {
+		const { sentence, toast } = NEW_ORG_PLAN_COPY.action_needed;
+		expect(`${sentence} ${toast} ${actionNeededNextStep(null)} ${actionNeededNextStep("https://x")}`).not.toMatch(
+			/Billing/,
+		);
+	});
+
+	it("names the plan as Billing does (Pro), never 'Team plan'", () => {
+		for (const state of NEW_ORG_PLAN_STATES) {
+			const { sentence, toast } = NEW_ORG_PLAN_COPY[state];
+			expect(`${sentence} ${toast}`).not.toMatch(/Team plan/);
+		}
+	});
+
 	it("only the active state says the subscription is active", () => {
 		for (const state of NEW_ORG_PLAN_STATES) {
 			const { toast, sentence, label } = NEW_ORG_PLAN_COPY[state];
