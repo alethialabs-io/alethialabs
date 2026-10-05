@@ -22,18 +22,20 @@
 // writes R8 under the same org's slug into the same file — two disjoint predicate sets about one
 // organisation, joined by `audit-report.mjs` as the `interaction` section.
 //
-// ── EVERY ROW IT SEEDS IT DELETES ───────────────────────────────────────────────────────────────
+// ── EVERY ROW IT SEEDS IT DELETES, BUT TWO ──────────────────────────────────────────────────────
 //
 // `inert.spec.ts` runs after this file in the same project and org, and counts the controls each
-// list renders; `afterAll` removes exactly what `seedFilterFixtures()` wrote.
+// list renders; `afterAll` removes exactly what `seedFilterFixtures()` wrote. The two activity events
+// are the exception: `authz_activity_log` refuses a DELETE outside its retention GC, so they stay in
+// the run's org. `seed-filters.ts` says why they are written anyway.
 
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
 import { closeDb } from "../helpers/db";
-import { cleanFilterFixtures, seedFilterFixtures, type FilterFixtures } from "../helpers/seed-filters";
+import { cleanFilterFixtures, SEEDED_ROUTES, seedFilterFixtures, type FilterFixtures } from "../helpers/seed-filters";
 import { materialize, resolveOrgSlug, resolveOwner, type AuditContext } from "./context";
-import { filtersControl, measureRoute, subjectSet, type FilterRoute, type Outcome } from "./filters";
+import { filtersControl, measureRoute, MIN_ROWS, subjectSet, type FilterRoute, type Outcome } from "./filters";
 import { consoleRoutes } from "./manifest";
 import { createReport } from "./report";
 
@@ -162,6 +164,19 @@ test("F8–F10 measured something — a column of NOT MEASURED is not a pass, an
 		if (mine.length !== manifest.routes.length) problems.push(`${id} has ${mine.length} record(s) for ${manifest.routes.length} routes — a route recorded nowhere shrinks the denominator to fit the answer.`);
 		if (measured.length < MIN_MEASURED) problems.push(`${id}: ${measured.length} route(s) produced a PASS or a FAIL, under the floor of ${MIN_MEASURED}.`);
 	}
+	// THE SEEDED ROUTES. `seed-filters.ts` writes a narrowing pair for each of these, so a NOT MEASURED
+	// whose evidence shows the list ANSWERED — fewer than MIN_ROWS rows, or every counted option
+	// covering every row — is that file's pair failing to reach the page, and is a problem here rather
+	// than a column (#5471: the activity feeds sat NOT MEASURED because nothing seeded them, and their
+	// rows came from whatever earlier specs did). A NOT MEASURED with no answered list (no count read,
+	// still busy) is about the page or the run, not the pair, and stays the column it already is.
+	for (const route of SEEDED_ROUTES) {
+		if (!manifest.routes.some((r) => r.route === route)) problems.push(`seed-filters.ts lists ${route} in SEEDED_ROUTES and the route manifest has no such route — a misspelt entry would be held to nothing.`);
+	}
+	for (const r of records) {
+		if (r.predicate === "F10" || r.verdict !== "NOT MEASURED" || !SEEDED_ROUTES.includes(r.route)) continue;
+		if (pairMissing(r.evidence)) problems.push(`${r.route} ${r.predicate} is NOT MEASURED although seed-filters.ts seeds it a pair — the pair did not reach the page: ${r.reason ?? "(no reason recorded)"}`);
+	}
 	const withheld = report.withheld().get("F8");
 	if (withheld !== undefined) problems.push(`the positive control was red, so every verdict was withheld: ${withheld}`);
 
@@ -175,8 +190,22 @@ test("F8–F10 measured something — a column of NOT MEASURED is not a pass, an
 	expect(problems.join("\n"), `this run may not be read as an F8–F10 board:\n${lines.join("\n")}`).toBe("");
 });
 
+/**
+ * Whether a NOT MEASURED record's evidence shows a list that answered and still had no narrowing
+ * pair: an answered count under MIN_ROWS, or the option list a facet search gave up on. Evidence of
+ * any other shape — or none — is not read as a missing pair.
+ */
+function pairMissing(evidence: unknown): boolean {
+	if (typeof evidence !== "object" || evidence === null) return false;
+	if ("options" in evidence && Array.isArray(evidence.options)) return true;
+	if (!("count" in evidence)) return false;
+	const count = evidence.count;
+	if (typeof count !== "object" || count === null || !("value" in count) || !("busy" in count)) return false;
+	return count.busy === false && typeof count.value === "number" && count.value < MIN_ROWS;
+}
+
 /** The shape `report.write()` produces. Narrowed, never cast — CLAUDE.md §6. */
-function isRecordFile(value: unknown): value is { records: { route: string; predicate: string; verdict: string; reason?: string }[] } {
+function isRecordFile(value: unknown): value is { records: { route: string; predicate: string; verdict: string; reason?: string; evidence?: unknown }[] } {
 	return (
 		typeof value === "object" &&
 		value !== null &&

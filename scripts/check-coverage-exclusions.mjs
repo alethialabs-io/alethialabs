@@ -223,13 +223,13 @@ const MARKER_KEYS = ["issue", "reason"];
  * and #4105 enrolled all three in one PR, so the win is banked here in the same diff.
  *
  * WHAT ZERO ACTUALLY ASSERTS, stated exactly, because this doc is what a future reader consults
- * when deciding whether raising this number back above 0 is legitimate. It is NOT "all six
+ * when deciding whether raising this number back above 0 is legitimate. It is NOT "all seven
  * coverage-emitting projects carry a manifest" — they do not, and they are not meant to. The run
- * prints `6 coverage-emitting config(s) · 4 manifest(s)`: `packages/format` and
- * `packages/plan-catalog` emit coverage, hide nothing (no `exclude:`, a pure-glob
+ * prints `7 coverage-emitting config(s) · 4 manifest(s)`: `packages/format`,
+ * `packages/plan-catalog` and `packages/org-slug` emit coverage, hide nothing (no `exclude:`, a pure-glob
  * `include: ["src/**"]`), and correctly owe no manifest. The invariant is the pair:
  * EVERY PROJECT THAT HIDES SOMETHING IS MANIFESTED, AND ZERO OF THEM ARE DEFERRED. The first half
- * is held by D0's unenrolled direction and by D3, which fire the moment either of those two gains
+ * is held by D0's unenrolled direction and by D3, which fire the moment any of those three gains
  * an `exclude:` or a hand-listed `include:`; the second half is this number. So a NEW marker
  * cannot be added without raising this line and saying why in the PR, and "every exclusion is
  * manifested" is no longer a claim about the projects that happen to carry one.

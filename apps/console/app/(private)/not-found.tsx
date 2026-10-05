@@ -37,14 +37,11 @@ export default function PrivateNotFound() {
 			title="Organization not found"
 			description="This organization doesn't exist, or you don't have access to it."
 			actions={
-				// See the sibling boundary at `[org]/not-found.tsx`: base-ui's Button stamps
-				// `role="button"` on a non-native render, so this anchor announced itself as a
-				// button. THE TWO 404s ARE FIXED TOGETHER ON PURPOSE — #4267's scope names only the
-				// `[org]` one, but "the org 404" in its prose is THIS file (the header above says
-				// why the org's own failure cannot reach `[org]/not-found.tsx`), and a "Go home"
-				// that is a link on one 404 and a button on the other is the disagreement the
-				// shared-surface rule exists to prevent.
-				<Button size="sm" nativeButton={false} role="link" render={<Link href="/" />}>
+				// "Go home" is an `<a href>` and is announced as a link: `@repo/ui/button` gives a
+				// `render` element with an `href` `role="link"` (#5444), so it needs no role of its
+				// own. It must read the same on every 404 — a link here and a button on
+				// `[org]/not-found.tsx` is the disagreement the shared-surface rule exists to prevent.
+				<Button size="sm" nativeButton={false} render={<Link href="/" />}>
 					Go home
 				</Button>
 			}

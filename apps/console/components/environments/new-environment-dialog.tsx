@@ -61,11 +61,18 @@ export function NewEnvironmentDialog({
 	// `<Label>` above it names it only if something associates the two. It carried neither an
 	// `htmlFor` nor an id, so the base picker was an unnamed combobox (#4630).
 	const baseLabelId = useId();
+	const nameErrorId = useId();
 	const defaultBase = envs.find((e) => e.is_default) ?? envs[0];
 	const [name, setName] = useState("");
 	const [mode, setMode] = useState<Mode>("duplicate");
 	const [baseId, setBaseId] = useState<string>(defaultBase?.id ?? "");
 	const [submitting, setSubmitting] = useState(false);
+	/**
+	 * Why the server refused the name, shown under the field it is about. The action RETURNS this
+	 * (#5445); it used to throw it, and a production build replaced the sentence with a digest
+	 * before the toast below could show it.
+	 */
+	const [nameError, setNameError] = useState<string | null>(null);
 
 	// When (re)opened, seed the base from `defaultBaseId` (the duplicated env) if given.
 	useEffect(() => {
@@ -79,13 +86,14 @@ export function NewEnvironmentDialog({
 	/** Resets the form to its defaults (called on close + after a successful create). */
 	function reset() {
 		setName("");
+		setNameError(null);
 		setMode("duplicate");
 		setBaseId(defaultBase?.id ?? "");
 	}
 
 	async function submit() {
 		if (!name.trim()) {
-			toast.error("Environment name is required");
+			setNameError("Environment name is required");
 			return;
 		}
 		if (mode === "duplicate" && !baseId) {
@@ -93,11 +101,17 @@ export function NewEnvironmentDialog({
 			return;
 		}
 		setSubmitting(true);
+		setNameError(null);
 		try {
-			const { environment } =
+			const res =
 				mode === "duplicate"
 					? await duplicateEnvironment(projectId, baseId, name)
 					: await addEnvironment(projectId, { name, stage: "development" });
+			if (!res.ok) {
+				setNameError(res.error);
+				return;
+			}
+			const { environment } = res;
 			toast.success(
 				mode === "duplicate" ? "Environment duplicated" : "Environment created",
 			);
@@ -144,11 +158,21 @@ export function NewEnvironmentDialog({
 						<Input
 							id="env-name"
 							value={name}
-							onChange={(e) => setName(e.target.value)}
+							onChange={(e) => {
+								setName(e.target.value);
+								setNameError(null);
+							}}
 							placeholder="staging"
 							className="h-9 text-sm"
+							aria-invalid={nameError ? true : undefined}
+							aria-describedby={nameError ? nameErrorId : undefined}
 							autoFocus
 						/>
+						{nameError && (
+							<p id={nameErrorId} role="alert" className="text-ui-xs text-destructive">
+								{nameError}
+							</p>
+						)}
 					</div>
 
 					<div className="space-y-2">

@@ -18,6 +18,7 @@ import {
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
+import { roleDisplayName } from "@/lib/authz/registry";
 import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
@@ -86,7 +87,7 @@ function RailRow({
 		>
 			<span
 				className={cn(
-					"truncate text-ui-md capitalize",
+					"truncate text-ui-md",
 					active ? "font-medium text-text-primary" : "text-text-secondary",
 				)}
 			>
@@ -283,7 +284,7 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 								builtinList.map((r) => (
 									<RailRow
 										key={r.id}
-										name={r.name}
+										name={roleDisplayName(r.name, r.builtin)}
 										count={r.permissionKeys.length}
 										active={selectedId === r.id}
 										onClick={() => setSelectedId(r.id)}
@@ -308,7 +309,7 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 								custom.map((r) => (
 									<RailRow
 										key={r.id}
-										name={r.name}
+										name={roleDisplayName(r.name, r.builtin)}
 										count={r.permissionKeys.length}
 										active={selectedId === r.id}
 										onClick={() => setSelectedId(r.id)}
@@ -401,8 +402,8 @@ function RoleDetail({
 				<div className="min-w-0">
 					<div className="flex items-center gap-2">
 						<Shield size={15} className="text-text-tertiary" />
-						<span className="text-ui-lg font-semibold capitalize text-text-primary">
-							{role.name}
+						<span className="text-ui-lg font-semibold text-text-primary">
+							{roleDisplayName(role.name, role.builtin)}
 						</span>
 						<span className="rounded-full border border-border-strong px-2 py-0.5 font-mono text-ui-3xs uppercase tracking-[0.1em] text-text-secondary">
 							{role.builtin ? "Built-in" : "Custom"}

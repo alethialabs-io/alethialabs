@@ -46,6 +46,8 @@ import { declarePayer, payerConversionStatus } from "@/app/server/actions/legal"
 const CONSOLE = process.cwd();
 const UPGRADE_SHEET = join(CONSOLE, "components/org/upgrade-org-sheet.tsx");
 const CREATE_SHEET = join(CONSOLE, "components/org/create-org-sheet.tsx");
+/** The create sheet's post-payment steps (link, declare) — moved out of the sheet so a close cannot orphan them (#5445). */
+const PAID_SETUP = join(CONSOLE, "components/org/pending-paid-setup.ts");
 const DECLARATION_FORM = join(
 	CONSOLE,
 	"components/billing/payer-declaration-form.tsx",
@@ -85,7 +87,7 @@ describe("the payer declaration is reachable from the product", () => {
 	});
 
 	it("gives `declarePayer` a caller — the defect this test exists for", () => {
-		const callers = [UPGRADE_SHEET, CREATE_SHEET].filter((p) =>
+		const callers = [UPGRADE_SHEET, CREATE_SHEET, PAID_SETUP].filter((p) =>
 			read(p).includes("declarePayer("),
 		);
 		if (callers.length === 0) {
@@ -103,13 +105,18 @@ describe("the payer declaration is reachable from the product", () => {
 	// and the type system could not notice because every one of them is optional (it has to be:
 	// the gate's inputs are optional, its verdict is not).
 	it("passes `payer` to every conversion call that takes it", () => {
-		const src = read(CREATE_SHEET);
-		for (const call of [
-			"createNewOrgSubscriptionIntent",
-			"linkSubscriptionToNewOrg",
-		]) {
+		// Each call is read in the file that makes it: the intent is opened by the sheet, the link
+		// runs in the post-payment steps (pending-paid-setup.ts). A call that moves again fails here
+		// as "disappeared" rather than passing on a file that no longer contains it.
+		const calls: ReadonlyArray<readonly [string, string]> = [
+			["createNewOrgSubscriptionIntent", CREATE_SHEET],
+			["linkSubscriptionToNewOrg", PAID_SETUP],
+		];
+		for (const [call, path] of calls) {
+			const src = read(path);
+			const file = path.slice(CONSOLE.length + 1);
 			const at = src.indexOf(`${call}(`);
-			if (at === -1) throw new Error(`${call} has disappeared from create-org-sheet.tsx`);
+			if (at === -1) throw new Error(`${call} has disappeared from ${file}`);
 			// Every occurrence, not the first: the currency toggle re-creates the intent, and an
 			// un-declared re-creation is refused exactly as the first one would have been.
 			let index = at;
@@ -117,7 +124,7 @@ describe("the payer declaration is reachable from the product", () => {
 				const body = src.slice(index, index + 600);
 				if (!body.includes("payer:")) {
 					throw new Error(
-						`a call to ${call} in create-org-sheet.tsx does not pass \`payer:\`. Without it the ` +
+						`a call to ${call} in ${file} does not pass \`payer:\`. Without it the ` +
 							`eligibility gate sees capacity: null and refuses the sale.`,
 					);
 				}

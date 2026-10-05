@@ -272,6 +272,29 @@ variable "aks_authorized_ip_ranges" {
   description = "CIDRs allow-listed on the AKS public API server (api_server_access_profile.authorized_ip_ranges). Empty = open to all (unchanged)."
 }
 
+# Control-plane log retention (CUSTOMIZABILITY-PARITY top gap #1; aws parity:
+# eks_cloudwatch_log_group_retention_in_days). Null (default) creates NOTHING — no Log Analytics
+# workspace, no oms_agent, no diagnostic setting — so every existing cluster plans unchanged and
+# nobody starts paying for ingestion they did not ask for. Set, it creates one workspace with this
+# retention, points the AKS monitoring add-on at it, and ships kube-apiserver + kube-audit-admin
+# there. See aks.tf. A workspace bills per GB ingested.
+variable "aks_log_retention_days" {
+  type        = number
+  default     = null
+  description = "Days to keep AKS control-plane logs (kube-apiserver, kube-audit-admin) in a Log Analytics workspace this template creates. 30-730. Null = no workspace and no log shipping (unchanged). Billed per GB ingested."
+
+  validation {
+    # Log Analytics' PerGB2018 tier accepts 30-730 days; anything outside fails at apply with an
+    # error that names the workspace, not this knob.
+    #
+    # try(), not `null ? … : …` or `== null || …`: neither operator short-circuits on the runner's
+    # tofu 1.9 (#1931), so a comparison against null would error instead of passing. A null makes
+    # the first argument fail, and the fallback then answers "is it null" — true only for null.
+    condition     = try(var.aks_log_retention_days >= 30 && var.aks_log_retention_days <= 730 && floor(var.aks_log_retention_days) == var.aks_log_retention_days, var.aks_log_retention_days == null)
+    error_message = "aks_log_retention_days must be a whole number of days from 30 to 730 (the Log Analytics PerGB2018 range), or null to ship no control-plane logs."
+  }
+}
+
 #########################################################################
 ##                   Azure DB Variables                                ##
 #########################################################################
@@ -339,6 +362,67 @@ variable "azure_db_allowed_cidrs" {
   description = "Source CIDRs allow-listed on the Azure DB public endpoint. Empty = no firewall rules, server stays private (unchanged)."
 }
 
+# DB log exports (CUSTOMIZABILITY-PARITY top gap #5; aws parity: rds_enabled_cloudwatch_logs_exports).
+# Empty (default) creates no diagnostic setting. The categories are the flexible server's own log
+# categories, and they differ by engine — the engine match is enforced at plan in azure-db.tf,
+# because a variable validation here may not read azure_db_engine on the runner's tofu.
+variable "azure_db_log_exports" {
+  type        = list(string)
+  default     = []
+  description = "Flexible Server log categories to ship to Log Analytics. PostgreSQL: PostgreSQLLogs, PostgreSQLFlexSessions, PostgreSQLFlexQueryStoreRuntime, PostgreSQLFlexQueryStoreWaitStats, PostgreSQLFlexTableStats, PostgreSQLFlexDatabaseXacts. MySQL: MySqlSlowLogs, MySqlAuditLogs. Empty = no log shipping (unchanged). Billed per GB ingested."
+
+  validation {
+    condition = alltrue([for c in var.azure_db_log_exports : contains([
+      "PostgreSQLLogs", "PostgreSQLFlexSessions", "PostgreSQLFlexQueryStoreRuntime",
+      "PostgreSQLFlexQueryStoreWaitStats", "PostgreSQLFlexTableStats", "PostgreSQLFlexDatabaseXacts",
+      "MySqlSlowLogs", "MySqlAuditLogs",
+    ], c)])
+    error_message = "azure_db_log_exports accepts only Flexible Server log categories. PostgreSQL: PostgreSQLLogs, PostgreSQLFlexSessions, PostgreSQLFlexQueryStoreRuntime, PostgreSQLFlexQueryStoreWaitStats, PostgreSQLFlexTableStats, PostgreSQLFlexDatabaseXacts. MySQL: MySqlSlowLogs, MySqlAuditLogs."
+  }
+
+  validation {
+    condition     = length(distinct(var.azure_db_log_exports)) == length(var.azure_db_log_exports)
+    error_message = "azure_db_log_exports lists a category twice; a diagnostic setting accepts each category once."
+  }
+}
+
+# Where azure_db_log_exports go when this template is not creating a workspace (aks_log_retention_days
+# unset). A full Log Analytics workspace resource id. Empty + no template workspace + a non-empty
+# azure_db_log_exports is REFUSED at plan (azure-db.tf), never silently skipped.
+variable "azure_db_log_workspace_id" {
+  type        = string
+  default     = ""
+  description = "Resource id of an existing Log Analytics workspace to receive azure_db_log_exports. Required when azure_db_log_exports is set and aks_log_retention_days is not; ignored when the template creates its own workspace."
+
+  validation {
+    condition     = var.azure_db_log_workspace_id == "" || can(regex("(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.OperationalInsights/workspaces/[^/]+$", var.azure_db_log_workspace_id))
+    error_message = "azure_db_log_workspace_id must be a Log Analytics workspace resource id: /subscriptions/<id>/resourceGroups/<rg>/providers/Microsoft.OperationalInsights/workspaces/<name>."
+  }
+}
+
+# Server parameters (CUSTOMIZABILITY-PARITY top gap #7; gcp parity: cloud_sql_database_flags). One
+# *_flexible_server_configuration per entry, for whichever engine is provisioned. Empty (default)
+# creates none. Parameters that could switch transport encryption off or down are refused here,
+# not left to the server to accept.
+variable "azure_db_database_flags" {
+  type        = map(string)
+  default     = {}
+  description = "Flexible Server parameters as name = value, e.g. { max_connections = \"200\", log_min_duration_statement = \"500\" }. Applied to whichever engine is provisioned. TLS parameters (require_secure_transport, ssl_min_protocol_version, tls_version) are refused. Empty = server defaults (unchanged)."
+
+  validation {
+    condition     = alltrue([for k in keys(var.azure_db_database_flags) : can(regex("^[a-z][a-z0-9_.]*$", k))])
+    error_message = "azure_db_database_flags keys must be server parameter names: lowercase letters, digits, '_' and '.', starting with a letter (e.g. max_connections, pg_qs.query_capture_mode)."
+  }
+
+  validation {
+    # Refused by NAME, not by value: the only values worth setting on these weaken the server
+    # (require_secure_transport=OFF, a TLS 1.0/1.1 floor), and the defaults are already the strict
+    # ones. A user who needs one of them changes it with eyes open, outside this template.
+    condition     = length(setintersection(toset(keys(var.azure_db_database_flags)), toset(["require_secure_transport", "ssl_min_protocol_version", "tls_version"]))) == 0
+    error_message = "azure_db_database_flags may not set require_secure_transport, ssl_min_protocol_version or tls_version: each can turn TLS off or allow TLS below 1.2 on the database. The server defaults already require TLS 1.2."
+  }
+}
+
 #########################################################################
 ##                   Azure Cache (Redis) Variables                     ##
 #########################################################################
@@ -380,6 +464,39 @@ variable "azure_cache_multi_az" {
   type        = bool
   default     = false
   description = "Whether to enable zone redundancy for Azure Cache for Redis (requires Premium SKU)"
+}
+
+# Cache logging (CUSTOMIZABILITY-PARITY top gap #9; aws parity: the ElastiCache log delivery
+# configuration). Empty (default) creates no diagnostic setting. Same destination rule as
+# azure_db_log_exports: the template's workspace when aks_log_retention_days created one, otherwise
+# azure_cache_log_workspace_id, otherwise refused at plan.
+variable "azure_cache_log_categories" {
+  type        = list(string)
+  default     = []
+  description = "Azure Managed Redis diagnostic log categories to ship to Log Analytics. Accepted: ConnectionEvents. Empty = no log shipping (unchanged). Billed per GB ingested."
+
+  validation {
+    # Microsoft.Cache/redisEnterprise/databases exposes exactly one log category. The list shape is
+    # kept so a category Azure adds later is a validation change, not a type change.
+    condition     = alltrue([for c in var.azure_cache_log_categories : contains(["ConnectionEvents"], c)])
+    error_message = "azure_cache_log_categories accepts only ConnectionEvents, the one log category Azure Managed Redis emits."
+  }
+
+  validation {
+    condition     = length(distinct(var.azure_cache_log_categories)) == length(var.azure_cache_log_categories)
+    error_message = "azure_cache_log_categories lists a category twice; a diagnostic setting accepts each category once."
+  }
+}
+
+variable "azure_cache_log_workspace_id" {
+  type        = string
+  default     = ""
+  description = "Resource id of an existing Log Analytics workspace to receive azure_cache_log_categories. Required when azure_cache_log_categories is set and aks_log_retention_days is not; ignored when the template creates its own workspace."
+
+  validation {
+    condition     = var.azure_cache_log_workspace_id == "" || can(regex("(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.OperationalInsights/workspaces/[^/]+$", var.azure_cache_log_workspace_id))
+    error_message = "azure_cache_log_workspace_id must be a Log Analytics workspace resource id: /subscriptions/<id>/resourceGroups/<rg>/providers/Microsoft.OperationalInsights/workspaces/<name>."
+  }
 }
 
 #########################################################################
@@ -580,9 +697,13 @@ variable "storage_containers" {
     # Per container because that is how it is chosen; applied per ACCOUNT because that is the only
     # scope azurerm offers. modules/storage-account/main.tf carries the aggregation and the reason.
     versioning_enabled = optional(bool, false)
+    # CMEK (CUSTOMIZABILITY-PARITY top gap #8). The same per-container/per-account split as
+    # versioning: encryption is a property of the ACCOUNT, so any container asking for it encrypts
+    # the whole account under a key in this project's Key Vault. See storage-account.tf.
+    cmek_enabled = optional(bool, false)
   }))
   default     = []
-  description = "List of storage containers to create in the Storage Account"
+  description = "List of storage containers to create in the Storage Account. `cmek_enabled` on any container encrypts the whole account with a customer-managed key in the project's Key Vault (requires key_vault_purge_protection_enabled)."
 }
 
 #########################################################################

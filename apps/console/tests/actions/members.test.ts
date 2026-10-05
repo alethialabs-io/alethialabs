@@ -54,6 +54,7 @@ function orderedColumns(call: unknown[]): unknown[] {
 function mockDb(resultSets: unknown[][]) {
 	const queue = [...resultSets];
 	const setSpy = vi.fn();
+	const updateSpy = vi.fn();
 	const orderBySpy = vi.fn();
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
@@ -72,7 +73,10 @@ function mockDb(resultSets: unknown[][]) {
 			orderBySpy(...a);
 			return db;
 		},
-		update: () => db,
+		update: (table: unknown) => {
+			updateSpy(table);
+			return db;
+		},
 		set: (...a: unknown[]) => {
 			setSpy(...a);
 			return db;
@@ -81,7 +85,7 @@ function mockDb(resultSets: unknown[][]) {
 			resolve(queue.length ? (queue.shift() ?? []) : []),
 	});
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
-	return { setSpy, orderBySpy };
+	return { setSpy, updateSpy, orderBySpy };
 }
 
 beforeEach(() => {
@@ -278,6 +282,23 @@ describe("setMemberSuspended", () => {
 		});
 	});
 
+	// #5472: an admin who invited a second account they control, and is then suspended, must not
+	// see that account get in. Against the previous head the suspension wrote only the member row.
+	it("suspending cancels the member's own pending invitations into the org; reactivating does not touch them", async () => {
+		const { setSpy, updateSpy } = mockDb([
+			[{ orgId: "org-1", userId: "user-BBB", role: "admin" }],
+		]);
+		await setMemberSuspended("m-2", true);
+		expect(updateSpy).toHaveBeenCalledWith(member);
+		expect(updateSpy).toHaveBeenCalledWith(invitation);
+		expect(setSpy).toHaveBeenCalledWith({ status: "canceled" });
+
+		vi.clearAllMocks();
+		const reactivated = mockDb([[{ orgId: "org-1", userId: "user-BBB", role: "admin" }]]);
+		await setMemberSuspended("m-2", false);
+		expect(reactivated.updateSpy).not.toHaveBeenCalledWith(invitation);
+	});
+
 	it("reactivates a member: restores status and re-grants by role", async () => {
 		const { setSpy } = mockDb([
 			[{ orgId: "org-1", userId: "user-BBB", role: "admin" }],
@@ -310,6 +331,29 @@ describe("setMemberSuspended", () => {
 			/owner can't be suspended/,
 		);
 		expect(revokeMemberGrant).not.toHaveBeenCalled();
+	});
+
+	// #5465: `member.role` can be comma-joined, and `toPdpRole` reads any `owner` part as owner. The
+	// old `role === "owner"` let these through, so the org could lose its active owner.
+	it.each(["owner,admin", "admin,owner", "viewer, owner"])(
+		"refuses to suspend %j, which the PDP reads as an owner",
+		async (role) => {
+			const { setSpy } = mockDb([[{ orgId: "org-1", userId: "u-1", role }]]);
+			await expect(setMemberSuspended("m-1", true)).rejects.toThrow(
+				/owner can't be suspended/,
+			);
+			expect(setSpy).not.toHaveBeenCalled();
+			expect(revokeMemberGrant).not.toHaveBeenCalled();
+		},
+	);
+
+	it("reactivates a suspended owner: adding an active owner back is never refused", async () => {
+		const { setSpy } = mockDb([
+			[{ orgId: "org-1", userId: "u-1", role: "owner" }],
+		]);
+		expect(await setMemberSuspended("m-1", false)).toEqual({ ok: true });
+		expect(setSpy).toHaveBeenCalledWith({ status: "active" });
+		expect(ensureMemberGrant).toHaveBeenCalledWith("org-1", "u-1", "owner");
 	});
 
 	it("propagates the authorization failure (no db access)", async () => {

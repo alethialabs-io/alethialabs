@@ -146,8 +146,8 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 				className="pb-2"
 				description="Seats, plan limits and provisioned-runner hours are billed org-wide, not per project."
 				actions={
-					// A plain `<Link>` — see the sibling note in usage-panel.tsx: base-ui's
-					// non-native Button puts `role="button"` on the anchor, and this navigates.
+					// A plain `<Link>` — see the sibling note in usage-panel.tsx: a "go and read the
+					// other page" affordance is styled as text, not as this page's action.
 					<Link
 						href={globalHref(orgSlug, "usage")}
 						className="inline-flex items-center gap-1 text-ui-sm text-text-secondary transition-colors hover:text-text-primary"

@@ -44,9 +44,15 @@ function firstString(rows: unknown[], column: string): string | null {
  *     through to case 3 and handed back a *different* org, so `X-Alethia-Org: <my user id>`
  *     was answered with a team org's rows, silently. That path is also walked by
  *     `POST /api/jobs`, which provisions and destroys real infrastructure.
- *  2. A named org the caller holds a `member` row in: that org.
- *  3. Nothing named (or a named org they are not a member of): the primary — earliest —
- *     membership, else the personal org.
+ *  2. A named org the caller holds an ACTIVE `member` row in: that org.
+ *  3. Nothing named (or a named org they are not an active member of): the primary — earliest —
+ *     active membership, else the personal org.
+ *
+ * Only an `active` member row counts (#5484). A suspended member keeps their row, and reads that
+ * trust the resolved org without asking the PDP (`listSharedArtifacts`, say) went on serving them
+ * that org's data. A suspended member is now resolved as if the row were absent: to another org
+ * they are active in, else to their personal org — and a header naming the suspended org is
+ * refused by `resolveNamedOrgScope`, as for any org they are not a member of.
  *
  * Case 3's fallback for a *named* org is deliberate and stays: this resolver also serves the
  * console session, where `activeOrganizationId` is a stored PREFERENCE that can name an org
@@ -67,20 +73,21 @@ export async function resolveActiveScope(
 	// The personal org, named explicitly. No membership row exists for it, by construction.
 	if (activeOrgId === userId) return { userId, orgId: userId };
 
-	// Honor the selected org, but only if the user is a member of it.
+	// Honor the selected org, but only if the user is an active member of it.
 	if (activeOrgId) {
 		const selected = await db.execute(sql`
 			select organization_id as id from member
 			where user_id = ${userId}::uuid and organization_id = ${activeOrgId}::uuid
+			  and status = 'active'
 			limit 1
 		`);
 		if (firstString(selected, "id") !== null) return { userId, orgId: activeOrgId };
 	}
 
-	// Else the primary (earliest) membership; else the personal org.
+	// Else the primary (earliest) active membership; else the personal org.
 	const rows = await db.execute(sql`
 		select organization_id from member
-		where user_id = ${userId}::uuid
+		where user_id = ${userId}::uuid and status = 'active'
 		order by created_at asc
 		limit 1
 	`);

@@ -21,19 +21,32 @@ import {
 	projects,
 } from "@/lib/db/schema";
 import { RESERVED_SLUGS } from "@/lib/routing";
+import { orgSlugShapeRefusal } from "@repo/org-slug";
 
-const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/**
+ * {@link configureOnboardingOrg}'s result: the persisted slug, or a refusal the user can read.
+ *
+ * A refusal is RETURNED, not thrown, because this is a `"use server"` export: in a production build
+ * (`next build` + `next start`, which the `qa` release-gate leg drives) Next redacts a thrown
+ * `Error`'s message to a digest and answers HTTP 500, so "That slug is reserved" never reached the
+ * form — the #4644 class, fixed for `projects.ts` and missed here (#5415). Only refusals the user
+ * can act on (name, slug format, reserved, taken) travel this way; an unauthenticated caller, a
+ * missing org or a non-owner still throw, because the onboarding form cannot fix any of those.
+ */
+export type ConfigureOnboardingOrgResult =
+	| { ok: true; slug: string }
+	| { ok: false; error: string };
 
 /**
  * Renames the current user's primary organization and sets its URL slug (the
  * "Create your organization" step of /onboarding). Owner-gated; validates the slug
  * format and global uniqueness, treating the org's own current slug as available.
- * Returns the persisted slug.
+ * Returns the persisted slug, or a readable refusal (see {@link ConfigureOnboardingOrgResult}).
  */
 export async function configureOnboardingOrg(input: {
 	name: string;
 	slug: string;
-}): Promise<{ slug: string }> {
+}): Promise<ConfigureOnboardingOrgResult> {
 	const userId = await getOwner();
 	if (!userId) throw new Error("Not authenticated");
 
@@ -45,12 +58,17 @@ export async function configureOnboardingOrg(input: {
 
 	const name = input.name.trim();
 	const slug = input.slug.trim().toLowerCase();
-	if (name.length < 2) throw new Error("Give your organization a name.");
-	if (!SLUG_RE.test(slug)) {
-		throw new Error("Use lowercase letters, numbers and hyphens.");
+	if (name.length < 2) {
+		return { ok: false, error: "Give your organization a name." };
+	}
+	// The one org-slug rule (@repo/org-slug), which names which half failed: a 64-character slug
+	// told "use lowercase letters" has nothing to fix.
+	const shape = orgSlugShapeRefusal(slug);
+	if (shape) {
+		return { ok: false, error: shape.message };
 	}
 	if (RESERVED_SLUGS.has(slug)) {
-		throw new Error("That slug is reserved — try another.");
+		return { ok: false, error: "That slug is reserved — try another." };
 	}
 
 	// Unique across all orgs except this one (the user keeps their own slug).
@@ -59,14 +77,14 @@ export async function configureOnboardingOrg(input: {
 		.from(organization)
 		.where(and(eq(organization.slug, slug), ne(organization.id, org.id)))
 		.limit(1);
-	if (taken) throw new Error("That slug is taken — try another.");
+	if (taken) return { ok: false, error: "That slug is taken — try another." };
 
 	await getServiceDb()
 		.update(organization)
 		.set({ name, slug, updatedAt: new Date() })
 		.where(eq(organization.id, org.id));
 
-	return { slug };
+	return { ok: true, slug };
 }
 
 /**

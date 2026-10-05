@@ -14,9 +14,13 @@ import { describe, expect, it } from "vitest";
 import {
 	SLUG_MAX_LENGTH,
 	canSlugify,
+	finishSlugDraft,
 	slugify,
+	slugifyDraft,
 	slugifyOrEmpty,
 } from "@/lib/utils/slugify";
+import { pendingOrgSetupSlugSchema } from "@/lib/billing/pending-org-setup";
+import { ORG_SLUG_MAX_LENGTH } from "@repo/org-slug";
 
 describe("slugifyOrEmpty", () => {
 	it("lowercases, trims, and collapses non-alphanumeric runs to one dash", () => {
@@ -103,5 +107,67 @@ describe("canSlugify", () => {
 		expect(canSlugify("1")).toBe(true);
 		expect(canSlugify("@#$%")).toBe(false);
 		expect(canSlugify("")).toBe(false);
+	});
+});
+
+// #5453 — the org URL fields re-slug their own value on every keystroke. With `slugifyOrEmpty`
+// that trimmed the trailing dash, so `acme-` became `acme` and the next letter made `acmec`: a
+// hyphen could not be typed. The keystroke normaliser keeps it; submission finishes it.
+describe("slugifyDraft", () => {
+	it("keeps the trailing dash a person just typed, so the next letter lands after it", () => {
+		expect(slugifyDraft("my-")).toBe("my-");
+		// The keystroke after: the input's value is the stored draft plus the new character.
+		expect(slugifyDraft(`${slugifyDraft("my-")}t`)).toBe("my-t");
+	});
+
+	it("collapses a run of separators to ONE dash, as the slugifier does", () => {
+		expect(slugifyDraft("my--")).toBe("my-");
+		expect(slugifyDraft("my - team")).toBe("my-team");
+		expect(slugifyDraft("my ")).toBe("my-");
+	});
+
+	it("drops a leading dash, which nothing typed after it can make legal", () => {
+		expect(slugifyDraft("-")).toBe("");
+		expect(slugifyDraft("--acme")).toBe("acme");
+	});
+
+	it("normalises the same way the slugifier does everywhere but the trailing dash", () => {
+		expect(slugifyDraft("José's API ")).toBe("joses-api-");
+		expect(slugifyDraft("Acme Cloud")).toBe(slugifyOrEmpty("Acme Cloud"));
+		expect(slugifyDraft("a".repeat(80))).toBe("a".repeat(SLUG_MAX_LENGTH));
+	});
+});
+
+describe("finishSlugDraft", () => {
+	it("trims the dashes at either end of a draft and nothing else", () => {
+		expect(finishSlugDraft("my-team-")).toBe("my-team");
+		expect(finishSlugDraft("-my-team")).toBe("my-team");
+		expect(finishSlugDraft("my-team")).toBe("my-team");
+		expect(finishSlugDraft("-")).toBe("");
+	});
+
+	it("finishes every draft into what the slugifier would have produced", () => {
+		for (const raw of ["my-", "José's API ", "acme--cloud-", "-x-"]) {
+			expect(finishSlugDraft(slugifyDraft(raw))).toBe(slugifyOrEmpty(raw));
+		}
+	});
+});
+
+describe("the server's slug format check — unchanged by #5453", () => {
+	// A trailing dash only: the draft never holds a LEADING one (`slugifyDraft` drops it). (The schema
+	// refuses `-acme` too since #5509, when it began reading @repo/org-slug.)
+	it("still refuses a slug ending in a dash, so an unfinished draft cannot be saved", () => {
+		expect(pendingOrgSetupSlugSchema.safeParse("acme-").success).toBe(false);
+		expect(pendingOrgSetupSlugSchema.safeParse("acme-cloud-").success).toBe(false);
+		expect(pendingOrgSetupSlugSchema.safeParse("acme-cloud").success).toBe(true);
+	});
+});
+
+// #5509: the slugifier cuts to SLUG_MAX_LENGTH and the org-slug rule refuses past ORG_SLUG_MAX_LENGTH.
+// The rule's cap moved into @repo/org-slug, so the two numbers are no longer one constant; were
+// they to differ, the create-a-team form could produce a slug the rule then refuses.
+describe("the slugifier's length is the org-slug rule's", () => {
+	it("cuts to exactly the org-slug cap", () => {
+		expect(SLUG_MAX_LENGTH).toBe(ORG_SLUG_MAX_LENGTH);
 	});
 });

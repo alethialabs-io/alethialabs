@@ -38,12 +38,16 @@
 //   · the upgrade sheet mounts Stripe.js's own cross-origin card iframes, which exist only once
 //     Elements has initialised against a real publishable key.
 //
-// THE LAST TWO ARE `test.fixme` ON #4633, and so is the currency toggle, because the product
-// refuses the sale before Stripe is ever asked: `eligibility.ts` requires a declared payer
-// capacity, `declarePayer` has NO caller anywhere in the repo, and neither purchase sheet passes
-// the `payer` facts its own action accepts. The sheet then renders "Billing may not be configured
-// on this deployment", which is why this read for a while as an unwired Stripe. It is not unwired
-// — the first two tests above prove the same leg reaching the same account.
+// THE LAST TWO NEED THE ELIGIBILITY GATE TO SAY YES, and it is asked before Stripe is. Two doors:
+//   · the payer must be DECLARED (#4633, fixed by #4895). The upgrade sheet opens on a
+//     `PayerDeclarationForm` step now, so every test that needs the pay view walks it first —
+//     `declareOrganizationPayer` below. /start has no form; its test records the declaration on
+//     the `team` org directly (`declareTeamPayer`).
+//   · the MARKET must be open, and `PAID_MARKETS` is empty on purpose. The release gate's console
+//     carries `ALETHIA_BILLING_TEST_MARKET=1` beside its `sk_test_` key, the one configuration in
+//     which `lib/billing/eligibility.ts · testModeMarketOpen` waives the market check (#5412,
+//     maintainer ruling 2026-10-03). A live key with the flag still refuses; a test key without it
+//     is every sandbox env, which measures the product as it ships.
 //
 // We STOP before any payment: no confirmation is ever submitted, and the two destructive
 // confirmations (`billing.card.remove`, `billing.subscription.cancel`) are opened and CANCELLED.
@@ -146,6 +150,51 @@ function cardRow(page: import("@playwright/test").Page, last4: string) {
 		.filter({ hasText: `•••• ${last4}` })
 		.filter({ has: page.getByRole("button", { name: "Remove", exact: true }) })
 		.last();
+}
+
+/**
+ * Walks the upgrade sheet's payer declaration (#4895) as an organization buyer, and returns once
+ * the sheet has moved past it.
+ *
+ * Every pay-view assertion sits behind this step: the sheet opens no subscription intent until
+ * the payer has said who they are and where they are billed, and the gate has said yes. The
+ * organization option is the one with an attestation field, so the walk exercises the whole form
+ * rather than its shortest path.
+ *
+ * "Moved past it" is measured as the declaration's submit button going away. If the gate refuses
+ * instead, the button stays and the refusal sentence renders above it, so the failure names the
+ * gate's own words rather than a missing card field thirty seconds later.
+ */
+async function declareOrganizationPayer(page: import("@playwright/test").Page): Promise<void> {
+	const dialog = page.getByRole("dialog", { name: "Upgrade to Pro" });
+	await dialog.getByRole("radio", { name: /An organization/ }).check({ timeout: 30_000 });
+	await dialog.getByPlaceholder("Director").fill("Director");
+	await dialog.getByRole("button", { name: "Select a country" }).click();
+	// The country list is a popover portalled outside the sheet, so it is located on the page.
+	await page.getByPlaceholder("Search country…").fill("Germany");
+	// Not `exact`: each row's flag carries the country's name as an SVG title, so the option's
+	// accessible name can read it twice. The search above has already narrowed the list to one.
+	await page.getByRole("option", { name: /Germany/ }).first().click();
+	const submit = dialog.getByRole("button", { name: /Continue to payment/ });
+	await submit.click();
+	await expect(submit, "the eligibility gate refused the declaration — see the sentence in the sheet").toBeHidden({
+		timeout: 30_000,
+	});
+}
+
+/**
+ * Records the `team` org's payer declaration directly, for the one conversion path with no form.
+ *
+ * `/start` goes straight to hosted Checkout, so nothing on it can collect the declaration; a real
+ * customer would have made it in the upgrade or create-org sheet first. Written as the same three
+ * columns `declarePayer` writes, and idempotent, so parallel workers and retries agree.
+ */
+async function declareTeamPayer(orgId: string): Promise<void> {
+	await db()`
+		update organization_billing
+		set payer_capacity = 'organization', billing_country = 'DE',
+		    authority_attestation = 'Director', updated_at = now()
+		where organization_id = ${orgId}`;
 }
 
 /**
@@ -267,10 +316,7 @@ test.describe("Billing — Stripe test mode", () => {
 	test("the /start trial CTA redirects into a TEST-mode Checkout session", { tag: "@needs:stripe" }, async ({
 		team,
 	}) => {
-		test.fixme(
-			true,
-			"BUG: /start's createCheckoutSession is refused for an undeclared payer capacity and the page swallows it, redirecting to billing #4633",
-		);
+		await declareTeamPayer(team.orgId!);
 		// `app/start/page.tsx` calls `createCheckoutSession("team")` server-side and redirects to
 		// the session URL, falling back to the org's billing page when Stripe is unconfigured or
 		// the call throws. Intercept the external navigation so no browser ever reaches Stripe.
@@ -303,8 +349,9 @@ test.describe("Billing — Stripe test mode", () => {
 			.poll(() => attempts.length, {
 				timeout: 45_000,
 				message:
-					"no navigation to checkout.stripe.com was issued — /start fell back to the billing " +
-					"page, which means createCheckoutSession threw or Stripe is not configured",
+					"no navigation to checkout.stripe.com was issued — /start either showed the gate's " +
+					"refusal or fell back to the billing page (createCheckoutSession threw, or Stripe is " +
+					"not configured)",
 			})
 			.toBeGreaterThan(0);
 		// `cs_test_…` is the one thing a LIVE-mode account could not have produced, and a stub
@@ -315,14 +362,11 @@ test.describe("Billing — Stripe test mode", () => {
 	test("the upgrade sheet mounts Stripe.js's own card fields, not a look-alike", { tag: "@needs:stripe" }, async ({
 		owner,
 	}) => {
-		test.fixme(
-			true,
-			"BUG: the upgrade sheet's createSubscriptionIntent is refused for an undeclared payer capacity, so Elements never mounts #4633",
-		);
 		await owner.page.goto(billingPath(owner.orgSlug));
 		await owner.page.getByRole("button", { name: "Upgrade to Pro" }).click();
+		await declareOrganizationPayer(owner.page);
 
-		const dialog = owner.page.getByRole("dialog");
+		const dialog = owner.page.getByRole("dialog", { name: "Upgrade to Pro" });
 		await expect(dialog.getByText("Card information")).toBeVisible({ timeout: 30_000 });
 		// Number / expiry / CVC are three separate CardElements, each mounted by Stripe.js in its
 		// own cross-origin iframe served from js.stripe.com. Those frames exist only once Elements
@@ -508,10 +552,15 @@ test.describe("Billing settings — Hobby → Pro upgrade (owner)", () => {
 		await owner.page.goto(billingPath(owner.orgSlug));
 		await owner.page.getByRole("button", { name: "Upgrade to Pro" }).click();
 
-		const dialog = owner.page.getByRole("dialog");
-		await expect(dialog.getByRole("heading", { name: "Upgrade to Pro" })).toBeVisible({
+		// The sheet names itself twice: an sr-only `SheetTitle` (the dialog's accessible name) and
+		// `PurchaseLayout`'s visible <h1>, a recorded decision in shared-surface-allowlist.yaml
+		// ("Buying a plan is a checkout"). The visible one is the level-1 heading.
+		const dialog = owner.page.getByRole("dialog", { name: "Upgrade to Pro" });
+		await expect(dialog.getByRole("heading", { name: "Upgrade to Pro", level: 1 })).toBeVisible({
 			timeout: 30_000,
 		});
+		// The sheet opens on the payer declaration (#4895); the checkout form follows it.
+		await declareOrganizationPayer(owner.page);
 		// The custom checkout form (BillingCheckoutForm) mounts once the subscription intent's
 		// client secret loads — assert the card fields + the Upgrade submit; STOP before payment.
 		await expect(dialog.getByText("Card information")).toBeVisible({ timeout: 30_000 });
@@ -524,7 +573,9 @@ test.describe("Billing settings — Hobby → Pro upgrade (owner)", () => {
 		await owner.page.goto(billingPath(owner.orgSlug));
 		await owner.page.getByRole("button", { name: "Upgrade to Pro" }).click();
 
-		const dialog = owner.page.getByRole("dialog");
+		await declareOrganizationPayer(owner.page);
+
+		const dialog = owner.page.getByRole("dialog", { name: "Upgrade to Pro" });
 		await expect(dialog.getByText("Card information")).toBeVisible({ timeout: 30_000 });
 		// Order summary: a Total row (the seat unit) — a stable, payment-free assertion.
 		await expect(dialog.getByText("Total")).toBeVisible();
@@ -557,14 +608,12 @@ test.describe("Billing settings — Hobby → Pro upgrade (owner)", () => {
 	test("the purchase sheet offers a billing currency once the intent exists", { tag: "@needs:stripe" }, async ({
 		owner,
 	}) => {
-		test.fixme(
-			true,
-			"BUG: the currency toggle stays disabled because createSubscriptionIntent is refused for an undeclared payer capacity #4633",
-		);
 		await owner.page.goto(billingPath(owner.orgSlug));
 		await owner.page.getByRole("button", { name: "Upgrade to Pro" }).click();
+		// The toggle lives in the pay view, which follows the payer declaration (#4895).
+		await declareOrganizationPayer(owner.page);
 
-		const dialog = owner.page.getByRole("dialog");
+		const dialog = owner.page.getByRole("dialog", { name: "Upgrade to Pro" });
 		const currency = dialog.getByRole("group", { name: "Billing currency" });
 		await expect(currency).toBeVisible({ timeout: 30_000 });
 		// ENABLED, not merely present: `disabled={!clientSecret}`, so an enabled option is
@@ -579,8 +628,9 @@ test.describe("Billing settings — Hobby → Pro upgrade (owner)", () => {
 		await owner.page.goto(billingPath(owner.orgSlug));
 		await owner.page.getByRole("button", { name: "Upgrade to Pro" }).click();
 
-		const dialog = owner.page.getByRole("dialog");
-		await expect(dialog.getByRole("heading", { name: "Upgrade to Pro" })).toBeVisible({
+		const dialog = owner.page.getByRole("dialog", { name: "Upgrade to Pro" });
+		// Level 1: the visible `PurchaseLayout` heading, not the sr-only `SheetTitle` of the same name.
+		await expect(dialog.getByRole("heading", { name: "Upgrade to Pro", level: 1 })).toBeVisible({
 			timeout: 30_000,
 		});
 		await dialog.getByRole("button", { name: "Close" }).click();
@@ -605,10 +655,12 @@ test.describe("Usage — Pro trial (team)", () => {
 
 	test("plan & limits renders the seats / concurrency gauges", { tag: "@needs:stripe" }, async ({ team }) => {
 		await team.page.goto(usagePath(team.orgSlug));
-		await expect(team.page.getByText("Seats")).toBeVisible({ timeout: 30_000 });
+		// `exact`, because a bare "Seats" is a case-insensitive substring match and also hits the
+		// meter's own "N seats available" sub-line below it.
+		await expect(team.page.getByText("Seats", { exact: true })).toBeVisible({ timeout: 30_000 });
 		// seats vs members → "N seats available" sub-note.
 		await expect(team.page.getByText(/seats available/)).toBeVisible();
-		await expect(team.page.getByText("Concurrency")).toBeVisible();
+		await expect(team.page.getByText("Concurrency", { exact: true })).toBeVisible();
 	});
 
 	test("the spend-control hard-cap toggle flips and can be restored", { tag: "@needs:stripe" }, async ({ team }) => {
@@ -662,12 +714,20 @@ test.describe("Usage — Pro trial (team)", () => {
 		await expect(team.page.getByText(/· last 30 days/i)).toBeVisible();
 	});
 
-	test("AI usage section shows the weekly window, balance and top-up link", { tag: "@needs:stripe" }, async ({ team }) => {
+	// RENAMED in #5412 from "…shows the weekly window, balance and top-up link". #209 made the AI
+	// section percent-based and titled it "AI plan & usage"; the balance strip and "Buy credits"
+	// appear only on a paid AI tier (ai-usage-section.tsx header), and the `team` persona is on AI
+	// Free. Seeding a paid tier would mutate a persona every parallel worker shares, so the test
+	// asserts the free tier's decided shape — and that the top-up is ABSENT from it.
+	test("AI plan & usage shows the weekly window and the AI plan upgrade on the free AI tier", { tag: "@needs:stripe" }, async ({ team }) => {
 		await team.page.goto(usagePath(team.orgSlug));
-		await expect(team.page.getByText("AI usage")).toBeVisible({ timeout: 30_000 });
-		await expect(team.page.getByText("AI credits this week")).toBeVisible();
-		await expect(team.page.getByText("Purchased balance")).toBeVisible();
-		await expect(team.page.getByRole("link", { name: /buy credits/i })).toBeVisible();
+		await expect(team.page.getByRole("heading", { name: "AI plan & usage" })).toBeVisible({
+			timeout: 30_000,
+		});
+		await expect(team.page.getByText("Weekly limit", { exact: true })).toBeVisible();
+		await expect(team.page.getByText(/^Resets /).first()).toBeVisible();
+		await expect(team.page.getByRole("button", { name: "Upgrade AI plan" })).toBeVisible();
+		await expect(team.page.getByText(/buy credits/i)).toHaveCount(0);
 	});
 
 	test("usage page has no serious accessibility violations", { tag: "@needs:stripe" }, async ({ team }) => {
@@ -692,8 +752,9 @@ test.describe("Usage — Hobby (owner)", () => {
 	}) => {
 		await owner.page.goto(usagePath(owner.orgSlug));
 		await owner.page.getByRole("button", { name: /Upgrade to Pro/ }).click();
-		const dialog = owner.page.getByRole("dialog");
-		await expect(dialog.getByRole("heading", { name: "Upgrade to Pro" })).toBeVisible({
+		const dialog = owner.page.getByRole("dialog", { name: "Upgrade to Pro" });
+		// Level 1: the visible `PurchaseLayout` heading, not the sr-only `SheetTitle` of the same name.
+		await expect(dialog.getByRole("heading", { name: "Upgrade to Pro", level: 1 })).toBeVisible({
 			timeout: 30_000,
 		});
 	});

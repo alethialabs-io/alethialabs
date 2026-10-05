@@ -4,7 +4,7 @@
 
 
 import { useCallback, useEffect, useState } from "react";
-import { planProject, provisionProject } from "@/app/server/actions/projects";
+import { tryPlanProject, tryProvisionProject } from "@/app/server/actions/projects";
 import { getPlanResult, getProjectJobs } from "@/app/server/actions/jobs";
 import {
 	parsePlanJSON,
@@ -155,9 +155,16 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 		setCostResult(null);
 
 		try {
-			const { jobId } = await planProject(projectId, runnerId);
+			const res = await tryPlanProject(projectId, runnerId);
+			// A refusal the user can act on is RETURNED (#5445) — thrown, a production build
+			// replaced its sentence with a digest before it reached `error` below.
+			if (!res.ok) {
+				setPhase("failed");
+				setError(res.error);
+				return;
+			}
 			// Logs stream via useJobLogStream(planJobId) once this is set.
-			setPlanJobId(jobId);
+			setPlanJobId(res.jobId);
 		} catch (err) {
 			setPhase("failed");
 			setError(
@@ -174,8 +181,13 @@ export function usePlan(projectId: string | null, onRefresh?: () => void): UsePl
 		setError(null);
 
 		try {
-			const { jobId } = await provisionProject(projectId, planJobId, runnerId);
-			setDeployJobId(jobId);
+			const res = await tryProvisionProject(projectId, planJobId, runnerId);
+			if (!res.ok) {
+				setPhase("failed");
+				setError(res.error);
+				return;
+			}
+			setDeployJobId(res.jobId);
 		} catch (err) {
 			setPhase("failed");
 			setError(

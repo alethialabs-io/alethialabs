@@ -173,6 +173,12 @@ export const CATEGORIES: CatalogCategory[] = [
 			// via ALETHIA_PLATFORM_ALERT_ORG_ID. Throttled to one per degraded episode.
 			ev("platform.loop_degraded", "system.platform.loop_degraded", "Background loop degraded", "critical", true),
 			ev("platform.loop_recovered", "system.platform.loop_recovered", "Background loop recovered", "info", true),
+			// Raised by the purchase flow (lib/billing/payment-alert.ts) when a subscription it cancelled, or
+			// tried to, is not proven settled: a refund that failed, a payment still processing after the
+			// cancel, payments it could not read or recognise, an invoice it could not void, or a cancel it
+			// could not confirm. That purchase is refused; nothing records it for the next one, so this alert
+			// is what a person acts on. Routed the same way.
+			ev("platform.payment_needs_support", "system.platform.payment_needs_support", "Customer payment needs manual review", "critical", true),
 		],
 	},
 	{

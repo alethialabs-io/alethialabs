@@ -56,7 +56,7 @@ export function InvoicesPanel() {
 	const set = useInvoiceFilters((s) => s.set);
 	const patch = useInvoiceFilters((s) => s.patch);
 	const reset = useInvoiceFilters((s) => s.reset);
-	useFilterUrlSync(useInvoiceFilters, DEFAULT_INVOICE_FILTERS);
+	const urlRead = useFilterUrlSync(useInvoiceFilters, DEFAULT_INVOICE_FILTERS);
 
 	// The preview dialog (open state + selected invoice).
 	const [selected, setSelected] = useState<InvoiceInfo | null>(null);
@@ -85,6 +85,14 @@ export function InvoicesPanel() {
 	);
 
 	const rows = invoices.data ?? [];
+	// The list is BUSY while what it shows may not answer the URL and the bar: before the link has
+	// been read into the store, before the first answer, and while the rows are the previous
+	// query's placeholder — the jobs, runners, members, alerts and activity lists' rule (#4980,
+	// #5045, #5471), without the debounce term because this list has no search box. Before the
+	// first answer the panel is a skeleton under a null count pill, which nothing else on screen
+	// tells apart from a page that failed to render a list; `aria-busy` says which, for assistive
+	// tech and for the audit's F8–F9 `settle()` (#5494).
+	const busy = !urlRead || invoices.isPending || invoices.isPlaceholderData;
 
 	// A null window means "no date constraint"; the pickers still need a concrete value to
 	// render, so they fall back to the default preset without that becoming a filter.
@@ -116,63 +124,65 @@ export function InvoicesPanel() {
 			title="Invoices"
 			action={<CountPill count={invoices.isPending ? null : rows.length} />}
 		>
-			<FilterBar>
-				<FacetFilter
-					label="Status"
-					icon={CircleDot}
-					options={INVOICE_STATUS_OPTIONS.map((o) => ({
-						value: o.value,
-						label: o.label,
-						hint: String(counts[o.value] ?? 0),
-					}))}
-					value={filters.statuses}
-					onChange={(next) => set("statuses", next)}
-					searchPlaceholder="Filter status…"
-					emptyText="No statuses."
-				/>
-				<QuickRangeFilter
-					label={filters.rangeLabel || ALL_TIME_LABEL}
-					value={range}
-					onChange={applyRange}
-				/>
-				<DateRangeFilter
-					value={range}
-					onChange={(r) => applyRange(r, formatRangeLabel(r))}
-				/>
-				<FilterBarReset count={activeFilters} onReset={reset} />
-			</FilterBar>
+			<div aria-busy={busy}>
+				<FilterBar>
+					<FacetFilter
+						label="Status"
+						icon={CircleDot}
+						options={INVOICE_STATUS_OPTIONS.map((o) => ({
+							value: o.value,
+							label: o.label,
+							hint: String(counts[o.value] ?? 0),
+						}))}
+						value={filters.statuses}
+						onChange={(next) => set("statuses", next)}
+						searchPlaceholder="Filter status…"
+						emptyText="No statuses."
+					/>
+					<QuickRangeFilter
+						label={filters.rangeLabel || ALL_TIME_LABEL}
+						value={range}
+						onChange={applyRange}
+					/>
+					<DateRangeFilter
+						value={range}
+						onChange={(r) => applyRange(r, formatRangeLabel(r))}
+					/>
+					<FilterBarReset count={activeFilters} onReset={reset} />
+				</FilterBar>
 
-			{invoices.isError ? (
-				// A fetch failure must not render as "no invoices yet" — that reads as a fact
-				// about the account rather than about the request.
-				<ErrorState
-					title="Couldn't load invoices"
-					description="Something went wrong fetching your invoice history. Check your connection and try again."
-					actions={
-						<Button variant="outline" size="sm" onClick={() => void invoices.refetch()}>
-							Retry
-						</Button>
-					}
-				/>
-			) : invoices.isPending ? (
-				<Skeleton className="h-56 w-full" />
-			) : (
-				<div className={cn(invoices.isPlaceholderData && "opacity-60")}>
-					<InvoicesTable
-						rows={rows}
-						onPreview={(row) => {
-							setSelected(row);
-							setPreviewOpen(true);
-						}}
-						pageSize={20}
-						emptyMessage={
-							activeFilters > 0
-								? "No invoices match these filters."
-								: "No invoices yet — invoices appear here after your first payment."
+				{invoices.isError ? (
+					// A fetch failure must not render as "no invoices yet" — that reads as a fact
+					// about the account rather than about the request.
+					<ErrorState
+						title="Couldn't load invoices"
+						description="Something went wrong fetching your invoice history. Check your connection and try again."
+						actions={
+							<Button variant="outline" size="sm" onClick={() => void invoices.refetch()}>
+								Retry
+							</Button>
 						}
 					/>
-				</div>
-			)}
+				) : invoices.isPending ? (
+					<Skeleton className="h-56 w-full" />
+				) : (
+					<div className={cn(invoices.isPlaceholderData && "opacity-60")}>
+						<InvoicesTable
+							rows={rows}
+							onPreview={(row) => {
+								setSelected(row);
+								setPreviewOpen(true);
+							}}
+							pageSize={20}
+							emptyMessage={
+								activeFilters > 0
+									? "No invoices match these filters."
+									: "No invoices yet — invoices appear here after your first payment."
+							}
+						/>
+					</div>
+				)}
+			</div>
 
 			<InvoicePreviewDialog
 				invoice={selected}

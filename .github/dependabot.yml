@@ -36,6 +36,20 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
     groups:
+      # The Vercel AI SDK family moves as ONE unit, in its own PR. Each release of `ai`,
+      # `@ai-sdk/anthropic`, `@ai-sdk/openai`, `@ai-sdk/react` and `@ai-sdk/gateway` pins an EXACT
+      # `@ai-sdk/provider` / `@ai-sdk/provider-utils`, and the root package.json `pnpm.overrides`
+      # forces one copy of each. Dependabot does not edit those overrides, so a bump that moves the
+      # family leaves them behind: #5460 resolved provider-utils 4.0.50 under packages built
+      # against 4.0.56, and Turbopack failed on exports (EXPERIMENTAL_EMBEDDING_MODEL_PROVIDER_
+      # OPTIONS_TRANSFORMER, StreamingToolCallTracker) the older copy lacks. A PR from this group
+      # therefore needs the two overrides moved by hand to the versions the bumped packages declare
+      # (`npm view ai@<ver> dependencies`). Keeping it separate means that hand step holds back only
+      # the AI SDK, not the other ~40 minor/patch updates. Groups are matched in order, so this one
+      # must stay ABOVE `npm-minor-patch`.
+      ai-sdk:
+        patterns: ["ai", "@ai-sdk/*"]
+        update-types: [minor, patch]
       npm-minor-patch:
         update-types: [minor, patch]
 

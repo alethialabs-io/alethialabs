@@ -40,3 +40,46 @@ module "azure_cache" {
 
   tags = local.azure_default_tags
 }
+
+################################################################################
+# Cache logging (azure_cache_log_categories) — CUSTOMIZABILITY-PARITY top gap #9
+################################################################################
+# A diagnostic setting on the Managed Redis DATABASE. The cluster resource
+# (Microsoft.Cache/redisEnterprise) emits metrics only; ConnectionEvents is a category of its
+# databases, and azurerm_managed_redis always creates exactly one (its inline default_database).
+#
+# Same destination rule as azure_db_log_exports, and for the same reason it is a precondition:
+# the template's workspace when aks_log_retention_days created one, otherwise
+# azure_cache_log_workspace_id, otherwise the plan fails naming both. Empty creates nothing.
+
+locals {
+  azure_cache_log_workspace = one(azurerm_log_analytics_workspace.aks[*].id) != null ? one(azurerm_log_analytics_workspace.aks[*].id) : var.azure_cache_log_workspace_id
+}
+
+resource "terraform_data" "azure_cache_log_guard" {
+  count = var.create_azure_cache && length(var.azure_cache_log_categories) > 0 ? 1 : 0
+
+  lifecycle {
+    precondition {
+      condition     = local.azure_cache_log_workspace != ""
+      error_message = "azure_cache_log_categories is set but there is nowhere to send the logs: set aks_log_retention_days (the template then creates a Log Analytics workspace) or azure_cache_log_workspace_id (an existing workspace's resource id)."
+    }
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "azure_cache" {
+  count = var.create_azure_cache && length(var.azure_cache_log_categories) > 0 ? 1 : 0
+
+  depends_on = [terraform_data.azure_cache_log_guard]
+
+  name                       = "azure-cache-logs"
+  target_resource_id         = try(module.azure_cache[0].database_id, null) != null ? module.azure_cache[0].database_id : ""
+  log_analytics_workspace_id = local.azure_cache_log_workspace
+
+  dynamic "enabled_log" {
+    for_each = toset(var.azure_cache_log_categories)
+    content {
+      category = enabled_log.value
+    }
+  }
+}

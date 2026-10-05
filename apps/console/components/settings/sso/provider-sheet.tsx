@@ -118,12 +118,15 @@ export function ProviderSheet({
 	// per protocol) are rebuilt on a protocol switch.
 	const type = form.watch("type");
 	const errors = form.formState.errors;
+	/** The IdP plugin's refusal of the last save or registration, shown above the footer. */
+	const serverError = errors.root?.server?.message;
 
 	async function onSubmit(v: SsoProviderInput) {
 		setSaving(true);
+		form.clearErrors("root.server");
 		try {
 			if (isEdit) {
-				await updateSsoProvider(provider.id, {
+				const res = await updateSsoProvider(provider.id, {
 					domain: v.domain,
 					issuer: v.issuer,
 					clientId: v.clientId || undefined,
@@ -132,6 +135,12 @@ export function ProviderSheet({
 					cert: v.cert || undefined,
 					mapping: mappingOf(v),
 				});
+				// The plugin's refusal, RETURNED (#5445). It used to be thrown out of the action and a
+				// production build reduced it to a digest; it now stays in the form that caused it.
+				if (!res.ok) {
+					form.setError("root.server", { message: res.error });
+					return;
+				}
 				toast.success("Provider updated");
 			} else {
 				// Registration is @better-auth/sso's own endpoint (it mints the domain-verification
@@ -174,7 +183,10 @@ export function ProviderSheet({
 						typeof data.message === "string"
 							? data.message
 							: "Couldn't register the provider";
-					throw new Error(message);
+					// Shown in the form, beside the fields it is about — not a toast that is gone
+					// before an admin has read which value the IdP refused (#5445).
+					form.setError("root.server", { message });
+					return;
 				}
 				toast.success("Provider registered — verify its domain to enable sign-in");
 			}
@@ -395,6 +407,14 @@ export function ProviderSheet({
 							open={openSection}
 							onOpenChange={setOpenSection}
 						/>
+						{serverError && (
+							<p
+								role="alert"
+								className="mt-4 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-ui-sm text-destructive"
+							>
+								{serverError}
+							</p>
+						)}
 					</div>
 					<SheetFooter className="flex-row items-center justify-between border-t border-border/60 p-4">
 						<Button

@@ -15,6 +15,8 @@
 // cases assert on the serialised response text, so a credential smuggled under any other key is caught
 // too — not only one under `connector_credentials`.
 
+import { is, SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
@@ -60,6 +62,8 @@ vi.mock("@/lib/crypto/secrets", () => ({
 let tablesRead: unknown[] = [];
 /** The rows each table's SELECT resolves to. */
 let rowsByTable = new Map<unknown, unknown[]>();
+/** The WHERE condition each table's SELECT was given — rendered to SQL by the #5479 tests. */
+let whereByTable = new Map<unknown, unknown>();
 
 /**
  * A drizzle stand-in: `from(table)` picks the rows, and both `.limit()` and awaiting `.where()` (the
@@ -77,7 +81,10 @@ function fakeDb() {
 					then: (resolve: (v: unknown[]) => unknown) => resolve(rows),
 				};
 				const chain = {
-					where: () => terminal,
+					where: (cond: unknown) => {
+						whereByTable.set(table, cond);
+						return terminal;
+					},
 					innerJoin: () => chain,
 				};
 				return chain;
@@ -96,7 +103,7 @@ const SNAPSHOT = {
 };
 
 /** Seeds the claimed job (of `jobType`), its Hetzner identity and the two connector credentials. */
-function seed(jobType: string) {
+function seed(jobType: string, jobOrgId: string | null = "org-1") {
 	rowsByTable = new Map<unknown, unknown[]>([
 		[runners, [{ cloud_identity_id: null }]],
 		[
@@ -107,7 +114,7 @@ function seed(jobType: string) {
 					job_type: jobType,
 					provider: "hetzner",
 					user_id: "user-1",
-					org_id: "org-1",
+					org_id: jobOrgId,
 					cloud_identity_id: "ci-1",
 					config_snapshot: SNAPSHOT,
 					config_snapshot_sig: null,
@@ -169,8 +176,8 @@ const ClaimBody = z.object({
 });
 
 /** Claims a seeded job of `jobType`; returns the parsed body and its raw text. */
-async function claim(jobType: string) {
-	seed(jobType);
+async function claim(jobType: string, jobOrgId: string | null = "org-1") {
+	seed(jobType, jobOrgId);
 	const { POST } = await import("@/app/api/jobs/claim/route");
 	const res = await POST(
 		new Request("https://console.local/api/jobs/claim", { method: "POST" }),
@@ -183,6 +190,7 @@ async function claim(jobType: string) {
 beforeEach(() => {
 	vi.clearAllMocks();
 	tablesRead = [];
+	whereByTable = new Map();
 	verifyRunnerToken.mockResolvedValue({ runnerId: "runner-1", tokenHash: "h" });
 });
 
@@ -235,6 +243,44 @@ describe("POST /api/jobs/claim — per-job-type grants (#5308)", () => {
 		for (const canary of [DNS_CANARY, REGISTRY_CANARY, S3_CANARY, "hcloud-api-token"]) {
 			expect(text).not.toContain(canary);
 		}
+	});
+});
+
+/** The SQL text and parameters of the WHERE the route gave the cloud identity lookup. */
+function identityLookup(): { sql: string; params: unknown[] } {
+	const cond = whereByTable.get(cloudIdentities);
+	if (!is(cond, SQL)) throw new Error("the cloud identity lookup was not given a SQL condition");
+	return new PgDialect().sqlToQuery(cond);
+}
+
+describe("POST /api/jobs/claim — the identity is bound to the job's tenancy (#5479)", () => {
+	it("looks the identity up by id AND the job's org, not by id alone", async () => {
+		await claim("DEPLOY");
+
+		const { sql, params } = identityLookup();
+		expect(params).toContain("ci-1");
+		expect(params).toContain("org-1");
+		expect(sql).toContain('"cloud_identities"."org_id"');
+	});
+
+	it("admits by authorship only a personal identity or one in the creator's personal org", async () => {
+		await claim("DEPLOY");
+
+		const { sql, params } = identityLookup();
+		expect(params).toContain("user-1");
+		expect(params).toContain("personal");
+		expect(sql).toContain('"cloud_identities"."user_id"');
+		expect(sql).toContain('"cloud_identities"."scope"');
+	});
+
+	it("binds a job with no org by its creator alone", async () => {
+		await claim("DEPLOY", null);
+
+		const { params } = identityLookup();
+		expect(params).toContain("ci-1");
+		expect(params).toContain("user-1");
+		expect(params).not.toContain(null);
+		expect(params).not.toContain("org-1");
 	});
 });
 

@@ -15,12 +15,20 @@ vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/authz/actor-context", () => ({ getInjectedActor: vi.fn() }));
 vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
 
-// `isOrgMember` reads the `member` table, and the service-token branch below calls it on EVERY
-// request. vi.hoisted because the factory is hoisted above every const in this file.
-const { dbLimit } = vi.hoisted(() => ({ dbLimit: vi.fn() }));
+// `isActiveOrgMember` reads the `member` table, and the service-token branch below calls it on EVERY
+// request. vi.hoisted because the factory is hoisted above every const in this file. `dbWhere`
+// records each predicate, so a test can ask whether the query counted only an ACTIVE row.
+const { dbLimit, dbWhere } = vi.hoisted(() => ({ dbLimit: vi.fn(), dbWhere: vi.fn() }));
 vi.mock("@/lib/db", () => ({
 	getServiceDb: () => ({
-		select: () => ({ from: () => ({ where: () => ({ limit: dbLimit }) }) }),
+		select: () => ({
+			from: () => ({
+				where: (predicate: unknown) => {
+					dbWhere(predicate);
+					return { limit: dbLimit };
+				},
+			}),
+		}),
 	}),
 }));
 
@@ -30,11 +38,14 @@ import { getPdp } from "@/lib/authz";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { ForbiddenError, type Actor } from "@/lib/authz/types";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { type SQL } from "drizzle-orm";
 
 import {
 	assertMintingProfileStillMember,
 	authorize,
 	authorizeCli,
+	authorizeCliOrg,
 	ensureCliOrgAccess,
 	orgScopeFor,
 	userIdIsTheCaller,
@@ -243,12 +254,15 @@ describe("userIdIsTheCaller", () => {
 });
 
 describe("ensureCliOrgAccess", () => {
+	const MANAGE = ["manage_members", { type: "member" }] as const;
+
 	it("admits a service token to the org it is pinned to", async () => {
 		expect(
 			await ensureCliOrgAccess(
 				{ userId: "u-minter", orgId: "org-t" },
 				"service_token",
 				"org-t",
+				...MANAGE,
 			),
 		).toBeNull();
 		expect(dbLimit).not.toHaveBeenCalled();
@@ -262,39 +276,171 @@ describe("ensureCliOrgAccess", () => {
 			{ userId: "u-minter", orgId: "org-t" },
 			"service_token",
 			"org-u",
+			...MANAGE,
 		);
 		expect(denied?.status).toBe(403);
 	});
 
 	// …and it must not even ASK. A membership query whose answer is ignored is a query that the
 	// next edit will start trusting.
-	it("does not consult membership at all for a service token", async () => {
+	it("does not consult membership or the PDP at all for a service token", async () => {
 		dbLimit.mockResolvedValue([{ id: "m-minter-in-org-u" }]);
 		await ensureCliOrgAccess(
 			{ userId: "u-minter", orgId: "org-t" },
 			"service_token",
 			"org-u",
+			...MANAGE,
 		);
 		expect(dbLimit).not.toHaveBeenCalled();
+		expect(can).not.toHaveBeenCalled();
 	});
 
 	it("admits a session to its own resolved org without a query", async () => {
 		expect(
-			await ensureCliOrgAccess(CLI_ACTOR, "session", "org-cli"),
+			await ensureCliOrgAccess(CLI_ACTOR, "session", "org-cli", ...MANAGE),
 		).toBeNull();
 		expect(dbLimit).not.toHaveBeenCalled();
 	});
 
-	it("admits a session to another org it is a member of", async () => {
+	it("admits a session to another org where it is an active member holding the permission", async () => {
 		dbLimit.mockResolvedValue([{ id: "m-1" }]);
-		expect(await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other")).toBeNull();
-		expect(dbLimit).toHaveBeenCalled();
+		const inOther: Actor = { userId: "u-cli", orgId: "org-other" };
+		vi.mocked(getActiveScope).mockResolvedValue(inOther);
+		expect(await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other", ...MANAGE)).toBeNull();
+		// The permission is asked of the PATH org's scope, not of the caller's resolved one.
+		expect(getActiveScope).toHaveBeenCalledWith("u-cli", "org-other");
+		expect(can).toHaveBeenCalledWith(inOther, "manage_members", {
+			type: "member",
+			id: undefined,
+		});
 	});
 
-	it("refuses a session an org it is not a member of", async () => {
-		dbLimit.mockResolvedValue([]);
-		const denied = await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other");
+	// #5479. A member row was the whole test, so the route's permission was checked in one org and
+	// the write landed in another.
+	it("refuses a session member of another org who lacks the permission there", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-viewer" }]);
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-cli", orgId: "org-other" });
+		can.mockResolvedValue({ allowed: false });
+		const denied = await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other", ...MANAGE);
 		expect(denied?.status).toBe(403);
+	});
+
+	// The shape the defect was reached by: a caller in their PERSONAL scope, where they own
+	// everything, naming an org they are an ordinary member of.
+	it("does not let a personal-scope caller carry its own-org permission into another org", async () => {
+		const personal: Actor = { userId: "u-p", orgId: "u-p" };
+		dbLimit.mockResolvedValue([{ id: "m-viewer" }]);
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-p", orgId: "org-b" });
+		can.mockImplementation(async (a: Actor) => ({ allowed: a.orgId === "u-p" }));
+		const denied = await ensureCliOrgAccess(personal, "session", "org-b", ...MANAGE);
+		expect(denied?.status).toBe(403);
+	});
+
+	it("refuses a session with no ACTIVE member row in that org, without asking the PDP", async () => {
+		dbLimit.mockResolvedValue([]);
+		const denied = await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other", ...MANAGE);
+		expect(denied?.status).toBe(403);
+		expect(can).not.toHaveBeenCalled();
+	});
+
+	it("refuses when the scope resolver lands on a different org than the path names", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-1" }]);
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-cli", orgId: "org-third" });
+		const denied = await ensureCliOrgAccess(CLI_ACTOR, "session", "org-other", ...MANAGE);
+		expect(denied?.status).toBe(403);
+		expect(can).not.toHaveBeenCalled();
+	});
+
+	it("admits a session to its own personal org with no member row", async () => {
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-cli", orgId: "u-cli" });
+		expect(await ensureCliOrgAccess(CLI_ACTOR, "session", "u-cli", ...MANAGE)).toBeNull();
+		expect(dbLimit).not.toHaveBeenCalled();
+	});
+});
+
+describe("authorizeCliOrg", () => {
+	it("returns the actor scoped to the PATH org for a cross-org session", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-1" }]);
+		const inOther: Actor = { userId: "u-cli", orgId: "org-other" };
+		vi.mocked(getActiveScope).mockResolvedValue(inOther);
+		expect(
+			await authorizeCliOrg(CLI_ACTOR, "session", "org-other", "manage_members", {
+				type: "member",
+			}),
+		).toEqual({ actor: inOther });
+	});
+});
+
+/** Whether a recorded `member` predicate requires `status = 'active'`. */
+function requiresActive(predicate: SQL): boolean {
+	const { sql, params } = new PgDialect().sqlToQuery(predicate);
+	return /"member"\."status" = \$\d+/.test(sql) && params.includes("active");
+}
+
+/**
+ * A member row that is SUSPENDED: a status-blind membership query finds it, a query that counts
+ * only active rows does not. This is the row the scope resolver stopped landing on in #5484.
+ */
+function suspendedRow(): void {
+	dbLimit.mockImplementation(async () => {
+		const last = dbWhere.mock.calls.at(-1)?.[0];
+		return last && requiresActive(last) ? [] : [{ id: "m-suspended" }];
+	});
+}
+
+describe("membership checks count only an ACTIVE member row (#5484)", () => {
+	// The minter is suspended in the pinned org. Their default scope is another org (the resolver
+	// no longer lands on a suspended row), so the fast path does not fire and the query decides.
+	it("assertMintingProfileStillMember refuses a minter SUSPENDED in the pinned org", async () => {
+		suspendedRow();
+		const denied = await assertMintingProfileStillMember(
+			{ userId: "u-minter", orgId: "org-other" },
+			"org-t",
+		);
+		expect(denied?.status).toBe(403);
+	});
+
+	it("authorizeCli refuses a service token whose minter is SUSPENDED in the pinned org", async () => {
+		suspendedRow();
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: {
+				sub: "u-minter",
+				type: "access",
+				service_token_org_id: "org-A",
+				service_token_id: "tok-1",
+			},
+			error: null,
+		});
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-minter", orgId: "org-A" });
+		const result = await authorizeCli(new Request("https://example.test/api/cli"), "manage_tokens", {
+			type: "org",
+		});
+		expect("error" in result && result.error.status).toBe(403);
+		expect(enforce).not.toHaveBeenCalled();
+	});
+
+	it("authorizeCli refuses an X-Alethia-Org header naming an org the caller is SUSPENDED in", async () => {
+		suspendedRow();
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "u-cli", type: "access" },
+			error: null,
+		});
+		vi.mocked(getActiveScope).mockResolvedValue({ userId: "u-cli", orgId: "org-susp" });
+		const result = await authorizeCli(
+			new Request("https://example.test/api/cli", { headers: { "X-Alethia-Org": "org-susp" } }),
+			"view",
+			{ type: "org" },
+		);
+		expect("error" in result && result.error.status).toBe(403);
+		expect(enforce).not.toHaveBeenCalled();
+	});
+
+	it("an ACTIVE row still passes, so the checks did not become refuse-all", async () => {
+		dbLimit.mockResolvedValue([{ id: "m-active" }]);
+		expect(
+			await assertMintingProfileStillMember({ userId: "u-minter", orgId: "org-other" }, "org-t"),
+		).toBeNull();
+		expect(requiresActive(dbWhere.mock.calls.at(-1)?.[0])).toBe(true);
 	});
 });
 

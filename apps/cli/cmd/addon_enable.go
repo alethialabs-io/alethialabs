@@ -18,6 +18,7 @@ var (
 	addonEnableMode       string
 	addonEnableSet        []string
 	addonEnableValuesFile string
+	addonEnableVersion    string
 	addonDisableYes       bool
 )
 
@@ -44,6 +45,9 @@ var addonEnableCmd = &cobra.Command{
 Re-running enable on an installed add-on UPDATES it — the knobs you pass are merged over what
 is stored, so you can change one value without restating the rest. A secret you do not resend
 is preserved rather than blanked.
+
+--version pins the add-on's chart version in this environment; --version "" removes the pin so the
+catalog's default version applies again. Without the flag, a stored pin is kept.
 
 Omit the add-on id on a terminal and the add-ons installed in the environment are offered to
 reconfigure. Installing one that is not yet enabled needs its catalog id, which the marketplace
@@ -86,10 +90,23 @@ in the console gives you.`,
 			Mode:       mode,
 			Values:     values,
 			ValuesYAML: valuesYAML,
+			Version:    addonVersionFlag(cmd),
 		}); err != nil {
 			failf("Failed to enable add-on: %v", err)
 		}
 	},
+}
+
+// addonVersionFlag returns the --version pin as the API's three-state value: nil when the flag was
+// not given (the stored pin is kept), a pointer to "" when it was given empty (the pin is cleared),
+// and the version otherwise. The value is NOT checked here: the server validates it through the one
+// definition of a chart version the console also uses, so a local copy could only disagree with it.
+func addonVersionFlag(cmd *cobra.Command) *string {
+	if !cmd.Flags().Changed("version") {
+		return nil
+	}
+	v := addonEnableVersion
+	return &v
 }
 
 // readAddonValuesFile reads the raw Helm-values override, or returns "" when no file was named.
@@ -185,6 +202,8 @@ func init() {
 		"Delivery mode ("+strings.Join(addonModeValues(), ", ")+"): managed = Alethia applies it, gitops = written to your apps repo")
 	addonEnableCmd.Flags().StringArrayVar(&addonEnableSet, "set", nil, "Add-on setting key=value (repeatable)")
 	addonEnableCmd.Flags().StringVar(&addonEnableValuesFile, "values-file", "", "Path to a raw Helm values YAML override (Advanced)")
+	addonEnableCmd.Flags().StringVar(&addonEnableVersion, "version", "",
+		`Pin the chart version, e.g. 58.2.1; --version "" removes the pin (catalog default)`)
 	addYesFlag(addonDisableCmd, &addonDisableYes)
 	addonCmd.AddCommand(addonEnableCmd)
 	addonCmd.AddCommand(addonDisableCmd)

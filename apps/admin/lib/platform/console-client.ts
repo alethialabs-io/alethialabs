@@ -3,8 +3,8 @@
 
 // The staff app calls the console's provisioning routes (create an org + owner invite, set a plan)
 // rather than reaching into the console's authz/slug/billing internals — so all that logic stays in
-// the console (single source of truth) and the operator plane holds only the sales/contract/audit
-// layer. Authenticated with the DEDICATED PLATFORM_PROVISION_SECRET bearer.
+// the console and the operator plane holds only the sales/contract/audit layer. (The slug's SHAPE is
+// the one exception: it is @repo/org-slug, a shared package both apps read, not a console internal.) Authenticated with the DEDICATED PLATFORM_PROVISION_SECRET bearer.
 
 import { env } from "next-runtime-env";
 

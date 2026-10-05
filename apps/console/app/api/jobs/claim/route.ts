@@ -4,7 +4,6 @@
 import { asRecord } from "@/lib/records";
 import { getServiceDb } from "@/lib/db";
 import {
-	cloudIdentities,
 	connectorCredentials,
 	connectors,
 	jobs,
@@ -16,6 +15,7 @@ import { recordClaimLatency } from "@/lib/observability/metrics";
 import { markJobSpan } from "@/lib/observability/trace";
 import { verifyRunnerToken } from "@/lib/runners/auth";
 import { claimGrantFor } from "@/lib/runners/claim-grants";
+import { loadClaimIdentity } from "@/lib/runners/claim-identity";
 import { verifySnapshot } from "@/lib/runners/snapshot-sig";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -135,14 +135,13 @@ export async function POST(req: Request) {
 
 		let cloud_identity = null;
 		if (grant.cloudIdentity && job.cloud_identity_id) {
-			const [identity] = await db
-				.select({
-					credentials: cloudIdentities.credentials,
-					provider: cloudIdentities.provider,
-				})
-				.from(cloudIdentities)
-				.where(eq(cloudIdentities.id, job.cloud_identity_id))
-				.limit(1);
+			// By id AND the job's tenancy (#5479): an identity from another tenant is never sent,
+			// whatever id the row carries.
+			const identity = await loadClaimIdentity(db, {
+				cloud_identity_id: job.cloud_identity_id,
+				org_id: job.org_id,
+				user_id: job.user_id,
+			});
 
 			if (identity) {
 				const c = identity.credentials;

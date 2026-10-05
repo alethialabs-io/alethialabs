@@ -240,11 +240,12 @@ export async function resolveCliProvider(
 			// and the membership query never runs: the check would trust exactly the input it exists to verify.
 			//
 			// That fast path cannot mask an offboarded caller here. `getActiveScope(userId)` with no
-			// org resolves the caller's earliest REMAINING membership, else their personal org
-			// (ee/src/scope.ts, case 3) — never an org they have been removed from. So a departed
-			// member's default can never equal the pin, the query always runs for them, and the answer
-			// is a 403. A still-member whose default happens to BE the pin takes the fast path, which
-			// is the correct answer by a cheaper route.
+			// org resolves the caller's earliest REMAINING ACTIVE membership, else their personal org
+			// (ee/src/scope.ts, case 3) — never an org they have been removed from or are suspended in.
+			// So a departed or suspended member's default can never equal the pin, the query always runs
+			// for them, and it counts only an active row, so the answer is a 403. An active member whose
+			// default happens to BE the pin takes the fast path, which is the correct answer by a
+			// cheaper route.
 			//
 			// Absence is not error: `resolveActiveScope` lets a failed lookup propagate rather than
 			// reporting it as a missing membership, so a database blip surfaces as a 500 and never as
@@ -258,7 +259,16 @@ export async function resolveCliProvider(
 			if (denied) {
 				return { userId: null, scope: null, provider: null, errorResponse: denied };
 			}
-			return { userId, scope: await getActiveScope(userId, caller.pinnedOrg), provider, errorResponse: null };
+			// THE SCOPE MUST LAND ON THE PIN, or nothing is served. `getActiveScope` treats its org
+			// argument as a preference and falls back to another org on a miss, so its answer is checked,
+			// never trusted (#5484): a minter suspended in the pinned org resolves to one of their OTHER
+			// orgs, and `enforceProviderPermission` would then authorize in that org, where they hold
+			// full rights. The token was issued for the pin and for nothing else.
+			const pinnedScope = await getActiveScope(userId, caller.pinnedOrg);
+			if (pinnedScope.orgId !== caller.pinnedOrg) {
+				return { userId: null, scope: null, provider: null, errorResponse: forbidden() };
+			}
+			return { userId, scope: pinnedScope, provider, errorResponse: null };
 		}
 		case "session": {
 			// An interactive session picks its org with `X-Alethia-Org` — the CLI's `--org` flag. It is safe
@@ -277,22 +287,32 @@ export async function resolveCliProvider(
 			// itself, returns null, and the membership query never runs: the guard would trust exactly the
 			// input it exists to verify. That is the shape of #3863, one rung lower.
 			//
-			// Calling `isOrgMember` directly instead would skip the extra resolution honestly, but it puts a
+			// Calling the membership query directly instead would skip the extra resolution honestly, but it puts a
 			// second copy of the membership predicate in the tree while #3863 is correcting the first.
 			const defaultScope = await getActiveScope(userId);
 			if (!headerOrg) {
 				return { userId, scope: defaultScope, provider, errorResponse: null };
 			}
-			// A human, so the session arm — `actor.orgId === orgId`, else a membership query. Behaviour
-			// identical to before #4298; what changed is where the kind comes from. It is
+			// A human, so the session arm — `actor.orgId === orgId`, else an ACTIVE membership plus the
+			// named permission in that org (#5479). What #4298 changed is where the kind comes from. It is
 			// `caller.credential` and not the literal `"session"` so the value the guard switches on is
 			// the one this arm was ENTERED on: a literal here would keep saying "human" if the arm
 			// above it ever stopped being the only other one.
-			const denied = await ensureCliOrgAccess(defaultScope, caller.credential, headerOrg);
+			// `org:view` is the gate — may this human act in the named org at all. The provider
+			// permission itself is `enforceProviderPermission`'s, on the scope returned below.
+			const denied = await ensureCliOrgAccess(defaultScope, caller.credential, headerOrg, "view", {
+				type: "org",
+			});
 			if (denied) {
 				return { userId: null, scope: null, provider: null, errorResponse: denied };
 			}
-			return { userId, scope: await getActiveScope(userId, headerOrg), provider, errorResponse: null };
+			// The same landing check as the token arm: the header names this request's org, so a
+			// resolution that fell back to any other org is refused, not served.
+			const headerScope = await getActiveScope(userId, headerOrg);
+			if (headerScope.orgId !== headerOrg) {
+				return { userId: null, scope: null, provider: null, errorResponse: forbidden() };
+			}
+			return { userId, scope: headerScope, provider, errorResponse: null };
 		}
 	}
 }

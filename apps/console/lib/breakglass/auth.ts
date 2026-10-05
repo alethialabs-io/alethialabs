@@ -9,11 +9,14 @@
 //   1. ALETHIA_BREAKGLASS_ENABLED === "true"         (master switch; else the surface 404s)
 //   2. an identity can be established, from ONE of:
 //        a. a valid CLI bearer token (terminal operators; cryptographically verified against
-//           CLI_JWT_SECRET), whose subject resolves to an account email — the PRIMARY path, or
+//           CLI_JWT_SECRET), whose subject resolves to an account email — the PRIMARY path. Only
+//           an interactive CLI SESSION (the device-login JWT) qualifies: a service token is
+//           refused (#5496), or
 //        b. the Cloudflare-Access header (a DEDICATED break-glass Access app fronts the operator UI),
 //           BUT ONLY when the request also carries the shared proxy secret proving it transited that
 //           trusted proxy (see below), or
-//        c. the BREAKGLASS_DEV_EMAIL local-dev fallback (only when neither of the above is present).
+//        c. the BREAKGLASS_DEV_EMAIL local-dev fallback (only when neither of the above is present,
+//           and never when NODE_ENV=production — see `breakglassDevEmail`).
 //   3. that email is on the BREAKGLASS_OPERATORS allowlist.
 //
 // Why the proxy secret (spoofing defense): apps/admin can trust the CF-Access email header because
@@ -27,6 +30,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { verifyCliToken } from "@/lib/cli/auth";
+import { credentialOf } from "@/lib/cli/providers";
 import { getServiceDb } from "@/lib/db";
 import { user } from "@/lib/db/schema";
 import {
@@ -62,6 +66,12 @@ export async function resolveBreakglassOperator(
 	// Verify the JWT first, then map the subject to an account email; the allowlist is the wall.
 	if (req.headers.get("Authorization")?.startsWith("Bearer ")) {
 		const { payload } = await verifyCliToken(req);
+		// A CLI SESSION only. `verifyCliToken` also accepts a service token and maps its `sub` to the
+		// user who minted it, so without this check a token pinned to one org — handed to that
+		// tenant's CI — would authenticate as its minter's platform-wide break-glass identity
+		// (#5496). `credentialOf` is the one classifier of the credential kind; a malformed pin
+		// (null) is refused too.
+		if (credentialOf(payload)?.credential !== "session") return null;
 		const sub = typeof payload?.sub === "string" ? payload.sub : null;
 		if (sub) {
 			const email = await emailForUserId(sub);

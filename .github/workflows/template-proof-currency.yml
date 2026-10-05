@@ -1,0 +1,153 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Is each starter template's live HEAD the commit it was last green-proven on? (#5418, epic #2766)
+#
+# The console hands a user each starter template at its repo's HEAD, and the `templates` e2e
+# dimension that proves one deploys is dispatch-only — `floor` is the only scheduled dimension
+# (scripts/e2e/resolve-dimension.sh). So the first push to a starter repo after its last proof makes
+# the product offer an unproven template. scripts/check-template-proof-currency.mjs compares each
+# repo's HEAD with the commit scripts/lib/template-proofs.mjs reads from the newest PASS bundle under
+# demos/proofs/templates/; this runs it daily.
+#
+# IT ONLY REPORTS. No cloud, no credential beyond the run's own token, no dispatch, no paid
+# dimension: whether drift should trigger an automatic re-prove (epic #2766 unit 3) is undecided.
+#
+# THREE OUTCOMES, all on the run's colour:
+#   0  every HEAD is the proven commit           → green; an open tracker is closed
+#   1  DRIFT — a HEAD moved, named with repo, both shas and the proof bundle → red, tracker upserted
+#   2  the instrument could not answer (unreadable proofs, an unreadable HEAD) → red, tracker
+#      upserted. "I did not check" must never render as "current".
+# Anything else (a crash before a verdict) fails the `measure` job and files nothing.
+#
+# ONE tracker, deduped on its exact TITLE (the #5418 acceptance criterion): open → edit it in place;
+# none open → create it; more than one open with that title → reported and the run fails rather than
+# picking one.
+#
+# NOT on pull_request: a push to a starter repo is a change in ANOTHER repo, not in the diff, so this
+# would red PRs that touched nothing. The self-tests are wired into ci.yml's `guards` job instead.
+#
+# WARNING: `schedule:` fires the DEFAULT branch's copy of this file and of the scripts and proof
+# bundles it reads. Until this has ridden dev → staging → main it runs on no schedule at all, and
+# afterwards it compares against main's bundles. `workflow_dispatch` against a branch exercises it
+# before then.
+
+name: Template proof currency
+
+on:
+  schedule:
+    - cron: "37 6 * * *" # daily, 06:37 UTC (off the hour)
+  workflow_dispatch:
+
+# Least privilege, per job: the job that runs repository code and reads the network holds a
+# read-only token and no persisted credential; only the job that files the tracker can write
+# issues, and it checks nothing out and runs no repository code. The workflow-level block makes
+# every unlisted scope NONE.
+permissions:
+  contents: read
+
+concurrency:
+  group: template-proof-currency
+  # false: the tracker job lists, then creates, an issue. Cancelling between those two calls is how
+  # a second tracker with the same title gets filed — queue the next run instead.
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    name: Every starter template's HEAD is its last proven commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.currency.outputs.code }}
+      report: ${{ steps.currency.outputs.report }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The instruments' own proof first, hermetic: the reader's fixtures, then this check's fixtures
+      # plus the mutation control (one HEAD moved off its proven sha must exit 1).
+      - name: Self-test the proven-commit reader
+        run: node scripts/lib/template-proofs.mjs --self-test
+      - name: Self-test the currency check
+        run: node scripts/check-template-proof-currency.mjs --self-test
+
+      # `|| code=$?` rather than a bare call: a `run:` step is `bash -e`, so a non-zero exit would
+      # abort the step before the report could be handed on, and exits 1 and 2 here MEAN something.
+      # The starter repos are public; the run's own token only lifts the anonymous rate limit.
+      - name: Compare each starter repo's HEAD with its last green proof
+        id: currency
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          code=0
+          node scripts/check-template-proof-currency.mjs > report.md || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          delim="REPORT_$(openssl rand -hex 16)"
+          { echo "report<<$delim"; cat report.md; echo "$delim"; } >> "$GITHUB_OUTPUT"
+          { echo '## Template proof currency'; echo; cat report.md; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" != "0" ] && [ "$code" != "1" ] && [ "$code" != "2" ]; then
+            echo "::error::the currency check exited $code without a verdict — this run is blind, not clean"
+            exit 1
+          fi
+
+  tracker:
+    name: Upsert the template proof currency tracker
+    needs: measure
+    if: needs.measure.outputs.code == '0' || needs.measure.outputs.code == '1' || needs.measure.outputs.code == '2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write # the ONLY write this workflow holds
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # One title for BOTH red outcomes, drift (1) and an unanswered check (2), so it must not claim
+      # drift: the body (the check's own report) says which one this run was.
+      TITLE: "templates: a starter repo's HEAD is not proven to be its last green-proven commit"
+      CODE: ${{ needs.measure.outputs.code }}
+      REPORT: ${{ needs.measure.outputs.report }}
+    steps:
+      - name: Open, update or close the tracking issue
+        run: |
+          set -euo pipefail
+          # Exact-title match over the open-issue LIST, not `--search`: the search index lags, and a
+          # lagging index is how a second tracker gets filed.
+          open="$(gh issue list --state open --limit 1000 --json number,title --jq "map(select(.title == env.TITLE)) | .[].number")"
+          count="$(printf '%s' "$open" | grep -c . || true)"
+          if [ "${count:-0}" -gt 1 ]; then
+            echo "::error title=duplicate tracking issues::more than one open issue is titled \"$TITLE\": $(printf '%s' "$open" | tr '\n' ' ')— close all but one."
+            exit 1
+          fi
+          existing="$(printf '%s' "$open" | head -1)"
+          now="$(date -u +%Y-%m-%dT%H:%MZ)"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+          if [ "$CODE" = "0" ]; then
+            if [ -n "$existing" ]; then
+              gh issue close "$existing" --comment "Every starter template's HEAD is its last green-proven commit as of $now ($run_url). Closing; the next drift files this title again."
+              echo "closed #$existing"
+            fi
+            exit 0
+          fi
+
+          { printf '%s\n' "$REPORT"; printf "\n_Refreshed by \`.github/workflows/template-proof-currency.yml\` on %s ([run](%s)). It reports only — nothing is re-proved or dispatched. It closes itself once every HEAD is proven again._\n" "$now" "$run_url"; } > body.md
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file body.md
+            echo "updated #$existing"
+          else
+            gh issue create --title "$TITLE" --label "wave:hygiene" --body-file body.md
+          fi
+
+      # The tracker is the durable signal; the run's colour is the immediate one. Drift (1) and an
+      # unanswered check (2) both end red, AFTER the tracker is filed.
+      - name: Red on drift or on an unanswered check
+        run: |
+          if [ "$CODE" != "0" ]; then
+            echo "::error::template proof currency exited $CODE — $([ "$CODE" = "1" ] && echo "a starter repo's HEAD moved past its last green proof" || echo "the check could not answer")"
+            exit 1
+          fi

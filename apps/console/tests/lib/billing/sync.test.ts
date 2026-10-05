@@ -10,8 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // stubbing the predicate a test is about would let the wrong answer pass.
 vi.mock("@/lib/billing/credit-grants", () => ({ ensureIncludedCredit: vi.fn() }));
 vi.mock("@/lib/billing/queries", () => ({
+	applySubscriptionToBilling: vi.fn(async () => true),
+	applyAiSubscriptionToBilling: vi.fn(async () => true),
+	// Not the sync's write path any more (#5514): it is the unconditional OFF-Stripe write. Stubbed
+	// so a regression back onto it is caught by an assertion rather than a missing-export crash.
 	upsertOrgBilling: vi.fn(),
-	upsertOrgAiSubscription: vi.fn(),
 	claimPlanWelcome: vi.fn(async () => false),
 }));
 vi.mock("@/lib/email/billing-email", () => ({ sendPlanWelcomeEmail: vi.fn() }));
@@ -27,7 +30,13 @@ import {
 	syncSubscriptionToBilling,
 } from "@/lib/billing/sync";
 import { aiTierForPriceId, planForPriceId } from "@/lib/billing/config";
-import { upsertOrgAiSubscription, upsertOrgBilling } from "@/lib/billing/queries";
+import { ensureIncludedCredit } from "@/lib/billing/credit-grants";
+import {
+	applyAiSubscriptionToBilling,
+	applySubscriptionToBilling,
+	claimPlanWelcome,
+	upsertOrgBilling,
+} from "@/lib/billing/queries";
 
 /** A subscription carrying only the fields planFromSubscription reads. */
 function subWithPlan(plan?: string): Stripe.Subscription {
@@ -179,8 +188,8 @@ describe("syncSubscriptionToBilling", () => {
 		vi.mocked(aiTierForPriceId).mockReturnValue(null);
 	});
 	afterEach(() => {
-		vi.mocked(upsertOrgBilling).mockClear();
-		vi.mocked(upsertOrgAiSubscription).mockClear();
+		vi.mocked(applySubscriptionToBilling).mockClear();
+		vi.mocked(applyAiSubscriptionToBilling).mockClear();
 	});
 
 	// THE REGRESSION, stated as the row it would have written. With the meter first, the old
@@ -188,7 +197,7 @@ describe("syncSubscriptionToBilling", () => {
 	// `plan: live && plan ? plan : "community"` wrote `community` over a live Pro subscription.
 	it("writes the plan off the licensed item even when the meter is listed FIRST", async () => {
 		await syncSubscriptionToBilling(sub([meter, flat]));
-		expect(upsertOrgBilling).toHaveBeenCalledWith(
+		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
 			expect.objectContaining({
 				organizationId: "org_1",
 				plan: "team",
@@ -201,7 +210,7 @@ describe("syncSubscriptionToBilling", () => {
 
 	it("writes the same row when the meter is listed SECOND", async () => {
 		await syncSubscriptionToBilling(sub([flat, meter]));
-		expect(upsertOrgBilling).toHaveBeenCalledWith(
+		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
 			expect.objectContaining({ plan: "team", seats: 4 }),
 		);
 	});
@@ -210,7 +219,7 @@ describe("syncSubscriptionToBilling", () => {
 		// An `incomplete` upgrade must not light up Pro in the billing panel; the subscription id
 		// is still retained so the panel can clean it up.
 		await syncSubscriptionToBilling(sub([flat], { status: "incomplete" }));
-		expect(upsertOrgBilling).toHaveBeenCalledWith(
+		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
 			expect.objectContaining({
 				plan: "community",
 				status: "none",
@@ -225,7 +234,7 @@ describe("syncSubscriptionToBilling", () => {
 		await syncSubscriptionToBilling(
 			sub([meter], { metadata: { organization_id: "org_1", plan: "enterprise" } }),
 		);
-		expect(upsertOrgBilling).toHaveBeenCalledWith(
+		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
 			// No plan line, so no seats and no period either — every one of them came off that item.
 			expect.objectContaining({ plan: "enterprise", seats: null, currentPeriodEnd: null }),
 		);
@@ -243,7 +252,7 @@ describe("syncSubscriptionToBilling", () => {
 				} as unknown as Stripe.SubscriptionItem,
 			]),
 		);
-		expect(upsertOrgAiSubscription).toHaveBeenCalledWith(
+		expect(applyAiSubscriptionToBilling).toHaveBeenCalledWith(
 			expect.objectContaining({
 				organizationId: "org_1",
 				aiTier: "ai_plus",
@@ -251,13 +260,13 @@ describe("syncSubscriptionToBilling", () => {
 				aiStripeSubscriptionId: "sub_1",
 			}),
 		);
-		expect(upsertOrgBilling).not.toHaveBeenCalled();
+		expect(applySubscriptionToBilling).not.toHaveBeenCalled();
 	});
 
 	it("ignores a subscription with no organization_id rather than guessing a tenant", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		await syncSubscriptionToBilling(sub([flat], { metadata: {} }));
-		expect(upsertOrgBilling).not.toHaveBeenCalled();
+		expect(applySubscriptionToBilling).not.toHaveBeenCalled();
 		expect(warn).toHaveBeenCalledWith(expect.stringContaining("no organization_id"));
 		warn.mockRestore();
 	});
@@ -266,8 +275,46 @@ describe("syncSubscriptionToBilling", () => {
 		await syncSubscriptionToBilling(
 			sub([flat], { customer: { id: "cus_expanded" } as Stripe.Customer }),
 		);
-		expect(upsertOrgBilling).toHaveBeenCalledWith(
+		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
 			expect.objectContaining({ stripeCustomerId: "cus_expanded" }),
 		);
+	});
+
+	// ── #5514: the sync's write is conditional, and a refused write has no side effects ──────────
+
+	it("hands the event time to the guarded write, so a stale event can be refused", async () => {
+		const eventAt = new Date("2026-10-01T12:00:05Z");
+		await syncSubscriptionToBilling(sub([flat], { status: "active" }), { eventAt });
+		expect(applySubscriptionToBilling).toHaveBeenCalledWith(
+			expect.objectContaining({ stripeSubscriptionId: "sub_1", status: "active", eventAt }),
+		);
+		// The unconditional off-Stripe write is never the subscription path.
+		expect(upsertOrgBilling).not.toHaveBeenCalled();
+	});
+
+	it("hands the event time to the guarded AI write too", async () => {
+		vi.mocked(aiTierForPriceId).mockReturnValue("ai_plus");
+		const eventAt = new Date("2026-10-01T12:00:07Z");
+		await syncSubscriptionToBilling(sub([flat], { status: "active" }), { eventAt });
+		expect(applyAiSubscriptionToBilling).toHaveBeenCalledWith(
+			expect.objectContaining({ aiStripeSubscriptionId: "sub_1", eventAt }),
+		);
+	});
+
+	it("a refused write grants no credit and sends no welcome — the org is not on this subscription", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		vi.mocked(applySubscriptionToBilling).mockResolvedValueOnce(false);
+		vi.mocked(claimPlanWelcome).mockClear();
+		vi.mocked(ensureIncludedCredit).mockClear();
+
+		const outcome = await syncSubscriptionToBilling(sub([flat], { status: "active" }), {
+			eventAt: new Date("2026-10-01T12:00:09Z"),
+		});
+
+		expect(outcome).toBe("ignored");
+		expect(ensureIncludedCredit).not.toHaveBeenCalled();
+		expect(claimPlanWelcome).not.toHaveBeenCalled();
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining("not applied to org org_1"));
+		warn.mockRestore();
 	});
 });

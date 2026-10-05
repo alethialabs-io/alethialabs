@@ -14,6 +14,7 @@ import type React from "react";
 import { useId } from "react";
 import { z } from "zod";
 import { PlanChecklist } from "@/components/billing/plan-checklist";
+import { BUILT_IN_ROLE_LABELS } from "@/lib/authz/registry";
 import type { PlanCatalogEntry } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -184,8 +185,8 @@ export function InviteView({
 					name={inv.email}
 					meta="Invited · pending"
 				>
-					<span className="rounded-full border border-border px-2 py-0.5 font-mono text-ui-2xs capitalize text-text-tertiary">
-						{inv.role}
+					<span className="rounded-full border border-border px-2 py-0.5 font-mono text-ui-2xs text-text-tertiary">
+						{BUILT_IN_ROLE_LABELS[inv.role]}
 					</span>
 				</Seat>
 			))}
@@ -214,7 +215,14 @@ export function isValidInviteEmail(email: string): boolean {
 	return z.string().email().safeParse(email.trim()).success;
 }
 
-/** A compact role <select> on the shadcn Select primitive. */
+/**
+ * A compact role <select> on the shadcn Select primitive.
+ *
+ * Each option is the role's LABEL from the registry (`BUILT_IN_ROLE_LABELS`), the one source every
+ * other role picker reads since #5444. It used to be the raw key under CSS `capitalize`, which
+ * paints "Admin" while the accessible name — and the trigger's text, which `@repo/ui/select`
+ * resolves from these children — stayed "admin" (#5445).
+ */
 export function RoleField({
 	value,
 	onChange,
@@ -226,13 +234,13 @@ export function RoleField({
 }) {
 	return (
 		<Select value={value} onValueChange={(v) => onChange(coerceEnum(v, ROLES, "viewer"))}>
-			<SelectTrigger size="sm" aria-label="Role" className={cn("capitalize", className)}>
+			<SelectTrigger size="sm" aria-label="Role" className={className}>
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>
 				{ROLES.map((r) => (
-					<SelectItem key={r} value={r} className="capitalize">
-						{r}
+					<SelectItem key={r} value={r}>
+						{BUILT_IN_ROLE_LABELS[r]}
 					</SelectItem>
 				))}
 			</SelectContent>
@@ -282,7 +290,11 @@ export function Field({
 				<div className={labelClass}>{text}</div>
 			)}
 			{typeof children === "function" ? children(id) : children}
-			{error && <p className="text-ui-xs text-destructive">{error}</p>}
+			{error && (
+				<p role="alert" className="text-ui-xs text-destructive">
+					{error}
+				</p>
+			)}
 		</div>
 	);
 }

@@ -100,6 +100,7 @@ const nextConfig: NextConfig = {
 		"@repo/brand",
 		"@repo/format",
 		"@repo/legal",
+		"@repo/org-slug",
 		"@repo/plan-catalog",
 		"@repo/email",
 		"@repo/support",

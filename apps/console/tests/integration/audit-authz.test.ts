@@ -32,7 +32,7 @@ import { seedAuthz } from "@/lib/authz/seed";
 import type { Actor, Entitlements } from "@/lib/authz/types";
 import { ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
-import { grants, jobs, organization, projects, user } from "@/lib/db/schema";
+import { grants, jobs, member, organization, projects, user } from "@/lib/db/schema";
 import { describeIfDb } from "./db";
 
 const ORG = randomUUID();
@@ -93,6 +93,12 @@ describeIfDb("queueAudit — real PDP gate (#2697)", () => {
 			{ id: VIEWER, email: `it-audit-viewer-${VIEWER}@example.test` },
 		]);
 		await db.insert(organization).values({ id: ORG, name: `audit-${ORG.slice(0, 8)}` });
+		// Both PDPs grant nothing in a non-personal org to an actor who is not an ACTIVE member of
+		// it (#5472), so every actor here is a member, as they are in production.
+		await db.insert(member).values([
+			{ organizationId: ORG, userId: OPERATOR, role: "viewer" },
+			{ organizationId: ORG, userId: VIEWER, role: "viewer" },
+		]);
 		await db.insert(projects).values({
 			id: PROJECT,
 			user_id: OPERATOR,

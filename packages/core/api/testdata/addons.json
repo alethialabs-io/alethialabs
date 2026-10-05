@@ -6,6 +6,7 @@
 			"enabled": false,
 			"mode": "string",
 			"version": "string",
+			"version_pinned": false,
 			"namespace": "string",
 			"status": "string",
 			"health": "string",
