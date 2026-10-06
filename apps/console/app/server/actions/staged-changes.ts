@@ -5,6 +5,8 @@
 import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { asRecord } from "@/lib/records";
+import { assertDesignStoresNoNewCredentials } from "@/lib/cloud-providers/credential-knob-store";
+import { withoutCredentials } from "@/lib/cloud-providers/credential-knobs";
 import { withActorScope } from "@/lib/db";
 import { projectChanges } from "@/lib/db/schema";
 import type { StagedChangePayload } from "@/types/jsonb.types";
@@ -57,6 +59,10 @@ export async function stageChanges(
 		.catch(() => null);
 	const rows = diffConfig(live, data);
 	return withActorScope(actor, async (tx) => {
+		// The staged diff is persisted too (project_changes), so a credential in provider_config would
+		// be stored in plaintext here before it ever reached a component row. Same guard as the
+		// apply (#5565).
+		await assertDesignStoresNoNewCredentials(tx, projectId, data);
 		await tx.delete(projectChanges).where(changeScope(projectId, environmentId));
 		if (rows.length)
 			await tx.insert(projectChanges).values(
@@ -65,6 +71,10 @@ export async function stageChanges(
 					environment_id: environmentId,
 					user_id: owner,
 					...r,
+					// The payload is a display copy of the component. A legacy credential that passed the
+					// guard above (already stored, unchanged) must not be written a SECOND time, in
+					// plaintext, into project_changes — so it is omitted here (#5565).
+					payload: r.payload ? withoutCredentials(r.component_type, r.payload) : r.payload,
 				})),
 			);
 		return { count: rows.length };

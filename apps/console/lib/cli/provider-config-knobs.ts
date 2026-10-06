@@ -12,15 +12,20 @@
 // "Settable" therefore has ONE definition, and it is the canvas's: `offerableKnobs` — the function
 // behind `knobsFor`, which the cluster inspector renders its Advanced section from — over the
 // generated `template-knobs.json`. This file only NARROWS that set, never widens it, and it narrows
-// it by two rules the canvas does not need because a person is looking at the control there:
+// it by one rule the canvas does not need because a person is looking at the control there:
 //
 //   · RESERVED — any key starting `alethia_` is platform context (`alethia_project`,
 //     `alethia_environment`, …). None is offerable today; the prefix is refused anyway so that a
 //     template adding one cannot open it to the CLI by accident.
-//   · CREDENTIAL — a knob the template marks `sensitive`, a knob whose name or declared type carries
-//     a credential word (`rds_extra_credentials` declares a `password` attribute), and a secret's own
-//     material (`value` on a secret). A credential belongs in a secret store, not in a component's
-//     config, where it would ride the config snapshot and the tofu state in the clear.
+//
+// CREDENTIALS are not filtered here any more. #5562 first added that rule on this side only, which
+// left the canvas offering `rds_extra_credentials` and a secret's `value`; #5565 moved it into
+// `offerableKnobs` itself (`isCredentialKnob`, lib/cloud-providers/template-knobs.ts), so both
+// surfaces now get it from the one definition and a second filter here would be a copy that could
+// drift. REMOVED, not kept as defence in depth: the defence in depth is server-side and covers both
+// surfaces — the project write actions refuse a credential key through `credentialRefusal`. What
+// this file still does with credentials is NAME them: `refusalReason` says "a credential" rather
+// than the generic "not settable", because the refusal is also the user's explanation.
 //
 // Everything else the manifest knows a reason for — typed, provider-owned, ceiling, dead,
 // unreachable — is the manifest's reason, and the refusal says which one, beside the list of keys
@@ -30,6 +35,8 @@ import { z } from "zod";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import {
 	TEMPLATE_KNOBS,
+	isCredentialKeyName,
+	isCredentialKnob,
 	isRead,
 	offerableKnobs,
 	type TemplateKnob,
@@ -99,25 +106,6 @@ const REASON_TEXT: Readonly<Record<RefusalReason, string>> = {
 	dead: "read by nothing in the template",
 };
 
-/** A credential word as a whole `_`-separated segment of a knob name. */
-const CREDENTIAL_NAME =
-	/(^|_)(password|passwd|passphrase|credentials?|token|secret_key|access_key|private_key|api_key|client_secret)(_|$)/;
-
-/** A credential attribute declared inside a knob's type (`object({ password = … })`). */
-const CREDENTIAL_ATTRIBUTE =
-	/\b(password|passwd|passphrase|token|secret_key|access_key|private_key|api_key|client_secret)\s*=/;
-
-/**
- * True when a knob carries a credential: the template marks it `sensitive`, its name or its declared
- * type names a credential, or it is a secret component's own material (`value`).
- */
-export function isCredentialKnob(knob: TemplateKnob): boolean {
-	if (knob.sensitive) return true;
-	if (CREDENTIAL_NAME.test(knob.name)) return true;
-	if (CREDENTIAL_ATTRIBUTE.test(knob.typeExpr)) return true;
-	return knob.component === "secret" && knob.name === "value";
-}
-
 /** True for a key the platform reserves for its own context. */
 function isReservedKey(key: string): boolean {
 	return key.startsWith("alethia_");
@@ -125,7 +113,8 @@ function isReservedKey(key: string): boolean {
 
 /**
  * The knobs a CLI write may set on one component kind on one cloud: the canvas's offerable set
- * (`offerableKnobs`, the body of `knobsFor`) less reserved and credential knobs. Sorted by name.
+ * (`offerableKnobs`, the body of `knobsFor` — credentials already excluded there) less reserved
+ * keys. Sorted by name.
  *
  * `knobs` defaults to the committed manifest; a test passes a fixture to drive a category the live
  * manifest no longer contains (a dead knob, since #4320).
@@ -137,9 +126,7 @@ export function settableProviderConfigKnobs(
 ): TemplateKnob[] {
 	const nodeKind = PROVIDER_CONFIG_NODE_KIND[kind];
 	if (!nodeKind) return [];
-	return offerableKnobs(knobs, cloud, nodeKind).filter(
-		(k) => !isReservedKey(k.name) && !isCredentialKnob(k),
-	);
+	return offerableKnobs(knobs, cloud, nodeKind).filter((k) => !isReservedKey(k.name));
 }
 
 /** Why `key` is not in the settable set — the first matching reason, most fundamental first. */
@@ -153,7 +140,7 @@ function refusalReason(
 	const knob = nodeKind
 		? knobs.find((k) => k.cloud === cloud && k.component === nodeKind && k.name === key)
 		: undefined;
-	if (!knob) return CREDENTIAL_NAME.test(key) ? "credential" : "unknown";
+	if (!knob) return isCredentialKeyName(key) ? "credential" : "unknown";
 	if (isCredentialKnob(knob)) return "credential";
 	if (!knob.reachable) return "unreachable";
 	if (knob.ceiling) return "ceiling";
