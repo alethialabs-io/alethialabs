@@ -513,3 +513,87 @@ alethia project component add --project boutique --kind cluster --set capacity_t
 Fields are **validated server-side** against the component's schema: an unknown or mistyped field
 fails with a clear `400`, naming the offending field and the allowed set. Singleton kinds ignore
 `--name` (they upsert the project's single row); multi kinds require it.
+
+### Setting template knobs
+
+A component's `provider_config` field sets the template's own variables: the same knobs as the
+**Advanced** section of the component's card on the canvas. Examples are the GKE private endpoint,
+the AKS Spot pool and the EKS volume type. Pass it as a JSON object with `--set`:
+
+```bash
+alethia project component add --project boutique --kind cluster \
+  --set 'provider_config={"gke_enable_private_endpoint":true,"gke_disk_type":"pd-ssd"}'
+```
+
+In `alethia.yaml`, write it as a nested mapping under the component:
+
+```yaml
+environments:
+  - name: prod
+    components:
+      cluster:
+        node_min_size: 2
+        provider_config:
+          gke_enable_private_endpoint: true
+          gke_disk_type: pd-ssd
+      databases:
+        - name: orders
+          engine: postgres
+          provider_config:
+            cloud_sql_high_availability: true
+```
+
+**Which keys you can set depends on the project's cloud and the component.** The server checks each
+key against the template for that cloud. It refuses a key it does not accept, and the error lists
+every key that you can set. To find the keys, send one you know is wrong:
+
+```
+provider_config key(s) not settable for cluster on gcp: gke_private_endpoint (not a variable of this template).
+Settable keys for cluster on gcp: external_dns_service_account_email, external_secrets_service_account_email,
+gke_disk_type, gke_enable_private_endpoint, gke_enable_private_nodes, gke_master_authorized_cidr_blocks,
+gke_secrets_encryption_enabled, gke_secrets_encryption_rotation_period, gke_volume_iops, gke_volume_throughput
+```
+
+The server refuses these keys, and says why for each one:
+
+- a key the template does not declare;
+- a key that a typed field already sets, such as `instance_types` for the node type — use that field;
+- a key that Alethia always sets itself, or that the cloud can't apply;
+- a key that starts with `alethia_`, which is reserved for platform context;
+- a credential, such as a password or a secret's value. Store a credential as a secret, not in
+  `provider_config`.
+
+Each value must have the type that the template declares. Use a JSON `true`/`false` for a `bool`
+knob, a number for a `number` knob, and a list or an object where the template declares one.
+
+**A write merges into what is stored.** A key you send replaces that key's value, and a key you do
+not send keeps its value. This includes a key that someone set on the canvas. To remove a key and
+go back to the template's default, set it to `null`. With `--set`, write it as JSON `null`:
+
+```bash
+alethia project component add --project boutique --kind cluster \
+  --set 'provider_config={"gke_disk_type":null}'
+```
+
+In `alethia.yaml`, write `null` (or `~`) as the key's value, then run `alethia apply`:
+
+```yaml
+      cluster:
+        provider_config:
+          gke_disk_type: null
+```
+
+Deleting the line from `alethia.yaml` does not remove the key. A key that the file does not
+declare keeps its stored value.
+
+<Callout type="warn">
+  `alethia plan` compares `provider_config` as one value, not key by key. If the server holds a
+  key that `alethia.yaml` does not declare, for example one set on the canvas, `plan` shows an
+  update to `provider_config` on every run. Applying it is safe: the write merges, so the
+  undeclared key keeps its value. A key-by-key compare is tracked in
+  [#5528](https://github.com/alethialabs-io/alethialabs/issues/5528).
+</Callout>
+
+`provider_config` needs a cloud. The project, or the component, must be linked to a cloud account
+first. `network` and `repositories` have no `provider_config`, and the server refuses the field on
+them.
