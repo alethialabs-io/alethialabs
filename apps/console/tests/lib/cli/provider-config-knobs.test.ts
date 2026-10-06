@@ -16,8 +16,10 @@
 
 import type { SQL } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import {
 	TEMPLATE_KNOBS,
+	isCredentialKnob,
 	knobsFor,
 	type TemplateKnob,
 } from "@/lib/cloud-providers/template-knobs";
@@ -149,7 +151,6 @@ vi.mock("@/lib/cli/resolve-project", () => ({
 }));
 
 const {
-	isCredentialKnob,
 	knobTypeError,
 	mergeProviderConfig,
 	resolveProviderConfigPatch,
@@ -227,9 +228,10 @@ describe("a key that is not offerable is refused, with the settable keys listed"
 		});
 	});
 
-	it("refuses a credential the canvas would offer: rds_extra_credentials declares a password", () => {
+	// Since #5565 the canvas no longer offers it either: the credential rule lives in `offerableKnobs`.
+	it("refuses a credential, and names it as one: rds_extra_credentials declares a password", () => {
 		const knob = manifestKnob("aws", "database", "rds_extra_credentials");
-		expect(knobsFor("aws", "database")).toContainEqual(knob);
+		expect(knobsFor("aws", "database")).not.toContainEqual(knob);
 		expect(knob.typeExpr).toMatch(/password\s*=/);
 		expect(refusal("aws", "databases", { rds_extra_credentials: { username: "u", database: "d", password: "p" } })).toContain(
 			"rds_extra_credentials (a credential",
@@ -238,9 +240,19 @@ describe("a key that is not offerable is refused, with the settable keys listed"
 
 	it("refuses a secret's own material (`value` on a secret)", () => {
 		const knob = manifestKnob("aws", "secret", "value");
-		expect(knobsFor("aws", "secret")).toContainEqual(knob);
+		expect(knobsFor("aws", "secret")).not.toContainEqual(knob);
 		expect(isCredentialKnob(knob)).toBe(true);
 		expect(refusal("aws", "secrets", { value: "hunter2" })).toContain("value (a credential");
+	});
+
+	// #5571 delta review: a map knob's keys are user data, never read for credential words.
+	it("accepts map knobs whose own keys are named like credentials", () => {
+		expect(resolveProviderConfigPatch("aws", "secrets", { keepers: { api_token: "rotate-2026-10" } })).toMatchObject({ ok: true });
+		expect(
+			resolveProviderConfigPatch("azure", "databases", {
+				azure_db_database_flags: { password_encryption: "scram-sha-256", default_password_lifetime: "90" },
+			}),
+		).toMatchObject({ ok: true });
 	});
 
 	it("refuses a sensitive knob whatever else it is", () => {
@@ -392,10 +404,19 @@ describe("one definition of settable: the canvas's knobsFor, narrowed only", () 
 		for (const k of settableProviderConfigKnobs(cloud, "cluster")) expect(canvas).toContain(k.name);
 	});
 
-	it("keeps every canvas knob that is neither reserved nor a credential", () => {
-		const cli = settableProviderConfigKnobs("aws", "databases").map((k) => k.name);
-		const canvas = knobsFor("aws", "database").map((k) => k.name);
-		expect(cli).toEqual(canvas.filter((n) => n !== "rds_extra_credentials"));
+	// Credentials are excluded by `offerableKnobs` itself (#5565), so the two surfaces agree exactly
+	// wherever no `alethia_*` key is declared — which is everywhere today.
+	it.each(TEMPLATE_KNOBS.clouds)("%s: the CLI's settable set IS the canvas's offerable set", (cloud) => {
+		for (const [cliKind, nodeKind] of [
+			["databases", "database"],
+			["secrets", "secret"],
+			["cluster", "cluster"],
+			["storage_buckets", "bucket"],
+		] satisfies [string, NodeKind][]) {
+			const cli = settableProviderConfigKnobs(cloud, cliKind).map((k) => k.name);
+			const canvas = knobsFor(cloud, nodeKind).map((k) => k.name);
+			expect(cli).toEqual(canvas);
+		}
 	});
 });
 

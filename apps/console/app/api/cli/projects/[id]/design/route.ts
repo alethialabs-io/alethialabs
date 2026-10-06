@@ -24,6 +24,7 @@ import { stageChanges } from "@/app/server/actions/staged-changes";
 // export there to be async, and diffConfig is a pure synchronous function.
 import { type DiffRow, diffConfig } from "@/lib/config-diff";
 import { updateProjectDesign } from "@/app/server/actions/projects";
+import { CredentialKnobRefusedError } from "@/lib/cloud-providers/credential-knobs";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
@@ -113,6 +114,11 @@ export async function POST(
 			changes: [],
 		});
 	} catch (err: unknown) {
+		// A credential in a component's provider_config (#5565) is the caller's input, not a server
+		// fault: a 400 with the refusal, which names the component and key and never the value.
+		if (err instanceof CredentialKnobRefusedError) {
+			return NextResponse.json({ error: err.message }, { status: 400 });
+		}
 		const message = err instanceof Error ? err.message : "Internal Server Error";
 		if (/forbidden|not authorized|permission/i.test(message)) {
 			return NextResponse.json({ error: message }, { status: 403 });
