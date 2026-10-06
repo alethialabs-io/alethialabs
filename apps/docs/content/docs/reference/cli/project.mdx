@@ -568,12 +568,31 @@ knob, a number for a `number` knob, and a list or an object where the template d
 
 **A write merges into what is stored.** A key you send replaces that key's value, and a key you do
 not send keeps its value. This includes a key that someone set on the canvas. To remove a key and
-go back to the template's default, set it to `null`:
+go back to the template's default, set it to `null`. With `--set`, write it as JSON `null`:
 
 ```bash
 alethia project component add --project boutique --kind cluster \
   --set 'provider_config={"gke_disk_type":null}'
 ```
+
+In `alethia.yaml`, write `null` (or `~`) as the key's value, then run `alethia apply`:
+
+```yaml
+      cluster:
+        provider_config:
+          gke_disk_type: null
+```
+
+Deleting the line from `alethia.yaml` does not remove the key. A key that the file does not
+declare keeps its stored value.
+
+<Callout type="warn">
+  `alethia plan` compares `provider_config` as one value, not key by key. If the server holds a
+  key that `alethia.yaml` does not declare, for example one set on the canvas, `plan` shows an
+  update to `provider_config` on every run. Applying it is safe: the write merges, so the
+  undeclared key keeps its value. A key-by-key compare is tracked in
+  [#5528](https://github.com/alethialabs-io/alethialabs/issues/5528).
+</Callout>
 
 `provider_config` needs a cloud. The project, or the component, must be linked to a cloud account
 first. `network` and `repositories` have no `provider_config`, and the server refuses the field on

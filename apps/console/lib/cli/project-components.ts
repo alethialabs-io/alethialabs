@@ -35,7 +35,7 @@ import {
 } from "@/lib/cloud-providers/generated/catalog";
 import { applySizingOneWriter } from "@/lib/cloud-providers/node-sizing";
 import { isCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
-import { getServiceDb } from "@/lib/db";
+import { getServiceDb, type Db, type Tx } from "@/lib/db";
 import { asRecord } from "@/lib/records";
 import {
 	cloudIdentities,
@@ -851,7 +851,7 @@ function hasNoInstanceTypes(value: unknown): boolean {
  * linked, the identity is gone, or its cloud has no catalog — the caller must then not guess: a new
  * cluster leaves its instance types unset, and a provider_config write is refused. */
 async function componentProvider(
-	db: ReturnType<typeof getServiceDb>,
+	db: Db | Tx,
 	projectId: string,
 	componentIdentityId: unknown,
 ): Promise<CloudProviderSlug | null> {
@@ -883,9 +883,13 @@ interface StoredProviderConfig {
 /**
  * Reads the stored `provider_config` and `cloud_identity_id` of the ONE row a write will amend —
  * the environment's singleton, or the named multi row — or null when there is none yet.
+ *
+ * `FOR UPDATE`, and only ever called inside the transaction that then writes the merged object: the
+ * row stays locked from this read to that write, so a concurrent save (the canvas, another CLI call)
+ * waits rather than landing between them and being overwritten by a merge computed without it.
  */
 async function readStoredProviderConfig(
-	db: ReturnType<typeof getServiceDb>,
+	db: Db | Tx,
 	def: KindDef,
 	projectId: string,
 	environmentId: string,
@@ -897,6 +901,7 @@ async function readStoredProviderConfig(
 		.select({ provider_config: cols.provider_config, cloud_identity_id: cols.cloud_identity_id })
 		.from(def.table)
 		.where(name !== null && cols.name ? and(scope, eq(cols.name, name)) : scope)
+		.for("update")
 		.limit(1);
 	return row ?? null;
 }
@@ -913,7 +918,7 @@ async function readStoredProviderConfig(
  * set — is kept, and a key sent as `null` is removed.
  */
 async function providerConfigToStore(
-	db: ReturnType<typeof getServiceDb>,
+	db: Db | Tx,
 	kind: string,
 	projectId: string,
 	values: Record<string, unknown>,
@@ -946,20 +951,36 @@ export async function insertProjectComponent(
 	const def = getKindDef(kind);
 	if (!def) throw new Error(`Unknown component kind "${kind}"`);
 	const db = getServiceDb();
-	const cols = getTableColumns(def.table);
-
-	// A provider_config patch is resolved against the cloud and MERGED into the row it amends — for a
-	// singleton the environment's existing row (add upserts), for a new multi row nothing. Only when
-	// the caller sent one: a write without it reads nothing extra and stores exactly what it did.
-	if (values.provider_config !== undefined) {
-		const stored = def.singleton
-			? await readStoredProviderConfig(db, def, projectId, environmentId, null)
-			: null;
-		values = {
-			...values,
-			provider_config: await providerConfigToStore(db, kind, projectId, values, stored),
-		};
+	// A write without provider_config reads nothing extra and stores exactly what it did before #5529.
+	if (values.provider_config === undefined) {
+		return insertComponentWith(db, def, kind, projectId, environmentId, name, values);
 	}
+	// A provider_config patch is resolved against the cloud and MERGED into the row it amends — for a
+	// singleton the environment's existing row (add upserts), for a new multi row nothing — in ONE
+	// transaction, the row locked from the read to the write.
+	return db.transaction(async (tx) => {
+		const stored = def.singleton
+			? await readStoredProviderConfig(tx, def, projectId, environmentId, null)
+			: null;
+		const merged = await providerConfigToStore(tx, kind, projectId, values, stored);
+		return insertComponentWith(tx, def, kind, projectId, environmentId, name, {
+			...values,
+			provider_config: merged,
+		});
+	});
+}
+
+/** The body of {@link insertProjectComponent}, on the connection or transaction it is handed. */
+async function insertComponentWith(
+	db: Db | Tx,
+	def: KindDef,
+	kind: string,
+	projectId: string,
+	environmentId: string,
+	name: string,
+	values: Record<string, unknown>,
+): Promise<ComponentWire> {
+	const cols = getTableColumns(def.table);
 
 	// environment_id is required — a component in a NULL env is invisible to the env-scoped deploy,
 	// and the singleton unique is composite, so the conflict target below must include it.
@@ -1098,24 +1119,27 @@ export async function updateProjectComponent(
 		throw new Error("updateProjectComponent: no fields to update");
 	}
 	const cols = getTableColumns(def.table);
-	if (!cols.name) throw new Error(`${kind} has no name column`);
+	const nameCol = cols.name;
+	if (!nameCol) throw new Error(`${kind} has no name column`);
 	const db = getServiceDb();
-	// provider_config merges per key into the stored object (#5529), so the row is read first; no row
-	// is the caller's 404, the same answer the update itself would give.
-	if (values.provider_config !== undefined) {
-		const stored = await readStoredProviderConfig(db, def, projectId, environmentId, name);
+	/** The UPDATE itself, on the connection or transaction it is handed. */
+	const write = async (q: Db | Tx, set: Record<string, unknown>) => {
+		const [row] = await q
+			.update(def.table)
+			.set({ ...set, updated_at: new Date() })
+			.where(and(componentScope(cols, projectId, environmentId), eq(nameCol, name)))
+			.returning();
+		return row ? rowToComponentWire(kind, row) : null;
+	};
+	if (values.provider_config === undefined) return write(db, values);
+	// provider_config merges per key into the stored object (#5529): read the row FOR UPDATE, merge,
+	// write, in one transaction. No row is the caller's 404, the answer the update itself would give.
+	return db.transaction(async (tx) => {
+		const stored = await readStoredProviderConfig(tx, def, projectId, environmentId, name);
 		if (!stored) return null;
-		values = {
-			...values,
-			provider_config: await providerConfigToStore(db, kind, projectId, values, stored),
-		};
-	}
-	const [row] = await db
-		.update(def.table)
-		.set({ ...values, updated_at: new Date() })
-		.where(and(componentScope(cols, projectId, environmentId), eq(cols.name, name)))
-		.returning();
-	return row ? rowToComponentWire(kind, row) : null;
+		const merged = await providerConfigToStore(tx, kind, projectId, values, stored);
+		return write(tx, { ...values, provider_config: merged });
+	});
 }
 
 /** Deletes a component within ONE environment. Singletons delete that environment's single row;

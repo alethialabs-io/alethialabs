@@ -14,6 +14,7 @@
 // route handlers) over a fake service db that answers each SELECT by table, so merge and delete are
 // asserted against a seeded row, not a stub of the merge.
 
+import type { SQL } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	TEMPLATE_KNOBS,
@@ -31,10 +32,19 @@ import {
 const PROJ_ID = "33333333-3333-4333-8333-333333333333";
 const ENV_ID = "11111111-1111-4111-8111-111111111111";
 const IDENTITY = "55555555-5555-4555-8555-555555555555";
+/** A second identity, on GCP, that a write can move a component onto. */
+const IDENTITY_GCP = "66666666-6666-4666-8666-666666666666";
 
 /** What the fake db answers (the identity's cloud, the stored component row) and records. */
 interface FakeDb {
+	/** The cloud of IDENTITY (the project's); IDENTITY_GCP is always gcp. */
 	cloud: string | null;
+	/** Inside db.transaction(…) right now. */
+	inTx: boolean;
+	/** Every component-row read: whether it was FOR UPDATE and inside the transaction. */
+	componentReads: Array<{ forUpdate: boolean; inTx: boolean }>;
+	/** Whether the INSERT / UPDATE ran inside the transaction. */
+	writeInTx: boolean | undefined;
 	stored: Record<string, unknown> | null;
 	componentSelects: number;
 	inserted: Record<string, unknown> | undefined;
@@ -44,6 +54,9 @@ interface FakeDb {
 const { db } = vi.hoisted((): { db: FakeDb } => ({
 	db: {
 		cloud: "aws",
+		inTx: false,
+		componentReads: [],
+		writeInTx: undefined,
 		stored: null,
 		componentSelects: 0,
 		inserted: undefined,
@@ -53,26 +66,47 @@ const { db } = vi.hoisted((): { db: FakeDb } => ({
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/db", () => ({
-	getServiceDb: () => ({
+vi.mock("@/lib/db", async () => {
+	const { PgDialect } = await import("drizzle-orm/pg-core");
+	/** The rows one SELECT answers, by table — an identity's cloud by the id its predicate binds. */
+	const rowsFor = async (table: unknown, predicate: SQL, forUpdate: boolean): Promise<unknown[]> => {
+		if (table === projectEnvironments) return [{ fabric_id: null, placement_mode: "dedicated" }];
+		if (table === projects) return [{ cloud_identity_id: IDENTITY }];
+		if (table === cloudIdentities) {
+			const id = new PgDialect().sqlToQuery(predicate).params[0];
+			if (id === IDENTITY_GCP) return [{ provider: "gcp" }];
+			return id === IDENTITY && db.cloud ? [{ provider: db.cloud }] : [];
+		}
+		if (table === projectCluster || table === projectDatabases) {
+			db.componentSelects++;
+			db.componentReads.push({ forUpdate, inTx: db.inTx });
+			return db.stored ? [db.stored] : [];
+		}
+		throw new Error("unexpected table in select");
+	};
+	const conn = {
 		select: () => ({
 			from: (table: unknown) => ({
-				where: () => ({
-					limit: async () => {
-						if (table === projectEnvironments) return [{ fabric_id: null, placement_mode: "dedicated" }];
-						if (table === projects) return [{ cloud_identity_id: IDENTITY }];
-						if (table === cloudIdentities) return db.cloud ? [{ provider: db.cloud }] : [];
-						if (table === projectCluster || table === projectDatabases) {
-							db.componentSelects++;
-							return db.stored ? [db.stored] : [];
-						}
-						throw new Error("unexpected table in select");
-					},
+				where: (predicate: SQL) => ({
+					limit: () => rowsFor(table, predicate, false),
+					for: (strength: string) => ({
+						limit: () => rowsFor(table, predicate, strength === "update"),
+					}),
 				}),
 			}),
 		}),
+		/** Runs `fn` on this same fake, flagged as inside the transaction. */
+		transaction: async <T,>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
+			db.inTx = true;
+			try {
+				return await fn(conn);
+			} finally {
+				db.inTx = false;
+			}
+		},
 		insert: () => ({
 			values: (v: Record<string, unknown>) => {
+				db.writeInTx = db.inTx;
 				db.inserted = v;
 				const returning = async () => [{ id: "row-1", ...v }];
 				return {
@@ -86,6 +120,7 @@ vi.mock("@/lib/db", () => ({
 		}),
 		update: () => ({
 			set: (v: Record<string, unknown>) => {
+				db.writeInTx = db.inTx;
 				db.updated = v;
 				return {
 					where: () => ({
@@ -94,8 +129,9 @@ vi.mock("@/lib/db", () => ({
 				};
 			},
 		}),
-	}),
-}));
+	};
+	return { getServiceDb: () => conn };
+});
 
 // The routes' own collaborators. The guard and the project resolver are not what this file tests
 // (component-update.test.ts drives the real guard); what is tested is that a refused knob reaches the
@@ -147,6 +183,9 @@ function refusal(cloud: string, kind: string, patch: Record<string, unknown>): s
 
 beforeEach(() => {
 	db.cloud = "aws";
+	db.inTx = false;
+	db.componentReads = [];
+	db.writeInTx = undefined;
 	db.stored = null;
 	db.componentSelects = 0;
 	db.inserted = undefined;
@@ -168,8 +207,24 @@ describe("a key that is not offerable is refused, with the settable keys listed"
 		expect(refusal("aws", "cluster", { alethia_project: "other" })).toContain(
 			"alethia_project (reserved for platform context",
 		);
-		// The prefix, not a list: a future template variable under it is refused before it exists.
 		expect(refusal("gcp", "cluster", { alethia_anything_new: true })).toContain("reserved");
+	});
+
+	// The prefix, not a list, and it holds against the MANIFEST: a template that one day declares an
+	// alethia_* variable that is otherwise offerable (reachable, read, not typed or owned) must still
+	// not open it to the CLI. No live knob has that shape, so it is a fixture.
+	it("refuses an alethia_* knob even when the manifest makes it offerable", () => {
+		const reserved: TemplateKnob = {
+			...manifestKnob("aws", "cluster", "eks_ami_type"),
+			name: "alethia_environment",
+		};
+		expect(knobsFor("aws", "cluster").some((k) => k.name === "alethia_environment")).toBe(false);
+		expect(settableProviderConfigKnobs("aws", "cluster", [reserved])).toEqual([]);
+		const r = resolveProviderConfigPatch("aws", "cluster", { alethia_environment: "prod" }, [reserved]);
+		expect(r).toEqual({
+			ok: false,
+			error: expect.stringContaining("alethia_environment (reserved for platform context"),
+		});
 	});
 
 	it("refuses a credential the canvas would offer: rds_extra_credentials declares a password", () => {
@@ -192,6 +247,18 @@ describe("a key that is not offerable is refused, with the settable keys listed"
 		const knob = manifestKnob("hetzner", "cluster", "hcloud_token");
 		expect(knob.sensitive || /token/.test(knob.name)).toBe(true);
 		expect(refusal("hetzner", "cluster", { hcloud_token: "t" })).toContain("hcloud_token (a credential");
+	});
+
+	// `sensitive` ALONE makes a knob a credential: a fixture whose name and type carry no credential
+	// word, otherwise offerable, marked sensitive by its template.
+	it("treats a template-sensitive knob as a credential, by the flag alone", () => {
+		const plain = manifestKnob("aws", "cluster", "eks_ami_type");
+		const sensitive: TemplateKnob = { ...plain, name: "bootstrap_blob", sensitive: true };
+		expect(isCredentialKnob({ ...sensitive, sensitive: false })).toBe(false);
+		expect(isCredentialKnob(sensitive)).toBe(true);
+		expect(settableProviderConfigKnobs("aws", "cluster", [sensitive])).toEqual([]);
+		const r = resolveProviderConfigPatch("aws", "cluster", { bootstrap_blob: "x" }, [sensitive]);
+		expect(r).toEqual({ ok: false, error: expect.stringContaining("bootstrap_blob (a credential") });
 	});
 
 	it("refuses a typed key — a typed field already writes it", () => {
@@ -402,14 +469,54 @@ describe("the write path merges into the stored row", () => {
 		expect(db.inserted).toBeUndefined();
 	});
 
+	// The stored row is on AWS (IDENTITY); the write moves it to GCP (IDENTITY_GCP). The keys must be
+	// judged on GCP: a GKE knob passes and an EKS one is refused. Judged on the stored identity, both
+	// answers flip.
 	it("checks the keys against the identity the write SETS, not the stored one", async () => {
-		db.cloud = "gcp";
-		db.stored = { cloud_identity_id: null, provider_config: {} };
-		const v = validateComponentFields("cluster", { provider_config: { eks_volume_iops: 1 } });
-		if (!v.ok) throw new Error(v.error);
-		await expect(insertProjectComponent("cluster", PROJ_ID, ENV_ID, "", v.values)).rejects.toThrow(
+		db.stored = { cloud_identity_id: IDENTITY, provider_config: {} };
+		const gke = validateComponentFields("cluster", {
+			cloud_identity_id: IDENTITY_GCP,
+			provider_config: { gke_disk_type: "pd-ssd" },
+		});
+		if (!gke.ok) throw new Error(gke.error);
+		await insertProjectComponent("cluster", PROJ_ID, ENV_ID, "", gke.values);
+		expect(db.conflictSet?.provider_config).toEqual({ gke_disk_type: "pd-ssd" });
+
+		const eks = validateComponentFields("cluster", {
+			cloud_identity_id: IDENTITY_GCP,
+			provider_config: { eks_volume_iops: 1 },
+		});
+		if (!eks.ok) throw new Error(eks.error);
+		await expect(insertProjectComponent("cluster", PROJ_ID, ENV_ID, "", eks.values)).rejects.toThrow(
 			/not settable for cluster on gcp/,
 		);
+	});
+
+	it("falls back to the stored row's identity when the write sets none", async () => {
+		db.stored = { cloud_identity_id: IDENTITY_GCP, provider_config: {} };
+		const v = validateComponentFields("cluster", { provider_config: { gke_disk_type: "pd-ssd" } });
+		if (!v.ok) throw new Error(v.error);
+		await insertProjectComponent("cluster", PROJ_ID, ENV_ID, "", v.values);
+		expect(db.conflictSet?.provider_config).toEqual({ gke_disk_type: "pd-ssd" });
+	});
+
+	// The read-merge-write is one transaction with the row locked, so a concurrent save cannot land
+	// between the read and the write and be overwritten by a merge computed without it.
+	it("reads the row FOR UPDATE and writes inside the same transaction (add and update)", async () => {
+		db.stored = { cloud_identity_id: null, provider_config: { eks_volume_type: "gp3" } };
+		const add = validateComponentFields("cluster", { provider_config: { eks_volume_iops: 1 } });
+		if (!add.ok) throw new Error(add.error);
+		await insertProjectComponent("cluster", PROJ_ID, ENV_ID, "", add.values);
+		expect(db.componentReads).toEqual([{ forUpdate: true, inTx: true }]);
+		expect(db.writeInTx).toBe(true);
+
+		db.componentReads = [];
+		db.writeInTx = undefined;
+		const upd = validateComponentFields("databases", { provider_config: { rds_default_username: "x" } });
+		if (!upd.ok) throw new Error(upd.error);
+		await updateProjectComponent("databases", PROJ_ID, ENV_ID, "main", upd.values);
+		expect(db.componentReads).toEqual([{ forUpdate: true, inTx: true }]);
+		expect(db.writeInTx).toBe(true);
 	});
 
 	// Defaults unchanged: a write that sends no provider_config reads no row for it and writes no
