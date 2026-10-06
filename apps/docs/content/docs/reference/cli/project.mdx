@@ -561,7 +561,9 @@ The server refuses these keys, and says why for each one:
 - a key that Alethia always sets itself, or that the cloud can't apply;
 - a key that starts with `alethia_`, which is reserved for platform context;
 - a credential, such as a password or a secret's value. Store a credential as a secret, not in
-  `provider_config`.
+  `provider_config`. The canvas does not offer these keys either, and `alethia apply` refuses them
+  in a design. See [Secrets](/guides/design-project/secrets#set-a-secrets-value) and
+  [Databases](/guides/design-project/databases#the-extra-database-user-aws).
 
 Each value must have the type that the template declares. Use a JSON `true`/`false` for a `bool`
 knob, a number for a `number` knob, and a list or an object where the template declares one.
