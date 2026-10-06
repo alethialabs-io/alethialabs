@@ -35,6 +35,11 @@ module "cloud_sql" {
   # existing instance keeps exactly the IAM-auth flag it has; the module appends, never replaces.
   database_flags = var.cloud_sql_database_flags
 
+  # Query Insights (#5532). All false by default, which renders no insights_config block at all.
+  query_insights_enabled                 = var.cloud_sql_query_insights_enabled
+  query_insights_record_application_tags = var.cloud_sql_query_insights_record_application_tags
+  query_insights_record_client_address   = var.cloud_sql_query_insights_record_client_address
+
   # Keyless app DB user (#722): when IAM auth is on, register the app GSA as a
   # CLOUD_IAM_SERVICE_ACCOUNT database user so the workload logs in with an IAM token, no password.
   app_iam_sa_email = local.enable_app_db_iam ? one(data.google_service_account.app_db_adopted[*].email) : null
@@ -42,4 +47,19 @@ module "cloud_sql" {
   authorized_networks = var.cloud_sql_authorized_networks
 
   labels = local.gcp_default_labels
+}
+
+# The two Query Insights `record_*` switches only refine Query Insights (#5532). With insights off
+# there is no insights_config block to carry them, so a caller who set one would be accepted and
+# silently ignored. Refused at plan instead. Count 0 unless that exact mistake is made, so the
+# default plan gains nothing.
+resource "terraform_data" "cloud_sql_query_insights_guard" {
+  count = var.create_cloud_sql && !var.cloud_sql_query_insights_enabled && (var.cloud_sql_query_insights_record_application_tags || var.cloud_sql_query_insights_record_client_address) ? 1 : 0
+
+  lifecycle {
+    precondition {
+      condition     = var.cloud_sql_query_insights_enabled
+      error_message = "cloud_sql_query_insights_record_application_tags and cloud_sql_query_insights_record_client_address refine Query Insights and need cloud_sql_query_insights_enabled = true. Turn Query Insights on, or leave both record switches off."
+    }
+  }
 }

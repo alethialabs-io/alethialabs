@@ -152,11 +152,23 @@ resource "google_sql_database_instance" "this" {
       }
     }
 
+    # Query Insights (#5532). Gated on the BOOLEAN, so the block is absent — not present-and-false —
+    # for every project that never asked, and the plan of an existing instance does not move.
+    dynamic "insights_config" {
+      for_each = var.query_insights_enabled ? [1] : []
+      content {
+        query_insights_enabled  = true
+        record_application_tags = var.query_insights_record_application_tags
+        record_client_address   = var.query_insights_record_client_address
+      }
+    }
+
     user_labels = merge(var.labels, {
       environment = var.environment
       managed-by  = "opentofu"
     })
   }
+
 }
 
 ################################################################################

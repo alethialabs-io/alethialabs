@@ -30,3 +30,10 @@ output "app_iam_user" {
   description = "Keyless app database username — the CLOUD_IAM_SERVICE_ACCOUNT login as the engine stores it (#722, #1505); null when no app GSA was passed"
   value       = var.app_iam_sa_email != null ? one(google_sql_user.app_iam[*].name) : null
 }
+
+# Read off the PLANNED instance, not the input, so checks_customize.tftest.hcl fails if the
+# insights_config block ever stops reading the variable (#5532). An empty list means no block.
+output "insights_config" {
+  description = "The instance's planned settings.insights_config blocks (empty when Query Insights is off)"
+  value       = google_sql_database_instance.this.settings[0].insights_config
+}

@@ -348,6 +348,31 @@ variable "cloud_sql_database_flags" {
   description = "List of database flags to set on the Cloud SQL instance"
 }
 
+# Query Insights (#5532) — the GCP analogue of the AWS/Azure "database log exports" row in
+# CUSTOMIZABILITY-PARITY.md. Cloud SQL already sends its engine logs to Cloud Logging without any
+# setting, and the log flags themselves are `cloud_sql_database_flags` above; what the template could
+# not do was turn on per-query latency and plan insight. All three are off by default, and off
+# renders NO `insights_config` block, so an instance whose project never sets them plans exactly as
+# it did before. The two `record_*` switches refine Query Insights and are refused without it (a
+# precondition in modules/cloud-sql), rather than being sent to an instance that ignores them.
+variable "cloud_sql_query_insights_enabled" {
+  type        = bool
+  default     = false
+  description = "Turn on Cloud SQL Query Insights (settings.insights_config.query_insights_enabled): per-query latency, load and execution plans in the Cloud SQL console. Off by default."
+}
+
+variable "cloud_sql_query_insights_record_application_tags" {
+  type        = bool
+  default     = false
+  description = "Record application tags (sqlcommenter) with Query Insights. Requires cloud_sql_query_insights_enabled."
+}
+
+variable "cloud_sql_query_insights_record_client_address" {
+  type        = bool
+  default     = false
+  description = "Record the client IP address with Query Insights. Requires cloud_sql_query_insights_enabled."
+}
+
 variable "cloud_sql_authorized_networks" {
   type = list(object({
     name  = string
@@ -587,6 +612,9 @@ variable "cloud_storage_buckets" {
     })), [])
     cors_origins = optional(list(string), [])
     cors_methods = optional(list(string), [])
+    # Encrypt this bucket with a customer-managed Cloud KMS key the template creates (#5532). See
+    # cloud-storage.tf. Disabling or destroying that key makes the bucket's objects unreadable.
+    cmek_enabled = optional(bool, false)
   }))
   default     = []
   description = "List of Cloud Storage buckets to create"

@@ -122,6 +122,24 @@ variable "database_flags" {
   default     = []
 }
 
+variable "query_insights_enabled" {
+  type        = bool
+  description = "Turn on Query Insights. False renders no insights_config block, which is what every instance built before #5532 has."
+  default     = false
+}
+
+variable "query_insights_record_application_tags" {
+  type        = bool
+  description = "Record application tags with Query Insights. Refused at the root (cloud-sql.tf) unless query_insights_enabled is true."
+  default     = false
+}
+
+variable "query_insights_record_client_address" {
+  type        = bool
+  description = "Record client addresses with Query Insights. Refused at the root (cloud-sql.tf) unless query_insights_enabled is true."
+  default     = false
+}
+
 variable "app_iam_sa_email" {
   type        = string
   description = "Email of the app-workload Google service account granted keyless Cloud SQL IAM access (#722). When set, a CLOUD_IAM_SERVICE_ACCOUNT database user is created for it so the workload authenticates with a short-lived IAM token instead of a password. null → no keyless app user."
