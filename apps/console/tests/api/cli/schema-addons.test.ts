@@ -17,6 +17,7 @@ import { chartVersionError } from "@/lib/addons/chart-version";
 import { secretFieldKeys } from "@/lib/addons/secrets";
 import { authorizeCli } from "@/lib/authz/guard";
 import { addonSettingDefaults } from "@/lib/cli/addon-catalog";
+import { asRecord } from "@/lib/records";
 import { cliAddonCatalogResponse } from "@/lib/validations/cli-contract";
 
 const URL_ = "https://console.local/api/cli/schema/addons";
@@ -71,7 +72,7 @@ describe("GET /api/cli/schema/addons", () => {
 			if (!parsed.success) continue;
 			const defaults = addonSettingDefaults(def);
 			for (const [key, value] of Object.entries(defaults)) {
-				expect(parsed.data[key]).toEqual(value);
+				expect(asRecord(parsed.data)[key]).toEqual(value);
 			}
 		}
 	});
