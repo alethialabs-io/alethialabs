@@ -86,7 +86,7 @@ func TestExportConfigurationWasAlreadyCorrect(t *testing.T) {
 	srv, gotPath, gotQuery := captureServer(t, `{"content":"x","filename":"f"}`)
 	cl := &Client{baseURL: srv.URL + "/api", authToken: "t", httpClient: srv.Client()}
 
-	if _, err := cl.ExportConfiguration("a/b#c", "yaml"); err != nil {
+	if _, err := cl.ExportConfiguration("a/b#c", "yaml", ""); err != nil {
 		// The body may not decode; the path is the assertion.
 		_ = err
 	}
