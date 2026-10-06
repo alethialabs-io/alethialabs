@@ -73,13 +73,17 @@ var applySpec = spec.Spec{
 	},
 }
 
-// planSpec is `plan`'s one field: the file. It reads and computes; it has nothing to confirm.
+// planSpec is `plan`'s fields: the file, and how much the exit code says (plan_exit.go). It reads and
+// computes; it has nothing to confirm.
 var planSpec = spec.Spec{
 	Command: "alethia plan",
 	Fields: []spec.Field{
 		{Command: "alethia plan", Key: "file", Title: "Manifest",
 			Description: "The alethia.yaml to plan (default: ./alethia.yaml)",
 			Flag:        "file", Shorthand: "f", Default: manifest.FileName, Page: docsPlanApplyPage},
+		{Command: "alethia plan", Key: "detailed-exitcode", Title: "Detailed exit code",
+			Description: "Exit 0 with no changes, 2 with changes, 3 with problems (1 is an error). Default: 0 unless the plan has problems (2)",
+			Flag:        "detailed-exitcode", Bool: true, Page: docsPlanApplyPage},
 	},
 }
 
@@ -153,8 +157,12 @@ func runApply(_ *cobra.Command, client applyClient, token string, o applyOptions
 	if o.format == ui.FormatTable {
 		renderPlan(os.Stdout, plan)
 	}
+	// A refusal exits 2, the code the default `plan` gives the same file (plan_exit.go), so a script
+	// can tell "this file cannot be applied as written" from an error.
 	if err := plan.refusal(); err != nil {
-		fail(err)
+		reportRefusal(err, o.format)
+		exitFunc(exitPlanRefused)
+		return
 	}
 	if !confirmApply(o.yes) {
 		return
@@ -194,6 +202,9 @@ var planCmd = &cobra.Command{
 be created, which already match, and anything the file declares that cannot be reconciled from
 the terminal. Nothing is written and no job is queued.
 
+Exit codes: 0 when apply would accept the file, 1 on an error, 2 when the plan has problems that
+apply would refuse. With --detailed-exitcode: 0 no changes, 1 error, 2 changes, 3 problems.
+
 The per-environment OpenTofu plan runs inside a deploy — use "alethia project plan" to queue one
 on its own.`,
 	Args: cobra.NoArgs,
@@ -206,21 +217,22 @@ on its own.`,
 		if err != nil {
 			fail(err)
 		}
+		detailed, _ := planBinder.Bool("detailed-exitcode")
 		plan, err := planFromFile(api.NewClient(token), values.Get("file"))
 		if err != nil {
 			fail(err)
 		}
 		format := outputFormat(cmd)
+		// The plan is printed whole first, in either form, and only then does the exit code say what
+		// it found: a JSON document with problems is still the whole document (#5600).
 		if format != ui.FormatTable {
 			if err := ui.Render(os.Stdout, format, ui.TableSpec{}, plan); err != nil {
 				fail(err)
 			}
-			return
+		} else {
+			renderPlan(os.Stdout, plan)
 		}
-		renderPlan(os.Stdout, plan)
-		if err := plan.refusal(); err != nil {
-			fail(err)
-		}
+		finishPlan(plan, detailed, format)
 	},
 }
 
