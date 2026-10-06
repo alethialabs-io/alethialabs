@@ -267,7 +267,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 <details><summary>Every cell that has any evidence at all</summary>
 
-- `aws/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/aws/20260930T194843Z` — but #5436 is OPEN and was filed 2026-10-03, AFTER the 2026-09-30 run that proved it
+- `aws/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/aws/20260930T194843Z` — but #5436 was filed 2026-10-03, AFTER the 2026-09-30 run that proved it, and CLOSED 2026-10-04 inside this refresh window, so no derivation ever saw it open
 - `aws/maxconfig` **proven** — ledger 2026-08-26, bundle `demos/proofs/aws/20260826T114712Z`
 - `aws/addons` **proven** — ledger 2026-08-30, bundle `demos/proofs/aws/20260830T100243Z`
 - `aws/gitops` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T142417Z`
@@ -275,7 +275,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `aws/day2` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T190408Z`
 - `aws/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `aws/cli-demo` **contested** — ledger 2026-09-30, bundle `demos/proofs/aws/20260930T061330Z` — but #5401 is OPEN and was filed 2026-10-03, AFTER the 2026-09-30 run that proved it
-- `gcp/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/gcp/20260930T190822Z` — but #5437 is OPEN and was filed 2026-10-03, AFTER the 2026-09-30 run that proved it
+- `gcp/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/gcp/20260930T190822Z` — but #5437 was filed 2026-10-03, AFTER the 2026-09-30 run that proved it, and CLOSED 2026-10-04 inside this refresh window, so no derivation ever saw it open
 - `gcp/maxconfig` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T124233Z`
 - `gcp/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/gcp/20260829T093816Z` (⚠️ argocd counts unmeasured: pre-#3281 binary (A0.6's convergence loop wrote no summary); the assertion DID run and pass — run 33243600150 logs `all 20 asserted ArgoCD Applications are Healthy+Synced (1 withheld)`)
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
@@ -283,7 +283,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
 - `gcp/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `gcp/cli-demo` **contested** — ledger 2026-09-30, bundle `demos/proofs/gcp/20260930T065516Z` — but #5402 is OPEN and was filed 2026-10-03, AFTER the 2026-09-30 run that proved it
-- `azure/floor` **contested** — ledger 2026-09-29, bundle `demos/proofs/azure/20260929T103904Z` — but #5438 is OPEN and was filed 2026-10-03, AFTER the 2026-09-29 run that proved it
+- `azure/floor` **contested** — ledger 2026-09-29, bundle `demos/proofs/azure/20260929T103904Z` — but #5438 was filed 2026-10-03, AFTER the 2026-09-29 run that proved it, and CLOSED 2026-10-04 inside this refresh window, so no derivation ever saw it open
 - `azure/maxconfig` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T211849Z`
 - `azure/addons` **proven** — ledger 2026-08-30, bundle `demos/proofs/azure/20260830T005214Z`
 - `azure/gitops` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
@@ -292,7 +292,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `azure/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
 - `azure/cli-demo` **contested** — ledger 2026-09-30, bundle `demos/proofs/azure/20260930T095658Z` — but #5403 is OPEN and was filed 2026-10-03, AFTER the 2026-09-30 run that proved it
 - `alibaba/templates` **ceiling** — Starter templates runs on hetzner only — proven once, as cheaply as possible, by #4113's decision — the tutorial does not change per cloud
-- `hetzner/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/hetzner/20260930T124805Z` — but #5393 is OPEN and was filed 2026-10-02, AFTER the 2026-09-30 run that proved it
+- `hetzner/floor` **contested** — ledger 2026-09-30, bundle `demos/proofs/hetzner/20260930T124805Z` — but #5393 was filed 2026-10-02, AFTER the 2026-09-30 run that proved it, and CLOSED 2026-10-04 inside this refresh window, so no derivation ever saw it open
 - `hetzner/maxconfig` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T105705Z`
 - `hetzner/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T085104Z`
 - `hetzner/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/2026-08-25T175213Z`
@@ -305,7 +305,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`aws/floor`** — contested. ledger 2026-09-30, bundle `demos/proofs/aws/20260930T194843Z` — but #5436 is OPEN and was filed 2026-10-03, AFTER the 2026-09-30 run that proved it
+**`aws/floor`** — contested. ledger 2026-09-30, bundle `demos/proofs/aws/20260930T194843Z` — but #5436 was filed 2026-10-03, AFTER the 2026-09-30 run that proved it, and CLOSED 2026-10-04 inside this refresh window, so no derivation ever saw it open
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
@@ -357,11 +357,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 37193158835 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 37193158835 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 37193158835 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ⛔ **unwired** | a gate-off proof was recorded — run 37193158835 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 37193158835 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 37296250119 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 37296250119 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 37296250119 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ⛔ **unwired** | a gate-off proof was recorded — run 37296250119 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 37296250119 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -387,14 +387,14 @@ A nightly that goes red files an **issue** and writes **no ledger row**. So from
 
 | cell | proven by a run dated | red | filed | red's state |
 |---|:---:|---|:---:|---|
-| `azure/floor` | 2026-09-29 | #5438 | 2026-10-03 | open |
-| `gcp/floor` | 2026-09-30 | #5437 | 2026-10-03 | open |
-| `aws/floor` | 2026-09-30 | #5436 | 2026-10-03 | open |
 | `azure/cli-demo` | 2026-09-30 | #5403 | 2026-10-03 | open |
 | `gcp/cli-demo` | 2026-09-30 | #5402 | 2026-10-03 | open |
 | `aws/cli-demo` | 2026-09-30 | #5401 | 2026-10-03 | open |
 | `hetzner/cli-demo` | 2026-09-30 | #5400 | 2026-10-03 | open |
-| `hetzner/floor` | 2026-09-30 | #5393 | 2026-10-02 | open |
+| `azure/floor` | 2026-09-29 | #5438 | 2026-10-03 | closed 2026-10-04, inside this refresh window |
+| `gcp/floor` | 2026-09-30 | #5437 | 2026-10-03 | closed 2026-10-04, inside this refresh window |
+| `aws/floor` | 2026-09-30 | #5436 | 2026-10-03 | closed 2026-10-04, inside this refresh window |
+| `hetzner/floor` | 2026-09-30 | #5393 | 2026-10-02 | closed 2026-10-04, inside this refresh window |
 
 `contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the run, and guessing either way is worse than naming the contradiction. It claims only what is derivable — the two sources disagree, so the ✅ is not trustworthy right now.
 
@@ -411,15 +411,16 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 
 | cloud | state | durable evidence |
 |---|:---:|---|
-| **aws** | ✅ clean | run 37204723640 at 2026-10-04T13:12:57Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
-| **gcp** | ✅ clean | run 37204723640 at 2026-10-04T13:12:57Z found no orphan runs and verified clean |
-| **azure** | ✅ clean | run 37204723640 at 2026-10-04T13:12:57Z found no orphan runs and verified clean |
-| **alibaba** | ? indeterminate | run 37204723640 at 2026-10-04T13:12:57Z skipped its cloud gate |
-| **hetzner** | ? indeterminate | run 37204723640 at 2026-10-04T13:12:57Z found 1 unattributable resource(s) |
+| **aws** | ✅ clean | run 37337307692 at 2026-10-05T16:11:39Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
+| **gcp** | ✅ clean | run 37337307692 at 2026-10-05T16:11:39Z found no orphan runs and verified clean |
+| **azure** | ✅ clean | run 37337307692 at 2026-10-05T16:11:39Z found no orphan runs and verified clean |
+| **alibaba** | ? indeterminate | run 37337307692 at 2026-10-05T16:11:39Z skipped its cloud gate |
+| **hetzner** | ? indeterminate | run 37337307692 at 2026-10-05T16:11:39Z found 1 unattributable resource(s) |
 
 ### Blocked on a human
 
 - **`alibaba` cannot provision** — `E2E_ALIBABA_ROLE_ARN` is not set, so the leg green-skips.
+- #5538 — hetzner: worker autoscaling (min/max + cluster-autoscaler) — decide where the scaling credential lives
 - #5235 — test(fabric): prove the enterprise demo on azure — blocked on the e2e subscription's 10-vCPU regional quota
 - #4923 — epic(ownership): ALETHIA LABS EDPK takes possession — chain of title, the notices that disagree, the ee/ repository boundary, and public-repo licensing
 - #4903 — infra(e2e): all three e2e IAM stacks have NO remote state — one laptop holds the only copy, and their declared backends do not exist
@@ -454,7 +455,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-10-04T14:25:55Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-10-05T17:27:07Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
