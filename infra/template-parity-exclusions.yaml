@@ -843,6 +843,11 @@ baseline:
     off: "alibaba,aws,azure,hetzner"
     state: unreviewed
     issue: "#2004"
+  - variable: extra_node_pools
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#5523"
   - variable: firestore_database_type
     on: "gcp"
     off: "alibaba,aws,azure,hetzner"
@@ -1086,6 +1091,16 @@ baseline:
     off: "aws,azure"
     state: unreviewed
     issue: "#2004"
+  - variable: node_labels
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#5523"
+  - variable: node_taints
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#5523"
   - variable: oss_buckets
     on: "alibaba"
     off: "aws,azure,gcp,hetzner"

@@ -227,6 +227,8 @@ const COMPONENT_OF_ROOT_FILE = {
 	"azure/cosmos-db.tf": "nosql",
 	"azure/existing-network.tf": "network",
 	"azure/key-vault.tf": "secret",
+	"azure/nodepool_contract_render.tf": "cluster",
+	"azure/nodepools.tf": "cluster",
 	"azure/registry-pull.tf": "platform",
 	"azure/secrets-encryption.tf": "cluster",
 	"azure/service-bus.tf": "queue",
