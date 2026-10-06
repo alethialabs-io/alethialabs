@@ -29,7 +29,9 @@
 
 import fs from "node:fs";
 
-export const PRELUDE = 4;
+// The toolchain prelude: checkout · pnpm · node · go (#5593's arch-filename self-test needs `go`) ·
+// install. Unconditional on purpose; see check().
+export const PRELUDE = 5;
 
 // A parser that has stopped understanding the file finds zero steps and passes. The `guards` job
 // has had dozens of steps for its whole life; if this ever sees fewer than a few, the file's shape
@@ -100,7 +102,7 @@ export function check(text) {
 			if (s.hasIf) {
 				out.push(
 					`ci.yml:${s.line}: prelude step ${i} (\`${s.name}\`) carries an \`if:\`. Steps 0-${PRELUDE - 1} are the ` +
-						"toolchain (checkout · pnpm · node · install) and are a real dependency chain — they must stay unconditional.",
+						"toolchain (checkout · pnpm · node · go · install) and are a real dependency chain — they must stay unconditional.",
 				);
 			}
 			continue;
@@ -158,6 +160,7 @@ function selfTest() {
 		"      - uses: actions/checkout@v7",
 		"      - uses: pnpm/action-setup@v6",
 		"      - uses: actions/setup-node@v7",
+		"      - uses: actions/setup-go@v7",
 		"      - id: setup\n        run: pnpm install --frozen-lockfile",
 	];
 	/** n armed check steps. */
