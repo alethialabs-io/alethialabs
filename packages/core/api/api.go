@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -2311,6 +2312,13 @@ type Addon struct {
 	Health        *string `json:"health"`
 	Sync          *string `json:"sync"`
 	LastSyncedAt  *string `json:"last_synced_at"`
+	// Settings are the stored NON-secret settings (#5528). A secret setting is absent from this map
+	// — the server removes it rather than masking it — and named in SecretKeys instead.
+	Settings map[string]any `json:"settings"`
+	// ValuesYAML is the stored Advanced Helm-values override; nil when there is none.
+	ValuesYAML *string `json:"values_yaml"`
+	// SecretKeys are the names of the add-on's secret settings. Names only, never values.
+	SecretKeys []string `json:"secret_keys"`
 }
 
 // ProjectAddons is the installed catalog add-ons for one environment.
@@ -2365,6 +2373,72 @@ func (c *Client) getProjectAddonsPage(project, env, cursor string) (*ProjectAddo
 		return nil, fmt.Errorf("failed to get add-ons: %w", err)
 	}
 	return &page, nil
+}
+
+// AddonCatalogEntry is one catalog add-on as `GET /api/cli/schema/addons` publishes it (#5528).
+type AddonCatalogEntry struct {
+	ID string `json:"id"`
+	// Version is the catalog's default chart version — what applies when no pin is stored.
+	Version string `json:"version"`
+	// SecretKeys are the names of the add-on's secret settings.
+	SecretKeys []string `json:"secret_keys"`
+	// Defaults are what each non-secret setting is when nothing is stored for it — the value a
+	// setting reset with `key: null` lands on.
+	Defaults map[string]any `json:"defaults"`
+}
+
+// ChartVersionRule is the server's one definition of a valid chart-version pin, published so the
+// CLI compiles it rather than holding a copy (apps/console/lib/addons/chart-version.ts).
+type ChartVersionRule struct {
+	Pattern   string `json:"pattern"`
+	MaxLength int    `json:"max_length"`
+	Refusal   string `json:"refusal"`
+}
+
+// AddonCatalogDocument is the add-on catalog the CLI checks `alethia.yaml` against.
+type AddonCatalogDocument struct {
+	Addons       []AddonCatalogEntry `json:"addons"`
+	ChartVersion ChartVersionRule    `json:"chart_version"`
+}
+
+// Addon returns one catalog entry by id.
+func (d *AddonCatalogDocument) Addon(id string) (AddonCatalogEntry, bool) {
+	if d == nil {
+		return AddonCatalogEntry{}, false
+	}
+	for _, a := range d.Addons {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return AddonCatalogEntry{}, false
+}
+
+// IDs is every catalog add-on id, sorted.
+func (d *AddonCatalogDocument) IDs() []string {
+	if d == nil {
+		return nil
+	}
+	out := make([]string, 0, len(d.Addons))
+	for _, a := range d.Addons {
+		out = append(out, a.ID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// GetAddonCatalog fetches the published add-on catalog. A catalog with zero add-ons is refused, for
+// the reason GetComponentSchema refuses zero kinds: cached, it would reject every add-on the server
+// accepts.
+func (c *Client) GetAddonCatalog() (*AddonCatalogDocument, error) {
+	var doc AddonCatalogDocument
+	if err := c.doGet(fmt.Sprintf("%s/cli/schema/addons", c.baseURL), &doc); err != nil {
+		return nil, fmt.Errorf("failed to fetch the add-on catalog: %w", err)
+	}
+	if len(doc.Addons) == 0 {
+		return nil, fmt.Errorf("the add-on catalog published zero add-ons — refusing a document that would reject every add-on")
+	}
+	return &doc, nil
 }
 
 // EnableAddonParams is the payload for EnableAddon. Values is the add-on's own knob map, validated
