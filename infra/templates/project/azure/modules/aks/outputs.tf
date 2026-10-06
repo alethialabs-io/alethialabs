@@ -76,7 +76,7 @@ output "node_pools" {
         max_pods        = azurerm_kubernetes_cluster.this.default_node_pool[0].max_pods
         eviction_policy = null
         spot_max_price  = null
-        rotation_name   = null
+        rotation_name   = azurerm_kubernetes_cluster.this.default_node_pool[0].temporary_name_for_rotation
       }
     },
     {
