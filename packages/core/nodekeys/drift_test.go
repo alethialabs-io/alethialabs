@@ -6,7 +6,6 @@ package nodekeys
 import (
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -34,28 +33,50 @@ import (
 // startswith(), say) is invisible to it; both sites use regex() for every key rule today, and each
 // template's tofu test proves the rule refuses what it should.
 
-// keyRuleSite is one template file and the variables in it that carry the key rules.
+// keyRuleSite is one template file and the variables in it that carry the key rules. One file may
+// hold two sites with different rules (the AWS template carries the Karpenter knobs and the
+// cross-cloud contract).
 type keyRuleSite struct {
+	file string // relative to the repo root
 	vars []string
 	// portable sites follow the cross-cloud contract's lengths (PortableKeyMaxLength, non-empty values).
 	portable bool
 	// nodeRestriction names the variables allowed to carry NodeRestrictionDomainRegex: only the
 	// Karpenter labels, which reach the API rather than the kubelet.
 	nodeRestriction map[string]bool
+	// instanceLiterals are a cloud's OWN instance-type rules, which a portable site may add beside
+	// the contract's (contractOnlyLiterals["instance"]). They are listed here so that every literal
+	// applied to an instance type still has a known owner.
+	instanceLiterals []string
 }
 
-// keyRuleSites are the variables whose validations carry the key rules, by file relative to the repo
-// root.
-var keyRuleSites = map[string]keyRuleSite{
-	"infra/templates/project/aws/variables.tf": {
+// keyRuleSites are the variables whose validations carry the key rules.
+var keyRuleSites = []keyRuleSite{
+	{
+		file:            "infra/templates/project/aws/variables.tf",
 		vars:            []string{"karpenter_node_labels", "karpenter_node_taints"},
 		nodeRestriction: map[string]bool{"karpenter_node_labels": true},
 	},
-	"infra/templates/project/azure/variables.tf": {
+	// The AWS template's copy of the cross-cloud contract (#5534). It shares a file with the Karpenter
+	// knobs above, which follow Kubernetes' lengths, so it is a second site of that file.
+	{
+		file:     "infra/templates/project/aws/variables.tf",
+		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},
+		portable: true,
+		// AWS's instance-type rule on extra_node_pools: an EC2 family.size whose family is letters
+		// then a generation digit; a Graviton type (a1, or "g" after the generation digit) exactly when
+		// the pool is arm64 (provisioner.karpenterGravitonFamily, held equal by
+		// TestKarpenterArm64_GravitonRuleIsTheTemplates); and the NVIDIA GPU families that need an
+		// NVIDIA AMI.
+		instanceLiterals: []string{`^[a-z]+[0-9][a-z0-9-]*\.[a-z0-9-]+$`, `^(a1([.]|$)|[a-z]+[0-9]+g)`, `^(g[0-9]+[a-z]*|gr[0-9]+[a-z]*|p[0-9]+[a-z]*)[.]`},
+	},
+	{
+		file:     "infra/templates/project/azure/variables.tf",
 		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},
 		portable: true,
 	},
-	"packages/core/cloud/testdata/nodepool/reference/variables.tf": {
+	{
+		file:     "packages/core/cloud/testdata/nodepool/reference/variables.tf",
 		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},
 		portable: true,
 	},
@@ -181,13 +202,8 @@ func ruleUses(t *testing.T, path string) (regexes, lengths map[string][]ruleUse)
 // literal by literal.
 func TestKeyRuleLiteralsMatchTheGoDefinition(t *testing.T) {
 	root := repoRoot(t)
-	files := make([]string, 0, len(keyRuleSites))
-	for f := range keyRuleSites {
-		files = append(files, f)
-	}
-	sort.Strings(files)
-	for _, rel := range files {
-		site := keyRuleSites[rel]
+	for _, site := range keyRuleSites {
+		rel := site.file
 		regexes, lengths := ruleUses(t, filepath.Join(root, filepath.FromSlash(rel)))
 		for _, name := range site.vars {
 			uses := regexes[name]
@@ -219,8 +235,12 @@ func TestKeyRuleLiteralsMatchTheGoDefinition(t *testing.T) {
 						count["reserved"]++
 					}
 				case "poolname", "instance":
-					if !site.portable || !contains(contractOnlyLiterals[u.role], u.literal) {
-						t.Errorf("%s is %s, which is not one of the contract's %s rules %v", where(), u.literal, u.role, contractOnlyLiterals[u.role])
+					allowed := contractOnlyLiterals[u.role]
+					if u.role == "instance" {
+						allowed = append(append([]string{}, allowed...), site.instanceLiterals...)
+					}
+					if !site.portable || !contains(allowed, u.literal) {
+						t.Errorf("%s is %s, which is not one of the contract's %s rules or this site's own %v", where(), u.literal, u.role, allowed)
 					}
 				default:
 					t.Errorf("%s: the drift test cannot tell what this regex checks, so it cannot hold it to nodekeys: %s", where(), u.literal)
@@ -274,8 +294,13 @@ func TestKeyRuleSitesAreEnumeratedFromTheTemplates(t *testing.T) {
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
 		known := map[string]bool{}
-		for _, n := range keyRuleSites[rel].vars {
-			known[n] = true
+		for _, site := range keyRuleSites {
+			if site.file != rel {
+				continue
+			}
+			for _, n := range site.vars {
+				known[n] = true
+			}
 		}
 		regexes, _ := ruleUses(t, p)
 		for name, uses := range regexes {
