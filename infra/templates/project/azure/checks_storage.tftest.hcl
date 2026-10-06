@@ -177,3 +177,75 @@ run "one_container_asking_for_versioning_is_enough" {
     error_message = "anytrue, not alltrue: a single container asking for versioning must turn it on for the account."
   }
 }
+
+################################################################################
+# 4. CORS origins reach the account (#5543)
+################################################################################
+# The Go provider emits `cors_origins` per container and modules/storage-account unions them into
+# the account's one cors_rule — but the ROOT `storage_containers` type did not declare the
+# attribute, and an object type discards what it does not name. So a value set on a bucket was
+# dropped at the root, the module's optional() filled in [], and the account planned no CORS rule.
+# Nothing errored. These runs set the value AT THE ROOT, which is the seam that dropped it.
+
+run "a_container_cors_origin_reaches_the_account_cors_rule" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      { name = "assets", cors_origins = ["https://app.example.com"] },
+      { name = "logs" },
+    ]
+  }
+
+  assert {
+    condition     = module.storage_account[0].cors_rule != null
+    error_message = "A container that allows an origin must plan a cors_rule on the storage account; the root storage_containers type dropped cors_origins."
+  }
+
+  assert {
+    condition     = tolist(try(module.storage_account[0].cors_rule.allowed_origins, [])) == tolist(["https://app.example.com"])
+    error_message = "The account's cors_rule must allow exactly the origin the container asked for."
+  }
+
+  # Allowing an origin must not widen what it may DO beyond the module's fixed method set.
+  assert {
+    condition     = toset(try(module.storage_account[0].cors_rule.allowed_methods, [])) == toset(["GET", "HEAD", "OPTIONS", "PUT", "POST"])
+    error_message = "The cors_rule must carry the module's fixed method set, not \"*\"."
+  }
+}
+
+# The default direction: no container names an origin, so no rule — an empty cors_rule is not "no
+# CORS", it is a rule that matches nothing and churns the plan.
+run "no_cors_origin_plans_no_cors_rule" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      { name = "assets" },
+    ]
+  }
+
+  assert {
+    condition     = module.storage_account[0].cors_rule == null
+    error_message = "With no container allowing an origin the account must plan no cors_rule."
+  }
+}
+
+# The aggregation decision, pinned as versioning's is above: CORS is an ACCOUNT property, so the
+# per-container lists are UNIONED — deduplicated and sorted, so re-ordering buckets on the canvas
+# does not produce a plan diff.
+run "cors_origins_from_every_container_are_unioned_into_one_rule" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      { name = "assets", cors_origins = ["https://b.example.com", "https://a.example.com"] },
+      { name = "uploads", cors_origins = ["https://a.example.com", "https://c.example.com"] },
+    ]
+  }
+
+  assert {
+    condition     = tolist(try(module.storage_account[0].cors_rule.allowed_origins, [])) == tolist(["https://a.example.com", "https://b.example.com", "https://c.example.com"])
+    error_message = "The account's one cors_rule must allow the sorted, de-duplicated union of every container's origins."
+  }
+}
