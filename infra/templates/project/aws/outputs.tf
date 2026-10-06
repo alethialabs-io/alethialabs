@@ -285,6 +285,16 @@ output "karpenter_nodepool" {
   }
 }
 
+output "karpenter_arm64_nodepool" {
+  description = "Settings the runner renders the arm64 (Graviton) Karpenter NodePool from (#5534). Null when Karpenter is disabled or karpenter_arm64_nodepool is not set; the runner then deletes any arm64 NodePool an earlier apply created."
+  value       = length(module.karpenter) > 0 ? local.karpenter_arm64_nodepool : null
+
+  precondition {
+    condition     = length(module.karpenter) == 0 || length(local.karpenter_arm64_families_outside_categories) == 0
+    error_message = "karpenter_arm64_nodepool.instance_families ${jsonencode(local.karpenter_arm64_families_outside_categories)} belong to none of karpenter_instance_categories ${jsonencode(var.karpenter_instance_categories)}. Karpenter requires both, so the arm64 NodePool could launch no instance. Add the category, or set karpenter_instance_categories to []."
+  }
+}
+
 output "fluentbit_sa_role_arn" {
   description = "IAM Role ARN for Fluent Bit Service Account"
   value       = try(module.irsa_fluentbit_cloudwatch[0].iam_role_arn, null) != null ? module.irsa_fluentbit_cloudwatch[0].iam_role_arn : null

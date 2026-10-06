@@ -135,37 +135,9 @@ module "eks" {
     }
   }
 
-  eks_managed_node_groups = {
-    eks_workers = {
-      iam_role_use_name_prefix = !var.allow_long_names
-
-      name         = "${var.eks_cluster_name}-ng"
-      min_size     = var.eks_ng_min_size
-      max_size     = var.eks_ng_max_size
-      desired_size = var.eks_ng_desired_size
-
-      ebs_optimized = true
-
-      # Namespace-placement tenant isolation (#1012). Hop limit 1 (the IMDSv2 PUT-response IP
-      # TTL) means a token reply routed to a Pod on the pod network (one extra CNI hop) is
-      # dropped — a tenant Pod CANNOT reach 169.254.169.254 to assume the node IAM role
-      # (cluster-wide node creds: ECR, ENI/EC2). Host-network components (kubelet, aws-node,
-      # kube-proxy) sit at 0 hops so IMDS still works for them. Workloads that need cloud
-      # identity use IRSA/Pod Identity, never the node role. (Was 2 — which is exactly the
-      # value AWS says to set only when you WANT Pods to reach IMDS.)
-      metadata_options = {
-        http_endpoint               = "enabled"
-        http_tokens                 = "required"
-        http_put_response_hop_limit = 1
-        instance_metadata_tags      = "disabled"
-      }
-
-      subnet_ids            = var.subnet_ids
-      capacity_type         = var.eks_ng_capacity_type
-      create_security_group = true
-      security_group_name   = "${var.eks_cluster_name}-ng-sg"
-    }
-  }
+  # eks_workers and the extra node groups (#5534) are built in node_groups.tf, which says why each
+  # extra group carries every isolation control eks_workers has.
+  eks_managed_node_groups = local.eks_managed_node_groups
 
   tags                          = var.eks_tags
   kms_key_enable_default_policy = var.kms_key_enable_default_policy
