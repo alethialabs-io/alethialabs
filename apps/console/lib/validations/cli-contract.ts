@@ -709,15 +709,16 @@ export const cliComponentsResponse = z.object({
 });
 /** POST /api/cli/projects/:id/components/:kind result. */
 export const cliComponentResponse = z.object({ component: componentWire });
-/** The deploy or destroy a `component_busy` refusal waited on: the job's id, type and status. */
+/** What a `component_busy` refusal waited on: a BUILD, DEPLOY or DESTROY job (its id, type and
+ * status), or a promotion into the environment (`type` PROMOTION, the promotion's id and status). */
 export const componentRunWire = z.object({
 	id: z.string(),
 	type: z.string(),
 	status: z.string(),
 });
 /** The 409 body of a component write that was REFUSED rather than failed (#5551): `component_busy`
- * — a deploy or a destroy of the environment is queued or running (`run`; null when it finished
- * between the refusal and its explanation); `component_changed` — the `If-Match` revision is not the
+ * — a run holds the environment: a BUILD, DEPLOY or DESTROY job, or a promotion into it (`run`;
+ * null when it finished between the refusal and its explanation); `component_changed` — the `If-Match` revision is not the
  * server's any more. `status` is the component's own status. `component` is the server's copy now
  * (null when it no longer exists), so the CLI can name the fields that changed against the copy it
  * read. */

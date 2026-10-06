@@ -34,14 +34,22 @@ func componentUpdateRefusal(comp ComponentPlan, err error) string {
 	label := componentLabel(comp)
 	if conflict.Busy() {
 		if conflict.Run == nil {
-			return fmt.Sprintf("%s was not changed — a deploy or destroy of this environment was running when apply sent the change, and has finished since; re-run `alethia apply`", label)
+			return fmt.Sprintf("%s was not changed — a deploy, build, destroy or promotion of this environment was in progress when apply sent the change, and has finished since; re-run `alethia apply`", label)
 		}
-		verb := "deploy"
-		if conflict.Run.Type == "DESTROY" {
-			verb = "destroy"
+		status := strings.ToLower(strings.ReplaceAll(conflict.Run.Status, "_", " "))
+		if conflict.Run.Type == "PROMOTION" {
+			return fmt.Sprintf("%s cannot be changed while a promotion into this environment is %s (promotion %s) — it deploys the design its plan froze; see it with `alethia promotion get %s`, then re-run `alethia apply` once it has finished",
+				label, status, conflict.Run.ID, conflict.Run.ID)
 		}
-		return fmt.Sprintf("%s cannot be changed while a %s of this environment is %s (job %s); follow it with `alethia jobs logs %s`, then re-run `alethia apply` once it has finished",
-			label, verb, strings.ToLower(conflict.Run.Status), conflict.Run.ID, conflict.Run.ID)
+		what := "deploy"
+		switch conflict.Run.Type {
+		case "DESTROY":
+			what = "destroy"
+		case "BUILD":
+			what = "deploy (its image build)"
+		}
+		return fmt.Sprintf("%s cannot be changed while a %s of this environment is %s (job %s); follow it with `alethia jobs logs %s --follow`, then re-run `alethia apply` once it has finished",
+			label, what, status, conflict.Run.ID, conflict.Run.ID)
 	}
 	if conflict.Current == nil {
 		return fmt.Sprintf("%s no longer exists on the server — it was removed after `alethia plan` read it; %s", label, rerunPlanHint)

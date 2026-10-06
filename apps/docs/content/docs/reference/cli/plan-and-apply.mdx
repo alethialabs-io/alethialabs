@@ -158,20 +158,38 @@ setting that changed on the server:
 Run `alethia plan` again, decide which value you want, and then run `alethia apply`. A component
 that was removed after the read is refused in the same way. `apply` does not create it again.
 
-**A component is not changed while its environment is deploying or being destroyed.** From the
-moment a deploy or a destroy of an environment is queued until its job finishes, the server refuses
-every change that `apply` sends to a component of that environment. A plan job does not block a
-change. The error names the job:
+**A component is not changed while its environment is deploying or being destroyed.** The server
+refuses every change that `apply` makes to an existing component while one of these is unfinished
+for that environment:
+
+- a deploy job, or the image build that starts a deploy of an environment with services built from
+  a repository;
+- a destroy job;
+- a promotion into the environment, from the moment its plan is queued, through approval, until its
+  deploy finishes. The promotion deploys the design that its plan read, so a change made in between
+  would not be part of that deploy.
+
+A job counts from the moment it is queued until it finishes. Other jobs, such as a plan that is not
+part of a promotion or a drift check, do not block a change. The error names what holds the
+environment:
 
 ```
   ✗ databases/orders in prod was not updated: databases/orders cannot be changed while a deploy
-    of this environment is processing (job 3f9c…); follow it with `alethia jobs logs 3f9c…`, then
-    re-run `alethia apply` once it has finished
+    of this environment is processing (job 3f9c…); follow it with
+    `alethia jobs logs 3f9c… --follow`, then re-run `alethia apply` once it has finished
 ```
 
-Wait for that job to finish, then run `alethia apply` again. `apply` does not queue the change for
-later. The component's own status does not block a change: a database can stay `CREATING` after a
-successful deploy while its chart is still starting, and you can still change it.
+Wait for that job or promotion to finish, then run `alethia apply` again. `apply` does not queue the
+change for later.
+
+The rule has three limits:
+
+- The component's own status does not block a change. A database can stay `CREATING` after a
+  successful deploy while its chart is still starting, and you can still change it.
+- Adding a component that does not exist yet is not refused. `apply` creates it even while a deploy
+  is running. That deploy does not include it; the next deploy does.
+- A deploy reads the components a moment before its job is queued. A change that lands in that
+  moment is accepted and is not part of that deploy. It stays saved, and the next deploy applies it.
 
 Both refusals follow the rule above: that environment is not deployed, and the other environments
 continue.

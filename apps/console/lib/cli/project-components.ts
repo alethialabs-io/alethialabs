@@ -39,6 +39,7 @@ import { getServiceDb, type Db, type Tx } from "@/lib/db";
 import { asRecord } from "@/lib/records";
 import {
 	cloudIdentities,
+	environmentPromotions,
 	jobs,
 	projects,
 	projectCaches,
@@ -583,22 +584,63 @@ export function componentRevision(row: unknown): string | null {
 }
 
 /**
- * The jobs that act on an environment's components (#5551): a DEPLOY applies their settings, a
- * DESTROY removes their resources. A PLAN reads them but changes nothing, so it does not block a
- * write.
+ * The job types that hold an environment's components while unfinished (#5551): each one either
+ * applies or removes them, or carries a config snapshot, frozen from the component rows, that a
+ * later DEPLOY applies. A change admitted while one of them runs is silently left out of that run.
+ *
+ * - `DEPLOY` applies the snapshot it was enqueued with.
+ * - `DESTROY` removes the components' resources.
+ * - `BUILD` is the first phase of a deploy of an environment with repo-sourced services:
+ *   `provisionProject` enqueues it and moves the environment through `enqueueDeploy`, and
+ *   `enqueueDeployAfterBuild` (lib/jobs/finalize-build.ts) then queues the DEPLOY with the BUILD's
+ *   own snapshot. `enqueueBuildAfterProvision` chains BUILD → DEPLOY after a first deploy, carrying
+ *   that deploy's snapshot.
+ *
+ * A `PLAN` freezes a snapshot as well, and one PLAN's snapshot IS applied later: a promotion's
+ * (`applyGateDecision` in lib/promotions/lifecycle.ts deploys `planJob.config_snapshot`). That is
+ * gated through the promotion and not through the job type — see {@link PROMOTION_HOLDING_STATUSES}
+ * — because the promotion also holds the environment between its PLAN and its DEPLOY, while it waits
+ * for approval and no job is running. Any other PLAN is a preview whose snapshot nothing applies.
+ *
+ * Not gated, and why. None of them writes a component's settings, and none of their snapshots
+ * reaches a DEPLOY or a DESTROY:
+ * - `DETECT_DRIFT`, `PROBE_CLUSTER`, `AUDIT` and `MINT_KUBECONFIG` read the environment, mostly
+ *   through the last successful DEPLOY's snapshot.
+ * - `CHART_SCAN` and `IAC_SCAN` write scan results to add-on and IaC-source rows, not to components.
+ * - `STATE_SURGERY` repairs tofu state with the job it re-runs.
+ * - `ANALYZE_REPO`, `DEPLOY_RUNNER`, `UPDATE_RUNNER` and `DESTROY_RUNNER` do not act on an
+ *   environment's components.
  */
-export const COMPONENT_RUN_JOB_TYPES = ["DEPLOY", "DESTROY"] as const;
+export const COMPONENT_RUN_JOB_TYPES = ["BUILD", "DEPLOY", "DESTROY"] as const;
+
+/**
+ * The promotion statuses during which a promotion into an environment holds its components: its
+ * PLAN has frozen the candidate (`PENDING_PLAN`), it waits for approval (`PENDING_APPROVAL`), it is
+ * about to deploy that snapshot (`APPROVED`), or it is deploying it (`DEPLOYING`). This is the
+ * `IN_FLIGHT` set of lib/promotions/lifecycle.ts, restated here instead of imported to keep that
+ * module's import graph out of this one. A test holds the two lists equal.
+ */
+export const PROMOTION_HOLDING_STATUSES = ["PENDING_PLAN", "PENDING_APPROVAL", "APPROVED", "DEPLOYING"] as const;
 
 /** A job in one of these statuses has not finished: waiting for a runner, claimed by one, or running.
  * The same in-flight set the canvas and the env-status convergence read (lib/reconcile/converge.ts). */
 export const RUN_IN_FLIGHT_STATUSES = ["QUEUED", "CLAIMED", "PROCESSING"] as const;
 
-/** The predicate on `jobs` that names a deploy or destroy of `environmentId` that has not finished. */
+/** The predicate on `jobs` that names an unfinished job of `environmentId` that holds its components. */
 function runInFlight(environmentId: string): SQL | undefined {
 	return and(
 		eq(jobs.environment_id, environmentId),
 		inArray(jobs.job_type, [...COMPONENT_RUN_JOB_TYPES]),
 		inArray(jobs.status, [...RUN_IN_FLIGHT_STATUSES]),
+	);
+}
+
+/** The predicate on `environment_promotions` that names a promotion into `environmentId` that still
+ * holds it. */
+function promotionInFlight(environmentId: string): SQL | undefined {
+	return and(
+		eq(environmentPromotions.target_environment_id, environmentId),
+		inArray(environmentPromotions.status, [...PROMOTION_HOLDING_STATUSES]),
 	);
 }
 
@@ -612,15 +654,16 @@ export interface ComponentWriteGuard {
 /** The unconditional guard: the run gate only. */
 const NO_PRECONDITION: ComponentWriteGuard = { ifMatch: null };
 
-/** The deploy or destroy that holds an environment's components, as the 409 names it. Null when the
- * write lost to a run that had already finished by the time the refusal was explained. */
+/** What holds an environment's components, as the 409 names it: a job (`type` is its job type) or a
+ * promotion into the environment (`type` is `PROMOTION`, `id` the promotion's). Null when the write
+ * lost to a run that had already finished by the time the refusal was explained. */
 export interface ComponentRun {
 	id: string;
 	type: string;
 	status: string;
 }
 
-/** Why a guarded write was refused: a deploy or destroy of the environment has not finished, or the
+/** Why a guarded write was refused: a run holds the environment (`run`), or the
  * component is not the copy the caller read (`component` is the server's copy now, null when it no
  * longer exists). */
 export type ComponentWriteRefusal =
@@ -668,10 +711,13 @@ function refusalMessage(r: ComponentWriteRefusal): string {
 	if (r.reason === "busy") {
 		const label = componentWireLabel(r.component);
 		if (!r.run) {
-			return `${label} was not changed: a deploy or destroy of its environment was running when the change was sent, and has finished since. Try again.`;
+			return `${label} was not changed: a deploy, build, destroy or promotion of its environment was in progress when the change was sent, and has finished since. Try again.`;
 		}
-		const verb = r.run.type === "DESTROY" ? "destroy" : "deploy";
-		return `${label} cannot be changed while a ${verb} of its environment is ${r.run.status} (job ${r.run.id}). Wait for that ${verb} to finish, then try again.`;
+		if (r.run.type === "PROMOTION") {
+			return `${label} cannot be changed while a promotion into its environment is ${r.run.status} (promotion ${r.run.id}): the promotion deploys the design its plan froze. Wait for the promotion to finish, or cancel it, then try again.`;
+		}
+		const what = r.run.type === "DESTROY" ? "destroy" : r.run.type === "BUILD" ? "deploy (its image build)" : "deploy";
+		return `${label} cannot be changed while a ${what} of its environment is ${r.run.status} (job ${r.run.id}). Wait for that job to finish, then try again.`;
 	}
 	if (!r.component) {
 		return "The component no longer exists: it was removed or replaced on the server since it was read. Read it again and retry.";
@@ -707,25 +753,33 @@ export function parseIfMatch(
 
 /**
  * The WHERE half of a guarded write to a component of `environmentId`:
- * - no deploy or destroy of that environment is queued or running — a `NOT EXISTS` on `jobs`, the
- *   table a run is recorded in from the moment it is enqueued until it reaches a terminal status;
+ * - no job that holds the environment's components ({@link COMPONENT_RUN_JOB_TYPES}) is queued,
+ *   claimed or running — a `NOT EXISTS` on `jobs`, where a run is recorded from the moment it is
+ *   enqueued until it reaches a terminal status;
+ * - no promotion into the environment still holds it ({@link PROMOTION_HOLDING_STATUSES}) — a
+ *   `NOT EXISTS` on `environment_promotions`;
  * - and, when the caller sent one, the row is still at the revision it read.
  *
- * Both sit in the write statement itself rather than in a prior read, so there is no window between
- * a check and the write it admits. What a `NOT EXISTS` cannot see is a job whose enqueue transaction
- * commits AFTER this statement took its snapshot. That deploy read the component rows in its own
- * transaction, which cannot have seen this uncommitted write, so it runs on the copy it read and this
- * write is left on the row for the next deploy — the same state as a change made just before it.
+ * All of them sit in the write statement itself rather than in a prior read, so nothing can be
+ * committed between a check and the write it admits. What the gate cannot see is a deploy that has
+ * read the component rows but whose job row is not committed yet. `buildConfigSnapshot`
+ * (app/server/actions/projects.ts) reads the rows BEFORE, and outside, the transaction that inserts
+ * the job, so that window runs from the snapshot read to the job insert's commit, plus the part of
+ * this statement's own run before that commit. A write admitted in that window is not in that
+ * deploy's snapshot. It stays on the row, and the next deploy applies it.
  *
  * Throws when a precondition is asked of a table with no `updated_at`: dropping it would turn a
  * conditional write into an unconditional one, which {@link parseIfMatch} exists to prevent.
  */
-function writableWhere(
+export function writableWhere(
 	cols: Record<string, AnyColumn>,
 	environmentId: string,
 	guard: ComponentWriteGuard,
 ): SQL {
-	const conds: SQL[] = [sql`not exists (select 1 from ${jobs} where ${runInFlight(environmentId)})`];
+	const conds: SQL[] = [
+		sql`not exists (select 1 from ${jobs} where ${runInFlight(environmentId)})`,
+		sql`not exists (select 1 from ${environmentPromotions} where ${promotionInFlight(environmentId)})`,
+	];
 	if (guard.ifMatch !== null) {
 		if (!cols.updated_at) {
 			throw new Error("This component kind has no updated_at column, so an If-Match precondition cannot be checked");
@@ -737,7 +791,8 @@ function writableWhere(
 
 /**
  * Why a guarded write matched no row, read after the fact: the row the write addressed (`where`)
- * and the environment's unfinished deploy or destroy. Returns null when there is no such row (the
+ * and what holds the environment — an unfinished job of {@link COMPONENT_RUN_JOB_TYPES}, then a
+ * promotion into it. Returns null when there is no such row (the
  * caller's 404).
  *
  * A row with no run in flight was refused by the revision — unless it is still AT the revision the
@@ -763,6 +818,15 @@ async function refusalFor(
 		.limit(1);
 	if (job) {
 		const run = { id: job.id, type: job.job_type, status: job.status };
+		return new ComponentWriteRefusedError({ reason: "busy", run, component });
+	}
+	const [promotion] = await db
+		.select()
+		.from(environmentPromotions)
+		.where(promotionInFlight(environmentId))
+		.limit(1);
+	if (promotion) {
+		const run = { id: promotion.id, type: "PROMOTION", status: promotion.status };
 		return new ComponentWriteRefusedError({ reason: "busy", run, component });
 	}
 	if (guard.ifMatch === null || component.updated_at === guard.ifMatch) {
@@ -1156,7 +1220,7 @@ async function providerConfigToStore(
  * created/updated row's wire.
  *
  * A singleton that already exists is UPDATED, and that update is guarded like the PATCH's (#5551):
- * refused while a deploy or destroy of the environment is queued or running, and — when
+ * refused while a run holds the environment (see {@link writableWhere}), and — when
  * `guard.ifMatch` is set — refused unless the row is
  * still at that revision, in which case the row must exist (a precondition on a row that is gone is
  * not met, so it is never re-created). A refusal throws {@link ComponentWriteRefusedError}. */
@@ -1356,8 +1420,8 @@ export async function componentIdentityAllowed(
  * Singletons are refused rather than handled: they have no name to address and `add` upserts
  * them, so a second write path for them would only be a second set of rules.
  *
- * The write is guarded (#5551): it is refused while a deploy or destroy of the environment is queued
- * or running, and with `guard.ifMatch` a row no longer at that revision is refused — both as {@link ComponentWriteRefusedError}, in the UPDATE's own WHERE so
+ * The write is guarded (#5551): it is refused while a run holds the environment (see
+ * {@link writableWhere}), and with `guard.ifMatch` a row no longer at that revision is refused — both as {@link ComponentWriteRefusedError}, in the UPDATE's own WHERE so
  * nothing can land between the check and the write. */
 export async function updateProjectComponent(
 	kind: string,

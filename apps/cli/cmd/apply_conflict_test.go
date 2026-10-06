@@ -147,7 +147,15 @@ func TestComponentUpdateRefusal_EachConflictReadsAsItsOwnNextStep(t *testing.T) 
 	}{
 		"deploy running": {
 			&api.ComponentConflictError{Code: api.ConflictComponentBusy, Status: "ACTIVE", Run: &api.ComponentRun{ID: "j-1", Type: "DEPLOY", Status: "PROCESSING"}},
-			[]string{"databases/orders cannot be changed while a deploy of this environment is processing (job j-1)", "`alethia jobs logs j-1`", "re-run `alethia apply`"},
+			[]string{"databases/orders cannot be changed while a deploy of this environment is processing (job j-1)", "`alethia jobs logs j-1 --follow`", "re-run `alethia apply`"},
+		},
+		"build running": {
+			&api.ComponentConflictError{Code: api.ConflictComponentBusy, Run: &api.ComponentRun{ID: "j-3", Type: "BUILD", Status: "PROCESSING"}},
+			[]string{"while a deploy (its image build) of this environment is processing (job j-3)", "`alethia jobs logs j-3 --follow`"},
+		},
+		"promotion awaiting approval": {
+			&api.ComponentConflictError{Code: api.ConflictComponentBusy, Run: &api.ComponentRun{ID: "p-1", Type: "PROMOTION", Status: "PENDING_APPROVAL"}},
+			[]string{"while a promotion into this environment is pending approval (promotion p-1)", "`alethia promotion get p-1`"},
 		},
 		"destroy queued": {
 			&api.ComponentConflictError{Code: api.ConflictComponentBusy, Status: "ACTIVE", Run: &api.ComponentRun{ID: "j-2", Type: "DESTROY", Status: "QUEUED"}},
@@ -155,7 +163,7 @@ func TestComponentUpdateRefusal_EachConflictReadsAsItsOwnNextStep(t *testing.T) 
 		},
 		"run finished since": {
 			&api.ComponentConflictError{Code: api.ConflictComponentBusy, Status: "ACTIVE"},
-			[]string{"was running when apply sent the change, and has finished since", "re-run `alethia apply`"},
+			[]string{"was in progress when apply sent the change, and has finished since", "re-run `alethia apply`"},
 		},
 		"removed": {
 			&api.ComponentConflictError{Code: api.ConflictComponentChanged},
