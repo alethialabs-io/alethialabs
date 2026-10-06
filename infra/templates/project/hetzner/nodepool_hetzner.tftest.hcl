@@ -38,12 +38,40 @@ override_resource {
 # subnet runs below APPLY, and they need it.
 override_data {
   target = data.talos_image_factory_urls.amd64
-  values = { urls = { disk_image = "https://factory.talos.dev/image/mock/amd64.raw.xz" } }
+  values = {
+    urls = {
+      disk_image            = "https://factory.talos.dev/image/mock/amd64/disk_image"
+      disk_image_secureboot = "https://factory.talos.dev/image/mock/amd64/disk_image_secureboot"
+      initramfs             = "https://factory.talos.dev/image/mock/amd64/initramfs"
+      installer             = "https://factory.talos.dev/image/mock/amd64/installer"
+      installer_secureboot  = "https://factory.talos.dev/image/mock/amd64/installer_secureboot"
+      iso                   = "https://factory.talos.dev/image/mock/amd64/iso"
+      iso_secureboot        = "https://factory.talos.dev/image/mock/amd64/iso_secureboot"
+      kernel                = "https://factory.talos.dev/image/mock/amd64/kernel"
+      kernel_command_line   = "https://factory.talos.dev/image/mock/amd64/kernel_command_line"
+      pxe                   = "https://factory.talos.dev/image/mock/amd64/pxe"
+      uki                   = "https://factory.talos.dev/image/mock/amd64/uki"
+    }
+  }
 }
 
 override_data {
   target = data.talos_image_factory_urls.arm64
-  values = { urls = { disk_image = "https://factory.talos.dev/image/mock/arm64.raw.xz" } }
+  values = {
+    urls = {
+      disk_image            = "https://factory.talos.dev/image/mock/arm64/disk_image"
+      disk_image_secureboot = "https://factory.talos.dev/image/mock/arm64/disk_image_secureboot"
+      initramfs             = "https://factory.talos.dev/image/mock/arm64/initramfs"
+      installer             = "https://factory.talos.dev/image/mock/arm64/installer"
+      installer_secureboot  = "https://factory.talos.dev/image/mock/arm64/installer_secureboot"
+      iso                   = "https://factory.talos.dev/image/mock/arm64/iso"
+      iso_secureboot        = "https://factory.talos.dev/image/mock/arm64/iso_secureboot"
+      kernel                = "https://factory.talos.dev/image/mock/arm64/kernel"
+      kernel_command_line   = "https://factory.talos.dev/image/mock/arm64/kernel_command_line"
+      pxe                   = "https://factory.talos.dev/image/mock/arm64/pxe"
+      uki                   = "https://factory.talos.dev/image/mock/arm64/uki"
+    }
+  }
 }
 mock_provider "minio" {}
 
