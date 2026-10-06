@@ -226,12 +226,16 @@ type diffCall struct {
 type diffFake struct {
 	applyClient
 	envs      []api.Environment
-	comps     map[string][]api.Component // by environment name
+	comps     map[string][]api.Component // by environment name; calls address it by id (envName)
 	calls     []diffCall
 	refuse    map[string]error // UpdateComponent errors, by "env kind/name" ("env kind" for a singleton)
 	ifMatch   []string         // the If-Match each update/upsert carried, in call order
 	jobs      []string         // environment ids a DEPLOY was queued for
 	listCalls int
+	// byNameOrStage makes envName answer a NAME the way the server's resolver did before #5583 —
+	// name OR stage, the default environment winning — instead of refusing it. Only the test that
+	// proves plan and apply never depend on that resolution sets it.
+	byNameOrStage bool
 }
 
 func (f *diffFake) GetConfigurations() ([]types.ConfigurationSummary, error) {
@@ -241,14 +245,43 @@ func (f *diffFake) ListEnvironments(string) ([]api.Environment, error) {
 	f.listCalls++
 	return f.envs, nil
 }
+
+// envName resolves the `env` a per-environment call was addressed with to that environment's name,
+// accepting ONLY an id (#5583). A name is what the client used to send, and the server resolves a
+// name as name OR stage — so a call addressed by name could land in another environment. Anything
+// that is not a listed id comes back as "by-name:<value>", which no fixture keys on, so a call that
+// regresses to a name reads nothing and fails every assertion about what it wrote.
+func (f *diffFake) envName(env string) string {
+	for _, e := range f.envs {
+		if e.ID == env {
+			return e.Name
+		}
+	}
+	if f.byNameOrStage {
+		var match *api.Environment
+		for i, e := range f.envs {
+			if e.Name == env || e.Stage == env {
+				if match == nil || (e.IsDefault && !match.IsDefault) {
+					match = &f.envs[i]
+				}
+			}
+		}
+		if match != nil {
+			return match.Name
+		}
+	}
+	return "by-name:" + env
+}
+
 func (f *diffFake) ListComponents(_, _, env string) ([]api.Component, error) {
-	return f.comps[env], nil
+	return f.comps[f.envName(env)], nil
 }
 func (f *diffFake) AddComponent(_, kind, name, env string, fields map[string]interface{}) (*api.Component, error) {
-	f.calls = append(f.calls, diffCall{"add", kind, name, env, fields})
+	f.calls = append(f.calls, diffCall{"add", kind, name, f.envName(env), fields})
 	return &api.Component{Kind: kind, Name: name}, nil
 }
 func (f *diffFake) UpdateComponent(_, kind, name, env string, fields map[string]interface{}, ifMatch string) (*api.Component, error) {
+	env = f.envName(env)
 	f.calls = append(f.calls, diffCall{"update", kind, name, env, fields})
 	f.ifMatch = append(f.ifMatch, ifMatch)
 	if err := f.refuse[env+" "+kind+"/"+name]; err != nil {
@@ -257,6 +290,7 @@ func (f *diffFake) UpdateComponent(_, kind, name, env string, fields map[string]
 	return &api.Component{Kind: kind, Name: name}, nil
 }
 func (f *diffFake) UpsertComponent(_, kind, env string, fields map[string]interface{}, ifMatch string) (*api.Component, error) {
+	env = f.envName(env)
 	f.calls = append(f.calls, diffCall{"upsert", kind, "", env, fields})
 	f.ifMatch = append(f.ifMatch, ifMatch)
 	if err := f.refuse[env+" "+kind]; err != nil {

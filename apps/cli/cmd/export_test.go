@@ -56,19 +56,32 @@ func (f *exportFake) ListComponents(p, k, env string) ([]api.Component, error) {
 	if err := f.failed("components"); err != nil {
 		return nil, err
 	}
-	return f.diffFake.ListComponents(p, k, f.resolveEnv(env))
+	return f.diffFake.ListComponents(p, k, f.idOf(f.resolveEnv(env)))
 }
 func (f *exportFake) GetProjectAddons(p, env string) (*api.ProjectAddons, error) {
 	if err := f.failed("addons"); err != nil {
 		return nil, err
 	}
-	return f.addonFake.GetProjectAddons(p, f.resolveEnv(env))
+	return f.addonFake.GetProjectAddons(p, f.idOf(f.resolveEnv(env)))
+}
+
+// idOf is the id of the environment with this name — the address diffFake accepts (envName) — or
+// the name itself when none has it, which diffFake then reads as an address by name.
+func (f *exportFake) idOf(name string) string {
+	for _, e := range f.envs {
+		if e.Name == name {
+			return e.ID
+		}
+	}
+	return name
 }
 
 // resolveEnv is the server's resolveCliEnvironment (apps/console/lib/cli/resolve-project.ts) over the
-// fake's environments: an id, else a NAME or a STAGE, the default environment winning a tie. It
-// returns the environment's name, the key the fake's maps use. Without it a read by name would find
-// the right rows here and the wrong ones on the server.
+// fake's environments AS IT WAS BEFORE #5583: an id, else a NAME or a STAGE, the default environment
+// winning a tie. The server now lets an exact name beat a stage; the fake keeps the older, harsher
+// rule on purpose, because a client that addresses by id must be right against either, and only the
+// older rule makes a read by name land in the wrong environment here. It returns the environment's
+// name, the key the fake's maps use.
 func (f *exportFake) resolveEnv(ref string) string {
 	var match *api.Environment
 	for i, e := range f.envs {

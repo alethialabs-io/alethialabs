@@ -95,7 +95,8 @@ func (f statefulAddonFake) EnableAddon(p api.EnableAddonParams) error {
 	if err := f.addonFake.EnableAddon(p); err != nil {
 		return err
 	}
-	rows := f.addons[p.Env]
+	env := f.envName(p.Env)
+	rows := f.addons[env]
 	i := -1
 	for j, r := range rows {
 		if r.AddonID == p.AddonID {
@@ -141,7 +142,7 @@ func (f statefulAddonFake) EnableAddon(p api.EnableAddonParams) error {
 			row.Version = sptr(*p.Version)
 		}
 	}
-	f.addons[p.Env] = rows
+	f.addons[env] = rows
 	return nil
 }
 

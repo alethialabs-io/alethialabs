@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -495,22 +496,31 @@ func TestApply_ReconcilesAnExistingProjectByAddingWhatIsMissing(t *testing.T) {
 	}}
 	h2 := applyEnv(t, s2)
 	read2 := projCaptureStdout(t)
-	// The fake never lists dev-1 after the add, so the deploy step refuses — which is itself an
-	// arm worth pinning: a declared environment the server does not list is fatal, not skipped.
-	if !h2.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input") {
-		t.Error("an environment the server does not list after apply must be fatal")
+	// The fake never LISTS dev-1 after the add, but the add's own response carries its id (e9) — and
+	// that id, not the name, is what dev-1's components and deploy are addressed by (#5583). A name
+	// is resolved by the server as name OR stage, so it could land in another environment. (The
+	// arm where no id can be found at all is TestExecuteApply_AnEnvironmentWithNoIdIsRefusedBeforeAnyWrite.)
+	if h2.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input") {
+		t.Error("an environment whose add returned its id must apply")
 	}
 	out := read2()
 	if !strings.Contains(out, "created environment dev-1") {
 		t.Errorf("the add-environment arm did not run:\n%s", out)
 	}
 	var posts []string
+	var deployed []any
 	for _, p := range s2.posts {
 		posts = append(posts, p.Method+" "+p.Path)
+		if p.Path == "/api/jobs" {
+			deployed = append(deployed, p.Body["environment_id"])
+		}
 	}
-	// production deploys first, in file order, and dev-1's refusal comes after it.
-	if strings.Join(posts, " ") != "POST /api/cli/projects/p1/environments POST /api/cli/projects/p1/components/databases POST /api/cli/projects/p1/components/databases POST /api/jobs" {
+	// production deploys first, in file order, then dev-1 by the id its add returned.
+	if strings.Join(posts, " ") != "POST /api/cli/projects/p1/environments POST /api/cli/projects/p1/components/databases POST /api/cli/projects/p1/components/databases POST /api/jobs POST /api/jobs" {
 		t.Errorf("requests: %v", posts)
+	}
+	if !reflect.DeepEqual(deployed, []any{"e1", "e9"}) {
+		t.Errorf("deployed %v, want [e1 e9]", deployed)
 	}
 
 	// And the POST itself failing is reported by environment.

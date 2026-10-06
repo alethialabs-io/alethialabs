@@ -32,7 +32,7 @@ alethia promotion list -p my-project -o json
 | Field | What it is | Set with |
 |-------|------------|----------|
 | Project | Whose promotions to list | `--project` |
-| Target environment | Show only promotions INTO this environment, by name, stage, or id | `--env` |
+| Target environment | Show only promotions INTO this environment, by id, name or stage (an exact name wins over a stage) | `--env` |
 
 Columns: **ID**, **Source**, **Target**, **Status**, **Created**. Backing call:
 `GET /cli/projects/<project>/promotions`.
