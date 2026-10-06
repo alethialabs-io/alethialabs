@@ -52,4 +52,23 @@ locals {
     for f in var.karpenter_instance_families : f
     if !anytrue([for c in var.karpenter_instance_categories : startswith(f, c)])
   ]
+
+  # The arm64 (Graviton) NodePool (#5534): the default pool's settings with its own architecture,
+  # families and CPU limit. Null when it is not configured, so a cluster that sets nothing renders no
+  # such pool. The output carries only the user's values: the runner adds the platform taint
+  # alethia.io/arch=arm64:NoSchedule after it has validated them (provisioner/karpenter.go).
+  karpenter_arm64_nodepool = var.karpenter_arm64_nodepool == null ? null : {
+    capacity_types      = var.karpenter_capacity_types
+    architectures       = ["arm64"]
+    instance_categories = var.karpenter_instance_categories
+    instance_families   = var.karpenter_arm64_nodepool.instance_families
+    cpu_limit           = var.karpenter_arm64_nodepool.cpu_limit
+    labels              = var.karpenter_node_labels
+    taints              = var.karpenter_node_taints
+  }
+
+  karpenter_arm64_families_outside_categories = var.karpenter_arm64_nodepool == null || length(var.karpenter_instance_categories) == 0 ? [] : [
+    for f in var.karpenter_arm64_nodepool.instance_families : f
+    if !anytrue([for c in var.karpenter_instance_categories : startswith(f, c)])
+  ]
 }

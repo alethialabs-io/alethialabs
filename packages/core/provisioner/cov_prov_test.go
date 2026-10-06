@@ -1345,7 +1345,9 @@ func provKarpenterOutputs() map[string]interface{} {
 // exists.
 func TestProv_KarpenterNodeClassAppliesWithSweepTags(t *testing.T) {
 	applied := filepath.Join(t.TempDir(), "applied.yaml")
-	provStubTool(t, "kubectl", "#!/bin/sh\ncat \"$3\" > "+applied+"\nexit 0\n")
+	// Only the apply writes the file: the runner then deletes a no-longer-configured arm64 NodePool
+	// (#5534) with a second kubectl call.
+	provStubTool(t, "kubectl", "#!/bin/sh\nif [ \"$1\" = apply ]; then cat \"$3\" > "+applied+"; fi\nexit 0\n")
 
 	err := applyKarpenterNodeClass(
 		context.Background(),

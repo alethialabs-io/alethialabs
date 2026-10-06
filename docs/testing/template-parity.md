@@ -183,7 +183,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `external_secrets_identity_name` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `external_secrets_identity_resource_group` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `external_secrets_service_account_email` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
-| `extra_node_pools` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#5523) |
+| `extra_node_pools` | 🚫 | ✅ | ✅ | 🚫 | 🚫 | baseline |  (#5523) |
 | `firestore_database_type` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `firestore_location_id` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `firestore_point_in_time_recovery` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
@@ -213,6 +213,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `hetzner_s3_secret_key` | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | baseline |  (#2004) |
 | `incluster_registry_hosts` | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | uniform | Hetzner has no registry product, so its `registry` kind is an in-cluster Harbor the kubelet must be told to trust over plain HTTP (a Talos machine.registries.mirrors entry). The other four provision a real cloud registry their nodes authenticate to over TLS with their own identity — there is no host to trust and no equivalent knob to add. |
 | `karpenter_architectures` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | uniform | Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure. |
+| `karpenter_arm64_nodepool` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | uniform | Adds the arm64 Karpenter NodePool beside the default one (#5534), which only the aws template installs (enable_karpenter). The other clouds put arm64 on an extra node pool through extra_node_pools. |
 | `karpenter_capacity_types` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | uniform | Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure. |
 | `karpenter_cpu_limit` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | uniform | Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure. |
 | `karpenter_instance_categories` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | uniform | Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure. |
@@ -241,8 +242,8 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `network_allowed_cidr_blocks` | ✅ | 🚫 | 🚫 | ✅ | ✅ | baseline |  (#2004) |
 | `network_cidr` | ✅ | 🚫 | 🚫 | ✅ | ✅ | baseline |  (#2004) |
 | `network_id` | ✅ | 🚫 | 🚫 | ✅ | ✅ | baseline |  (#2004) |
-| `node_labels` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#5523) |
-| `node_taints` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#5523) |
+| `node_labels` | 🚫 | ✅ | ✅ | 🚫 | 🚫 | baseline |  (#5523) |
+| `node_taints` | 🚫 | ✅ | ✅ | 🚫 | 🚫 | baseline |  (#5523) |
 | `oss_buckets` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `ots_tables` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `pod_cidr` | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | baseline |  (#2004) |
