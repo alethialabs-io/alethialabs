@@ -875,12 +875,14 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 		}
 	}
 
-	// Every environment is addressed by its ID from here on — each component write, each add-on write
-	// and each deploy (#5583). A NAME is resolved by the server as name OR stage, so it can land in a
-	// different environment from the one the plan diffed. The ids an environment created a moment
-	// ago does not have yet — a project created with a matrix returns the project, not its
-	// environments — are read back once, and only when one is missing, so a no-op apply does not pay
-	// for the read.
+	// Every environment is addressed by its ID from here on — each component add, PATCH and upsert,
+	// each add-on enable and each deploy (#5583). The server resolves a NAME as name OR stage; a
+	// server from before #5583 lets the default environment's stage beat another environment's exact
+	// name, so a name can land in a different environment from the one the plan diffed. An id has
+	// one meaning everywhere. Ids come from the plan's read for existing environments and from
+	// AddEnvironment's response for ones created above; the environment list is read back once, and
+	// only when an id is still missing (a project created with a matrix returns the project, not its
+	// environments), so a no-op apply does not pay for the read.
 	if err := fillEnvironmentIDs(c, result.ProjectID, p.Environments, ids); err != nil {
 		return nil, err
 	}

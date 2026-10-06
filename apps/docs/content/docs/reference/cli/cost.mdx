@@ -30,7 +30,7 @@ alethia cost show -p my-project -o json
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--project`, `-p` | No | Project name or id. Omit on a TTY for the interactive project picker. |
-| `--env`, `-e` | No | Environment name, stage, or id. Omit to use the project's default environment. |
+| `--env`, `-e` | No | Environment id, name or stage; an exact name wins over a stage. Omit to use the project's default environment. |
 
 Run without `--project` on a terminal and the CLI shows the same project picker as `project plan`
 and `project apply`. The flag is the complete contract — it can set anything the picker can ask —

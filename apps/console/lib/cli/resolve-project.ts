@@ -152,9 +152,14 @@ export async function resolveCliWriteEnvironment(
  * `main` sits at stage `staging` and whose second environment is NAMED `staging`, `?env=staging`
  * resolved to `main` — and `alethia plan`/`apply`, which then addressed environments by name, diffed
  * and wrote the default environment's components. The CLI now sends ids; this ordering is the
- * defence in depth for any caller that still sends a name. A value that matches only by stage
- * resolves exactly as it did before. Names are unique per project
- * (`project_environments_project_id_name_key`), so rank 2 is at most one row.
+ * defence in depth for any caller that still sends a name.
+ *
+ * A value that matches only by stage still resolves to the default environment when the default is
+ * at that stage, as before. One thing did change there: when SEVERAL non-default environments share
+ * the stage, the oldest now wins (then the lowest id). Before #5583 nothing ordered them, so Postgres
+ * could return any of them. Names are unique per project (`project_environments_project_id_name_key`),
+ * so rank 1 is at most one row. Every match is scoped to `projectId`, so another project's id, name
+ * or stage matches nothing here.
  */
 export async function resolveCliEnvironment(projectId: string, idOrName: string) {
 	const matchers = [eq(projectEnvironments.name, idOrName)];

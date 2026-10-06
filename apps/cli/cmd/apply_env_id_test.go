@@ -31,8 +31,15 @@ func stageNamedServer() *addonFake {
 				{ID: "e-stg", Name: "staging", Stage: "development", PlacementMode: "namespace"},
 			},
 			comps: map[string][]api.Component{
-				"main":    {{ID: "c-main", Kind: "cluster", Name: "cluster", Config: map[string]any{"node_max_size": float64(9)}}},
-				"staging": {{ID: "c-stg", Kind: "cluster", Name: "cluster", Config: map[string]any{"node_max_size": float64(2)}}},
+				"main": {
+					{ID: "c-main", Kind: "cluster", Name: "cluster", Config: map[string]any{"node_max_size": float64(9)}},
+					{ID: "d-main", Kind: "databases", Name: "orders", Config: map[string]any{"max_capacity": float64(5)}},
+					{ID: "d-main2", Kind: "databases", Name: "carts", Config: map[string]any{"max_capacity": float64(3)}},
+				},
+				"staging": {
+					{ID: "c-stg", Kind: "cluster", Name: "cluster", Config: map[string]any{"node_max_size": float64(2)}},
+					{ID: "d-stg", Kind: "databases", Name: "orders", Config: map[string]any{"max_capacity": float64(1)}},
+				},
 			},
 		},
 		catalog: addonCatalog(),
@@ -44,8 +51,11 @@ func stageNamedServer() *addonFake {
 	}
 }
 
-// stageNamedManifest declares only the environment named `staging`: its cluster grows from 2 to 4,
-// and cert-manager is what it already runs.
+// stageNamedManifest declares only the environment named `staging`. Each per-environment write path
+// has a component on it: the cluster (a singleton, upserted) grows from 2 to 4; databases/orders (a
+// named component, PATCHed) grows from 1 to 2; databases/carts is NEW in staging (added) — `main`
+// holds a carts, so a lookup of the wrong environment turns that add into an update. cert-manager is
+// what staging already runs.
 const stageNamedManifest = `project: web
 cloud:
   region: eu-west-1
@@ -56,6 +66,11 @@ environments:
     components:
       cluster:
         node_max_size: 4
+      databases:
+        - name: orders
+          max_capacity: 2
+        - name: carts
+          max_capacity: 3
     addons:
       - id: cert-manager
 `
@@ -74,11 +89,24 @@ func TestPlanAndApply_AStageNamedEnvironmentReadsAndWritesItself(t *testing.T) {
 		t.Errorf("planned environment id = %q, want e-stg", env.ID)
 	}
 
-	// The diff is against `staging`'s own cluster (2), not the default's (9).
-	wantChanges := []FieldChange{{Field: "node_max_size", From: float64(2), To: 4}}
-	if len(env.Components) != 1 || env.Components[0].Action != ActionUpdate ||
-		!reflect.DeepEqual(env.Components[0].Changes, wantChanges) {
-		t.Errorf("staging's cluster = %+v, want update %+v", env.Components, wantChanges)
+	// The diff is against `staging`'s own rows (cluster 2, orders 1, no carts), not the default's
+	// (9, 5, carts at 3).
+	got := map[string]ComponentPlan{}
+	for _, c := range env.Components {
+		got[componentLabel(c)] = c
+	}
+	for label, want := range map[string]struct {
+		action  Action
+		changes []FieldChange
+	}{
+		"cluster":          {ActionUpdate, []FieldChange{{Field: "node_max_size", From: float64(2), To: 4}}},
+		"databases/orders": {ActionUpdate, []FieldChange{{Field: "max_capacity", From: float64(1), To: 2}}},
+		"databases/carts":  {ActionCreate, nil},
+	} {
+		c, ok := got[label]
+		if !ok || c.Action != want.action || !reflect.DeepEqual(c.Changes, want.changes) {
+			t.Errorf("staging's %s = %+v, want %s %+v", label, c, want.action, want.changes)
+		}
 	}
 	// cert-manager is staging's and matches; loki is main's and must not appear as unmanaged here.
 	if len(env.Addons) != 1 || env.Addons[0].Action != ActionUnchanged {
@@ -91,14 +119,40 @@ func TestPlanAndApply_AStageNamedEnvironmentReadsAndWritesItself(t *testing.T) {
 	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
-	// The write lands on `staging` — addressed by its id — and the default is never touched.
-	wantCalls := []diffCall{{"upsert", "cluster", "", "staging", map[string]any{"node_max_size": 4}}}
-	if !reflect.DeepEqual(f.calls, wantCalls) {
-		t.Errorf("calls = %+v, want %+v", f.calls, wantCalls)
+	// Every write — the upsert, the PATCH and the add — lands on `staging`, addressed by its id, and
+	// the default is never touched.
+	wantCalls := []diffCall{
+		{"upsert", "cluster", "", "staging", map[string]any{"node_max_size": 4}},
+		{"update", "databases", "orders", "staging", map[string]any{"max_capacity": 2}},
+		{"add", "databases", "carts", "staging", map[string]any{"max_capacity": 3}},
+	}
+	if !sameCalls(f.calls, wantCalls) {
+		t.Errorf("calls = %+v, want (in any order) %+v", f.calls, wantCalls)
 	}
 	if !reflect.DeepEqual(f.jobs, []string{"e-stg"}) {
 		t.Errorf("deployed %v, want [e-stg]", f.jobs)
 	}
+}
+
+// sameCalls reports whether got and want hold the same calls, in any order.
+func sameCalls(got, want []diffCall) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	used := make([]bool, len(got))
+	for _, w := range want {
+		found := false
+		for i, g := range got {
+			if !used[i] && reflect.DeepEqual(g, w) {
+				used[i], found = true, true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // An add-on the plan creates in that environment is enabled THERE, not in the default.

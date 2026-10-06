@@ -95,14 +95,22 @@ const ENV_PREVIEW_NEW = randomUUID();
 const PROJ_STAGE = randomUUID();
 const ENV_LIVE = randomUUID();
 const ENV_EU_OLDER = randomUUID();
+// Another organization's project, holding an environment whose name AND stage are `staging`.
+const ORG_FOREIGN = randomUUID();
+const PROJ_FOREIGN = randomUUID();
+const ENV_FOREIGN = randomUUID();
 
 describeIfDb("resolveCliEnvironment — an exact name beats a stage (#5583)", () => {
 	beforeAll(async () => {
 		const db = getServiceDb();
-		for (const id of [PROJ_NAMED, PROJ_STAGE]) {
+		for (const [id, org] of [
+			[PROJ_NAMED, ORG],
+			[PROJ_STAGE, ORG],
+			[PROJ_FOREIGN, ORG_FOREIGN],
+		]) {
 			await db.insert(projects).values({
 				id,
-				org_id: ORG,
+				org_id: org,
 				user_id: USER,
 				project_name: `p-${id}`,
 				region: "westeurope",
@@ -126,14 +134,24 @@ describeIfDb("resolveCliEnvironment — an exact name beats a stage (#5583)", ()
 				{ id: ENV_LIVE, project_id: PROJ_STAGE, user_id: USER, name: "live", stage: "production", is_default: true, created_at: new Date("2026-03-01T00:00:00Z") },
 			]);
 		});
+		await db.insert(projectEnvironments).values({
+			id: ENV_FOREIGN,
+			project_id: PROJ_FOREIGN,
+			user_id: USER,
+			name: "staging",
+			stage: "staging",
+			is_default: true,
+		});
 	});
 
 	afterAll(async () => {
 		const db = getServiceDb();
 		await db
 			.delete(projectEnvironments)
-			.where(inArray(projectEnvironments.project_id, [PROJ_NAMED, PROJ_STAGE]));
-		await db.delete(projects).where(inArray(projects.id, [PROJ_NAMED, PROJ_STAGE]));
+			.where(inArray(projectEnvironments.project_id, [PROJ_NAMED, PROJ_STAGE, PROJ_FOREIGN]));
+		await db
+			.delete(projects)
+			.where(inArray(projects.id, [PROJ_NAMED, PROJ_STAGE, PROJ_FOREIGN]));
 	});
 
 	it("resolves `staging` to the environment NAMED staging, not the default at stage staging", async () => {
@@ -149,6 +167,16 @@ describeIfDb("resolveCliEnvironment — an exact name beats a stage (#5583)", ()
 	it("a stage that names no environment still resolves by stage — the default first", async () => {
 		const env = await resolveCliEnvironment(PROJ_STAGE, "production");
 		expect(env?.id).toBe(ENV_LIVE);
+	});
+
+	it("an environment id from another project, or another organization, matches nothing", async () => {
+		// Real ids, in other projects: the id matcher is scoped by project_id like the name and stage
+		// matchers, so it must not cross over — within one organization or across two.
+		expect(await resolveCliEnvironment(PROJ_NAMED, ENV_LIVE)).toBeNull();
+		expect(await resolveCliEnvironment(PROJ_NAMED, ENV_FOREIGN)).toBeNull();
+		expect(await resolveCliEnvironment(PROJ_STAGE, ENV_MAIN)).toBeNull();
+		// The foreign project's `staging` (name AND stage, and its default) does not compete either.
+		expect((await resolveCliEnvironment(PROJ_NAMED, "staging"))?.id).toBe(ENV_NAMED_STAGING);
 	});
 
 	it("a stage matched only by non-default environments resolves to the oldest", async () => {

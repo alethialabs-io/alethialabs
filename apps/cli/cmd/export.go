@@ -595,9 +595,11 @@ func (r *exportReader) environment(e api.Environment, ex *exported) (manifest.En
 	if e.Lifecycle != "" && e.Lifecycle != exportDefaultLifecycle {
 		env.Lifecycle = e.Lifecycle
 	}
-	// Every per-environment read names the environment by its ID. The server resolves a NAME through
-	// a name-or-stage match that prefers the default environment, so passing `staging` reads the
-	// default environment's rows whenever that one's stage is `staging`; an id cannot collide.
+	// Every per-environment read names the environment by its ID. The server resolves a NAME as id,
+	// name or stage. Since #5583 an exact name beats a stage there, but a server from before it ranked
+	// the default environment first, so `staging` read the default's rows whenever that one's stage
+	// was `staging`. A value that names no environment still resolves by stage. An id has one meaning
+	// on every server.
 	comps, err := r.c.ListComponents(r.project, "", e.ID)
 	if err != nil {
 		return env, fmt.Errorf("list components of %s: %w", e.Name, err)
