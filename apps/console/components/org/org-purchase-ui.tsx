@@ -15,6 +15,11 @@ import { useId } from "react";
 import { z } from "zod";
 import { PlanChecklist } from "@/components/billing/plan-checklist";
 import { BUILT_IN_ROLE_LABELS } from "@/lib/authz/registry";
+import {
+	actionNeededNextStep,
+	NEW_ORG_PLAN_COPY,
+	type NewOrgPlanReport,
+} from "@/lib/billing/new-org-plan-state";
 import type { PlanCatalogEntry } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
@@ -25,6 +30,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@repo/ui/select";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 
 export const ROLES = ["admin", "operator", "viewer"] as const;
@@ -100,9 +106,41 @@ export function PurchaseLayout({
 	);
 }
 
-/** Post-purchase view — invite teammates (paid), or upsell to pay (card-less trial). */
+/**
+ * The plan state a finished PAID setup reports (#5522) — a status badge and one sentence that is true
+ * for that state, from what the server read. It replaces the old blanket "Subscription active".
+ */
+function PaidPlanStatus({ report }: { report: NewOrgPlanReport }) {
+	const copy = NEW_ORG_PLAN_COPY[report.planState];
+	return (
+		<div role="status" className="flex flex-col gap-1.5 rounded-sm border border-border px-3 py-2.5">
+			<StatusBadge status={report.planState} tier={copy.tier} label={copy.label} />
+			<p className="text-ui-xs text-text-secondary">{copy.sentence}</p>
+			{report.planState === "action_needed" &&
+				(report.paymentUrl ? (
+					<a
+						href={report.paymentUrl}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="text-ui-xs text-text-primary underline underline-offset-2"
+					>
+						{actionNeededNextStep(report.paymentUrl)}
+					</a>
+				) : (
+					<p className="text-ui-xs text-text-secondary">{actionNeededNextStep(null)}</p>
+				))}
+		</div>
+	);
+}
+
+/**
+ * Post-purchase view — invite teammates (paid), or upsell to pay (card-less trial). A paid setup also
+ * shows the plan state the server reported (`paidPlan`), so the screen never claims a plan that
+ * is not live.
+ */
 export function InviteView({
 	isTrialOrg,
+	paidPlan = null,
 	ownerEmail,
 	inviteEmail,
 	setInviteEmail,
@@ -114,6 +152,8 @@ export function InviteView({
 	onAddPayment,
 }: {
 	isTrialOrg: boolean;
+	/** The plan state of a paid create-a-team setup; null (the default) for a trial or an upgrade. */
+	paidPlan?: NewOrgPlanReport | null;
 	ownerEmail: string;
 	inviteEmail: string;
 	setInviteEmail: (v: string) => void;
@@ -136,6 +176,8 @@ export function InviteView({
 						: "Add teammates now, or skip and invite them later from settings."}
 				</p>
 			</div>
+
+			{paidPlan && <PaidPlanStatus report={paidPlan} />}
 
 			<Seat avatar="YO" name={ownerEmail || "You"} meta="Organization owner">
 				<span className="rounded-full border border-border-strong px-2 py-0.5 font-mono text-ui-2xs uppercase tracking-wide text-text-secondary">

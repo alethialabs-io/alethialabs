@@ -69,6 +69,12 @@ import {
 	readPaymentAfterCancel,
 } from "@/lib/billing/first-payment";
 import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
+import {
+	type FirstPaymentRead,
+	type NewOrgPlanReport,
+	newOrgPlanState,
+	PAYMENT_DEPENDENT_STATUSES,
+} from "@/lib/billing/new-org-plan-state";
 import { type NewOrgSetupState, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
 import {
 	findSetupOrg,
@@ -1851,7 +1857,7 @@ export async function linkSubscriptionToNewOrg(input: {
 	 * coverage test found exactly that gap.
 	 */
 	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
-}): Promise<void> {
+}): Promise<NewOrgPlanReport> {
 	// NAMED, not ambient (#4133). This runs from a sheet on the CURRENT org's page, against the org
 	// just created — so the address and the target genuinely differ, and always did. It used to work
 	// by asking for the verb in the ambient scope and then asserting that scope WAS the new org,
@@ -1922,6 +1928,75 @@ export async function linkSubscriptionToNewOrg(input: {
 
 	// The setup record's link step (#5445). Last, so it says only what has fully happened.
 	await markPendingOrgSetupLinked(actor.userId, input.subscriptionId, input.orgId);
+
+	// What the sheet may say about the plan (#5522): read from the subscription just linked, never
+	// assumed. Stripe keeps it `incomplete` while the first invoice settles, so "active" here would
+	// often be false.
+	return readNewOrgPlanState(linked);
+}
+
+/**
+ * The plan state of a create-a-team subscription (#5522): its status, plus — for `incomplete`,
+ * `canceled` and `incomplete_expired` — what its first invoice's payments show. A failed payments
+ * read is not an error here (the link and the resume must not fail over what they SAY): the state
+ * is then decided without it (`unconfirmed` for an `incomplete` one), which claims least.
+ *
+ * For `action_needed` it also returns Stripe's hosted page for the open first invoice, where the
+ * customer can complete the payment — Billing has no control that finishes a first payment, so the
+ * sheet must not send them there.
+ */
+async function readNewOrgPlanState(sub: Stripe.Subscription): Promise<NewOrgPlanReport> {
+	if (!PAYMENT_DEPENDENT_STATUSES.has(sub.status)) {
+		return { planState: newOrgPlanState(sub.status, null), paymentUrl: null };
+	}
+	let payment: FirstPaymentRead | null = null;
+	try {
+		const read = await readPaymentAfterCancel(sub);
+		payment =
+			read.kind === "processing"
+				? "in_flight"
+				: read.kind === "took_money"
+					? "succeeded"
+					: read.kind === "no_money"
+						? "none"
+						: "unrecognised";
+	} catch {
+		payment = null;
+	}
+	const planState = newOrgPlanState(sub.status, payment);
+	return {
+		planState,
+		paymentUrl: planState === "action_needed" ? await openInvoicePaymentUrl(sub) : null,
+	};
+}
+
+/** True only for a parseable `https:` URL whose host is exactly `invoice.stripe.com`. */
+function isStripeInvoiceUrl(raw: string): boolean {
+	try {
+		const url = new URL(raw);
+		return url.protocol === "https:" && url.host === "invoice.stripe.com";
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Stripe's hosted page for a subscription's first invoice while that invoice is still `open` (so it
+ * can be paid or its bank confirmation completed there), or null — when it is not open, has no page,
+ * the read fails, or the URL is not `https://invoice.stripe.com/…` exactly (parsed, not prefix-matched):
+ * the sheet renders it as a link, so nothing but Stripe's own invoice host may reach it.
+ */
+async function openInvoicePaymentUrl(sub: Stripe.Subscription): Promise<string | null> {
+	const invoiceId =
+		typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
+	if (!invoiceId) return null;
+	try {
+		const invoice = await getStripe().invoices.retrieve(invoiceId);
+		const url = invoice.hosted_invoice_url;
+		return invoice.status === "open" && url && isStripeInvoiceUrl(url) ? url : null;
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -2009,6 +2084,7 @@ async function newOrgSetupStateFor(
 		subscriptionId: sub.id,
 		customerId,
 		paid: PAID_SUBSCRIPTION_STATUSES.has(sub.status),
+		...(await readNewOrgPlanState(sub)),
 		org,
 		linked: !!linkedTo,
 		declared,
