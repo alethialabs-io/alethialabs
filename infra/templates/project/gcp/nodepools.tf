@@ -98,7 +98,10 @@ resource "google_container_node_pool" "extra" {
   name     = each.value.gke_name
   project  = var.project_id
   location = var.region
-  cluster  = module.gke[0].cluster_name
+  # The refresh-safe existence probe (scripts/check-templates-refresh-safe.mjs): under -refresh-only
+  # a cluster with no module instance in state is an empty tuple, and a bare [0] aborts the plan.
+  # The fallback is the name the module is given, so it names the same cluster.
+  cluster = try(module.gke[0].cluster_name, null) != null ? module.gke[0].cluster_name : local.gke_name
 
   initial_node_count = each.value.initial_count
 
