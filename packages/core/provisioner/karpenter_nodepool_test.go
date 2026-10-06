@@ -311,6 +311,12 @@ func TestKarpenterNodePool_RendererRefusesWhatTheTemplateRefuses(t *testing.T) {
 		{"label value not a string", "labels", map[string]interface{}{"workload": float64(1)}, "is not a string"},
 		{"taint in a reserved domain", "taints", []interface{}{map[string]interface{}{"key": "node.kubernetes.io/unschedulable", "effect": "NoSchedule"}}, "reserved domain"},
 		{"taint in karpenter.sh", "taints", []interface{}{map[string]interface{}{"key": "karpenter.sh/disrupted", "effect": "NoSchedule"}}, "reserved domain"},
+		// #5533: alethia.io is the platform's own domain (alethia.io/pool on every extra pool, alethia.io/arch
+		// on arm64 capacity), and the clouds' domains are reserved on every cloud so a key is portable.
+		{"label in alethia.io", "labels", map[string]interface{}{"alethia.io/pool": "batch"}, "reserved domain"},
+		{"label in a domain merely ending in alethia.io", "labels", map[string]interface{}{"examplealethia.io/x": "y"}, "reserved domain"},
+		{"label in amazonaws.com", "labels", map[string]interface{}{"eks.amazonaws.com/nodegroup": "x"}, "reserved domain"},
+		{"taint in alethia.io", "taints", []interface{}{map[string]interface{}{"key": "alethia.io/arch", "value": "arm64", "effect": "NoSchedule"}}, "reserved domain"},
 		{"unknown taint effect", "taints", []interface{}{map[string]interface{}{"key": "dedicated", "effect": "NoScheduleEver"}}, `has effect "NoScheduleEver"`},
 		{"duplicate taint", "taints", []interface{}{
 			map[string]interface{}{"key": "dedicated", "effect": "NoSchedule"},

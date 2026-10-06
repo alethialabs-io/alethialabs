@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/nodekeys"
 )
 
 // karpenterNodeClassName is the fixed name shared by the EC2NodeClass and the NodePool's
@@ -314,20 +315,11 @@ var (
 	karpenterCategoryPattern = regexp.MustCompile(`^[a-z]{1,8}$`)
 	// karpenterFamilyPattern is an EC2 instance family such as c7g or m7i-flex.
 	karpenterFamilyPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,15}$`)
-	// k8sQualifiedKeyPattern is a Kubernetes label/taint key: an optional DNS-subdomain prefix and a
-	// name of at most 63 characters.
-	k8sQualifiedKeyPattern = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$`)
-	// k8sLabelValuePattern is a Kubernetes label (and taint) value; length is checked separately.
-	k8sLabelValuePattern = regexp.MustCompile(`^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$`)
-	// reservedKeyDomainPattern matches a key prefix in a domain Kubernetes or Karpenter owns. There is
-	// deliberately NO dot boundary: Karpenter's NodePool CRD tests `endsWith("kubernetes.io")` on the
-	// prefix, so `examplekubernetes.io/x` is refused at apply, and this guard must refuse it at plan.
-	reservedKeyDomainPattern = regexp.MustCompile(`(kubernetes\.io|k8s\.io|karpenter\.sh|karpenter\.k8s\.aws)$`)
-	// labelDomainExceptionPattern is the one reserved subdomain a user label may use. Kubernetes
-	// documents node-restriction.kubernetes.io/ for exactly this (labels a kubelet cannot set on its
-	// own node), and Karpenter's NodePool CRD admits it. node-role.kubernetes.io is NOT admitted.
-	labelDomainExceptionPattern = regexp.MustCompile(`(^|\.)node-restriction\.kubernetes\.io$`)
 )
+
+// The label and taint KEY and VALUE rules, and the reserved domains (kubernetes.io, k8s.io,
+// karpenter.sh, karpenter.k8s.aws, each cloud's, and alethia.io), are packages/core/nodekeys: one
+// definition shared with the template validations and the cross-cloud node-pool contract (#5533).
 
 // karpenterMaxCPULimit is the highest limits.cpu a user may set. Karpenter launches EC2 outside
 // OpenTofu, so no plan-time cost guard sees its fleet; this cap is the bound that remains.
@@ -351,35 +343,19 @@ var karpenterNodePoolKeys = map[string]bool{
 	"cpu_limit": true, "labels": true, "taints": true,
 }
 
-// keyDomain returns the prefix of a qualified key ("example.com" for "example.com/gpu"), or "" when
-// the key has none.
-func keyDomain(key string) string {
-	if i := strings.Index(key, "/"); i >= 0 {
-		return key[:i]
-	}
-	return ""
-}
-
-// validateQualifiedKey checks a label or taint key's syntax and lengths: a prefix of at most 253
-// characters whose dot-separated DNS labels are at most 63 each, and a name of at most 63 (the
-// pattern bounds the name).
+// validateQualifiedKey checks a label or taint key's syntax and lengths (nodekeys.ValidKey): a
+// prefix of at most 253 characters whose dot-separated DNS labels are at most 63 each, and a name of
+// at most 63.
 func validateQualifiedKey(what, key string) error {
-	bad := !k8sQualifiedKeyPattern.MatchString(key)
-	if prefix := keyDomain(key); !bad && prefix != "" {
-		bad = len(prefix) > 253
-		for _, label := range strings.Split(prefix, ".") {
-			bad = bad || len(label) > 63
-		}
-	}
-	if bad {
+	if !nodekeys.ValidKey(key) {
 		return fmt.Errorf("%s key %q is not a Kubernetes key: use [prefix/]name, with a DNS prefix of up to 253 characters (63 per label) and a name of up to 63 letters, digits, '-', '_' or '.'", what, key)
 	}
 	return nil
 }
 
-// validateLabelValue checks a label or taint value's syntax and length.
+// validateLabelValue checks a label or taint value's syntax and length (nodekeys.ValidValue).
 func validateLabelValue(what, key, value string) error {
-	if len(value) > 63 || !k8sLabelValuePattern.MatchString(value) {
+	if !nodekeys.ValidValue(value) {
 		return fmt.Errorf("%s %q has value %q: use up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit", what, key, value)
 	}
 	return nil
@@ -423,7 +399,10 @@ func validatePatternList(name string, values []string, pattern *regexp.Regexp, e
 }
 
 // validate applies the template's rules to the NodePool settings. It is the renderer's own guard:
-// every value it accepts is one the template's variable validations accept too.
+// every value it accepts is one the template's variable validations accept too. It refuses every
+// alethia.io key, because a user may not write one, so a platform-owned label or taint (#5534's
+// alethia.io/arch=arm64:NoSchedule on an arm64 NodePool) is added AFTER validate() has passed on the
+// user's values, never fed through it.
 func (p karpenterNodePool) validate() error {
 	if err := validateEnumList("capacity type", p.CapacityTypes, "spot", "on-demand"); err != nil {
 		return err
@@ -460,8 +439,8 @@ func (p karpenterNodePool) validate() error {
 		if err := validateQualifiedKey("karpenter node label", l.Key); err != nil {
 			return err
 		}
-		if d := keyDomain(l.Key); reservedKeyDomainPattern.MatchString(d) && !labelDomainExceptionPattern.MatchString(d) {
-			return fmt.Errorf("karpenter node label %q uses the reserved domain %q: Kubernetes and Karpenter own kubernetes.io, k8s.io, karpenter.sh and karpenter.k8s.aws labels (node-restriction.kubernetes.io/ is allowed)", l.Key, d)
+		if d, reserved := nodekeys.ReservedDomain(l.Key); reserved && !nodekeys.IsNodeRestrictionDomain(d) {
+			return fmt.Errorf("karpenter node label %q uses the reserved domain %q: Kubernetes, Karpenter, the clouds and Alethia own labels whose prefix ends in %s (node-restriction.kubernetes.io/ is allowed)", l.Key, d, nodekeys.ReservedDomainsText())
 		}
 		if err := validateLabelValue("karpenter node label", l.Key, l.Value); err != nil {
 			return err
@@ -472,8 +451,8 @@ func (p karpenterNodePool) validate() error {
 		if err := validateQualifiedKey("karpenter node taint", t.Key); err != nil {
 			return err
 		}
-		if d := keyDomain(t.Key); reservedKeyDomainPattern.MatchString(d) {
-			return fmt.Errorf("karpenter node taint %q uses the reserved domain %q: Kubernetes and Karpenter set kubernetes.io, k8s.io, karpenter.sh and karpenter.k8s.aws taints themselves", t.Key, d)
+		if d, reserved := nodekeys.ReservedDomain(t.Key); reserved {
+			return fmt.Errorf("karpenter node taint %q uses the reserved domain %q: Kubernetes, Karpenter, the clouds and Alethia set taints whose prefix ends in %s themselves (alethia.io/arch marks arm64 capacity)", t.Key, d, nodekeys.ReservedDomainsText())
 		}
 		if t.HasValue {
 			if err := validateLabelValue("karpenter node taint", t.Key, t.Value); err != nil {

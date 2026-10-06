@@ -350,6 +350,33 @@ run "refuses_a_label_in_a_domain_merely_ending_in_kubernetes_io" {
   expect_failures = [var.karpenter_node_labels]
 }
 
+# #5533: alethia.io is the platform's own domain. Alethia labels every extra pool alethia.io/pool and
+# taints arm64 capacity alethia.io/arch; a user who could write either could steer a workload onto
+# a pool it did not ask for. The list is packages/core/nodekeys (drift_test.go holds this file to it).
+run "refuses_a_label_in_the_alethia_io_domain" {
+  command = plan
+  variables {
+    karpenter_node_labels = { "alethia.io/pool" = "batch" }
+  }
+  expect_failures = [var.karpenter_node_labels]
+}
+
+run "refuses_a_label_in_a_cloud_domain" {
+  command = plan
+  variables {
+    karpenter_node_labels = { "eks.amazonaws.com/nodegroup" = "workers" }
+  }
+  expect_failures = [var.karpenter_node_labels]
+}
+
+run "refuses_the_platform_arch_taint" {
+  command = plan
+  variables {
+    karpenter_node_taints = [{ key = "alethia.io/arch", value = "arm64", effect = "NoSchedule" }]
+  }
+  expect_failures = [var.karpenter_node_taints]
+}
+
 run "refuses_a_label_prefix_with_a_dns_label_over_63" {
   command = plan
   variables {
