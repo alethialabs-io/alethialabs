@@ -789,16 +789,17 @@ func TestApply_RefusalsThroughTheApplyCommand(t *testing.T) {
 }
 
 func TestApply_PlanJSONOfARefusalStillPrintsTheTypedPlan(t *testing.T) {
-	// `--output json` on plan renders the plan and returns: the problems are IN the document, and
-	// a script reads them from there rather than from an exit code with prose beside it.
+	// `--output json` on plan renders the whole plan, problems IN the document, and THEN exits
+	// non-zero (#5600): a CI step gating on the exit code must not pass a file apply refuses.
+	// plan_exit_test.go pins the exact codes.
 	s := &projServer{envs: []map[string]any{
 		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
 	}}
 	h := applyEnv(t, s)
 	mismatch := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: staging\n")
 	read := projCaptureStdout(t)
-	if h.run("plan", "--file", mismatch, "--no-input", "--output", "json") {
-		t.Error("plan --output json is a document, not a refusal")
+	if !h.run("plan", "--file", mismatch, "--no-input", "--output", "json") {
+		t.Error("plan --output json of a plan apply refuses must exit non-zero")
 	}
 	var got ApplyPlan
 	if err := json.Unmarshal([]byte(read()), &got); err != nil {
