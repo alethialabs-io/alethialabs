@@ -173,8 +173,42 @@ run "aks_nodepools_nothing_set_renders_the_existing_pools_unchanged" {
   }
 
   assert {
-    condition     = module.aks[0].node_pools["spot"].priority == "Spot" && module.aks[0].node_pools["spot"].node_taints == null
-    error_message = "The Spot pool must stay a Spot pool with no node_taints of its own."
+    condition     = module.aks[0].node_pools["spot"].priority == "Spot" && jsonencode(module.aks[0].node_pools["spot"].node_taints) == jsonencode(["kubernetes.azure.com/scalesetpriority=spot:NoSchedule"])
+    error_message = "The Spot pool must stay a Spot pool, and its only taint must be the one AKS puts on every Spot node, which azurerm requires a Spot pool to declare (#5578). None of the user's taints may reach it."
+  }
+
+  # #5578: every planned attribute of the four pools, pinned whole. Against dev the ONLY differences
+  # are the three this change makes: rotation_name on every pool, and the Spot taint. node_count is
+  # still the configured starting size, because ignore_changes affects only a pool that exists.
+  assert {
+    condition = jsonencode(module.aks[0].node_pools) == jsonencode({
+      default = {
+        eviction_policy = null, max_count = 5, max_pods = 110, min_count = 1, mode = "System", name = "default",
+        node_count      = 2, node_labels = {}, node_taints = null, os_disk_size_gb = 100, os_disk_type = null,
+        priority        = "Regular", rotation_name = "defaulc21f96", spot_max_price = null, vm_size = "Standard_D4s_v5",
+        vnet_subnet_id  = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock/providers/Microsoft.Network/virtualNetworks/mock/subnets/mock"
+      }
+      pool1 = {
+        eviction_policy = null, max_count = 5, max_pods = 110, min_count = 1, mode = null, name = "pool1",
+        node_count      = 2, node_labels = {}, node_taints = null, os_disk_size_gb = 100, os_disk_type = null,
+        priority        = null, rotation_name = "pool15934c3", spot_max_price = null, vm_size = "Standard_D8s_v5",
+        vnet_subnet_id  = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock/providers/Microsoft.Network/virtualNetworks/mock/subnets/mock"
+      }
+      pool2 = {
+        eviction_policy = null, max_count = 5, max_pods = 110, min_count = 1, mode = null, name = "pool2",
+        node_count      = 2, node_labels = {}, node_taints = null, os_disk_size_gb = 100, os_disk_type = null,
+        priority        = null, rotation_name = "pool239496f", spot_max_price = null, vm_size = "Standard_E4s_v5",
+        vnet_subnet_id  = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock/providers/Microsoft.Network/virtualNetworks/mock/subnets/mock"
+      }
+      spot = {
+        eviction_policy = "Delete", max_count = 3, max_pods = 110, min_count = 0, mode = null, name = "spot",
+        node_count      = 0, node_labels = {}, node_taints = ["kubernetes.azure.com/scalesetpriority=spot:NoSchedule"],
+        os_disk_size_gb = 100, os_disk_type = null, priority = "Spot", rotation_name = "spotb2e189", spot_max_price = -1,
+        vm_size         = "Standard_D4s_v5",
+        vnet_subnet_id  = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock/providers/Microsoft.Network/virtualNetworks/mock/subnets/mock"
+      }
+    })
+    error_message = "With nothing set the default, positional and Spot pools must plan exactly as before #5578 except for a rotation pool name on each and the Spot taint on the Spot pool."
   }
 
   assert {
@@ -281,6 +315,11 @@ run "aks_nodepools_node_labels_reach_every_pool" {
   assert {
     condition     = module.aks[0].node_pools["spot"].node_labels["kubernetes.azure.com/scalesetpriority"] == "spot"
     error_message = "Once node_labels is set, the Spot pool must declare the Spot label beside them, as azurerm requires of a Spot pool."
+  }
+
+  assert {
+    condition     = jsonencode(module.aks[0].node_pools["spot"].node_taints) == jsonencode(["kubernetes.azure.com/scalesetpriority=spot:NoSchedule"])
+    error_message = "Setting node_labels must not change the Spot pool's taints: it declares the Spot taint, and only that."
   }
 
   assert {
@@ -465,5 +504,74 @@ run "aks_nodepools_named_pools_get_a_distinct_rotation_pool_within_the_name_rule
       !can(regex("^pool[0-9]+$", module.aks[0].node_pools[name].rotation_name))
     ]) && module.aks[0].node_pools["abcdefghij1"].rotation_name != module.aks[0].node_pools["abcdefghij2"].rotation_name
     error_message = "Each named pool's temporary_name_for_rotation must be a valid AKS pool name (12 lowercase alphanumerics, starting with a letter), distinct from every pool name and from each other's, so a vm_size change cycles the pool."
+  }
+}
+
+# #5578: the default pool, pool1..N and spot get a rotation pool too, from the same derivation as the
+# named pools, so a vm_size change on them cycles the pool instead of failing the apply.
+run "aks_nodepools_positional_pools_get_a_distinct_rotation_pool_within_the_name_rule" {
+  command = plan
+
+  variables {
+    aks_instance_types = ["Standard_D4s_v5", "Standard_D8s_v5", "Standard_E4s_v5", "Standard_F4s_v2"]
+    aks_spot_enabled   = true
+    extra_node_pools   = [{ name = "batch", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 }]
+  }
+
+  assert {
+    condition = alltrue([for name in ["default", "pool1", "pool2", "pool3", "spot"] :
+      can(regex("^[a-z][a-z0-9]{0,11}$", module.aks[0].node_pools[name].rotation_name)) &&
+      !contains(keys(module.aks[0].node_pools), module.aks[0].node_pools[name].rotation_name) &&
+      !contains(["system"], module.aks[0].node_pools[name].rotation_name)
+    ])
+    error_message = "Each positional pool's temporary_name_for_rotation must be a valid AKS pool name (12 lowercase alphanumerics, starting with a letter) and must not be any pool's name."
+  }
+
+  assert {
+    condition     = length(distinct([for name, p in module.aks[0].node_pools : p.rotation_name])) == length(module.aks[0].node_pools)
+    error_message = "No two pools, positional or named, may share a rotation pool name."
+  }
+}
+
+# #5578: the autoscaler owns the node count of an EXISTING autoscaled pool. The first run applies the
+# cluster (against the mock); the second changes the sizes the pools start from and plans again.
+# Every positional pool and the default pool is autoscaled (auto_scaling_enabled is fixed at true in
+# modules/aks), so there is no fixed-count pool here for which the count would still be managed.
+run "aks_nodepools_ignore_changes_setup_applies_the_cluster" {
+  command = apply
+
+  variables {
+    aks_instance_types = ["Standard_D4s_v5", "Standard_D8s_v5"]
+    aks_spot_enabled   = true
+  }
+
+  assert {
+    condition     = module.aks[0].node_pools["default"].node_count == 2 && module.aks[0].node_pools["pool1"].node_count == 2 && module.aks[0].node_pools["spot"].node_count == 0
+    error_message = "The pools must be created at their starting sizes: aks_node_desired_size (2) and aks_spot_node_min_size (0)."
+  }
+}
+
+run "aks_nodepools_an_existing_autoscaled_pools_count_is_left_to_the_autoscaler" {
+  command = plan
+
+  variables {
+    aks_instance_types     = ["Standard_D4s_v5", "Standard_D8s_v5"]
+    aks_spot_enabled       = true
+    aks_node_desired_size  = 4
+    aks_spot_node_min_size = 1
+  }
+
+  assert {
+    condition = (
+      module.aks[0].node_pools["default"].node_count == 2 &&
+      module.aks[0].node_pools["pool1"].node_count == 2 &&
+      module.aks[0].node_pools["spot"].node_count == 0
+    )
+    error_message = "A changed starting size must not plan a node_count change on an existing default, positional or Spot pool: the autoscaler owns the count once the pool exists."
+  }
+
+  assert {
+    condition     = module.aks[0].node_pools["spot"].min_count == 1
+    error_message = "ignore_changes covers node_count only: the Spot pool's min_count must still follow aks_spot_node_min_size."
   }
 }
