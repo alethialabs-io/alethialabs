@@ -246,8 +246,10 @@ A field that the file leaves out keeps its stored value: `apply` never clears it
 top of the file lists each thing that is not in it, and `export` prints the same list on stderr.
 The list also names the environments you did not export, the add-ons that are disabled, the
 components that are destroyed, and attached BYO charts and BYO IaC, which `alethia.yaml` cannot
-describe yet. The environment `lifecycle` is not exported either, because the environment read does
-not return it: add `lifecycle: ephemeral` yourself where it applies.
+describe yet.
+
+An ephemeral environment is exported with `lifecycle: ephemeral`. A persistent environment has no
+`lifecycle` line, because `persistent` is the default.
 
 ## Runner Credentials
 
