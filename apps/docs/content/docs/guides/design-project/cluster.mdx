@@ -92,12 +92,11 @@ Each value is bounded individually (1â€“100); the form does not enforce a min â‰
 ## Node labels, taints and extra pools
 
 <Callout type="warn">
-  This is the contract that each cloud implements. AWS and Azure accept these keys: see
+  This is the contract that each cloud implements. AWS, Azure and GCP accept these keys: see
   [Node labels, taints and extra node groups](/concepts/runner/infrastructure-templates/aws#node-labels-taints-and-extra-node-groups)
-  for AWS and [On Azure](#on-azure). On a cloud that does not accept them yet, the server refuses
-  them with "not a variable of this template". Hetzner is coming in
-  [#5536](https://github.com/alethialabs-io/alethialabs/issues/5536) and GCP in
-  [#5537](https://github.com/alethialabs-io/alethialabs/issues/5537).
+  for AWS, [On Azure](#on-azure) and [On GCP](#on-gcp). On a cloud that does not accept them yet, the
+  server refuses them with "not a variable of this template". Hetzner is coming in
+  [#5536](https://github.com/alethialabs-io/alethialabs/issues/5536).
 </Callout>
 
 Three keys in the cluster's `provider_config` label your nodes, taint them, and add node pools
@@ -262,11 +261,11 @@ because of its instance type or Spot capacity, but never because it is less isol
 
 | | AWS | Azure | Hetzner | GCP |
 |-|-----|-------|---------|-----|
-| How a pool is built | One more EKS managed node group, with the default node group's isolation controls | One AKS user node pool (`mode = User`) per entry, named for the entry. See [On Azure](#on-azure) | Coming in [#5536](https://github.com/alethialabs-io/alethialabs/issues/5536) | Coming in [#5537](https://github.com/alethialabs-io/alethialabs/issues/5537) |
-| Pool size | The node group starts with `desired_size` nodes and stays there: no autoscaler scales a managed node group, and a later change to `desired_size` does not resize it. `min_size` and `max_size` bound the group | The cluster autoscaler scales the pool from `min_size` to `max_size`, starting at `desired_size`. After that the autoscaler owns the count | A fixed count of `desired_size` until [#5538](https://github.com/alethialabs-io/alethialabs/issues/5538) | Coming in #5537 |
-| `capacity_type: spot` | An EKS Spot node group (`SPOT`) | A Spot pool, with the cluster's `aks_spot_eviction_policy` and `aks_spot_max_price`. AKS also adds its own label and taint, `kubernetes.azure.com/scalesetpriority=spot:NoSchedule` | Refused, because Hetzner Cloud sells no Spot capacity (#5536) | Coming in #5537 |
+| How a pool is built | One more EKS managed node group, with the default node group's isolation controls | One AKS user node pool (`mode = User`) per entry, named for the entry. See [On Azure](#on-azure) | Coming in [#5536](https://github.com/alethialabs-io/alethialabs/issues/5536) | One GKE node pool per entry, named `<cluster name>-<name>`. Not on Autopilot, which has no node pools to add. See [On GCP](#on-gcp) |
+| Pool size | The node group starts with `desired_size` nodes and stays there: no autoscaler scales a managed node group, and a later change to `desired_size` does not resize it. `min_size` and `max_size` bound the group | The cluster autoscaler scales the pool from `min_size` to `max_size`, starting at `desired_size`. After that the autoscaler owns the count | A fixed count of `desired_size` until [#5538](https://github.com/alethialabs-io/alethialabs/issues/5538) | The cluster autoscaler scales the whole pool from `min_size` to `max_size`. A regional cluster starts the pool with the same number of nodes in each of its three zones. See [On GCP](#on-gcp) |
+| `capacity_type: spot` | An EKS Spot node group (`SPOT`) | A Spot pool, with the cluster's `aks_spot_eviction_policy` and `aks_spot_max_price`. AKS also adds its own label and taint, `kubernetes.azure.com/scalesetpriority=spot:NoSchedule` | Refused, because Hetzner Cloud sells no Spot capacity (#5536) | A pool of Spot VMs (`node_config.spot`). GKE labels its nodes `cloud.google.com/gke-spot=true` |
 | Taints on an arm64 pool | `alethia.io/arch=arm64:NoSchedule` | `alethia.io/arch=arm64:NoSchedule` (#5535) | `alethia.io/arch=arm64:NoSchedule` (#5536) | `alethia.io/arch=arm64:NoSchedule`, and GKE's own `kubernetes.io/arch=arm64:NoSchedule` (#5537) |
-| arm64 instance types | Graviton types, such as `m7g.large` or `a1.large`. The plan refuses an instance type whose architecture is not the pool's `arch` | The Arm64 sizes, which carry the feature letter `p` after the vCPU count: `Standard_D4ps_v5`, `Standard_D2pds_v5`, `Standard_E4ps_v6`, `Standard_B2pts_v2` | Coming in #5536 | Coming in #5537 |
+| arm64 instance types | Graviton types, such as `m7g.large` or `a1.large`. The plan refuses an instance type whose architecture is not the pool's `arch` | The Arm64 sizes, which carry the feature letter `p` after the vCPU count: `Standard_D4ps_v5`, `Standard_D2pds_v5`, `Standard_E4ps_v6`, `Standard_B2pts_v2` | Coming in #5536 | The Arm machine families `t2a`, `c4a` and `n4a`: `t2a-standard-4`, `c4a-standard-8` |
 
 ### On Azure
 
@@ -313,6 +312,51 @@ The `gpu` pool's nodes carry the taints `gpu=true:NoSchedule` and AKS's own
 `kubernetes.azure.com/scalesetpriority=spot:NoSchedule`. A pod that runs there tolerates both. See
 [Azure resources](/concepts/runner/infrastructure-templates/azure#node-pools) for what changes
 when you edit a pool.
+
+### On GCP
+
+On GCP, each entry in `extra_node_pools` becomes its own GKE node pool, beside the default pool.
+The pool is keyed by its name: removing a pool from the middle of the list removes that pool only.
+Its nodes carry the labels that the template puts on every GKE node (`environment`, `service`,
+`managed-by` and the project's classification tags), and the plan refuses a `node_labels` key or a
+pool label with one of those names.
+
+The GCP plan also refuses:
+
+- a pool whose instance type is not a Compute Engine machine type, such as `m7g.large`;
+- a pool whose `arch` does not match its machine type. An arm64 pool needs an Arm machine type
+  (`t2a`, `c4a` or `n4a`), and an amd64 pool cannot use one;
+- any of the three keys on an Autopilot cluster (`gke_enable_autopilot: true`). Autopilot creates
+  and sizes its own nodes, so there is no pool to add, label or taint.
+
+This example adds a Spot batch pool on Arm machines that scales to zero:
+
+```yaml
+environments:
+  - name: prod
+    components:
+      cluster:
+        provider_config:
+          node_labels:
+            team: payments
+          extra_node_pools:
+            - name: batch
+              instance_type: t2a-standard-4
+              arch: arm64
+              capacity_type: spot
+              min_size: 0
+              max_size: 6
+              taints:
+                - key: dedicated
+                  value: batch
+                  effect: NoSchedule
+```
+
+The `batch` pool's nodes carry three taints: `dedicated=batch:NoSchedule`, Alethia's
+`alethia.io/arch=arm64:NoSchedule`, and GKE's own `kubernetes.io/arch=arm64:NoSchedule`. A pod that
+runs there tolerates all three. See
+[GCP resources](/concepts/runner/infrastructure-templates/gcp#node-pools) for how the pool is sized
+and what changes when you edit it.
 
 ## Cluster Admins
 

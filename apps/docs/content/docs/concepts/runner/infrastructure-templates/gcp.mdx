@@ -12,6 +12,7 @@ The GCP template set (`infra/templates/project/gcp/`) provides cloud-native equi
 | File | Resources Created |
 |------|------------------|
 | `main.tf` | GKE cluster with Workload Identity, node pool |
+| `nodepools.tf` | Maps `node_labels`, `node_taints` and `extra_node_pools` onto the GKE node pools |
 | `vpn.tf` | VPC network, subnets, Cloud NAT, Cloud Router |
 | `cloudsql.tf` | Cloud SQL instances (PostgreSQL/MySQL), HA configuration |
 | `memorystore.tf` | Memorystore Redis instance |
@@ -50,6 +51,91 @@ The GCP template set (`infra/templates/project/gcp/`) provides cloud-native equi
 ## Operational settings
 
 The settings below are off by default. A project that sets none of them gets the same infrastructure as before. Each one is a template variable that you set on the component it belongs to. In the console, open the component on the canvas and set the value on its template settings card. The examples show the component's `provider_config` that the card writes.
+
+### Node pools
+
+GKE runs your workloads on node pools. The template always makes one default pool, sized by
+`gke_node_min_size`, `gke_node_max_size` and `gke_node_desired_size`. Set three keys on the
+**cluster** to label your nodes, taint them, and add pools of other machine types, Spot pools
+included. They are the same keys on every cloud. The
+[cluster guide](/guides/design-project/cluster#node-labels-taints-and-extra-pools) describes every
+field and every rule.
+
+This example labels every node with its team and adds a Spot batch pool that scales to zero. Only
+pods that tolerate the `dedicated=batch` taint run there:
+
+```json
+{
+  "node_labels": { "team": "payments" },
+  "node_taints": [{ "key": "dedicated", "value": "batch", "effect": "NoSchedule" }],
+  "extra_node_pools": [
+    {
+      "name": "batch",
+      "instance_type": "e2-standard-8",
+      "capacity_type": "spot",
+      "min_size": 0,
+      "max_size": 6
+    }
+  ]
+}
+```
+
+A pod for that pool selects it by the label `alethia.io/pool=batch` and tolerates the taint:
+
+```yaml
+spec:
+  nodeSelector:
+    alethia.io/pool: batch
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: batch
+      effect: NoSchedule
+```
+
+On GKE, the template builds them like this:
+
+- **`node_labels`** go on every pool: the default pool and every extra pool. They sit beside the
+  labels the template already puts on every node (`environment`, `service`, `managed-by` and the
+  project's classification tags). The plan refuses a key with one of those names.
+- **`node_taints`** go on the extra pools only. The default pool runs Alethia's add-ons.
+- **Each entry in `extra_node_pools`** is one GKE node pool, named `<cluster name>-<name>`. A name
+  that would pass GKE's 40-character limit is shortened with a hash, the same way as the default
+  pool's name. The pool is keyed by its name, so removing an entry from the middle of the list
+  removes that pool only.
+- **Size.** The cluster autoscaler keeps the whole pool between `min_size` and `max_size`, across
+  all its zones. GKE creates a pool's first nodes per zone. On a zonal cluster (a `region` such as
+  `europe-west3-a`) the pool starts with `desired_size` nodes, or `min_size` when you leave it out.
+  On a regional cluster the pool is in three zones and starts with the same number in each:
+  `desired_size` rounded up to a multiple of three, but never more than `max_size`. So a regional
+  pool with `max_size` below 3 starts empty. The autoscaler does not add nodes only to reach
+  `min_size`; it adds them when pods are waiting for one. After the pool exists, the autoscaler
+  owns the count, so a later change to `desired_size` does nothing.
+- **Taints** use GKE's effect names: `NoSchedule` becomes `NO_SCHEDULE`, `PreferNoSchedule`
+  becomes `PREFER_NO_SCHEDULE`, and `NoExecute` becomes `NO_EXECUTE`.
+- **Spot.** A pool with `capacity_type: spot` runs on Spot VMs. GKE labels its nodes
+  `cloud.google.com/gke-spot=true`, and Google can reclaim them at any time.
+- **arm64.** An arm64 pool needs an Arm machine type: `t2a` (for example `t2a-standard-4`), `c4a`
+  or `n4a`. Every other family is amd64. The plan refuses an arm64 pool on an amd64 machine type,
+  and an amd64 pool on an Arm one. Alethia taints every arm64 pool with
+  `alethia.io/arch=arm64:NoSchedule`, and GKE adds its own `kubernetes.io/arch=arm64:NoSchedule`
+  to every Arm node. A pod that runs on an arm64 pool tolerates both.
+- **Autopilot.** An Autopilot cluster (`gke_enable_autopilot`) has no node pools for you to manage,
+  so the plan refuses all three keys there.
+- **Isolation.** An extra pool uses the default pool's node service account, the GKE metadata server
+  (`workload_metadata_config` mode `GKE_METADATA`), shielded nodes with secure boot and integrity
+  monitoring, the same boot disk settings and disk encryption, and the same node management. A pool
+  cannot cost less because it is less isolated.
+
+When you set none of the three keys, the plan is the same as before: no pool changes.
+
+<Callout type="warn">
+Some changes replace a pool, and with it the pool's nodes and the pods on them. Changing a pool's
+`name` or `capacity_type` replaces it. Changing its `instance_type` keeps the pool, and GKE
+recreates its nodes on the new machine type. Changing `node_labels`, `node_taints` or a pool's
+`labels`, `taints`, `min_size` or `max_size` updates the pool in place. A taint that you add does
+not evict the pods already on the node, unless its effect is `NoExecute`.
+</Callout>
 
 ### Cloud SQL Query Insights
 
