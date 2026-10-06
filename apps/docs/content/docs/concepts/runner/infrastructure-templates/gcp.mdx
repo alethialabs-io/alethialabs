@@ -106,18 +106,21 @@ On GKE, the template builds them like this:
 - **Size.** The cluster autoscaler keeps the whole pool between `min_size` and `max_size`, across
   all its zones. GKE creates a pool's first nodes per zone. On a zonal cluster (a `region` such as
   `europe-west3-a`) the pool starts with `desired_size` nodes, or `min_size` when you leave it out.
-  On a regional cluster the pool is in three zones and starts with the same number in each:
-  `desired_size` rounded up to a multiple of three, but never more than `max_size`. So a regional
-  pool with `max_size` below 3 starts empty. The autoscaler does not add nodes only to reach
-  `min_size`; it adds them when pods are waiting for one. After the pool exists, the autoscaler
-  owns the count, so a later change to `desired_size` does nothing.
+  On a regional cluster the pool is in three zones and starts with the same number in each, so it
+  starts with a multiple of three: `desired_size` rounded up, and lowered if that passes
+  `max_size`. It never starts below `min_size`, because the autoscaler does not add nodes only to
+  reach `min_size`. If no multiple of three lies between `min_size` and `max_size` (for example
+  `min_size: 4` and `max_size: 5`), the pool starts on the multiple above `min_size`, up to two nodes
+  over `max_size`, and the autoscaler can then remove the extra nodes. After the pool exists, the
+  autoscaler owns the count, so a later change to `desired_size` does nothing.
 - **Taints** use GKE's effect names: `NoSchedule` becomes `NO_SCHEDULE`, `PreferNoSchedule`
   becomes `PREFER_NO_SCHEDULE`, and `NoExecute` becomes `NO_EXECUTE`.
 - **Spot.** A pool with `capacity_type: spot` runs on Spot VMs. GKE labels its nodes
   `cloud.google.com/gke-spot=true`, and Google can reclaim them at any time.
-- **arm64.** An arm64 pool needs an Arm machine type: `t2a` (for example `t2a-standard-4`), `c4a`
-  or `n4a`. Every other family is amd64. The plan refuses an arm64 pool on an amd64 machine type,
-  and an amd64 pool on an Arm one. Alethia taints every arm64 pool with
+- **arm64.** An arm64 pool needs a machine type from one of these Arm families: `t2a` (for example
+  `t2a-standard-4`), `c4a`, `n4a` and `a4x` (A4X and A4X Max, for example `a4x-highgpu-4g`). The
+  template treats a machine type from any other family as amd64. The plan refuses an arm64 pool on
+  an amd64 machine type, and an amd64 pool on an Arm one. Alethia taints every arm64 pool with
   `alethia.io/arch=arm64:NoSchedule`, and GKE adds its own `kubernetes.io/arch=arm64:NoSchedule`
   to every Arm node. A pod that runs on an arm64 pool tolerates both.
 - **Autopilot.** An Autopilot cluster (`gke_enable_autopilot`) has no node pools for you to manage,

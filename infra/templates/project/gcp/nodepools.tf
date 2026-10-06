@@ -30,10 +30,16 @@
 #     the default pool (checks_naming.tf), so a long cluster name cannot push it past GKE's limit.
 #   · SIZE. min_size and max_size bound the WHOLE pool (total_min_node_count /
 #     total_max_node_count), as on every other cloud, not each zone. initial_node_count is per zone,
-#     so on a regional cluster (three zones) the pool starts with desired_size rounded up to a
-#     multiple of three, but never past max_size; on a zonal cluster it starts with desired_size.
-#     The autoscaler owns the count after that, so later changes to desired_size do nothing.
-#   · SPOT. capacity_type spot is node_config.spot. arm64 is the machine type (t2a, c4a, n4a);
+#     so the pool starts with (zones x the per-zone count) nodes: desired_size rounded up to a
+#     multiple of the zone count, lowered to fit under max_size, and never under min_size, because
+#     the cluster autoscaler does not add nodes only to reach min_size. On a zonal cluster that is
+#     desired_size. On a regional cluster (three zones) a range [min_size, max_size] with no
+#     multiple of three in it cannot be met evenly; the pool then starts on the multiple just above
+#     min_size, at most two nodes over max_size (the autoscaler can then remove them; starting under
+#     min_size would never be corrected). It is not refused: the same alethia.yaml is valid on every
+#     other cloud and on a zonal cluster. The autoscaler owns the count after that, so later changes
+#     to desired_size do nothing.
+#   · SPOT. capacity_type spot is node_config.spot. arm64 is the machine type (t2a, c4a, n4a, a4x);
 #     GKE adds its own kubernetes.io/arch=arm64:NoSchedule taint to those nodes, beside the
 #     platform's alethia.io/arch=arm64:NoSchedule from the render.
 
@@ -75,7 +81,7 @@ locals {
       machine_type   = p.instance_type
       total_min      = p.min_size
       total_max      = p.max_size
-      initial_count  = min(ceil((p.desired_size == null ? p.min_size : p.desired_size) / local.gke_pool_zone_count), floor(p.max_size / local.gke_pool_zone_count))
+      initial_count  = max(ceil(p.min_size / local.gke_pool_zone_count), min(ceil((p.desired_size == null ? p.min_size : p.desired_size) / local.gke_pool_zone_count), floor(p.max_size / local.gke_pool_zone_count)))
       spot           = p.capacity_type == "spot"
       labels         = merge(local.gke_platform_node_labels, local.nodepool_contract_render[p.name].labels)
       taints         = [for t in local.nodepool_contract_render[p.name].taints : { key = t.key, value = t.value, effect = local.gke_taint_effects[t.effect] }]
@@ -172,3 +178,4 @@ resource "google_container_node_pool" "extra" {
     ]
   }
 }
+

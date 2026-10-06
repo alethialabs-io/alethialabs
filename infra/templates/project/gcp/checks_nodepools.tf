@@ -20,9 +20,13 @@ locals {
   # not match.
   gke_machine_type_pattern = "^[a-z][a-z0-9]*-[a-z0-9-]*[a-z0-9]$"
 
-  # The Arm machine families (Ampere Altra T2A; Google Axion C4A and N4A). Every other family is
-  # x86-64, so arm64 is decided by the family and nothing else.
-  gke_arm64_machine_type_pattern = "^(t2a|c4a|n4a)-"
+  # The Arm machine families: T2A (Ampere Altra), C4A and N4A (Google Axion), and A4X / A4X Max
+  # (NVIDIA Grace; a4x-highgpu-4g, a4x-maxgpu-4g-metal). Source: the Arm column of
+  # https://cloud.google.com/compute/docs/machine-resource. GCP has no naming convention that marks
+  # Arm, so the list is kept by hand, in ONE place: nodekeys.GCPArmMachineFamilies
+  # (packages/core/nodekeys). This literal is a copy of nodekeys.GCPArmMachineTypeRegex, and
+  # packages/core/nodekeys/drift_test.go fails when they differ. Add a new Arm family THERE first.
+  gke_arm64_machine_type_pattern = "^(t2a|c4a|n4a|a4x)-"
 
   gke_nodepool_guard_needed = length(var.node_labels) > 0 || length(var.node_taints) > 0 || length(var.extra_node_pools) > 0
 
@@ -63,7 +67,7 @@ resource "terraform_data" "gke_nodepool_guard" {
     # images (Alethia's builds are single-arch) on Arm nodes.
     precondition {
       condition     = alltrue([for p in var.extra_node_pools : (p.arch == "arm64") == can(regex(local.gke_arm64_machine_type_pattern, p.instance_type))])
-      error_message = "NODEPOOL-005: an extra_node_pools pool's arch must match its machine type. The Arm families are t2a, c4a and n4a (t2a-standard-4, c4a-standard-8); every other family is amd64. Mismatched: ${join(", ", [for p in var.extra_node_pools : "${p.name} (arch ${p.arch}, ${p.instance_type})" if(p.arch == "arm64") != can(regex(local.gke_arm64_machine_type_pattern, p.instance_type))])}."
+      error_message = "NODEPOOL-005: an extra_node_pools pool's arch must match its machine type. The Arm families are t2a, c4a, n4a and a4x (t2a-standard-4, c4a-standard-8, a4x-highgpu-4g); every other family is amd64. Mismatched: ${join(", ", [for p in var.extra_node_pools : "${p.name} (arch ${p.arch}, ${p.instance_type})" if(p.arch == "arm64") != can(regex(local.gke_arm64_machine_type_pattern, p.instance_type))])}."
     }
 
     # NODEPOOL-006 · a user label that would overwrite one the template sets. The template labels

@@ -132,7 +132,7 @@ run "nodepools_two_pools_carry_their_own_shape" {
         name          = "gpu"
         instance_type = "g2-standard-4"
         min_size      = 1
-        max_size      = 2
+        max_size      = 3
         taints = [
           { key = "gpu", value = "true", effect = "NoExecute" },
         ]
@@ -168,15 +168,15 @@ run "nodepools_two_pools_carry_their_own_shape" {
 
   # Sizes bound the whole pool. A regional cluster (europe-west3) has three zones and
   # initial_node_count is per zone: desired 3 starts one per zone; the GPU pool's desired (= min 1)
-  # rounds up to one per zone but may not pass max 2, so it starts at zero per zone.
+  # rounds up to one per zone, which is 3 nodes, inside [1, 3].
   assert {
     condition = alltrue([
       google_container_node_pool.extra["batch"].autoscaling[0].total_min_node_count == 0,
       google_container_node_pool.extra["batch"].autoscaling[0].total_max_node_count == 6,
       google_container_node_pool.extra["gpu"].autoscaling[0].total_min_node_count == 1,
-      google_container_node_pool.extra["gpu"].autoscaling[0].total_max_node_count == 2,
+      google_container_node_pool.extra["gpu"].autoscaling[0].total_max_node_count == 3,
       google_container_node_pool.extra["batch"].initial_node_count == 1,
-      google_container_node_pool.extra["gpu"].initial_node_count == 0,
+      google_container_node_pool.extra["gpu"].initial_node_count == 1,
       google_container_node_pool.extra["batch"].autoscaling[0].location_policy == "ANY",
       google_container_node_pool.extra["gpu"].autoscaling[0].location_policy == "BALANCED",
     ])
@@ -246,6 +246,61 @@ run "nodepools_zonal_cluster_starts_at_desired_size" {
   assert {
     condition     = google_container_node_pool.extra["batch"].initial_node_count == 2 && google_container_node_pool.extra["batch"].location == "europe-west3-a"
     error_message = "On a zonal cluster the pool must start with desired_size nodes."
+  }
+}
+
+# A regional pool starts inside [min_size, max_size] whenever a multiple of three lies in it:
+# min 4 / max 6 and min 4 / max 9 (desired 4) both round up to two per zone, 6 nodes.
+run "nodepools_regional_pool_starts_inside_min_and_max" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "web", instance_type = "e2-standard-4", min_size = 4, max_size = 6, desired_size = 4 },
+      { name = "api", instance_type = "e2-standard-4", min_size = 4, max_size = 9, desired_size = 4 },
+    ]
+  }
+
+  assert {
+    condition = alltrue([
+      google_container_node_pool.extra["web"].initial_node_count == 2,
+      google_container_node_pool.extra["api"].initial_node_count == 2,
+    ])
+    error_message = "A regional pool must start with at least min_size and at most max_size nodes in total (per-zone count x 3)."
+  }
+}
+
+# min 4 / max 5 holds no multiple of three, so no even start fits. The pool starts on 6 (over
+# max_size, never under min_size), and the plan still succeeds.
+run "nodepools_regional_pool_with_no_even_start_starts_over_max" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "web", instance_type = "e2-standard-4", min_size = 4, max_size = 5 },
+    ]
+  }
+
+  assert {
+    condition     = google_container_node_pool.extra["web"].initial_node_count == 2
+    error_message = "With no multiple of three in [min_size, max_size], a regional pool must start above max_size rather than under min_size."
+  }
+}
+
+# On a zonal cluster the same pool starts at exactly min_size.
+run "nodepools_zonal_pool_with_the_same_range_starts_at_min_size" {
+  command = plan
+
+  variables {
+    region = "europe-west3-a"
+    extra_node_pools = [
+      { name = "web", instance_type = "e2-standard-4", min_size = 4, max_size = 5 },
+    ]
+  }
+
+  assert {
+    condition     = google_container_node_pool.extra["web"].initial_node_count == 4
+    error_message = "On a zonal cluster a pool must start with desired_size (here min_size) nodes."
   }
 }
 
@@ -401,6 +456,38 @@ run "nodepools_refuses_settings_without_a_cluster" {
   variables {
     provision_gke = false
     node_labels   = { team = "payments" }
+  }
+
+  expect_failures = [terraform_data.gke_nodepool_guard]
+}
+
+# A4X / A4X Max run on NVIDIA Grace, an Arm CPU (nodekeys.GCPArmMachineFamilies): an arm64 pool on
+# them plans, and an amd64 pool on them is refused.
+run "nodepools_accepts_arm64_on_a4x" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "gb200", instance_type = "a4x-highgpu-4g", arch = "arm64", min_size = 0, max_size = 3 },
+      { name = "gb300", instance_type = "a4x-maxgpu-4g-metal", arch = "arm64", min_size = 0, max_size = 3 },
+    ]
+  }
+
+  assert {
+    condition = alltrue([for p in google_container_node_pool.extra :
+      contains([for t in p.node_config[0].taint : "${t.key}=${t.value}:${t.effect}"], "alethia.io/arch=arm64:NO_SCHEDULE")
+    ])
+    error_message = "An arm64 pool on A4X must plan and carry the alethia.io/arch=arm64 taint."
+  }
+}
+
+run "nodepools_refuses_amd64_on_a4x" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "gb200", instance_type = "a4x-highgpu-4g", min_size = 0, max_size = 3 },
+    ]
   }
 
   expect_failures = [terraform_data.gke_nodepool_guard]

@@ -73,6 +73,24 @@ const PortableKeyMaxLength = 63
 // ValueMaxLength is the longest label or taint value Kubernetes and every cloud accept.
 const ValueMaxLength = 63
 
+// GCPArmMachineFamilies are the Compute Engine machine families whose CPUs are Arm: T2A (Ampere
+// Altra), C4A and N4A (Google Axion), and A4X / A4X Max (NVIDIA Grace), whose machine types all
+// start "a4x-" (a4x-highgpu-4g, a4x-maxgpu-4g-metal). Source: the Arm column of Google's machine
+// families table, https://cloud.google.com/compute/docs/machine-resource. GCP has no naming
+// convention that marks Arm, so this list is the definition and is kept by hand; every other family
+// is x86-64. The GCP template's arch check (infra/templates/project/gcp/checks_nodepools.tf,
+// local.gke_arm64_machine_type_pattern) carries GCPArmMachineTypeRegex as a literal, and
+// drift_test.go fails when the two differ.
+var GCPArmMachineFamilies = []string{"t2a", "c4a", "n4a", "a4x"}
+
+// GCPArmMachineTypeRegex matches a Compute Engine machine type of one of GCPArmMachineFamilies.
+var GCPArmMachineTypeRegex = "^(" + strings.Join(GCPArmMachineFamilies, "|") + ")-"
+
+// IsGCPArmMachineType reports whether a Compute Engine machine type runs on an Arm CPU.
+func IsGCPArmMachineType(machineType string) bool {
+	return gcpArmMachineType.MatchString(machineType)
+}
+
 // ReservedDomainRegex matches a key prefix that ends in one of ReservedDomains.
 var ReservedDomainRegex = reservedDomainRegex()
 
@@ -81,6 +99,7 @@ var (
 	value                 = regexp.MustCompile(ValueRegex)
 	reservedDomain        = regexp.MustCompile(ReservedDomainRegex)
 	nodeRestrictionDomain = regexp.MustCompile(NodeRestrictionDomainRegex)
+	gcpArmMachineType     = regexp.MustCompile(GCPArmMachineTypeRegex)
 )
 
 // reservedDomainRegex builds the alternation over ReservedDomains, anchored at the end only.

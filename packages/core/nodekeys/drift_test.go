@@ -327,3 +327,48 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+// TestGCPArmMachineFamiliesMatchTheTemplate holds the GCP template's arch check to
+// GCPArmMachineFamilies: checks_nodepools.tf carries the families as a regex literal, and an Arm
+// family missing there would refuse an arm64 pool on it and let an amd64 pool land on Arm nodes with
+// no alethia.io/arch taint. It also fails if the literal stops being the one the arch precondition
+// reads, so a dead copy cannot pass.
+func TestGCPArmMachineFamiliesMatchTheTemplate(t *testing.T) {
+	path := filepath.Join(repoRoot(t), "infra", "templates", "project", "gcp", "checks_nodepools.tf")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, diags := hclsyntax.ParseConfig(src, path, hcl.InitialPos)
+	if diags.HasErrors() {
+		t.Fatalf("%s: %s", path, diags.Error())
+	}
+	body, ok := f.Body.(*hclsyntax.Body)
+	if !ok {
+		t.Fatalf("%s: not native HCL syntax", path)
+	}
+	found := false
+	for _, blk := range body.Blocks {
+		if blk.Type != "locals" {
+			continue
+		}
+		attr, ok := blk.Body.Attributes["gke_arm64_machine_type_pattern"]
+		if !ok {
+			continue
+		}
+		found = true
+		v, d := attr.Expr.Value(nil)
+		if d.HasErrors() || v.Type() != cty.String {
+			t.Fatalf("%s: local.gke_arm64_machine_type_pattern is not a string literal; the test cannot read it", path)
+		}
+		if v.AsString() != GCPArmMachineTypeRegex {
+			t.Errorf("%s: local.gke_arm64_machine_type_pattern is %s, nodekeys.GCPArmMachineTypeRegex is %s", path, v.AsString(), GCPArmMachineTypeRegex)
+		}
+	}
+	if !found {
+		t.Fatalf("%s: no local.gke_arm64_machine_type_pattern (renamed or moved? update this test)", path)
+	}
+	if !strings.Contains(string(src), "can(regex(local.gke_arm64_machine_type_pattern, p.instance_type))") {
+		t.Errorf("%s: the arch precondition no longer reads local.gke_arm64_machine_type_pattern, so the checked literal is dead", path)
+	}
+}

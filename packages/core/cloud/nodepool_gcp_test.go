@@ -39,9 +39,25 @@ var gkePoolIsolationMayDiffer = map[string]bool{
 	"dynamic taint":     true,
 }
 
-// gkeNodePoolEntries returns a google_container_node_pool's node_config and management entries as
-// "node_config.<attr>" / "node_config.<block>.<attr>" → token sequence. A nested block is keyed by
-// its type ("dynamic <label>" for a dynamic block, whose whole body is one entry).
+// gkePoolLevelMayDiffer are the pool-level entries an extra pool may set differently from the
+// default pool: how many there are (count / for_each), its name and cluster reference, and its size
+// (initial_node_count and the autoscaling block, which nodepools.tftest.hcl asserts on the plan) and
+// lifecycle. Every other pool-level argument or block (project, location, node_locations,
+// network_config, upgrade_settings, ...) is compared.
+var gkePoolLevelMayDiffer = map[string]bool{
+	"count":              true,
+	"for_each":           true,
+	"name":               true,
+	"cluster":            true,
+	"initial_node_count": true,
+	"autoscaling":        true,
+	"lifecycle":          true,
+}
+
+// gkeNodePoolEntries returns a google_container_node_pool's arguments as comparable entries: each
+// pool-level argument and block as "pool.<name>", and inside node_config and management each
+// argument and nested block as "<block>.<name>" (a dynamic block keyed "dynamic <label>", whose whole
+// body is one entry). Other pool-level blocks are one entry each.
 func gkeNodePoolEntries(path, name string) (map[string]string, error) {
 	body, src, err := parseHCLFile(path)
 	if err != nil {
@@ -52,8 +68,12 @@ func gkeNodePoolEntries(path, name string) (map[string]string, error) {
 			continue
 		}
 		out := map[string]string{}
+		for k, a := range b.Body.Attributes {
+			out["pool."+k] = exprTokens(src, a.Expr)
+		}
 		for _, nb := range b.Body.Blocks {
 			if nb.Type != "node_config" && nb.Type != "management" {
+				out["pool."+nb.Type] = blockTokens(src, nb.Body)
 				continue
 			}
 			for k, a := range nb.Body.Attributes {
@@ -89,7 +109,8 @@ func blockTokens(src []byte, body *hclsyntax.Body) string {
 }
 
 // gkeIsolationDrift compares two pools' entries and returns one line per isolation control that is
-// missing from either pool or set differently, skipping only gkePoolIsolationMayDiffer.
+// missing from either pool or set differently, skipping only gkePoolLevelMayDiffer and
+// gkePoolIsolationMayDiffer.
 func gkeIsolationDrift(def, extra map[string]string) []string {
 	keys := map[string]bool{}
 	for k := range def {
@@ -100,8 +121,10 @@ func gkeIsolationDrift(def, extra map[string]string) []string {
 	}
 	var drift []string
 	for k := range keys {
-		short := strings.TrimPrefix(k, "node_config.")
-		if strings.HasPrefix(k, "node_config.") && gkePoolIsolationMayDiffer[short] {
+		if strings.HasPrefix(k, "node_config.") && gkePoolIsolationMayDiffer[strings.TrimPrefix(k, "node_config.")] {
+			continue
+		}
+		if strings.HasPrefix(k, "pool.") && gkePoolLevelMayDiffer[strings.TrimPrefix(k, "pool.")] {
 			continue
 		}
 		d, inDef := def[k]
@@ -121,11 +144,13 @@ func gkeIsolationDrift(def, extra map[string]string) []string {
 
 // TestGKEExtraPoolsKeepTheDefaultPoolsIsolation fails when the extra pools (root nodepools.tf) and
 // the default pool (modules/gke/main.tf) drift apart on an isolation control: the metadata server
-// mode, shielded nodes, the metadata, the OAuth scopes, the node service account, disk encryption or
-// node management. It reads the SOURCE because modules/gke cannot be planned under mocks, so no
-// tofu test can see the default pool; nodepools.tftest.hcl asserts the same controls on the planned
-// extra pools. Any entry not in gkePoolIsolationMayDiffer must be token-equal in both, so a control
-// added to one pool and not the other fails here.
+// mode, shielded nodes, the metadata, the OAuth scopes, the node service account, disk encryption,
+// node management, or a pool-level setting such as node_locations or network_config. It compares
+// EVERY argument and block of the two resources, pool level, node_config and management alike;
+// only gkePoolLevelMayDiffer and gkePoolIsolationMayDiffer are skipped, so a control added to one
+// pool and not the other fails here. It reads the SOURCE because modules/gke cannot be planned under
+// mocks, so no tofu test can see the default pool; nodepools.tftest.hcl asserts the same controls on
+// the planned extra pools.
 func TestGKEExtraPoolsKeepTheDefaultPoolsIsolation(t *testing.T) {
 	root, err := repoRootFromSource()
 	if err != nil {
@@ -151,7 +176,8 @@ func TestGKEExtraPoolsKeepTheDefaultPoolsIsolation(t *testing.T) {
 }
 
 // TestGKEIsolationDriftIsDetected proves the comparison can fail: an extra pool without the GKE
-// metadata server, and one with a node service account the default pool does not have, are reported.
+// metadata server, one with a node service account the default pool does not have, and a pool-level
+// network_config on one side only are reported; a pool name that differs is not.
 func TestGKEIsolationDriftIsDetected(t *testing.T) {
 	def := map[string]string{
 		"node_config.workload_metadata_config": `mode="GKE_METADATA"`,
@@ -160,9 +186,11 @@ func TestGKEIsolationDriftIsDetected(t *testing.T) {
 	extra := map[string]string{
 		"node_config.machine_type":    "each . value . machine_type",
 		"node_config.service_account": `"sa@x.iam.gserviceaccount.com"`,
+		"pool.network_config":         "enable_private_nodes=false",
+		"pool.name":                   "each . value . gke_name",
 	}
 	got := gkeIsolationDrift(def, extra)
-	if len(got) != 2 || !strings.Contains(got[0], "service_account") || !strings.Contains(got[1], "workload_metadata_config") {
-		t.Fatalf("want the missing metadata mode and the extra service account reported, got %q", got)
+	if len(got) != 3 || !strings.Contains(got[0], "service_account") || !strings.Contains(got[1], "workload_metadata_config") || !strings.Contains(got[2], "pool.network_config") {
+		t.Fatalf("want the missing metadata mode, the extra service account and the pool-level network_config reported, got %q", got)
 	}
 }
