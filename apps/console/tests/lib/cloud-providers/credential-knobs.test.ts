@@ -11,8 +11,11 @@ import {
 	credentialKeyCounts,
 	credentialKeysInDesign,
 	credentialRefusal,
+	derivedCredentialKeyCounts,
 	isCredentialKey,
-	providerConfigKeyCountSql,
+	jsonKeyCountSql,
+	providerConfigValueCountSql,
+	withoutCredentials,
 } from "@/lib/cloud-providers/credential-knobs";
 
 /** A design with one database and one secret, each carrying the given provider_config. */
@@ -100,24 +103,98 @@ describe("credentialRefusal", () => {
 	});
 });
 
-describe("the audit:credential-knobs query (#5565 item 3)", () => {
-	it("reads key names and counts, and never selects a provider_config value", () => {
-		const sql = providerConfigKeyCountSql("project_databases");
-		expect(sql).toContain('public."project_databases"');
+describe("the audit:credential-knobs queries (#5565 item 3)", () => {
+	/** The select list of a query — everything between its first `select` and `from`. */
+	const selectList = (sql: string) => sql.slice(sql.indexOf("select") + 6, sql.indexOf("from")).trim();
+
+	it("reads key names and counts at any depth, and never selects a value", () => {
+		const sql = jsonKeyCountSql("jobs", "config_snapshot");
+		expect(sql).toContain('public."jobs"');
+		expect(sql).toContain('t."config_snapshot"');
+		expect(sql).toContain("'strict $.**'");
 		expect(sql).toContain("jsonb_object_keys");
-		// The select list is the key, two counts — nothing that dereferences the JSONB.
-		const selectList = sql.slice(sql.indexOf("select") + 6, sql.indexOf("from")).trim();
-		expect(selectList).toBe("k as key, count(*)::int as rows, count(distinct t.project_id)::int as projects");
-		expect(sql).not.toMatch(/->|#>|\bvalue\b/);
+		expect(selectList(sql)).toBe(
+			"k as key, count(distinct t.id)::int as rows, count(distinct t.project_id)::int as projects",
+		);
+		expect(sql).not.toMatch(/->|#>/);
 		expect(sql).not.toMatch(/\b(delete|update|insert|drop|alter)\b/i);
 	});
 
-	it("reports only the credential keys of a kind's tallies", () => {
+	it("counts a secret's provider_config.value in a derived document by rows only", () => {
+		const sql = providerConfigValueCountSql("project_changes", "payload");
+		expect(selectList(sql)).toBe("count(*)::int as rows, count(distinct t.project_id)::int as projects");
+		expect(sql).toContain("jsonb_path_exists");
+		expect(sql).not.toMatch(/\b(delete|update|insert|drop|alter)\b/i);
+	});
+
+	it("reports only the credential keys of a component kind's tallies", () => {
 		const counts = [
 			{ key: "rds_default_username", rows: 4, projects: 2 },
 			{ key: "rds_extra_credentials", rows: 3, projects: 1 },
 		];
 		expect(credentialKeyCounts("database", counts)).toEqual([{ key: "rds_extra_credentials", rows: 3, projects: 1 }]);
 		expect(credentialKeyCounts("secret", [{ key: "value", rows: 1, projects: 1 }])).toHaveLength(1);
+	});
+
+	it("in a derived document, counts credential names and credential knob names but not a bare value", () => {
+		const counts = [
+			{ key: "rds_extra_credentials", rows: 2, projects: 1 },
+			{ key: "dbPassword", rows: 1, projects: 1 },
+			{ key: "value", rows: 90, projects: 9 },
+			{ key: "name", rows: 90, projects: 9 },
+		];
+		expect(derivedCredentialKeyCounts(counts).map((c) => c.key)).toEqual(["rds_extra_credentials", "dbPassword"]);
+	});
+});
+
+// The reviewer's bypass probes (#5571). Each one is a spelling of a credential the first cut matched
+// exactly, lower-case only, at the top level only. HCL is case-sensitive, so none would reach tofu —
+// but each would still be stored in plaintext JSONB, which is what is refused.
+describe("a credential is recognised however the key is spelled, and wherever it is nested", () => {
+	/** [design key, provider_config key, value] — a singleton is written as `cluster`. */
+	const PROBES: [string, string, unknown][] = [
+		["databases", "RDS_EXTRA_CREDENTIALS", CREDS],
+		["databases", "Rds_Extra_Credentials", CREDS],
+		["databases", "rds_extra_credentials ", CREDS],
+		["secrets", "Value", "s3cr3t"],
+		["secrets", " value", "s3cr3t"],
+		["caches", "DB_PASSWORD", "hunter2"],
+		["caches", "dbPassword", "hunter2"],
+		["cluster", "apiToken", "t0k3n"],
+	];
+
+	it.each(PROBES)("%s → %j is refused", (designKey, key, value) => {
+		const component = { name: "c", provider_config: { [key]: value } };
+		const shaped = designKey === "cluster" ? { cluster: component } : { [designKey]: [component] };
+		const refusal = credentialRefusal(shaped, []);
+		expect(refusal).toContain(key.trim());
+		expect(refusal).not.toMatch(/hunter2|s3cr3t|t0k3n/);
+	});
+
+	it("a password nested inside another knob's value is refused", () => {
+		const nested = design({ rds_cluster_parameters: [{ name: "timezone", value: "UTC" }, { password: "hunter2" }] });
+		expect(credentialRefusal(nested, [])).toContain("rds_cluster_parameters");
+		expect(credentialRefusal(nested, [])).not.toContain("hunter2");
+	});
+
+	it("an ordinary nested knob is left alone", () => {
+		expect(credentialRefusal(design({ rds_cluster_parameters: [{ name: "timezone", value: "UTC" }] }), [])).toBeNull();
+	});
+});
+
+describe("withoutCredentials — the staged payload never carries a credential", () => {
+	it("omits credential entries and keeps the rest of the component", () => {
+		const record = { name: "api-key", length: 48, provider_config: { value: "s3cr3t", keepers: { r: "1" } } };
+		expect(withoutCredentials("secret", record)).toEqual({
+			name: "api-key",
+			length: 48,
+			provider_config: { keepers: { r: "1" } },
+		});
+		expect(record.provider_config.value).toBe("s3cr3t");
+	});
+
+	it("leaves a kind without provider_config untouched", () => {
+		const network = { cidr_block: "10.0.0.0/16" };
+		expect(withoutCredentials("network", network)).toBe(network);
 	});
 });

@@ -28,7 +28,9 @@ import {
 	credentialGuidance,
 	isCredentialKeyName,
 	isCredentialKnob,
+	normalizeKeyName,
 	type TemplateKnob,
+	valueHoldsCredential,
 } from "@/lib/cloud-providers/template-knobs";
 import { asRecord } from "@/lib/records";
 
@@ -69,6 +71,9 @@ export interface CredentialEntry {
  * which `isCredentialKnob` classifies as one. ANY cloud, on purpose: the design does not always say
  * which cloud it is for, and a key that is a credential on one cloud is not a safe thing to store on
  * another.
+ *
+ * Compared in `normalizeKeyName`'s spelling (trimmed, camelCase → snake_case, lower case), so
+ * `Value`, `RDS_EXTRA_CREDENTIALS` and `rds_extra_credentials ` are the keys they imitate.
  */
 export function isCredentialKey(
 	kind: NodeKind,
@@ -76,11 +81,38 @@ export function isCredentialKey(
 	knobs: readonly TemplateKnob[] = TEMPLATE_KNOBS.knobs,
 ): boolean {
 	if (isCredentialKeyName(key)) return true;
-	if (kind === "secret" && key === "value") return true;
-	return knobs.some((k) => k.component === kind && k.name === key && isCredentialKnob(k));
+	const name = normalizeKeyName(key);
+	if (kind === "secret" && name === "value") return true;
+	return knobs.some((k) => k.component === kind && k.name === name && isCredentialKnob(k));
 }
 
-/** The credential entries of one component's `provider_config`. */
+/**
+ * The `provider_config` kinds as `NodeKind`s, for a caller that holds a kind as a plain string
+ * (the staged-changes diff's `component_type`).
+ */
+function providerConfigKind(kind: string): NodeKind | null {
+	return Object.values(DESIGN_PROVIDER_CONFIG_KIND).find((k) => k === kind) ?? null;
+}
+
+/**
+ * A component record with every credential entry removed from its `provider_config` — for a copy
+ * that is DISPLAY-ONLY, such as the staged-changes payload. A grandfathered legacy value passes the
+ * write guard (it is already stored); this keeps it from being written a SECOND time, in plaintext,
+ * into `project_changes`. Everything else in the record is kept, so the change still reads as a
+ * change. A kind without `provider_config` is returned unchanged.
+ */
+export function withoutCredentials(kind: string, record: Record<string, unknown>): Record<string, unknown> {
+	const nodeKind = providerConfigKind(kind);
+	if (!nodeKind || record.provider_config === undefined || record.provider_config === null) return record;
+	const providerConfig = { ...asRecord(record.provider_config) };
+	for (const entry of credentialEntriesOf(nodeKind, kind, providerConfig)) delete providerConfig[entry.key];
+	return { ...record, provider_config: providerConfig };
+}
+
+/**
+ * The credential entries of one component's `provider_config`: a key that is a credential, or any
+ * key whose value carries a credential-named key inside it (`rds_cluster_parameters: [{ password }]`).
+ */
 export function credentialEntriesOf(
 	kind: NodeKind,
 	component: string,
@@ -88,7 +120,12 @@ export function credentialEntriesOf(
 	knobs: readonly TemplateKnob[] = TEMPLATE_KNOBS.knobs,
 ): CredentialEntry[] {
 	return Object.entries(asRecord(providerConfig))
-		.filter(([key, value]) => value !== undefined && value !== null && isCredentialKey(kind, key, knobs))
+		.filter(
+			([key, value]) =>
+				value !== undefined &&
+				value !== null &&
+				(isCredentialKey(kind, key, knobs) || valueHoldsCredential(value)),
+		)
 		.map(([key, value]) => ({ kind, component, key, value }));
 }
 
@@ -128,6 +165,36 @@ function canonicalJson(value: unknown): string {
 }
 
 /**
+ * The credential entries of a design that are NOT already stored, unchanged, in the same project —
+ * the ones a write refuses (see the file header).
+ */
+function newCredentialEntries(
+	design: unknown,
+	stored: readonly CredentialEntry[],
+	knobs: readonly TemplateKnob[],
+): CredentialEntry[] {
+	const identity = (e: CredentialEntry) => `${e.kind}\u0000${e.key}\u0000${canonicalJson(e.value)}`;
+	const storedValues = new Set(stored.map(identity));
+	return credentialKeysInDesign(design, knobs).filter((e) => !storedValues.has(identity(e)));
+}
+
+/** The components and keys a refusal names — `database "orders": rds_extra_credentials; …`. Never a value. */
+function credentialWhere(entries: readonly CredentialEntry[]): string {
+	return entries.map((e) => `${e.kind} "${e.component}": ${e.key.trim()}`).join("; ");
+}
+
+/** The refusal sentence for a set of offending entries. */
+function refusalMessage(offending: readonly CredentialEntry[]): string {
+	const guidance = [
+		...new Set(offending.map((e) => credentialGuidance(e.kind, normalizeKeyName(e.key)))),
+	].join(" ");
+	return (
+		`provider_config cannot hold a credential, because Alethia would store it in plaintext (${credentialWhere(offending)}). ` +
+		`${guidance} Remove the key from the component and save again.`
+	);
+}
+
+/**
  * The refusal for a design that writes a credential into `provider_config`, or null when it writes
  * none — or only values already stored, unchanged, in the same project (see the file header).
  *
@@ -138,17 +205,8 @@ export function credentialRefusal(
 	stored: readonly CredentialEntry[],
 	knobs: readonly TemplateKnob[] = TEMPLATE_KNOBS.knobs,
 ): string | null {
-	const storedValues = new Set(stored.map((s) => `${s.kind}\u0000${s.key}\u0000${canonicalJson(s.value)}`));
-	const offending = credentialKeysInDesign(design, knobs).filter(
-		(e) => !storedValues.has(`${e.kind}\u0000${e.key}\u0000${canonicalJson(e.value)}`),
-	);
-	if (offending.length === 0) return null;
-	const where = offending.map((e) => `${e.kind} "${e.component}": ${e.key}`).join("; ");
-	const guidance = [...new Set(offending.map((e) => credentialGuidance(e.kind, e.key)))].join(" ");
-	return (
-		`provider_config cannot hold a credential, because Alethia would store it in plaintext (${where}). ` +
-		`${guidance} Remove the key from the component and save again.`
-	);
+	const offending = newCredentialEntries(design, stored, knobs);
+	return offending.length === 0 ? null : refusalMessage(offending);
 }
 
 /**
@@ -159,8 +217,14 @@ export function credentialRefusal(
 export class CredentialKnobRefusedError extends Error {
 	readonly code = "23514";
 
-	/** Builds the refusal from the message the caller will read. */
-	constructor(message: string) {
+	/**
+	 * Builds the refusal from the message the caller will read, and the components and keys it
+	 * names (`where`, never a value) for a wrapper that words its own sentence.
+	 */
+	constructor(
+		message: string,
+		readonly where: string,
+	) {
 		super(message);
 		this.name = "CredentialKnobRefusedError";
 	}
@@ -168,37 +232,66 @@ export class CredentialKnobRefusedError extends Error {
 
 /** Throws {@link CredentialKnobRefusedError} when {@link credentialRefusal} refuses the design. */
 export function assertNoNewCredentials(design: unknown, stored: readonly CredentialEntry[]): void {
-	const refusal = credentialRefusal(design, stored);
-	if (refusal) throw new CredentialKnobRefusedError(refusal);
+	const offending = newCredentialEntries(design, stored, TEMPLATE_KNOBS.knobs);
+	if (offending.length > 0) {
+		throw new CredentialKnobRefusedError(refusalMessage(offending), credentialWhere(offending));
+	}
 }
 
 /**
- * The read-only query behind `audit:credential-knobs` (#5565) for one component table: how many
- * rows, and how many distinct projects, carry each `provider_config` KEY.
+ * The read-only query behind `audit:credential-knobs` (#5565): for one JSONB column of one table,
+ * how many rows — and how many distinct projects — carry each object KEY, at ANY depth of the
+ * document (`strict $.**` walks every nested object, so `[{ password: … }]` inside a knob counts).
  *
  * It reads key NAMES only — `jsonb_object_keys` — and never selects a value, so no credential can
- * reach the output however the result is printed. Every key comes back, and the caller keeps the
- * credential ones with {@link credentialKeyCounts}, so the rule is `isCredentialKey` and is not
- * restated in SQL. `table` is a schema table name taken from Drizzle, never user input.
+ * reach the output however the result is printed. Every key comes back and the caller keeps the
+ * credential ones ({@link credentialKeyCounts} / {@link derivedCredentialKeyCounts}), so the rule is
+ * the write path's and is not restated in SQL. `table` and `column` come from the Drizzle schema,
+ * never from input.
  */
-export function providerConfigKeyCountSql(table: string): string {
-	return `select k as key, count(*)::int as rows, count(distinct t.project_id)::int as projects
+export function jsonKeyCountSql(table: string, column: string): string {
+	return `select k as key, count(distinct t.id)::int as rows, count(distinct t.project_id)::int as projects
   from public."${table}" t
-  cross join lateral jsonb_object_keys(
-    case when jsonb_typeof(t.provider_config) = 'object' then t.provider_config else '{}'::jsonb end
-  ) as k
+  cross join lateral jsonb_path_query(coalesce(t."${column}", '{}'::jsonb), 'strict $.**') as v
+  cross join lateral jsonb_object_keys(case when jsonb_typeof(v) = 'object' then v else '{}'::jsonb end) as k
  group by k
  order by k`;
 }
 
-/** One `provider_config` key's tally in one component table, as {@link providerConfigKeyCountSql} returns it. */
+/**
+ * Rows of a DERIVED document (a job's `config_snapshot`, a staged `project_changes.payload`) that
+ * hold a `provider_config.value` at any depth — a secret's own value. Counted separately because
+ * `value` is a credential only on a secret, and a bare `value` key appears all over a snapshot.
+ */
+export function providerConfigValueCountSql(table: string, column: string): string {
+	return `select count(*)::int as rows, count(distinct t.project_id)::int as projects
+  from public."${table}" t
+ where jsonb_path_exists(coalesce(t."${column}", '{}'::jsonb), 'lax $.**.provider_config.value')`;
+}
+
+/** One key's tally in one table, as {@link jsonKeyCountSql} returns it. */
 export interface KeyCount {
 	key: string;
 	rows: number;
 	projects: number;
 }
 
-/** The credential keys among one kind's key tallies — what the audit reports. */
+/** The credential keys among one component kind's key tallies — what the audit reports. */
 export function credentialKeyCounts(kind: NodeKind, counts: readonly KeyCount[]): KeyCount[] {
 	return counts.filter((c) => isCredentialKey(kind, c.key));
+}
+
+/**
+ * The credential keys among a DERIVED document's key tallies, where the component kind is not known
+ * per key: a credential word in the name, or the name of a template knob that is a credential on
+ * some component (`rds_extra_credentials`). A bare `value` is not counted here — see
+ * {@link providerConfigValueCountSql}.
+ */
+export function derivedCredentialKeyCounts(
+	counts: readonly KeyCount[],
+	knobs: readonly TemplateKnob[] = TEMPLATE_KNOBS.knobs,
+): KeyCount[] {
+	const knobNames = new Set(knobs.filter(isCredentialKnob).map((k) => k.name));
+	knobNames.delete("value");
+	return counts.filter((c) => isCredentialKeyName(c.key) || knobNames.has(normalizeKeyName(c.key)));
 }

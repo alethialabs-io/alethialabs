@@ -40,6 +40,7 @@ import {
 	isRead,
 	offerableKnobs,
 	type TemplateKnob,
+	valueHoldsCredential,
 } from "@/lib/cloud-providers/template-knobs";
 import { asRecord } from "@/lib/records";
 
@@ -263,6 +264,16 @@ export function resolveProviderConfigPatch(
 		return {
 			ok: false,
 			error: `provider_config key(s) not settable for ${kind} on ${cloud}: ${reasons}. ${offer}`,
+		};
+	}
+
+	// A settable knob can still carry a credential INSIDE its value — `[{ password: … }]` in a
+	// `list(object)` knob. Refused like a credential key (#5565), naming the key and never the value.
+	const smuggled = keys.filter((key) => patch[key] !== null && valueHoldsCredential(patch[key]));
+	if (smuggled.length > 0) {
+		return {
+			ok: false,
+			error: `provider_config value(s) for ${kind} on ${cloud} carry a credential-named key: ${smuggled.join(", ")} (${REASON_TEXT.credential})`,
 		};
 	}
 

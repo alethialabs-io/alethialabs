@@ -3259,6 +3259,16 @@ export async function tryDuplicateProjectForProvider(
 		if (err instanceof ProjectNameTakenError) {
 			return { ok: false, error: err.message };
 		}
+		// The source project still holds a credential in a component's provider_config from before
+		// #5565. Its own saves keep it (it is grandfathered there), but a duplicate is a NEW project,
+		// where it would be a fresh plaintext copy, so createProject refuses it. Say which component
+		// and how to clear it — never the value.
+		if (err instanceof CredentialKnobRefusedError) {
+			return {
+				ok: false,
+				error: `This project stores a credential in a component's settings (${err.where}), and a copy would store it again in plaintext. Open that component's Advanced section in the source project, choose "Remove the stored value" once the value is in its secret store, save, and duplicate again.`,
+			};
+		}
 		// `ProjectNameTakenError` above ALREADY covers the index race that `pickFreeProjectName`'s
 		// JSDoc describes — `takenNames` is read in one transaction and the insert happens in
 		// another, so two concurrent duplicates can derive the same name and

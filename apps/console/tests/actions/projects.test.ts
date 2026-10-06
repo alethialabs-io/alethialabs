@@ -4154,6 +4154,49 @@ describe("a credential in provider_config is refused at the write (#5565)", () =
 		expect(deleteSpy).not.toHaveBeenCalled();
 	});
 
+	// The base env's design is read back from the project and re-checked before it is copied. Here
+	// the read that BUILDS the copy sees a credential the guard's own read does not find stored — so
+	// the copy must be refused before any component row is written. Remove the guard from
+	// duplicateEnvironment and this goes red: the copy is written.
+	it("duplicateEnvironment refuses to copy a credential the project does not already store", async () => {
+		const envRow = { id: "env-1", org_id: "org-1", name: "production", stage: "production", status: "DRAFT", is_default: true, region: null };
+		let envCall = 0;
+		let dbCall = 0;
+		const { insertSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projects, [{ id: "p1", org_id: "org-1", project_name: "Shop", region: "us-east-1", iac_version: "1.11.4", cloud_identity_id: null }]],
+				// getProject's env list, then the base env, then "is the new name taken?" → no.
+				[projectEnvironments, () => (++envCall >= 3 ? [] : [envRow])],
+				// The design read sees the credential; the guard's stored-value read finds none.
+				[
+					projectSecrets,
+					() =>
+						++dbCall === 1
+							? [{ id: "s1", environment_id: "env-1", name: "api-key", generate: false, provider_config: { value: "s3cr3t" } }]
+							: [],
+				],
+			]),
+			insert: new Map<unknown, RowsResolver>([[projectEnvironments, [{ id: "env-2" }]]]),
+		});
+		await expect(duplicateEnvironment("p1", "env-1", "staging")).rejects.toBeInstanceOf(
+			CredentialKnobRefusedError,
+		);
+		expect(insertSpy).not.toHaveBeenCalledWith(projectSecrets);
+	});
+
+	it("tryDuplicateProjectForProvider explains a refused credential instead of a digest", async () => {
+		duplicateFixture("My App");
+		vi.mocked(withScope).mockImplementation((() => {
+			throw new CredentialKnobRefusedError("refused", 'database "orders": rds_extra_credentials');
+		}) as never);
+		const res = await tryDuplicateProjectForProvider("p1", "ci-target", "europe-west1");
+		expect(res).toEqual({
+			ok: false,
+			error: expect.stringContaining('database "orders": rds_extra_credentials'),
+		});
+		expect(res).toHaveProperty("error", expect.stringContaining("Remove the stored value"));
+	});
+
 	it("tryCreateProject returns the refusal as a value and writes nothing", async () => {
 		const { insertSpy } = setupDb({ select: new Map([[projects, []]]) });
 		const r = await tryCreateProject(design({ rds_extra_credentials: CREDS }) as never);

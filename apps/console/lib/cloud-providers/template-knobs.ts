@@ -147,9 +147,38 @@ const CREDENTIAL_NAME =
 const CREDENTIAL_ATTRIBUTE =
 	/\b(password|passwd|passphrase|token|secret_key|access_key|private_key|api_key|client_secret)\s*=/;
 
-/** True when a `provider_config` key's NAME carries a credential word (`hcloud_token`, `db_password`). */
+/**
+ * A key name in the one spelling the credential rule matches: trimmed, camelCase split into
+ * snake_case, and lower-cased — so `dbPassword`, `DB_PASSWORD`, `Rds_Extra_Credentials` and
+ * `rds_extra_credentials ` (trailing space) all read as the name they imitate. HCL names are
+ * case-sensitive, so those spellings never reach tofu; they would still be stored in plaintext
+ * JSONB, which is the thing being prevented.
+ */
+export function normalizeKeyName(name: string): string {
+	return name
+		.trim()
+		.replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+		.replace(/[\s-]+/g, "_")
+		.toLowerCase();
+}
+
+/** True when a `provider_config` key's NAME carries a credential word (`hcloud_token`, `dbPassword`). */
 export function isCredentialKeyName(name: string): boolean {
-	return CREDENTIAL_NAME.test(name);
+	return CREDENTIAL_NAME.test(normalizeKeyName(name));
+}
+
+/**
+ * True when a JSON value carries a credential-named key anywhere inside it — `[{ password: … }]`
+ * in a `list(object)` knob, `{ apiToken: … }` in a `map` knob. A knob that is not itself a
+ * credential can still be used to smuggle one into `provider_config`, so a value is scanned as
+ * well as its key. Key NAMES only: a value is never inspected for what it looks like.
+ */
+export function valueHoldsCredential(value: unknown): boolean {
+	if (Array.isArray(value)) return value.some(valueHoldsCredential);
+	if (typeof value !== "object" || value === null) return false;
+	return Object.entries(value).some(
+		([key, inner]) => isCredentialKeyName(key) || valueHoldsCredential(inner),
+	);
 }
 
 /**
@@ -204,7 +233,7 @@ export function withheldCredentialKnobs(
  */
 const CREDENTIAL_GUIDANCE: Readonly<Record<string, string>> = {
 	"database:rds_extra_credentials":
-		"Alethia generates the extra database user's password and stores the user, password and database name in AWS Secrets Manager. Read them from there after deploy; the secret's ARN is recorded on the database as extra_secret_ref.",
+		"Alethia generates the extra database user's password and stores the user, password and database name in AWS Secrets Manager. Read them from there after deploy; the secret's ARN is recorded on the database as extra_secret_ref. The user name and database name share this one variable with the password, so they keep the template defaults (demouser on demodb).",
 	"secret:value":
 		"Turn off Auto-generate value: Alethia then creates the secret with a placeholder and you set the real value in AWS Secrets Manager after deploy. Or make a secrets connector (Vault, Doppler, Infisical, 1Password) the environment's secrets store and write the value there.",
 };

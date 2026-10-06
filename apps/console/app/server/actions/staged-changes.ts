@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { asRecord } from "@/lib/records";
 import { assertDesignStoresNoNewCredentials } from "@/lib/cloud-providers/credential-knob-store";
+import { withoutCredentials } from "@/lib/cloud-providers/credential-knobs";
 import { withActorScope } from "@/lib/db";
 import { projectChanges } from "@/lib/db/schema";
 import type { StagedChangePayload } from "@/types/jsonb.types";
@@ -70,6 +71,10 @@ export async function stageChanges(
 					environment_id: environmentId,
 					user_id: owner,
 					...r,
+					// The payload is a display copy of the component. A legacy credential that passed the
+					// guard above (already stored, unchanged) must not be written a SECOND time, in
+					// plaintext, into project_changes — so it is omitted here (#5565).
+					payload: r.payload ? withoutCredentials(r.component_type, r.payload) : r.payload,
 				})),
 			);
 		return { count: rows.length };
