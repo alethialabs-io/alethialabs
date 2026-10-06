@@ -451,6 +451,9 @@ func computePlan(c applyClient, m *manifest.Manifest, catalog *api.AddonCatalogD
 			if existing.PlacementMode != "" && existing.PlacementMode != env.Placement {
 				ep.Problems = append(ep.Problems, fmt.Sprintf("the file says placement %s, the server has %s — placement cannot be changed from here; edit it in the console or the file", env.Placement, existing.PlacementMode))
 			}
+			if why := lifecycleProblem(env.Lifecycle, existing.Lifecycle); why != "" {
+				ep.Problems = append(ep.Problems, why)
+			}
 			// Only when the file declares components for THIS environment. `existingComps` is read
 			// nowhere else, so a four-environment project declaring components on one of them was
 			// issuing three round trips whose results nobody looked at.
@@ -514,6 +517,41 @@ func computePlan(c applyClient, m *manifest.Manifest, catalog *api.AddonCatalogD
 	}
 	sort.Strings(plan.Unmanaged)
 	return plan, nil
+}
+
+// lifecycleProblem is the refusal when the file's lifecycle for an EXISTING environment differs from
+// the server's, and "" when they agree (#5590).
+//
+// It is a refusal rather than an update because the server has no way to change a lifecycle: it is
+// written only when an environment is created (`POST /api/cli/projects/{id}/environments` and project
+// creation), and no route, server action or console screen updates it afterwards. Sending it on any
+// other request would be dropped, so the honest answer is to say so before a single write.
+//
+// An omitted key in the file means the default, `persistent` — the value apply would create — so a
+// file that leaves it out disagrees with an ephemeral environment. A server that reports no lifecycle
+// at all (one from before #5581) is not compared against: an empty value there is "not said", not a
+// lifecycle.
+func lifecycleProblem(declared, stored string) string {
+	if stored == "" {
+		return ""
+	}
+	if declared == "" {
+		declared = exportDefaultLifecycle
+	}
+	if declared == stored {
+		return ""
+	}
+	// Keeping the environment means making the file say what the server holds. For the default that
+	// is either spelling — the key removed or written out — so both are named.
+	keep := fmt.Sprintf("set it to `lifecycle: %s`", stored)
+	if stored == exportDefaultLifecycle {
+		keep = fmt.Sprintf("remove `lifecycle` or set it to `lifecycle: %s`", stored)
+	}
+	// The other remedy is a NEW environment, and two of its consequences are easy to miss: apply
+	// never deletes, so the old one keeps running (and billing) until someone destroys it; and a new
+	// environment that is not first in the file and names no placement is placed `namespace`
+	// (manifest.Normalize), not on a dedicated cluster like the one it may be replacing.
+	return fmt.Sprintf("the file says lifecycle %s, the server has %s — a lifecycle is set only when an environment is created, and nothing changes it afterwards (not apply, not the console). To keep this environment, %s. To get %s, declare a NEW environment with `lifecycle: %s`: apply creates it with `namespace` placement unless the file sets `placement` (or lists it first), and this environment keeps running until it is destroyed", declared, stored, keep, declared, declared)
 }
 
 // findComponent returns the existing component of the kind (and name, for a multi kind).

@@ -193,6 +193,67 @@ func TestApply_PlanRefusesWhatItCannotReconcile(t *testing.T) {
 	}
 }
 
+func TestApply_ALifecycleChangeOnAnExistingEnvironmentIsRefused(t *testing.T) {
+	// #5590: the server sets `lifecycle` only when it creates an environment and has no route that
+	// changes it afterwards, so a file that flips it on an existing environment is a difference
+	// plan must SHOW and apply must REFUSE — before #5590 plan printed `=` and apply ignored it.
+	s := &projServer{envs: []map[string]any{
+		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "lifecycle": "persistent", "status": "ACTIVE", "is_default": true},
+		{"id": "e2", "name": "preview", "stage": "development", "placement_mode": "namespace", "lifecycle": "ephemeral", "status": "ACTIVE"},
+	}}
+	// production: persistent → ephemeral, stated. preview: ephemeral → persistent, by OMITTING the
+	// key — an omitted lifecycle means the default, which is what apply would create.
+	flipped := "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n    lifecycle: ephemeral\n  - name: preview\n    stage: development\n"
+	h := applyEnv(t, s)
+	read := projCaptureStdout(t)
+	if !h.run("plan", "--file", applyWriteManifest(t, flipped), "--no-input") {
+		t.Error("a plan that changes an existing environment's lifecycle must be refused")
+	}
+	out := read()
+	for _, want := range []string{
+		"the file says lifecycle ephemeral, the server has persistent",
+		"the file says lifecycle persistent, the server has ephemeral",
+		"set only when an environment is created",
+		// production: the server holds the default, so both spellings of keeping it are named.
+		"remove `lifecycle` or set it to `lifecycle: persistent`",
+		// preview: the server holds ephemeral, so the one spelling is.
+		"To keep this environment, set it to `lifecycle: ephemeral`",
+		// A new environment does not replace the old one, and is not placed like it by default.
+		"this environment keeps running until it is destroyed",
+		"with `namespace` placement unless the file sets `placement`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the plan does not show %q:\n%s", want, out)
+		}
+	}
+	h = applyEnv(t, s)
+	if !h.run("apply", "--file", applyWriteManifest(t, flipped), "--yes", "--no-input") {
+		t.Error("apply must refuse a lifecycle change it cannot make")
+	}
+	if len(s.posts) != 0 {
+		t.Errorf("a refused apply wrote: %+v", s.posts)
+	}
+
+	// The same lifecycle, stated or left to the default, is no difference.
+	same := "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n  - name: preview\n    stage: development\n    lifecycle: ephemeral\n"
+	h = applyEnv(t, s)
+	read = projCaptureStdout(t)
+	if h.run("plan", "--file", applyWriteManifest(t, same), "--no-input") {
+		t.Errorf("a matching lifecycle was refused:\n%s", read())
+	} else if out := read(); strings.Contains(out, "lifecycle") {
+		t.Errorf("a matching lifecycle was reported as a difference:\n%s", out)
+	}
+
+	// A server that does not report a lifecycle (before #5581) is not compared against.
+	old := &projServer{envs: []map[string]any{
+		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+	}}
+	h = applyEnv(t, old)
+	if h.run("plan", "--file", applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n    lifecycle: ephemeral\n"), "--no-input") {
+		t.Error("a server that sends no lifecycle cannot disagree with the file")
+	}
+}
+
 func TestApply_ManifestProblemsAreNamedBeforeAnyRequest(t *testing.T) {
 	s := &projServer{}
 	h := applyEnv(t, s)
