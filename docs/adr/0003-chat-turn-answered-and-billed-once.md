@@ -406,28 +406,45 @@ first one's committed claim, so it is refused at step 4 or 5 and **never reaches
 
 ### 5.2 Classifying a request
 
-The request carries `turn: { trigger, turnId, baseRevision, answerId? }` (§9.1). Let `T` be the
-locked row's `messages`, `last` its last message, and `u` the request's message with id `turnId`.
+The request carries `turn: { trigger, turnId, baseRevision, answerId?, toolCallIds? }` (§9.1). Let
+`T` be the locked row's `messages`, `last` its last message, and `u` the request's message with id
+`turnId`.
+
+**Equal text.** "`u`'s text equals the stored text" compares one string per message: the `text`
+parts joined in order, after ADR 0001's normalization (its §4.1: line endings to `\n`, trimmed at
+send). No other part type and no `metadata` field takes part. The same function,
+`turnText(message)` in `lib/agent/turn-key.ts`, normalizes both sides, so ADR 0001's own D12 first
+send (whose stored row was trimmed by `startConversation`) compares equal to what its tab sends. A U
+test pins that pair.
 
 | Request | Condition on `T` | Attempt key | Outcome |
 |---|---|---|---|
 | submit, `u` is the last request message | `turnId` not in `T`, `revision = baseRevision` | `answer` | accept; step 8 appends `u` |
 | submit | `turnId` not in `T`, `revision ≠ baseRevision` | — | refuse `transcript-stale` (case 6) |
-| submit or Retry (`regenerate` with no `answerId`) | `last` is `turnId`, unanswered, and `u`'s parts equal the stored parts | `answer` | accept; answer the **stored** message, append nothing |
-| the same | `last` is `turnId`, unanswered, parts differ | — | refuse `turn-committed` (case 19) |
-| the same | `turnId` in `T` and answered (any later message exists) | — | refuse `turn-answered` (case 2) |
+| submit or Retry (`regenerate` with no `answerId`) | `last` is `turnId`, unanswered, and `u`'s text equals the stored text | `answer` | accept; answer the **stored** message, append nothing |
+| the same | `turnId` in `T` (answered, unanswered, or being answered), and the text differs | — | refuse `turn-committed-different-text` (case 19, §9.3), with `answered` as stored. The request's text is **not** committed. Checked **before** the two rows around it and before the claim row (§5.1 step 4), so an edited re-send is never read as `turn-answered` or `turn-in-progress`, both of which consume the draft |
+| the same | `turnId` in `T` and answered (any later message exists), the text equal | — | refuse `turn-answered` (case 2) |
 | regenerate, `answerId = a` | `last` is `a` and `a` answers `turnId`, `revision = baseRevision` | `regen:a` | accept; finalize replaces `a` |
 | the same | otherwise | — | refuse `turn-answered`, carrying the stored answer id (case 11) |
-| continuation (submit with the assistant message last, `answerId = a`) | `last` is `a`, every named tool call is in `a`'s last step with no stored output, `revision = baseRevision` | `continue:a:<ids>` | accept; merge **only** those outputs from the request into the stored `a` |
+| continuation (submit with the assistant message last, `answerId = a`, `toolCallIds = K`) | `last` is `a`; `P = pendingClientToolCalls(stored a)` (§3) is not empty; no id of `P` has a stored output; `K = P`; the request's `a` carries an output for every id of `P`; `revision = baseRevision` | `continue:a:<P>` | accept; merge **only** the outputs of `P` from the request into the stored `a`. Outputs the request carries for any other tool call (a server tool's, already stored by finalize) are ignored, never compared |
 | the same | otherwise | — | refuse `turn-answered` (the continuation already ran, or the answer moved on) |
 
-Then the claim row of that key decides: none (C1), `failed`/`expired` (C2), `running` (C3), or
-`answered` (C4).
+Then the claim row of that key decides (§5.1 step 4, before the busy check): none (C1),
+`failed`/`expired` (C2), `running` (C3), or `answered` (C4).
+
+**Why the key is derived from the stored answer, from client tools only.** Revision 1 named "the
+tool calls of the last step whose outputs are present" on the client, and "with no stored output" on
+the server. Those differ whenever a server tool shares the step with the proposal: the client names
+both, the server finds `list_projects`'s output stored, and refuses the approval as answered on
+every attempt (case 7b). `pendingClientToolCalls` reads only tool names and `providerExecuted`,
+which the client's copy and the stored row agree on, never output presence, which they do not.
 
 **The request's transcript is never stored.** The model's input is `T` (after step 8, or with the
-merged tool outputs), never the client's list. The client's list contributes `u`'s parts, `u`'s
-`metadata.mentions` and `metadata.cellTarget` (§9.2), and, for a continuation, the outputs of the
-named tool calls. Everything else in it is ignored.
+merged tool outputs), never the client's list, converted with `convertToModelMessages(T, {
+ignoreIncompleteToolCalls: true })`: a partial answer stored after an abort mid-tool (§8.1) can hold
+a tool call with no result, and without that option every later turn of the thread would send the
+provider a dangling tool call. The client's list contributes `u`'s parts, `u`'s mentions and cell
+target (§9.2), and, for a continuation, the outputs of `P`. Everything else in it is ignored.
 
 ### 5.3 Finalize
 
@@ -442,23 +459,49 @@ in-memory once-guard, from whichever of these happens first:
 - **The model failed** (`onError`), **the client disconnected**, or **the route's own timeout fired**
   (`onAbort`, §8.2).
 
-One transaction: `UPDATE agent_turn_claims SET state = … WHERE id = $claim AND token = $token AND
-state = 'running' RETURNING …`, then, for C6, append the answer to the locked thread under
-`revision = accepted_revision` and add one. Its outcomes:
+One transaction, in §5's lock order: lock the thread (`SELECT … FOR UPDATE`), then `UPDATE
+agent_turn_claims SET state = … WHERE id = $claim AND token = $token AND state = 'running'
+RETURNING …`, then, for C6, append the answer under `revision = accepted_revision` and add one,
+and **settle the hold on the same `tx`**: `recordAgentTurnUsage` takes `tx`, and its row 0 (the
+hold, `agent-metering.ts:141`) and its appended rows are written before the commit. C7, C6m and C8
+release the hold the same way. A crash or a failed metering write after the answer is stored is
+therefore impossible: either the whole transaction commits (stored and settled, `settled_at`
+stamped, so `release-ai-holds` never sees the row), or none of it does and the claim stays
+`running` until C8 releases the hold. Its outcomes:
 
 | Outcome | Meaning | The answer | The hold |
 |---|---|---|---|
-| `won` | C6 or C7 applied | stored (C6) or none (C7) | C6: settled by this process (§8); C7: released to 0 |
-| `deleted` | no claim row, and the thread is a tombstone | stored in a "Recovered: …" thread, as today (`transcript-save.ts:123-137`), built from `T` + the answer | settled (the user has the answer) |
+| `won` | C6 or C7 applied | stored (C6) or none (C7) | C6: settled in the transaction; C7: released to 0 in it |
+| `moved` | C6m applied: the token matches, the revision does not (§4.2 says nothing else writes) | not stored | released to 0 in the transaction |
+| `deleted` | no claim row, and the thread is a tombstone | stored in a "Recovered: …" thread, as today (`transcript-save.ts:123-137`), built from `T` + the answer | settled in the same transaction as the Recovered thread's insert (the user has the answer) |
 | `lost` | the claim exists under another token or state (C8 ran) | not stored | not touched (C8 released it to 0) |
+
+**A deleted thread does not stop the model (Q4).** The cascade removes the claim, and the
+heartbeat (C5) reads "no claim and a tombstone" as `deleted`, not as `lost`, so the route keeps
+streaming and the **full** answer reaches the Recovered thread, as it does on dev today. The turn is
+still bounded by `TURN_BUDGET_MS` (§8.2), far inside the tombstone's day.
 
 ## 6. The billing org (cases 3, 4, 10, 15)
 
 ### 6.1 The resolver
 
-The request names its org: `orgId` in the body. For Elench it is the server-resolved org id of the
-page (ADR 0001's `pageOrg`, D29). The route resolves it with one function,
-`resolveTurnActor(userId, orgId)`, in `lib/authz/guard.ts`:
+**Which org (Q1).** The request names an org: `orgId` in the body. For Elench it is the
+server-resolved org id of the page (ADR 0001's `pageOrg`, D29). The route reads the thread's
+`billing_org_id` (an unlocked read; §5.1 step 2 re-checks it under the lock):
+
+- **Pinned:** the turn bills to, and runs in, the pinned org. The request's `orgId` is still
+  required (its absence is `client-outdated`, §10) but does not choose the org. A Retry,
+  regenerate, continuation or new turn sent from org B's tab into a thread pinned to A is A's.
+- **Not pinned** (the thread's first accepted turn, or an existing thread's first turn after
+  deploy): the request's `orgId`, which acceptance then pins.
+
+Why pin: a thread is its user's and is listed in every org (§1, Threads), so without a pin one
+answer's continuation could run its tools and bill in a different org from the answer it continues,
+and a C2 re-arm could reserve under B a turn whose first attempt A paid for. With the pin, one turn,
+and one thread, has one ledger.
+
+The route resolves the chosen org with one function, `resolveTurnActor(userId, orgId)`, in
+`lib/authz/guard.ts`:
 
 1. `orgId === userId`: the personal actor. In community, every page resolves here
    (`lib/auth/scope.ts:20-31`), so the client names the user id.
@@ -466,7 +509,10 @@ page (ADR 0001's `pageOrg`, D29). The route resolves it with one function,
    the enterprise resolver lands on the named org only for an **active** member
    (`ee/src/scope.ts:75-84`), and any other answer is `null`.
 3. `null`, or no `orgId` at all: **403 `org-forbidden`**, before the claim and the hold. There is no
-   session fallback and no personal fallback for a named team org.
+   session fallback and no personal fallback for a named team org. For a pinned thread this is how
+   a caller who has left, or been suspended from, the pinned org is refused: the thread still
+   lists, and every send into it is `org-forbidden` with the reason "This conversation belongs to
+   an organization you are no longer a member of".
 
 It then checks `can(actor, "view", { type: "org" })` without recording activity (the
 `authorizeQuiet` shape, `guard.ts:113-122`), because a chat turn is not an activity-log event.
@@ -476,7 +522,7 @@ refuses the personal org in community (its resolver is two-way, `guard.ts:59-64`
 
 ### 6.2 The project check
 
-The project route then requires `projects.id = projectId AND projects.org_id = actor.orgId` (one
+A project thread's pin is its project's org. The project route then requires `projects.id = projectId AND projects.org_id = actor.orgId` (one
 service-role read) **and** `can(actor, "view", { type: "project", id: projectId })`. Either failing
 is **404 `project-not-found`**, before the claim and the hold. 404, not 403, as the console's
 `[org]` pages answer, so a status code does not confirm that a project id exists elsewhere.
@@ -532,13 +578,20 @@ rest (§10, PR 2).
 
 ### 8.1 What is billed
 
-**Rule: an attempt is billed if and only if it stores an answer, and the process that stored it
-settles it.** Each attempt has its own hold row, held in the memory of the one process that reserved
-it, so no two processes can settle one hold. The `running → answered` compare-and-set decides who
-stores, and only the winner (or the `deleted` branch, which also stores) calls
-`recordAgentTurnUsage`. A `lost` finalize calls nothing. Because a `recordAgentTurnUsage` call
-appends rows past row 0 (`agent-metering.ts:113-148`), this is also what stops a second call from
-billing twice.
+**Rule: an attempt is billed if and only if it stores an answer, and it is settled in the
+transaction that stores it.** Each attempt has its own hold row, held in the memory of the one
+process that reserved it, so no two processes can settle one hold. The `running → answered`
+compare-and-set decides who stores, and only the winner (or the `deleted` branch, which also
+stores) calls `recordAgentTurnUsage`, on the finalize transaction (§5.3). A `lost` finalize calls
+nothing. Because a `recordAgentTurnUsage` call appends rows past row 0
+(`agent-metering.ts:113-148`), this is also what stops a second call from billing twice.
+
+**Why inside the transaction.** Revision 1 settled after the commit. A crash, or a failed metering
+write (`meteringFailed`, `ai-quota.ts`), between the two left a stored answer with an unsettled
+hold, which `release-ai-holds` then released to **0** an hour later: a stored answer billed nothing.
+Settling on the same `tx` removes the gap; the cost is that a metering write error now fails the
+finalize, which then stores nothing and leaves the claim to C8 (the answer the client saw is not
+kept, the §8.3 residual), rather than storing an answer it cannot bill.
 
 | How the attempt ends | Transcript | Claim | Billed |
 |---|---|---|---|
@@ -546,11 +599,11 @@ billing twice.
 | 402 budget | unchanged (the transaction rolled back) | none | nothing; no hold |
 | Model finished | turn + answer | `answered` | the steps' real cost, as today |
 | Provider error before any model output | turn, no answer | `failed` | released to 0, as today |
-| Provider error after model output | turn + partial answer | `answered`, `partial` | completed steps; at least the reserve (Q2) |
+| Provider error after model output | turn + partial answer | `answered`, `partial` | completed steps; at least the reserve (Q8) |
 | Client disconnect or Stop before any model output | turn, no answer | `failed` | released to 0 |
-| **Client disconnect or Stop after model output** (case 14) | turn + partial answer (the UI stream's `onFinish` still runs on abort) | `answered`, `partial` | completed steps' real cost, and **at least the reserve** (Q2). Today: 0 |
+| **Client disconnect or Stop after model output** (case 14) | turn + partial answer (the UI stream's `onFinish` still runs on abort) | `answered`, `partial` | completed steps' real cost, and **at least the reserve** (Q8). Today: 0 |
 | The route's own timeout | as the row above | as above | as above |
-| Process crash or redeploy | turn, no answer | `running` until the lease is silent 90 s, then `expired` (C8) | released to 0 by C8 (Q3). Today: left at the reserve, forever |
+| Process crash or redeploy | turn, no answer | `running` until the lease is silent 90 s, then `expired` (C8) by the next accept on the thread or by `release-ai-holds` | released to 0 by C8 (Q9), within 90 s of the last heartbeat plus one sweep interval (at most about 16.5 minutes). Today: released to 0 by `release-ai-holds` after 60 to 75 minutes (§1) |
 | Finalize fails (database unreachable) after the model finished | the client saw the answer; the row did not store it | `running`, then `expired` | released to 0 by C8; the residual case of §8.3 |
 
 **Why "at least the reserve" for a partial answer.** `onAbort` reports only completed steps
@@ -564,19 +617,44 @@ tokens.
 
 - **The bound.** `streamText` takes `abortSignal: AbortSignal.any([req.signal,
   AbortSignal.timeout(TURN_BUDGET_MS)])`. A timeout fires `onAbort`, so it ends exactly like a
-  disconnect (§8.1). Recommended `TURN_BUDGET_MS = 900_000` (Q1): above the six minutes measured
+  disconnect (§8.1). Recommended `TURN_BUDGET_MS = 900_000` (Q7): above the six minutes measured
   for a deep-reasoning turn. The `maxDuration` exports are deleted, so nothing claims a bound it does
   not have.
 - **The lease measures silence**, as ADR 0001's draft lease does (its R0). The route renews it every
   30 s (C5) while the attempt runs, and `lease_until = now() + 90 s` at each renewal. A live route
   therefore never loses its claim to the lease unless the database is unreachable for 90 s, and then
-  its finalize would fail anyway. A dead process stops renewing, and the next accept on the thread,
-  or the sweep, expires it (C8) within 90 s of its last renewal.
-- **A heartbeat that matches nothing** (the claim expired or the thread was deleted) aborts the model,
-  so the route stops paying for an answer it can no longer store.
-- **The sweep** `agent-turn-claims-sweep` runs every minute on the reconcile loop
-  (`lib/reconcile/loop.ts`, beside `kubeconfig-mint-sweep`) and applies C8 to every silent claim. It
-  also deletes terminal claims older than 30 days whose thread still exists (Q5).
+  its finalize would fail anyway. A dead process stops renewing. The next accept on the thread
+  expires it (C8) as soon as it is 90 s silent; otherwise the sweep does, on its next run after
+  that, so within 90 s plus one 15-minute interval of the last renewal.
+- **A heartbeat that matches nothing** because the claim expired (it exists under another token or
+  state) aborts the model, so the route stops paying for an answer it can no longer store. One that
+  matches nothing because the thread was deleted keeps going (§5.3, Q4).
+- **One sweep owns stranded holds (Q5): `release-ai-holds`, extended.** There is no second
+  sweep. The existing task (`lib/reconcile/ai-holds.ts`, every 15 minutes, `loop.ts:49`) runs three
+  passes, each batched as today:
+  1. **Expire silent claims (C8).** Every `running` claim with `lease_until < now()`, locked in
+     §5's order (thread `FOR UPDATE SKIP LOCKED`, then claim, then ledger row), is set `expired` and
+     its hold released to 0 in one transaction per claim.
+  2. **Release unclaimed stranded holds,** as today: `settled_at IS NULL` and older than the window
+     below, **excluding** any hold that a `running` claim names (`NOT EXISTS (SELECT 1 FROM
+     agent_turn_claims WHERE hold_id = l.id AND state = 'running')`). A claimed hold is released
+     only by its claim's lease, never by age.
+  3. **Retention:** delete terminal claims older than 30 days whose thread still exists (Q10).
+- **The window, re-derived.** `ai-holds.ts:27-37` derives 60 minutes from "the platform's function
+  timeout". That timeout does not exist: the console runs as a standalone Node server, and the
+  `maxDuration = 300` exports bound nothing (§1, Duration). The real bounds are these:
+  - a chat-route hold after PR 1 is claimed, so pass 2 never reads it; its turn is bounded by
+    `TURN_BUDGET_MS` (15 minutes), and its release by C8;
+  - every other hold (the support and agent-identity routes until Q11, the `colony`, `scanner` and
+    `verify` actions, and a turn that ran on the old process across the deploy) has **no** time
+    bound at all. For those, 60 minutes is an assumption, not a derivation.
+
+  60 minutes is kept. It is longer than `TURN_BUDGET_MS` + the 90 s lease + one sweep interval
+  (about 32 minutes), so pass 2 could not release a live chat hold even without its exclusion. For
+  an unbounded caller that runs past it, an early release costs headroom accuracy only, not money:
+  the late settle overwrites the row in place (`ai-quota.ts:318-338`) and the turn is billed once.
+  PR 1 rewrites the comment at `ai-holds.ts:27-37` to say exactly this, and drops its false "books
+  the cost twice".
 - **`agent.ts:119-123` is corrected** to cite `TURN_BUDGET_MS` plus the 90 s lease: a turn streaming
   at the delete finalizes within about 16 minutes, far inside the tombstone's day.
 
@@ -596,32 +674,56 @@ The transport (`use-agent-chat.ts:61-63`) passes what ai 6 gives it and adds the
 
 ```ts
 prepareSendMessagesRequest: ({ messages, trigger, messageId }) => ({
-  body: { messages, orgId, turn: turnOf(messages, trigger, messageId, revisionRef.current),
+  body: { messages, orgId: orgRef.current,
+          turn: turnOf(messages, trigger, messageId, revisionRef.current),
           ...prepareBody?.(messages) },
 }),
 ```
 
 `turnOf` reads: `trigger`; `turnId`, the last **user** message's id; `answerId`, the `messageId` of
-a regenerate or the last assistant message's id for a continuation; the tool call ids of that
-message's last step whose outputs are present; and `baseRevision`. `revisionRef` is set by
-`loadInto` from `getThread().revision` and by every `data-turn-accepted` and `data-turn-finished`
-part.
+a regenerate or the last assistant message's id for a continuation; for a continuation,
+`toolCallIds = pendingClientToolCalls(that message)` (§3), the **same function** the server runs
+over the stored answer, which reads tool names and never output presence; and `baseRevision`.
+
+- `revisionRef` is set by `loadInto` from `getThread().revision`, by every `data-turn-accepted` and
+  `data-turn-finished` part, and by the revision that ADR 0001's `startConversation` `created`
+  outcome and `createThread` return for the thread row (both return it; revision 1 left a new
+  empty row unseeded, so its first turn was `transcript-stale` once).
+- `orgRef` is read at request time, as `revisionRef` is. `useChat` keeps a Chat's first transport
+  for the Chat's life (it is recreated only when `id` changes), so a closed-over `orgId` would be
+  the first render's. AppShell remounts under the `[org]` layout today, so this is not reachable
+  yet; the ref keeps a later shell change from turning it back into case 3.
 
 - **Regenerate passes the answer it replaces.** `regenerate()` slices that answer off before the
   transport runs, so both call sites change to `regenerate({ messageId: answer.id })`
   (`elench-conversation.tsx:464`, `agent-chat.tsx:376`). Retry of an unanswered turn stays
   `regenerate()`: with no `answerId`, it is an `answer` attempt (§5.2). A tab can therefore only
   regenerate the answer it displays (case 11).
-- **The continuation needs no new client id.** Its key is derived from the stored answer and the
-  tool calls it resolves, so two tabs that approve the same card make the same key and one of them
-  is refused (case 7).
+- **The continuation needs no new client id.** Its key is derived from the stored answer and its
+  pending client tool calls, so two tabs that approve the same card make the same key and one of
+  them is refused (case 7), and a server read tool in the same step does not enter the key (case
+  7b).
 
 ### 9.2 Mentions and the cell target move to the message (case 13)
 
-The routes read `metadata.mentions` and `metadata.cellTarget` from the turn's **stored** user
-message (§5.2), validated with `mentionsSchema` and the existing cell schema. ADR 0001 already sets
-them on every message (its §5.1). The body fields and the `pendingMentions` slot are deleted in PR 2,
-after ADR 0001's PR 2 has made every send carry the metadata.
+The routes read the mentions and the cell target of the turn's **stored** user message (§5.2),
+validated with `mentionsSchema` and the existing cell schema. Where each comes from depends on what
+the sends carry, and revision 1 overstated that:
+
+| Field | ADR 0001 rev 5.1 writes it into `metadata` on | PR 1 reads | Deleted from the body by |
+|---|---|---|---|
+| `mentions` | the first turn (`startConversation`, its §5.1 step 3) and every later turn (D9b: `sendMessage({ id, parts, metadata: { mentions } })`) | `metadata.mentions`, else `body.mentions` | this ADR's PR 2, after ADR 0001's PR 2 (which ships D9b) |
+| `cellTarget` | the first turn, an external start (D10x) and the failed-send marker **only**. A later turn's D9b sends no `cellTarget` | `metadata.cellTarget`, else `body.cellTarget` | this ADR's PR 2, and only once ADR 0001's D9b also sends `metadata.cellTarget` (§9.4, change 3) |
+
+The empty-cell prompt sends into the **current** conversation, usually an existing thread with
+widgets (`elench-conversation.tsx:316-324`), so it is a later turn. Until D9b carries the target,
+`body.cellTarget` (from `takePendingCellTarget()`, `:172`) is the only path for it, and deleting it
+would land the widget by first-fit instead of in the cell the user clicked: the (0,0) regression
+recorded at `:170-172`. The fallback is read for the **acceptance's** user message only, and §5.1
+step 8 writes it into that message's `metadata` as it appends, so the stored turn carries its
+target from then on (a Retry of it needs no body). A stored message's metadata always wins. Tests: R › `a later-turn cell prompt with body.cellTarget and no
+metadata lands in the named cell`; C › `a later-turn cell prompt stores its cell target in the user
+message's metadata` (PR 2, after ADR 0001's D9b change).
 
 ### 9.3 Refusals (case 12)
 
@@ -629,20 +731,23 @@ Every refusal before acceptance is a JSON body:
 
 ```ts
 type TurnRefusal = {
-  refusal: "turn-in-progress" | "turn-answered" | "turn-committed" | "thread-busy"
-         | "transcript-stale" | "thread-deleted" | "thread-not-found" | "org-forbidden"
-         | "project-not-found" | "client-outdated";
+  refusal: "turn-in-progress" | "turn-answered" | "turn-committed-different-text"
+         | "thread-busy" | "transcript-stale" | "thread-deleted" | "thread-not-found"
+         | "org-forbidden" | "project-not-found" | "client-outdated";
   turnId: string | null;
-  committed: boolean;   // the turn is in the stored transcript
-  answered: boolean;    // ...and has an answer
+  committed: boolean;      // a turn with this id is in the stored transcript
+  textCommitted: boolean;  // ...and its text is the text this request sent
+  answered: boolean;       // ...and it has an answer
   revision: number | null;
   answerId: string | null;
 };
 ```
 
-Statuses: 409 for the first six and `client-outdated`, 410 `thread-deleted`, 404 `thread-not-found`
-and `project-not-found`, 403 `org-forbidden`. **This is ADR 0001 §5.3's second item**: a refused send
-says whether its turn is committed and whether it is answered.
+Statuses: 409 for the first five and `client-outdated`, 410 `thread-deleted`, 404
+`thread-not-found` and `project-not-found`, 403 `org-forbidden`. **This is ADR 0001 §5.3's second
+item**: a refused send says whether its turn is committed and whether it is answered, and now also
+whether **the text it sent** is the committed one. `textCommitted` is false only on
+`turn-committed-different-text`; on every other refusal it equals `committed`.
 
 How the client reads it:
 
@@ -650,7 +755,7 @@ How the client reads it:
 |---|---|---|
 | `turn-in-progress` | true | ADR 0001 D9d's "committed" arm: `consumeDraft`, then D20: load the transcript, show "Being answered in another tab or device", poll `getThread` until `inFlight` is null |
 | `turn-answered` | true | `consumeDraft`, then D20: load the transcript. No error card |
-| `turn-committed` | true | as `turn-answered`; the stored turn shows "No reply arrived" with Retry (Q4) |
+| `turn-committed-different-text` | true, `textCommitted: false` | **Not** consumed (Q3). ADR 0001 releases the draft with the edited text and a **fresh** turn id (§9.4, change 1), then loads the transcript. The stored turn shows "No reply arrived" with Retry; the box keeps the edit, and the card reads "An earlier version of this message was already sent. It is shown above. Your edit is still in the box." Enter sends the edit as a new turn |
 | `thread-busy` | false | load the transcript; the words go back into the box; "Another message in this conversation is being answered" |
 | `transcript-stale` | false | load the transcript; the words go back into the box; "This conversation has newer messages. They are shown now. Press Enter to send." (ADR 0001 D9a's wording) |
 | `thread-deleted` | false | ADR 0001 D18: the words move to a new conversation |
@@ -658,12 +763,59 @@ How the client reads it:
 | `client-outdated` | false | "Reload to continue"; the words stay in the box |
 
 For ADR 0001, every `committed: false` refusal is a refusal "the route itself answers before its
-budget hold, which stores nothing", which is the principle of its D9d's certain release. D9d's
-enumerated list (400, 402, 413, 429) needs these names added (Q6).
+budget hold, which stores nothing", which is the principle of its D9d's certain release (§9.4,
+change 2).
 
-Surfaces without ADR 0001 (the support chat, if it adopts this, §12) read the same body through a
-`fetch` wrapper in `useAgentChat` that throws a typed `TurnRefusedError`; the surface renders the
-loaded transcript instead of the error card and calls `clearError()`.
+**Why the edited re-send is not consumed.** Revision 1 sent it as `committed: true`, and ADR 0001's
+D9d consumes the draft on any committed refusal. The sequence that reaches it is ordinary: a later
+turn X waits on the org or thread lock, D9d's 60 s deadline fires and releases X `uncertain` before
+the acceptance commits, the acceptance then stores X with no answer, and the user corrects the box
+to X' and presses Enter. D31 and R10 send X' under X's turn id, the route refuses, and consuming the
+draft would delete X' while only X is stored. That breaks ADR 0001's founding invariant, "typed text
+is never lost". So the refusal says the text is not committed, and ADR 0001 keeps it.
+
+**The client half without ADR 0001's store (PR 1).** `useAgentChat` gets a `fetch` wrapper that
+reads the typed body and throws a `TurnRefusedError`. Elench and any surface without ADR 0001's
+store (the support chat, if it adopts this, §12) handle it in one function, `onTurnRefused`:
+`loadInto` the thread (which refreshes `revisionRef`), `clearError()`, and, on every refusal whose
+`textCommitted` is false, put the refused text back into the composer through its existing
+`restore` handle (`elench-conversation.tsx:289-292`) with the table's notice. No error card is
+shown, and a Retry is never needed to recover, because the reload already refreshed the base
+revision. Once ADR 0001's PR 2 is on dev, `onTurnRefused` dispatches to its store instead (D9d,
+D20), and the composer path is deleted.
+
+### 9.4 What this ADR needs ADR 0001 to change
+
+ADR 0001 rev 5.1 cannot carry this ADR's refusals as written. Four changes, each with its test,
+belong in its next revision:
+
+1. **An edited re-send releases with a fresh turn id; it is never consumed** (Q3). D9d gains an arm
+   for `turn-committed-different-text`: `releaseClaim(token, error, { freshTurnId })`, with the
+   new id minted by the client. S4's guard today turns any release whose turn is in the transcript
+   into S3 (consumed). With `freshTurnId`, S4 applies anyway: content kept, claim cleared,
+   `failed_send := { turnId: freshTurnId, …, uncertain: false }`. The same rule applies to S5 (the
+   lease settle) and to S4's redirect: a later turn whose id is in the transcript is consumed only
+   when the stored message's `turnText` equals the claimed content; otherwise it is released with a
+   fresh turn id. R10 is amended: a corrected re-send carries the same turn id **until** the route
+   answers `turn-committed-different-text`, and from then on the edit is a new turn. "Never
+   re-minted for a stored turn" still holds: the fresh id names the edit, which is not stored.
+   Test (ADR 0001's S): `an uncertain later turn stored by a late acceptance, edited and re-sent:
+   turn-committed-different-text keeps the edit in the box under a new turn id, and Enter sends it
+   as a new turn`; A: `the lease settle releases, not consumes, a claim whose stored turn has
+   different text`.
+2. **D9d's certain-release list** (400, 402, 413, 429) gains this ADR's `committed: false`
+   refusals: 409 `thread-busy`, `transcript-stale` and `client-outdated`, 410, 404 and 403. Without
+   it they release `uncertain: true` and D31 says "may already have been sent", which is false.
+3. **D9b sends the cell target**: `sendMessage({ id: turnId, parts, metadata: { mentions,
+   cellTarget } })`, `cellTarget` taken from the pending slot, so the body fallback of §9.2 can go.
+   Test (C): `a later-turn cell prompt stores its cell target in the user message's metadata`.
+4. **`startConversation`'s `created` returns the thread's revision**, not only the draft's, so the
+   transport's `revisionRef` is seeded (§9.1).
+
+**The dependency.** Changes 1 and 2 bind whichever of ADR 0001's PR 2 and this ADR's PR 1 merges
+**second**: that PR does not merge until ADR 0001's D9d implements them, because the first deploy
+with both is the first moment D9d can receive these refusals. Change 3 binds this ADR's PR 2 (which
+deletes `body.cellTarget`). Change 4 binds this ADR's PR 1 if ADR 0001's PR 2 is already on dev.
 
 ## 10. Migration and rollout (via the db pipeline)
 
