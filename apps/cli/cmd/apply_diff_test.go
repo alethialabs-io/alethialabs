@@ -245,6 +245,7 @@ func (f *diffFake) ListEnvironments(string) ([]api.Environment, error) {
 	f.listCalls++
 	return f.envs, nil
 }
+
 // envName resolves the `env` a per-environment call was addressed with to that environment's name,
 // accepting ONLY an id (#5583). A name is what the client used to send, and the server resolves a
 // name as name OR stage — so a call addressed by name could land in another environment. Anything
