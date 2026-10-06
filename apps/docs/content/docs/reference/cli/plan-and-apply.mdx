@@ -138,6 +138,62 @@ Here the file raises `max_capacity` of the `orders` database in `prod` from `4` 
   for that component, does not deploy that environment, and continues with the other environments.
   Then it exits with an error that names each refused component.
 
+### When the server changes first
+
+`apply` changes a component only if the server still holds the copy that `apply` read. There is no
+saved plan file: `apply` reads every component again, computes the changes against that read, and
+then makes them. Two rules protect that read.
+
+**A component changed after the read is not overwritten.** `apply` sends the component's revision
+(its `updated_at`) with each change. If someone changed the component in the meantime, for example
+in the console or with another `apply`, the server refuses the change. `apply` then names each
+setting that changed on the server:
+
+```
+  ✗ databases/orders in prod was not updated: databases/orders changed on the server after
+    `alethia plan` read it: max_capacity: 4 → 16; re-run `alethia plan` to see the difference
+    against the server's copy now, then apply again
+```
+
+Run `alethia plan` again, decide which value you want, and then run `alethia apply`. A component
+that was removed after the read is refused in the same way. `apply` does not create it again.
+
+**A component is not changed while its environment is deploying or being destroyed.** The server
+refuses every change that `apply` makes to an existing component while one of these is unfinished
+for that environment:
+
+- a deploy job, or the image build that starts a deploy of an environment with services built from
+  a repository;
+- a destroy job;
+- a promotion into the environment, from the moment its plan is queued, through approval, until its
+  deploy finishes. The promotion deploys the design that its plan read, so a change made in between
+  would not be part of that deploy.
+
+A job counts from the moment it is queued until it finishes. Other jobs, such as a plan that is not
+part of a promotion or a drift check, do not block a change. The error names what holds the
+environment:
+
+```
+  ✗ databases/orders in prod was not updated: databases/orders cannot be changed while a deploy
+    of this environment is processing (job 3f9c…); follow it with
+    `alethia jobs logs 3f9c… --follow`, then re-run `alethia apply` once it has finished
+```
+
+Wait for that job or promotion to finish, then run `alethia apply` again. `apply` does not queue the
+change for later.
+
+The rule has three limits:
+
+- The component's own status does not block a change. A database can stay `CREATING` after a
+  successful deploy while its chart is still starting, and you can still change it.
+- Adding a component that does not exist yet is not refused. `apply` creates it even while a deploy
+  is running. That deploy does not include it; the next deploy does.
+- A deploy reads the components a moment before its job is queued. A change that lands in that
+  moment is accepted and is not part of that deploy. It stays saved, and the next deploy applies it.
+
+Both refusals follow the rule above: that environment is not deployed, and the other environments
+continue.
+
 ### Setting and removing a `provider_config` key
 
 A component's `provider_config` holds its template knobs, the same ones the console's **Advanced**
@@ -194,7 +250,8 @@ plan, a component with the action `update` carries a `changes` array, one entry 
 ```
 
 `from` is `null` when the server has no value for the field. A `create` or `unchanged` component has
-no `changes` key. In the result, an `errors` array lists each change the server refused, as
+no `changes` key. A component that exists also carries `revision`, the server's `updated_at` that the
+plan read, which `apply` sends back with the change. In the result, an `errors` array lists each change the server refused, as
 `{ "environment", "component", "error" }`.
 
 ## Add-ons

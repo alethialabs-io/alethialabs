@@ -291,6 +291,15 @@ type ComponentPlan struct {
 	// Changes are the declared fields whose value differs from the server's, one per field, for
 	// an `update`. Empty for `create` (everything is new) and `unchanged` (nothing differs).
 	Changes []FieldChange `json:"changes,omitempty"`
+	// Revision is the server's revision of the component as the plan READ it (its updated_at); empty
+	// for `create`, and for a server too old to send one. Apply sends it back as If-Match, so a
+	// component that changed on the server after the plan read it is refused rather than overwritten
+	// (#5551). There is no saved plan file: apply recomputes the plan, and this is that read.
+	Revision string `json:"revision,omitempty"`
+
+	// read is every settable value the plan read from the server, so a refused update can name the
+	// fields that changed since (apply_conflict.go).
+	read map[string]any
 }
 
 // applyClient is the slice of the API the plan and the apply need. Narrow so the tests can fake
@@ -304,7 +313,8 @@ type applyClient interface {
 	CreateProject(params api.CreateProjectParams) (*api.Project, error)
 	AddEnvironment(params api.AddEnvironmentParams) (*api.Environment, error)
 	AddComponent(project, kind, name, env string, fields map[string]interface{}) (*api.Component, error)
-	UpdateComponent(project, kind, name, env string, fields map[string]interface{}) (*api.Component, error)
+	UpdateComponent(project, kind, name, env string, fields map[string]interface{}, ifMatch string) (*api.Component, error)
+	UpsertComponent(project, kind, env string, fields map[string]interface{}, ifMatch string) (*api.Component, error)
 	QueueJobWithParams(params api.QueueJobParams) (*api.ProvisionJob, error)
 	GetJob(jobID string) (*api.ProvisionJob, error)
 	GetRunners() ([]api.Runner, error)
@@ -472,7 +482,11 @@ func computePlan(c applyClient, m *manifest.Manifest, catalog *api.AddonCatalogD
 					// Only the fields the FILE declares are compared: an omitted field is left
 					// as the server has it, never cleared. Equal everywhere is `unchanged` and
 					// apply sends nothing; any difference is an `update` carrying the diff.
-					cp.Changes = diffFields(entry.Fields, componentValues(current))
+					cp.read = componentValues(current)
+					cp.Changes = diffFields(entry.Fields, cp.read)
+					if current.UpdatedAt != nil {
+						cp.Revision = *current.UpdatedAt
+					}
 					cp.Action = ActionUnchanged
 					if len(cp.Changes) > 0 {
 						cp.Action = ActionUpdate
@@ -859,19 +873,23 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 				// whose ON CONFLICT arm sets exactly the keys it is given. Re-sending an unchanged
 				// field is not harmless: the cluster's one-writer rule turns a re-sent `node_size`
 				// into `instance_types: []`, clearing a field the file never touched.
+				//
+				// Both carry the revision the plan read as If-Match (#5551): the diff was computed
+				// against THAT copy, so it may only land on that copy.
 				changed := changedFields(comp.Changes)
 				var err error
 				if comp.Name != "" {
-					_, err = c.UpdateComponent(result.ProjectID, comp.Kind, comp.Name, e.Name, changed)
+					_, err = c.UpdateComponent(result.ProjectID, comp.Kind, comp.Name, e.Name, changed, comp.Revision)
 				} else {
-					_, err = c.AddComponent(result.ProjectID, comp.Kind, "", e.Name, changed)
+					_, err = c.UpsertComponent(result.ProjectID, comp.Kind, e.Name, changed, comp.Revision)
 				}
 				if err != nil {
 					// The refusal belongs to THIS component. Recorded and reported, and the
 					// environment is held back from its deploy; the other environments carry on.
+					why := componentUpdateRefusal(comp, err)
 					refusedIn(refused, e.Name).component = true
-					result.Errors = append(result.Errors, ComponentError{Environment: e.Name, Component: label, Error: err.Error()})
-					say(fmt.Sprintf("  %s %s in %s was not updated: %v", ui.ErrorStyle.Render(ui.SymbolError), label, e.Name, err))
+					result.Errors = append(result.Errors, ComponentError{Environment: e.Name, Component: label, Error: why})
+					say(fmt.Sprintf("  %s %s in %s was not updated: %s", ui.ErrorStyle.Render(ui.SymbolError), label, e.Name, why))
 					continue
 				}
 			}

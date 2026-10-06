@@ -228,7 +228,8 @@ type diffFake struct {
 	envs      []api.Environment
 	comps     map[string][]api.Component // by environment name
 	calls     []diffCall
-	refuse    map[string]error // UpdateComponent errors, by "env kind/name"
+	refuse    map[string]error // UpdateComponent errors, by "env kind/name" ("env kind" for a singleton)
+	ifMatch   []string         // the If-Match each update/upsert carried, in call order
 	jobs      []string         // environment ids a DEPLOY was queued for
 	listCalls int
 }
@@ -247,12 +248,21 @@ func (f *diffFake) AddComponent(_, kind, name, env string, fields map[string]int
 	f.calls = append(f.calls, diffCall{"add", kind, name, env, fields})
 	return &api.Component{Kind: kind, Name: name}, nil
 }
-func (f *diffFake) UpdateComponent(_, kind, name, env string, fields map[string]interface{}) (*api.Component, error) {
+func (f *diffFake) UpdateComponent(_, kind, name, env string, fields map[string]interface{}, ifMatch string) (*api.Component, error) {
 	f.calls = append(f.calls, diffCall{"update", kind, name, env, fields})
+	f.ifMatch = append(f.ifMatch, ifMatch)
 	if err := f.refuse[env+" "+kind+"/"+name]; err != nil {
 		return nil, err
 	}
 	return &api.Component{Kind: kind, Name: name}, nil
+}
+func (f *diffFake) UpsertComponent(_, kind, env string, fields map[string]interface{}, ifMatch string) (*api.Component, error) {
+	f.calls = append(f.calls, diffCall{"upsert", kind, "", env, fields})
+	f.ifMatch = append(f.ifMatch, ifMatch)
+	if err := f.refuse[env+" "+kind]; err != nil {
+		return nil, err
+	}
+	return &api.Component{Kind: kind, Name: kind}, nil
 }
 func (f *diffFake) QueueJobWithParams(p api.QueueJobParams) (*api.ProvisionJob, error) {
 	f.jobs = append(f.jobs, p.EnvironmentID)
@@ -368,7 +378,7 @@ func TestComputePlan_ADifferingSingletonIsAnUpdateWithItsDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A singleton is upserted through the add route — there is no name to PATCH.
-	if len(f.calls) != 1 || f.calls[0].Method != "add" || f.calls[0].Kind != "cluster" {
+	if len(f.calls) != 1 || f.calls[0].Method != "upsert" || f.calls[0].Kind != "cluster" {
 		t.Errorf("calls %+v, want one upsert of the cluster", f.calls)
 	}
 }
@@ -395,7 +405,7 @@ func TestExecuteApply_ASingletonUpdateSendsOnlyWhatChanged(t *testing.T) {
 	if _, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
 		t.Fatal(err)
 	}
-	want := []diffCall{{"add", "cluster", "", "prod", map[string]any{"node_max_size": 5}}}
+	want := []diffCall{{"upsert", "cluster", "", "prod", map[string]any{"node_max_size": 5}}}
 	if !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("calls = %+v, want only the changed node_max_size: %+v", f.calls, want)
 	}
