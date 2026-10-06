@@ -20,6 +20,31 @@ mock_provider "hcloud" {
 
 mock_provider "talos" {}
 mock_provider "imager" {}
+
+# Each architecture's Talos snapshot gets its OWN id, so a pool that boots the wrong architecture's
+# image is told apart from one that boots the right one. (Left to mock_provider, both ids are the
+# same generated value, and the per-arch image assertion below could not fail.)
+override_resource {
+  target = imager_image.arm64
+  values = { image_id = "talos-arm64-snapshot" }
+}
+
+override_resource {
+  target = imager_image.amd64
+  values = { image_id = "talos-amd64-snapshot" }
+}
+
+# imager_image validates that its image_url is https, which a generated mock string is not. Only the
+# subnet runs below APPLY, and they need it.
+override_data {
+  target = data.talos_image_factory_urls.amd64
+  values = { urls = { disk_image = "https://factory.talos.dev/image/mock/amd64.raw.xz" } }
+}
+
+override_data {
+  target = data.talos_image_factory_urls.arm64
+  values = { urls = { disk_image = "https://factory.talos.dev/image/mock/arm64.raw.xz" } }
+}
 mock_provider "minio" {}
 
 variables {
@@ -68,7 +93,7 @@ run "hetzner_defaults_plan_unchanged" {
   }
 
   assert {
-    condition     = !strcontains(join("\n", data.talos_machine_configuration.worker.config_patches), "nodeLabels") && !strcontains(join("\n", data.talos_machine_configuration.worker.config_patches), "register-with-taints")
+    condition     = !strcontains(join("\n", data.talos_machine_configuration.worker.config_patches), "nodeLabels") && !strcontains(join("\n", data.talos_machine_configuration.worker.config_patches), "registerWithTaints") && !strcontains(join("\n", data.talos_machine_configuration.worker.config_patches), "register-with-taints")
     error_message = "With defaults, no label or taint may reach the default workers' Talos config."
   }
 }
@@ -119,7 +144,7 @@ run "hetzner_node_labels_reach_the_default_workers" {
 
   # node_taints reach extra pools only (contract): the default pool runs the platform's add-ons.
   assert {
-    condition     = !strcontains(join("\n", data.talos_machine_configuration.worker.config_patches), "register-with-taints")
+    condition     = !strcontains(join("\n", data.talos_machine_configuration.worker.config_patches), "registerWithTaints")
     error_message = "node_taints must not reach the default workers."
   }
 
@@ -193,9 +218,14 @@ run "hetzner_builds_an_amd64_and_an_arm64_pool" {
     error_message = "Pool server names must be <cluster>-<pool>-<index>."
   }
 
-  # The image follows the pool's arch, as worker_arch picks the default workers' image.
+  # The image follows the pool's arch, as worker_arch picks the default workers' image. The ids are
+  # the literal per-arch values of the overrides above, so a pool on the other arch's image fails.
   assert {
-    condition     = local.need_arm64 && local.need_amd64 && hcloud_server.node_pools["arm-1"].image == local.image_id_arm64 && hcloud_server.node_pools["db-0"].image == local.image_id_amd64
+    condition = (
+      local.need_arm64 && local.need_amd64 &&
+      alltrue([for k in ["arm-0", "arm-1", "arm-2"] : hcloud_server.node_pools[k].image == "talos-arm64-snapshot"]) &&
+      alltrue([for k in ["db-0", "db-1"] : hcloud_server.node_pools[k].image == "talos-amd64-snapshot"])
+    )
     error_message = "An arm64 pool must boot the arm64 Talos image (and get it built or reused), an amd64 pool the amd64 one."
   }
 
@@ -218,13 +248,15 @@ run "hetzner_builds_an_amd64_and_an_arm64_pool" {
     error_message = "Pool servers must carry the cluster label (the teardown sweep's selector), role=worker and pool=<name>."
   }
 
-  # Each pool has its own /24 after the node subnet; its servers take .101 onwards.
+  # Each pool has its own /24, chosen from its NAME (servers.tf, ADDRESSING): on the default network
+  # 10.0.0.0/16 the free /24s are 1..95 (96..255 are the service and pod CIDRs), and sha256("db")
+  # lands on 15, sha256("arm") on 23. Its servers take .101 onwards.
   assert {
     condition = (
-      hcloud_network_subnet.node_pools["db"].ip_range == "10.0.1.0/24" && hcloud_network_subnet.node_pools["arm"].ip_range == "10.0.2.0/24" &&
-      one(hcloud_server.node_pools["db-1"].network).ip == "10.0.1.102" && one(hcloud_server.node_pools["arm-0"].network).ip == "10.0.2.101"
+      hcloud_network_subnet.node_pools["db"].ip_range == "10.0.15.0/24" && hcloud_network_subnet.node_pools["arm"].ip_range == "10.0.23.0/24" &&
+      one(hcloud_server.node_pools["db-1"].network).ip == "10.0.15.102" && one(hcloud_server.node_pools["arm-0"].network).ip == "10.0.23.101"
     )
-    error_message = "Pool db must take 10.0.1.0/24 and pool arm 10.0.2.0/24, with servers from .101."
+    error_message = "Pool db must take 10.0.15.0/24 and pool arm 10.0.23.0/24, with servers from .101: got ${jsonencode({ for k, s in hcloud_network_subnet.node_pools : k => s.ip_range })}."
   }
 
   # The same secrets bundle as every other node: the pool joins THIS cluster.
@@ -248,10 +280,14 @@ run "hetzner_builds_an_amd64_and_an_arm64_pool" {
         }
         kubelet = {
           nodeIP = {
-            validSubnets = ["10.0.1.0/24"]
+            validSubnets = ["10.0.15.0/24"]
           }
-          extraArgs = {
-            "register-with-taints" = "dedicated=db:NoSchedule,gpu=true:NoSchedule,gpu=true:NoExecute"
+          extraConfig = {
+            registerWithTaints = [
+              { key = "dedicated", value = "db", effect = "NoSchedule" },
+              { key = "gpu", value = "true", effect = "NoSchedule" },
+              { key = "gpu", value = "true", effect = "NoExecute" },
+            ]
           }
         }
       }
@@ -269,10 +305,13 @@ run "hetzner_builds_an_amd64_and_an_arm64_pool" {
         }
         kubelet = {
           nodeIP = {
-            validSubnets = ["10.0.2.0/24"]
+            validSubnets = ["10.0.23.0/24"]
           }
-          extraArgs = {
-            "register-with-taints" = "dedicated=db:NoSchedule,alethia.io/arch=arm64:NoSchedule"
+          extraConfig = {
+            registerWithTaints = [
+              { key = "dedicated", value = "db", effect = "NoSchedule" },
+              { key = "alethia.io/arch", value = "arm64", effect = "NoSchedule" },
+            ]
           }
         }
       }
@@ -298,7 +337,7 @@ run "hetzner_builds_an_amd64_and_an_arm64_pool" {
   }
 }
 
-# A pool with no taints and an amd64 type gets no register-with-taints flag at all.
+# A pool with no taints and an amd64 type gets no registerWithTaints at all.
 run "hetzner_untainted_amd64_pool_registers_no_taints" {
   command = plan
 
@@ -314,8 +353,8 @@ run "hetzner_untainted_amd64_pool_registers_no_taints" {
   }
 
   assert {
-    condition     = !strcontains(data.talos_machine_configuration.node_pool["web"].config_patches[2], "register-with-taints")
-    error_message = "An untainted amd64 pool must not set --register-with-taints."
+    condition     = !strcontains(data.talos_machine_configuration.node_pool["web"].config_patches[2], "registerWithTaints") && !strcontains(data.talos_machine_configuration.node_pool["web"].config_patches[2], "extraConfig")
+    error_message = "An untainted amd64 pool must not set registerWithTaints."
   }
 
   assert {
@@ -418,7 +457,7 @@ run "hetzner_refuses_cpx_as_arm64" {
 
 # On a /22, the pod and service CIDRs take every /24 after the node subnet, so a pool has nowhere to
 # go: refused at plan with a sentence, not by the hcloud API.
-run "hetzner_refuses_a_pool_subnet_that_overlaps_the_service_cidr" {
+run "hetzner_refuses_a_pool_when_the_network_has_no_free_subnet" {
   command = plan
 
   variables {
@@ -434,4 +473,150 @@ run "hetzner_refuses_a_pool_subnet_that_overlaps_the_service_cidr" {
   }
 
   expect_failures = [hcloud_network_subnet.node_pools]
+}
+
+# ── Subnet allocation: stable under add, remove and reorder (servers.tf, ADDRESSING). ─────────────
+#
+# A pool's /24 comes from its name, so these runs pin the literal /24s: on the default 10.0.0.0/16,
+# sha256 puts "a" on 81, "b" on 22 and "c" on 74, and "edge" and "search" both on 41.
+
+# A name collision is refused at plan, before any server is built.
+run "hetzner_refuses_two_pools_on_one_subnet" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "edge", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  expect_failures = [hcloud_network_subnet.node_pools]
+}
+
+# node_pool_subnet_index is the fix the refusal names: the same two pools plan once one is moved.
+run "hetzner_subnet_index_resolves_a_collision" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "edge", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+    node_pool_subnet_index = { search = 42 }
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["edge"].ip_range == "10.0.41.0/24" && hcloud_network_subnet.node_pools["search"].ip_range == "10.0.42.0/24"
+    error_message = "edge must keep its derived 10.0.41.0/24 and search take the 10.0.42.0/24 its node_pool_subnet_index names."
+  }
+}
+
+# An override onto another pool's /24 is refused the same way.
+run "hetzner_refuses_a_subnet_index_on_another_pools_subnet" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "a", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+    node_pool_subnet_index = { b = 81 }
+  }
+
+  expect_failures = [hcloud_network_subnet.node_pools]
+}
+
+# An override inside the pod CIDR (10.0.128.0/17 on the default network) is refused.
+run "hetzner_refuses_a_subnet_index_in_the_pod_cidr" {
+  command = plan
+
+  variables {
+    extra_node_pools       = [{ name = "a", instance_type = "cpx31", min_size = 1, max_size = 1 }]
+    node_pool_subnet_index = { a = 200 }
+  }
+
+  expect_failures = [hcloud_network_subnet.node_pools]
+}
+
+# An override for a pool that does not exist is refused, never silently ignored.
+run "hetzner_refuses_a_subnet_index_for_an_unknown_pool" {
+  command = plan
+
+  variables {
+    extra_node_pools       = [{ name = "a", instance_type = "cpx31", min_size = 1, max_size = 1 }]
+    node_pool_subnet_index = { typo = 5 }
+  }
+
+  expect_failures = [terraform_data.node_pool_subnets_guard]
+}
+
+# The reviewer's repro on #5582, as applies on mocks sharing one state: create [a, b], remove a,
+# then add c AT THE END. Under the old position-based rule c computed the /24 b still held and the
+# plan was refused; now each pool keeps the /24 its name gives it.
+run "hetzner_subnets_create_a_and_b" {
+  command = apply
+
+  variables {
+    extra_node_pools = [
+      { name = "a", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["a"].ip_range == "10.0.81.0/24" && hcloud_network_subnet.node_pools["b"].ip_range == "10.0.22.0/24"
+    error_message = "a must take 10.0.81.0/24 and b 10.0.22.0/24."
+  }
+}
+
+# A reorder changes nothing: every pool, subnet and server address is where it was.
+run "hetzner_subnets_reorder_changes_nothing" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "a", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition = (
+      hcloud_network_subnet.node_pools["a"].ip_range == "10.0.81.0/24" && hcloud_network_subnet.node_pools["b"].ip_range == "10.0.22.0/24" &&
+      one(hcloud_server.node_pools["a-0"].network).ip == "10.0.81.101" && one(hcloud_server.node_pools["b-0"].network).ip == "10.0.22.101"
+    )
+    error_message = "Reordering extra_node_pools must not move any pool's subnet or server address."
+  }
+}
+
+run "hetzner_subnets_remove_a" {
+  command = apply
+
+  variables {
+    extra_node_pools = [
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition     = keys(hcloud_network_subnet.node_pools) == ["b"] && hcloud_network_subnet.node_pools["b"].ip_range == "10.0.22.0/24"
+    error_message = "Removing a must leave b on 10.0.22.0/24."
+  }
+}
+
+run "hetzner_subnets_add_c_at_the_end" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "c", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["b"].ip_range == "10.0.22.0/24" && hcloud_network_subnet.node_pools["c"].ip_range == "10.0.74.0/24"
+    error_message = "Adding c after removing a must plan cleanly: b stays on 10.0.22.0/24 and c takes 10.0.74.0/24."
+  }
 }

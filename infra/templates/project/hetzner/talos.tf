@@ -92,15 +92,17 @@ locals {
   worker_base_patches   = [yamlencode(local.common_machine_patch), yamlencode(local.cluster_patch)]
 
   # ── Node labels and taints (#5536, contract #5533), mapped from local.nodepool_contract_render
-  #    (nodepool_contract_render.tf) into Talos's spelling.
+  #    (the contract's render, at the bottom of THIS file; it must stay in talos.tf, see there) into
+  #    Talos's spelling.
   #
   # LABELS go in machine.nodeLabels (Talos v1.13.6 config schema: map[string]string). Talos's
   # NodeApplyController keeps them reconciled on the Node object with the kubelet's own credentials,
   # so a changed label reaches running nodes on the next apply. NodeRestriction lets a kubelet set
   # any label outside kubernetes.io / k8s.io, and the contract refuses those domains anyway.
   #
-  # TAINTS go in the kubelet's --register-with-taints (machine.kubelet.extraArgs), NOT in
-  # machine.nodeTaints, for two reasons read from the pinned sources:
+  # TAINTS go in the kubelet's registerWithTaints (KubeletConfiguration, set through
+  # machine.kubelet.extraConfig), NOT in machine.nodeTaints, for two reasons read from the pinned
+  # sources:
   #   1. machine.nodeTaints is applied by the same controller with the KUBELET's credentials, and
   #      the NodeRestriction admission plugin (which Talos always enables on kube-apiserver) refuses
   #      a node that modifies its own taints: "node %q is not allowed to modify taints"
@@ -108,6 +110,13 @@ locals {
   #      schema notes this for worker nodes. A taint at REGISTRATION (Create) is allowed.
   #   2. machine.nodeTaints is a map keyed by taint key (one NodeTaintSpec per key), so the
   #      contract's gpu=true:NoSchedule + gpu=true:NoExecute could not both be expressed.
+  # registerWithTaints rather than the --register-with-taints flag: the flag is deprecated on the
+  # kubelet side (Talos v1.13.6 kubelet_spec.go says so where it checks for it). The config field is
+  # the same registration-only mechanism: k8s.io/kubelet v0.36.2 (Talos v1.13.6's pin)
+  # config/v1beta1 KubeletConfiguration.RegisterWithTaints []v1.Taint, "upon the initial
+  # registration of the node". Talos merges extraConfig into the KubeletConfiguration it writes
+  # (prepareExtraConfig), and registerWithTaints is not one of its ProtectedConfigurationFields
+  # (pkg/machinery/kubelet/kubelet.go@v1.13.6).
   # The consequence, stated in the docs: a taint is set when a node registers. Changing a pool's
   # taints reaches the servers created after the change, not the nodes already registered.
   #
@@ -123,21 +132,26 @@ locals {
     for name, p in local.node_pools : name => yamlencode({
       machine = {
         nodeLabels = local.nodepool_contract_render[name].labels
-        kubelet = {
-          # Appended to the common patch's node subnet (Talos merges lists), so the kubelet picks
-          # its node IP from this pool's own /24 (servers.tf).
-          nodeIP = {
-            validSubnets = [hcloud_network_subnet.node_pools[name].ip_range]
-          }
-          extraArgs = {
-            for k, v in {
-              "register-with-taints" = join(",", [
+        # extraConfig only when the pool has a taint, so an untainted pool's patch carries no empty
+        # kubelet setting.
+        kubelet = merge(
+          {
+            # Appended to the common patch's node subnet (Talos merges lists), so the kubelet picks
+            # its node IP from this pool's own /24 (servers.tf).
+            nodeIP = {
+              validSubnets = [hcloud_network_subnet.node_pools[name].ip_range]
+            }
+          },
+          length(local.nodepool_contract_render[name].taints) == 0 ? {} : {
+            # A Taint's value is omitted when empty, as the API server would store it.
+            extraConfig = {
+              registerWithTaints = [
                 for t in local.nodepool_contract_render[name].taints :
-                t.value == "" ? "${t.key}:${t.effect}" : "${t.key}=${t.value}:${t.effect}"
-              ])
-            } : k => v if length(local.nodepool_contract_render[name].taints) > 0
-          }
-        }
+                t.value == "" ? { key = t.key, effect = t.effect } : { key = t.key, value = t.value, effect = t.effect }
+              ]
+            }
+          },
+        )
       }
     })
   }

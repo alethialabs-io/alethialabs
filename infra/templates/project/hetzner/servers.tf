@@ -100,16 +100,27 @@ resource "hcloud_server" "workers" {
 # SIZE: a FIXED group of desired_size servers, or min_size when desired_size is left out. Hetzner has
 # no autoscaler yet (#5538); max_size is validated but adds no servers today.
 #
-# ADDRESSING: each pool gets its own /24 on the cluster's network, the Nth /24 after the node subnet
-# for the Nth pool in the list, and its servers take .101 onwards in it (at most 100 per pool, so it
-# always fits). The pool's subnet is fixed at creation (ignore_changes below): reordering or removing
-# pools later does NOT move an existing pool to another subnet, which would re-address its nodes.
-# A new pool whose computed /24 is already held by an older pool is refused at plan
-# (terraform_data.node_pool_subnets_guard) rather than by the hcloud API at apply.
+# ADDRESSING: each pool gets its own /24 on the cluster's network, and its servers take .101 onwards
+# in it (at most 100 per pool, so it always fits). The /24 is chosen from the pool's NAME, never from
+# its position in extra_node_pools, so adding, removing or reordering pools never moves another pool:
+#
+#   free /24s  = the network's /24s numbered 1 .. min(count, 1024) - 1 (0 is the node subnet) that
+#                overlap neither the pod CIDR nor the service CIDR, in ascending order;
+#   pool's /24 = free[ parseint(first 8 hex digits of sha256(name), 16) mod length(free) ],
+#                or the /24 numbered node_pool_subnet_index[name] when that is set.
+#
+# Two names can land on the same /24. That is refused at plan, naming both pools, and the fix is to
+# set node_pool_subnet_index for the pool being added (setting it on a pool that already exists moves
+# that pool's subnet, which replaces its servers).
+#
+# There is deliberately NO ignore_changes on the subnet's ip_range: the address a pool computes is
+# stable on its own, so the plan shows exactly the /24 each pool will hold and the checks below read
+# that same value. A computed /24 changes only when node_pool_subnet_index, the network's range, or
+# the pod/service CIDRs change, and the plan then shows the subnet and its servers being replaced
+# rather than hiding it.
 locals {
   node_pools = {
-    for i, p in var.extra_node_pools : p.name => {
-      slot        = i + 1
+    for p in var.extra_node_pools : p.name => {
       count       = p.desired_size != null ? p.desired_size : p.min_size
       server_type = p.instance_type
       arch        = p.arch
@@ -117,11 +128,74 @@ locals {
     }
   }
 
-  # The /24 a pool would take if created now, or null when the network has no such /24.
-  node_pool_subnet_cidrs = {
-    for name, p in local.node_pools :
-    name => try(cidrsubnet(local.network_ip_range, 24 - tonumber(split("/", local.network_ip_range)[1]), p.slot), null)
+  # How many bits a /24 adds to the network's prefix, and the /24s a pool may take.
+  node_pool_subnet_newbits = max(0, 24 - tonumber(split("/", local.network_ip_range)[1]))
+  node_pool_free_slots = [
+    for n in range(1, min(pow(2, local.node_pool_subnet_newbits), 1024)) : n
+    if !local.node_pool_slot_overlaps_cluster_cidrs[n]
+  ]
+
+  # For each /24 number up to the cap: does it overlap the pod or the service CIDR? Same overlap test
+  # as checks.tf, at the coarser of the two prefixes. (An override is checked by node_pool_subnet_fits,
+  # which is not capped.)
+  node_pool_slot_overlaps_cluster_cidrs = {
+    for n in range(0, min(pow(2, local.node_pool_subnet_newbits), 1024)) : n => anytrue([
+      for other in [local.pod_cidr, local.service_cidr] :
+      cidrhost("${cidrhost(cidrsubnet(local.network_ip_range, local.node_pool_subnet_newbits, n), 0)}/${min(24, tonumber(split("/", other)[1]))}", 0)
+      ==
+      cidrhost("${cidrhost(other, 0)}/${min(24, tonumber(split("/", other)[1]))}", 0)
+    ])
   }
+
+  # Each pool's /24 number: its override, or the free /24 its name hashes to (null when the network
+  # has no free /24 at all; the precondition below says so).
+  node_pool_subnet_slot = {
+    for name, p in local.node_pools : name => (
+      contains(keys(var.node_pool_subnet_index), name) ? var.node_pool_subnet_index[name] : (
+        length(local.node_pool_free_slots) == 0 ? null :
+        local.node_pool_free_slots[parseint(substr(sha256(name), 0, 8), 16) % length(local.node_pool_free_slots)]
+      )
+    )
+  }
+
+  # The /24 each pool holds, or null when its number is outside the network.
+  node_pool_subnet_cidrs = {
+    for name, slot in local.node_pool_subnet_slot :
+    name => slot == null ? null : try(cidrsubnet(local.network_ip_range, local.node_pool_subnet_newbits, slot), null)
+  }
+
+  # For each pool, the other pools on the same /24 (empty when it has its own).
+  node_pool_subnet_clashes = {
+    for name, slot in local.node_pool_subnet_slot : name => [
+      for other, other_slot in local.node_pool_subnet_slot : other
+      if other != name && slot != null && other_slot == slot
+    ]
+  }
+
+  # Does each pool's /24 fit: inside the network, not the node subnet (number 0), and clear of the pod
+  # and service CIDRs, which Cilium routes natively over this same network? Same overlap test as
+  # checks.tf, at the coarser of the two prefixes. try(): a null or out-of-range number is a "no".
+  node_pool_subnet_fits = {
+    for name, cidr in local.node_pool_subnet_cidrs : name => try(local.node_pool_subnet_slot[name] >= 1 && alltrue([
+      for other in [local.pod_cidr, local.service_cidr] :
+      cidrhost("${cidrhost(cidr, 0)}/${min(24, tonumber(split("/", other)[1]))}", 0)
+      !=
+      cidrhost("${cidrhost(other, 0)}/${min(24, tonumber(split("/", other)[1]))}", 0)
+    ]), false)
+  }
+
+  # What the fit check says when it fails, per pool.
+  node_pool_subnet_misfit_message = {
+    for name, slot in local.node_pool_subnet_slot : name => try(
+      slot == null
+      ? "extra_node_pools pool \"${name}\" has no /24 to take: every /24 of the network (${local.network_ip_range}) after the node subnet overlaps the pod CIDR (${local.pod_cidr}) or the service CIDR (${local.service_cidr}). Use a larger network (a /16, the default, has 95 free /24s), or smaller pod and service CIDRs."
+      : "extra_node_pools pool \"${name}\" would take /24 number ${coalesce(slot, -1)} of the network (${local.network_ip_range})${contains(keys(var.node_pool_subnet_index), name) ? ", set by node_pool_subnet_index" : ""}, and that /24 is outside the network, is the node subnet (number 0), or overlaps the pod CIDR (${local.pod_cidr}) or the service CIDR (${local.service_cidr}). ${length(local.node_pool_free_slots) > 0 ? "The free /24 numbers lie between ${local.node_pool_free_slots[0]} and ${local.node_pool_free_slots[length(local.node_pool_free_slots) - 1]}; set node_pool_subnet_index for this pool to one that no other pool takes." : "The network has no free /24: use a larger network."}",
+      "extra_node_pools pool \"${name}\" has no /24 it can take in the network (${local.network_ip_range}).",
+    )
+  }
+
+  # The lowest free /24 no pool takes: the number the clash message suggests.
+  node_pool_spare_slot = try([for n in local.node_pool_free_slots : n if !contains(values(local.node_pool_subnet_slot), n)][0], null)
 
   node_pool_servers = merge({}, [
     for name, p in local.node_pools : {
@@ -139,35 +213,32 @@ resource "hcloud_network_subnet" "node_pools" {
   ip_range     = local.node_pool_subnet_cidrs[each.key]
 
   lifecycle {
-    # A subnet's range cannot change in place (it is a replacement, under live servers). Fixed at
-    # creation; see ADDRESSING above.
-    ignore_changes = [ip_range]
-
-    # The pool's /24 must exist in the network and stay clear of the pod and service CIDRs, which
-    # Cilium routes natively over this same network. Same overlap test as checks.tf.
+    # The pool's /24 must be inside the network, must not be the node subnet (number 0), and must stay
+    # clear of the pod and service CIDRs, which Cilium routes natively over this same network.
     precondition {
-      condition = local.node_pool_subnet_cidrs[each.key] != null && alltrue([
-        for other in [local.pod_cidr, local.service_cidr] : local.node_pool_subnet_cidrs[each.key] == null ? false : (
-          cidrhost("${cidrhost(local.node_pool_subnet_cidrs[each.key], 0)}/${min(24, tonumber(split("/", other)[1]))}", 0)
-          !=
-          cidrhost("${cidrhost(other, 0)}/${min(24, tonumber(split("/", other)[1]))}", 0)
-        )
-      ])
-      error_message = "extra_node_pools pool \"${each.key}\" needs /24 number ${each.value.slot} after the node subnet of the network (${local.network_ip_range}), and that /24 is outside the network or overlaps the pod CIDR (${local.pod_cidr}) or the service CIDR (${local.service_cidr}). Use a larger network (a /16 holds every pool), or fewer pools."
+      condition     = local.node_pool_subnet_fits[each.key]
+      error_message = local.node_pool_subnet_misfit_message[each.key]
+    }
+
+    # No two pools on one /24: the hcloud API would refuse the second subnet at apply, after other
+    # servers were built. Checked on the /24 each pool will hold (see ADDRESSING: no ignore_changes).
+    precondition {
+      condition     = length(local.node_pool_subnet_clashes[each.key]) == 0
+      error_message = "extra_node_pools pools ${jsonencode(sort(concat([each.key], local.node_pool_subnet_clashes[each.key])))} would all take /24 number ${coalesce(local.node_pool_subnet_slot[each.key], -1)} (${coalesce(local.node_pool_subnet_cidrs[each.key], "none")}) of the network. A pool's /24 is chosen from its name, and these names land on the same one. Set node_pool_subnet_index for the pool you are adding, to a free /24 number${local.node_pool_spare_slot == null ? "" : " such as ${local.node_pool_spare_slot}"} (for example node_pool_subnet_index = { ${each.key} = ${coalesce(local.node_pool_spare_slot, 1)} }), or rename it. Do not set it on a pool that already exists: that moves the pool's subnet and replaces its servers."
     }
   }
 }
 
-# Two pools on one /24 would be refused by the hcloud API at apply, after other servers were built.
-# It can only happen when a pool's subnet was fixed at creation (above) and the list was later
-# reordered or shortened so that a NEW pool computes the same /24.
+# node_pool_subnet_index may only name pools that exist: an entry for a pool that is not in
+# extra_node_pools (a typo, or a pool since removed) would otherwise be silently ignored. Nothing is
+# created; the resource exists only to carry the check, and only when node_pool_subnet_index is set.
 resource "terraform_data" "node_pool_subnets_guard" {
-  count = length(local.node_pools) > 0 ? 1 : 0
+  count = length(var.node_pool_subnet_index) > 0 ? 1 : 0
 
   lifecycle {
     precondition {
-      condition     = length(distinct([for s in hcloud_network_subnet.node_pools : s.ip_range])) == length(hcloud_network_subnet.node_pools)
-      error_message = "Two extra_node_pools would share one subnet: ${jsonencode({ for k, s in hcloud_network_subnet.node_pools : k => s.ip_range })}. An existing pool keeps the /24 it was created with, and a pool added since computes its /24 from its position in the list. Move the new pool to the end of extra_node_pools."
+      condition     = alltrue([for name in keys(var.node_pool_subnet_index) : contains(keys(local.node_pools), name)])
+      error_message = "node_pool_subnet_index names ${jsonencode(sort([for name in keys(var.node_pool_subnet_index) : name if !contains(keys(local.node_pools), name)]))}, which is not a pool in extra_node_pools ${jsonencode(sort(keys(local.node_pools)))}. Each key must be the name of an extra pool; remove the entry or fix the name."
     }
   }
 }

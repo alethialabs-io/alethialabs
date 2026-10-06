@@ -33,9 +33,9 @@
 			"dead": 0
 		},
 		"hetzner": {
-			"declared": 39,
-			"reachable": 29,
-			"settable": 7,
+			"declared": 40,
+			"reachable": 30,
+			"settable": 8,
 			"dead": 1
 		}
 	},
@@ -9542,6 +9542,26 @@
 			"description": "Labels on the nodes of every Alethia-managed pool, the default pool included. A pool's own labels win for the same key. At most 24. Keys whose prefix ends in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io are refused.",
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/hetzner/variables.tf:365",
+			"readBy": [
+				"hetzner"
+			],
+			"reportedByOutput": false,
+			"ceiling": false,
+			"reachable": true,
+			"ownedByProvider": false,
+			"typed": false,
+			"default": {}
+		},
+		{
+			"cloud": "hetzner",
+			"component": "cluster",
+			"name": "node_pool_subnet_index",
+			"kind": "map",
+			"typeExpr": "map(number)",
+			"required": false,
+			"description": "Hetzner only. For an extra pool, by name, the number of the /24 of the cluster network it takes (1 is the /24 after the node subnet). Leave empty: each pool's /24 is chosen from its name. Set it for a pool the plan reports on the same /24 as another.",
+			"sensitive": false,
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:535",
 			"readBy": [
 				"hetzner"
 			],

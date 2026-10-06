@@ -89,13 +89,64 @@ smaller, does not rename the servers of another pool.
   `desired_size` out. Hetzner has no autoscaler yet. It arrives in
   [#5538](https://github.com/alethialabs-io/alethialabs/issues/5538). Until then, `min_size` and
   `max_size` are checked but do not change the number of servers.
-- **Network.** Each pool has its own `/24` subnet on the cluster's private network. The first pool
-  in the list gets the second `/24` of the network, the next pool the third, and so on. A pool keeps
-  its subnet after it is created. To add a pool, add it at the **end** of the list. A pool
-  added in the middle can compute a subnet that an older pool already holds, and the plan refuses it.
+- **Network.** Each pool has its own `/24` subnet on the cluster's private network. Its servers
+  take the addresses from `.101` onward in that subnet. The template chooses the subnet from the
+  pool's **name**, not from its position in the list. So you can add, remove or reorder pools, and
+  no other pool changes its subnet. See [How a pool's subnet is chosen](#how-a-pools-subnet-is-chosen).
 - **Image.** The pool's servers boot the Talos image for the pool's `arch`.
 - **Isolation.** The pool's servers have the same firewall and the same private network as the
   default workers, and the same kind of public address: an IPv4 and an IPv6 address each.
+
+### How a pool's subnet is chosen
+
+The template numbers the `/24` subnets of the cluster network from `0`. Number `0` is the node
+subnet of the control plane and the default workers. A **free** `/24` is one with a number from `1`
+and that does not overlap the pod or the service range. On the default `10.0.0.0/16` network, the
+free numbers are `1` to `95`.
+
+A pool takes the free `/24` that its name hashes to. The same name always gets the same subnet on
+the same network, so the order of the list does not matter.
+
+Two names can hash to the same `/24`. The plan then refuses both pools and names them, for example:
+
+```text
+extra_node_pools pools ["edge","search"] would all take /24 number 41 (10.0.41.0/24) of the network.
+```
+
+To fix it, choose a free number for the pool you are adding, and set it in
+`node_pool_subnet_index`, which is a Hetzner-only key:
+
+```yaml
+provider_config:
+  extra_node_pools:
+    - name: edge
+      instance_type: cpx31
+      min_size: 1
+      max_size: 1
+    - name: search
+      instance_type: cpx31
+      min_size: 1
+      max_size: 1
+  node_pool_subnet_index:
+    search: 42
+```
+
+The error message suggests a free number. You can also rename the new pool.
+
+<Callout type="warn">
+  Set `node_pool_subnet_index` only for a pool that you are adding. If you set it for a pool that
+  already exists, its subnet moves, and its servers are replaced.
+</Callout>
+
+The plan also refuses these values:
+
+- a `node_pool_subnet_index` value that is `0`, outside the network, or in the pod or service range;
+- a `node_pool_subnet_index` key that is not the name of a pool in `extra_node_pools`.
+
+If you bring your own network (`provision_network: false`), the plan cannot see the subnets that
+are already on it. If a pool's `/24` is already a subnet of that network, Hetzner refuses it when
+the apply creates the pool's subnet. Set `node_pool_subnet_index` for that pool to a `/24` that the
+network does not use.
 
 ### How labels and taints reach a node
 
@@ -103,9 +154,9 @@ Labels are set in the Talos machine configuration (`machine.nodeLabels`). Talos 
 node, so a label that you change reaches the running nodes on the next apply. `node_labels` reach
 the default workers and every pool. They do not reach the control plane.
 
-Taints are set when a node registers with the cluster, through the kubelet's
-`--register-with-taints` flag. Kubernetes does not let a node change its own taints after it
-registers, so Talos cannot keep them up to date the way it keeps labels.
+Taints are set when a node registers with the cluster, through the kubelet's `registerWithTaints`
+setting (`machine.kubelet.extraConfig` in Talos). Kubernetes does not let a node change its own
+taints after it registers, so Talos cannot keep them up to date the way it keeps labels.
 
 <Callout type="warn">
   A change to a pool's taints, or to `node_taints`, reaches only the servers that join the cluster
@@ -126,4 +177,12 @@ The Hetzner plan refuses these values, in addition to the rules that every cloud
 - **An architecture that does not match the server type.** A `cax` pool must set `arch: arm64`.
   A `cx`, `cpx` or `ccx` pool must leave `arch` out or set it to `amd64`.
 - **A network too small for the pools.** A pool's `/24` must be inside the network and must not
-  overlap the pod or service ranges. A `/16` network, the default, has room for all ten pools.
+  overlap the pod or service ranges. A `/16` network, the default, has 95 free `/24` subnets.
+- **Two pools on one subnet.** See [How a pool's subnet is chosen](#how-a-pools-subnet-is-chosen).
+
+## When you set none of these keys
+
+If you leave `node_labels`, `node_taints` and `extra_node_pools` unset, the plan creates identical
+resources to the template before these keys existed. It adds one output, `nodepool_contract_render`,
+which lists the labels and taints of each pool. So the first plan after an upgrade shows that output
+as a change, and no resource changes.

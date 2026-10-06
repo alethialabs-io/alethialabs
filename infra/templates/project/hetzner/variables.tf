@@ -526,3 +526,20 @@ variable "extra_node_pools" {
     error_message = "extra_node_pools arch must match instance_type on Hetzner: cax* server types are arm64 (set arch = \"arm64\"), and cx*, cpx* and ccx* are amd64 (leave arch out, or set \"amd64\")."
   }
 }
+
+# Hetzner only (#5536): which /24 of the cluster network an extra pool takes. Normally left empty —
+# a pool's /24 is derived from its NAME (servers.tf, ADDRESSING), so adding, removing or reordering
+# pools never moves another pool. Set an entry only when the plan refuses two pools on one /24, and
+# set it for the pool being ADDED: changing it for a pool that exists moves its subnet and replaces
+# its servers. A key that names no pool in extra_node_pools is refused (servers.tf), never ignored.
+variable "node_pool_subnet_index" {
+  type        = map(number)
+  default     = {}
+  nullable    = false
+  description = "Hetzner only. For an extra pool, by name, the number of the /24 of the cluster network it takes (1 is the /24 after the node subnet). Leave empty: each pool's /24 is chosen from its name. Set it for a pool the plan reports on the same /24 as another."
+
+  validation {
+    condition     = alltrue([for name, n in var.node_pool_subnet_index : floor(n) == n && n >= 1])
+    error_message = "node_pool_subnet_index values must be whole numbers of 1 or more: the number of a /24 of the cluster network after the node subnet (number 0)."
+  }
+}
