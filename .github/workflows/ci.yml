@@ -904,6 +904,13 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # Go is here for ONE step: check-go-arch-filenames.mjs --self-test cross-checks its hard-coded
+      # GOOS/GOARCH lists against the toolchain's internal/syslist, and FAILS under CI without a `go`
+      # (#5593) — a skip there would be a permanent silent green. No module cache: nothing is built.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache: false
       - id: setup
         run: pnpm install --frozen-lockfile
       - name: Open-core boundary (core must not import ee/)

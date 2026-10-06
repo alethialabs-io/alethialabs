@@ -19,8 +19,9 @@
 // no longer carries a platform suffix, is stale and fails too — otherwise it would outlive its
 // subject forever and excuse whatever is later written at that path.
 //
-// The rule is go/build's, transcribed: strip `.go`, then a trailing `_test`; split what follows the
-// FIRST `_` on `_`; the name is constrained if the last two parts are a known GOOS then a known
+// The rule is go/build's goodOSArchFile, transcribed: cut the name at its FIRST `.` (so
+// `foo_linux.pb.go` and `foo_windows.gen_test.go` are read as `foo_linux` and `foo_windows` — the
+// shape generated files take), drop a trailing `_test` part, split what follows the FIRST `_` on `_`; the name is constrained if the last two parts are a known GOOS then a known
 // GOARCH, or the last part is either. A file with no `_` at all (`linux.go`) is NOT constrained.
 //
 //   node scripts/check-go-arch-filenames.mjs                 # the repo
@@ -57,11 +58,13 @@ const ALLOWLIST = "scripts/check-go-arch-filenames.allowlist";
 
 /**
  * The platform tokens a Go file name implies, per go/build's goodOSArchFile, or [] for none.
- * `foo_linux_arm64_test.go` → ["linux", "arm64"]; `foo_arm64.go` → ["arm64"]; `linux.go` → [].
+ * `foo_linux_arm64_test.go` → ["linux", "arm64"]; `foo_arm64.go` → ["arm64"]; `foo_linux.pb.go` →
+ * ["linux"]; `linux.go` → [].
  */
 export function impliedConstraint(basename) {
 	if (!basename.endsWith(".go")) return [];
-	let name = basename.slice(0, -".go".length);
+	// go/build: `name, _, _ = strings.Cut(name, ".")` — everything from the FIRST dot goes.
+	let name = basename.split(".")[0];
 	const i = name.indexOf("_");
 	if (i < 0) return [];
 	name = name.slice(i);
@@ -121,18 +124,123 @@ export function parseAllowlist(text) {
 	return { entries, errors };
 }
 
-/** True when the file's `//go:build` line names every token its filename implies. */
-function statesConstraint(absFile, tokens) {
+/** GOOS values that also satisfy `unix`, and the extra GOOS tag each port implies (go/build matchTag). */
+const UNIX_OS = new Set([
+	"aix", "android", "darwin", "dragonfly", "freebsd", "hurd", "illumos", "ios", "linux", "netbsd",
+	"openbsd", "solaris",
+]);
+const IMPLIED_OS = new Map([["android", "linux"], ["ios", "darwin"], ["illumos", "solaris"]]);
+
+/**
+ * Parse a `//go:build` expression (idents, `!`, `&&`, `||`, parens) into an evaluator over a tag
+ * lookup, plus the identifiers it mentions. Returns null when the expression does not parse.
+ */
+export function parseBuildExpr(expr) {
+	const toks = expr.match(/&&|\|\||[!()]|[A-Za-z0-9_.]+|\S/g) ?? [];
+	let i = 0;
+	const idents = new Set();
+	/** or := and ('||' and)* */
+	const or = () => {
+		let l = and();
+		while (l && toks[i] === "||") {
+			i++;
+			const a = l;
+			const b = and();
+			if (!b) return null;
+			l = (t) => a(t) || b(t);
+		}
+		return l;
+	};
+	/** and := not ('&&' not)* */
+	const and = () => {
+		let l = not();
+		while (l && toks[i] === "&&") {
+			i++;
+			const a = l;
+			const b = not();
+			if (!b) return null;
+			l = (t) => a(t) && b(t);
+		}
+		return l;
+	};
+	/** not := '!' not | '(' or ')' | ident */
+	const not = () => {
+		const tok = toks[i];
+		if (tok === "!") {
+			i++;
+			const x = not();
+			return x ? (t) => !x(t) : null;
+		}
+		if (tok === "(") {
+			i++;
+			const x = or();
+			if (!x || toks[i] !== ")") return null;
+			i++;
+			return x;
+		}
+		if (tok && /^[A-Za-z0-9_.]+$/.test(tok)) {
+			i++;
+			idents.add(tok);
+			return (t) => t(tok);
+		}
+		return null;
+	};
+	const fn = or();
+	if (!fn || i !== toks.length) return null;
+	return { fn, idents };
+}
+
+/**
+ * True when the build expression can be satisfied on a platform the filename suffix allows: the
+ * suffix fixes GOOS and/or GOARCH (and with them `unix` and the implied OS tags); every other tag is
+ * free and is searched exhaustively. `foo_linux.go` + `//go:build !linux` can never compile → false.
+ */
+export function satisfiableUnderSuffix(parsed, tokens) {
+	const fixedOS = tokens.find((t) => KNOWN_OS.has(t));
+	const fixedArch = tokens.find((t) => KNOWN_ARCH.has(t));
+	/** The value a fixed tag must take, or undefined when the tag is free. */
+	const fixed = (tag) => {
+		if (fixedOS !== undefined) {
+			if (tag === "unix") return UNIX_OS.has(fixedOS);
+			if (KNOWN_OS.has(tag)) return tag === fixedOS || IMPLIED_OS.get(fixedOS) === tag;
+		}
+		if (fixedArch !== undefined && KNOWN_ARCH.has(tag)) return tag === fixedArch;
+		return undefined;
+	};
+	const free = [...parsed.idents].filter((t) => fixed(t) === undefined);
+	if (free.length > 16) return true; // too many to enumerate; the token check above still applies
+	for (let mask = 0; mask < 1 << free.length; mask++) {
+		const lookup = (tag) => {
+			const f = fixed(tag);
+			return f !== undefined ? f : (mask & (1 << free.indexOf(tag))) !== 0;
+		};
+		if (parsed.fn(lookup)) return true;
+	}
+	return false;
+}
+
+/**
+ * Why an allowlisted file's `//go:build` line does not state the constraint its filename implies,
+ * or "" when it does: the line must exist, parse, name every suffix token, and be satisfiable on
+ * the platform the suffix selects.
+ */
+function buildLineProblem(absFile, tokens) {
 	let src;
 	try {
 		src = fs.readFileSync(absFile, "utf8");
 	} catch {
-		return false;
+		return "could not be read";
 	}
 	const build = src.split("\n").find((l) => /^\/\/go:build\s/.test(l));
-	if (!build) return false;
-	const words = new Set(build.slice("//go:build".length).split(/[^A-Za-z0-9_]+/));
-	return tokens.every((t) => words.has(t));
+	if (!build) return `has no //go:build line naming ${tokens.join(" and ")} — state the constraint the filename implies`;
+	const parsed = parseBuildExpr(build.slice("//go:build".length).trim());
+	if (!parsed) return `its //go:build line does not parse: "${build}"`;
+	const missing = tokens.filter((t) => !parsed.idents.has(t));
+	if (missing.length > 0) return `its //go:build line does not name ${missing.join(" and ")} — state the constraint the filename implies`;
+	if (!satisfiableUnderSuffix(parsed, tokens)) {
+		return `its //go:build line ("${build}") contradicts the ${tokens.join("/")} filename suffix — the file can never compile`;
+	}
+	return "";
 }
 
 /** Run the check over a tree. Returns the list of problems (empty = pass). */
@@ -166,10 +274,9 @@ export function check(root) {
 				`${f}: the "${suffix}" suffix is an implicit build constraint — this file only compiles on ` +
 					`${tokens.join("/")}. Rename it, or (if it is genuinely platform-specific) list it in ${ALLOWLIST} with a reason.`,
 			);
-		} else if (!statesConstraint(path.join(root, f), tokens)) {
-			problems.push(
-				`${f}: allowlisted, but has no //go:build line naming ${tokens.join(" and ")} — state the constraint the filename implies.`,
-			);
+		} else {
+			const why = buildLineProblem(path.join(root, f), tokens);
+			if (why) problems.push(`${f}: allowlisted, but ${why}.`);
 		}
 	}
 	for (const f of entries.keys()) {
@@ -232,6 +339,10 @@ function selfTest() {
 		["planted foo_linux_amd64.go fails", { ...base, "apps/cli/x/foo_linux_amd64.go": pkg }, "nonzero"],
 		["planted foo_zos.go fails (known OS with no port)", { ...base, "test/e2e/foo_zos.go": pkg }, "nonzero"],
 		["planted under ee/ fails", { ...base, "ee/x/foo_windows.go": pkg }, "nonzero"],
+		["planted foo_amd64.gen.go fails (Go cuts at the FIRST dot)", { ...base, "packages/core/foo/foo_amd64.gen.go": pkg }, "nonzero"],
+		["planted foo_linux.pb.go fails", { ...base, "packages/core/foo/foo_linux.pb.go": pkg }, "nonzero"],
+		["planted foo_windows.gen_test.go fails", { ...base, "packages/core/foo/foo_windows.gen_test.go": pkg }, "nonzero"],
+		["foo.linux_amd64.go passes (suffix is past the first dot)", { ...base, "packages/core/foo/foo.linux_amd64.go": pkg }, 0],
 		["linux.go (no underscore) passes", { ...base, "packages/core/foo/linux.go": pkg }, 0],
 		["foo_unix.go passes (unix is a tag, not a filename GOOS)", { ...base, "packages/core/foo/foo_unix.go": pkg }, 0],
 		["karpenter_graviton_test.go passes", { ...base, "packages/core/foo/karpenter_graviton_test.go": pkg }, 0],
@@ -244,6 +355,26 @@ function selfTest() {
 			"allowlisted but no //go:build fails",
 			{ ...base, "packages/core/foo/foo_linux.go": pkg, [ALLOWLIST]: "packages/core/foo/foo_linux.go uses linux-only syscalls\n" },
 			"nonzero",
+		],
+		[
+			"allowlisted foo_linux.go with //go:build !linux fails (can never compile)",
+			{ ...base, "packages/core/foo/foo_linux.go": "//go:build !linux\n\npackage foo\n", [ALLOWLIST]: "packages/core/foo/foo_linux.go uses linux-only syscalls\n" },
+			"nonzero",
+		],
+		[
+			"allowlisted foo_linux.go with //go:build linux && windows fails",
+			{ ...base, "packages/core/foo/foo_linux.go": "//go:build linux && windows\n\npackage foo\n", [ALLOWLIST]: "packages/core/foo/foo_linux.go uses linux-only syscalls\n" },
+			"nonzero",
+		],
+		[
+			"allowlisted foo_linux.go with //go:build linux && e2e passes",
+			{ ...base, "packages/core/foo/foo_linux.go": "//go:build linux && e2e\n\npackage foo\n", [ALLOWLIST]: "packages/core/foo/foo_linux.go uses linux-only syscalls\n" },
+			0,
+		],
+		[
+			"allowlisted foo_windows.go with //go:build windows || !unix passes",
+			{ ...base, "packages/core/foo/foo_windows.go": "//go:build windows || !unix\n\npackage foo\n", [ALLOWLIST]: "packages/core/foo/foo_windows.go LockFileEx only exists on windows\n" },
+			0,
 		],
 		["allowlist entry with no reason fails", { ...base, "packages/core/foo/foo_linux.go": linuxBuild, [ALLOWLIST]: "packages/core/foo/foo_linux.go\n" }, "nonzero"],
 		["stale entry (file gone) fails", { ...base, [ALLOWLIST]: "packages/core/foo/gone_linux.go a reason that is long enough\n" }, "nonzero"],
@@ -283,9 +414,16 @@ function selfTest() {
 				console.log(`${same ? "✓" : "✗"} hard-coded ${label} equals ${syslist}${same ? "" : ` (toolchain has: ${names.join(" ")})`}`);
 				if (!same) fails++;
 			}
+		} else {
+			console.log(`✗ ${syslist} not found — cannot cross-check the hard-coded lists against go/build's`);
+			fails++;
 		}
+	} else if (process.env.CI) {
+		// In CI a skip would be a permanent silent green; the guards job installs Go for this.
+		console.log("✗ no `go` on PATH in CI — the GOOS/GOARCH lists were NOT cross-checked");
+		fails++;
 	} else {
-		console.log("· no `go` on PATH — skipped the toolchain cross-checks");
+		console.log("· no `go` on PATH — skipped the toolchain cross-checks (this FAILS when CI is set)");
 	}
 
 	if (fails > 0) {
@@ -295,5 +433,7 @@ function selfTest() {
 	console.log("\nself-test: all passed");
 }
 
-if (process.argv.includes("--self-test")) selfTest();
-else main();
+// Only when run as a script: importing this module (for impliedConstraint & co.) must not run it.
+const isEntry = process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isEntry && process.argv.includes("--self-test")) selfTest();
+else if (isEntry) main();
