@@ -4,10 +4,13 @@
 import { z } from "zod";
 import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
 import {
+	ComponentWriteRefusedError,
 	componentIdentityAllowed,
+	componentWriteRefusedBody,
 	deleteProjectComponent,
 	getKindDef,
 	isSingletonKind,
+	parseIfMatch,
 	updateProjectComponent,
 	validateComponentFields,
 } from "@/lib/cli/project-components";
@@ -18,6 +21,7 @@ import {
 import { NextResponse } from "next/server";
 import { cliEnvironmentError, cliJson } from "@/lib/cli/respond";
 import {
+	cliComponentConflictResponse,
 	cliComponentResponse,
 	cliOkResponse,
 } from "@/lib/validations/cli-contract";
@@ -31,7 +35,11 @@ const updateComponentBody = z
 /** Updates the settable fields of a named (multi) component in one environment — what `alethia
  * apply` calls for a component whose declared fields differ from the server's. Same authorization,
  * org binding and environment resolution as POST .../components/:kind, and the same field
- * validation, so "settable" means one thing for both writes. Only the fields sent are changed. */
+ * validation, so "settable" means one thing for both writes. Only the fields sent are changed.
+ *
+ * Two refusals, both 409 (#5551): the component is mid-run (CREATING, UPDATING, DESTROYING), or the
+ * request sent `If-Match: <revision>` — the `updated_at` the caller read — and the row is no longer
+ * at it. Without `If-Match` the write is unconditional, as it always was. */
 export async function PATCH(
 	req: Request,
 	{ params }: { params: Promise<{ id: string; kind: string; name: string }> },
@@ -72,6 +80,10 @@ export async function PATCH(
 	if (!validated.ok) {
 		return NextResponse.json({ error: validated.error }, { status: 400 });
 	}
+	const precondition = parseIfMatch(req.headers.get("if-match"));
+	if (!precondition.ok) {
+		return NextResponse.json({ error: precondition.error }, { status: 400 });
+	}
 
 	try {
 		// The org binding: a project is resolved only inside the caller's org, so a project id from
@@ -102,12 +114,16 @@ export async function PATCH(
 			target.id,
 			name,
 			validated.values,
+			{ ifMatch: precondition.ifMatch },
 		);
 		if (!component) {
 			return NextResponse.json({ error: "Component not found" }, { status: 404 });
 		}
 		return cliJson(cliComponentResponse, { component });
 	} catch (err: unknown) {
+		if (err instanceof ComponentWriteRefusedError) {
+			return cliJson(cliComponentConflictResponse, componentWriteRefusedBody(err), { status: 409 });
+		}
 		// A constraint the column itself enforces (NOT NULL, CHECK, FK) is the caller's value, not a
 		// server fault — the same mapping POST makes.
 		if (typeof err === "object" && err !== null && "code" in err) {

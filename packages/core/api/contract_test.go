@@ -418,6 +418,13 @@ func TestContract_Component(t *testing.T) {
 	assertNoExtraStructKeys(t, "component.json", resp)
 }
 
+// TestContract_ComponentConflict pins the 409 body of a refused component write (#5551).
+func TestContract_ComponentConflict(t *testing.T) {
+	var resp ComponentConflict
+	strictDecode(t, "component_conflict.json", &resp)
+	assertNoExtraStructKeys(t, "component_conflict.json", resp)
+}
+
 func TestContract_SigningKeys(t *testing.T) {
 	var resp SigningKeysResponse
 	strictDecode(t, "signing_keys.json", &resp)

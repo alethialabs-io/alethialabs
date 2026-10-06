@@ -11,7 +11,7 @@
 
 import { createHash } from "node:crypto";
 import { createInsertSchema } from "drizzle-zod";
-import { and, eq, getTableColumns } from "drizzle-orm";
+import { and, eq, getTableColumns, notInArray, sql } from "drizzle-orm";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { z } from "zod";
@@ -79,6 +79,8 @@ export interface ComponentWire {
 	status: string;
 	cloud_identity_id: string | null;
 	config: Record<string, unknown>;
+	/** The row's revision, `updated_at` as ISO-8601 — what `If-Match` is compared with (#5551). */
+	updated_at: string | null;
 }
 
 /** One supported component kind. `fields` is the drizzle-zod insert schema narrowed to the
@@ -555,7 +557,142 @@ export function rowToComponentWire(kind: string, row: unknown): ComponentWire {
 		status,
 		cloud_identity_id: cloud,
 		config,
+		updated_at: componentRevision(rec),
 	};
+}
+
+/** A row's revision: its `updated_at` as ISO-8601 at millisecond precision, or null when the row
+ * has none. Millisecond, because that is what the driver hands back (a JS `Date`), and the write
+ * guard below compares against the column truncated to the same precision. */
+export function componentRevision(row: unknown): string | null {
+	const value = asRecord(row).updated_at;
+	const at = value instanceof Date ? value : typeof value === "string" ? new Date(value) : null;
+	return at && !Number.isNaN(at.getTime()) ? at.toISOString() : null;
+}
+
+/**
+ * The component statuses a write is refused in (#5551): a deploy is creating or changing the row's
+ * resources (`CREATING`, `UPDATING`), or a destroy is removing them (`DESTROYING`). A change landing
+ * mid-run is read by nothing that is running, and is then overwritten by the run's own write-back or
+ * left on a row whose resources are gone. `PENDING`, `ACTIVE`, `FAILED` and `DESTROYED` are at rest.
+ */
+export const BUSY_COMPONENT_STATUSES: readonly string[] = ["CREATING", "UPDATING", "DESTROYING"];
+
+/** What a write to an EXISTING component is conditioned on, beyond the status gate every such write
+ * gets. `ifMatch` is the revision the caller read ({@link componentRevision}); null writes
+ * unconditionally, which is what every caller that sends no `If-Match` gets. */
+export interface ComponentWriteGuard {
+	ifMatch: string | null;
+}
+
+/** The unconditional guard: the status gate only. */
+const NO_PRECONDITION: ComponentWriteGuard = { ifMatch: null };
+
+/** Why a guarded write was refused: the component is mid-run, or it is not the copy the caller read
+ * (`component` is the server's copy now, null when it no longer exists). */
+export type ComponentWriteRefusal =
+	| { reason: "busy"; status: string; component: ComponentWire }
+	| { reason: "changed"; component: ComponentWire | null };
+
+/** Thrown by a guarded write the server refused — the routes answer it with a 409. Thrown rather
+ * than returned so a refusal inside a transaction rolls it back. */
+export class ComponentWriteRefusedError extends Error {
+	readonly refusal: ComponentWriteRefusal;
+
+	/** Builds the refusal with the sentence the 409 carries. */
+	constructor(refusal: ComponentWriteRefusal) {
+		super(refusalMessage(refusal));
+		this.name = "ComponentWriteRefusedError";
+		this.refusal = refusal;
+	}
+}
+
+/** The 409 body a refused write answers with — `cliComponentConflictResponse` on the wire. The code
+ * says which refusal, so a client can tell "wait for the run" from "re-read and retry" without
+ * matching on the sentence. */
+export function componentWriteRefusedBody(err: ComponentWriteRefusedError): {
+	error: string;
+	code: "component_busy" | "component_changed";
+	status: string | null;
+	component: ComponentWire | null;
+} {
+	const r = err.refusal;
+	return r.reason === "busy"
+		? { error: err.message, code: "component_busy", status: r.status, component: r.component }
+		: {
+				error: err.message,
+				code: "component_changed",
+				status: r.component?.status ?? null,
+				component: r.component,
+			};
+}
+
+/** The sentence a refusal is reported with — what to do next, not only what happened. */
+function refusalMessage(r: ComponentWriteRefusal): string {
+	if (r.reason === "busy") {
+		const label = componentWireLabel(r.component);
+		const doing = r.status === "DESTROYING" ? "being destroyed" : "being provisioned";
+		return `${label} is ${r.status}: a component cannot be changed while it is ${doing}. Wait for the run to finish, then try again.`;
+	}
+	if (!r.component) {
+		return "The component no longer exists: it was removed or replaced on the server since it was read. Read it again and retry.";
+	}
+	return `${componentWireLabel(r.component)} changed on the server since it was read (now at revision ${r.component.updated_at ?? "unknown"}). Read it again and retry.`;
+}
+
+/** `kind` for a singleton (its wire name is the kind) and `kind/name` for a named component. */
+function componentWireLabel(c: ComponentWire): string {
+	return c.name === c.kind ? c.kind : `${c.kind}/${c.name}`;
+}
+
+/**
+ * Parses an `If-Match` header into a revision. Absent, empty or `*` is no precondition; a `W/` weak
+ * prefix and the entity-tag quotes are accepted, since a client may send the revision either way.
+ * Anything that is not a timestamp is refused rather than ignored: a precondition the server cannot
+ * read must not quietly become an unconditional write.
+ */
+export function parseIfMatch(
+	header: string | null,
+): { ok: true; ifMatch: string | null } | { ok: false; error: string } {
+	const raw = (header ?? "").trim().replace(/^W\//, "").replace(/^"(.*)"$/, "$1").trim();
+	if (raw === "" || raw === "*") return { ok: true, ifMatch: null };
+	const at = new Date(raw);
+	if (Number.isNaN(at.getTime())) {
+		return {
+			ok: false,
+			error: `If-Match must be the component's revision (its updated_at, e.g. "2026-01-01T00:00:00.000Z"), got ${JSON.stringify(raw)}`,
+		};
+	}
+	return { ok: true, ifMatch: at.toISOString() };
+}
+
+/** The WHERE half of a guarded write: not mid-run, and — when the caller sent one — still at the
+ * revision it read. In the statement itself rather than a prior read, so the row the check passes on
+ * is the row the write changes: Postgres re-evaluates it on the locked row. */
+function writableWhere(cols: Record<string, AnyColumn>, guard: ComponentWriteGuard): SQL | undefined {
+	const conds: SQL[] = [];
+	if (cols.status) conds.push(notInArray(cols.status, [...BUSY_COMPONENT_STATUSES]));
+	if (guard.ifMatch !== null && cols.updated_at) {
+		conds.push(sql`date_trunc('milliseconds', ${cols.updated_at}) = ${guard.ifMatch}::timestamptz`);
+	}
+	return conds.length > 0 ? and(...conds) : undefined;
+}
+
+/** Why a guarded write matched no row: reads the row the write addressed and names the refusal, or
+ * returns null when there is no such row (the caller's 404). */
+async function refusalFor(
+	db: Db | Tx,
+	def: KindDef,
+	kind: string,
+	where: SQL | undefined,
+): Promise<ComponentWriteRefusedError | null> {
+	const [row] = await db.select().from(def.table).where(where).limit(1);
+	if (!row) return null;
+	const component = rowToComponentWire(kind, row);
+	if (BUSY_COMPONENT_STATUSES.includes(component.status)) {
+		return new ComponentWriteRefusedError({ reason: "busy", status: component.status, component });
+	}
+	return new ComponentWriteRefusedError({ reason: "changed", component });
 }
 
 /** Result of validating an add request's `fields`: the typed values, or an error message. */
@@ -940,20 +1077,26 @@ async function providerConfigToStore(
 /** Inserts a component of `kind` on a project, scoped to `environmentId`. Singletons upsert on the
  * composite `(project_id, environment_id)` — the table's actual unique; multi kinds require a name
  * and conflict (handled by the caller) on `(project_id, environment_id, name)`. Returns the
- * created/updated row's wire. */
+ * created/updated row's wire.
+ *
+ * A singleton that already exists is UPDATED, and that update is guarded like the PATCH's (#5551):
+ * refused while the row is mid-run, and — when `guard.ifMatch` is set — refused unless the row is
+ * still at that revision, in which case the row must exist (a precondition on a row that is gone is
+ * not met, so it is never re-created). A refusal throws {@link ComponentWriteRefusedError}. */
 export async function insertProjectComponent(
 	kind: string,
 	projectId: string,
 	environmentId: string,
 	name: string,
 	values: Record<string, unknown>,
+	guard: ComponentWriteGuard = NO_PRECONDITION,
 ): Promise<ComponentWire> {
 	const def = getKindDef(kind);
 	if (!def) throw new Error(`Unknown component kind "${kind}"`);
 	const db = getServiceDb();
 	// A write without provider_config reads nothing extra and stores exactly what it did before #5529.
 	if (values.provider_config === undefined) {
-		return insertComponentWith(db, def, kind, projectId, environmentId, name, values);
+		return insertComponentWith(db, def, kind, projectId, environmentId, name, values, guard);
 	}
 	// A provider_config patch is resolved against the cloud and MERGED into the row it amends — for a
 	// singleton the environment's existing row (add upserts), for a new multi row nothing — in ONE
@@ -963,10 +1106,16 @@ export async function insertProjectComponent(
 			? await readStoredProviderConfig(tx, def, projectId, environmentId, null)
 			: null;
 		const merged = await providerConfigToStore(tx, kind, projectId, values, stored);
-		return insertComponentWith(tx, def, kind, projectId, environmentId, name, {
-			...values,
-			provider_config: merged,
-		});
+		return insertComponentWith(
+			tx,
+			def,
+			kind,
+			projectId,
+			environmentId,
+			name,
+			{ ...values, provider_config: merged },
+			guard,
+		);
 	});
 }
 
@@ -979,6 +1128,7 @@ async function insertComponentWith(
 	environmentId: string,
 	name: string,
 	values: Record<string, unknown>,
+	guard: ComponentWriteGuard,
 ): Promise<ComponentWire> {
 	const cols = getTableColumns(def.table);
 
@@ -1047,18 +1197,35 @@ async function insertComponentWith(
 		// The conflict branch must carry the linkage too. `add` upserts, so the row a caller is
 		// amending is very often one written before this fix — repairing it on write is what makes
 		// the fix reach existing projects without a data migration.
+		//
+		// `updated_at` moves on the conflict arm, so the next `If-Match` against this row sees the change
+		// — before #5551 an upsert left it where the INSERT put it.
 		const updateValues = fabricLinked
-			? { ...values, fabric_id: insertValues.fabric_id ?? null }
-			: values;
-		const [row] = await db
-			.insert(def.table)
-			.values(insertValues)
-			.onConflictDoUpdate({
-				target: [cols.project_id, cols.environment_id],
-				set: updateValues,
-			})
-			.returning();
-		return rowToComponentWire(kind, row);
+			? { ...values, fabric_id: insertValues.fabric_id ?? null, updated_at: new Date() }
+			: { ...values, updated_at: new Date() };
+		const scope = componentScope(cols, projectId, environmentId);
+		const writable = writableWhere(cols, guard);
+		// A precondition names a row the caller READ, so it is an UPDATE of that row and never an
+		// insert: a singleton removed since the read is a refusal, not a fresh row carrying only the
+		// fields that changed.
+		const [row] = guard.ifMatch !== null
+			? await db.update(def.table).set(updateValues).where(and(scope, writable)).returning()
+			: await db
+					.insert(def.table)
+					.values(insertValues)
+					.onConflictDoUpdate({
+						target: [cols.project_id, cols.environment_id],
+						set: updateValues,
+						// The status gate on the conflict arm: an existing row mid-run is not updated, and
+						// RETURNING then yields nothing.
+						setWhere: writable,
+					})
+					.returning();
+		if (row) return rowToComponentWire(kind, row);
+		throw (
+			(await refusalFor(db, def, kind, scope)) ??
+			new ComponentWriteRefusedError({ reason: "changed", component: null })
+		);
 	}
 	const [row] = await db.insert(def.table).values(insertValues).returning();
 	return rowToComponentWire(kind, row);
@@ -1104,13 +1271,18 @@ export async function componentIdentityAllowed(
  * the same name is never touched.
  *
  * Singletons are refused rather than handled: they have no name to address and `add` upserts
- * them, so a second write path for them would only be a second set of rules. */
+ * them, so a second write path for them would only be a second set of rules.
+ *
+ * The write is guarded (#5551): a row mid-run is refused, and with `guard.ifMatch` a row no longer at
+ * that revision is refused — both as {@link ComponentWriteRefusedError}, in the UPDATE's own WHERE so
+ * nothing can land between the check and the write. */
 export async function updateProjectComponent(
 	kind: string,
 	projectId: string,
 	environmentId: string,
 	name: string,
 	values: Record<string, unknown>,
+	guard: ComponentWriteGuard = NO_PRECONDITION,
 ): Promise<ComponentWire | null> {
 	const def = getKindDef(kind);
 	if (!def) throw new Error(`Unknown component kind "${kind}"`);
@@ -1123,13 +1295,18 @@ export async function updateProjectComponent(
 	if (!nameCol) throw new Error(`${kind} has no name column`);
 	const db = getServiceDb();
 	/** The UPDATE itself, on the connection or transaction it is handed. */
+	const target = and(componentScope(cols, projectId, environmentId), eq(nameCol, name));
 	const write = async (q: Db | Tx, set: Record<string, unknown>) => {
 		const [row] = await q
 			.update(def.table)
 			.set({ ...set, updated_at: new Date() })
-			.where(and(componentScope(cols, projectId, environmentId), eq(nameCol, name)))
+			.where(and(target, writableWhere(cols, guard)))
 			.returning();
-		return row ? rowToComponentWire(kind, row) : null;
+		if (row) return rowToComponentWire(kind, row);
+		// Nothing matched: no such row (null, the 404), or a row the guard refused.
+		const refusal = await refusalFor(q, def, kind, target);
+		if (refusal) throw refusal;
+		return null;
 	};
 	if (values.provider_config === undefined) return write(db, values);
 	// provider_config merges per key into the stored object (#5529): read the row FOR UPDATE, merge,

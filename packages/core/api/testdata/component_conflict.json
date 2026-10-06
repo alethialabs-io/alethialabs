@@ -1,4 +1,7 @@
 {
+	"error": "string",
+	"code": "component_busy",
+	"status": "string",
 	"component": {
 		"id": "string",
 		"kind": "string",

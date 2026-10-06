@@ -465,6 +465,10 @@ export const componentWire = z.object({
 	status: z.string(),
 	cloud_identity_id: z.string().nullable(),
 	config: jsonObject,
+	/** The row's revision — its `updated_at` — or null when the table has none. `alethia plan` keeps
+	 *  the value it read and `alethia apply` sends it back as `If-Match`, so a write is refused (409)
+	 *  when the component changed on the server in between (#5551). */
+	updated_at: isoNullable,
 });
 
 /** Latest published CLI release (GET /api/releases/cli) — drives the update notice. */
@@ -705,6 +709,16 @@ export const cliComponentsResponse = z.object({
 });
 /** POST /api/cli/projects/:id/components/:kind result. */
 export const cliComponentResponse = z.object({ component: componentWire });
+/** The 409 body of a component write that was REFUSED rather than failed (#5551): `component_busy`
+ * — a deploy or a destroy is acting on it (`status`); `component_changed` — the `If-Match` revision
+ * is not the server's any more. `component` is the server's copy now (null when it no longer
+ * exists), so the CLI can name the fields that changed against the copy it read. */
+export const cliComponentConflictResponse = z.object({
+	error: z.string(),
+	code: z.enum(["component_busy", "component_changed"]),
+	status: z.string().nullable(),
+	component: componentWire.nullable(),
+});
 
 /** A single drifted resource (mirrors DriftDetail). */
 export const driftDetailWire = z.object({
@@ -1243,6 +1257,7 @@ export const cliContract = {
 	DestroyTreeResponse: cliDestroyTreeResponse,
 	ComponentsResponse: cliComponentsResponse,
 	ComponentResponse: cliComponentResponse,
+	ComponentConflictResponse: cliComponentConflictResponse,
 	DriftResponse: cliDriftResponse,
 	CostResponse: cliCostResponse,
 	ProtectionResponse: cliProtectionResponse,
