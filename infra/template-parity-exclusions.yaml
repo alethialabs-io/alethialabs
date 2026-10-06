@@ -844,8 +844,8 @@ baseline:
     state: unreviewed
     issue: "#2004"
   - variable: extra_node_pools
-    on: "azure"
-    off: "alibaba,aws,gcp,hetzner"
+    on: "aws,azure"
+    off: "alibaba,gcp,hetzner"
     state: unreviewed
     issue: "#5523"
   - variable: firestore_database_type
@@ -1092,13 +1092,13 @@ baseline:
     state: unreviewed
     issue: "#2004"
   - variable: node_labels
-    on: "azure"
-    off: "alibaba,aws,gcp,hetzner"
+    on: "aws,azure"
+    off: "alibaba,gcp,hetzner"
     state: unreviewed
     issue: "#5523"
   - variable: node_taints
-    on: "azure"
-    off: "alibaba,aws,gcp,hetzner"
+    on: "aws,azure"
+    off: "alibaba,gcp,hetzner"
     state: unreviewed
     issue: "#5523"
   - variable: oss_buckets
@@ -1724,3 +1724,5 @@ uniform:
     reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
   - variable: karpenter_node_taints
     reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_arm64_nodepool
+    reason: Adds the arm64 Karpenter NodePool beside the default one (#5534), which only the aws template installs (enable_karpenter). The other clouds put arm64 on an extra node pool through extra_node_pools.

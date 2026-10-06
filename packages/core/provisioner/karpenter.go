@@ -17,11 +17,22 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/nodekeys"
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 )
 
-// karpenterNodeClassName is the fixed name shared by the EC2NodeClass and the NodePool's
-// nodeClassRef. A single default node class/pool is all the platform provisions today.
+// karpenterNodeClassName is the fixed name shared by the EC2NodeClass, the default NodePool and
+// every NodePool's nodeClassRef. One EC2NodeClass serves both pools: its `al2023@latest` alias
+// resolves to the AMI of whichever architecture a NodePool launches.
 const karpenterNodeClassName = "default"
+
+// karpenterArm64NodePoolName names the arm64 (Graviton) NodePool beside the default one (#5534).
+const karpenterArm64NodePoolName = "arm64"
+
+// karpenterArm64Taint is the platform taint every arm64 NodePool carries (#5534). The images Alethia
+// builds (kaniko) and the Deployments it generates are single-arch and pin no arch, so arm64 capacity
+// must never take a pod that did not tolerate this taint. A user may not write an alethia.io key, so
+// validate() would refuse it: the renderer adds it AFTER validation, and only to the arm64 pool.
+var karpenterArm64Taint = karpenterTaint{Key: "alethia.io/arch", Value: "arm64", HasValue: true, Effect: "NoSchedule"}
 
 // kvPair is a sorted key/value tag entry — a map ranged in text/template iterates in
 // non-deterministic order, so tags are pre-sorted into a slice for a stable render (golden tests).
@@ -38,11 +49,35 @@ type karpenterNodeClassData struct {
 	SecurityGroupID string   // node_security_group selected by ID
 	Tags            []kvPair // karpenter_node_tags — classification + sweep-handle tags stamped on launched EC2/EBS
 	NodePool        karpenterNodePool
+	// Arm64 is the arm64 (Graviton) NodePool (#5534), or nil for none. Its platform taint is the
+	// renderer's to add, so a caller cannot leave it out.
+	Arm64 *karpenterNodePool
+}
+
+// karpenterManifestTemplate is the parsed manifest: the EC2NodeClass and one NodePool document per
+// pool. Parsed once, at init, so a template that does not parse fails every test rather than one
+// apply.
+var karpenterManifestTemplate = template.Must(template.New("karpenter-nodeclass").
+	Funcs(template.FuncMap{"quoteList": quoteList}).
+	Parse(karpenterNodeClassTemplate + karpenterNodePoolTemplate))
+
+// karpenterManifestData is what the manifest template executes over: the node class's facts and the
+// NodePool documents, default first.
+type karpenterManifestData struct {
+	karpenterNodeClassData
+	Docs []karpenterNodePoolDoc
+}
+
+// karpenterNodePoolDoc is the render context of one NodePool document.
+type karpenterNodePoolDoc struct {
+	Name      string
+	NodeClass string
+	Pool      karpenterNodePool
 }
 
 // CPULimit is the NodePool's limits.cpu as the decimal string the manifest quotes.
-func (d karpenterNodeClassData) CPULimit() string {
-	return strconv.Itoa(d.NodePool.CPULimit)
+func (d karpenterNodePoolDoc) CPULimit() string {
+	return strconv.Itoa(d.Pool.CPULimit)
 }
 
 // karpenterNodeClassTemplate renders a Karpenter v1 EC2NodeClass + NodePool. Both CRs use the
@@ -68,17 +103,22 @@ spec:
 {{- range .Tags }}
     {{ printf "%q" .Key }}: {{ printf "%q" .Value }}
 {{- end }}
----
-apiVersion: karpenter.sh/v1
+{{ range .Docs }}---
+{{ template "nodepool" . }}{{ end }}`
+
+// karpenterNodePoolTemplate renders one NodePool. The default pool's document is byte-identical to
+// the one the manifest carried before the arm64 pool existed (#5534): the golden in
+// karpenter_nodepool_test.go pins it. PlatformTaints follow the user's taints and are never theirs.
+const karpenterNodePoolTemplate = `{{ define "nodepool" }}apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
   name: {{ .Name }}
 spec:
   template:
-{{- if .NodePool.Labels }}
+{{- if .Pool.Labels }}
     metadata:
       labels:
-{{- range .NodePool.Labels }}
+{{- range .Pool.Labels }}
         {{ printf "%q" .Key }}: {{ printf "%q" .Value }}
 {{- end }}
 {{- end }}
@@ -86,30 +126,37 @@ spec:
       nodeClassRef:
         group: karpenter.k8s.aws
         kind: EC2NodeClass
-        name: {{ .Name }}
+        name: {{ .NodeClass }}
       requirements:
         - key: karpenter.sh/capacity-type
           operator: In
-          values: {{ quoteList .NodePool.CapacityTypes }}
+          values: {{ quoteList .Pool.CapacityTypes }}
         - key: kubernetes.io/arch
           operator: In
-          values: {{ quoteList .NodePool.Architectures }}
-{{- if .NodePool.InstanceCategories }}
+          values: {{ quoteList .Pool.Architectures }}
+{{- if .Pool.InstanceCategories }}
         - key: karpenter.k8s.aws/instance-category
           operator: In
-          values: {{ quoteList .NodePool.InstanceCategories }}
+          values: {{ quoteList .Pool.InstanceCategories }}
 {{- end }}
-{{- if .NodePool.InstanceFamilies }}
+{{- if .Pool.InstanceFamilies }}
         - key: karpenter.k8s.aws/instance-family
           operator: In
-          values: {{ quoteList .NodePool.InstanceFamilies }}
+          values: {{ quoteList .Pool.InstanceFamilies }}
 {{- end }}
         - key: karpenter.k8s.aws/instance-generation
           operator: Gt
           values: ["2"]
-{{- if .NodePool.Taints }}
+{{- if or .Pool.Taints .Pool.PlatformTaints }}
       taints:
-{{- range .NodePool.Taints }}
+{{- range .Pool.Taints }}
+        - key: {{ printf "%q" .Key }}
+{{- if .HasValue }}
+          value: {{ printf "%q" .Value }}
+{{- end }}
+          effect: {{ printf "%q" .Effect }}
+{{- end }}
+{{- range .Pool.PlatformTaints }}
         - key: {{ printf "%q" .Key }}
 {{- if .HasValue }}
           value: {{ printf "%q" .Value }}
@@ -122,7 +169,7 @@ spec:
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 1m
-`
+{{ end }}`
 
 // quoteList renders a string list as a YAML flow sequence of double-quoted scalars — `["a", "b"]`,
 // the exact shape the NodePool requirements were written in before they were configurable, so the
@@ -139,16 +186,31 @@ func quoteList(values []string) string {
 // renderKarpenterNodeClass renders the EC2NodeClass + NodePool manifest from the provisioned-infra
 // facts. Kept separate from the apply so the golden tests can assert the exact YAML. It re-validates
 // the NodePool settings itself, so no caller can render a value the template would have refused.
+//
+// The arm64 NodePool (#5534), when data.Arm64 is set, is validated as the user's values and THEN given
+// the platform taint alethia.io/arch=arm64:NoSchedule. No caller sets PlatformTaints: the renderer
+// overwrites them on both pools, so the default pool never carries the arm64 taint and the arm64
+// pool always does.
 func renderKarpenterNodeClass(data karpenterNodeClassData) (string, error) {
 	if err := data.NodePool.validate(); err != nil {
 		return "", err
 	}
-	tmpl, err := template.New("karpenter-nodeclass").Funcs(template.FuncMap{"quoteList": quoteList}).Parse(karpenterNodeClassTemplate)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse karpenter template: %w", err)
+	defaultPool := data.NodePool
+	defaultPool.PlatformTaints = nil
+	render := karpenterManifestData{
+		karpenterNodeClassData: data,
+		Docs:                   []karpenterNodePoolDoc{{Name: data.Name, NodeClass: data.Name, Pool: defaultPool}},
+	}
+	if data.Arm64 != nil {
+		if err := data.Arm64.validateArm64(); err != nil {
+			return "", err
+		}
+		arm64 := *data.Arm64
+		arm64.PlatformTaints = []karpenterTaint{karpenterArm64Taint}
+		render.Docs = append(render.Docs, karpenterNodePoolDoc{Name: karpenterArm64NodePoolName, NodeClass: data.Name, Pool: arm64})
 	}
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
+	if err := karpenterManifestTemplate.Execute(&buf, render); err != nil {
 		return "", fmt.Errorf("failed to render karpenter manifest: %w", err)
 	}
 	return buf.String(), nil
@@ -216,6 +278,10 @@ func applyKarpenterNodeClass(ctx context.Context, outputs map[string]interface{}
 	if err != nil {
 		return err
 	}
+	arm64, err := extractKarpenterArm64NodePool(outputs)
+	if err != nil {
+		return err
+	}
 
 	// Fail loudly if the selectors the node class needs are missing — an EC2NodeClass without a
 	// role/subnets/SG can never launch a node, and silently applying it would look healthy while
@@ -247,6 +313,7 @@ func applyKarpenterNodeClass(ctx context.Context, outputs map[string]interface{}
 		SecurityGroupID: sg,
 		Tags:            sortedTagPairs(tags),
 		NodePool:        nodePool,
+		Arm64:           arm64,
 	})
 	if err != nil {
 		return err
@@ -257,6 +324,9 @@ func applyKarpenterNodeClass(ctx context.Context, outputs map[string]interface{}
 	for attempt := 1; attempt <= 4; attempt++ {
 		if lastErr = argocd.ApplyManifest(manifest, stdout, stderr); lastErr == nil {
 			fmt.Fprintln(stdout, "Karpenter EC2NodeClass + NodePool applied.")
+			if arm64 == nil {
+				return removeKarpenterArm64NodePool(stdout, stderr)
+			}
 			return nil
 		}
 		fmt.Fprintf(stderr, "Karpenter node class apply attempt %d/4 failed (CRDs not synced yet): %v\n", attempt, lastErr)
@@ -267,6 +337,26 @@ func applyKarpenterNodeClass(ctx context.Context, outputs map[string]interface{}
 		}
 	}
 	return fmt.Errorf("kubectl apply of Karpenter node class failed after retries: %w", lastErr)
+}
+
+// deleteKarpenterNodePool deletes one Karpenter NodePool by name, if it exists, and waits for it to
+// go. Karpenter's finalizer holds the NodePool until its nodes are drained and terminated, and a drain
+// waits on PodDisruptionBudgets and termination grace periods, so the wait is 15 minutes, not the
+// seconds an ordinary delete takes. A variable so the tests can see the call without a cluster.
+var deleteKarpenterNodePool = func(name string, stdout, stderr io.Writer) error {
+	cmd := fmt.Sprintf("kubectl delete nodepools.karpenter.sh %s --ignore-not-found --timeout=15m", name)
+	return utils.ExecuteCommand(cmd, ".", nil, stdout, stderr)
+}
+
+// removeKarpenterArm64NodePool deletes the arm64 NodePool when the project no longer configures one
+// (#5534). `kubectl apply` never prunes, so without this a pool the user switched off would keep
+// launching Graviton nodes. Karpenter drains and terminates the pool's nodes when the NodePool goes;
+// a cluster that never had one is unaffected (--ignore-not-found).
+func removeKarpenterArm64NodePool(stdout, stderr io.Writer) error {
+	if err := deleteKarpenterNodePool(karpenterArm64NodePoolName, stdout, stderr); err != nil {
+		return fmt.Errorf("the arm64 Karpenter NodePool is no longer configured, and deleting it failed: %w", err)
+	}
+	return nil
 }
 
 // ── The NodePool settings (#5527) ────────────────────────────────────────────────────────────────
@@ -294,6 +384,9 @@ type karpenterNodePool struct {
 	CPULimit           int
 	Labels             []kvPair // key-sorted for a deterministic render
 	Taints             []karpenterTaint
+	// PlatformTaints are the platform's, rendered after Taints and never validated as a user's: only
+	// renderKarpenterNodeClass sets them (the arm64 taint, #5534).
+	PlatformTaints []karpenterTaint
 }
 
 // defaultKarpenterNodePool returns the NodePool every Karpenter cluster got before #5527, and still
@@ -325,12 +418,12 @@ var (
 // OpenTofu, so no plan-time cost guard sees its fleet; this cap is the bound that remains.
 const karpenterMaxCPULimit = 1000
 
-// karpenterArm64Refusal says why the ONE NodePool this renderer applies takes amd64 only. The
-// managed node group is x86_64 and the images Alethia builds (kaniko) are single-arch amd64, so an
-// arm64 node in the only pool would take any of them and crash it with `exec format error`. A taint
-// would not help either: on the only pool it would strand every untolerated pod on the fixed-size
-// managed group. arm64 belongs on an additional, tainted pool (#5534).
-const karpenterArm64Refusal = "the default Karpenter NodePool accepts amd64 only, because the managed node group is x86_64 and the images Alethia builds are amd64-only, so they would crash on an arm64 node with exec format error. arm64 needs a separate, tainted NodePool, tracked in #5534"
+// karpenterArm64Refusal says why the DEFAULT NodePool takes amd64 only. The managed node group is
+// x86_64 and the images Alethia builds (kaniko) are single-arch amd64, so an arm64 node in the
+// default pool would take any of them and crash it with `exec format error`. A taint would not help
+// either: on the default pool it would strand every untolerated pod on the fixed-size managed group.
+// arm64 belongs on the additional, tainted pool karpenter_arm64_nodepool creates (#5534).
+const karpenterArm64Refusal = "the default Karpenter NodePool accepts amd64 only, because the managed node group is x86_64 and the images Alethia builds are amd64-only, so they would crash on an arm64 node with exec format error. arm64 needs a separate, tainted NodePool: set karpenter_arm64_nodepool instead"
 
 // karpenterTaintEffects are the taint effects Kubernetes defines.
 var karpenterTaintEffects = map[string]bool{"NoSchedule": true, "PreferNoSchedule": true, "NoExecute": true}
@@ -404,15 +497,45 @@ func validatePatternList(name string, values []string, pattern *regexp.Regexp, e
 // alethia.io/arch=arm64:NoSchedule on an arm64 NodePool) is added AFTER validate() has passed on the
 // user's values, never fed through it.
 func (p karpenterNodePool) validate() error {
-	if err := validateEnumList("capacity type", p.CapacityTypes, "spot", "on-demand"); err != nil {
-		return err
-	}
 	for _, a := range p.Architectures {
 		if a == "arm64" {
 			return fmt.Errorf("karpenter architecture \"arm64\" is refused: %s", karpenterArm64Refusal)
 		}
 	}
 	if err := validateEnumList("architecture", p.Architectures, "amd64"); err != nil {
+		return err
+	}
+	return p.validateShared()
+}
+
+// karpenterGravitonFamily is a Graviton (arm64) EC2 instance family or type: a1 (Graviton 1), or a
+// "g" right after the generation digit (m7g, c7gn, t4g, r8gd). The template applies the same literal
+// to karpenter_arm64_nodepool and extra_node_pools; TestKarpenterArm64_GravitonRuleIsTheTemplates
+// holds the three equal.
+var karpenterGravitonFamily = regexp.MustCompile(`^(a1([.]|$)|[a-z]+[0-9]+g)`)
+
+// validateArm64 applies the template's rules to the arm64 NodePool's settings (#5534): exactly the
+// arm64 architecture, Graviton families only, and every rule the default pool has. Like validate(),
+// it refuses an alethia.io key, so the platform taint is added after it, never fed through it.
+func (p karpenterNodePool) validateArm64() error {
+	if len(p.Architectures) != 1 || p.Architectures[0] != "arm64" {
+		return fmt.Errorf("the arm64 Karpenter NodePool must launch exactly the arm64 architecture, not %s", quoteList(p.Architectures))
+	}
+	for _, f := range p.InstanceFamilies {
+		if f == "a1" {
+			return fmt.Errorf("karpenter arm64 instance family \"a1\" is refused: the NodePool requires instance generation 3 or later, so a1 (Graviton 1) could never launch")
+		}
+		if !karpenterGravitonFamily.MatchString(f) {
+			return fmt.Errorf("karpenter arm64 instance family %q is not a Graviton family: use one such as \"m7g\", \"c7gn\", \"t4g\" or \"a1\"", f)
+		}
+	}
+	return p.validateShared()
+}
+
+// validateShared applies the rules both NodePools share: capacity types, categories, families, the
+// CPU limit, and the label and taint keys and values.
+func (p karpenterNodePool) validateShared() error {
+	if err := validateEnumList("capacity type", p.CapacityTypes, "spot", "on-demand"); err != nil {
 		return err
 	}
 	if err := validatePatternList("instance category", p.InstanceCategories, karpenterCategoryPattern, `"c", "m" or "r"`); err != nil {
@@ -471,17 +594,18 @@ func (p karpenterNodePool) validate() error {
 	return nil
 }
 
-// stringList decodes a JSON list of strings from a tofu output attribute.
+// stringList decodes a JSON list of strings from a tofu output attribute; name is the attribute's
+// full path ("karpenter_nodepool.capacity_types").
 func stringList(name string, raw interface{}) ([]string, error) {
 	items, ok := raw.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("karpenter_nodepool.%s is not a list", name)
+		return nil, fmt.Errorf("%s is not a list", name)
 	}
 	out := make([]string, 0, len(items))
 	for _, item := range items {
 		s, ok := item.(string)
 		if !ok {
-			return nil, fmt.Errorf("karpenter_nodepool.%s holds a non-string entry", name)
+			return nil, fmt.Errorf("%s holds a non-string entry", name)
 		}
 		out = append(out, s)
 	}
@@ -494,22 +618,53 @@ func stringList(name string, raw interface{}) ([]string, error) {
 // A malformed or unknown attribute is an ERROR, never a silent default: a setting that does not take
 // effect must not look as if it did. The values are validated before they are returned.
 func extractKarpenterNodePool(outputs map[string]interface{}) (karpenterNodePool, error) {
-	pool := defaultKarpenterNodePool()
-	raw, ok := outputs["karpenter_nodepool"]
+	pool, _, err := parseKarpenterNodePoolOutput(outputs, "karpenter_nodepool", defaultKarpenterNodePool())
+	if err != nil {
+		return pool, err
+	}
+	if err := pool.validate(); err != nil {
+		return pool, fmt.Errorf("the karpenter_nodepool output is invalid: %w", err)
+	}
+	return pool, nil
+}
+
+// extractKarpenterArm64NodePool reads the template's `karpenter_arm64_nodepool` output (#5534). It
+// returns nil when the output is absent or null: the project configured no arm64 pool, or its state
+// predates one. Like extractKarpenterNodePool it refuses a malformed or unknown attribute, and it
+// validates the values (validateArm64) before returning them. The platform taint is not among them:
+// renderKarpenterNodeClass adds it.
+func extractKarpenterArm64NodePool(outputs map[string]interface{}) (*karpenterNodePool, error) {
+	defaults := defaultKarpenterNodePool()
+	defaults.Architectures = []string{"arm64"}
+	pool, present, err := parseKarpenterNodePoolOutput(outputs, "karpenter_arm64_nodepool", defaults)
+	if err != nil || !present {
+		return nil, err
+	}
+	if err := pool.validateArm64(); err != nil {
+		return nil, fmt.Errorf("the karpenter_arm64_nodepool output is invalid: %w", err)
+	}
+	return &pool, nil
+}
+
+// parseKarpenterNodePoolOutput decodes the NodePool settings object in outputs[key] over pool, the
+// defaults for every attribute it omits. present is false when the output is absent or null. It
+// checks shapes only; the caller validates the values.
+func parseKarpenterNodePoolOutput(outputs map[string]interface{}, key string, pool karpenterNodePool) (karpenterNodePool, bool, error) {
+	raw, ok := outputs[key]
 	if !ok || raw == nil {
-		return pool, nil
+		return pool, false, nil
 	}
 	m, ok := raw.(map[string]interface{})
 	if !ok {
-		return pool, fmt.Errorf("the karpenter_nodepool output is not an object")
+		return pool, false, fmt.Errorf("the %s output is not an object", key)
 	}
 	if inner, wrapped := m["value"]; wrapped && len(m) == 1 {
 		// The defensive `{"value": …}` wrapped form extractStringTagMap also accepts.
 		if inner == nil {
-			return pool, nil
+			return pool, false, nil
 		}
 		if m, ok = inner.(map[string]interface{}); !ok {
-			return pool, fmt.Errorf("the karpenter_nodepool output is not an object")
+			return pool, false, fmt.Errorf("the %s output is not an object", key)
 		}
 	}
 
@@ -520,7 +675,7 @@ func extractKarpenterNodePool(outputs map[string]interface{}) (karpenterNodePool
 	sort.Strings(keys)
 	for _, k := range keys {
 		if !karpenterNodePoolKeys[k] {
-			return pool, fmt.Errorf("the karpenter_nodepool output carries %q, which this runner does not know how to apply", k)
+			return pool, true, fmt.Errorf("the %s output carries %q, which this runner does not know how to apply", key, k)
 		}
 	}
 
@@ -536,8 +691,8 @@ func extractKarpenterNodePool(outputs map[string]interface{}) (karpenterNodePool
 	}
 	for _, l := range lists {
 		if v, ok := m[l.key]; ok && v != nil {
-			if *l.dst, err = stringList(l.key, v); err != nil {
-				return pool, err
+			if *l.dst, err = stringList(key+"."+l.key, v); err != nil {
+				return pool, true, err
 			}
 		}
 	}
@@ -545,7 +700,7 @@ func extractKarpenterNodePool(outputs map[string]interface{}) (karpenterNodePool
 	if v, ok := m["cpu_limit"]; ok && v != nil {
 		n, isNum := v.(float64)
 		if !isNum || n != float64(int(n)) {
-			return pool, fmt.Errorf("karpenter_nodepool.cpu_limit %v is not a whole number", v)
+			return pool, true, fmt.Errorf("%s.cpu_limit %v is not a whole number", key, v)
 		}
 		pool.CPULimit = int(n)
 	}
@@ -553,13 +708,13 @@ func extractKarpenterNodePool(outputs map[string]interface{}) (karpenterNodePool
 	if v, ok := m["labels"]; ok && v != nil {
 		lm, isMap := v.(map[string]interface{})
 		if !isMap {
-			return pool, fmt.Errorf("karpenter_nodepool.labels is not a map")
+			return pool, true, fmt.Errorf("%s.labels is not a map", key)
 		}
 		labels := make(map[string]string, len(lm))
 		for k, lv := range lm {
 			s, isStr := lv.(string)
 			if !isStr {
-				return pool, fmt.Errorf("karpenter_nodepool.labels[%q] is not a string", k)
+				return pool, true, fmt.Errorf("%s.labels[%q] is not a string", key, k)
 			}
 			labels[k] = s
 		}
@@ -569,12 +724,12 @@ func extractKarpenterNodePool(outputs map[string]interface{}) (karpenterNodePool
 	if v, ok := m["taints"]; ok && v != nil {
 		items, isList := v.([]interface{})
 		if !isList {
-			return pool, fmt.Errorf("karpenter_nodepool.taints is not a list")
+			return pool, true, fmt.Errorf("%s.taints is not a list", key)
 		}
 		for i, item := range items {
 			tm, isMap := item.(map[string]interface{})
 			if !isMap {
-				return pool, fmt.Errorf("karpenter_nodepool.taints[%d] is not an object", i)
+				return pool, true, fmt.Errorf("%s.taints[%d] is not an object", key, i)
 			}
 			var taint karpenterTaint
 			for k, tv := range tm {
@@ -582,7 +737,7 @@ func extractKarpenterNodePool(outputs map[string]interface{}) (karpenterNodePool
 				case "key", "effect":
 					s, isStr := tv.(string)
 					if !isStr {
-						return pool, fmt.Errorf("karpenter_nodepool.taints[%d].%s is not a string", i, k)
+						return pool, true, fmt.Errorf("%s.taints[%d].%s is not a string", key, i, k)
 					}
 					if k == "key" {
 						taint.Key = s
@@ -595,19 +750,16 @@ func extractKarpenterNodePool(outputs map[string]interface{}) (karpenterNodePool
 					}
 					s, isStr := tv.(string)
 					if !isStr {
-						return pool, fmt.Errorf("karpenter_nodepool.taints[%d].value is not a string", i)
+						return pool, true, fmt.Errorf("%s.taints[%d].value is not a string", key, i)
 					}
 					taint.Value, taint.HasValue = s, true
 				default:
-					return pool, fmt.Errorf("karpenter_nodepool.taints[%d] carries %q, which this runner does not know how to apply", i, k)
+					return pool, true, fmt.Errorf("%s.taints[%d] carries %q, which this runner does not know how to apply", key, i, k)
 				}
 			}
 			pool.Taints = append(pool.Taints, taint)
 		}
 	}
 
-	if err := pool.validate(); err != nil {
-		return pool, fmt.Errorf("the karpenter_nodepool output is invalid: %w", err)
-	}
-	return pool, nil
+	return pool, true, nil
 }

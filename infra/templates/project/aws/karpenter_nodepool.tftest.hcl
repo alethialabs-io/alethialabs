@@ -232,7 +232,8 @@ run "refuses_an_unknown_architecture" {
 }
 
 # arm64 is refused on the default pool, alone or mixed: the managed node group is x86_64 and the
-# images Alethia builds are amd64-only. It needs a separate, tainted NodePool (#5534).
+# images Alethia builds are amd64-only. It runs on the separate, tainted arm64 NodePool instead
+# (karpenter_arm64_nodepool, #5534; its runs are at the end of this file).
 run "refuses_arm64_alone" {
   command = plan
   variables {
@@ -416,4 +417,118 @@ run "refuses_a_family_outside_every_category" {
     karpenter_instance_families = ["c7g"]
   }
   expect_failures = [output.karpenter_nodepool]
+}
+
+################################################################################
+# The arm64 (Graviton) NodePool (#5534). The output carries the user's settings only: the runner
+# adds the platform taint alethia.io/arch=arm64:NoSchedule after validating them
+# (packages/core/provisioner/karpenter_graviton_test.go pins that half).
+################################################################################
+
+# Not configured: no arm64 pool, so the runner renders none.
+run "no_arm64_nodepool_by_default" {
+  command = plan
+
+  assert {
+    condition     = output.karpenter_arm64_nodepool == null
+    error_message = "A project that sets no karpenter_arm64_nodepool must emit no arm64 NodePool settings."
+  }
+}
+
+# Configured: the default pool's capacity types, categories, labels and taints, with arm64 and the
+# pool's own families and CPU limit. The default pool stays amd64.
+run "arm64_nodepool_reaches_the_runner" {
+  command = plan
+
+  variables {
+    karpenter_capacity_types = ["spot", "on-demand"]
+    karpenter_node_labels    = { workload = "batch" }
+    karpenter_node_taints    = [{ key = "dedicated", value = "batch", effect = "NoSchedule" }]
+    karpenter_arm64_nodepool = { instance_families = ["m7g", "t4g"], cpu_limit = 64 }
+  }
+
+  assert {
+    condition = jsonencode(output.karpenter_arm64_nodepool) == jsonencode({
+      capacity_types      = ["spot", "on-demand"]
+      architectures       = ["arm64"]
+      instance_categories = ["t", "m"]
+      instance_families   = ["m7g", "t4g"]
+      cpu_limit           = 64
+      labels              = { workload = "batch" }
+      taints              = [{ key = "dedicated", value = "batch", effect = "NoSchedule" }]
+    })
+    error_message = "karpenter_arm64_nodepool must reach the runner as the default pool's settings with arm64, its own families and its own CPU limit."
+  }
+
+  assert {
+    condition     = output.karpenter_nodepool.architectures == tolist(["amd64"])
+    error_message = "The default NodePool must stay amd64 when an arm64 pool is configured."
+  }
+}
+
+run "an_empty_arm64_nodepool_takes_the_defaults" {
+  command = plan
+
+  variables {
+    karpenter_arm64_nodepool = {}
+  }
+
+  assert {
+    condition     = output.karpenter_arm64_nodepool.cpu_limit == 100 && length(output.karpenter_arm64_nodepool.instance_families) == 0 && jsonencode(output.karpenter_arm64_nodepool.architectures) == jsonencode(["arm64"])
+    error_message = "karpenter_arm64_nodepool = {} must be an arm64 pool of any Graviton family in the categories, capped at 100 vCPU."
+  }
+}
+
+run "no_karpenter_means_no_arm64_nodepool" {
+  command = plan
+
+  variables {
+    enable_karpenter         = false
+    karpenter_arm64_nodepool = {}
+  }
+
+  assert {
+    condition     = output.karpenter_arm64_nodepool == null
+    error_message = "Without Karpenter there is no arm64 NodePool to render."
+  }
+}
+
+run "refuses_an_x86_family_on_the_arm64_nodepool" {
+  command = plan
+  variables {
+    karpenter_arm64_nodepool = { instance_families = ["m7i"] }
+  }
+  expect_failures = [var.karpenter_arm64_nodepool]
+}
+
+run "refuses_a_duplicate_family_on_the_arm64_nodepool" {
+  command = plan
+  variables {
+    karpenter_arm64_nodepool = { instance_families = ["m7g", "m7g"] }
+  }
+  expect_failures = [var.karpenter_arm64_nodepool]
+}
+
+run "refuses_a_zero_cpu_limit_on_the_arm64_nodepool" {
+  command = plan
+  variables {
+    karpenter_arm64_nodepool = { cpu_limit = 0 }
+  }
+  expect_failures = [var.karpenter_arm64_nodepool]
+}
+
+run "refuses_an_arm64_family_outside_the_categories" {
+  command = plan
+  variables {
+    karpenter_arm64_nodepool = { instance_families = ["c7g"] }
+  }
+  expect_failures = [output.karpenter_arm64_nodepool]
+}
+
+run "refuses_a1_on_the_arm64_nodepool" {
+  command = plan
+  variables {
+    karpenter_arm64_nodepool = { instance_families = ["a1"] }
+  }
+  expect_failures = [var.karpenter_arm64_nodepool]
 }

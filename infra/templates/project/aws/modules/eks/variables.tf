@@ -176,6 +176,34 @@ variable "eks_ng_capacity_type" {
   default     = "ON_DEMAND"
 }
 
+variable "node_labels" {
+  description = "Labels on eks_workers' nodes (the root's node_labels, #5534). Empty leaves the group unlabelled."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+}
+
+variable "extra_node_groups" {
+  description = "Extra EKS managed node groups by key (#5534), already resolved by the root: the group name, instance and AMI type, EKS capacity type, sizes, labels, and taints keyed by key:effect with EKS effect spelling. Each inherits eks_workers' isolation controls (node_groups.tf)."
+  type = map(object({
+    name           = string
+    instance_types = list(string)
+    ami_type       = string
+    capacity_type  = string
+    min_size       = number
+    max_size       = number
+    desired_size   = number
+    labels         = map(string)
+    taints = map(object({
+      key    = string
+      value  = optional(string)
+      effect = string
+    }))
+  }))
+  default  = {}
+  nullable = false
+}
+
 variable "kms_key_enable_default_policy" {
   description = "Specifies whether to enable the default key policy. Defaults to `true`"
   type        = bool
