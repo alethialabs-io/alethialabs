@@ -850,7 +850,7 @@ variable "karpenter_cpu_limit" {
 variable "karpenter_node_labels" {
   type        = map(string)
   default     = {}
-  description = "Labels on every node Karpenter launches. Keys in the kubernetes.io, k8s.io, karpenter.sh and karpenter.k8s.aws domains are refused, except node-restriction.kubernetes.io/."
+  description = "Labels on every node Karpenter launches. Keys whose prefix ends in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io are refused, except node-restriction.kubernetes.io/."
 
   validation {
     condition = alltrue([for k, v in var.karpenter_node_labels :
@@ -862,9 +862,9 @@ variable "karpenter_node_labels" {
 
   validation {
     condition = alltrue([for k, v in var.karpenter_node_labels :
-      !strcontains(k, "/") || can(regex("(^|\\.)node-restriction\\.kubernetes\\.io$", split("/", k)[0])) || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws)$", split("/", k)[0]))
+      !strcontains(k, "/") || can(regex("(^|\\.)node-restriction\\.kubernetes\\.io$", split("/", k)[0])) || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", k)[0]))
     ])
-    error_message = "karpenter_node_labels keys may not use the reserved kubernetes.io, k8s.io, karpenter.sh or karpenter.k8s.aws domains (node-restriction.kubernetes.io/ is allowed). Kubernetes and Karpenter own those labels; any prefix ending in one of them is refused, as Karpenter's NodePool admission does."
+    error_message = "karpenter_node_labels keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io (node-restriction.kubernetes.io/ is allowed). Kubernetes, Karpenter, the clouds and Alethia own those labels; the list is packages/core/nodekeys."
   }
 }
 
@@ -892,9 +892,9 @@ variable "karpenter_node_taints" {
 
   validation {
     condition = alltrue([for t in var.karpenter_node_taints :
-      !strcontains(t.key, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws)$", split("/", t.key)[0]))
+      !strcontains(t.key, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", t.key)[0]))
     ])
-    error_message = "karpenter_node_taints keys may not use the reserved kubernetes.io, k8s.io, karpenter.sh or karpenter.k8s.aws domains. Kubernetes and Karpenter set those taints themselves."
+    error_message = "karpenter_node_taints keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Kubernetes, Karpenter, the clouds and Alethia set those taints themselves (alethia.io/arch marks arm64 capacity); the list is packages/core/nodekeys."
   }
 }
 
