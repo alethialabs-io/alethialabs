@@ -51,14 +51,20 @@ func TestPlan_NeverPrintsAnOverridesContent(t *testing.T) {
 }
 
 func TestPlan_ABrokenValuesFileIsRefusedWithoutQuotingIt(t *testing.T) {
-	plan, err := planFromFile(addonServer(), writeAddonManifest(t, lokiOnProd+"        values_file: v.yaml\n",
-		map[string]string{"v.yaml": "a: [" + sentinel + "\n"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	refusal := plan.refusal()
-	if refusal == nil || strings.Contains(refusal.Error(), sentinel) {
-		t.Fatalf("refusal = %v — want a refusal that does not quote the file", refusal)
+	// A duplicate key is the case yaml.v3 quotes in its message ("mapping key %q already defined").
+	for name, content := range map[string]string{
+		"a duplicate key": sentinel + ": 1\n" + sentinel + ": 2\n",
+		"a broken flow":   "a: [" + sentinel + "\n",
+	} {
+		plan, err := planFromFile(addonServer(), writeAddonManifest(t, lokiOnProd+"        values_file: v.yaml\n",
+			map[string]string{"v.yaml": content}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		refusal := plan.refusal()
+		if refusal == nil || strings.Contains(refusal.Error(), sentinel) || !strings.Contains(refusal.Error(), "is not valid YAML") {
+			t.Errorf("%s: refusal = %v — want a refusal that does not quote the file", name, refusal)
+		}
 	}
 }
 
