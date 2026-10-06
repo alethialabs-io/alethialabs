@@ -56,6 +56,13 @@ import {
 	projectStorageBuckets,
 	projectTopics,
 } from "@/lib/db/schema";
+import {
+	ProviderConfigRefusedError,
+	hasProviderConfig,
+	mergeProviderConfig,
+	providerConfigPatchSchema,
+	resolveProviderConfigPatch,
+} from "@/lib/cli/provider-config-knobs";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { appsPathSchema } from "@/lib/validations/apps-path";
 import {
@@ -112,9 +119,18 @@ const WIRE_EXCLUDE = new Set<string>([
 	"cursor_key",
 ]);
 
+/**
+ * The `provider_config` field every kind whose table has the column accepts (#5529): an object of
+ * template-knob overrides, `null` removing a key. This is the SHAPE only — which keys, at what type,
+ * depends on the component's cloud and is decided on the write path by `resolveProviderConfigPatch`
+ * (lib/cli/provider-config-knobs.ts), over the same `offerableKnobs` the canvas renders. A write
+ * MERGES into the stored object; it never replaces it.
+ */
+const PROVIDER_CONFIG_FIELD = { provider_config: providerConfigPatchSchema.optional() };
+
 /** The component-kind registry. The pick-lists are the columns a CLI caller may `--set`;
- * server-managed columns (status, endpoints, provider_outputs, JSONB provider_config) are
- * intentionally excluded — nested JSONB config is not settable via the scalar `--set` flag. */
+ * server-managed columns (status, endpoints, provider_outputs) are excluded. `provider_config` is
+ * added by {@link PROVIDER_CONFIG_FIELD} on the kinds whose table has it. */
 const KINDS: Record<string, KindDef> = {
 	network: {
 		table: projectNetwork,
@@ -169,7 +185,8 @@ const KINDS: Record<string, KindDef> = {
 				node_disk_size_gb: true,
 				cluster_name: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 	dns: {
 		table: projectDns,
@@ -185,7 +202,8 @@ const KINDS: Record<string, KindDef> = {
 				managed_certificate: true,
 				waf_enabled: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 	observability: {
 		table: projectObservability,
@@ -197,7 +215,8 @@ const KINDS: Record<string, KindDef> = {
 				enabled: true,
 				provider: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 	repositories: {
 		table: projectRepositories,
@@ -226,7 +245,8 @@ const KINDS: Record<string, KindDef> = {
 				backup_retention_days: true,
 				iam_auth: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 	caches: {
 		table: projectCaches,
@@ -241,7 +261,8 @@ const KINDS: Record<string, KindDef> = {
 				multi_az: true,
 				allowed_cidr_blocks: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 	queues: {
 		table: projectQueues,
@@ -254,14 +275,16 @@ const KINDS: Record<string, KindDef> = {
 				visibility_timeout: true,
 				message_retention: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 	topics: {
 		table: projectTopics,
 		singleton: false,
 		fields: createInsertSchema(projectTopics)
 			.pick({ cloud_identity_id: true, region: true })
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 	nosql_tables: {
 		table: projectNosqlTables,
@@ -279,7 +302,8 @@ const KINDS: Record<string, KindDef> = {
 				point_in_time_recovery: true,
 				global_replicas: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 	container_registries: {
 		table: projectContainerRegistries,
@@ -300,11 +324,12 @@ const KINDS: Record<string, KindDef> = {
 				immutable_tags: true,
 				vulnerability_scanning: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
-	// A chart repo's HOST lives in the JSONB provider_config, which `--set` deliberately can't reach,
-	// so the CLI can list/read these and switch the connector but not finish configuring an "any
-	// host" provider — that needs the console.
+	// A chart repo's HOST lives in the JSONB provider_config, and no template declares it as a knob,
+	// so the provider_config allow-list (#5529) offers nothing here: the CLI can list/read these and
+	// switch the connector but not finish configuring an "any host" provider — that needs the console.
 	helm_registries: {
 		table: projectHelmRegistries,
 		singleton: false,
@@ -314,7 +339,8 @@ const KINDS: Record<string, KindDef> = {
 				region: true,
 				provider: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 	secrets: {
 		table: projectSecrets,
@@ -328,7 +354,8 @@ const KINDS: Record<string, KindDef> = {
 				length: true,
 				special_chars: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 	storage_buckets: {
 		table: projectStorageBuckets,
@@ -342,7 +369,8 @@ const KINDS: Record<string, KindDef> = {
 				public_access: true,
 				cors_origins: true,
 			})
-			.partial(),
+			.partial()
+			.extend(PROVIDER_CONFIG_FIELD),
 	},
 };
 
@@ -549,9 +577,15 @@ export function validateComponentFields(
 		schema instanceof z.ZodObject ? new Set(Object.keys(schema.shape)) : new Set<string>();
 	const unknown = Object.keys(fields).filter((k) => !allowed.has(k));
 	if (unknown.length > 0) {
+		// network and repositories have no provider_config column, so there is nowhere for a template
+		// knob to be stored — said outright rather than left as a bare "unknown field".
+		const noPassthrough =
+			unknown.includes("provider_config") && !hasProviderConfig(kind)
+				? `. ${kind} has no provider_config column, so it takes no template knobs from the CLI`
+				: "";
 		return {
 			ok: false,
-			error: `Unknown field(s) for ${kind}: ${unknown.join(", ")}. Allowed: ${[...allowed].join(", ")}`,
+			error: `Unknown field(s) for ${kind}: ${unknown.join(", ")}. Allowed: ${[...allowed].join(", ")}${noPassthrough}`,
 		};
 	}
 
@@ -812,11 +846,11 @@ function hasNoInstanceTypes(value: unknown): boolean {
 	return value == null || (Array.isArray(value) && value.length === 0);
 }
 
-/** The provisioning cloud a new cluster row will run on: its own `cloud_identity_id` when the
- * caller set one, else the project's (a NULL per-component identity inherits it). `null` when no
- * identity is linked, the identity is gone, or its cloud has no catalog — the caller must then
- * leave the row's instance types unset rather than guess. */
-async function clusterProvider(
+/** The provisioning cloud a component row runs on: its own `cloud_identity_id` when it has one,
+ * else the project's (a NULL per-component identity inherits it). `null` when no identity is
+ * linked, the identity is gone, or its cloud has no catalog — the caller must then not guess: a new
+ * cluster leaves its instance types unset, and a provider_config write is refused. */
+async function componentProvider(
 	db: ReturnType<typeof getServiceDb>,
 	projectId: string,
 	componentIdentityId: unknown,
@@ -840,6 +874,64 @@ async function clusterProvider(
 	return typeof provider === "string" && isCloudProviderSlug(provider) ? provider : null;
 }
 
+/** The two stored columns a provider_config write reads from the row it is about to amend. */
+interface StoredProviderConfig {
+	provider_config: unknown;
+	cloud_identity_id: unknown;
+}
+
+/**
+ * Reads the stored `provider_config` and `cloud_identity_id` of the ONE row a write will amend —
+ * the environment's singleton, or the named multi row — or null when there is none yet.
+ */
+async function readStoredProviderConfig(
+	db: ReturnType<typeof getServiceDb>,
+	def: KindDef,
+	projectId: string,
+	environmentId: string,
+	name: string | null,
+): Promise<StoredProviderConfig | null> {
+	const cols = getTableColumns(def.table);
+	const scope = componentScope(cols, projectId, environmentId);
+	const [row] = await db
+		.select({ provider_config: cols.provider_config, cloud_identity_id: cols.cloud_identity_id })
+		.from(def.table)
+		.where(name !== null && cols.name ? and(scope, eq(cols.name, name)) : scope)
+		.limit(1);
+	return row ?? null;
+}
+
+/**
+ * The `provider_config` a write stores, given the patch the caller sent (#5529).
+ *
+ * The patch is checked against the component's CLOUD — the identity the write sets, else the row's
+ * own, else the project's — because the settable keys are per cloud: `resolveProviderConfigPatch`
+ * allow-lists them from the same manifest the canvas renders and type-checks each value. A refusal
+ * throws {@link ProviderConfigRefusedError}, which the routes answer with a 400.
+ *
+ * The result MERGES into what is stored: a key the caller did not send — including one the canvas
+ * set — is kept, and a key sent as `null` is removed.
+ */
+async function providerConfigToStore(
+	db: ReturnType<typeof getServiceDb>,
+	kind: string,
+	projectId: string,
+	values: Record<string, unknown>,
+	stored: StoredProviderConfig | null,
+): Promise<Record<string, unknown>> {
+	const identity =
+		"cloud_identity_id" in values ? values.cloud_identity_id : stored?.cloud_identity_id;
+	const cloud = await componentProvider(db, projectId, identity);
+	if (!cloud) {
+		throw new ProviderConfigRefusedError(
+			`provider_config needs a cloud: link a cloud identity to the project (or set cloud_identity_id on the ${kind} component) — the settable keys depend on the cloud`,
+		);
+	}
+	const resolved = resolveProviderConfigPatch(cloud, kind, asRecord(values.provider_config));
+	if (!resolved.ok) throw new ProviderConfigRefusedError(resolved.error);
+	return mergeProviderConfig(stored?.provider_config, resolved.set, resolved.unset);
+}
+
 /** Inserts a component of `kind` on a project, scoped to `environmentId`. Singletons upsert on the
  * composite `(project_id, environment_id)` — the table's actual unique; multi kinds require a name
  * and conflict (handled by the caller) on `(project_id, environment_id, name)`. Returns the
@@ -855,6 +947,19 @@ export async function insertProjectComponent(
 	if (!def) throw new Error(`Unknown component kind "${kind}"`);
 	const db = getServiceDb();
 	const cols = getTableColumns(def.table);
+
+	// A provider_config patch is resolved against the cloud and MERGED into the row it amends — for a
+	// singleton the environment's existing row (add upserts), for a new multi row nothing. Only when
+	// the caller sent one: a write without it reads nothing extra and stores exactly what it did.
+	if (values.provider_config !== undefined) {
+		const stored = def.singleton
+			? await readStoredProviderConfig(db, def, projectId, environmentId, null)
+			: null;
+		values = {
+			...values,
+			provider_config: await providerConfigToStore(db, kind, projectId, values, stored),
+		};
+	}
 
 	// environment_id is required — a component in a NULL env is invisible to the env-scoped deploy,
 	// and the singleton unique is composite, so the conflict target below must include it.
@@ -910,7 +1015,7 @@ export async function insertProjectComponent(
 		hasNoInstanceTypes(insertValues.instance_types) &&
 		insertValues.node_size == null
 	) {
-		const provider = await clusterProvider(db, projectId, insertValues.cloud_identity_id);
+		const provider = await componentProvider(db, projectId, insertValues.cloud_identity_id);
 		// Unknown provider (no linked identity yet, or a cloud with no catalog): leave it NULL and
 		// let the template default apply, exactly as before. Guessing a cloud would stamp another
 		// cloud's SKU on the row.
@@ -995,6 +1100,16 @@ export async function updateProjectComponent(
 	const cols = getTableColumns(def.table);
 	if (!cols.name) throw new Error(`${kind} has no name column`);
 	const db = getServiceDb();
+	// provider_config merges per key into the stored object (#5529), so the row is read first; no row
+	// is the caller's 404, the same answer the update itself would give.
+	if (values.provider_config !== undefined) {
+		const stored = await readStoredProviderConfig(db, def, projectId, environmentId, name);
+		if (!stored) return null;
+		values = {
+			...values,
+			provider_config: await providerConfigToStore(db, kind, projectId, values, stored),
+		};
+	}
 	const [row] = await db
 		.update(def.table)
 		.set({ ...values, updated_at: new Date() })
