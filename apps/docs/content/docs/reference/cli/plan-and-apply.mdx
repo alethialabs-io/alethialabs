@@ -51,6 +51,7 @@ environments:
 | `environments[].placement` | `dedicated`, `vcluster` or `namespace`. Optional: the **first** environment defaults to `dedicated` and owns the Fabric; every later one defaults to `namespace` and shares it. |
 | `environments[].namespace` | The destination namespace for a shared placement. Optional; derived from the name. Ignored on `dedicated`. |
 | `environments[].lifecycle` | `persistent` (default) or `ephemeral`. |
+| `environments[].addons` | The catalog add-ons the environment runs, as a list of `{ id, version, mode, settings, values, values_file }`. See [Add-ons](#add-ons). |
 | `environments[].components` | The environment's resources, keyed by kind. A one-per-environment kind (`cluster`, `network`, `dns`, `observability`, `repositories`) is written as its fields; a named kind (`databases`, `caches`, `queues`, …) as a list of entries, each with a `name`. `alethia project component kinds` lists them and the fields each takes. |
 
 A misspelt key, a stage outside the allowed set, a component kind the server does not publish or a
@@ -137,6 +138,28 @@ Here the file raises `max_capacity` of the `orders` database in `prod` from `4` 
   for that component, does not deploy that environment, and continues with the other environments.
   Then it exits with an error that names each refused component.
 
+### Setting and removing a `provider_config` key
+
+A component's `provider_config` holds its template knobs, the same ones the console's **Advanced**
+section sets. `plan` and `apply` treat it **key by key**, not as one value:
+
+```yaml
+      databases:
+        - name: orders
+          engine: postgres
+          provider_config:
+            rds_backup_retention_period: 14   # set this key
+            rds_performance_insights: null    # remove this key
+```
+
+- A key you write is set to the file's value.
+- A key you write as `null` is removed. `plan` shows it as a change only while the server still
+  holds the key, so the removal shows once and then settles.
+- A key you do not write is kept, and shows no change. A key set in the console stays set.
+
+`apply` sends only the keys that changed. The keys a component accepts depend on its cloud;
+[Project](/reference/cli/project) explains how to find them.
+
 `apply` changes the component's **settings**. It does not tell you whether the next deploy replaces
 the cloud resource. To see that, read the OpenTofu plan of the deploy: `alethia project plan`.
 
@@ -170,6 +193,118 @@ plan, a component with the action `update` carries a `changes` array, one entry 
 `from` is `null` when the server has no value for the field. A `create` or `unchanged` component has
 no `changes` key. In the result, an `errors` array lists each change the server refused, as
 `{ "environment", "component", "error" }`.
+
+## Add-ons
+
+An environment can declare the [catalog add-ons](/reference/cli/addons) it runs. `plan` shows what
+would change, and `apply` makes it so. This file declares two environments. `staging` runs
+external-dns pinned to chart version `1.14.5` with two settings, and kube-prometheus-stack with a
+Helm values file. `prod` runs loki at the catalog's default version:
+
+```yaml
+project: boutique
+cloud:
+  account: prod-account
+  region: nbg1
+environments:
+  - name: prod
+    stage: production
+    placement: dedicated
+    addons:
+      - id: loki                         # no version: the catalog's default version
+        settings:
+          retentionDays: 30
+  - name: staging
+    stage: staging
+    placement: namespace
+    namespace: boutique-staging
+    addons:
+      - id: external-dns
+        version: 1.14.5                  # pin the chart version
+        settings:
+          provider: cloudflare
+          domainFilter: staging.boutique.example.com
+      - id: kube-prometheus-stack
+        settings:
+          retentionDays: 7
+        values_file: helm/kps-staging.yaml   # relative to alethia.yaml
+```
+
+`helm/kps-staging.yaml` is an ordinary Helm values file, next to `alethia.yaml` in the repository:
+
+```yaml
+grafana:
+  replicas: 2
+prometheus:
+  prometheusSpec:
+    resources:
+      requests:
+        memory: 2Gi
+```
+
+| Key | What it is |
+| --- | --- |
+| `id` | The add-on's catalog id. Required. An id the catalog does not have is refused, and the refusal lists the ids it does have. |
+| `version` | A chart-version pin: one exact version, such as `1.14.5`. A range such as `^1.14` is refused. |
+| `mode` | `managed` or `gitops`. Omitted on a new add-on, `managed`. |
+| `settings` | The add-on's settings, by name: the same keys `alethia addon enable` sets. |
+| `values` | An Advanced Helm-values override, written inline as a mapping. |
+| `values_file` | The same override, read from a file. The path is relative to `alethia.yaml`. Use `values` or `values_file`, not both. |
+
+### Keep and clear
+
+Each key means what the same flag of [`alethia addon enable`](/reference/cli/addons) means, because
+`apply` sends the same request:
+
+| You write | `apply` does |
+| --- | --- |
+| nothing for a key | keeps what is stored: the pin, the mode, each setting, the override |
+| `version: 1.14.5` | pins the chart version |
+| `version: ""` or `version: null` | removes the pin, so the catalog's default version applies |
+| `settings: { key: value }` | sets that one setting and keeps the others |
+| `settings: { key: null }` | resets that setting to the add-on's default |
+| `values` or `values_file: path` | replaces the whole stored override |
+| `values_file: ""` or `values: null` | removes the override |
+
+### What `plan` shows
+
+Add-ons get one line per environment, with the same marks as components. Under it, one line names
+each changed field. Here staging's external-dns runs the catalog's default version and an older
+domain filter, and reloader in `prod` is enabled on the server but not in the file:
+
+```
+▸ Reading alethia.yaml · boutique · hetzner/nbg1
+  prod     dedicated  = environment
+    add-ons  = loki
+    add-on reloader is enabled on the server and not in the file — left alone (unmanaged)
+  staging  namespace  = environment
+    add-ons  ~ external-dns  + kube-prometheus-stack
+    ~ external-dns  settings.domainFilter: boutique.example.com → staging.boutique.example.com
+    ~ external-dns  version: (catalog default) → 1.14.5
+  0 projects to create · 0 environments · 0 components · 1 add-on to enable · 1 to change
+```
+
+`(default)` means a setting is reset to its default. `(none)` means there is no override. A setting
+you reset with `null` shows as a change only while the server holds a value other than the default,
+so the reset shows once and then settles.
+
+`--output json` puts the add-ons on each environment as `addons`, each with an `id`, an `action`
+and, for an `update`, the same `changes` array components carry. A change to one setting has the
+setting's name in `key`. Add-ons that are on the server but not in the file are in
+`unmanaged_addons`.
+
+### What `apply` never does
+
+- **It never disables an add-on.** An add-on that is enabled on the server and not in the file is
+  listed as unmanaged and keeps running. Disable one with
+  [`alethia addon disable`](/reference/cli/addons).
+- **It never takes a secret from the file.** `alethia.yaml` is committed to git, so a secret setting
+  in it is refused before anything is sent. The refusal names the setting. Set a secret with
+  `alethia addon enable <id> --set <key>=…` or in the console. `apply` keeps a stored secret as it
+  is, and `plan` never prints a secret's value.
+
+`apply` enables add-ons after it creates components and before it deploys. If the server refuses an
+add-on, `apply` reports it, does not deploy that environment, and continues with the others.
 
 ## `alethia up`
 

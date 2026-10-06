@@ -93,6 +93,107 @@ func TestDiffFields(t *testing.T) {
 	}
 }
 
+// TestDiffFields_ProviderConfigPerKey is item A moved from #5529: `provider_config` is merged by the
+// server key by key, so the plan compares it key by key.
+func TestDiffFields_ProviderConfigPerKey(t *testing.T) {
+	server := map[string]any{"provider_config": map[string]any{
+		"rds_backup_retention_period": float64(7),
+		"rds_performance_insights":    true,
+		"set_in_the_console":          "kept",
+	}}
+	for name, tc := range map[string]struct {
+		declared map[string]any
+		want     []FieldChange
+	}{
+		"a key the file does not declare is kept and is no change": {
+			map[string]any{"provider_config": map[string]any{"rds_backup_retention_period": 7}}, nil,
+		},
+		"a changed key": {
+			map[string]any{"provider_config": map[string]any{"rds_backup_retention_period": 14}},
+			[]FieldChange{{Field: "provider_config", Key: "rds_backup_retention_period", From: float64(7), To: 14}},
+		},
+		"an added key": {
+			map[string]any{"provider_config": map[any]any{"rds_storage_type": "gp3"}},
+			[]FieldChange{{Field: "provider_config", Key: "rds_storage_type", From: nil, To: "gp3"}},
+		},
+		"a removed key (null) while the server still holds it": {
+			map[string]any{"provider_config": map[string]any{"rds_performance_insights": nil}},
+			[]FieldChange{{Field: "provider_config", Key: "rds_performance_insights", From: true, To: nil}},
+		},
+		"a removed key the server no longer holds has settled": {
+			map[string]any{"provider_config": map[string]any{"rds_gone_already": nil}}, nil,
+		},
+		"several keys, sorted": {
+			map[string]any{"provider_config": map[string]any{"b_key": 1, "a_key": 2}},
+			[]FieldChange{
+				{Field: "provider_config", Key: "a_key", From: nil, To: 2},
+				{Field: "provider_config", Key: "b_key", From: nil, To: 1},
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := diffFields(tc.declared, server)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("diffFields = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+	// With nothing stored, a declared key is an addition and a null one is nothing at all.
+	got := diffFields(map[string]any{"provider_config": map[string]any{"a": 1, "b": nil}}, map[string]any{})
+	if want := []FieldChange{{Field: "provider_config", Key: "a", From: nil, To: 1}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("against an empty server: %#v, want %#v", got, want)
+	}
+}
+
+func TestChangedFields_SendsOnlyTheChangedProviderConfigKeys(t *testing.T) {
+	body := changedFields([]FieldChange{
+		{Field: "max_capacity", From: 4, To: 8},
+		{Field: "provider_config", Key: "rds_backup_retention_period", From: 7, To: 14},
+		{Field: "provider_config", Key: "rds_performance_insights", From: true, To: nil},
+	})
+	want := map[string]any{
+		"max_capacity": 8,
+		"provider_config": map[string]any{
+			"rds_backup_retention_period": 14,
+			"rds_performance_insights":    nil,
+		},
+	}
+	if !reflect.DeepEqual(body, want) {
+		t.Errorf("changedFields = %#v, want %#v", body, want)
+	}
+}
+
+func TestComputePlan_ProviderConfigRemovalSettlesAfterOneApply(t *testing.T) {
+	const file = "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: prod\n    stage: production\n    components:\n      databases:\n        - name: orders\n          provider_config:\n            rds_performance_insights: null\n"
+	before := &diffFake{
+		envs: []api.Environment{{ID: "e1", Name: "prod", Stage: "production", PlacementMode: "dedicated"}},
+		comps: map[string][]api.Component{"prod": {{ID: "c1", Kind: "databases", Name: "orders", Config: map[string]any{
+			"provider_config": map[string]any{"rds_performance_insights": true, "console_key": "x"},
+		}}}},
+	}
+	plan, err := computePlan(before, diffManifest(t, file), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeApply(before, &bytes.Buffer{}, ui.FormatTable, plan, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(before.calls) != 1 || !reflect.DeepEqual(before.calls[0].Fields, map[string]any{"provider_config": map[string]any{"rds_performance_insights": nil}}) {
+		t.Fatalf("apply sent %+v, want only the removed key", before.calls)
+	}
+	// The server merged the removal; the key the console set is still there.
+	after := &diffFake{envs: before.envs, comps: map[string][]api.Component{"prod": {{ID: "c1", Kind: "databases", Name: "orders", Config: map[string]any{
+		"provider_config": map[string]any{"console_key": "x"},
+	}}}}}
+	plan, err = computePlan(after, diffManifest(t, file), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := plan.Environments[0].Components[0]; c.Action != ActionUnchanged {
+		t.Errorf("after one apply the removal should have settled, got %s %v", c.Action, c.Changes)
+	}
+}
+
 func TestFormatFieldValue(t *testing.T) {
 	for in, want := range map[string]struct {
 		v    any

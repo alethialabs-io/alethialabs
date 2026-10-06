@@ -21,12 +21,12 @@ import (
 //	  - name: staging
 //	    stage: staging
 //	    addons:
-//	      - id: cert-manager
+//	      - id: loki
 //	      - id: external-dns
-//	        version: 1.15.0          # a pin; "" or null removes it, omitted keeps the stored one
+//	        version: 1.14.5          # a pin; "" or null removes it, omitted keeps the stored one
 //	        settings:
 //	          provider: cloudflare
-//	          txtOwnerId: null       # resets this setting to the add-on's default
+//	          domainFilter: null     # resets this setting to the add-on's default
 //	      - id: kube-prometheus-stack
 //	        values_file: helm/kps-staging.yaml   # relative to alethia.yaml
 //
@@ -323,4 +323,14 @@ func SecretSettings(settings map[string]any, secretKeys []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ValidateAddons checks a list of add-ons on its own, by the rules Validate applies to an
+// environment's — for a command that builds the list from flags (`alethia init --addon`) before
+// there is a file to validate.
+func ValidateAddons(at string, addons []Addon, catalog *api.AddonCatalogDocument, modes []string) error {
+	if p := validateAddons(at, addons, catalog, modes); len(p) > 0 {
+		return p
+	}
+	return nil
 }
