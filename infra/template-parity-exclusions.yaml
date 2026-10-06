@@ -438,6 +438,21 @@ baseline:
     off: "alibaba,aws,azure,hetzner"
     state: unreviewed
     issue: "#2004"
+  - variable: cloud_sql_query_insights_enabled
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_query_insights_record_application_tags
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_query_insights_record_client_address
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
   - variable: cloud_sql_tier
     on: "gcp"
     off: "alibaba,aws,azure,hetzner"

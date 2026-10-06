@@ -26,3 +26,12 @@ output "publicly_readable_buckets" {
   description = "Bucket suffixes that carry an allUsers reader binding"
   value       = sort(keys(google_storage_bucket_iam_member.public_read))
 }
+
+# Read off the PLANNED buckets (#5532), so checks_customize.tftest.hcl fails if the encryption block
+# stops reading the knob. A bucket with no encryption block maps to null.
+output "bucket_kms_key_names" {
+  description = "Map of bucket suffixes to the default_kms_key_name each bucket is planned with (null = Google-managed encryption)"
+  value = {
+    for key, bucket in google_storage_bucket.this : key => try(bucket.encryption[0].default_kms_key_name, null)
+  }
+}

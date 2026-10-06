@@ -59,6 +59,8 @@ variable "buckets" {
       role   = string
       member = string
     })))
+    # Encrypt with `var.cmek_key_name` (#5532). The root creates the key and its grant.
+    cmek_enabled = optional(bool, false)
   }))
   description = <<-EOT
     List of buckets to create. Each bucket is prefixed with project_name-environment.
@@ -82,6 +84,12 @@ variable "buckets" {
       ]
   EOT
   default     = []
+}
+
+variable "cmek_key_name" {
+  type        = string
+  description = "Cloud KMS crypto key id for the buckets whose cmek_enabled is true. Null when no bucket asked; a bucket asking without one is refused at plan."
+  default     = null
 }
 
 ################################################################################
