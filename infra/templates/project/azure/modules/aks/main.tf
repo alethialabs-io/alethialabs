@@ -10,6 +10,12 @@ locals {
     Project     = var.project_name
     ManagedBy   = "opentofu"
   })
+
+  # The node_labels ARGUMENT the default pool and the positional pools render (#5535). Null when
+  # none were set, which is the argument those blocks have always left out, so a cluster that sets
+  # nothing plans unchanged. One expression for both, output below so the root's tofu test can tell
+  # null from {} (a mocked plan reads both back as {}).
+  node_labels_argument = length(var.node_labels) > 0 ? var.node_labels : null
 }
 
 ################################################################################
@@ -121,7 +127,7 @@ resource "azurerm_kubernetes_cluster" "this" {
 
     # node_labels (#5535): null when none were set, which is the argument this block has always
     # left out, so a cluster that sets nothing plans unchanged. Updated in place, not rotated.
-    node_labels = length(var.node_labels) > 0 ? var.node_labels : null
+    node_labels = local.node_labels_argument
 
     upgrade_settings {
       max_surge = "10%"
@@ -169,7 +175,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "extra" {
 
   # node_labels (#5535): null when none were set, so these pools plan exactly as before. They take
   # none of the user's taints: those go to the named pools only (node-pool contract #5533).
-  node_labels = length(var.node_labels) > 0 ? var.node_labels : null
+  node_labels = local.node_labels_argument
 
   tags = local.common_tags
 }
@@ -225,9 +231,11 @@ resource "azurerm_kubernetes_cluster_node_pool" "named" {
 # `count = 0` by default, so a cluster that did not ask for Spot plans exactly as it did before.
 #
 # Azure taints these nodes `kubernetes.azure.com/scalesetpriority=spot:NoSchedule` and labels them
-# `kubernetes.azure.com/scalesetpriority=spot` on its own — deliberately NOT restated here as
-# node_taints/node_labels, which are also ForceNew and would only be a second, drifting copy of
-# something the platform already guarantees.
+# `kubernetes.azure.com/scalesetpriority=spot` on its own. With no user node_labels the pool states
+# neither, as it always has. Once node_labels is set (#5535) the Spot label is declared beside
+# them, because azurerm documents that a Spot pool declaring node_labels must carry the applicable
+# ones. The pool never takes node_taints: the user's taints go to the named pools only (#5533).
+# (In azurerm 4.x node_labels and node_taints update a pool in place; they are not ForceNew.)
 resource "azurerm_kubernetes_cluster_node_pool" "spot" {
   count = var.spot_enabled ? 1 : 0
 

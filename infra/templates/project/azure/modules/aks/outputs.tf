@@ -95,3 +95,8 @@ output "node_pools" {
     },
   )
 }
+
+output "node_labels_argument" {
+  description = "The node_labels argument the default and positional pools render: null when node_labels is empty, so they plan exactly as before (#5535)."
+  value       = local.node_labels_argument
+}
