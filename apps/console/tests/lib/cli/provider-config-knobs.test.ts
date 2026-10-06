@@ -127,6 +127,7 @@ const {
 } = await import("@/lib/cli/project-components");
 const addRoute = await import("@/app/api/cli/projects/[id]/components/[kind]/route");
 const updateRoute = await import("@/app/api/cli/projects/[id]/components/[kind]/[name]/route");
+const schemaRoute = await import("@/app/api/cli/schema/components/route");
 
 /** The manifest entry for one knob, or a failure naming it. */
 function manifestKnob(cloud: string, component: string, name: string): TemplateKnob {
@@ -494,6 +495,19 @@ describe("the published component schema advertises provider_config", () => {
 		expect(r).toEqual({
 			ok: false,
 			error: expect.stringContaining(`${kind} has no provider_config column`),
+		});
+	});
+
+	// What alethia.yaml validates against (apps/cli/pkg/manifest/validate.go reads `fields`): the
+	// route's own body, so a nested `provider_config:` mapping is a known field in the file.
+	it("GET /api/cli/schema/components serves provider_config in cluster's fields", async () => {
+		const res = await schemaRoute.GET(new Request("http://x/api/cli/schema/components"));
+		expect(res.status).toBe(200);
+		const body: unknown = await res.json();
+		expect(body).toMatchObject({
+			kinds: expect.arrayContaining([
+				expect.objectContaining({ kind: "cluster", fields: expect.arrayContaining(["provider_config"]) }),
+			]),
 		});
 	});
 
