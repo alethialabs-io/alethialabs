@@ -28,7 +28,8 @@
 //
 // It also cannot report a FALSE ZERO under row-level security. Every table here is RLS-protected,
 // and a role subject to RLS with no org in its session reads every table as empty — which would
-// print the ✓ line. So the session runs `SET row_security = off`: for a role that bypasses RLS (the
+// print the ✓ line. So the session starts with `row_security=off` (startup `options`, kept across a
+// reconnect, and read back): for a role that bypasses RLS (the
 // service role behind ALETHIA_DATABASE_URL) that changes nothing, and for any other role Postgres
 // RAISES on the first query instead of filtering, and the audit fails with exit 1.
 //
@@ -160,7 +161,7 @@ async function main(): Promise<void> {
 	const counted = [...new Set(queries.map((q) => `${q.table}.${q.column}`))];
 
 	if (process.argv.includes("--print-sql")) {
-		process.stdout.write(`set row_security = off;\n\n${queries.map((q) => `${q.sql};`).join("\n\n")}\n`);
+		process.stdout.write(`-- run with row_security=off and a read-only session\n\n${queries.map((q) => `${q.sql};`).join("\n\n")}\n`);
 		process.exitCode = 0;
 		return;
 	}
@@ -177,7 +178,9 @@ async function main(): Promise<void> {
 	const sql = postgres(url, {
 		max: 1,
 		onnotice: () => {},
-		connection: { default_transaction_read_only: true },
+		// Both in the STARTUP packet, so a reconnect by the driver gets them too: a later `SET` would be
+		// lost with the connection it ran on.
+		connection: { default_transaction_read_only: true, options: "-c row_security=off" },
 	});
 	try {
 		const [mode] = await sql`show transaction_read_only`;
@@ -191,7 +194,6 @@ async function main(): Promise<void> {
 		}
 		// See the header: a role subject to RLS now RAISES on the first query instead of reading every
 		// table as empty and reporting a false zero. Read back, like the read-only flag.
-		await sql`set row_security = off`;
 		const [rls] = await sql`show row_security`;
 		if (rls?.row_security !== "off") {
 			console.error(`✗ Refusing to run: row_security could not be turned off (row_security=${rls?.row_security ?? "unknown"}).`);
@@ -223,11 +225,11 @@ async function main(): Promise<void> {
 		if (json) {
 			process.stdout.write(`${JSON.stringify({ counted, findings }, null, 2)}\n`);
 		} else if (findings.length === 0) {
-			console.log(`✓ No credential key in any of the ${counted.length} places counted (values not read):`);
+			console.log(`✓ No key that is a credential, or is named like one, in any of the ${counted.length} places counted (values not read):`);
 			for (const c of counted) console.log(`    ${c}`);
 			console.log("  Not counted: tofu state and plan files, runner logs, and database backups.");
 		} else {
-			console.log(`⚠ Credential keys found (values not shown). Counted: ${counted.join(", ")}.\n`);
+			console.log(`⚠ Keys that are credentials, or are named like them, found (values not shown). Counted: ${counted.join(", ")}.\n`);
 			for (const f of findings) {
 				console.log(`  ${f.table}.${f.column} → ${f.key}  ${f.rows} row(s) in ${f.projects} project(s)`);
 			}

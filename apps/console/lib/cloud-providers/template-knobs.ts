@@ -143,48 +143,41 @@ export function offerableKnobs(knobs: readonly TemplateKnob[], cloud: string, ki
 const CREDENTIAL_NAME =
 	/(^|_)(password|passwd|passphrase|credentials?|token|secret_key|access_key|private_key|api_key|client_secret)(_|$)/;
 
-/** A credential attribute declared inside a knob's type (`object({ password = … })`). */
-const CREDENTIAL_ATTRIBUTE =
-	/\b(password|passwd|passphrase|token|secret_key|access_key|private_key|api_key|client_secret)\s*=/;
+/** Every attribute NAME a knob's declared type declares — `object({ username = string, password = … })`. */
+const DECLARED_ATTRIBUTE = /([A-Za-z_][\w.-]*)\s*=/g;
 
 /**
- * A key name in the one spelling the credential rule matches: trimmed, camelCase split into
- * snake_case, and lower-cased — so `dbPassword`, `DB_PASSWORD`, `Rds_Extra_Credentials` and
- * `rds_extra_credentials ` (trailing space) all read as the name they imitate. HCL names are
- * case-sensitive, so those spellings never reach tofu; they would still be stored in plaintext
- * JSONB, which is the thing being prevented.
+ * A NAME in the one spelling the credential rule matches: trimmed, camelCase split into snake_case
+ * (acronyms too — `DBPassword` → `db_password`, `APIKey` → `api_key`), dots, dashes and spaces
+ * read as `_`, and lower-cased. So `dbPassword`, `DB_PASSWORD`, `Rds_Extra_Credentials`,
+ * `db.password` and `rds_extra_credentials ` all read as the name they imitate. HCL names are
+ * case-sensitive, so those spellings never reach tofu; they would still be stored in plaintext JSONB,
+ * which is the thing being prevented.
+ *
+ * Applied to NAMES ONLY — a `provider_config` key, a knob name, an attribute name the template
+ * declares. Never to the keys INSIDE a user's value: a `map(string)` knob's keys are user data
+ * (`password_encryption` is a Postgres flag, `db-password` is a secret's name), and reading them as
+ * credentials refuses legitimate settings (#5571 review).
  */
 export function normalizeKeyName(name: string): string {
 	return name
 		.trim()
+		.replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
 		.replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-		.replace(/[\s-]+/g, "_")
+		.replace(/[\s.-]+/g, "_")
 		.toLowerCase();
 }
 
-/** True when a `provider_config` key's NAME carries a credential word (`hcloud_token`, `dbPassword`). */
+/** True when a NAME carries a credential word (`hcloud_token`, `dbPassword`, `APIKey`). */
 export function isCredentialKeyName(name: string): boolean {
 	return CREDENTIAL_NAME.test(normalizeKeyName(name));
 }
 
 /**
- * True when a JSON value carries a credential-named key anywhere inside it — `[{ password: … }]`
- * in a `list(object)` knob, `{ apiToken: … }` in a `map` knob. A knob that is not itself a
- * credential can still be used to smuggle one into `provider_config`, so a value is scanned as
- * well as its key. Key NAMES only: a value is never inspected for what it looks like.
- */
-export function valueHoldsCredential(value: unknown): boolean {
-	if (Array.isArray(value)) return value.some(valueHoldsCredential);
-	if (typeof value !== "object" || value === null) return false;
-	return Object.entries(value).some(
-		([key, inner]) => isCredentialKeyName(key) || valueHoldsCredential(inner),
-	);
-}
-
-/**
- * True when a knob carries a credential: the template marks it `sensitive`, its name or its declared
- * type names a credential (`rds_extra_credentials` declares a `password` attribute), or it is a
- * secret component's own material (`value`).
+ * True when a knob carries a credential, decided STATICALLY from what the template declares: it is
+ * marked `sensitive`, its name carries a credential word, an attribute name of its declared type
+ * does (`rds_extra_credentials` declares `password`), or it is a secret component's own material
+ * (`value`). A user's value is never inspected.
  *
  * The ONE definition. `offerableKnobs` excludes these, so the canvas and the CLI (which narrows that
  * same set) agree; the project write actions refuse them through `credentialKeysInDesign`.
@@ -196,9 +189,11 @@ export function valueHoldsCredential(value: unknown): boolean {
  */
 export function isCredentialKnob(knob: TemplateKnob): boolean {
 	if (knob.sensitive) return true;
-	if (CREDENTIAL_NAME.test(knob.name)) return true;
-	if (CREDENTIAL_ATTRIBUTE.test(knob.typeExpr)) return true;
-	return knob.component === "secret" && knob.name === "value";
+	if (isCredentialKeyName(knob.name)) return true;
+	for (const match of knob.typeExpr.matchAll(DECLARED_ATTRIBUTE)) {
+		if (isCredentialKeyName(match[1] ?? "")) return true;
+	}
+	return knob.component === "secret" && normalizeKeyName(knob.name) === "value";
 }
 
 /**

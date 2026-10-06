@@ -30,7 +30,6 @@ import {
 	isCredentialKnob,
 	normalizeKeyName,
 	type TemplateKnob,
-	valueHoldsCredential,
 } from "@/lib/cloud-providers/template-knobs";
 import { asRecord } from "@/lib/records";
 
@@ -110,8 +109,30 @@ export function withoutCredentials(kind: string, record: Record<string, unknown>
 }
 
 /**
- * The credential entries of one component's `provider_config`: a key that is a credential, or any
- * key whose value carries a credential-named key inside it (`rds_cluster_parameters: [{ password }]`).
+ * Removes every credential entry from every component's `provider_config` in a design, IN PLACE —
+ * for a design about to be COPIED (duplicating an environment). A legacy value stored before #5565
+ * stays where it is, but is not multiplied into a new environment in plaintext; the copy's component
+ * starts without it, as a new one would. Everything else in the design is untouched.
+ */
+export function stripDesignCredentials(design: object): void {
+	for (const [designKey, kind] of Object.entries(DESIGN_PROVIDER_CONFIG_KIND)) {
+		const section: unknown = Reflect.get(design, designKey);
+		const items: unknown[] = Array.isArray(section) ? section : section ? [section] : [];
+		for (const item of items) {
+			if (typeof item !== "object" || item === null) continue;
+			const providerConfig: unknown = Reflect.get(item, "provider_config");
+			if (typeof providerConfig !== "object" || providerConfig === null) continue;
+			for (const key of Object.keys(providerConfig)) {
+				if (isCredentialKey(kind, key)) Reflect.deleteProperty(providerConfig, key);
+			}
+		}
+	}
+}
+
+/**
+ * The credential entries of one component's `provider_config`: each key {@link isCredentialKey}
+ * classifies. Decided from the KEY and the template's declaration of it — never from the value, whose
+ * inner keys are user data (a `map(string)` of Postgres flags, keepers named after secrets).
  */
 export function credentialEntriesOf(
 	kind: NodeKind,
@@ -124,7 +145,7 @@ export function credentialEntriesOf(
 			([key, value]) =>
 				value !== undefined &&
 				value !== null &&
-				(isCredentialKey(kind, key, knobs) || valueHoldsCredential(value)),
+				isCredentialKey(kind, key, knobs),
 		)
 		.map(([key, value]) => ({ kind, component, key, value }));
 }
@@ -189,7 +210,7 @@ function refusalMessage(offending: readonly CredentialEntry[]): string {
 		...new Set(offending.map((e) => credentialGuidance(e.kind, normalizeKeyName(e.key)))),
 	].join(" ");
 	return (
-		`provider_config cannot hold a credential, because Alethia would store it in plaintext (${credentialWhere(offending)}). ` +
+		`provider_config cannot hold these keys: each is a credential, or is named like one, and Alethia would store its value in plaintext (${credentialWhere(offending)}). ` +
 		`${guidance} Remove the key from the component and save again.`
 	);
 }

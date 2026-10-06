@@ -6,6 +6,7 @@
 // tests/actions/projects.test.ts.
 
 import { describe, expect, it } from "vitest";
+import { isCredentialKnob, TEMPLATE_KNOBS } from "@/lib/cloud-providers/template-knobs";
 import {
 	type CredentialEntry,
 	credentialKeyCounts,
@@ -171,14 +172,43 @@ describe("a credential is recognised however the key is spelled, and wherever it
 		expect(refusal).not.toMatch(/hunter2|s3cr3t|t0k3n/);
 	});
 
-	it("a password nested inside another knob's value is refused", () => {
-		const nested = design({ rds_cluster_parameters: [{ name: "timezone", value: "UTC" }, { password: "hunter2" }] });
-		expect(credentialRefusal(nested, [])).toContain("rds_cluster_parameters");
-		expect(credentialRefusal(nested, [])).not.toContain("hunter2");
+	// Acronym camelCase and dotted names (#5571 delta review).
+	it.each(["DBPassword", "APIKey", "db.password", "Client.Secret"])("%s is refused as a key name", (key) => {
+		expect(credentialRefusal({ caches: [{ name: "c", provider_config: { [key]: "x" } }] }, [])).toContain(key);
+	});
+});
+
+// The KEYS inside a map knob's value are user data, not names the template declares, so they are
+// never read for credential words (#5571 delta review). Each of these is a legitimate setting that
+// the first cut of the nested scan refused.
+describe("a map knob's own keys are data — legitimate settings are accepted", () => {
+	it("Azure database flags named after password settings", () => {
+		const flags = design({
+			azure_db_database_flags: { password_encryption: "scram-sha-256", default_password_lifetime: "90" },
+		});
+		expect(credentialRefusal(flags, [])).toBeNull();
 	});
 
-	it("an ordinary nested knob is left alone", () => {
-		expect(credentialRefusal(design({ rds_cluster_parameters: [{ name: "timezone", value: "UTC" }] }), [])).toBeNull();
+	it("Alibaba secret keepers keyed by secret name", () => {
+		expect(credentialRefusal(design({}, { custom_secret_keepers: { "db-password": "2", "api-key": "1" } }), [])).toBeNull();
+	});
+
+	it("AWS secret keepers keyed api_token", () => {
+		expect(credentialRefusal(design({}, { keepers: { api_token: "rotate-2026-10" } }), [])).toBeNull();
+	});
+
+	it("a declared attribute name is normalised like a key name (camelCase, acronyms)", () => {
+		const knob = TEMPLATE_KNOBS.knobs.find((k) => k.cloud === "aws" && k.component === "cluster" && k.name === "eks_ami_type");
+		if (!knob) throw new Error("fixture knob missing");
+		expect(isCredentialKnob({ ...knob, kind: "object", typeExpr: "object({ host = string, DBPassword = string })" })).toBe(true);
+		expect(isCredentialKnob({ ...knob, kind: "object", typeExpr: "object({ host = string, port = number })" })).toBe(false);
+	});
+
+	it("a declared OBJECT attribute is read statically, from the template, not from the value", () => {
+		// rds_extra_credentials declares `password`; refused even when the value omits it.
+		expect(credentialRefusal(design({ rds_extra_credentials: { username: "u", database: "d" } }), [])).toContain(
+			"rds_extra_credentials",
+		);
 	});
 });
 

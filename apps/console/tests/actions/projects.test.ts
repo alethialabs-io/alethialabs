@@ -4154,34 +4154,37 @@ describe("a credential in provider_config is refused at the write (#5565)", () =
 		expect(deleteSpy).not.toHaveBeenCalled();
 	});
 
-	// The base env's design is read back from the project and re-checked before it is copied. Here
-	// the read that BUILDS the copy sees a credential the guard's own read does not find stored — so
-	// the copy must be refused before any component row is written. Remove the guard from
-	// duplicateEnvironment and this goes red: the copy is written.
-	it("duplicateEnvironment refuses to copy a credential the project does not already store", async () => {
+	// A legacy secret value stored on the base env (before #5565) stays there, but duplicating the
+	// environment must not multiply it: the new env's secret is written without it, and with
+	// everything else it had. Remove the strip from duplicateEnvironment and this goes red — the
+	// guard alone would grandfather the value and copy it in plaintext.
+	it("duplicateEnvironment does not copy a legacy credential into the new environment", async () => {
 		const envRow = { id: "env-1", org_id: "org-1", name: "production", stage: "production", status: "DRAFT", is_default: true, region: null };
 		let envCall = 0;
-		let dbCall = 0;
-		const { insertSpy } = setupDb({
+		const { valuesSpy } = setupDb({
 			select: new Map<unknown, RowsResolver>([
 				[projects, [{ id: "p1", org_id: "org-1", project_name: "Shop", region: "us-east-1", iac_version: "1.11.4", cloud_identity_id: null }]],
 				// getProject's env list, then the base env, then "is the new name taken?" → no.
 				[projectEnvironments, () => (++envCall >= 3 ? [] : [envRow])],
-				// The design read sees the credential; the guard's stored-value read finds none.
 				[
 					projectSecrets,
-					() =>
-						++dbCall === 1
-							? [{ id: "s1", environment_id: "env-1", name: "api-key", generate: false, provider_config: { value: "s3cr3t" } }]
-							: [],
+					[
+						{
+							id: "s1",
+							environment_id: "env-1",
+							name: "api-key",
+							generate: false,
+							provider_config: { value: "legacy-s3cr3t", keepers: { rotate: "1" } },
+						},
+					],
 				],
 			]),
 			insert: new Map<unknown, RowsResolver>([[projectEnvironments, [{ id: "env-2" }]]]),
 		});
-		await expect(duplicateEnvironment("p1", "env-1", "staging")).rejects.toBeInstanceOf(
-			CredentialKnobRefusedError,
-		);
-		expect(insertSpy).not.toHaveBeenCalledWith(projectSecrets);
+		await expect(duplicateEnvironment("p1", "env-1", "staging")).resolves.toMatchObject({ ok: true });
+		const copied = valueRowsFor(valuesSpy, projectSecrets);
+		expect(copied[0]).toMatchObject({ name: "api-key", environment_id: "env-2", provider_config: { keepers: { rotate: "1" } } });
+		expect(JSON.stringify(copied)).not.toContain("legacy-s3cr3t");
 	});
 
 	it("tryDuplicateProjectForProvider explains a refused credential instead of a digest", async () => {

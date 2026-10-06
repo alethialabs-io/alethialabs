@@ -8,6 +8,7 @@ import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import {
 	assertNoNewCredentials,
 	CredentialKnobRefusedError,
+	stripDesignCredentials,
 } from "@/lib/cloud-providers/credential-knobs";
 import { assertDesignStoresNoNewCredentials } from "@/lib/cloud-providers/credential-knob-store";
 import {
@@ -3514,8 +3515,10 @@ export async function duplicateEnvironment(
 		if (!env) throw new Error("Failed to create environment");
 		// Copy the base env's components into the new env (fresh rows, status defaults to PENDING).
 		if (baseConfig) {
-			// The base env's design is read back from this project, so a legacy value is recognised
-			// and copied; anything else carrying a credential is refused (#5565).
+			// A credential stored before #5565 stays on the base env, but is NOT copied into the new
+			// one: the copy's component starts without it, as a new component would (#5565). The
+			// guard then has nothing left to grandfather, and refuses anything that slipped through.
+			stripDesignCredentials(baseConfig);
 			await assertDesignStoresNoNewCredentials(tx, projectId, baseConfig);
 			await writeComponents(tx, projectId, env.id, baseConfig);
 		}

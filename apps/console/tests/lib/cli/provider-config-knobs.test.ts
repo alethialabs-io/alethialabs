@@ -245,15 +245,13 @@ describe("a key that is not offerable is refused, with the settable keys listed"
 		expect(refusal("aws", "secrets", { value: "hunter2" })).toContain("value (a credential");
 	});
 
-	// #5571 review: a settable knob can carry a credential INSIDE its value.
-	it("refuses a settable knob whose value carries a credential-named key, without echoing it", () => {
-		const r = resolveProviderConfigPatch("aws", "databases", {
-			rds_cluster_parameters: [{ name: "timezone", value: "UTC" }, { password: "hunter2" }],
-		});
-		expect(r).toEqual({ ok: false, error: expect.stringContaining("rds_cluster_parameters") });
-		expect(JSON.stringify(r)).not.toContain("hunter2");
+	// #5571 delta review: a map knob's keys are user data, never read for credential words.
+	it("accepts map knobs whose own keys are named like credentials", () => {
+		expect(resolveProviderConfigPatch("aws", "secrets", { keepers: { api_token: "rotate-2026-10" } })).toMatchObject({ ok: true });
 		expect(
-			resolveProviderConfigPatch("aws", "databases", { rds_cluster_parameters: [{ name: "timezone", value: "UTC" }] }),
+			resolveProviderConfigPatch("azure", "databases", {
+				azure_db_database_flags: { password_encryption: "scram-sha-256", default_password_lifetime: "90" },
+			}),
 		).toMatchObject({ ok: true });
 	});
 
