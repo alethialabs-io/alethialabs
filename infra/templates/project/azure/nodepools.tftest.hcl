@@ -533,6 +533,88 @@ run "aks_nodepools_positional_pools_get_a_distinct_rotation_pool_within_the_name
   }
 }
 
+# #5578: a named pool may not carry another pool's rotation name. Cycling that pool would adopt the
+# named pool as its temporary pool and delete it. The names are the literals the module renders
+# (pinned in aks_nodepools_nothing_set_renders_the_existing_pools_unchanged), so the validation's
+# copy of the derivation and the module's cannot drift apart unnoticed.
+run "aks_nodepools_refuses_the_default_pools_rotation_name" {
+  command = plan
+
+  variables {
+    extra_node_pools = [{ name = "defaulc21f96", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 }]
+  }
+
+  expect_failures = [var.extra_node_pools]
+}
+
+run "aks_nodepools_refuses_the_spot_pools_rotation_name" {
+  command = plan
+
+  variables {
+    extra_node_pools = [{ name = "spotb2e189", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 }]
+  }
+
+  expect_failures = [var.extra_node_pools]
+}
+
+run "aks_nodepools_refuses_a_positional_pools_rotation_name" {
+  command = plan
+
+  variables {
+    extra_node_pools = [{ name = "pool15934c3", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 }]
+  }
+
+  expect_failures = [var.extra_node_pools]
+}
+
+run "aks_nodepools_refuses_the_last_positional_pools_rotation_name" {
+  command = plan
+
+  # pool100's: the last positional pool AKS's cap of 100 node pools per cluster allows.
+  variables {
+    extra_node_pools = [{ name = "pool10b2a0c8", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 }]
+  }
+
+  expect_failures = [var.extra_node_pools]
+}
+
+run "aks_nodepools_refuses_another_named_pools_rotation_name" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "batch", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 },
+      { name = "batchd265ae", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 },
+    ]
+  }
+
+  expect_failures = [var.extra_node_pools]
+}
+
+run "aks_nodepools_accepts_a_name_that_only_resembles_a_rotation_name" {
+  command = plan
+
+  variables {
+    aks_instance_types = ["Standard_D4s_v5", "Standard_D8s_v5"]
+    aks_spot_enabled   = true
+    extra_node_pools = [
+      { name = "defaulc21f97", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 },
+      { name = "spotb2e18", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 },
+      { name = "batchd265af", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 },
+    ]
+  }
+
+  assert {
+    condition     = alltrue([for name in ["defaulc21f97", "spotb2e18", "batchd265af"] : contains(keys(module.aks[0].node_pools), name)])
+    error_message = "A name one character away from a rotation name is an ordinary pool name and must plan."
+  }
+
+  assert {
+    condition     = module.aks[0].node_pools["default"].rotation_name == "defaulc21f96" && module.aks[0].node_pools["spot"].rotation_name == "spotb2e189" && module.aks[0].node_pools["pool1"].rotation_name == "pool15934c3"
+    error_message = "The module must render the rotation names the extra_node_pools validation refuses; if the derivation changes, the validation in variables.tf must change with it."
+  }
+}
+
 # #5578: the autoscaler owns the node count of an EXISTING autoscaled pool. The first run applies the
 # cluster (against the mock); the second changes the sizes the pools start from and plans again.
 # Every positional pool and the default pool is autoscaled (auto_scaling_enabled is fixed at true in
