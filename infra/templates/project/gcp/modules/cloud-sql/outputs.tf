@@ -32,8 +32,9 @@ output "app_iam_user" {
 }
 
 # Read off the PLANNED instance, not the input, so checks_customize.tftest.hcl fails if the
-# insights_config block ever stops reading the variable (#5532). An empty list means no block.
+# insights_config block ever stops reading the variable (#5532). An empty list means no block, which
+# happens only when query_insights_enabled is unset (null); false plans one block switched off.
 output "insights_config" {
-  description = "The instance's planned settings.insights_config blocks (empty when Query Insights is off)"
+  description = "The instance's planned settings.insights_config blocks: empty only when query_insights_enabled is unset (null); false plans one block with query_insights_enabled = false"
   value       = google_sql_database_instance.this.settings[0].insights_config
 }

@@ -107,9 +107,9 @@ When you turn `cmek_enabled` on for a bucket that already exists, objects that a
 </Callout>
 
 <Callout type="warn">
-After you turn `cmek_enabled` off on every bucket, you cannot turn it on again in the same project. Cloud KMS never deletes a key or a key ring. It only destroys key versions. The key named `gcs-buckets` therefore stays in the project after the template removes it. When you turn `cmek_enabled` on again, the template tries to create a key with the same name, and Cloud KMS refuses it with `409 AlreadyExists`. If the project does not use GKE Secrets encryption, the template also removes the key ring, and creating the key ring again fails in the same way.
+After the template stops using your own key, you cannot turn `cmek_enabled` on again in the same project. This happens when you turn `cmek_enabled` off on every bucket, when you remove the last bucket that sets it, or when you set `create_cloud_storage` to `false`. Cloud KMS never deletes a key or a key ring. It only destroys key versions. The key named `gcs-buckets` therefore stays in the project after the template removes it. When you turn `cmek_enabled` on again, the template tries to create a key with the same name, and Cloud KMS refuses it with `409 AlreadyExists`. If the project does not use GKE Secrets encryption, the template also removes the key ring, and creating the key ring again fails in the same way.
 
-To keep the option of using your own key, leave `cmek_enabled` on for at least one bucket.
+To keep the option of using your own key, keep Cloud Storage on and leave `cmek_enabled` on for at least one bucket.
 </Callout>
 
 ### Cache logging

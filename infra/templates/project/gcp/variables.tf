@@ -364,6 +364,7 @@ variable "cloud_sql_database_flags" {
 variable "cloud_sql_query_insights_enabled" {
   type        = bool
   default     = null
+  nullable    = true
   description = "Cloud SQL Query Insights (settings.insights_config.query_insights_enabled): per-query latency, load and execution plans in the Cloud SQL console. true turns it on; false turns it off; unset (null, the default) leaves the instance's current setting as it is."
 }
 
