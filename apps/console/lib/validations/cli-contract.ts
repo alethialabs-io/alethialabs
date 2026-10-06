@@ -20,6 +20,7 @@ import {
 } from "@/lib/db/schema";
 import {
 	cloudProvider,
+	environmentLifecycle,
 	kubeconfigMintShape,
 	kubeconfigMintTier,
 } from "@/lib/db/schema/enums";
@@ -450,6 +451,10 @@ export const environmentWire = z.object({
 	/** The Fabric this environment is placed on, BY NAME rather than id — the whole point is to
 	 *  show at a glance that several environments share one, and a uuid does not read as shared. */
 	fabric: z.string().nullable(),
+	/** `persistent` (the default) or `ephemeral`. Carried so `alethia export` can write it back —
+	 *  without it an exported ephemeral environment applied into a new project came back
+	 *  persistent (#5581). */
+	lifecycle: z.enum(environmentLifecycle.enumValues),
 });
 
 /** A project component (GET /api/cli/projects/:id/components, POST .../components/:kind).
