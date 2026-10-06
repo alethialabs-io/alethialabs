@@ -55,11 +55,18 @@ import (
 //     is the boundary: a validation rewritten into an equivalent but different expression is reported
 //     as missing, which is the safe direction — the reference is copied, not re-derived.
 //  2. PROVEN — infra/templates/project/<cloud>/nodepool_contract.tftest.hcl carries every reference
-//     run under its name, with the same contract-variable VALUES (evaluated, so layout does not count)
-//     and the same expect_failures. That is what turns "the validation is written" into "the validation
-//     refuses", on that cloud's real template: a text check cannot prove a rule rejects anything, the
-//     lane's `tofu test` run does (.github/workflows/infra-templates.yml runs it). The one allowed
-//     difference is a pool's instance_type; the reference tftest's header says why and how far.
+//     run under its name, with the same contract-variable VALUES (evaluated, so layout does not count),
+//     the same expect_failures, and every reference `assert` block (token-equal). That is what turns
+//     "the validation is written" into "the validation refuses", and "render.tf is copied" into "the
+//     render is what the contract says", on that cloud's real template: a text check cannot prove a
+//     rule rejects anything, the lane's `tofu test` run does (.github/workflows/infra-templates.yml
+//     runs it, from infra/templates/project/<cloud>, which is where this check reads the file). A
+//     contract run may not carry a `module` block, which would plan the case against another module.
+//     The one allowed difference is a pool's instance_type; the reference tftest's header says why
+//     and how far. Boundary: file-level `override_module` / `override_resource` blocks are not read.
+//     A lane may need them to plan under mocks at all (the GKE module cannot be planned without
+//     them), and a variable validation fires before any module is evaluated, so they cannot turn a
+//     refusal green. They can only stub what a lane's OWN asserts check.
 //  3. REACHABLE — a value in the Cluster component's provider_config arrives at the same-named tfvar
 //     unchanged (the passthrough is generic, so this fails only if a provider reserves the key or
 //     overwrites it), and a cluster that sets none of them gets none of them as tfvars, which is the
@@ -324,6 +331,8 @@ func parseVariables(path string) (map[string]tfVariable, error) {
 type tfRun struct {
 	vars           map[string]any // contract variable → its evaluated value
 	expectFailures string         // token sequence, "" when absent
+	asserts        []string       // each assert block's condition and error_message tokens
+	module         bool           // the run carries a `module` block, so it runs some other module
 }
 
 // tfTest is a parsed .tftest.hcl: its runs by name, in file order, and the contract variables it
@@ -355,7 +364,21 @@ func parseTFTest(path string) (tfTest, error) {
 				r.expectFailures = exprTokens(src, a.Expr)
 			}
 			for _, vb := range blk.Body.Blocks {
-				if vb.Type != "variables" {
+				switch vb.Type {
+				case "module":
+					r.module = true
+					continue
+				case "assert":
+					var parts []string
+					for _, name := range []string{"condition", "error_message"} {
+						if a, ok := vb.Body.Attributes[name]; ok {
+							parts = append(parts, exprTokens(src, a.Expr))
+						}
+					}
+					r.asserts = append(r.asserts, strings.Join(parts, " ⟂ "))
+					continue
+				case "variables":
+				default:
 					continue
 				}
 				for _, name := range nodePoolContractVars {
@@ -472,6 +495,18 @@ func nodePoolTestViolations(refPath, subjectPath string) []string {
 		if !ok {
 			out = append(out, fmt.Sprintf("%s has no run %q: a lane carries every contract case", subjectPath, name))
 			continue
+		}
+		if have.module {
+			out = append(out, fmt.Sprintf("run %q carries a `module` block, so tofu test runs the case against that module instead of the cloud's template, and nothing proves the template refuses anything: delete it", name))
+		}
+		present := map[string]bool{}
+		for _, a := range have.asserts {
+			present[a] = true
+		}
+		for i, a := range want.asserts {
+			if !present[a] {
+				out = append(out, fmt.Sprintf("run %q is missing the contract case's assert #%d (or carries a changed copy of it); the asserts pin what render.tf renders, so a lane keeps every one verbatim: %.160s…", name, i+1, a))
+			}
 		}
 		if have.expectFailures != want.expectFailures {
 			out = append(out, fmt.Sprintf("run %q expects failures `%s`, the contract case expects `%s`", name, have.expectFailures, want.expectFailures))
@@ -781,7 +816,7 @@ func TestNodePoolContract_BrokenLaneTestsFail(t *testing.T) {
 	}{
 		{"a run is dropped", `run "nodepool_refuses_the_platform_arch_taint" {`, `run "renamed" {`,
 			`has no run "nodepool_refuses_the_platform_arch_taint"`},
-		{"a refusal's value is made valid", `key    = "alethia.io/arch"`, `key    = "example.com/arch"`,
+		{"a refusal's value is made valid", "node_taints = [\n      {\n        key    = \"alethia.io/arch\"", "node_taints = [\n      {\n        key    = \"example.com/arch\"",
 			`run "nodepool_refuses_the_platform_arch_taint": node_taints is`},
 		{"expect_failures is dropped", "      },\n    ]\n  }\n\n  expect_failures = [var.node_taints]\n}\n\n# alethia.io/arch",
 			"      },\n    ]\n  }\n}\n\n# alethia.io/arch", "expects failures ``, the contract case expects"},
@@ -793,6 +828,13 @@ func TestNodePoolContract_BrokenLaneTestsFail(t *testing.T) {
 			"      {\n        name          = \"batch\"\n        instance_type = \"cx 32\"\n        min_size      = 5", `substitutes instance_type "cx 32"`},
 		{"a case sets a variable the reference leaves alone", "run \"nodepool_defaults_plan\" {\n  command = plan\n",
 			"run \"nodepool_defaults_plan\" {\n  command = plan\n\n  variables {\n    node_labels = {}\n  }\n", `run "nodepool_defaults_plan" sets node_labels`},
+		// Review B4 on #5570: a run re-aimed at another module plans the case against that module, so the
+		// lane's template is never exercised and every refusal "passes".
+		{"a run is re-aimed at a stub module", "run \"nodepool_refuses_a_label_key_starting_with_a_dash\" {\n  command = plan\n",
+			"run \"nodepool_refuses_a_label_key_starting_with_a_dash\" {\n  command = plan\n\n  module {\n    source = \"./stub\"\n  }\n",
+			`run "nodepool_refuses_a_label_key_starting_with_a_dash" carries a ` + "`module`" + ` block`},
+		{"a render assert is dropped", "    error_message = \"nodepool_contract_render differs from the contract's render for this case (render.tf).\"\n  }\n}\n\n# The shape",
+			"    error_message = \"a weaker message\"\n  }\n}\n\n# The shape", `run "nodepool_defaults_plan" is missing the contract case's assert #1`},
 	}
 	ref := filepath.Join(nodePoolTestdata(t), "reference")
 	for _, tc := range cases {
@@ -911,7 +953,12 @@ func TestNodePoolContract_ReferenceRunsEveryCase(t *testing.T) {
 				t.Fatal(err)
 			}
 			dir := t.TempDir()
-			for _, f := range []string{"variables.tf", nodePoolTestFile} {
+			files, err := filepath.Glob(filepath.Join(src, "*.tf"))
+			if err != nil || len(files) == 0 {
+				t.Fatalf("no .tf files in %s (err=%v)", src, err)
+			}
+			for _, f := range append(files, filepath.Join(src, nodePoolTestFile)) {
+				f = filepath.Base(f)
 				b, err := os.ReadFile(filepath.Join(src, f))
 				if err != nil {
 					t.Fatal(err)

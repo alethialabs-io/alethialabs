@@ -15,14 +15,14 @@ variable "node_labels" {
   )
   default     = {}
   nullable    = false
-  description = "Hetzner: Labels on the nodes of every Alethia-managed pool, the default pool included. A pool's own labels win for the same key. Keys in the kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud and alethia.io domains are refused."
+  description = "Hetzner: Labels on the nodes of every Alethia-managed pool, the default pool included. A pool's own labels win for the same key. At most 24. Keys whose prefix ends in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io are refused."
 
   validation {
-    condition = alltrue([for k, v in var.node_labels :
-      length(split("/", k)[0]) <= 253 && alltrue([for l in split(".", split("/", k)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
-      length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    condition = length(var.node_labels) <= 24 && alltrue([for k, v in var.node_labels :
+      length(k) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) >= 1 && length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
     ])
-    error_message = "node_labels keys must be Kubernetes label keys ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and values must be up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+    error_message = "node_labels may hold at most 24 labels. A key is [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value is 1 to 63 of the same characters, starting and ending with a letter or digit."
   }
 
   validation {
@@ -41,19 +41,19 @@ variable "node_taints" {
   }))
   default     = []
   nullable    = false
-  description = "Hetzner: Taints on the nodes of every extra pool (not the default pool, which runs the platform's add-ons). A pool's own taint wins for the same key and effect. effect is one of NoSchedule, PreferNoSchedule and NoExecute."
+  description = "Hetzner: Taints on the nodes of every extra pool (not the default pool, which runs the platform's add-ons). A pool's own taint wins for the same key and effect. At most 24. effect is one of NoSchedule, PreferNoSchedule and NoExecute."
 
   validation {
-    condition     = alltrue([for t in var.node_taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in var.node_taints : "${t.key}:${t.effect}"])) == length(var.node_taints)
-    error_message = "node_taints effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once."
+    condition     = length(var.node_taints) <= 24 && alltrue([for t in var.node_taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in var.node_taints : "${t.key}:${t.effect}"])) == length(var.node_taints)
+    error_message = "node_taints may hold at most 24 taints, each effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once."
   }
 
   validation {
     condition = alltrue([for t in var.node_taints :
-      length(split("/", t.key)[0]) <= 253 && alltrue([for l in split(".", split("/", t.key)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
-      (t.value == null ? true : length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+      length(t.key) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) >= 1 && length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
     ])
-    error_message = "node_taints key must be a Kubernetes key ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and value, when set, up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+    error_message = "node_taints key must be [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value, when set, is 1 to 63 of the same characters, starting and ending with a letter or digit."
   }
 
   validation {
@@ -86,9 +86,9 @@ variable "extra_node_pools" {
 
   validation {
     condition = length(var.extra_node_pools) <= 10 && length(distinct([for p in var.extra_node_pools : p.name])) == length(var.extra_node_pools) && alltrue([for p in var.extra_node_pools :
-      can(regex("^[a-z][a-z0-9]{0,11}$", p.name)) && !contains(["default", "system", "spot"], p.name)
+      can(regex("^[a-z][a-z0-9]{0,11}$", p.name)) && !contains(["default", "system", "spot"], p.name) && !can(regex("^pool[0-9]+$", p.name))
     ])
-    error_message = "extra_node_pools may list at most 10 pools, each with a unique name of 1 to 12 lowercase letters and digits starting with a letter (the AKS pool-name rule, applied on every cloud so the file is portable). The names default, system and spot are taken by pools Alethia already makes."
+    error_message = "extra_node_pools may list at most 10 pools, each with a unique name of 1 to 12 lowercase letters and digits starting with a letter (the AKS pool-name rule, applied on every cloud so the file is portable). The names default, system, spot and pool1, pool2, ... are taken by pools Alethia already makes."
   }
 
   validation {
@@ -107,11 +107,11 @@ variable "extra_node_pools" {
   }
 
   validation {
-    condition = alltrue(flatten([for p in var.extra_node_pools : [for k, v in p.labels :
-      length(split("/", k)[0]) <= 253 && alltrue([for l in split(".", split("/", k)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
-      length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    condition = alltrue([for p in var.extra_node_pools : length(p.labels) <= 25]) && alltrue(flatten([for p in var.extra_node_pools : [for k, v in p.labels :
+      length(k) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) >= 1 && length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
     ]]))
-    error_message = "extra_node_pools labels keys must be Kubernetes label keys ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and values must be up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+    error_message = "extra_node_pools labels may hold at most 25 labels per pool. A key is [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value is 1 to 63 of the same characters, starting and ending with a letter or digit."
   }
 
   validation {
@@ -123,17 +123,17 @@ variable "extra_node_pools" {
 
   validation {
     condition = alltrue([for p in var.extra_node_pools :
-      alltrue([for t in p.taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in p.taints : "${t.key}:${t.effect}"])) == length(p.taints)
+      length(p.taints) <= 25 && alltrue([for t in p.taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in p.taints : "${t.key}:${t.effect}"])) == length(p.taints)
     ])
-    error_message = "extra_node_pools taints effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once in a pool."
+    error_message = "extra_node_pools taints may hold at most 25 taints per pool, each effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once in a pool."
   }
 
   validation {
     condition = alltrue(flatten([for p in var.extra_node_pools : [for t in p.taints :
-      length(split("/", t.key)[0]) <= 253 && alltrue([for l in split(".", split("/", t.key)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
-      (t.value == null ? true : length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+      length(t.key) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) >= 1 && length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
     ]]))
-    error_message = "extra_node_pools taints key must be a Kubernetes key ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and value, when set, up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+    error_message = "extra_node_pools taints key must be [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value, when set, is 1 to 63 of the same characters, starting and ending with a letter or digit."
   }
 
   validation {

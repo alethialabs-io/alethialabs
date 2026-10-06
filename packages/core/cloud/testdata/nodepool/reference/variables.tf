@@ -1,71 +1,100 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# THE node-pool contract (#5533, epic #5523): node labels, node taints and extra node pools, said the
-# same way on every cloud so that an alethia.yaml survives a move from AWS to Hetzner.
+# THE node-pool contract (#5533, epic #5523): node labels, node taints and extra node pools, written
+# the same way on every cloud, so that an alethia.yaml still works after a move from AWS to Hetzner.
 #
-# This file is the ONE place the rules are written. Every cloud lane (#5534 aws, #5535 azure, #5536
-# hetzner, #5537 gcp) copies these three `variable` blocks into infra/templates/project/<cloud>/
-# variables.tf. packages/core/cloud/nodepool_contract_test.go (`assertNodePoolContract`) then holds
-# each copy to this one: the `type`, `default` and `nullable` must be token-equal, and EVERY
-# `validation` block below must be present, condition and error_message both. A lane may ADD a
-# validation of its own (a cloud's instance-type grammar, Hetzner refusing Spot) and may rewrite the
-# `description`; it may not drop or weaken a rule here. `tofu test` runs this module against
-# nodepool_contract.tftest.hcl, so every refusal below is proven to refuse, not just written down.
+# This file and render.tf are the contract. Every cloud lane (#5534 aws, #5535 azure, #5536 hetzner,
+# #5537 gcp) copies these three `variable` blocks into infra/templates/project/<cloud>/variables.tf,
+# and copies render.tf into its template. packages/core/cloud/nodepool_contract_test.go
+# (`assertNodePoolContract`) then holds each copy to this one. The `type`, `default` and `nullable`
+# must be token-equal, and EVERY `validation` block below must be present, both its condition and its
+# error_message. A lane may ADD a validation of its own (a cloud's instance-type grammar, Hetzner
+# refusing Spot) and may rewrite the `description`. It may not drop or weaken a rule here. `tofu
+# test` runs this module against nodepool_contract.tftest.hcl, which proves that every refusal below
+# refuses and that render.tf renders what the tests assert.
 #
-# The rules, and why each one is the strictest of the four clouds rather than any one cloud's:
+# The key and value rules are written ONCE, in Go: packages/core/nodekeys. The regexes below are
+# copies of nodekeys.QualifiedKeyRegex, nodekeys.ValueRegex and nodekeys.ReservedDomainRegex, and
+# packages/core/nodekeys/drift_test.go fails if they drift.
 #
-#   · KEY GRAMMAR — a Kubernetes qualified key: [prefix/]name, a DNS-subdomain prefix of at most 253
-#     characters (63 per DNS label) and a name of at most 63. Values: at most 63 of [-A-Za-z0-9_.],
-#     starting and ending alphanumeric, or empty. Same expressions as karpenter_node_labels (#5544).
-#   · RESERVED DOMAINS — a prefix ENDING in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws,
-#     amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io is refused, for
-#     labels and taints alike. There is deliberately NO dot boundary: Karpenter's NodePool CRD tests
-#     endsWith("kubernetes.io"), so `examplekubernetes.io/x` fails at apply and must fail here at plan.
-#     There is also NO exception — not node-role.kubernetes.io/ (the issue's first draft) and not
-#     node-restriction.kubernetes.io/ (#5544's Karpenter-only exception). Managed node groups, GKE and
-#     AKS pools and Talos all label a node through the kubelet's --node-labels, and the kubelet admits
-#     only the kubernetes.io keys IsKubeletLabel allows
-#     (k8s.io/kubelet/pkg/apis/well_known_labels.go); node-role and node-restriction are not among
-#     them, so a portable file cannot carry either. The cloud domains are the UNION across clouds:
-#     a key refused on one cloud must be refused on all, or a file valid on AWS breaks on AKS.
-#   · PLATFORM-RESERVED — alethia.io is in that list because the platform writes there itself: every
-#     extra pool's nodes carry the label alethia.io/pool=<name> (the one pool selector that is the same
-#     on every cloud), and every arm64 pool carries the taint alethia.io/arch=arm64:NoSchedule (#5534:
-#     Alethia's kaniko builds and generated Deployments are single-arch and pin no arch, so arm64
-#     capacity must never take an untolerated pod). A user cannot spoof or remove either.
-#   · POOLS — at most 10; `name` matches ^[a-z][a-z0-9]{0,11}$ (AKS's Linux pool-name rule, the
-#     strictest), unique, and not default, system or spot, which name pools the templates already make.
-#     0 <= min_size <= desired_size <= max_size, 1 <= max_size <= 100, all whole numbers;
-#     desired_size defaults to min_size. arch is amd64 or arm64; capacity_type is on-demand or spot,
-#     the vocabulary karpenter_capacity_types uses.
+# The rules, and why each one is the strictest of the four clouds rather than one cloud's:
+#
+#   · KEY — a Kubernetes qualified key, [prefix/]name, with the name starting and ending with a
+#     letter or digit. The WHOLE key, prefix included, is 1 to 63 characters, because the EKS
+#     managed-node-group API caps label and taint keys there (CreateNodegroup.labels, Taint.key).
+#   · VALUE — 1 to 63 of [-A-Za-z0-9_.], starting and ending with a letter or digit. A label value
+#     may not be empty, because EKS refuses an empty one. A taint value may be left out, but when it
+#     is set it may not be empty.
+#   · RESERVED DOMAINS — a key whose prefix ENDS in kubernetes.io, k8s.io, karpenter.sh,
+#     karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or
+#     alethia.io is refused, for labels and taints alike. There is NO dot boundary: Karpenter's
+#     NodePool CRD tests endsWith("kubernetes.io"), so `examplekubernetes.io/x` fails at apply and
+#     must fail here at plan. There is also NO exception. That rules out node-role.kubernetes.io/ (the
+#     issue's first draft) and node-restriction.kubernetes.io/ (which only the Karpenter knobs admit,
+#     because Karpenter labels a node through the API). EKS managed node groups and GKE and AKS pools
+#     label a node through the kubelet's --node-labels, and the kubelet admits only the kubernetes.io
+#     keys that IsKubeletLabel allows (k8s.io/kubelet/pkg/apis/well_known_labels.go). Talos applies
+#     machine.nodeLabels through its own controller, but the same prefixes are reserved there for the
+#     same reason. The cloud domains are the UNION across clouds: a key that is refused on one cloud
+#     must be refused on all of them, or a file valid on AWS breaks on AKS.
+#   · PLATFORM-RESERVED — alethia.io is in that list because the platform writes there itself. Every
+#     extra pool's nodes carry the label alethia.io/pool=<name>, which is the one pool selector that is
+#     the same on every cloud. Every arm64 pool carries the taint alethia.io/arch=arm64:NoSchedule
+#     (#5534), because Alethia's kaniko builds and generated Deployments are single-arch and pin no
+#     arch, so arm64 capacity must never take an untolerated pod. The AWS Karpenter knobs refuse
+#     alethia.io too (nodekeys), so no knob lets a user set or spoof either key.
+#   · COUNTS — at most 24 node_labels and 25 labels per pool. With the platform's alethia.io/pool,
+#     that is at most 50 labels on a node. At most 24 node_taints and 25 taints per pool. With the
+#     platform's arm64 taint, that is at most 50 taints on a node. 50 is EKS's cap for each.
+#   · POOLS — at most 10. A `name` matches ^[a-z][a-z0-9]{0,11}$ (AKS's Linux pool-name rule, the
+#     strictest of the clouds) and is unique. It may not be `default`, `system`, `spot` or `pool<N>`,
+#     because the templates already make pools with those names: the AKS default pool, its Spot pool,
+#     and its positional pools pool1…poolN from machine_types[1..]. (`default` is also the render's key
+#     for the default pool.) Sizes are whole numbers with 0 <= min_size <= desired_size <= max_size
+#     and 1 <= max_size <= 100. desired_size defaults to min_size. arch is amd64 or arm64.
+#     capacity_type is on-demand or spot, the same vocabulary as karpenter_capacity_types.
 #   · TAINTS — effect is NoSchedule, PreferNoSchedule or NoExecute, and a key/effect pair appears at
 #     most once in one list (the shape of karpenter_node_taints, #5527).
 #
-# What each lane renders (the semantics this file cannot express, held by each lane's tofu test):
+# What each lane renders. render.tf defines it, and the reference tftest's `assert` blocks pin it.
+# Every lane carries both, so four lanes cannot render the semantics four ways:
 #
 #   · node_labels reach EVERY Alethia-managed pool, the default pool included. A pool's own `labels`
-#     win over node_labels for the same key.
+#     win over node_labels for the same key. alethia.io/pool=<name> is added last and always wins.
 #   · node_taints reach the EXTRA pools only. A taint on the default pool would strand the platform's
-#     own add-ons, which tolerate nothing of the user's. A pool's own taint wins over a node_taint
-#     with the same key and effect.
-#   · An extra pool inherits every isolation control the default pool has: the same subnets and
-#     security groups, the same disk encryption, IMDS hop limit 1 on AWS, GKE workload metadata. A pool
-#     that is cheaper because it is less isolated is a tenant-isolation regression.
-#   · Defaults ({}, [], []) render byte-identically to a template without these variables.
+#     own add-ons, which tolerate none of the user's taints. A pool's own taint replaces a node_taint
+#     with the same key and effect. The arm64 platform taint is added last.
+#   · Defaults ({}, [], []) render the default pool with no labels and no taints. The template must
+#     render byte-identically to one without these variables, which each lane proves in its own plan
+#     test.
+#
+# What each lane maps, and what this file cannot express:
+#
+#   · TAINT EFFECT SPELLING. The contract spells effects the Kubernetes way. EKS (aws_eks_node_group
+#     taint.effect) and GKE (node_config.taint.effect) want NO_SCHEDULE, PREFER_NO_SCHEDULE and
+#     NO_EXECUTE. AKS (node_taints) wants the string "key=value:NoSchedule". Talos on Hetzner
+#     (machine.nodeTaints) wants key → "value:NoSchedule". Each lane maps, and no lane changes the
+#     contract spelling.
+#   · HETZNER SIZE. Until the Hetzner autoscaler (#5538), a Hetzner pool is a FIXED group of
+#     desired_size servers (min_size when desired_size is left out). min_size and max_size are still
+#     validated, so the file stays valid when the autoscaler arrives.
+#   · ISOLATION. An extra pool inherits every isolation control the default pool has: the same
+#     subnets and security groups, the same disk encryption, IMDS hop limit 1 on AWS, and GKE workload
+#     metadata. A pool that is cheaper because it is less isolated is a tenant-isolation regression.
 
 variable "node_labels" {
   type        = map(string)
   default     = {}
   nullable    = false
-  description = "Labels on the nodes of every Alethia-managed pool, the default pool included. A pool's own labels win for the same key. Keys in the kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud and alethia.io domains are refused."
+  description = "Labels on the nodes of every Alethia-managed pool, the default pool included. A pool's own labels win for the same key. At most 24. Keys whose prefix ends in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io are refused."
 
   validation {
-    condition = alltrue([for k, v in var.node_labels :
-      length(split("/", k)[0]) <= 253 && alltrue([for l in split(".", split("/", k)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
-      length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    condition = length(var.node_labels) <= 24 && alltrue([for k, v in var.node_labels :
+      length(k) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) >= 1 && length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
     ])
-    error_message = "node_labels keys must be Kubernetes label keys ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and values must be up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+    error_message = "node_labels may hold at most 24 labels. A key is [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value is 1 to 63 of the same characters, starting and ending with a letter or digit."
   }
 
   validation {
@@ -84,19 +113,19 @@ variable "node_taints" {
   }))
   default     = []
   nullable    = false
-  description = "Taints on the nodes of every extra pool (not the default pool, which runs the platform's add-ons). A pool's own taint wins for the same key and effect. effect is one of NoSchedule, PreferNoSchedule and NoExecute."
+  description = "Taints on the nodes of every extra pool (not the default pool, which runs the platform's add-ons). A pool's own taint wins for the same key and effect. At most 24. effect is one of NoSchedule, PreferNoSchedule and NoExecute."
 
   validation {
-    condition     = alltrue([for t in var.node_taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in var.node_taints : "${t.key}:${t.effect}"])) == length(var.node_taints)
-    error_message = "node_taints effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once."
+    condition     = length(var.node_taints) <= 24 && alltrue([for t in var.node_taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in var.node_taints : "${t.key}:${t.effect}"])) == length(var.node_taints)
+    error_message = "node_taints may hold at most 24 taints, each effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once."
   }
 
   validation {
     condition = alltrue([for t in var.node_taints :
-      length(split("/", t.key)[0]) <= 253 && alltrue([for l in split(".", split("/", t.key)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
-      (t.value == null ? true : length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+      length(t.key) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) >= 1 && length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
     ])
-    error_message = "node_taints key must be a Kubernetes key ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and value, when set, up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+    error_message = "node_taints key must be [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value, when set, is 1 to 63 of the same characters, starting and ending with a letter or digit."
   }
 
   validation {
@@ -129,9 +158,9 @@ variable "extra_node_pools" {
 
   validation {
     condition = length(var.extra_node_pools) <= 10 && length(distinct([for p in var.extra_node_pools : p.name])) == length(var.extra_node_pools) && alltrue([for p in var.extra_node_pools :
-      can(regex("^[a-z][a-z0-9]{0,11}$", p.name)) && !contains(["default", "system", "spot"], p.name)
+      can(regex("^[a-z][a-z0-9]{0,11}$", p.name)) && !contains(["default", "system", "spot"], p.name) && !can(regex("^pool[0-9]+$", p.name))
     ])
-    error_message = "extra_node_pools may list at most 10 pools, each with a unique name of 1 to 12 lowercase letters and digits starting with a letter (the AKS pool-name rule, applied on every cloud so the file is portable). The names default, system and spot are taken by pools Alethia already makes."
+    error_message = "extra_node_pools may list at most 10 pools, each with a unique name of 1 to 12 lowercase letters and digits starting with a letter (the AKS pool-name rule, applied on every cloud so the file is portable). The names default, system, spot and pool1, pool2, ... are taken by pools Alethia already makes."
   }
 
   validation {
@@ -150,11 +179,11 @@ variable "extra_node_pools" {
   }
 
   validation {
-    condition = alltrue(flatten([for p in var.extra_node_pools : [for k, v in p.labels :
-      length(split("/", k)[0]) <= 253 && alltrue([for l in split(".", split("/", k)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
-      length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    condition = alltrue([for p in var.extra_node_pools : length(p.labels) <= 25]) && alltrue(flatten([for p in var.extra_node_pools : [for k, v in p.labels :
+      length(k) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) >= 1 && length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
     ]]))
-    error_message = "extra_node_pools labels keys must be Kubernetes label keys ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and values must be up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+    error_message = "extra_node_pools labels may hold at most 25 labels per pool. A key is [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value is 1 to 63 of the same characters, starting and ending with a letter or digit."
   }
 
   validation {
@@ -166,17 +195,17 @@ variable "extra_node_pools" {
 
   validation {
     condition = alltrue([for p in var.extra_node_pools :
-      alltrue([for t in p.taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in p.taints : "${t.key}:${t.effect}"])) == length(p.taints)
+      length(p.taints) <= 25 && alltrue([for t in p.taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in p.taints : "${t.key}:${t.effect}"])) == length(p.taints)
     ])
-    error_message = "extra_node_pools taints effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once in a pool."
+    error_message = "extra_node_pools taints may hold at most 25 taints per pool, each effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once in a pool."
   }
 
   validation {
     condition = alltrue(flatten([for p in var.extra_node_pools : [for t in p.taints :
-      length(split("/", t.key)[0]) <= 253 && alltrue([for l in split(".", split("/", t.key)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
-      (t.value == null ? true : length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+      length(t.key) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) >= 1 && length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
     ]]))
-    error_message = "extra_node_pools taints key must be a Kubernetes key ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and value, when set, up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+    error_message = "extra_node_pools taints key must be [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value, when set, is 1 to 63 of the same characters, starting and ending with a letter or digit."
   }
 
   validation {

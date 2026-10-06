@@ -3,9 +3,9 @@
 #
 # A CONFORMING lane's nodepool_contract.tftest.hcl (fixture for nodepool_contract_test.go): every
 # reference run, with this lane's own instance types substituted (the one substitution allowed),
-# plus what a lane adds: file-level values for its own variables, an assert block, and a run of its
-# own. A real lane also declares its mock providers here; this fixture has nothing to mock, so
-# `tofu test` runs it as it stands.
+# plus what a lane adds: file-level values for its own variables, an assert block of its own, and a
+# run of its own. A real lane also declares its mock providers here; this fixture has nothing to
+# mock, so `tofu test` runs it as it stands.
 
 variables {
   worker_count = 3
@@ -21,18 +21,28 @@ run "hetzner_refuses_a_spot_pool" {
   expect_failures = [var.extra_node_pools]
 }
 
-# Nothing set: the three variables take {}, [] and [] and the plan succeeds.
+# Nothing set: the default pool renders with no labels and no taints, and there is no other pool.
 run "nodepool_defaults_plan" {
   command = plan
 
-  # A lane asserts what it rendered; the contract does not read assert blocks.
+  # A lane adds asserts of its own on what it built; the contract's asserts stay as they are.
   assert {
     condition     = var.worker_count == 3
     error_message = "the default pool is unchanged"
   }
+
+  assert {
+    condition = jsonencode(output.nodepool_contract_render) == jsonencode({
+      default = {
+        labels = {}
+        taints = []
+      }
+    })
+    error_message = "nodepool_contract_render differs from the contract's render for this case (render.tf)."
+  }
 }
 
-# The shape of the docs example (cluster.mdx), widened: a label on every node, a taint for the extra pools, and an arm64 batch pool. capacity_type is left at on-demand because Hetzner refuses spot in a validation of its own.
+# The shape of the docs example (cluster.mdx), widened: a label on every node, a taint for the extra pools, an arm64 batch pool and an amd64 GPU pool. capacity_type stays on-demand because Hetzner refuses spot in a validation of its own.
 run "nodepool_accepts_the_portable_example" {
   command = plan
 
@@ -40,7 +50,6 @@ run "nodepool_accepts_the_portable_example" {
     node_labels = {
       team                      = "payments"
       "example.com/cost-centre" = "cc-1042"
-      empty                     = ""
     }
     node_taints = [
       {
@@ -87,27 +96,272 @@ run "nodepool_accepts_the_portable_example" {
       },
     ]
   }
+
+  assert {
+    condition = jsonencode(output.nodepool_contract_render) == jsonencode({
+      default = {
+        labels = {
+          team                      = "payments"
+          "example.com/cost-centre" = "cc-1042"
+        }
+        taints = []
+      }
+      batch = {
+        labels = {
+          team                      = "payments"
+          "example.com/cost-centre" = "cc-1042"
+          workload                  = "batch"
+          "alethia.io/pool"         = "batch"
+        }
+        taints = [
+          {
+            key    = "dedicated"
+            value  = "batch"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "example.com/batch"
+            value  = ""
+            effect = "PreferNoSchedule"
+          },
+          {
+            key    = "alethia.io/arch"
+            value  = "arm64"
+            effect = "NoSchedule"
+          },
+        ]
+      }
+      gpu = {
+        labels = {
+          team                      = "payments"
+          "example.com/cost-centre" = "cc-1042"
+          "alethia.io/pool"         = "gpu"
+        }
+        taints = [
+          {
+            key    = "dedicated"
+            value  = "batch"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "gpu"
+            value  = "true"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "gpu"
+            value  = "true"
+            effect = "NoExecute"
+          },
+        ]
+      }
+    })
+    error_message = "nodepool_contract_render differs from the contract's render for this case (render.tf)."
+  }
 }
 
-# The edges are inside the contract: 10 pools, a 12-character name, max_size 100, min_size 0, a 63-character label name and value, every taint effect.
+# A pool's label wins over node_labels; a pool's taint replaces the node_taint with the same key and effect; node_taints never reach the default pool; alethia.io/pool and the arm64 taint come last.
+run "nodepool_renders_the_merge_rules" {
+  command = plan
+
+  variables {
+    node_labels = {
+      team = "a"
+    }
+    node_taints = [
+      {
+        key    = "dedicated"
+        value  = "x"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "keep"
+        effect = "NoExecute"
+      },
+    ]
+    extra_node_pools = [
+      {
+        name          = "p"
+        instance_type = "cx32"
+        min_size      = 0
+        max_size      = 4
+        arch          = "arm64"
+        labels = {
+          team = "b"
+        }
+        taints = [
+          {
+            key    = "dedicated"
+            value  = "y"
+            effect = "NoSchedule"
+          },
+        ]
+      },
+    ]
+  }
+
+  assert {
+    condition = jsonencode(output.nodepool_contract_render) == jsonencode({
+      default = {
+        labels = {
+          team = "a"
+        }
+        taints = []
+      }
+      p = {
+        labels = {
+          team              = "b"
+          "alethia.io/pool" = "p"
+        }
+        taints = [
+          {
+            key    = "keep"
+            value  = ""
+            effect = "NoExecute"
+          },
+          {
+            key    = "dedicated"
+            value  = "y"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "alethia.io/arch"
+            value  = "arm64"
+            effect = "NoSchedule"
+          },
+        ]
+      }
+    })
+    error_message = "nodepool_contract_render differs from the contract's render for this case (render.tf)."
+  }
+}
+
+# The edges are inside the contract: 10 pools, a 12-character name, max_size 100, min_size 0, a 63-character key and value, 24 node_labels and node_taints, 25 labels and taints on a pool, every taint effect.
 run "nodepool_accepts_the_limits" {
   command = plan
 
   variables {
     node_labels = {
       aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"
+      l0                                                              = "v"
+      l1                                                              = "v"
+      l2                                                              = "v"
+      l3                                                              = "v"
+      l4                                                              = "v"
+      l5                                                              = "v"
+      l6                                                              = "v"
+      l7                                                              = "v"
+      l8                                                              = "v"
+      l9                                                              = "v"
+      l10                                                             = "v"
+      l11                                                             = "v"
+      l12                                                             = "v"
+      l13                                                             = "v"
+      l14                                                             = "v"
+      l15                                                             = "v"
+      l16                                                             = "v"
+      l17                                                             = "v"
+      l18                                                             = "v"
+      l19                                                             = "v"
+      l20                                                             = "v"
+      l21                                                             = "v"
+      l22                                                             = "v"
     }
     node_taints = [
       {
-        key    = "a"
+        key    = "t0"
         effect = "NoSchedule"
       },
       {
-        key    = "a"
+        key    = "t0"
         effect = "PreferNoSchedule"
       },
       {
-        key    = "a"
+        key    = "t0"
+        effect = "NoExecute"
+      },
+      {
+        key    = "t1"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t1"
+        effect = "PreferNoSchedule"
+      },
+      {
+        key    = "t1"
+        effect = "NoExecute"
+      },
+      {
+        key    = "t2"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t2"
+        effect = "PreferNoSchedule"
+      },
+      {
+        key    = "t2"
+        effect = "NoExecute"
+      },
+      {
+        key    = "t3"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t3"
+        effect = "PreferNoSchedule"
+      },
+      {
+        key    = "t3"
+        effect = "NoExecute"
+      },
+      {
+        key    = "t4"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t4"
+        effect = "PreferNoSchedule"
+      },
+      {
+        key    = "t4"
+        effect = "NoExecute"
+      },
+      {
+        key    = "t5"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t5"
+        effect = "PreferNoSchedule"
+      },
+      {
+        key    = "t5"
+        effect = "NoExecute"
+      },
+      {
+        key    = "t6"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t6"
+        effect = "PreferNoSchedule"
+      },
+      {
+        key    = "t6"
+        effect = "NoExecute"
+      },
+      {
+        key    = "t7"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t7"
+        effect = "PreferNoSchedule"
+      },
+      {
+        key    = "t7"
         effect = "NoExecute"
       },
     ]
@@ -117,6 +371,135 @@ run "nodepool_accepts_the_limits" {
         instance_type = "cx32"
         min_size      = 0
         max_size      = 4
+        labels = {
+          l0  = "v"
+          l1  = "v"
+          l2  = "v"
+          l3  = "v"
+          l4  = "v"
+          l5  = "v"
+          l6  = "v"
+          l7  = "v"
+          l8  = "v"
+          l9  = "v"
+          l10 = "v"
+          l11 = "v"
+          l12 = "v"
+          l13 = "v"
+          l14 = "v"
+          l15 = "v"
+          l16 = "v"
+          l17 = "v"
+          l18 = "v"
+          l19 = "v"
+          l20 = "v"
+          l21 = "v"
+          l22 = "v"
+          l23 = "v"
+          l24 = "v"
+        }
+        taints = [
+          {
+            key    = "example.com/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p0"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p1"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p2"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p3"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p4"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p5"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p6"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p7"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p8"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p9"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p10"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p11"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p12"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p13"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p14"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p15"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p16"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p17"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p18"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p19"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p20"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p21"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p22"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "p23"
+            effect = "NoSchedule"
+          },
+        ]
       },
       {
         name          = "p0"
@@ -183,6 +566,11 @@ run "nodepool_accepts_the_limits" {
       },
     ]
   }
+
+  assert {
+    condition     = length(output.nodepool_contract_render) == 11
+    error_message = "nodepool_contract_render must hold the default pool and every extra pool."
+  }
 }
 
 # A prefix that merely CONTAINS a reserved domain is the user's own: kubernetes.io.example.com does not end in kubernetes.io.
@@ -199,6 +587,18 @@ run "nodepool_accepts_a_lookalike_outside_the_reserved_domains" {
         effect = "NoSchedule"
       },
     ]
+  }
+
+  assert {
+    condition = jsonencode(output.nodepool_contract_render) == jsonencode({
+      default = {
+        labels = {
+          "kubernetes.io.example.com/team" = "a"
+        }
+        taints = []
+      }
+    })
+    error_message = "nodepool_contract_render differs from the contract's render for this case (render.tf)."
   }
 }
 
@@ -226,24 +626,26 @@ run "nodepool_refuses_a_label_name_over_63" {
   expect_failures = [var.node_labels]
 }
 
-run "nodepool_refuses_a_label_dns_label_over_63" {
+# EKS caps the WHOLE key at 63: a valid Kubernetes key of 64 is refused.
+run "nodepool_refuses_a_label_key_over_63_with_its_prefix" {
   command = plan
 
   variables {
     node_labels = {
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com/team" = "a"
+      "example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" = "a"
     }
   }
 
   expect_failures = [var.node_labels]
 }
 
-run "nodepool_refuses_a_label_prefix_over_253" {
+# EKS refuses an empty label value.
+run "nodepool_refuses_an_empty_label_value" {
   command = plan
 
   variables {
     node_labels = {
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/team" = "a"
+      team = ""
     }
   }
 
@@ -268,6 +670,42 @@ run "nodepool_refuses_a_label_value_over_63" {
   variables {
     node_labels = {
       team = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+
+  expect_failures = [var.node_labels]
+}
+
+run "nodepool_refuses_a_25th_node_label" {
+  command = plan
+
+  variables {
+    node_labels = {
+      l0  = "v"
+      l1  = "v"
+      l2  = "v"
+      l3  = "v"
+      l4  = "v"
+      l5  = "v"
+      l6  = "v"
+      l7  = "v"
+      l8  = "v"
+      l9  = "v"
+      l10 = "v"
+      l11 = "v"
+      l12 = "v"
+      l13 = "v"
+      l14 = "v"
+      l15 = "v"
+      l16 = "v"
+      l17 = "v"
+      l18 = "v"
+      l19 = "v"
+      l20 = "v"
+      l21 = "v"
+      l22 = "v"
+      l23 = "v"
+      l24 = "v"
     }
   }
 
@@ -466,6 +904,117 @@ run "nodepool_refuses_a_duplicate_taint" {
   expect_failures = [var.node_taints]
 }
 
+run "nodepool_refuses_a_25th_node_taint" {
+  command = plan
+
+  variables {
+    node_taints = [
+      {
+        key    = "t0"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t1"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t2"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t3"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t4"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t5"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t6"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t7"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t8"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t9"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t10"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t11"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t12"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t13"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t14"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t15"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t16"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t17"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t18"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t19"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t20"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t21"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t22"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t23"
+        effect = "NoSchedule"
+      },
+      {
+        key    = "t24"
+        effect = "NoSchedule"
+      },
+    ]
+  }
+
+  expect_failures = [var.node_taints]
+}
+
 run "nodepool_refuses_a_taint_key_with_a_space" {
   command = plan
 
@@ -473,6 +1022,38 @@ run "nodepool_refuses_a_taint_key_with_a_space" {
     node_taints = [
       {
         key    = "g pu"
+        effect = "NoSchedule"
+      },
+    ]
+  }
+
+  expect_failures = [var.node_taints]
+}
+
+run "nodepool_refuses_a_taint_key_over_63_with_its_prefix" {
+  command = plan
+
+  variables {
+    node_taints = [
+      {
+        key    = "example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        effect = "NoSchedule"
+      },
+    ]
+  }
+
+  expect_failures = [var.node_taints]
+}
+
+# Leave value out instead; an empty value is refused so that "" can only mean none.
+run "nodepool_refuses_an_empty_taint_value" {
+  command = plan
+
+  variables {
+    node_taints = [
+      {
+        key    = "gpu"
+        value  = ""
         effect = "NoSchedule"
       },
     ]
@@ -654,6 +1235,40 @@ run "nodepool_refuses_a_pool_name_spot" {
     extra_node_pools = [
       {
         name          = "spot"
+        instance_type = "cx32"
+        min_size      = 0
+        max_size      = 4
+      },
+    ]
+  }
+
+  expect_failures = [var.extra_node_pools]
+}
+
+run "nodepool_refuses_a_pool_name_pool1" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      {
+        name          = "pool1"
+        instance_type = "cx32"
+        min_size      = 0
+        max_size      = 4
+      },
+    ]
+  }
+
+  expect_failures = [var.extra_node_pools]
+}
+
+run "nodepool_refuses_a_pool_name_pool12" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      {
+        name          = "pool12"
         instance_type = "cx32"
         min_size      = 0
         max_size      = 4
@@ -1013,6 +1628,71 @@ run "nodepool_refuses_a_pool_label_value" {
   expect_failures = [var.extra_node_pools]
 }
 
+run "nodepool_refuses_an_empty_pool_label_value" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      {
+        name          = "batch"
+        instance_type = "cx32"
+        min_size      = 0
+        max_size      = 4
+        labels = {
+          x = ""
+        }
+      },
+    ]
+  }
+
+  expect_failures = [var.extra_node_pools]
+}
+
+run "nodepool_refuses_a_26th_pool_label" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      {
+        name          = "batch"
+        instance_type = "cx32"
+        min_size      = 0
+        max_size      = 4
+        labels = {
+          l0  = "v"
+          l1  = "v"
+          l2  = "v"
+          l3  = "v"
+          l4  = "v"
+          l5  = "v"
+          l6  = "v"
+          l7  = "v"
+          l8  = "v"
+          l9  = "v"
+          l10 = "v"
+          l11 = "v"
+          l12 = "v"
+          l13 = "v"
+          l14 = "v"
+          l15 = "v"
+          l16 = "v"
+          l17 = "v"
+          l18 = "v"
+          l19 = "v"
+          l20 = "v"
+          l21 = "v"
+          l22 = "v"
+          l23 = "v"
+          l24 = "v"
+          l25 = "v"
+        }
+      },
+    ]
+  }
+
+  expect_failures = [var.extra_node_pools]
+}
+
 # alethia.io/pool is the platform's portable pool selector; a pool may not override it.
 run "nodepool_refuses_the_platform_pool_label" {
   command = plan
@@ -1045,7 +1725,7 @@ run "nodepool_refuses_a_pool_label_in_kubernetes_io" {
         min_size      = 0
         max_size      = 4
         labels = {
-          "node-role.kubernetes.io/batch" = ""
+          "node-role.kubernetes.io/batch" = "x"
         }
       },
     ]
@@ -1095,6 +1775,129 @@ run "nodepool_refuses_a_duplicate_pool_taint" {
           {
             key    = "x"
             value  = "y"
+            effect = "NoSchedule"
+          },
+        ]
+      },
+    ]
+  }
+
+  expect_failures = [var.extra_node_pools]
+}
+
+run "nodepool_refuses_a_26th_pool_taint" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      {
+        name          = "batch"
+        instance_type = "cx32"
+        min_size      = 0
+        max_size      = 4
+        taints = [
+          {
+            key    = "t0"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t1"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t2"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t3"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t4"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t5"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t6"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t7"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t8"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t9"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t10"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t11"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t12"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t13"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t14"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t15"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t16"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t17"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t18"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t19"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t20"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t21"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t22"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t23"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t24"
+            effect = "NoSchedule"
+          },
+          {
+            key    = "t25"
             effect = "NoSchedule"
           },
         ]
