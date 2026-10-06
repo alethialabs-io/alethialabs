@@ -102,12 +102,21 @@ smaller, does not rename the servers of another pool.
 The template numbers the `/24` subnets of the cluster network from `0`. Number `0` is the node
 subnet of the control plane and the default workers. A **free** `/24` is one with a number from `1`
 and that does not overlap the pod or the service range. On the default `10.0.0.0/16` network, the
-free numbers are `1` to `95`.
+free numbers are `1` to `95`. The highest number is `1023`, also on a network that is larger than a
+`/14` and so has more `/24` subnets.
 
 A pool takes the free `/24` that its name hashes to. The same name always gets the same subnet on
 the same network, so the order of the list does not matter.
 
-Two names can hash to the same `/24`. The plan then refuses both pools and names them, for example:
+The hash is taken over the list of free numbers. So if you change `pod_cidr`, `service_cidr` or the
+network range, the list changes, and every pool is hashed again. A pool that is not in
+`node_pool_subnet_index` then usually moves to a different `/24`, and its servers are replaced. Change these values before you add pools, not after.
+
+Two names can hash to the same `/24`, and this is common when you add several pools. On the default
+network, the chance of at least one clash is about 10% for 5 pools and about 38% for 10. On a small
+network, such as a `/20` with 5 free numbers, a clash is almost certain after 3 pools.
+[#5595](https://github.com/alethialabs-io/alethialabs/issues/5595) tracks how to make clashes
+rarer. The plan refuses the pools that clash and names them, for example:
 
 ```text
 extra_node_pools pools ["edge","search"] would all take /24 number 41 (10.0.41.0/24) of the network.

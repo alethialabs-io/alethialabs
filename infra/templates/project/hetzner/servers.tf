@@ -197,6 +197,23 @@ locals {
   # The lowest free /24 no pool takes: the number the clash message suggests.
   node_pool_spare_slot = try([for n in local.node_pool_free_slots : n if !contains(values(local.node_pool_subnet_slot), n)][0], null)
 
+  # What the clash check says when it fails, per pool. It says HOW the pools came to share the /24:
+  # by the hash of their names, by node_pool_subnet_index, or some of each, so that the message is
+  # true when both pools were set by hand.
+  node_pool_subnet_clash_message = {
+    for name, others in local.node_pool_subnet_clashes : name => format(
+      "extra_node_pools pools %s would all take /24 number %d (%s) of the network. %s Do not set node_pool_subnet_index on a pool that already exists: that moves the pool's subnet and replaces its servers.",
+      jsonencode(sort(concat([name], others))),
+      coalesce(local.node_pool_subnet_slot[name], -1),
+      coalesce(local.node_pool_subnet_cidrs[name], "none"),
+      alltrue([for p in concat([name], others) : contains(keys(var.node_pool_subnet_index), p)])
+      ? "node_pool_subnet_index sets each of them to this /24. Give each pool a different free /24 number${local.node_pool_spare_slot == null ? "" : ", such as ${local.node_pool_spare_slot}"}."
+      : anytrue([for p in concat([name], others) : contains(keys(var.node_pool_subnet_index), p)])
+      ? "${jsonencode(sort([for p in concat([name], others) : p if contains(keys(var.node_pool_subnet_index), p)]))} take it by node_pool_subnet_index, and ${jsonencode(sort([for p in concat([name], others) : p if !contains(keys(var.node_pool_subnet_index), p)]))} by the hash of the name. Set node_pool_subnet_index for the pool you are adding to a different free /24 number${local.node_pool_spare_slot == null ? "" : ", such as ${local.node_pool_spare_slot}"}, or rename it."
+      : "A pool's /24 is chosen from its name, and these names land on the same one. Set node_pool_subnet_index for the pool you are adding, to a free /24 number${local.node_pool_spare_slot == null ? "" : " such as ${local.node_pool_spare_slot}"} (for example node_pool_subnet_index = { ${name} = ${coalesce(local.node_pool_spare_slot, 1)} }), or rename it."
+    )
+  }
+
   node_pool_servers = merge({}, [
     for name, p in local.node_pools : {
       for i in range(p.count) : "${name}-${i}" => { pool = name, index = i }
@@ -224,7 +241,7 @@ resource "hcloud_network_subnet" "node_pools" {
     # servers were built. Checked on the /24 each pool will hold (see ADDRESSING: no ignore_changes).
     precondition {
       condition     = length(local.node_pool_subnet_clashes[each.key]) == 0
-      error_message = "extra_node_pools pools ${jsonencode(sort(concat([each.key], local.node_pool_subnet_clashes[each.key])))} would all take /24 number ${coalesce(local.node_pool_subnet_slot[each.key], -1)} (${coalesce(local.node_pool_subnet_cidrs[each.key], "none")}) of the network. A pool's /24 is chosen from its name, and these names land on the same one. Set node_pool_subnet_index for the pool you are adding, to a free /24 number${local.node_pool_spare_slot == null ? "" : " such as ${local.node_pool_spare_slot}"} (for example node_pool_subnet_index = { ${each.key} = ${coalesce(local.node_pool_spare_slot, 1)} }), or rename it. Do not set it on a pool that already exists: that moves the pool's subnet and replaces its servers."
+      error_message = local.node_pool_subnet_clash_message[each.key]
     }
   }
 }

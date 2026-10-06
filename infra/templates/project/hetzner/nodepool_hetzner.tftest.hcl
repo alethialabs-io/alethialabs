@@ -555,6 +555,22 @@ run "hetzner_refuses_a_subnet_index_on_another_pools_subnet" {
   expect_failures = [hcloud_network_subnet.node_pools]
 }
 
+# Two overrides onto the same /24 are refused too; the message then says node_pool_subnet_index put
+# them there, not their names.
+run "hetzner_refuses_two_subnet_indexes_on_one_subnet" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "a", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+    node_pool_subnet_index = { a = 5, b = 5 }
+  }
+
+  expect_failures = [hcloud_network_subnet.node_pools]
+}
+
 # An override inside the pod CIDR (10.0.128.0/17 on the default network) is refused.
 run "hetzner_refuses_a_subnet_index_in_the_pod_cidr" {
   command = plan
