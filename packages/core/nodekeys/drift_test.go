@@ -76,6 +76,11 @@ var keyRuleSites = []keyRuleSite{
 		portable: true,
 	},
 	{
+		file:     "infra/templates/project/gcp/variables.tf",
+		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},
+		portable: true,
+	},
+	{
 		file:     "packages/core/cloud/testdata/nodepool/reference/variables.tf",
 		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},
 		portable: true,
