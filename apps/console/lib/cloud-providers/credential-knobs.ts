@@ -37,7 +37,7 @@ import { asRecord } from "@/lib/records";
  * template manifest files their knobs under. The design shape is `CreateProjectInput` — a singleton
  * object for `cluster` and `dns`, an array of named components for the rest.
  */
-export const DESIGN_PROVIDER_CONFIG_KIND: Readonly<Record<string, NodeKind>> = {
+const DESIGN_PROVIDER_CONFIG_KIND: Readonly<Record<string, NodeKind>> = {
 	cluster: "cluster",
 	dns: "dns",
 	databases: "database",

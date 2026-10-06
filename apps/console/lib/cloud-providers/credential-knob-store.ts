@@ -74,7 +74,7 @@ const READ_PROVIDER_CONFIGS: Readonly<
  * key on. Returns `[]` without a query when the design carries no credential key at all — the case
  * for every save the canvas itself makes, so the guard costs nothing on the normal path.
  */
-export async function storedCredentialEntries(
+async function storedCredentialEntries(
 	tx: Tx,
 	projectId: string,
 	design: unknown,

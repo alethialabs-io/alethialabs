@@ -140,7 +140,7 @@ async function main(): Promise<void> {
 	const sql = postgres(url, {
 		max: 1,
 		onnotice: () => {},
-		connection: { default_transaction_read_only: "on" },
+		connection: { default_transaction_read_only: true },
 	});
 	try {
 		const [mode] = await sql`show transaction_read_only`;

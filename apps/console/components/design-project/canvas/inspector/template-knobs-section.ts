@@ -365,7 +365,7 @@ export const CREDENTIAL_KEEP = "__stored_credential__";
  * never read into the control, so it never reaches the DOM. Removing is the ONLY write this field
  * can make; "keep" rewrites nothing.
  */
-export function withheldCredentialField(knob: TemplateKnob): FieldDef {
+function withheldCredentialField(knob: TemplateKnob): FieldDef {
 	const guidance = credentialGuidance(knob.component, knob.name);
 	const stored = (config: AnyConfig) => readKnob(knob, config) !== undefined;
 	return {
