@@ -210,6 +210,8 @@ const COMPONENT_OF_ROOT_FILE = {
 	"gcp/memorystore.tf": "cache",
 	"gcp/memorystore-valkey.tf": "cache",
 	"gcp/networking.tf": "network",
+	"gcp/nodepool_contract_render.tf": "cluster",
+	"gcp/nodepools.tf": "cluster",
 	"gcp/pubsub.tf": "topic",
 	"gcp/registry-pull.tf": "platform",
 	"gcp/secret-manager.tf": "secret",

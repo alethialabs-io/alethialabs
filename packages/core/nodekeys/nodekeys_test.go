@@ -116,3 +116,25 @@ func TestReservedDomainRegexAndText(t *testing.T) {
 		t.Error("keyPrefix")
 	}
 }
+
+// TestIsGCPArmMachineType pins each Arm family, A4X and A4X Max included, and x86 look-alikes.
+func TestIsGCPArmMachineType(t *testing.T) {
+	for mt, want := range map[string]bool{
+		"t2a-standard-4":      true,
+		"c4a-standard-8":      true,
+		"c4a-standard-4-lssd": true,
+		"n4a-standard-4":      true,
+		"a4x-highgpu-4g":      true,
+		"a4x-maxgpu-4g-metal": true,
+		"e2-standard-4":       false,
+		"n2d-standard-4":      false,
+		"c4-standard-8":       false,
+		"a4-highgpu-8g":       false,
+		"g2-standard-4":       false,
+		"t2d-standard-4":      false,
+	} {
+		if got := IsGCPArmMachineType(mt); got != want {
+			t.Errorf("IsGCPArmMachineType(%q) = %v, want %v", mt, got, want)
+		}
+	}
+}
