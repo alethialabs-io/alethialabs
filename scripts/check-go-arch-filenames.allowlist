@@ -1,0 +1,13 @@
+# Go files that are platform-specific ON PURPOSE — read by scripts/check-go-arch-filenames.mjs (#5593).
+#
+# A `_<goos>`, `_<goarch>` or `_<goos>_<goarch>` filename suffix is an implicit build constraint: the
+# file is skipped on every other platform, silently. Each entry below is a file where that is the
+# point. Format: `<repo-relative path>  <reason>`. Every listed file must also carry a `//go:build`
+# line naming its suffix, and an entry whose file is gone or no longer suffixed fails the check —
+# delete the line rather than leaving it to excuse whatever is written there next.
+#
+# Do NOT add a test about a platform here (karpenter_arm64_test.go, #5579): rename it instead, so it
+# runs on CI's amd64 runners.
+
+apps/cli/internal/kubecache/lock_windows.go  LockFileEx via golang.org/x/sys/windows; lock_unix.go is the flock counterpart
+test/e2e/t2_runner_proc_sysproc_linux_test.go  Setpgid+Pdeathsig SysProcAttr mirrors terraform-exec's Linux-only cmd_linux.go; Pdeathsig does not exist elsewhere
