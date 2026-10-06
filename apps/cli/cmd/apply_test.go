@@ -214,6 +214,13 @@ func TestApply_ALifecycleChangeOnAnExistingEnvironmentIsRefused(t *testing.T) {
 		"the file says lifecycle ephemeral, the server has persistent",
 		"the file says lifecycle persistent, the server has ephemeral",
 		"set only when an environment is created",
+		// production: the server holds the default, so both spellings of keeping it are named.
+		"remove `lifecycle` or set it to `lifecycle: persistent`",
+		// preview: the server holds ephemeral, so the one spelling is.
+		"To keep this environment, set it to `lifecycle: ephemeral`",
+		// A new environment does not replace the old one, and is not placed like it by default.
+		"this environment keeps running until it is destroyed",
+		"with `namespace` placement unless the file sets `placement`",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the plan does not show %q:\n%s", want, out)

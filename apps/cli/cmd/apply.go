@@ -541,7 +541,17 @@ func lifecycleProblem(declared, stored string) string {
 	if declared == stored {
 		return ""
 	}
-	return fmt.Sprintf("the file says lifecycle %s, the server has %s — a lifecycle is set only when an environment is created, and nothing changes it afterwards (not apply, not the console); set the file back to `lifecycle: %s`, or declare a new environment with `lifecycle: %s` and apply creates it", declared, stored, stored, declared)
+	// Keeping the environment means making the file say what the server holds. For the default that
+	// is either spelling — the key removed or written out — so both are named.
+	keep := fmt.Sprintf("set it to `lifecycle: %s`", stored)
+	if stored == exportDefaultLifecycle {
+		keep = fmt.Sprintf("remove `lifecycle` or set it to `lifecycle: %s`", stored)
+	}
+	// The other remedy is a NEW environment, and two of its consequences are easy to miss: apply
+	// never deletes, so the old one keeps running (and billing) until someone destroys it; and a new
+	// environment that is not first in the file and names no placement is placed `namespace`
+	// (manifest.Normalize), not on a dedicated cluster like the one it may be replacing.
+	return fmt.Sprintf("the file says lifecycle %s, the server has %s — a lifecycle is set only when an environment is created, and nothing changes it afterwards (not apply, not the console). To keep this environment, %s. To get %s, declare a NEW environment with `lifecycle: %s`: apply creates it with `namespace` placement unless the file sets `placement` (or lists it first), and this environment keeps running until it is destroyed", declared, stored, keep, declared, declared)
 }
 
 // findComponent returns the existing component of the kind (and name, for a multi kind).

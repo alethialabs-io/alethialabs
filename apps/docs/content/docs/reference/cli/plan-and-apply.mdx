@@ -112,8 +112,16 @@ difference and `apply` refuses the whole file:
     ✗ the file says lifecycle persistent, the server has ephemeral — a lifecycle is set only when an environment is created, …
 ```
 
-To keep the environment, set the file back to the server's value. To get the other lifecycle,
-declare a new environment with it, and `apply` creates that environment.
+To keep the environment, make the file match the server. If the server holds `persistent`, remove
+`lifecycle` or set it to `persistent`. If the server holds `ephemeral`, set `lifecycle: ephemeral`.
+
+To get the other lifecycle, declare a new environment with it, and `apply` creates that
+environment. Two things do not happen on their own:
+
+- The old environment is not removed. `apply` never deletes, so it keeps running until it is
+  destroyed.
+- The new environment gets `namespace` placement unless the file sets `placement`. The one
+  exception is an environment listed first in the file, which gets `dedicated`.
 
 ### Changing a component
 
