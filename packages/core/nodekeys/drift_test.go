@@ -75,6 +75,13 @@ var keyRuleSites = []keyRuleSite{
 		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},
 		portable: true,
 	},
+	// The Hetzner template's copy of the cross-cloud contract (#5536). Its own instance-type rule
+	// uses no regex(), so every literal here is the contract's.
+	{
+		file:     "infra/templates/project/hetzner/variables.tf",
+		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},
+		portable: true,
+	},
 	{
 		file:     "infra/templates/project/gcp/variables.tf",
 		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},

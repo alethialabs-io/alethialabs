@@ -1,0 +1,129 @@
+---
+title: Hetzner Resources
+description: The OpenTofu template for Hetzner Cloud — Talos Linux servers, worker pools, node labels and taints, and what Hetzner refuses.
+---
+
+# Hetzner Resources
+
+The Hetzner template (`infra/templates/project/hetzner/`) builds a Kubernetes cluster on Hetzner
+Cloud servers that run Talos Linux. Hetzner has no managed Kubernetes service, so the template
+creates the servers, the private network and the firewall itself, and Talos turns them into a
+cluster. The template has no modules: each file builds one part of the project.
+
+## Resources
+
+| File | Resources created |
+|------|-------------------|
+| `servers.tf` | Control-plane servers, default worker servers, and the servers of each extra worker pool |
+| `talos.tf` | Talos machine secrets, a machine configuration per role and per pool, the cluster bootstrap and the admin kubeconfig |
+| `image.tf` | The Talos disk snapshot for each CPU architecture the cluster needs, built once and reused |
+| `network.tf` | The private network (or the one you bring), the node subnet, public IPv4 addresses and the firewall |
+| `cilium.tf`, `csi.tf` | Cilium (the network plugin), the Hetzner cloud controller manager and the Hetzner volume driver, rendered for the runner to apply |
+| `dns.tf` | A Hetzner DNS zone, when you turn Cloud DNS on |
+| `buckets.tf` | Hetzner Object Storage buckets |
+
+## Node shape
+
+A Hetzner cluster has these servers:
+
+| Servers | Count | Server type | Set by |
+|---------|-------|-------------|--------|
+| Control plane | 1 | The worker server type | Fixed |
+| Default workers | `worker_count` (1 by default) | `worker_server_type` (`cpx22` by default) | The cluster's node size and instance types |
+| An extra worker pool | The pool's `desired_size`, or `min_size` | The pool's `instance_type` | `extra_node_pools` |
+
+Every server is on the cluster's private network, behind the cluster's firewall, and has a public
+IPv4 and IPv6 address. Talos uses the public address to configure the server. All servers join with
+the same Talos machine secrets, so a server can only join its own cluster.
+
+A server type that starts with `cax` is an Ampere arm64 server. The `cx`, `cpx` and `ccx` types are
+amd64. The template builds a Talos image for each architecture that the cluster uses.
+
+## Worker pools, labels and taints
+
+The Hetzner template accepts the three keys that every cloud accepts: `node_labels`,
+`node_taints` and `extra_node_pools`. Set them in the cluster's `provider_config`. The rules for the
+keys and values, and the labels and taints that each pool's nodes carry, are the same on every
+cloud. See [Node labels, taints and extra pools](/guides/design-project/cluster#node-labels-taints-and-extra-pools).
+
+This example adds a pool of two dedicated-vCPU `ccx23` servers for a database-heavy service, beside
+the default `cpx` workers, and a pool of three arm64 servers:
+
+```yaml
+environments:
+  - name: prod
+    components:
+      cluster:
+        provider_config:
+          node_labels:
+            team: payments
+          extra_node_pools:
+            - name: db
+              instance_type: ccx23
+              min_size: 2
+              max_size: 2
+              labels:
+                workload: db
+              taints:
+                - key: dedicated
+                  value: db
+                  effect: NoSchedule
+            - name: arm
+              instance_type: cax21
+              arch: arm64
+              min_size: 3
+              max_size: 3
+```
+
+To run a workload on the `db` pool, select `alethia.io/pool: db` and tolerate
+`dedicated=db:NoSchedule`. To run a workload on the `arm` pool, also tolerate
+`alethia.io/arch=arm64:NoSchedule`.
+
+### How a pool is built
+
+Each entry in `extra_node_pools` is a separate group of servers. The servers are named
+`<project>-<environment>-<pool>-<index>`, such as `boutique-prod-db-0`. Removing a pool, or making it
+smaller, does not rename the servers of another pool.
+
+- **Size.** A pool has a fixed number of servers: `desired_size`, or `min_size` if you leave
+  `desired_size` out. Hetzner has no autoscaler yet. It arrives in
+  [#5538](https://github.com/alethialabs-io/alethialabs/issues/5538). Until then, `min_size` and
+  `max_size` are checked but do not change the number of servers.
+- **Network.** Each pool has its own `/24` subnet on the cluster's private network. The first pool
+  in the list gets the second `/24` of the network, the next pool the third, and so on. A pool keeps
+  its subnet after it is created. To add a pool, add it at the **end** of the list. A pool
+  added in the middle can compute a subnet that an older pool already holds, and the plan refuses it.
+- **Image.** The pool's servers boot the Talos image for the pool's `arch`.
+- **Isolation.** The pool's servers have the same firewall and the same private network as the
+  default workers, and the same kind of public address: an IPv4 and an IPv6 address each.
+
+### How labels and taints reach a node
+
+Labels are set in the Talos machine configuration (`machine.nodeLabels`). Talos keeps them on the
+node, so a label that you change reaches the running nodes on the next apply. `node_labels` reach
+the default workers and every pool. They do not reach the control plane.
+
+Taints are set when a node registers with the cluster, through the kubelet's
+`--register-with-taints` flag. Kubernetes does not let a node change its own taints after it
+registers, so Talos cannot keep them up to date the way it keeps labels.
+
+<Callout type="warn">
+  A change to a pool's taints, or to `node_taints`, reaches only the servers that join the cluster
+  after the change. The nodes that are already registered keep their taints. To apply new taints
+  to a whole pool, set its `min_size` and `desired_size` to `0` and apply, which removes its
+  servers. Then set them back and apply again.
+</Callout>
+
+## What Hetzner refuses
+
+The Hetzner plan refuses these values, in addition to the rules that every cloud applies:
+
+- **Spot capacity.** `capacity_type: spot` is refused. Hetzner Cloud has no interruptible
+  servers, so a Spot pool could only be built as an on-demand pool at the on-demand price. Leave
+  `capacity_type` out.
+- **An instance type from another cloud.** `instance_type` must be a Hetzner server type: `cx`,
+  `cpx`, `ccx` or `cax`, followed by its size, such as `cpx31`, `ccx23` or `cax21`.
+- **An architecture that does not match the server type.** A `cax` pool must set `arch: arm64`.
+  A `cx`, `cpx` or `ccx` pool must leave `arch` out or set it to `amd64`.
+- **A network too small for the pools.** A pool's `/24` must be inside the network and must not
+  overlap the pod or service ranges. A `/16` network, the default, has room for all ten pools.
