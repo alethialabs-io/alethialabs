@@ -13,10 +13,10 @@ The AWS template set (`infra/templates/project/aws/`) is the most extensive, wit
 |------|------------------|
 | `networking.tf` | VPC, public/private subnets, NAT gateway, internet gateway, route tables, security groups |
 | `eks.tf` | EKS cluster, managed node groups (the default one and `extra_node_pools`), OIDC provider for IRSA |
-| `karpenter.tf` | Karpenter provisioner, node pools, instance types |
+| `karpenter.tf` | Karpenter's interruption queue (SQS) and its EventBridge rules, and the EC2 Spot service-linked role when `ec2_spot_service_role` is set. The runner applies the Karpenter NodePool after the cluster is up |
 | `rds.tf` | Aurora PostgreSQL/MySQL cluster, instances, subnet group |
 | `elasticache.tf` | ElastiCache Redis replication group, subnet group |
-| `valkey.tf` | Valkey (open-source Redis fork) node |
+| `valkey.tf` | ElastiCache Serverless cache running Valkey |
 | `dynamodb.tf` | DynamoDB tables with KMS encryption |
 | `ecr.tf` | ECR repositories with lifecycle policies, scan-on-push |
 | `s3.tf` | S3 buckets with encryption, versioning, lifecycle rules |
@@ -33,7 +33,7 @@ The AWS template set (`infra/templates/project/aws/`) is the most extensive, wit
 | `modules/eks/` | EKS cluster, access entries, OIDC provider |
 | `modules/rds/` | Aurora cluster, instances, IAM auth, S3 export |
 | `modules/redis/` | ElastiCache Redis with auth token, encryption |
-| `modules/valkey/` | Valkey node with security group |
+| `modules/valkey/` | ElastiCache Serverless Valkey cache, its user and user group, and a security group |
 | `modules/dynamodb/` | DynamoDB table with KMS, local encryption module |
 | `modules/ecr/` | ECR repository with lifecycle policy |
 | `modules/s3/` | S3 bucket with encryption, versioning |

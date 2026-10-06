@@ -1574,6 +1574,15 @@ jobs:
       - name: Docs describe a repo that exists (paths · scripts · blocked commands)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-docs-contract.mjs
+      # The GCP template page named `cloudsql.tf` and `vpn.tf`, which never existed (#5560). This
+      # fails when an infrastructure-template docs page names a `.tf` file or a `modules/<name>/`
+      # directory that is not in the template directory the page describes.
+      - name: Template docs name only template files that exist (#5560)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:template-docs
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-template-docs-files.mjs --self-test
       # A clickwrap record names a Terms VERSION. If the text behind that version can move, the
       # record proves nothing about what the user actually agreed to — so every public legal
       # document is pinned by the SHA-256 of its source, and editing one without re-sealing is a

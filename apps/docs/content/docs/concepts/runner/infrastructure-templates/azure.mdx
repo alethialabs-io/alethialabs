@@ -20,8 +20,8 @@ The Azure template set (`infra/templates/project/azure/`) provides Azure-native 
 | `acr.tf` | Azure Container Registry |
 | `storage-account.tf` | Storage account, blob containers |
 | `service-bus.tf` | Service Bus namespace, queues, topics |
-| `azure-dns.tf` | Azure DNS zone, record sets |
-| `key-vault.tf` | Key Vault, access policies |
+| `azure-dns.tf` | Azure DNS zone |
+| `key-vault.tf` | Key Vault that uses Azure RBAC (not access policies), the provisioner's Key Vault Secrets Officer role, and secrets |
 | `azure-waf.tf` | Web application firewall policy (OWASP 3.2 plus your custom rules) |
 | `application-gateway.tf` | Application Gateway v2, its public IP, and the AGIC workload identity |
 
@@ -36,7 +36,7 @@ The Azure template set (`infra/templates/project/azure/`) provides Azure-native 
 | `modules/acr/` | Azure Container Registry |
 | `modules/storage-account/` | Azure Blob Storage |
 | `modules/service-bus/` | Service Bus queues and topics |
-| `modules/azure-dns/` | DNS zones |
+| `modules/azure-dns/` | DNS zone |
 | `modules/azure-waf/` | Web application firewall policy |
 | `modules/key-vault/` | Key Vault for secrets |
 | `modules/vnet/` | Virtual Network with subnets and NSGs |
