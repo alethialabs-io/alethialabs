@@ -11,18 +11,19 @@ The GCP template set (`infra/templates/project/gcp/`) provides cloud-native equi
 
 | File | Resources Created |
 |------|------------------|
-| `main.tf` | GKE cluster with Workload Identity, node pool |
+| `gke.tf` | GKE cluster with Workload Identity and its default node pool, or an Autopilot cluster |
 | `nodepools.tf` | Maps `node_labels`, `node_taints` and `extra_node_pools` onto the GKE node pools |
-| `vpn.tf` | VPC network, subnets, Cloud NAT, Cloud Router |
-| `cloudsql.tf` | Cloud SQL instances (PostgreSQL/MySQL), HA configuration |
-| `memorystore.tf` | Memorystore Redis instance |
+| `networking.tf` | VPC network, subnets, Cloud NAT, Cloud Router, firewall rules, private services access |
+| `cloud-sql.tf` | Cloud SQL instance (PostgreSQL or MySQL) with backups and optional regional high availability |
+| `memorystore.tf` | Memorystore for Redis instance |
+| `memorystore-valkey.tf` | Memorystore for Valkey instance |
 | `firestore.tf` | Firestore database, indexes |
-| `artifact-registry.tf` | Artifact Registry repository |
-| `cloud-storage.tf` | Cloud Storage buckets |
-| `cloud-dns.tf` | Cloud DNS managed zones, record sets |
+| `artifact-registry.tf` | Artifact Registry repositories |
+| `cloud-storage.tf` | Cloud Storage buckets, and the Cloud KMS key for buckets that use your own key |
+| `cloud-dns.tf` | Cloud DNS managed zone |
 | `pubsub.tf` | Pub/Sub topics and subscriptions |
 | `secret-manager.tf` | Secret Manager secrets |
-| `cloud-armor.tf` | Cloud Armor security policies (WAF) |
+| `cloud-armor.tf` | Cloud Armor security policy (WAF) |
 
 ## Modules
 
@@ -30,13 +31,14 @@ The GCP template set (`infra/templates/project/gcp/`) provides cloud-native equi
 |--------|---------|
 | `modules/gke/` | GKE cluster with Workload Identity, Autopilot option |
 | `modules/cloud-sql/` | Cloud SQL instance with HA, backups |
-| `modules/memorystore/` | Memorystore Redis |
+| `modules/memorystore/` | Memorystore for Redis |
+| `modules/memorystore-valkey/` | Memorystore for Valkey |
 | `modules/firestore/` | Firestore database |
 | `modules/artifact-registry/` | Container image registry |
 | `modules/cloud-storage/` | GCS buckets |
-| `modules/cloud-armor/` | WAF policies |
-| `modules/cloud-dns/` | DNS zones and records |
-| `modules/pubsub/` | Pub/Sub topics |
+| `modules/cloud-armor/` | WAF policy |
+| `modules/cloud-dns/` | DNS managed zone |
+| `modules/pubsub/` | Pub/Sub topics and subscriptions |
 | `modules/secret-manager/` | Secrets |
 | `modules/vpc-network/` | VPC with subnets and Cloud NAT |
 
