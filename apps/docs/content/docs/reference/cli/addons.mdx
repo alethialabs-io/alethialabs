@@ -47,7 +47,7 @@ alethia addon list -p my-project -o json
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--project`, `-p` | No | Project name or id. Omit it on a terminal and you are asked. |
-| `--env`, `-e` | No | Environment name, stage, or id. Omit to use the project's default environment. |
+| `--env`, `-e` | No | Environment id, name or stage; an exact name wins over a stage. Omit to use the project's default environment. |
 
 Columns: **Add-on** (the catalog id), **Enabled** (✓ / —), **Mode** (`managed` | `gitops`),
 **Version**, **Status**, **Sync**, **Health**, **Last synced**.
@@ -103,7 +103,7 @@ alethia addon enable kube-prometheus-stack -p my-project -e staging --version ""
 |------|----------|-------------|
 | `[addon-id]` | No | Catalog id (positional). Omit it on a terminal to pick from the installed add-ons. |
 | `--project`, `-p` | No | Project name or id. Omit it on a terminal and you are asked. |
-| `--env`, `-e` | No | Environment name, stage, or id. Omit for the project's default. |
+| `--env`, `-e` | No | Environment id, name or stage; an exact name wins over a stage. Omit for the project's default. |
 | `--mode` | No | Delivery mode: `managed` (Alethia applies it) or `gitops` (written to your apps repo). |
 | `--set` `key=value` | No | An add-on setting. Repeatable; values are JSON-typed when they parse. `key=null` resets that setting to its default. Settings you do not pass keep their stored values. |
 | `--values-file` | No | Path to a raw Helm values YAML override (Advanced). `--values-file ""` removes the override. Omit it to keep the current override. |
@@ -180,7 +180,7 @@ alethia addon disable -p my-project
 |------|----------|-------------|
 | `[addon-id]` | No | Catalog id (positional). Omit it on a terminal to pick from the installed add-ons. |
 | `--project`, `-p` | No | Project name or id. Omit it on a terminal and you are asked. |
-| `--env`, `-e` | No | Environment name, stage, or id. |
+| `--env`, `-e` | No | Environment id, name or stage; an exact name wins over a stage. |
 | `--yes`, `-y` | No | Skip the confirmation prompt. Required with `--no-input`. |
 
 <Callout type="warn">

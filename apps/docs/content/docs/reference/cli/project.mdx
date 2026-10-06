@@ -18,8 +18,9 @@ the organization named by the global `--org <id>` for a single invocation — wh
 
 **Nothing has to be copied out of another command's output.** Every reference takes the name you
 already know: `--project` takes a project's name *or* its id, `--cloud-account` takes a cloud
-account's label *or* its id, and `--env` takes an environment's name, stage or id. Omit one on a
-terminal and you are asked, from a picker of what actually exists.
+account's label *or* its id, and `--env` takes an environment's id, name or stage, where an exact
+name wins over a stage ([precedence](#components-belong-to-an-environment)). Omit one on a terminal
+and you are asked, from a picker of what actually exists.
 
 **Every question has a flag.** The interactive paths below exist so you do not have to assemble
 anything by hand — they never let you say something a flag cannot. After a run that asked you
@@ -290,7 +291,7 @@ cat shop.json | alethia project design apply -p shop -f -
 |------|----------|-------------|
 | `-f`, `--file` | Yes* | Design document path, or `-` for stdin. *Asked for on a terminal when omitted. |
 | `-p`, `--project` | Yes* | Project name or id. *Asked for on a terminal when omitted. |
-| `-e`, `--env` | No | Environment name, stage, or id. Omit for the project's default. |
+| `-e`, `--env` | No | Environment id, name or stage; an exact name wins over a stage. Omit for the project's default. |
 | `--dry-run` | No | Print the changes that would be made and write nothing. |
 | `--stage` | No | Stage the change for review instead of applying it. |
 | `-y`, `--yes` | No | Confirm an apply whose plan **removes** a component. Required with `--no-input` only in that case. |
@@ -445,7 +446,10 @@ alethia project component remove --project boutique --kind network
 ### Components belong to an environment
 
 A component is scoped to one **environment**, not to the project as a whole — so two environments
-can hold the same kind with different configuration. `--env` takes an environment id, name or stage:
+can hold the same kind with different configuration. `--env` takes an environment id, name or stage.
+When one value matches more than one environment, the id wins, then an exact name, then a stage. Among
+stage matches, the default environment wins. So `--env staging` selects the environment named
+`staging`, even when the default environment is at stage `staging`:
 
 ```bash
 # dev and staging deploy DIFFERENT overlays of the same repo
