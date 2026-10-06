@@ -317,11 +317,12 @@ setting's name in `key`. Add-ons that are on the server but not in the file are 
   **A secret for an environment that `apply` creates.** The file cannot carry a secret, and
   `alethia addon enable --env <name>` needs the environment to exist. So the first `apply` installs
   the add-on without it: external-dns on a token provider such as Cloudflare comes up and cannot
-  write DNS records yet. Set the token once the environment exists, and deploy again:
+  write DNS records yet. Set the token once the environment exists, here from an environment
+  variable so it stays out of your shell history, and deploy again:
 
   ```bash
   alethia apply --yes
-  alethia addon enable external-dns --project boutique --env staging --set apiToken=<token>
+  alethia addon enable external-dns --project boutique --env staging --set apiToken="$CLOUDFLARE_API_TOKEN"
   alethia apply --yes
   ```
 
