@@ -51,6 +51,10 @@ var keyRuleSites = map[string]keyRuleSite{
 		vars:            []string{"karpenter_node_labels", "karpenter_node_taints"},
 		nodeRestriction: map[string]bool{"karpenter_node_labels": true},
 	},
+	"infra/templates/project/azure/variables.tf": {
+		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},
+		portable: true,
+	},
 	"packages/core/cloud/testdata/nodepool/reference/variables.tf": {
 		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},
 		portable: true,

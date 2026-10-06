@@ -21,9 +21,9 @@
 			"dead": 0
 		},
 		"azure": {
-			"declared": 95,
-			"reachable": 69,
-			"settable": 28,
+			"declared": 98,
+			"reachable": 72,
+			"settable": 31,
 			"dead": 1
 		},
 		"gcp": {
@@ -5493,6 +5493,66 @@
 			"ownedByProvider": false,
 			"typed": false,
 			"default": ""
+		},
+		{
+			"cloud": "azure",
+			"component": "cluster",
+			"name": "extra_node_pools",
+			"kind": "list",
+			"typeExpr": "list(object({\n    name          = string\n    instance_type = string\n    min_size      = number\n    max_size      = number\n    desired_size  = optional(number)\n    arch          = optional(string, \"amd64\")\n    capacity_type = optional(string, \"on-demand\")\n    labels        = optional(map(string), {})\n    taints = optional(list(object({\n      key    = string\n      value  = optional(string)\n      effect = string\n    })), [])\n  }))",
+			"required": false,
+			"description": "Node pools beside the default pool. Each has a name, an instance type, min/max/desired sizes, an optional arch (amd64 or arm64) and capacity_type (on-demand or spot), and its own labels and taints. Its nodes carry the label alethia.io/pool=<name>; an arm64 pool also carries the taint alethia.io/arch=arm64:NoSchedule.",
+			"sensitive": false,
+			"declaredAt": "infra/templates/project/azure/variables.tf:915",
+			"readBy": [
+				"azure"
+			],
+			"reportedByOutput": false,
+			"ceiling": false,
+			"reachable": true,
+			"ownedByProvider": false,
+			"typed": false,
+			"default": []
+		},
+		{
+			"cloud": "azure",
+			"component": "cluster",
+			"name": "node_labels",
+			"kind": "map",
+			"typeExpr": "map(string)",
+			"required": false,
+			"description": "Labels on the nodes of every Alethia-managed pool, the default pool included. A pool's own labels win for the same key. At most 24. Keys whose prefix ends in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io are refused.",
+			"sensitive": false,
+			"declaredAt": "infra/templates/project/azure/variables.tf:862",
+			"readBy": [
+				"azure"
+			],
+			"reportedByOutput": false,
+			"ceiling": false,
+			"reachable": true,
+			"ownedByProvider": false,
+			"typed": false,
+			"default": {}
+		},
+		{
+			"cloud": "azure",
+			"component": "cluster",
+			"name": "node_taints",
+			"kind": "list",
+			"typeExpr": "list(object({\n    key    = string\n    value  = optional(string)\n    effect = string\n  }))",
+			"required": false,
+			"description": "Taints on the nodes of every extra pool (not the default pool, which runs the platform's add-ons). A pool's own taint wins for the same key and effect. At most 24. effect is one of NoSchedule, PreferNoSchedule and NoExecute.",
+			"sensitive": false,
+			"declaredAt": "infra/templates/project/azure/variables.tf:884",
+			"readBy": [
+				"azure"
+			],
+			"reportedByOutput": false,
+			"ceiling": false,
+			"reachable": true,
+			"ownedByProvider": false,
+			"typed": false,
+			"default": []
 		},
 		{
 			"cloud": "azure",
