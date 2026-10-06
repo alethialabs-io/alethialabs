@@ -164,6 +164,7 @@ const FIXTURES: Record<keyof typeof cliContract, string> = {
 	DestroyTreeResponse: "destroy_tree.json",
 	ComponentsResponse: "components.json",
 	ComponentResponse: "component.json",
+	ComponentConflictResponse: "component_conflict.json",
 	DriftResponse: "drift.json",
 	CostResponse: "cost.json",
 	ProtectionResponse: "protection.json",

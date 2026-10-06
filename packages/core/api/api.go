@@ -1845,6 +1845,10 @@ type Component struct {
 	Status          string                 `json:"status"`
 	CloudIdentityID *string                `json:"cloud_identity_id"`
 	Config          map[string]interface{} `json:"config"`
+	// UpdatedAt is the component's revision, nil when its table has none. `plan` keeps it and
+	// `apply` sends it back as If-Match, so a component changed on the server in between is refused
+	// rather than overwritten (#5551).
+	UpdatedAt *string `json:"updated_at"`
 }
 
 // CreateProjectParams is the payload for CreateProject. CloudIdentityID/Stage are
