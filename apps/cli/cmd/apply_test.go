@@ -166,7 +166,7 @@ environments:
 	if strings.Contains(out, "+ project") {
 		t.Errorf("an existing project was planned for creation:\n%s", out)
 	}
-	for _, want := range []string{"= environment  ~ cluster", "+ environment  + repositories", "staging is on the server and not in the file", "0 projects to create · 1 environment · 2 components"} {
+	for _, want := range []string{"= environment  ~ cluster", "+ environment  + repositories", "staging is on the server and not in the file", "~ cluster  node_max_size: (unset) → 4", "0 projects to create · 1 environment · 1 component · 1 component to update"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
@@ -469,7 +469,7 @@ func TestApply_ReconcilesAnExistingProjectByAddingWhatIsMissing(t *testing.T) {
 		},
 		comps: []map[string]any{
 			{"id": "c0", "kind": "cluster", "name": "cluster", "status": "ACTIVE", "config": map[string]any{}},
-			{"id": "c1", "kind": "databases", "name": "orders", "status": "ACTIVE", "config": map[string]any{}},
+			{"id": "c1", "kind": "databases", "name": "orders", "status": "ACTIVE", "config": map[string]any{"engine": "postgres"}},
 		},
 	}
 	h := applyEnv(t, s)
