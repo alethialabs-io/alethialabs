@@ -528,10 +528,11 @@ func TestEnableAddon(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		}))
+		yaml := "loki:\n  auth_enabled: false\n"
 		err := client.EnableAddon(EnableAddonParams{
 			Project: "shop", Env: "staging", AddonID: "loki", Mode: "managed",
 			Values:     map[string]interface{}{"retention_days": 7},
-			ValuesYAML: "loki:\n  auth_enabled: false\n",
+			ValuesYAML: &yaml,
 		})
 		if err != nil {
 			t.Fatalf("EnableAddon: %v", err)
@@ -571,6 +572,26 @@ func TestEnableAddon(t *testing.T) {
 			if _, present := got[k]; present {
 				t.Errorf("%q must be omitted when unset: %+v", k, got)
 			}
+		}
+	})
+
+	// An empty override is the explicit CLEAR (#5545): it must reach the server as JSON null, which is
+	// distinct from the omitted field above (keep the stored override). Before #5545 the two were the
+	// same body, so no caller could keep an override while changing anything else.
+	t.Run("an empty values_yaml is sent as null", func(t *testing.T) {
+		var got map[string]interface{}
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		}))
+		cleared := ""
+		if err := client.EnableAddon(EnableAddonParams{Project: "shop", AddonID: "loki", ValuesYAML: &cleared}); err != nil {
+			t.Fatalf("EnableAddon: %v", err)
+		}
+		v, present := got["values_yaml"]
+		if !present || v != nil {
+			t.Errorf("values_yaml = %#v (present %v), want an explicit null", v, present)
 		}
 	})
 
