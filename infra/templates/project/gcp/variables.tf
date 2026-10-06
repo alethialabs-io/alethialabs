@@ -351,26 +351,32 @@ variable "cloud_sql_database_flags" {
 # Query Insights (#5532) — the GCP analogue of the AWS/Azure "database log exports" row in
 # CUSTOMIZABILITY-PARITY.md. Cloud SQL already sends its engine logs to Cloud Logging without any
 # setting, and the log flags themselves are `cloud_sql_database_flags` above; what the template could
-# not do was turn on per-query latency and plan insight. All three are off by default, and off
-# renders NO `insights_config` block, so an instance whose project never sets them plans exactly as
-# it did before. The two `record_*` switches refine Query Insights and are refused without it (a
-# precondition in modules/cloud-sql), rather than being sent to an instance that ignores them.
+# not do was turn on per-query latency and plan insight.
+#
+# `cloud_sql_query_insights_enabled` is deliberately NULLABLE, because `insights_config` is
+# Optional+Computed in hashicorp/google 6.50.0: a plan with no block keeps whatever the state holds,
+# so "absent" cannot mean "off". Unset (null, the default) renders NO `insights_config` block, so an
+# instance whose project never sets it plans exactly as it did before and keeps its current setting;
+# false renders the block with query_insights_enabled = false, which is what turns it off. The two
+# `record_*` switches refine Query Insights and are refused unless it is true (the
+# `terraform_data.cloud_sql_query_insights_guard` precondition in cloud-sql.tf), rather than being
+# sent to an instance that ignores them.
 variable "cloud_sql_query_insights_enabled" {
   type        = bool
-  default     = false
-  description = "Turn on Cloud SQL Query Insights (settings.insights_config.query_insights_enabled): per-query latency, load and execution plans in the Cloud SQL console. Off by default."
+  default     = null
+  description = "Cloud SQL Query Insights (settings.insights_config.query_insights_enabled): per-query latency, load and execution plans in the Cloud SQL console. true turns it on; false turns it off; unset (null, the default) leaves the instance's current setting as it is."
 }
 
 variable "cloud_sql_query_insights_record_application_tags" {
   type        = bool
   default     = false
-  description = "Record application tags (sqlcommenter) with Query Insights. Requires cloud_sql_query_insights_enabled."
+  description = "Record application tags (sqlcommenter) with Query Insights. Requires cloud_sql_query_insights_enabled = true."
 }
 
 variable "cloud_sql_query_insights_record_client_address" {
   type        = bool
   default     = false
-  description = "Record the client IP address with Query Insights. Requires cloud_sql_query_insights_enabled."
+  description = "Record the client IP address with Query Insights. Requires cloud_sql_query_insights_enabled = true."
 }
 
 variable "cloud_sql_authorized_networks" {

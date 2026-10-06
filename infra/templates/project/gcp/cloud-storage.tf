@@ -41,7 +41,8 @@ data "google_storage_project_service_account" "gcs" {
 }
 
 # In the project's one key ring (secrets-encryption.tf), which is regional: a CMEK bucket must be in
-# the key's location, and modules/cloud-storage refuses a bucket whose `location` is elsewhere.
+# the key's location, and `terraform_data.storage_cmek_location_guard` below refuses at plan a CMEK
+# bucket whose `location` is elsewhere.
 resource "google_kms_crypto_key" "storage" {
   count = local.storage_cmek ? 1 : 0
 
@@ -58,6 +59,12 @@ resource "google_kms_crypto_key" "storage" {
   # never be read again. 30 days (the Cloud KMS maximum is 120) is pinned explicitly, rather than left
   # to the API default, so the recovery window is a stated property of the template: a version
   # scheduled for destruction can be restored until it ends. The docs page says this in full.
+  #
+  # Cloud KMS never deletes a key or a key ring, so after that count-to-0 the `gcs-buckets` key (and,
+  # with no GKE Secrets encryption, the ring) still exist under fixed names, and turning cmek_enabled
+  # back on 409s (AlreadyExists). Not made sticky: there is no input that remembers "was ever on"
+  # without a new always-present resource, which would move every project's default plan. The docs
+  # callout states the consequence instead.
   destroy_scheduled_duration = "2592000s"
 }
 

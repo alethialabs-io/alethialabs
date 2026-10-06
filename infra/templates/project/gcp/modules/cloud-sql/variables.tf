@@ -124,8 +124,9 @@ variable "database_flags" {
 
 variable "query_insights_enabled" {
   type        = bool
-  description = "Turn on Query Insights. False renders no insights_config block, which is what every instance built before #5532 has."
-  default     = false
+  description = "Query Insights. null (the default) renders no insights_config block, which is what every instance built before #5532 has, and leaves the instance's current setting alone; true turns it on; false renders the block with query_insights_enabled = false, which turns it off."
+  default     = null
+  nullable    = true
 }
 
 variable "query_insights_record_application_tags" {

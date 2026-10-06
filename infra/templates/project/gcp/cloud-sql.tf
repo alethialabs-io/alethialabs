@@ -35,7 +35,8 @@ module "cloud_sql" {
   # existing instance keeps exactly the IAM-auth flag it has; the module appends, never replaces.
   database_flags = var.cloud_sql_database_flags
 
-  # Query Insights (#5532). All false by default, which renders no insights_config block at all.
+  # Query Insights (#5532). Enabled is null by default, which renders no insights_config block at
+  # all; false renders the block switched off (see modules/cloud-sql/main.tf for why both exist).
   query_insights_enabled                 = var.cloud_sql_query_insights_enabled
   query_insights_record_application_tags = var.cloud_sql_query_insights_record_application_tags
   query_insights_record_client_address   = var.cloud_sql_query_insights_record_client_address
@@ -49,16 +50,17 @@ module "cloud_sql" {
   labels = local.gcp_default_labels
 }
 
-# The two Query Insights `record_*` switches only refine Query Insights (#5532). With insights off
-# there is no insights_config block to carry them, so a caller who set one would be accepted and
-# silently ignored. Refused at plan instead. Count 0 unless that exact mistake is made, so the
-# default plan gains nothing.
+# The two Query Insights `record_*` switches only refine Query Insights (#5532). With insights unset
+# there is no insights_config block to carry them, and with insights off Cloud SQL records nothing,
+# so a caller who set one would be accepted and silently ignored. Refused at plan instead. Count 0
+# unless that exact mistake is made, so the default plan gains nothing. `!= true`, not `!x`: the
+# enabled knob is nullable, and `!null` is an error.
 resource "terraform_data" "cloud_sql_query_insights_guard" {
-  count = var.create_cloud_sql && !var.cloud_sql_query_insights_enabled && (var.cloud_sql_query_insights_record_application_tags || var.cloud_sql_query_insights_record_client_address) ? 1 : 0
+  count = var.create_cloud_sql && var.cloud_sql_query_insights_enabled != true && (var.cloud_sql_query_insights_record_application_tags || var.cloud_sql_query_insights_record_client_address) ? 1 : 0
 
   lifecycle {
     precondition {
-      condition     = var.cloud_sql_query_insights_enabled
+      condition     = var.cloud_sql_query_insights_enabled == true
       error_message = "cloud_sql_query_insights_record_application_tags and cloud_sql_query_insights_record_client_address refine Query Insights and need cloud_sql_query_insights_enabled = true. Turn Query Insights on, or leave both record switches off."
     }
   }

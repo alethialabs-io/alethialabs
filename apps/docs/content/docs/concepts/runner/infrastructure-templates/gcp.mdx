@@ -72,7 +72,15 @@ Two more settings add detail to Query Insights. Both are off by default:
 }
 ```
 
-The plan fails if you set either of these two without `cloud_sql_query_insights_enabled`.
+The plan fails if you set either of these two without `cloud_sql_query_insights_enabled` set to `true`.
+
+To turn Query Insights off, set `cloud_sql_query_insights_enabled` to `false`:
+
+```json
+{ "cloud_sql_query_insights_enabled": false }
+```
+
+Removing the setting does not turn Query Insights off. When `cloud_sql_query_insights_enabled` is not set, the template sends no Query Insights setting, and the instance keeps whatever Query Insights setting it already has.
 
 Cloud SQL already sends its database logs to Cloud Logging, so log export needs no setting. To change what the database logs, set log flags with `cloud_sql_database_flags`.
 
@@ -98,6 +106,12 @@ If you turn `cmek_enabled` off on every bucket, the template removes the key, an
 When you turn `cmek_enabled` on for a bucket that already exists, objects that are already in the bucket keep their current encryption. Only objects written after the change use the key.
 </Callout>
 
+<Callout type="warn">
+After you turn `cmek_enabled` off on every bucket, you cannot turn it on again in the same project. Cloud KMS never deletes a key or a key ring. It only destroys key versions. The key named `gcs-buckets` therefore stays in the project after the template removes it. When you turn `cmek_enabled` on again, the template tries to create a key with the same name, and Cloud KMS refuses it with `409 AlreadyExists`. If the project does not use GKE Secrets encryption, the template also removes the key ring, and creating the key ring again fails in the same way.
+
+To keep the option of using your own key, leave `cmek_enabled` on for at least one bucket.
+</Callout>
+
 ### Cache logging
 
-GCP has no cache logging setting. The pinned Google provider (`hashicorp/google` 6.50.0) has no logging argument on Memorystore for Redis (`google_redis_instance`) or on Memorystore for Valkey (`google_memorystore_instance`). The template therefore has no variable for it.
+The template has no cache logging setting. The Google provider (`hashicorp/google` 6.50.0) exposes no logging argument for Memorystore: not on Memorystore for Redis (`google_redis_instance`) and not on Memorystore for Valkey (`google_memorystore_instance`). The template therefore has no variable for it.

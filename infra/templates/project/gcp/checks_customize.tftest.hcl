@@ -93,7 +93,7 @@ run "a_project_that_sets_no_knob_plans_none_of_them" {
 
   assert {
     condition     = length(module.cloud_sql[0].insights_config) == 0
-    error_message = "With Query Insights unset the instance must carry NO insights_config block — present-and-false would move the plan of every existing instance."
+    error_message = "With Query Insights unset (null) the instance must carry NO insights_config block — present-and-false would move the plan of every existing instance."
   }
 
   assert {
@@ -155,12 +155,50 @@ run "query_insights_record_switches_reach_the_block" {
   }
 }
 
-# A record switch with insights off has no block to live in. It is refused, not silently dropped.
+# `insights_config` is Optional+Computed in hashicorp/google 6.50.0, so an ABSENT block keeps the
+# state's value: once Query Insights is on, leaving the knob unset can never turn it off. false must
+# therefore render the block, explicitly off — not collapse to "no block" like null does.
+run "query_insights_false_renders_the_block_explicitly_off" {
+  command = plan
+
+  variables {
+    cloud_sql_query_insights_enabled = false
+  }
+
+  assert {
+    condition     = length(module.cloud_sql[0].insights_config) == 1
+    error_message = "cloud_sql_query_insights_enabled = false must still plan an insights_config block: with the block absent the provider keeps the state's value, so turning Query Insights off would be a silent no-op."
+  }
+
+  assert {
+    condition     = module.cloud_sql[0].insights_config[0].query_insights_enabled == false
+    error_message = "cloud_sql_query_insights_enabled = false must plan insights_config.query_insights_enabled = false."
+  }
+
+  assert {
+    condition     = module.cloud_sql[0].insights_config[0].record_application_tags == false && module.cloud_sql[0].insights_config[0].record_client_address == false
+    error_message = "With Query Insights turned off both record_* switches must be planned false."
+  }
+}
+
+# A record switch with insights unset has no block to live in. It is refused, not silently dropped.
 run "a_record_switch_without_query_insights_is_refused" {
   command = plan
 
   variables {
     cloud_sql_query_insights_record_client_address = true
+  }
+
+  expect_failures = [terraform_data.cloud_sql_query_insights_guard]
+}
+
+# ...and with insights explicitly off Cloud SQL records nothing, so it is refused there too.
+run "a_record_switch_with_query_insights_off_is_refused" {
+  command = plan
+
+  variables {
+    cloud_sql_query_insights_enabled                 = false
+    cloud_sql_query_insights_record_application_tags = true
   }
 
   expect_failures = [terraform_data.cloud_sql_query_insights_guard]
