@@ -127,7 +127,7 @@ var govFields = []govField{
 		Command:     "alethia promotion list",
 		Key:         fieldKeyGovEnv,
 		Title:       "Target environment",
-		Description: "Show only promotions INTO this environment, by name, stage, or id",
+		Description: "Show only promotions INTO this environment, by id, name or stage (an exact name wins over a stage)",
 		Flag:        "env",
 		Page:        docsPromotionsPage,
 	},

@@ -33,9 +33,14 @@ type addonFake struct {
 func (f *addonFake) GetAddonCatalog() (*api.AddonCatalogDocument, error) { return f.catalog, nil }
 func (f *addonFake) GetProjectAddons(_, env string) (*api.ProjectAddons, error) {
 	f.addonReads++
+	env = f.envName(env)
 	return &api.ProjectAddons{Environment: env, Addons: f.addons[env]}, nil
 }
+
+// EnableAddon records the request with its environment resolved from the id it was addressed by
+// (diffFake.envName), so a request sent by name is recorded as "by-name:<name>" and fails.
 func (f *addonFake) EnableAddon(p api.EnableAddonParams) error {
+	p.Env = f.envName(p.Env)
 	f.enabled = append(f.enabled, p)
 	return f.refuseAddon[p.AddonID]
 }
