@@ -1,0 +1,72 @@
+{
+  "knobs": [
+    {
+      "cloud": "hetzner",
+      "component": "cluster",
+      "name": "node_labels",
+      "kind": "map",
+      "required": false,
+      "sensitive": false,
+      "declaredAt": "infra/templates/project/hetzner/variables.tf:1",
+      "readBy": [
+        "hetzner"
+      ],
+      "reportedByOutput": false,
+      "ceiling": false,
+      "reachable": true,
+      "ownedByProvider": false,
+      "typed": false
+    },
+    {
+      "cloud": "hetzner",
+      "component": "cluster",
+      "name": "node_taints",
+      "kind": "list",
+      "required": false,
+      "sensitive": false,
+      "declaredAt": "infra/templates/project/hetzner/variables.tf:1",
+      "readBy": [
+        "hetzner"
+      ],
+      "reportedByOutput": false,
+      "ceiling": false,
+      "reachable": true,
+      "ownedByProvider": false,
+      "typed": false
+    },
+    {
+      "cloud": "hetzner",
+      "component": "cluster",
+      "name": "extra_node_pools",
+      "kind": "list",
+      "required": false,
+      "sensitive": false,
+      "declaredAt": "infra/templates/project/hetzner/variables.tf:1",
+      "readBy": [
+        "hetzner"
+      ],
+      "reportedByOutput": false,
+      "ceiling": false,
+      "reachable": true,
+      "ownedByProvider": false,
+      "typed": false
+    },
+    {
+      "cloud": "hetzner",
+      "component": "cluster",
+      "name": "worker_count",
+      "kind": "number",
+      "required": false,
+      "sensitive": false,
+      "declaredAt": "infra/templates/project/hetzner/variables.tf:1",
+      "readBy": [
+        "hetzner"
+      ],
+      "reportedByOutput": false,
+      "ceiling": false,
+      "reachable": true,
+      "ownedByProvider": false,
+      "typed": false
+    }
+  ]
+}
