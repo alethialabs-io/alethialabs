@@ -86,6 +86,12 @@ alethia addon enable falco -p my-project --mode gitops
 # Advanced: a raw Helm values override
 alethia addon enable loki -p my-project --values-file ./loki-values.yaml
 
+# Remove the Advanced override
+alethia addon enable loki -p my-project --values-file ""
+
+# Reset one setting to the add-on's default
+alethia addon enable loki -p my-project --set retention_days=null
+
 # Pin the chart version in one environment
 alethia addon enable kube-prometheus-stack -p my-project -e staging --version 58.2.1
 
@@ -99,16 +105,37 @@ alethia addon enable kube-prometheus-stack -p my-project -e staging --version ""
 | `--project`, `-p` | No | Project name or id. Omit it on a terminal and you are asked. |
 | `--env`, `-e` | No | Environment name, stage, or id. Omit for the project's default. |
 | `--mode` | No | Delivery mode: `managed` (Alethia applies it) or `gitops` (written to your apps repo). |
-| `--set` `key=value` | No | An add-on setting. Repeatable; values are JSON-typed when they parse. |
-| `--values-file` | No | Path to a raw Helm values YAML override (Advanced). |
+| `--set` `key=value` | No | An add-on setting. Repeatable; values are JSON-typed when they parse. `key=null` resets that setting to its default. Settings you do not pass keep their stored values. |
+| `--values-file` | No | Path to a raw Helm values YAML override (Advanced). `--values-file ""` removes the override. Omit it to keep the current override. |
 | `--version` | No | Pin the chart version, for example `58.2.1`. `--version ""` removes the pin. Omit it to keep the current pin. |
 
 `--mode` is checked against the `addon_mode` database enum before anything is sent, so a typo is
 refused by name instead of costing a round trip; the two spellings are matched case-insensitively.
 
-Re-running `enable` on an installed add-on **updates** it. Settings are merged over what is stored,
-so you can change one value without restating the rest — and a secret you do not resend is
-preserved rather than blanked.
+### Reconfigure an installed add-on
+
+Re-running `enable` on an installed add-on **updates** it. A flag you leave out keeps what is
+stored, so you can change one value without restating the rest:
+
+```bash
+# Change one setting. The other settings, the Advanced override, the mode and the version pin stay.
+alethia addon enable loki -p my-project -e staging --set retention_days=14
+```
+
+| What you pass | `--set` settings | `--values-file` override | `--version` pin | `--mode` |
+|------|------|------|------|------|
+| Nothing | Each stored setting is kept | Kept | Kept | Kept |
+| A value | Merged key by key over the stored settings | The file replaces the stored override whole | Replaced | Replaced |
+| An empty value | `--set key=null` resets that setting to its default | `--values-file ""` removes the override | `--version ""` removes the pin | Not available |
+
+- The Advanced override is one YAML document. A new `--values-file` replaces the stored one; it is
+  not merged with it. A file that is empty or only whitespace also removes the override.
+- A secret setting you do not resend is kept. `key=null` does not remove a stored secret.
+- The merged settings are validated together, so a setting you did not pass can still make the
+  request fail if the add-on's schema has changed.
+- The console's configure card shows every stored value and sends all of them back when you save.
+  There, an emptied **Advanced** box removes the override and an emptied **Chart version** field
+  removes the pin.
 
 ### Pin the chart version
 

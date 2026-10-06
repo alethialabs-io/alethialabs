@@ -31,6 +31,7 @@ import { getServiceDb } from "@/lib/db";
 import { projectAddons, projects } from "@/lib/db/schema";
 import { addonMode } from "@/lib/db/schema/enums";
 import { cliAddonsResponse, cliOkResponse } from "@/lib/validations/cli-contract";
+import { loadStoredAddon, reconfigureInput } from "./reconfigure";
 
 const ADDONS_LIST = "project-addons";
 
@@ -149,9 +150,14 @@ export async function GET(
  * runs the add-on's own `def.configSchema.safeParse` on it, so each add-on's knobs are validated by
  * the definition that owns them rather than by a second schema here that would drift from the
  * catalog. `values_yaml` is the Advanced raw-Helm escape hatch, parsed and rejected as YAML by the
- * same action. `version` pins the chart version: absent keeps the stored pin, `null` or `""` clears it,
- * and anything else is checked by `lib/addons/chart-version.ts` inside `enableAddon` — one definition
- * of a valid pin, refused with the same sentence the console shows. */
+ * same action.
+ *
+ * One rule for every optional field (#5545, and #5525 for `version`): ABSENT keeps what is stored.
+ * `values_yaml` and `version` are cleared by `null` or `""`; a `values` key is merged over the stored
+ * knobs, and a key sent as `null` is reset to the add-on's default; `mode` absent keeps the stored
+ * mode. `reconfigure.ts` applies it. A `version` pin is checked by `lib/addons/chart-version.ts`
+ * inside `enableAddon` — one definition of a valid pin, refused with the same sentence the console
+ * shows. */
 const enableAddonBody = z.object({
 	addon_id: z.string().min(1),
 	mode: z.enum(addonMode.enumValues).optional(),
@@ -163,11 +169,13 @@ const enableAddonBody = z.object({
 /**
  * Enables (or reconfigures) a catalog add-on in an environment.
  *
- * Everything that matters is `enableAddon`'s, reached through `runWithActor` rather than
- * reimplemented: the per-add-on `configSchema` validation, the YAML-mapping check, and
+ * Every check is `enableAddon`'s, reached through `runWithActor` rather than reimplemented: the
+ * per-add-on `configSchema` validation (run on the MERGED knobs), the YAML-mapping check, and
  * `mergeAddonSecrets` — which is why a reconfigure cannot blank a secret the caller did not resend.
  * Duplicating any of that here would mean two definitions of what a valid add-on config is, and only
- * one of them would be the one the console enforces.
+ * one of them would be the one the console enforces. The one thing added here is the CLI's
+ * keep-what-you-did-not-send rule (`reconfigure.ts`), which the console does not need: its form
+ * always sends the whole stored state back.
  */
 export async function POST(
 	req: Request,
@@ -197,14 +205,25 @@ export async function POST(
 		);
 		if (!target.ok) return cliEnvironmentError(target);
 
+		// The keep/clear rule (#5545): a field the CLI left out keeps what is stored. An unknown add-on
+		// id falls through to enableAddon, which refuses it with the sentence the console uses.
+		const def = getAddOn(parsed.data.addon_id);
+		const input = def
+			? reconfigureInput(
+					def,
+					await loadStoredAddon(actor.orgId, project.id, target.id, def.id),
+					parsed.data,
+				)
+			: { mode: parsed.data.mode, values: parsed.data.values, valuesYaml: null };
+
 		await runWithActor(actor, () =>
 			enableAddon({
 				projectId: project.id,
 				environmentId: target.id,
 				addonId: parsed.data.addon_id,
-				mode: parsed.data.mode,
-				values: parsed.data.values,
-				valuesYaml: parsed.data.values_yaml ?? null,
+				mode: input.mode,
+				values: input.values,
+				valuesYaml: input.valuesYaml,
 				version: parsed.data.version,
 			}),
 		);
