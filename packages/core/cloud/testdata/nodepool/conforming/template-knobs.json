@@ -1,15 +1,15 @@
 {
   "knobs": [
     {
-      "cloud": "hetzner",
+      "cloud": "fixture",
       "component": "cluster",
       "name": "node_labels",
       "kind": "map",
       "required": false,
       "sensitive": false,
-      "declaredAt": "infra/templates/project/hetzner/variables.tf:1",
+      "declaredAt": "packages/core/cloud/testdata/nodepool/conforming/variables.tf:1",
       "readBy": [
-        "hetzner"
+        "fixture"
       ],
       "reportedByOutput": false,
       "ceiling": false,
@@ -18,15 +18,15 @@
       "typed": false
     },
     {
-      "cloud": "hetzner",
+      "cloud": "fixture",
       "component": "cluster",
       "name": "node_taints",
       "kind": "list",
       "required": false,
       "sensitive": false,
-      "declaredAt": "infra/templates/project/hetzner/variables.tf:1",
+      "declaredAt": "packages/core/cloud/testdata/nodepool/conforming/variables.tf:1",
       "readBy": [
-        "hetzner"
+        "fixture"
       ],
       "reportedByOutput": false,
       "ceiling": false,
@@ -35,15 +35,15 @@
       "typed": false
     },
     {
-      "cloud": "hetzner",
+      "cloud": "fixture",
       "component": "cluster",
       "name": "extra_node_pools",
       "kind": "list",
       "required": false,
       "sensitive": false,
-      "declaredAt": "infra/templates/project/hetzner/variables.tf:1",
+      "declaredAt": "packages/core/cloud/testdata/nodepool/conforming/variables.tf:1",
       "readBy": [
-        "hetzner"
+        "fixture"
       ],
       "reportedByOutput": false,
       "ceiling": false,
@@ -52,15 +52,15 @@
       "typed": false
     },
     {
-      "cloud": "hetzner",
+      "cloud": "fixture",
       "component": "cluster",
       "name": "worker_count",
       "kind": "number",
       "required": false,
       "sensitive": false,
-      "declaredAt": "infra/templates/project/hetzner/variables.tf:1",
+      "declaredAt": "packages/core/cloud/testdata/nodepool/conforming/variables.tf:1",
       "readBy": [
-        "hetzner"
+        "fixture"
       ],
       "reportedByOutput": false,
       "ceiling": false,

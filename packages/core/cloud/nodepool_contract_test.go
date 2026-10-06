@@ -4,9 +4,11 @@
 package cloud
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,8 +34,17 @@ import (
 // assertNodePoolContract is the helper every cloud lane calls from its own nodepool_<cloud>_test.go
 // (#5534 aws, #5535 azure, #5536 hetzner, #5537 gcp), so the lanes never share a file. It is defined
 // in a _test.go file on purpose: that keeps `testing` and the HCL parser out of production code, and
-// is still visible to every test file of package cloud. Nothing here runs it against a real cloud;
-// until a lane lands, its cloud does not declare the variables, and that is not a failure of this unit.
+// is still visible to every test file of package cloud.
+//
+// A lane REGISTERS its cloud from its own file, so no two lanes edit the same line:
+//
+//	func init() { nodePoolProviders["aws"] = nodePoolTarget{provider: &awsProvider{}} }
+//	func TestNodePoolContract_AWS(t *testing.T) { assertNodePoolContract(t, "aws") }
+//
+// Until a lane lands, its cloud is not registered and does not declare the variables; that is not a
+// failure of this unit. What runs TODAY is the harness itself, end to end, against two fixture
+// targets registered below: "fixture", which keeps the contract and must pass, and
+// "fixture-unreachable", which breaks it and must fail (TestNodePoolContract_HarnessRunsOnFixtures).
 //
 // What it checks, and the boundary of each check:
 //
@@ -71,13 +82,76 @@ const nodePoolTestFile = "nodepool_contract.tftest.hcl"
 // bounds the one substitution a lane's tftest may make.
 var nodePoolInstanceTypePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
-// nodePoolProviders maps each cloud that carries the contract to its provider. Alibaba is excluded
-// from epic #5523.
-var nodePoolProviders = map[string]CloudProvider{
-	"aws":     &awsProvider{},
-	"azure":   &azureProvider{},
-	"gcp":     &gcpProvider{},
-	"hetzner": &hetznerProvider{},
+// nodePoolFixtureDir is the conforming fixture, relative to the repo root.
+const nodePoolFixtureDir = "packages/core/cloud/testdata/nodepool/conforming"
+
+// nodePoolTarget is what assertNodePoolContract needs to find a cloud: its provider, and where its
+// template and knobs manifest live. A real cloud sets only provider; the empty fields resolve to
+// infra/templates/project/<cloud>, the generated template-knobs.json, and the cloud's own name.
+type nodePoolTarget struct {
+	provider   CloudProvider
+	dir        string // template directory relative to the repo root
+	knobsJSON  string // knobs manifest relative to the repo root
+	knobsCloud string // the `cloud` the manifest files the knobs under
+}
+
+// nodePoolProviders is the registry assertNodePoolContract resolves a cloud name in. Each cloud lane
+// adds its entry from an init() in its own nodepool_<cloud>_test.go (see above); Alibaba is excluded
+// from epic #5523. The two fixture targets are the harness's own proof that it passes a conforming
+// cloud and fails a broken one.
+var nodePoolProviders = map[string]nodePoolTarget{
+	"fixture": {
+		provider:   nodePoolFixtureProvider{},
+		dir:        nodePoolFixtureDir,
+		knobsJSON:  nodePoolFixtureDir + "/template-knobs.json",
+		knobsCloud: "fixture",
+	},
+	"fixture-unreachable": {
+		provider:   nodePoolFixtureProvider{swallow: "node_taints"},
+		dir:        nodePoolFixtureDir,
+		knobsJSON:  nodePoolFixtureDir + "/template-knobs.json",
+		knobsCloud: "fixture",
+	},
+}
+
+// nodePoolFixtureProvider is the reference provider for the fixture targets: it carries the Cluster
+// component's provider_config onto tfvars verbatim, which is the whole of what the contract asks of
+// a provider, except the one key it is told to swallow (as a provider that reserved it would).
+type nodePoolFixtureProvider struct {
+	swallow string
+}
+
+// Name returns the fixture's cloud name.
+func (nodePoolFixtureProvider) Name() string { return "fixture" }
+
+// RequiredCLIs returns no CLIs: the fixture provisions nothing.
+func (nodePoolFixtureProvider) RequiredCLIs() []string { return nil }
+
+// ProviderTfvars copies the Cluster provider_config onto tfvars, minus the swallowed key.
+func (p nodePoolFixtureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
+	tf := map[string]interface{}{"project_name": config.ProjectName}
+	for k, v := range config.Cluster.ProviderConfig {
+		if k != p.swallow {
+			tf[k] = v
+		}
+	}
+	return tf
+}
+
+// ValidateConfig accepts every config.
+func (nodePoolFixtureProvider) ValidateConfig(*types.ProjectConfig) error { return nil }
+
+// ConfigureKubeconfig does nothing: the fixture has no cluster.
+func (nodePoolFixtureProvider) ConfigureKubeconfig(context.Context, *types.ProjectConfig, map[string]interface{}, io.Writer) error {
+	return nil
+}
+
+// nodePoolReporter is the part of *testing.T the helper uses, so the harness's own test can record a
+// failure instead of failing.
+type nodePoolReporter interface {
+	Helper()
+	Errorf(format string, args ...any)
+	Fatalf(format string, args ...any)
 }
 
 // nodePoolSubject is one thing held to the contract: a cloud's template files, the knobs manifest
@@ -91,25 +165,65 @@ type nodePoolSubject struct {
 }
 
 // assertNodePoolContract fails t once per way the cloud's template breaks the node-pool contract.
-// Each cloud lane calls it from its own nodepool_<cloud>_test.go.
-func assertNodePoolContract(t *testing.T, cloud string) {
+// Each cloud lane registers its cloud in nodePoolProviders and calls this from its own
+// nodepool_<cloud>_test.go. t is a *testing.T in every caller but the harness's own test.
+func assertNodePoolContract(t nodePoolReporter, cloud string) {
 	t.Helper()
-	provider, ok := nodePoolProviders[cloud]
-	if !ok {
-		t.Fatalf("assertNodePoolContract: %q is not a cloud of the node-pool contract (aws, azure, gcp, hetzner)", cloud)
+	root, err := repoRootFromSource()
+	if err != nil {
+		t.Fatalf("assertNodePoolContract: %v", err)
+		return
 	}
-	root := templateRepoRoot(t)
-	dir := filepath.Join(root, "infra", "templates", "project", cloud)
-	subject := nodePoolSubject{
-		cloud:       cloud,
-		variablesTF: filepath.Join(dir, "variables.tf"),
-		tftest:      filepath.Join(dir, nodePoolTestFile),
-		knobsJSON:   filepath.Join(root, "apps", "console", "lib", "cloud-providers", "generated", "template-knobs.json"),
-		provider:    provider,
+	subject, err := resolveNodePoolSubject(root, cloud)
+	if err != nil {
+		t.Fatalf("assertNodePoolContract: %v", err)
+		return
 	}
 	for _, v := range nodePoolContractViolations(filepath.Join(root, filepath.FromSlash(nodePoolReferenceDir)), subject) {
 		t.Errorf("%s: %s", cloud, v)
 	}
+}
+
+// repoRootFromSource returns the repository root, three directories above this package.
+func repoRootFromSource() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(filepath.Join(wd, "..", "..", ".."))
+}
+
+// resolveNodePoolSubject turns a registered cloud name into the files and provider to check.
+func resolveNodePoolSubject(root, cloud string) (nodePoolSubject, error) {
+	target, ok := nodePoolProviders[cloud]
+	if !ok {
+		registered := make([]string, 0, len(nodePoolProviders))
+		for k := range nodePoolProviders {
+			registered = append(registered, k)
+		}
+		sort.Strings(registered)
+		return nodePoolSubject{}, fmt.Errorf("%q is not registered in nodePoolProviders (registered: %s); a cloud lane registers its cloud from an init() in its own nodepool_<cloud>_test.go", cloud, strings.Join(registered, ", "))
+	}
+	dir := target.dir
+	if dir == "" {
+		dir = "infra/templates/project/" + cloud
+	}
+	knobs := target.knobsJSON
+	if knobs == "" {
+		knobs = "apps/console/lib/cloud-providers/generated/template-knobs.json"
+	}
+	knobsCloud := target.knobsCloud
+	if knobsCloud == "" {
+		knobsCloud = cloud
+	}
+	abs := func(rel string) string { return filepath.Join(root, filepath.FromSlash(rel)) }
+	return nodePoolSubject{
+		cloud:       knobsCloud,
+		variablesTF: abs(dir + "/variables.tf"),
+		tftest:      abs(dir + "/" + nodePoolTestFile),
+		knobsJSON:   abs(knobs),
+		provider:    target.provider,
+	}, nil
 }
 
 // nodePoolContractViolations returns every way subject breaks the contract in refDir, one sentence
@@ -142,6 +256,14 @@ func parseHCLFile(path string) (*hclsyntax.Body, []byte, error) {
 	return body, src, nil
 }
 
+// layoutTokens are the token types that carry layout, not content: two expressions that differ only
+// in these are the same expression.
+var layoutTokens = map[hclsyntax.TokenType]bool{
+	hclsyntax.TokenNewline: true,
+	hclsyntax.TokenComment: true,
+	hclsyntax.TokenEOF:     true,
+}
+
 // exprTokens renders an expression as its token sequence with newlines and comments dropped, so two
 // expressions compare equal exactly when they differ only in layout.
 func exprTokens(src []byte, expr hclsyntax.Expression) string {
@@ -149,8 +271,7 @@ func exprTokens(src []byte, expr hclsyntax.Expression) string {
 	toks, _ := hclsyntax.LexExpression(rng.SliceBytes(src), rng.Filename, rng.Start)
 	var b strings.Builder
 	for _, tk := range toks {
-		switch tk.Type {
-		case hclsyntax.TokenNewline, hclsyntax.TokenComment, hclsyntax.TokenEOF:
+		if layoutTokens[tk.Type] {
 			continue
 		}
 		b.Write(tk.Bytes)
@@ -494,10 +615,9 @@ func nodePoolKnobViolations(path, cloud string) []string {
 			}
 		}
 		var why []string
-		switch {
-		case k == nil:
+		if k == nil {
 			why = append(why, "it is not in the manifest")
-		default:
+		} else {
 			if k.Component != "cluster" {
 				why = append(why, fmt.Sprintf("it is filed under component %q, not cluster", k.Component))
 			}
@@ -526,23 +646,54 @@ func nodePoolKnobViolations(path, cloud string) []string {
 
 // ── the helper's own tests ───────────────────────────────────────────────────────────────────────
 
-// nodePoolFixtureDir is testdata/nodepool, absolute.
-func nodePoolFixtureDir(t *testing.T) string {
+// nodePoolTestdata is testdata/nodepool, absolute.
+func nodePoolTestdata(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(templateRepoRoot(t), "packages", "core", "cloud", "testdata", "nodepool")
 }
 
-// conformingSubject is the conforming fixture as a Hetzner-shaped lane.
+// conformingSubject is the "fixture" target, which every mutation test then breaks in one place.
 func conformingSubject(t *testing.T) nodePoolSubject {
 	t.Helper()
-	dir := filepath.Join(nodePoolFixtureDir(t), "conforming")
-	return nodePoolSubject{
-		cloud:       "hetzner",
-		variablesTF: filepath.Join(dir, "variables.tf"),
-		tftest:      filepath.Join(dir, nodePoolTestFile),
-		knobsJSON:   filepath.Join(dir, "template-knobs.json"),
-		provider:    &hetznerProvider{},
+	s, err := resolveNodePoolSubject(templateRepoRoot(t), "fixture")
+	if err != nil {
+		t.Fatal(err)
 	}
+	return s
+}
+
+// recordingReporter records what assertNodePoolContract reports instead of failing the test.
+type recordingReporter struct {
+	errors []string
+}
+
+// Helper does nothing: there is no stack to trim.
+func (r *recordingReporter) Helper() {}
+
+// Errorf records one violation.
+func (r *recordingReporter) Errorf(format string, args ...any) {
+	r.errors = append(r.errors, fmt.Sprintf(format, args...))
+}
+
+// Fatalf records a fatal report; assertNodePoolContract returns right after calling it.
+func (r *recordingReporter) Fatalf(format string, args ...any) {
+	r.errors = append(r.errors, "FATAL: "+fmt.Sprintf(format, args...))
+}
+
+// TestNodePoolContract_HarnessRunsOnFixtures runs assertNodePoolContract itself, the exact entry
+// point a lane calls, against the registered fixture targets: the conforming one must pass and the
+// broken one (a provider that swallows node_taints) must fail, naming why. An unregistered cloud is
+// refused with the registration instructions rather than silently checking nothing.
+func TestNodePoolContract_HarnessRunsOnFixtures(t *testing.T) {
+	assertNodePoolContract(t, "fixture")
+
+	var broken recordingReporter
+	assertNodePoolContract(&broken, "fixture-unreachable")
+	requireViolation(t, broken.errors, `fixture-unreachable: the Cluster component's provider_config["node_taints"] does not reach`)
+
+	var unknown recordingReporter
+	assertNodePoolContract(&unknown, "alibaba")
+	requireViolation(t, unknown.errors, `FATAL: assertNodePoolContract: "alibaba" is not registered in nodePoolProviders`)
 }
 
 // requireViolation fails t unless violations has one containing want.
@@ -576,7 +727,7 @@ func writeMutated(t *testing.T, src, old, replacement string) string {
 // TestNodePoolContract_ConformingFixturePasses: a lane-shaped file set that keeps every rule (with
 // its own descriptions, layout, extra validation, extra run and substituted instance types) is clean.
 func TestNodePoolContract_ConformingFixturePasses(t *testing.T) {
-	ref := filepath.Join(nodePoolFixtureDir(t), "reference")
+	ref := filepath.Join(nodePoolTestdata(t), "reference")
 	if v := nodePoolContractViolations(ref, conformingSubject(t)); len(v) > 0 {
 		t.Errorf("the conforming fixture has %d violations:\n  %s", len(v), strings.Join(v, "\n  "))
 	}
@@ -594,7 +745,7 @@ func TestNodePoolContract_BrokenVariablesFixturesFail(t *testing.T) {
 		"validation_dropped":  `variable "node_taints" is missing the contract's validation #3`,
 		"validation_weakened": `variable "node_labels" is missing the contract's validation #2`,
 	}
-	brokenDir := filepath.Join(nodePoolFixtureDir(t), "broken")
+	brokenDir := filepath.Join(nodePoolTestdata(t), "broken")
 	entries, err := os.ReadDir(brokenDir)
 	if err != nil {
 		t.Fatal(err)
@@ -612,7 +763,7 @@ func TestNodePoolContract_BrokenVariablesFixturesFail(t *testing.T) {
 	if !reflect.DeepEqual(found, want) {
 		t.Fatalf("broken fixtures %v and expectations %v disagree", found, want)
 	}
-	ref := filepath.Join(nodePoolFixtureDir(t), "reference")
+	ref := filepath.Join(nodePoolTestdata(t), "reference")
 	for name, substr := range expect {
 		t.Run(name, func(t *testing.T) {
 			s := conformingSubject(t)
@@ -643,7 +794,7 @@ func TestNodePoolContract_BrokenLaneTestsFail(t *testing.T) {
 		{"a case sets a variable the reference leaves alone", "run \"nodepool_defaults_plan\" {\n  command = plan\n",
 			"run \"nodepool_defaults_plan\" {\n  command = plan\n\n  variables {\n    node_labels = {}\n  }\n", `run "nodepool_defaults_plan" sets node_labels`},
 	}
-	ref := filepath.Join(nodePoolFixtureDir(t), "reference")
+	ref := filepath.Join(nodePoolTestdata(t), "reference")
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := conformingSubject(t)
@@ -664,14 +815,14 @@ func TestNodePoolContract_UnsettableKnobsFail(t *testing.T) {
 	cases := []struct {
 		name, old, replacement, want string
 	}{
-		{"not read by anything", "\"name\": \"node_labels\",\n      \"kind\": \"map\",\n      \"required\": false,\n      \"sensitive\": false,\n      \"declaredAt\": \"infra/templates/project/hetzner/variables.tf:1\",\n      \"readBy\": [\n        \"hetzner\"\n      ]",
-			"\"name\": \"node_labels\",\n      \"kind\": \"map\",\n      \"required\": false,\n      \"sensitive\": false,\n      \"declaredAt\": \"infra/templates/project/hetzner/variables.tf:1\",\n      \"readBy\": []",
-			"node_labels is not a settable cluster knob on hetzner"},
+		{"not read by anything", "\"name\": \"node_labels\",\n      \"kind\": \"map\",\n      \"required\": false,\n      \"sensitive\": false,\n      \"declaredAt\": \"packages/core/cloud/testdata/nodepool/conforming/variables.tf:1\",\n      \"readBy\": [\n        \"fixture\"\n      ]",
+			"\"name\": \"node_labels\",\n      \"kind\": \"map\",\n      \"required\": false,\n      \"sensitive\": false,\n      \"declaredAt\": \"packages/core/cloud/testdata/nodepool/conforming/variables.tf:1\",\n      \"readBy\": []",
+			"node_labels is not a settable cluster knob on fixture"},
 		{"filed under another component", "\"component\": \"cluster\",\n      \"name\": \"extra_node_pools\"", "\"component\": \"platform\",\n      \"name\": \"extra_node_pools\"",
 			`filed under component "platform"`},
-		{"absent", "\"name\": \"node_taints\"", "\"name\": \"node_taints_renamed\"", "node_taints is not a settable cluster knob on hetzner"},
+		{"absent", "\"name\": \"node_taints\"", "\"name\": \"node_taints_renamed\"", "node_taints is not a settable cluster knob on fixture"},
 	}
-	ref := filepath.Join(nodePoolFixtureDir(t), "reference")
+	ref := filepath.Join(nodePoolTestdata(t), "reference")
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := conformingSubject(t)
@@ -701,12 +852,12 @@ func (p reservingProvider) ProviderTfvars(config *types.ProjectConfig) map[strin
 // TestNodePoolContract_UnreachableOrDefaultedFails: a provider that swallows a contract key, or emits
 // one the user never set, is caught.
 func TestNodePoolContract_UnreachableOrDefaultedFails(t *testing.T) {
-	ref := filepath.Join(nodePoolFixtureDir(t), "reference")
+	ref := filepath.Join(nodePoolTestdata(t), "reference")
 	s := conformingSubject(t)
-	s.provider = reservingProvider{CloudProvider: &hetznerProvider{}, drop: "node_taints"}
+	s.provider = reservingProvider{CloudProvider: nodePoolFixtureProvider{}, drop: "node_taints"}
 	requireViolation(t, nodePoolContractViolations(ref, s), `provider_config["node_taints"] does not reach`)
 
-	s.provider = reservingProvider{CloudProvider: &hetznerProvider{}, inject: "extra_node_pools"}
+	s.provider = reservingProvider{CloudProvider: nodePoolFixtureProvider{}, inject: "extra_node_pools"}
 	requireViolation(t, nodePoolContractViolations(ref, s), "a cluster that sets nothing gets a extra_node_pools tfvar")
 }
 
@@ -714,7 +865,7 @@ func TestNodePoolContract_UnreachableOrDefaultedFails(t *testing.T) {
 // expects exactly one variable to fail, an acceptance expects none, and every variable is refused by
 // at least one case.
 func TestNodePoolContract_ReferenceCasesAreWellFormed(t *testing.T) {
-	tt, err := parseTFTest(filepath.Join(nodePoolFixtureDir(t), "reference", nodePoolTestFile))
+	tt, err := parseTFTest(filepath.Join(nodePoolTestdata(t), "reference", nodePoolTestFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,7 +905,7 @@ func TestNodePoolContract_ReferenceRunsEveryCase(t *testing.T) {
 	}
 	for _, name := range []string{"reference", "conforming"} {
 		t.Run(name, func(t *testing.T) {
-			src := filepath.Join(nodePoolFixtureDir(t), name)
+			src := filepath.Join(nodePoolTestdata(t), name)
 			tt, err := parseTFTest(filepath.Join(src, nodePoolTestFile))
 			if err != nil {
 				t.Fatal(err)
