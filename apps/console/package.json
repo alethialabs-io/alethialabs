@@ -40,7 +40,6 @@
     "gen:catalog": "node scripts/gen-catalog.mjs",
     "gen:cli-fixtures": "tsx scripts/gen-cli-fixtures.ts",
     "gen:component-schema": "tsx scripts/gen-component-schema.ts",
-    "gen:provider-config-keys": "tsx scripts/gen-provider-config-keys.ts",
     "gen:go-enums": "tsx scripts/gen-go-enums.ts",
     "gen:go-brand": "tsx scripts/gen-go-brand.ts",
     "gen:go-routes": "tsx scripts/gen-go-routes.ts",

@@ -191,26 +191,49 @@ is optional on a terminal, where you pick it from a list.
 
 The file holds the project's cloud account (by its label), the region, the OpenTofu version, and
 for each environment its stage, placement, namespace, components and add-ons. Each component
-carries only the fields that the [published component schema](/reference/cli/project) marks as
-settable; the server's own fields, such as an endpoint or a status, are dropped. Each add-on
-carries its version pin, its delivery mode and its non-secret settings. The output is the same on
+carries the settable fields described below. Each add-on carries its version pin, its delivery mode
+and its non-secret settings. The output is the same on
 every run: environments, components and add-ons are in a fixed order, so a re-export shows only
 what changed.
 
-### What is never written
+### What is written, and what is left out
 
-The file is meant to be committed, so `export` leaves out every value that can be a secret:
+The file is meant to be committed, so it never contains a secret. `export` works from an
+allow-list: it writes a stored value only when Alethia publishes that value as a plain, non-secret
+setting. Everything else is left out.
 
-- a secret add-on setting, such as `external-dns`'s `apiToken`;
+| Part of the file | Written only when |
+|------------------|-------------------|
+| A component field | The [published component schema](/reference/cli/project) declares the field, does not mark it `writeOnly` or `format: password`, and its name is not a credential name. The value must be a string, number or boolean, or a list or map of them. |
+| A `provider_config` key | The key is a [settable template knob](/reference/cli/project#setting-template-knobs) of that component kind on the component's cloud. Credential knobs, such as a secret's `value` or `rds_extra_credentials`, are never settable, so they are never written. |
+| An add-on setting | The add-on catalog declares the setting and does not name it a secret. The catalog's secret names and the add-on's own secret names are both checked, in any letter case, so `APITOKEN` counts as the secret `apiToken`. |
+
+Some values are always left out:
+
 - an add-on's **Advanced values override**, because it is free-form Helm values and can hold a
-  password that the catalog cannot name. To manage the override from git, put it in a file next to
-  `alethia.yaml` and name it with
+  password. To manage the override from git, put it in a file next to `alethia.yaml` and name it with
   [`values_file:`](/reference/cli/plan-and-apply#where-a-values-file-can-come-from);
-- a component field or add-on setting whose name is a credential (`password`, `token`, `api_key`,
-  …), including a `provider_config` key, and a secret component's `value`;
-- a value that holds a credential: a URL with a user name or password in it, such as
-  `https://x-access-token:…@github.com/acme/apps`, or a nested key named like a credential;
-- a component's own `cloud_identity_id`, which is a reference to a credential.
+- a component's own `cloud_identity_id`, which is a reference to a credential;
+- a server field such as an endpoint or a status, which the schema does not declare.
+
+`export` then checks each value that passed the allow-list for the shape of a credential and
+leaves out any value that matches:
+
+- a URL with a user name or password, such as `https://x-access-token:…@github.com/acme/apps`;
+  each URL in a comma-separated list is checked;
+- a URL with a credential in its query string, such as `?token=…` or `?access_token=…`;
+- a `Bearer …` or `Basic …` value, or a connection string with a password, such as
+  `user:pw@tcp(db)/app`;
+- a map with a key named like a credential, at any depth.
+
+The allow-list and the shape check read names and values. They cannot know that someone typed a
+password into an ordinary field, such as a database user name. Read the file before you commit it.
+
+`--out` writes a new file, and fails if a file already exists at that path. `--force` replaces the
+file. `export` never writes through a symbolic link, with or without `--force`.
+
+The file pins `iac.version` to the OpenTofu version that the project uses now. A comment at the top
+of the file says so. Delete the line to use the server's default version.
 
 A field that the file leaves out keeps its stored value: `apply` never clears it. A comment at the
 top of the file lists each thing that is not in it, and `export` prints the same list on stderr.

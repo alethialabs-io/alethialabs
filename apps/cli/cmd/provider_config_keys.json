@@ -1,5 +1,5 @@
 {
-  "generatedBy": "pnpm -C apps/console run gen:provider-config-keys",
+  "generatedBy": "pnpm -C apps/console exec tsx scripts/gen-provider-config-keys.ts",
   "keys": {
     "alibaba": {
       "cluster": [

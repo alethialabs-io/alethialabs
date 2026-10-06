@@ -15,7 +15,7 @@
 // here only makes the export leave it out — named in the file's header, kept by apply — so a template
 // lane adding a knob is not made to touch apps/cli. Run this to bring the file up to date either way.
 //
-// Run: pnpm -C apps/console run gen:provider-config-keys
+// Run: pnpm -C apps/console exec tsx scripts/gen-provider-config-keys.ts
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -31,10 +31,10 @@ export const PROVIDER_CONFIG_KEYS_FILE = resolve(
 );
 
 /** The command that regenerates the file — named in the drift test's failure message. */
-export const REGENERATE_COMMAND = "pnpm -C apps/console run gen:provider-config-keys";
+export const REGENERATE_COMMAND = "pnpm -C apps/console exec tsx scripts/gen-provider-config-keys.ts";
 
 /** cloud → CLI component kind → the settable provider_config keys, sorted. Empty lists are left out. */
-export type ProviderConfigKeys = Record<string, Record<string, string[]>>;
+type ProviderConfigKeys = Record<string, Record<string, string[]>>;
 
 /** The settable keys for every cloud and every CLI kind with a provider_config column. */
 export function providerConfigKeys(): ProviderConfigKeys {
