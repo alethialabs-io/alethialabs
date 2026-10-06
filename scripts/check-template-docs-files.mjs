@@ -13,12 +13,16 @@
 // WHAT IT CHECKS. Every page in apps/docs/content/docs/concepts/runner/infrastructure-templates/
 // whose basename is a cloud with a template directory (`gcp.mdx` → infra/templates/project/gcp/)
 // is read for:
-//   · every token that ends in `.tf` (backticked or not), resolved against that directory, or
-//     against the repo root when it is written as an `infra/templates/...` path; and
-//   · every `modules/<name>/` token, which must be a directory under that template directory.
-// A page whose basename has NO template directory (index.mdx, argocd.mdx) must name no `.tf` file
-// at all: such a page has nothing to resolve the name against, so a name there fails rather than
-// passes unread. The run also fails if no page maps to a template directory, so a moved docs
+//   · every repo path written as `infra/templates/...` — a `.tf` file, a `modules/<name>/`
+//     directory or anything else — which must exist from the repo root. A link whose URL contains
+//     `/infra/templates/` (a GitHub blob or tree link) is checked the same way, by the repo path
+//     after that point. Any other URL is skipped, so `https://example.com/x/main.tf` is not read;
+//   · every other token that ends in `.tf` (backticked or not), resolved against the page's
+//     template directory; and
+//   · every other `modules/<name>/` token, which must be a directory in that template directory.
+// A page whose basename has NO template directory (index.mdx, argocd.mdx) must name no bare `.tf`
+// file: such a page has nothing to resolve the name against, so a name there fails rather than
+// passes unread. Its `infra/templates/...` paths are still checked from the repo root. The run also fails if no page maps to a template directory, so a moved docs
 // folder cannot turn this into a check over nothing.
 //
 // WHAT IT DOES NOT CHECK, stated so it is not read as more than it is:
@@ -45,6 +49,10 @@ const TEMPLATES_DIR = "infra/templates/project";
  * `checks.tftest.hcl` or `x.tf.json`, but a sentence-ending `vpn.tf.` still counts.
  */
 const TF_NAME = /[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.tf(?![A-Za-z0-9_]|\.[A-Za-z0-9])/g;
+/** A URL, up to the first character that ends a Markdown link target or a code span. */
+const URL = /https?:\/\/[^\s)`>\]"']+/g;
+/** A repo path under infra/templates/, not part of a longer path. */
+const REPO_PATH = /(?<![A-Za-z0-9_./-])infra\/templates\/[A-Za-z0-9_./-]*/g;
 /** A module directory reference such as `modules/gke/`. */
 const MODULE_REF = /(?<![A-Za-z0-9_./-])modules\/([A-Za-z0-9_-]+)\/?/g;
 
@@ -72,8 +80,25 @@ function check(root) {
 		const hasTemplate = isDir(templateDir);
 		if (hasTemplate) mapped++;
 		const lines = readFileSync(join(docsDir, page), "utf8").split("\n");
-		lines.forEach((text, i) => {
+		lines.forEach((raw, i) => {
 			const line = i + 1;
+			/** Repo paths this line names, from links and from written-out `infra/templates/...` paths. */
+			const repoPaths = [];
+			let text = raw.replace(URL, (url) => {
+				const at = url.indexOf("/infra/templates/");
+				if (at >= 0) repoPaths.push(url.slice(at + 1));
+				return " ".repeat(url.length);
+			});
+			text = text.replace(REPO_PATH, (path) => {
+				repoPaths.push(path);
+				return " ".repeat(path.length);
+			});
+			for (const path of repoPaths) {
+				const clean = path.replace(/[.,;:]+$/, "");
+				if (!existsSync(join(root, clean))) {
+					findings.push({ page, line, msg: `names \`${clean}\`, which does not exist` });
+				}
+			}
 			for (const m of text.matchAll(TF_NAME)) {
 				const name = m[0];
 				if (!hasTemplate) {
@@ -84,8 +109,7 @@ function check(root) {
 					});
 					continue;
 				}
-				const target = name.startsWith("infra/") ? join(root, name) : join(templateDir, name);
-				if (!existsSync(target)) {
+				if (!existsSync(join(templateDir, name))) {
 					findings.push({ page, line, msg: `names \`${name}\`, which is not in ${templateRel}/` });
 				}
 			}
@@ -170,6 +194,31 @@ function selfTest() {
 			pages: { "demo.mdx": "`real.tf`\n", "argocd.mdx": "`real.tf`\n" },
 			wantZero: false,
 			mustSay: "argocd.mdx",
+		},
+		{
+			name: "a GitHub link to a real template file passes, and a link to another site is not read",
+			pages: {
+				"demo.mdx":
+					"See [real](https://github.com/o/r/blob/dev/infra/templates/project/demo/real.tf) and [x](https://example.com/y/ghost.tf).\n",
+			},
+			wantZero: true,
+		},
+		{
+			name: "a GitHub link to a planted `ghost.tf` fails",
+			pages: { "demo.mdx": "[g](https://github.com/o/r/blob/dev/infra/templates/project/demo/ghost.tf)\n" },
+			wantZero: false,
+			mustSay: "infra/templates/project/demo/ghost.tf",
+		},
+		{
+			name: "a path-prefixed real module passes",
+			pages: { "demo.mdx": "`infra/templates/project/demo/modules/real/`\n" },
+			wantZero: true,
+		},
+		{
+			name: "a path-prefixed planted `modules/ghost/` fails",
+			pages: { "demo.mdx": "`infra/templates/project/demo/modules/ghost/`\n" },
+			wantZero: false,
+			mustSay: "infra/templates/project/demo/modules/ghost/",
 		},
 		{
 			name: "a docs directory mapping to no template directory fails",
