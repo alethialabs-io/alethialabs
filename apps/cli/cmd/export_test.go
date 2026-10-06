@@ -806,3 +806,54 @@ func TestExportCommand_ThroughTheCobraTree(t *testing.T) {
 		t.Error("no project under --no-input must exit")
 	}
 }
+
+// A credential that hides in a VALUE is caught by its shape: a URL with user-info anywhere, or a
+// nested key named like a credential inside a provider_config knob or an add-on setting.
+func TestExport_CredentialsHiddenInValues(t *testing.T) {
+	f := exportServer(t)
+	f.comps["staging"] = []api.Component{
+		{Kind: "repositories", Name: "repositories", Status: "ACTIVE", Config: map[string]any{
+			"apps_destination_repo": "https://x-access-token:ghp_planted@github.com/acme/apps",
+			"apps_path":             "overlays/staging",
+		}},
+		{Kind: "databases", Name: "orders", Status: "ACTIVE", Config: map[string]any{
+			"engine": "postgres",
+			"provider_config": map[string]any{
+				"rds_bootstrap":   map[string]any{"users": []any{map[string]any{"name": "app", "password": "pw_planted"}}},
+				"rds_backup_days": float64(7),
+			},
+		}},
+	}
+	f.addons["staging"] = []api.Addon{{AddonID: "cert-manager", Enabled: true, Mode: "managed", Settings: map[string]any{
+		"installCRDs": true, "webhookToken": "tok_planted", "issuer": "https://acme:pw2_planted@acme.example.com/dir",
+	}}}
+	data, _ := exportBytes(t, f, exportOptions{project: "web", env: "staging"})
+	out := string(data)
+	for _, planted := range []string{"ghp_planted", "pw_planted", "tok_planted", "pw2_planted"} {
+		if strings.Contains(out, planted) {
+			t.Errorf("%q reached the file:\n%s", planted, out)
+		}
+	}
+	for _, want := range []string{
+		"staging repositories — apps_destination_repo holds what looks like a credential",
+		"staging databases/orders — provider_config rds_bootstrap: a credential",
+		"staging add-on cert-manager — settings issuer, webhookToken look like credentials",
+		"rds_backup_days: 7",
+		"installCRDs: true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	assertNothingToDo(t, planExported(t, f, data), data)
+	for v, want := range map[any]bool{
+		"https://github.com/acme/apps": false, "plain": false, "https://u@h/x": true, "http://%zz": true,
+	} {
+		if got := holdsCredential(v); got != want {
+			t.Errorf("holdsCredential(%v) = %v, want %v", v, got, want)
+		}
+	}
+	if holdsCredential([]any{"a", float64(1)}) {
+		t.Error("a list of plain values holds no credential")
+	}
+}

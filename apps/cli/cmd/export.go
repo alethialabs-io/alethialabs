@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -541,6 +542,10 @@ func exportFields(env string, def api.ComponentSchemaKind, c api.Component, ex *
 			}
 			continue
 		}
+		if holdsCredential(v) {
+			ex.note(fmt.Sprintf("%s — %s holds what looks like a credential (a key named like one, or a URL with a user in it) and is not written", ref, f))
+			continue
+		}
 		out[f] = plainValue(v)
 	}
 	return out
@@ -548,7 +553,9 @@ func exportFields(env string, def api.ComponentSchemaKind, c api.Component, ex *
 
 // exportProviderConfig keeps a provider_config's non-credential, non-null keys. A key named like a
 // credential is dropped by NAME — the console's rule — because its value may be one that was stored
-// before the console started refusing them.
+// before the console started refusing them. So is a key whose VALUE holds one (holdsCredential): the
+// console decides credential-ness from the template's declared type, which this side cannot see, so
+// it reads the value's own shape instead.
 func exportProviderConfig(ref, kind string, v any, ex *exported) map[string]any {
 	in, ok := stringKeyed(v)
 	if !ok {
@@ -558,7 +565,7 @@ func exportProviderConfig(ref, kind string, v any, ex *exported) map[string]any 
 	out := map[string]any{}
 	var dropped []string
 	for k, val := range in {
-		if isCredentialKeyName(k) || (kind == "secrets" && normalizeKeyName(k) == "value") {
+		if isCredentialKeyName(k) || (kind == "secrets" && normalizeKeyName(k) == "value") || holdsCredential(val) {
 			dropped = append(dropped, k)
 			continue
 		}
@@ -572,6 +579,37 @@ func exportProviderConfig(ref, kind string, v any, ex *exported) map[string]any 
 		ex.note(fmt.Sprintf("%s — provider_config %s: a credential, never written (store it as a secret)", ref, strings.Join(dropped, ", ")))
 	}
 	return out
+}
+
+// holdsCredential reports whether a value carries something that reads as a credential: a mapping key
+// (at any depth) named like one, or a URL with user-info — `https://x-access-token:ghp_…@github.com/…`
+// is how a git token most often ends up in a repository URL. It over-matches on purpose, for the reason
+// isCredentialKeyName does: what it drops, apply keeps.
+func holdsCredential(v any) bool {
+	switch t := v.(type) {
+	case string:
+		if !strings.Contains(t, "://") {
+			return false
+		}
+		u, err := url.Parse(strings.TrimSpace(t))
+		// An unparseable value with a scheme separator in it cannot be shown to be clean.
+		return err != nil || u.User != nil
+	case []any:
+		for _, item := range t {
+			if holdsCredential(item) {
+				return true
+			}
+		}
+	default:
+		if m, ok := stringKeyed(v); ok {
+			for k, val := range m {
+				if isCredentialKeyName(k) || holdsCredential(val) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // schemaMarksSecret reports whether the published schema marks a field `writeOnly` — a value the
@@ -653,12 +691,14 @@ func (r *exportReader) addons(env string, rows []api.Addon, ex *exported) ([]man
 		}
 		secret := append(append([]string(nil), entry.SecretKeys...), row.SecretKeys...)
 		settings := map[string]any{}
-		var unknown []string
+		var unknown, credentialLike []string
 		for k, v := range row.Settings {
 			switch {
 			case v == nil, oneOfString(k, secret):
 				// A secret is never written. The server removes them from this read; this is the same
 				// rule against both lists, so a key only one of them names still cannot reach the file.
+			case isCredentialKeyName(k) || holdsCredential(v):
+				credentialLike = append(credentialLike, k)
 			case entry.Settings != nil && !oneOfString(k, entry.Settings):
 				unknown = append(unknown, k)
 			default:
@@ -670,6 +710,10 @@ func (r *exportReader) addons(env string, rows []api.Addon, ex *exported) ([]man
 		}
 		if len(secret) > 0 {
 			ex.note(fmt.Sprintf("%s — secret settings (%s) are never written; apply keeps the stored values", ref, strings.Join(sortedUnique(secret), ", ")))
+		}
+		if len(credentialLike) > 0 {
+			sort.Strings(credentialLike)
+			ex.note(fmt.Sprintf("%s — settings %s look like credentials and are not written; apply keeps the stored values", ref, strings.Join(credentialLike, ", ")))
 		}
 		if len(unknown) > 0 {
 			sort.Strings(unknown)

@@ -206,8 +206,10 @@ The file is meant to be committed, so `export` leaves out every value that can b
   password that the catalog cannot name. To manage the override from git, put it in a file next to
   `alethia.yaml` and name it with
   [`values_file:`](/reference/cli/plan-and-apply#where-a-values-file-can-come-from);
-- a component field whose name is a credential (`password`, `token`, `api_key`, …), including a
-  `provider_config` key, and a secret component's `value`;
+- a component field or add-on setting whose name is a credential (`password`, `token`, `api_key`,
+  …), including a `provider_config` key, and a secret component's `value`;
+- a value that holds a credential: a URL with a user name or password in it, such as
+  `https://x-access-token:…@github.com/acme/apps`, or a nested key named like a credential;
 - a component's own `cloud_identity_id`, which is a reference to a credential.
 
 A field that the file leaves out keeps its stored value: `apply` never clears it. A comment at the
