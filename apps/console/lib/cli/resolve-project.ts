@@ -137,10 +137,24 @@ export async function resolveCliWriteEnvironment(
 }
 
 /**
- * Resolves an environment within a project addressed by id, name, OR stage. Prefers the
- * `is_default` environment when a stage matches more than one. Returns the row or null.
- * Used by env-scoped CLI read routes (drift, cost, status, …) so a caller can pass
- * `--env production` (name/stage) or an environment id interchangeably.
+ * Resolves an environment within a project addressed by id, name, OR stage. Returns the row or null.
+ * Used by every env-scoped CLI route — reads (drift, cost, components, add-ons, …) and, through
+ * {@link resolveCliWriteEnvironment}, writes — so a caller can pass `--env production` (name/stage)
+ * or an environment id interchangeably.
+ *
+ * PRECEDENCE, when one value matches more than one row (#5583):
+ *   1. the environment whose **id** it is;
+ *   2. the environment whose **name** it is, exactly;
+ *   3. an environment at that **stage** — the `is_default` one first, then the oldest.
+ *
+ * An exact name beats a stage because the name is the one the caller can see and chose. Before
+ * #5583 every match was ranked by `is_default` alone, so in a project whose default environment
+ * `main` sits at stage `staging` and whose second environment is NAMED `staging`, `?env=staging`
+ * resolved to `main` — and `alethia plan`/`apply`, which then addressed environments by name, diffed
+ * and wrote the default environment's components. The CLI now sends ids; this ordering is the
+ * defence in depth for any caller that still sends a name. A value that matches only by stage
+ * resolves exactly as it did before. Names are unique per project
+ * (`project_environments_project_id_name_key`), so rank 2 is at most one row.
  */
 export async function resolveCliEnvironment(projectId: string, idOrName: string) {
 	const matchers = [eq(projectEnvironments.name, idOrName)];
@@ -157,7 +171,18 @@ export async function resolveCliEnvironment(projectId: string, idOrName: string)
 		})
 		.from(projectEnvironments)
 		.where(and(eq(projectEnvironments.project_id, projectId), or(...matchers)))
-		.orderBy(desc(projectEnvironments.is_default))
+		// The id is compared as TEXT so a value that is not a uuid is never cast to one (which would
+		// error at the DB); such a value simply cannot reach rank 0. Same shape as resolveCliProject.
+		.orderBy(
+			sql`case
+				when ${projectEnvironments.id}::text = ${idOrName} then 0
+				when ${projectEnvironments.name} = ${idOrName} then 1
+				else 2
+			end`,
+			desc(projectEnvironments.is_default),
+			asc(projectEnvironments.created_at),
+			asc(projectEnvironments.id),
+		)
 		.limit(1);
 	return row ?? null;
 }
