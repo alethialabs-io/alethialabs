@@ -77,6 +77,7 @@ import {
 	getProjects,
 	getProjectsList,
 	planProject,
+	reconcileEnvironmentComponents,
 	provisionProject,
 	tryCreateProject,
 	tryDuplicateProjectForProvider,
@@ -90,6 +91,7 @@ import { authorize, currentActor } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
+import { CredentialKnobRefusedError } from "@/lib/cloud-providers/credential-knobs";
 import { getServiceDb, withActorScope, withScope } from "@/lib/db";
 import {
 	auditLog,
@@ -4051,5 +4053,112 @@ describe("webhook_ca_consumers — the project-level webhook-CA marker (#4990)",
 			"webhook_ca_consumers",
 		);
 		expect(await snapshotFor({})).not.toHaveProperty("webhook_ca_consumers");
+	});
+});
+
+// ============================================================
+// #5565 — a credential in provider_config is refused at the write
+// ============================================================
+
+// The canvas offered `rds_extra_credentials` and a secret's `value`, and every project write action
+// spread `provider_config` into the row as it came: a plaintext password in JSONB, copied into every
+// config snapshot. Hiding the control is not a boundary — these are POST-addressable actions, and
+// updateProjectDesign is also the CLI design route's write path — so the actions refuse the key
+// themselves, before any row is deleted or written. A value already stored unchanged in the project
+// is let through, so a project holding one from before keeps saving.
+describe("a credential in provider_config is refused at the write (#5565)", () => {
+	const CREDS = { username: "reporting", database: "orders", password: "hunter2" };
+	const design = (dbConfig: Record<string, unknown>, secretConfig: Record<string, unknown> = {}) => ({
+		project: {
+			project_name: "Shop",
+			environment_stage: "production",
+			region: "us-east-1",
+			cloud_identity_id: "ci-1",
+			iac_version: "1.11.4",
+		},
+		network: { provision_network: true, cidr_block: "10.0.0.0/16", single_nat_gateway: true },
+		cluster: {
+			cluster_version: "1.31",
+			instance_types: ["m5.large"],
+			node_min_size: 2,
+			node_max_size: 5,
+			node_desired_size: 2,
+			cluster_admins: [],
+			provider_config: {},
+		},
+		dns: { enabled: false },
+		repositories: {},
+		databases: [{ name: "orders", engine: "postgres", provider_config: dbConfig }],
+		secrets: [{ name: "api-key", provider_config: secretConfig }],
+	});
+
+	it("updateProjectDesign refuses a new rds_extra_credentials before touching a row", async () => {
+		const { deleteSpy, insertSpy, setSpy } = setupDb({});
+		const save = updateProjectDesign("p1", "env-1", design({ rds_extra_credentials: CREDS }) as never);
+		await expect(save).rejects.toBeInstanceOf(CredentialKnobRefusedError);
+		await expect(save).rejects.toThrow(/database "orders": rds_extra_credentials/);
+		await expect(save).rejects.not.toThrow(/hunter2/);
+		expect(deleteSpy).not.toHaveBeenCalled();
+		expect(insertSpy).not.toHaveBeenCalled();
+		expect(setSpy).not.toHaveBeenCalled();
+	});
+
+	it("updateProjectDesign refuses a secret's value", async () => {
+		const { insertSpy } = setupDb({});
+		await expect(
+			updateProjectDesign("p1", "env-1", design({}, { value: "s3cr3t" }) as never),
+		).rejects.toThrow(/secret "api-key": value/);
+		expect(insertSpy).not.toHaveBeenCalled();
+	});
+
+	it("updateProjectDesign keeps an unchanged value stored before #5565", async () => {
+		const { valuesSpy } = setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectDatabases, [{ provider_config: { rds_extra_credentials: { ...CREDS } } }]],
+			]),
+		});
+		await updateProjectDesign("p1", "env-1", design({ rds_extra_credentials: CREDS }) as never);
+		expect(valueRowsFor(valuesSpy, projectDatabases)[0]?.provider_config).toEqual({
+			rds_extra_credentials: CREDS,
+		});
+	});
+
+	it("updateProjectDesign refuses a CHANGED value even when an older one is stored", async () => {
+		setupDb({
+			select: new Map<unknown, RowsResolver>([
+				[projectDatabases, [{ provider_config: { rds_extra_credentials: CREDS } }]],
+			]),
+		});
+		await expect(
+			updateProjectDesign(
+				"p1",
+				"env-1",
+				design({ rds_extra_credentials: { ...CREDS, password: "hunter3" } }) as never,
+			),
+		).rejects.toBeInstanceOf(CredentialKnobRefusedError);
+	});
+
+	it("a design with no credential key saves as before", async () => {
+		const { valuesSpy } = setupDb({});
+		await updateProjectDesign("p1", "env-1", design({ rds_default_username: "svc" }) as never);
+		expect(valueRowsFor(valuesSpy, projectDatabases)[0]?.provider_config).toEqual({
+			rds_default_username: "svc",
+		});
+	});
+
+	it("reconcileEnvironmentComponents (promotion) refuses it before the clear", async () => {
+		const { deleteSpy } = setupDb({});
+		await expect(
+			reconcileEnvironmentComponents("p1", "env-1", design({ rds_extra_credentials: CREDS }) as never),
+		).rejects.toBeInstanceOf(CredentialKnobRefusedError);
+		expect(deleteSpy).not.toHaveBeenCalled();
+	});
+
+	it("tryCreateProject returns the refusal as a value and writes nothing", async () => {
+		const { insertSpy } = setupDb({ select: new Map([[projects, []]]) });
+		const r = await tryCreateProject(design({ rds_extra_credentials: CREDS }) as never);
+		expect(r).toEqual({ ok: false, error: expect.stringContaining("rds_extra_credentials") });
+		expect(JSON.stringify(r)).not.toContain("hunter2");
+		expect(insertSpy).not.toHaveBeenCalled();
 	});
 });

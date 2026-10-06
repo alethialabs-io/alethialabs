@@ -105,6 +105,11 @@ export function isRead(knob: TemplateKnob): boolean {
  *   · `!typed` — the canvas already collects this value through a typed field. A generic control
  *     beside it is a second writer of one value, and which one wins is an implementation detail of
  *     the merge rather than anything a user could predict.
+ *   · `!isCredentialKnob` — a password, a token, a secret's own value. What a user types into a
+ *     knob is stored in plaintext in the component's `provider_config` JSONB, copied into every
+ *     config snapshot and passed to tofu as a variable. A credential belongs in a secret store, so
+ *     it is never offered — on the canvas or through the CLI (#5565). The canvas renders a note in
+ *     its place instead (`withheldCredentialKnobs`), and the project write actions refuse the key.
  *
  * Sorted by name so a card's controls do not reorder when the generator's file order changes.
  */
@@ -128,7 +133,86 @@ export function offerableKnobs(knobs: readonly TemplateKnob[], cloud: string, ki
 				isRead(k) &&
 				!k.ceiling &&
 				!k.ownedByProvider &&
-				!k.typed,
+				!k.typed &&
+				!isCredentialKnob(k),
 		)
 		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** A credential word as a whole `_`-separated segment of a knob name. */
+const CREDENTIAL_NAME =
+	/(^|_)(password|passwd|passphrase|credentials?|token|secret_key|access_key|private_key|api_key|client_secret)(_|$)/;
+
+/** A credential attribute declared inside a knob's type (`object({ password = … })`). */
+const CREDENTIAL_ATTRIBUTE =
+	/\b(password|passwd|passphrase|token|secret_key|access_key|private_key|api_key|client_secret)\s*=/;
+
+/** True when a `provider_config` key's NAME carries a credential word (`hcloud_token`, `db_password`). */
+export function isCredentialKeyName(name: string): boolean {
+	return CREDENTIAL_NAME.test(name);
+}
+
+/**
+ * True when a knob carries a credential: the template marks it `sensitive`, its name or its declared
+ * type names a credential (`rds_extra_credentials` declares a `password` attribute), or it is a
+ * secret component's own material (`value`).
+ *
+ * The ONE definition. `offerableKnobs` excludes these, so the canvas and the CLI (which narrows that
+ * same set) agree; the project write actions refuse them through `credentialKeysInDesign`.
+ *
+ * Deliberately a name-and-type rule, so it over-matches rather than under-matches: AWS's
+ * `store_access_key_in_ssm` is a `bool` and matches on `access_key`. It is not offerable for other
+ * reasons, so nothing is lost; a false positive costs a control, a false negative costs a plaintext
+ * secret.
+ */
+export function isCredentialKnob(knob: TemplateKnob): boolean {
+	if (knob.sensitive) return true;
+	if (CREDENTIAL_NAME.test(knob.name)) return true;
+	if (CREDENTIAL_ATTRIBUTE.test(knob.typeExpr)) return true;
+	return knob.component === "secret" && knob.name === "value";
+}
+
+/**
+ * The credential knobs one component WOULD offer on one cloud if they were not credentials — every
+ * other `offerableKnobs` filter passes. These are the controls a user may remember (or read about in
+ * an old doc), so the canvas renders a note where each used to be, saying where the value goes now.
+ */
+export function withheldCredentialKnobs(
+	knobs: readonly TemplateKnob[],
+	cloud: string,
+	kind: NodeKind,
+): TemplateKnob[] {
+	return knobs
+		.filter(
+			(k) =>
+				k.cloud === cloud &&
+				k.component === kind &&
+				k.reachable &&
+				isRead(k) &&
+				!k.ceiling &&
+				!k.ownedByProvider &&
+				!k.typed &&
+				isCredentialKnob(k),
+		)
+		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Where a withheld credential's value is supplied instead, as one or two sentences for the canvas
+ * note and the server's refusal. Keyed `<component>:<name>`; anything not listed gets the generic
+ * pointer, which is still true for every credential: a secret store, never `provider_config`.
+ */
+const CREDENTIAL_GUIDANCE: Readonly<Record<string, string>> = {
+	"database:rds_extra_credentials":
+		"Alethia generates the extra database user's password and stores the user, password and database name in AWS Secrets Manager. Read them from there after deploy; the secret's ARN is recorded on the database as extra_secret_ref.",
+	"secret:value":
+		"Turn off Auto-generate value: Alethia then creates the secret with a placeholder and you set the real value in AWS Secrets Manager after deploy. Or make a secrets connector (Vault, Doppler, Infisical, 1Password) the environment's secrets store and write the value there.",
+};
+
+/** Where a credential knob's value is supplied instead of `provider_config` (see `CREDENTIAL_GUIDANCE`). */
+export function credentialGuidance(component: string, name: string): string {
+	return (
+		CREDENTIAL_GUIDANCE[`${component}:${name}`] ??
+		"Store it as a Secret component or in a secrets connector instead."
+	);
 }
