@@ -358,17 +358,112 @@ run "aks_nodepools_refuses_node_settings_without_a_cluster" {
 run "aks_nodepools_accepts_the_arm64_sizes" {
   command = plan
 
+  # Azure's naming convention marks an Arm-based processor with the additive feature `p` after the
+  # vCPU count (checks_nodepools.tf). Ampere Altra v5, Cobalt v6 and the B-series v2 all carry it.
   variables {
     extra_node_pools = [
       { name = "altra", instance_type = "Standard_D4ps_v5", min_size = 1, max_size = 2, arch = "arm64" },
-      { name = "altrad", instance_type = "Standard_E8pds_v5", min_size = 1, max_size = 2, arch = "arm64" },
+      { name = "altrad", instance_type = "Standard_D2pds_v5", min_size = 1, max_size = 2, arch = "arm64" },
       { name = "altral", instance_type = "Standard_D2pls_v5", min_size = 1, max_size = 2, arch = "arm64" },
       { name = "cobalt", instance_type = "Standard_D4plds_v6", min_size = 1, max_size = 2, arch = "arm64" },
+      { name = "bps", instance_type = "Standard_B2ps_v2", min_size = 1, max_size = 2, arch = "arm64" },
+      { name = "bpls", instance_type = "Standard_B2pls_v2", min_size = 1, max_size = 2, arch = "arm64" },
+      { name = "bpts", instance_type = "Standard_B2pts_v2", min_size = 1, max_size = 2, arch = "arm64" },
     ]
   }
 
   assert {
-    condition     = length(terraform_data.aks_nodepool_guard) == 1 && alltrue([for name in ["altra", "altrad", "altral", "cobalt"] : contains(module.aks[0].node_pools[name].node_taints, "alethia.io/arch=arm64:NoSchedule")])
-    error_message = "Every Arm64 D/E size, v5 and v6, must plan as an arm64 pool carrying the alethia.io/arch taint."
+    condition     = length(terraform_data.aks_nodepool_guard) == 1 && alltrue([for name in ["altra", "altrad", "altral", "cobalt", "bps", "bpls", "bpts"] : contains(module.aks[0].node_pools[name].node_taints, "alethia.io/arch=arm64:NoSchedule")])
+    error_message = "Every Arm64 size (the feature letter p: D/E v5 and v6, B v2) must plan as an arm64 pool carrying the alethia.io/arch taint."
+  }
+}
+
+run "aks_nodepools_refuses_an_arm64_pool_on_a_b_series_x86_size" {
+  command = plan
+
+  variables {
+    extra_node_pools = [{ name = "burst", instance_type = "Standard_B2s_v2", min_size = 1, max_size = 2, arch = "arm64" }]
+  }
+
+  expect_failures = [terraform_data.aks_nodepool_guard]
+}
+
+run "aks_nodepools_refuses_an_amd64_pool_on_a_b_series_arm64_size" {
+  command = plan
+
+  variables {
+    extra_node_pools = [{ name = "burst", instance_type = "Standard_B2pts_v2", min_size = 1, max_size = 2 }]
+  }
+
+  expect_failures = [terraform_data.aks_nodepool_guard]
+}
+
+run "aks_nodepools_accepts_the_x86_sizes_as_amd64" {
+  command = plan
+
+  # No `p` among the features: x86-64, including a size with no version suffix (M128ms) and one
+  # whose features hold other letters (E4ds_v5).
+  variables {
+    extra_node_pools = [
+      { name = "dsv5", instance_type = "Standard_D2s_v5", min_size = 1, max_size = 2 },
+      { name = "edsv5", instance_type = "Standard_E4ds_v5", min_size = 1, max_size = 2 },
+      { name = "bsv2", instance_type = "Standard_B2s_v2", min_size = 1, max_size = 2 },
+      { name = "fsv2", instance_type = "Standard_F4s_v2", min_size = 1, max_size = 2 },
+      { name = "mms", instance_type = "Standard_M128ms", min_size = 1, max_size = 2 },
+    ]
+  }
+
+  assert {
+    condition     = length(terraform_data.aks_nodepool_guard) == 1 && alltrue([for name in ["dsv5", "edsv5", "bsv2", "fsv2", "mms"] : module.aks[0].node_pools[name].node_taints == null])
+    error_message = "x86 sizes must plan as amd64 pools, with no arm64 taint."
+  }
+}
+
+run "aks_nodepools_named_spot_pools_use_the_cluster_spot_settings" {
+  command = plan
+
+  # aks_spot_enabled stays false: a named Spot pool is enough for the price and the eviction policy
+  # to reach something, so CLUSTER-006 must not refuse them.
+  variables {
+    aks_spot_max_price       = 0.25
+    aks_spot_eviction_policy = "Deallocate"
+    extra_node_pools         = [{ name = "cheap", instance_type = "Standard_D4s_v5", min_size = 0, max_size = 3, capacity_type = "spot" }]
+  }
+
+  assert {
+    condition     = module.aks[0].node_pools["cheap"].eviction_policy == "Deallocate" && module.aks[0].node_pools["cheap"].spot_max_price == 0.25
+    error_message = "A named Spot pool must use aks_spot_eviction_policy and aks_spot_max_price, not hard-coded values."
+  }
+}
+
+run "aks_nodepools_spot_settings_with_no_spot_pool_are_still_refused" {
+  command = plan
+
+  variables {
+    aks_spot_max_price = 0.25
+    extra_node_pools   = [{ name = "batch", instance_type = "Standard_D4s_v5", min_size = 0, max_size = 3 }]
+  }
+
+  expect_failures = [check.aks_spot_settings_have_a_pool, terraform_data.aks_spot_guard]
+}
+
+run "aks_nodepools_named_pools_get_a_distinct_rotation_pool_within_the_name_rule" {
+  command = plan
+
+  variables {
+    extra_node_pools = [
+      { name = "abcdefghij1", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 },
+      { name = "abcdefghij2", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 },
+      { name = "g", instance_type = "Standard_D4s_v5", min_size = 1, max_size = 2 },
+    ]
+  }
+
+  assert {
+    condition = alltrue([for name in ["abcdefghij1", "abcdefghij2", "g"] :
+      can(regex("^[a-z][a-z0-9]{0,11}$", module.aks[0].node_pools[name].rotation_name)) &&
+      !contains(["abcdefghij1", "abcdefghij2", "g", "default", "system", "spot"], module.aks[0].node_pools[name].rotation_name) &&
+      !can(regex("^pool[0-9]+$", module.aks[0].node_pools[name].rotation_name))
+    ]) && module.aks[0].node_pools["abcdefghij1"].rotation_name != module.aks[0].node_pools["abcdefghij2"].rotation_name
+    error_message = "Each named pool's temporary_name_for_rotation must be a valid AKS pool name (12 lowercase alphanumerics, starting with a letter), distinct from every pool name and from each other's, so a vm_size change cycles the pool."
   }
 }

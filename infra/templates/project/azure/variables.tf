@@ -204,7 +204,7 @@ variable "aks_spot_enabled" {
 variable "aks_spot_max_price" {
   type        = number
   default     = -1
-  description = "Hourly ceiling (USD) for a Spot node. -1 (the default) means pay up to the on-demand price and never get evicted on price alone — only on capacity."
+  description = "Hourly ceiling (USD) for a Spot node. -1 (the default) means pay up to the on-demand price and never get evicted on price alone — only on capacity. Applies to the Spot pool and to every extra_node_pools pool with capacity_type spot."
 
   validation {
     condition     = var.aks_spot_max_price == -1 || var.aks_spot_max_price > 0
@@ -215,7 +215,7 @@ variable "aks_spot_max_price" {
 variable "aks_spot_eviction_policy" {
   type        = string
   default     = "Delete"
-  description = "What Azure does to a reclaimed Spot node: \"Delete\" (the default — the node is removed and the autoscaler replaces it) or \"Deallocate\" (the node is stopped but its quota is held)."
+  description = "What Azure does to a reclaimed Spot node: \"Delete\" (the default — the node is removed and the autoscaler replaces it) or \"Deallocate\" (the node is stopped but its quota is held). Applies to the Spot pool and to every extra_node_pools pool with capacity_type spot."
 
   validation {
     condition     = contains(["Delete", "Deallocate"], var.aks_spot_eviction_policy)

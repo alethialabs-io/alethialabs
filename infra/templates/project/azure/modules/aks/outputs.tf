@@ -57,7 +57,7 @@ output "oms_agent_workspace_id" {
 # Read off the PLANNED pools so the root's tofu test asserts what each pool will carry, not what the
 # root passed in (#5535). Every pool this module makes, keyed by its AKS name.
 output "node_pools" {
-  description = "Per node pool (default, pool1..N, spot, and each named pool), the planned name, mode, vm_size, sizes, priority, labels, taints, subnet, OS disk and max_pods."
+  description = "Per node pool (default, pool1..N, spot, and each named pool), the planned name, mode, vm_size, sizes, priority, Spot settings, labels, taints, subnet, OS disk, max_pods and rotation pool name."
   value = merge(
     {
       default = {
@@ -74,6 +74,9 @@ output "node_pools" {
         os_disk_size_gb = azurerm_kubernetes_cluster.this.default_node_pool[0].os_disk_size_gb
         os_disk_type    = azurerm_kubernetes_cluster.this.default_node_pool[0].os_disk_type
         max_pods        = azurerm_kubernetes_cluster.this.default_node_pool[0].max_pods
+        eviction_policy = null
+        spot_max_price  = null
+        rotation_name   = null
       }
     },
     {
@@ -91,6 +94,9 @@ output "node_pools" {
         os_disk_size_gb = p.os_disk_size_gb
         os_disk_type    = p.os_disk_type
         max_pods        = p.max_pods
+        eviction_policy = p.eviction_policy
+        spot_max_price  = p.spot_max_price
+        rotation_name   = p.temporary_name_for_rotation
       }
     },
   )

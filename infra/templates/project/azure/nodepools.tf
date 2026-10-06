@@ -11,13 +11,14 @@
 #
 #   · TAINT SPELLING. AKS takes a taint as one string. The contract's { key, value, effect } becomes
 #     "key=value:Effect", or "key:Effect" when no value was set (the render carries that as "").
-#   · SPOT. A spot pool is `priority = "Spot"`, evicted with Delete at up to the on-demand price
-#     (spot_max_price = -1). AKS puts kubernetes.azure.com/scalesetpriority=spot on the label and the
-#     taint of every spot node itself; azurerm documents that a Spot pool must ALSO declare both, or
-#     the pool's node_labels / node_taints read back with them and plan a change on every run. They
-#     are added here, after the render, because a user may not write azure.com keys.
+#   · SPOT. A spot pool is `priority = "Spot"`, with the cluster's aks_spot_eviction_policy and
+#     aks_spot_max_price (modules/aks). AKS puts kubernetes.azure.com/scalesetpriority=spot on the
+#     label and the taint of every spot node itself, and azurerm documents that a Spot pool must
+#     ALSO declare both. They are added here, after the render, because a user may not write
+#     azure.com keys.
 #   · SIZE. desired_size defaults to min_size (the contract). It is node_count, the autoscaler's
-#     starting point, between min_count and max_count.
+#     starting point between min_count and max_count; the module ignores later changes to it,
+#     because the autoscaler owns the count once the pool exists.
 #
 # The positional pools from aks_instance_types (pool1…poolN) are NOT moved onto this: they are
 # keyed by position, and re-keying them would replace live pools. They gain only node_labels, and

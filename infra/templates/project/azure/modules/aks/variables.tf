@@ -144,13 +144,13 @@ variable "spot_enabled" {
 
 variable "spot_max_price" {
   type        = number
-  description = "Hourly ceiling (USD) for a Spot node; -1 means pay up to the on-demand price."
+  description = "Hourly ceiling (USD) for a Spot node, in the spot pool and every named Spot pool; -1 means pay up to the on-demand price."
   default     = -1
 }
 
 variable "spot_eviction_policy" {
   type        = string
-  description = "Eviction policy for reclaimed Spot nodes: \"Delete\" or \"Deallocate\"."
+  description = "Eviction policy for reclaimed Spot nodes, in the spot pool and every named Spot pool: \"Delete\" or \"Deallocate\"."
   default     = "Delete"
 }
 
