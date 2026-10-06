@@ -3,7 +3,7 @@
 
 # A chat turn is answered by the model, and billed, exactly once
 
-**Status:** proposed (2026-10-06, revision 2; revision 1 was 09021e23f) · **Issue:** #5515 · **Builds on:** ADR 0001 revision
+**Status:** proposed (2026-10-06, revision 3; revision 1 was 09021e23f, revision 2 was 4a8e15518) · **Issue:** #5515 · **Builds on:** ADR 0001 revision
 5.1 (#5512, draft persistence), whose §5.3 defines the hand-off this ADR takes over · **Related:**
 ADR 0002 (#5511, payment holds; a different "hold": that one is a Stripe first payment, this one is
 the AI budget hold in `ai_usage_ledger`)
@@ -95,8 +95,8 @@ same way:
 - **The sweep's window is derived from a bound that does not exist.** `ai-holds.ts:27-37` says a
   turn is bounded by `stepCountIs(8)` and by "the platform's function timeout". There is no such
   timeout here (see **Duration** below). Every caller of `assertAiAllowed` is unbounded in time: the
-  four routes of the table above, and the server actions `colony.ts:85`, `scanner.ts:44` and
-  `verify.ts:44`. The same comment says that releasing a live turn's hold early "books the cost
+  four routes of the table above, and the server actions `colony.ts:85` and `verify.ts:44`
+  (`scanner.ts:44` takes the fixed `scan` charge, which writes no hold row, `ai-guard.ts:263-290`). The same comment says that releasing a live turn's hold early "books the cost
   twice". It does not: the late settle overwrites the row in place, so the turn is billed once and
   only the window's headroom is wrong in between. §8.2 corrects both statements.
 
@@ -264,6 +264,7 @@ Constraints and indexes:
 - `unique (thread_id, turn_id, attempt_key)`: one row per attempt key, re-armed in place.
 - `unique (thread_id) where state = 'running'`: **one running attempt per thread** (case 20).
 - `index (lease_until) where state = 'running'`: the expiry sweep.
+- `index (hold_id) where state = 'running'`: the age pass's `NOT EXISTS` probe (§8.2).
 - `check ((state = 'answered') = (answer_id is not null))`.
 
 ### 4.2 `agent_threads.billing_org_id` and `agent_threads.revision`
@@ -345,7 +346,7 @@ and waits on nothing else, so it cannot close a cycle.
 | C6 | `running` | finalize with model output | `token` matches and the thread's revision is `accepted_revision` | `answered` | append (or, for a continuation, replace) the answer; `revision + 1`; `answer_id`; `partial`; **settle the hold in the same transaction** (§8.1) |
 | C6m | `running` | finalize with model output | `token` matches, the revision moved (§4.2 forbids it) | `failed`, `error = 'transcript-moved'` | nothing stored; the hold is released to 0 in the same transaction |
 | C7 | `running` | finalize without model output (error, abort or timeout before the first model part) | `token` matches | `failed` | `error`; the hold is released to 0 in the same transaction |
-| C8 | `running` | lease silent: `lease_until < now()` | run first by any accept on the thread (under its lock) and by the `release-ai-holds` sweep | `expired` | the hold is released to 0 in the same transaction; the user turn stays stored and unanswered |
+| C8 | `running` | lease silent: `lease_until < now()` | run first by any accept on the thread (under its lock) and by the `release-ai-holds` sweep | `expired` | the hold is released to 0 in the same transaction, `settled_at` stamped as `releaseStrandedAiHolds` does (`ai-holds.ts:68`); the user turn stays stored and unanswered |
 | C9 | any | thread row deleted | — | (row gone) | cascade (§4.3) |
 
 A finalize that matches no row (C6/C7 lost to C8, or the row was cascaded away) is §8's "lost
@@ -384,12 +385,17 @@ the project is checked (§6.2). It is **one** service-role transaction:
    `reserveAiHold(tx, orgId, kind, userId)` and run on **this** transaction (it already runs under
    the lock of step 1). The plan read it needs (`resolveAiPlan`, `lib/billing/ai-plan.ts:165`, which
    reads the billing row through `getOrgBilling` on its own connection today) takes `tx` and runs
-   here, after the lock. A budget
-   refusal throws an `AiBudgetError` out of the transaction, which rolls back steps 2-6, and the
-   route answers 402 as today (`route.ts:205-215`). Without hosted billing it reserves nothing and
+   here, after the lock. It keeps today's split: it **decides** inside the transaction and
+   returns a refusal decision, the transaction rolls back steps 2-6, and only then is the
+   `AiBudgetError` built and thrown, with its reset times read after the lock is released
+   (`ai-guard.ts:308-311`). Building it inside would bring back the pool deadlock that comment
+   warns against. The route answers 402 as today (`route.ts:205-215`). Without hosted billing it reserves nothing and
    `hold_id` stays null.
-8. For an `answer` attempt whose turn is not yet stored, append the user message (§5.2) and add one
-   to `revision`. Set `accepted_revision`.
+8. For an `answer` attempt whose turn is not yet stored, append the user message (§5.2), with
+   its mentions and cell target in its `metadata` (§9.2), and add one to `revision`. For a
+   `continue:a:<P>` attempt whose outputs are not yet stored, merge the outputs of `P` into the
+   stored `a` and add one to `revision`: **an approval is durable from its acceptance**, whatever
+   happens to the model call it starts. Set `accepted_revision`.
 9. Commit. The route then opens the stream and writes, before anything else,
    `data-turn-accepted { turnId, answerId, revision }`.
 
@@ -410,9 +416,15 @@ The request carries `turn: { trigger, turnId, baseRevision, answerId?, toolCallI
 `T` be the locked row's `messages`, `last` its last message, and `u` the request's message with id
 `turnId`.
 
+**Which rows apply.** A request whose last message is an **assistant** message (a continuation)
+is classified by the two continuation rows only. The other rows apply only when a **user**
+message is last (a submit or a Retry) or the trigger is `regenerate-message`. Among the submit
+rows, the different-text row is checked first.
+
 **Equal text.** "`u`'s text equals the stored text" compares one string per message: the `text`
-parts joined in order, after ADR 0001's normalization (its §4.1: line endings to `\n`, trimmed at
-send). No other part type and no `metadata` field takes part. The same function,
+parts joined in order, after ADR 0001's normalization (its §4.1: `\u0000` removed,
+`toWellFormed()`, trimmed at send), plus one rule of this ADR's own, applied on both sides: line
+endings to `\n`. No other part type and no `metadata` field takes part. The same function,
 `turnText(message)` in `lib/agent/turn-key.ts`, normalizes both sides, so ADR 0001's own D12 first
 send (whose stored row was trimmed by `startConversation`) compares equal to what its tab sends. A U
 test pins that pair.
@@ -426,11 +438,21 @@ test pins that pair.
 | the same | `turnId` in `T` and answered (any later message exists), the text equal | — | refuse `turn-answered` (case 2) |
 | regenerate, `answerId = a` | `last` is `a` and `a` answers `turnId`, `revision = baseRevision` | `regen:a` | accept; finalize replaces `a` |
 | the same | otherwise | — | refuse `turn-answered`, carrying the stored answer id (case 11) |
-| continuation (submit with the assistant message last, `answerId = a`, `toolCallIds = K`) | `last` is `a`; `P = pendingClientToolCalls(stored a)` (§3) is not empty; no id of `P` has a stored output; `K = P`; the request's `a` carries an output for every id of `P`; `revision = baseRevision` | `continue:a:<P>` | accept; merge **only** the outputs of `P` from the request into the stored `a`. Outputs the request carries for any other tool call (a server tool's, already stored by finalize) are ignored, never compared |
-| the same | otherwise | — | refuse `turn-answered` (the continuation already ran, or the answer moved on) |
+| continuation (submit with the assistant message last, `answerId = a`, `toolCallIds = K`) | `last` is `a`; `P = pendingClientToolCalls(stored a)` (§3) is not empty; `K = P`; the request's `a` carries an output for every id of `P`; and **either** no id of `P` has a stored output and `revision = baseRevision` (the first approval), **or** every id of `P` has a stored output and the claim `continue:a:<P>` exists (a retry of that continuation; its claim row then decides: `failed`/`expired` re-arm, `running` is `turn-in-progress`, `answered` is `turn-answered`) | `continue:a:<P>` | accept; on the first approval, step 8 stores **only** the outputs of `P` from the request. On a retry the stored outputs win and the request's are ignored. Outputs for any other tool call (a server tool's, already stored by finalize) are ignored, never compared |
+| the same | otherwise | — | refuse `turn-answered` (the continuation already ran and its answer moved on, or the request does not match `a`) |
 
 Then the claim row of that key decides (§5.1 step 4, before the busy check): none (C1),
 `failed`/`expired` (C2), `running` (C3), or `answered` (C4).
+
+**Why the approval is stored at acceptance, and why a stored approval can be retried.** Approve
+has already queued its server action (`tryPlanProject` or `tryProvisionProject`, `components/agent/approval-card.tsx:56-57`) when the
+continuation request leaves. If the outputs were stored only by finalize, a continuation that ends
+before its first model token (Stop, a closed tab, a provider error, a crash) would store nothing,
+the card would render unresolved on reload, and a second Approve would queue a second provision.
+Dev keeps the output in that case because `onFinish` saves on abort. Storing at acceptance keeps
+it. The guard's second arm then lets the failed continuation be retried: the stored outputs and
+the existing claim identify it, and C2 re-arms it. A retry is a continuation request again, never
+`regenerate()` (§9.1).
 
 **Why the key is derived from the stored answer, from client tools only.** Revision 1 named "the
 tool calls of the last step whose outputs are present" on the client, and "with no stored output" on
@@ -439,8 +461,10 @@ both, the server finds `list_projects`'s output stored, and refuses the approval
 every attempt (case 7b). `pendingClientToolCalls` reads only tool names and `providerExecuted`,
 which the client's copy and the stored row agree on, never output presence, which they do not.
 
-**The request's transcript is never stored.** The model's input is `T` (after step 8, or with the
-merged tool outputs), never the client's list, converted with `convertToModelMessages(T, {
+**The request's transcript is never stored.** The model's input is `T` (after step 8, with any
+merged tool outputs), or, for `regen:a`, `T` **without** `a` (the model reads a trailing assistant
+message as text to continue, and `originalMessages` ending in `a` would make ai treat the stream as
+a continuation of `a`, `index.mjs:6485`). It is never the client's list. It is converted with `convertToModelMessages(…, {
 ignoreIncompleteToolCalls: true })`: a partial answer stored after an abort mid-tool (§8.1) can hold
 a tool call with no result, and without that option every later turn of the thread would send the
 provider a dangling tool call. The client's list contributes `u`'s parts, `u`'s mentions and cell
@@ -467,7 +491,10 @@ hold, `agent-metering.ts:141`) and its appended rows are written before the comm
 release the hold the same way. A crash or a failed metering write after the answer is stored is
 therefore impossible: either the whole transaction commits (stored and settled, `settled_at`
 stamped, so `release-ai-holds` never sees the row), or none of it does and the claim stays
-`running` until C8 releases the hold. Its outcomes:
+`running` until C8 releases the hold. Only the ledger writes run inside: `recordAiUsage`'s side
+effects (`captureAiGeneration` and `checkAiSpendThreshold`, `ai-quota.ts:366-400`, the second of
+which reads the ledger on a pooled connection) run **after** the commit, so a rolled-back finalize
+reports nothing and the spend alert reads the settled ledger. Its outcomes:
 
 | Outcome | Meaning | The answer | The hold |
 |---|---|---|---|
@@ -591,7 +618,10 @@ write (`meteringFailed`, `ai-quota.ts`), between the two left a stored answer wi
 hold, which `release-ai-holds` then released to **0** an hour later: a stored answer billed nothing.
 Settling on the same `tx` removes the gap; the cost is that a metering write error now fails the
 finalize, which then stores nothing and leaves the claim to C8 (the answer the client saw is not
-kept, the §8.3 residual), rather than storing an answer it cannot bill.
+kept, the §8.3 residual), rather than storing an answer it cannot bill. A **persistent** metering
+error therefore drops every answer, in every org, until it is fixed, so PR 1 adds an alert on the
+`finalize-metering-failed` log event (one occurrence pages), next to the existing
+`meteringFailed` log.
 
 | How the attempt ends | Transcript | Claim | Billed |
 |---|---|---|---|
@@ -603,7 +633,7 @@ kept, the §8.3 residual), rather than storing an answer it cannot bill.
 | Client disconnect or Stop before any model output | turn, no answer | `failed` | released to 0 |
 | **Client disconnect or Stop after model output** (case 14) | turn + partial answer (the UI stream's `onFinish` still runs on abort) | `answered`, `partial` | completed steps' real cost, and **at least the reserve** (Q8). Today: 0 |
 | The route's own timeout | as the row above | as above | as above |
-| Process crash or redeploy | turn, no answer | `running` until the lease is silent 90 s, then `expired` (C8) by the next accept on the thread or by `release-ai-holds` | released to 0 by C8 (Q9), within 90 s of the last heartbeat plus one sweep interval (at most about 16.5 minutes). Today: released to 0 by `release-ai-holds` after 60 to 75 minutes (§1) |
+| Process crash or redeploy | turn, no answer | `running` until the lease is silent 90 s, then `expired` (C8) by the next accept on the thread or by `release-ai-holds` | released to 0 by C8 (Q9), within 90 s of the last heartbeat plus one sweep interval (at most about 17.5 minutes: `release-ai-holds` is gated by `isDue` on the loop's 60 s tick, `loop.ts:33`, so its runs can be up to about 16 minutes apart). Today: released to 0 by `release-ai-holds` after 60 to 75 minutes (§1) |
 | Finalize fails (database unreachable) after the model finished | the client saw the answer; the row did not store it | `running`, then `expired` | released to 0 by C8; the residual case of §8.3 |
 
 **Why "at least the reserve" for a partial answer.** `onAbort` reports only completed steps
@@ -611,7 +641,10 @@ kept, the §8.3 residual), rather than storing an answer it cannot bill.
 real-cost rule alone bills it 0 while the user read the whole answer (case 14). The in-flight step's
 tokens are not observable, so the floor is the reserve the hold already took. It is an
 under-charge for a long answer and an over-charge only for an answer aborted after its first few
-tokens.
+tokens. **It needs code:** `recordAgentTurnUsage` today releases the hold to 0 when no step
+completed (`agent-metering.ts:100-110`). PR 1 gives it a `floorCredits` input, which finalize
+passes as `METERED_RESERVE_CREDITS` when `partial` is true, and row 0 is settled to the larger of
+the floor and the real cost (§10 item 3).
 
 ### 8.2 The bound and the lease (case 9)
 
@@ -625,7 +658,8 @@ tokens.
   therefore never loses its claim to the lease unless the database is unreachable for 90 s, and then
   its finalize would fail anyway. A dead process stops renewing. The next accept on the thread
   expires it (C8) as soon as it is 90 s silent; otherwise the sweep does, on its next run after
-  that, so within 90 s plus one 15-minute interval of the last renewal.
+  that, so within 90 s plus one sweep gap (about 16 minutes, the 15-minute interval on a 60 s
+  tick) of the last renewal: about 17.5 minutes at worst.
 - **A heartbeat that matches nothing** because the claim expired (it exists under another token or
   state) aborts the model, so the route stops paying for an answer it can no longer store. One that
   matches nothing because the thread was deleted keeps going (§5.3, Q4).
@@ -645,7 +679,7 @@ tokens.
   `maxDuration = 300` exports bound nothing (§1, Duration). The real bounds are these:
   - a chat-route hold after PR 1 is claimed, so pass 2 never reads it; its turn is bounded by
     `TURN_BUDGET_MS` (15 minutes), and its release by C8;
-  - every other hold (the support and agent-identity routes until Q11, the `colony`, `scanner` and
+  - every other hold (the support and agent-identity routes until Q11, the `colony` and
     `verify` actions, and a turn that ran on the old process across the deploy) has **no** time
     bound at all. For those, 60 minutes is an assumption, not a derivation.
 
@@ -696,9 +730,17 @@ over the stored answer, which reads tool names and never output presence; and `b
 
 - **Regenerate passes the answer it replaces.** `regenerate()` slices that answer off before the
   transport runs, so both call sites change to `regenerate({ messageId: answer.id })`
-  (`elench-conversation.tsx:464`, `agent-chat.tsx:376`). Retry of an unanswered turn stays
-  `regenerate()`: with no `answerId`, it is an `answer` attempt (§5.2). A tab can therefore only
-  regenerate the answer it displays (case 11).
+  (`elench-conversation.tsx:464`, `agent-chat.tsx:376`). A tab can therefore only regenerate the
+  answer it displays (case 11).
+- **The error card's Retry** (`elench-conversation.tsx:302`) is chosen by what is last:
+  - a **user** message (an unanswered turn): `regenerate()` with no `answerId`, an `answer`
+    attempt (§5.2);
+  - an **assistant** message whose pending client tool calls all have outputs (a failed
+    continuation): the continuation request again (trigger `submit-message`, the assistant message
+    last, as `addToolOutput`'s auto-send makes it), which §5.2's retry arm re-arms;
+  - any other **assistant** message (a partial answer after a provider error):
+    `regenerate({ messageId })`, a `regen:a` attempt. Revision 2's plain `regenerate()` sliced the
+    answer off and was refused `turn-answered`, so Retry became a silent reload.
 - **The continuation needs no new client id.** Its key is derived from the stored answer and its
   pending client tool calls, so two tabs that approve the same card make the same key and one of
   them is refused (case 7), and a server read tool in the same step does not enter the key (case
@@ -779,10 +821,20 @@ reads the typed body and throws a `TurnRefusedError`. Elench and any surface wit
 store (the support chat, if it adopts this, §12) handle it in one function, `onTurnRefused`:
 `loadInto` the thread (which refreshes `revisionRef`), `clearError()`, and, on every refusal whose
 `textCommitted` is false, put the refused text back into the composer through its existing
-`restore` handle (`elench-conversation.tsx:289-292`) with the table's notice. No error card is
-shown, and a Retry is never needed to recover, because the reload already refreshed the base
-revision. Once ADR 0001's PR 2 is on dev, `onTurnRefused` dispatches to its store instead (D9d,
-D20), and the composer path is deleted.
+`restore` handle (`elench-conversation.tsx:289-292`) with the table's notice. A refused **cell
+prompt** also restores its cell target, which `takePendingCellTarget()` consumed when the body was
+built (`:172`): `onTurnRefused` re-stages it with `setPendingCellTarget`, so the next Enter lands
+the widget in the cell the user clicked. On `turn-in-progress`, the loaded transcript ends on a
+user turn, so it shows "Being answered in another tab or device" instead of the `unanswered` rule's
+"No reply arrived" (`:223-229`), and polls `getThread` every 5 s until `inFlight` is null, then
+loads again. No error card is shown, and a Retry is never needed to recover, because the reload
+already refreshed the base revision.
+
+**Exactly one handler.** `onTurnRefused` checks for ADR 0001's store **at run time**: when the store
+owns the send (it holds a `sending` entry for this turn id), it dispatches the refusal to the store
+(D9d, D20) and does nothing else. The composer path runs only when no store owns the send. So if
+ADR 0001's PR 2 lands first, one refusal never reaches both D9d's release and `restore`, whose
+merge (D11r) would show the text twice. PR 2 deletes the composer path.
 
 ### 9.4 What this ADR needs ADR 0001 to change
 
@@ -812,10 +864,18 @@ belong in its next revision:
 4. **`startConversation`'s `created` returns the thread's revision**, not only the draft's, so the
    transport's `revisionRef` is seeded (§9.1).
 
-**The dependency.** Changes 1 and 2 bind whichever of ADR 0001's PR 2 and this ADR's PR 1 merges
-**second**: that PR does not merge until ADR 0001's D9d implements them, because the first deploy
-with both is the first moment D9d can receive these refusals. Change 3 binds this ADR's PR 2 (which
-deletes `body.cellTarget`). Change 4 binds this ADR's PR 1 if ADR 0001's PR 2 is already on dev.
+**The dependency.** Change 1 has a server half (S4's `freshTurnId` arm and the S5 text check, in
+ADR 0001's server actions) and a client half (D9d's arm and R10). Change 2 is client only.
+- **This ADR's PR 1 does not merge until all of change 1 and change 2 are on dev**, whichever ADR
+  0001 PR carries them. Gating on D9d alone is not enough: a tab that re-sends an edit under the
+  old turn id and dies before the refusal arrives leaves its draft to the S5 lease, which would
+  otherwise find the old id in the transcript and consume the edit.
+- If ADR 0001's PR 2 is still open when this ADR's PR 1 is ready, the server half of change 1 is
+  a small PR against ADR 0001's PR 1 code (`app/server/actions/elench-drafts.ts`), and the client
+  half rides in ADR 0001's PR 2.
+- Change 3 binds this ADR's PR 2 (which deletes `body.cellTarget`).
+- Change 4 binds **whichever PR lands second** of ADR 0001's PR 2 and this ADR's PR 1: the second
+  one wires `startConversation`'s returned thread revision into `revisionRef`.
 
 ## 10. Migration and rollout (via the db pipeline)
 
@@ -833,7 +893,8 @@ Two PRs. PR 1 holds `mutex:migration` (`.claude/skills/db-pipeline/SKILL.md`).
    set of tools in both routes' tool sets that have no `execute`.
    `lib/billing/ai-guard.ts`: extract `reserveAiHold(tx, …)`; `assertAiAllowed` keeps its signature
    for its other callers and calls it. `resolveAiPlan`/`getOrgBilling` and `recordAgentTurnUsage`
-   take an optional `tx` (§5.1 step 7, §5.3).
+   take an optional `tx` (§5.1 step 7, §5.3); `recordAgentTurnUsage` also takes `floorCredits`
+   (§8.1) and leaves `recordAiUsage`'s side effects to run after the commit.
 4. `lib/authz/guard.ts`: `resolveTurnActor` (§6.1).
 5. Both routes: `orgId` and `turn` required, the project check (§6.2), `runWithActor`, `reserveTurn`,
    the stream built from the stored transcript, finalize before `finish`, the heartbeat, the
@@ -914,7 +975,7 @@ Only R and O fall inside #5515's `scope:` globs; Q6 asks to widen it.
 | 4 | Project not checked before the hold | §6.2, before `reserveTurn` | O › `a project of org B named under org A: 404 project-not-found and no hold row` |
 | 5 | Two attempts reach the model | The thread lock + C3 | I › `two concurrent accepts of one turn: one running claim, one hold row, one turn-in-progress` |
 | 6 | A stale tab's new turn replaces newer turns | §5.2 `transcript-stale`; §7 append under `revision` | R › `a new turn at an old baseRevision: 409 transcript-stale, no hold, the stored transcript unchanged`; T › `appendLive never writes a client list` |
-| 7 | HITL continuation | `continue:a:<P>` (§3, §5.2); finalize before `finish` (§5.3) | R › `approve a plan card: the continuation is accepted after an answered turn and its outputs are merged`; R › `the same card approved in two tabs: one continuation, one turn-answered` |
+| 7 | HITL continuation | `continue:a:<P>` (§3, §5.2); finalize before `finish` (§5.3) | R › `approve a plan card: the continuation is accepted after an answered turn and its outputs are merged`; R › `the same card approved in two tabs: one continuation, one turn-answered`; R › `a continuation aborted before its first token: the approval output stays stored, the card is resolved after a reload, and a retry of the continuation re-arms continue:a:<P>`; C › `Retry on a failed continuation resends the continuation, not regenerate()` |
 | 7b | HITL continuation from a mixed step | `pendingClientToolCalls` reads names, not output presence, on both sides (§3, §9.1) | R › `a last step with list_projects (output stored) and propose_operation: the approval is accepted under continue:a:<proposal id>, the proposal's output is merged, and list_projects's stored output is unchanged`; U › `turnOf over the client copy and the classifier over the stored answer derive the same key for a mixed step`; U › `CLIENT_TOOL_NAMES equals the routes' tools without execute` |
 | 8 | Claim key vs RLS | §4.3: user-only policy over an org-free key; FK cascade | I › `one turn driven from org A and org B: the second accept sees the first claim and refuses`; I › `deleteThread removes the thread's claims`; I › `a claim on another user's thread id is refused although the FK would accept it` |
 | 9 | `maxDuration` is not a bound | §8.2: in-route timeout, 30 s heartbeat, 90 s silence | R › `a turn running past 90 s with heartbeats keeps its claim; a Retry answers turn-in-progress`; R › `TURN_BUDGET_MS fires onAbort and finalizes partial` |
@@ -922,7 +983,7 @@ Only R and O fall inside #5515's `scope:` globs; Q6 asks to widen it.
 | 11 | Regenerate re-bills; stale tab | `regen:a` requires `a` to be the stored last answer (§5.2, §9.1) | R › `regenerate of a displayed answer is billed once`; R › `regenerate from a tab that never saw the newer answer: turn-answered` |
 | 12 | The client half of a refusal | §9.3; PR 1's `onTurnRefused` (§10 item 8) | C › `turn-answered loads the transcript and shows no error card`; C › `transcript-stale reloads the transcript, restores the text, shows no error card, and the next Enter is accepted`; C › `turn-in-progress shows Being answered and reloads when inFlight clears` (PR 2) |
 | 13 | Mentions, `trigger`, `messageId` | §9.1, §9.2 | C › `the request carries trigger, turnId, answerId, toolCallIds and baseRevision`; R › `mentions are read from the stored user message's metadata`; R › `a later-turn cell prompt with body.cellTarget and no metadata lands in the named cell` |
-| 14 | Stream then disconnect, billed 0 | §8.1: `partial` answer billed, floor the reserve | R › `abort after model output: answered partial, hold settled to at least the reserve` |
+| 14 | Stream then disconnect, billed 0 | §8.1: `partial` answer billed, floor the reserve | R › `abort after model output: answered partial, hold settled to at least the reserve`; C › `Retry after a partial answer is regenerate({ messageId })` |
 | 15 | Nested `currentActor()` | `runWithActor` (§6.3) | R › `a tool executed in step 2 resolves the named org while the session names another` |
 | 16 | Crash: the hold sits at the reserve for an hour | C8 releases to 0 at the next accept, or at the next `release-ai-holds` run (§8.2) | I › `a silent running claim is expired by the next accept and its hold is 0`; I › `release-ai-holds expires a silent claim and releases its hold`; I › `release-ai-holds' age pass skips a hold a running claim names` |
 | 17 | Auto-send before the save | Finalize before `finish` (§5.3) | R › `no finish chunk is written before the claim is answered` |
@@ -944,6 +1005,9 @@ Only R and O fall inside #5515's `scope:` globs; Q6 asks to widen it.
 | 402 inside acceptance | I › `a budget refusal rolls back the claim and the appended turn` |
 | Self-host | R › `without hosted billing a claim is taken and no hold is reserved` |
 | Lock order | I › `accepts for one thread from orgs A and B do not deadlock`; I › `an acceptance running C8 on a claim whose route is finalizing does not deadlock`; I › `reserveTurn opens one connection` |
+| Continuation rows only when an assistant message is last | U › `a continuation is never classified by the submit rows` |
+| `regen:a` model input | R › `a regenerate sends the model T without a` |
+| One refusal handler | C › `with ADR 0001's store owning the send, onTurnRefused dispatches to the store and does not restore the composer` |
 | C3 before `thread-busy` | U › `a duplicate of a running turn is turn-in-progress, not thread-busy` |
 | `getThread` | I › `getThread returns revision and inFlight, and no inFlight for a silent claim` |
 
@@ -975,7 +1039,10 @@ The design above follows every recommendation. Rejecting one changes the section
 
 1. **Pin the billing org on the thread at its first turn** (§4.2, §6.1, C2). Continuations, Retries,
    regenerates and later turns bill to, and run their tools in, that org whichever tab sends them,
-   and are refused `org-forbidden` if the caller is no longer an active member. *Alternative:* bill
+   and are refused `org-forbidden` if the caller is no longer an active member. Two consequences
+   come with it: a thread pinned to an org with no AI plan or a spent budget is 402 from **every**
+   tab, including tabs of orgs that have budget; and a thread pinned to A driven from B's page runs
+   A's tools and shows A's data in B's grid. *Alternative:* bill
    each request to the org its tab names; then one answer and its continuation can land in two
    ledgers, and a re-arm can bill B for A's turn.
 2. **Put the minimum stale-transcript recovery into PR 1** (§9.3, §10 item 8): on every typed
@@ -994,7 +1061,7 @@ The design above follows every recommendation. Rejecting one changes the section
 5. **One sweep owns stranded holds: `release-ai-holds`, extended** (§8.2) with the C8 pass, the
    claimed-hold exclusion and retention, at its 15-minute interval, with the corrected comment. No
    second sweep. *Cost:* a crashed turn whose thread nobody opens keeps its reserve for up to about
-   16.5 minutes instead of about 2.5 with a one-minute sweep. The next accept on the thread does
+   17.5 minutes instead of about 3.5 with a one-minute sweep. The next accept on the thread does
    not wait for it.
 6. **Widen #5515's `scope:`** to `docs/adr/0003-*.md` (this PR; the issue names `0002-*.md`, which
    went to #5511), and, for PR 1, to `lib/db/schema/agent.ts`, `lib/db/programmables.sql`,
@@ -1011,7 +1078,7 @@ The design above follows every recommendation. Rejecting one changes the section
 9. **A crashed attempt's hold, re-asked against what dev does.** Dev already releases it to 0,
    deliberately, after 60 to 75 minutes (`release-ai-holds`, #2683, #3177); revision 1 wrongly
    said it stayed at the reserve forever. **Recommended: keep releasing to 0, sooner** (C8, within
-   about 16.5 minutes), so "billed if and only if an answer is stored" holds without exception.
+   about 17.5 minutes), so "billed if and only if an answer is stored" holds without exception.
    *Alternative:* keep the reserve as the price of an unknown provider cost; that reverses #2683's
    decision and needs its own ruling.
 10. **Claim retention: 30 days** for terminal claims; they hold no text, and the thread's own
