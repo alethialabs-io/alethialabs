@@ -150,7 +150,8 @@ func exportServer(t *testing.T) *exportFake {
 				envs: []api.Environment{
 					// Listed staging-first: the export puts the DEFAULT environment first regardless.
 					{ID: "e2", Name: "staging", Stage: "staging", PlacementMode: "namespace", Namespace: &ns},
-					{ID: "e1", Name: "prod", Stage: "production", PlacementMode: "dedicated", IsDefault: true},
+					// `persistent`, as the server sends it: the default, so the file says nothing about it.
+					{ID: "e1", Name: "prod", Stage: "production", PlacementMode: "dedicated", IsDefault: true, Lifecycle: "persistent"},
 				},
 				comps: map[string][]api.Component{
 					"prod": {
@@ -327,6 +328,41 @@ func TestExport_OneEnvironmentRoundTrips(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "environments prod — not exported") || !strings.Contains(stderr, "environments prod") {
 		t.Errorf("the environment left out is not named:\n%s\nstderr:\n%s", data, stderr)
+	}
+}
+
+// An ephemeral environment round-trips (#5581): the file says `lifecycle: ephemeral` for it and for
+// nothing else, plan on that file has nothing to do, and the header no longer asks for a hand edit.
+// Before the environments read carried a lifecycle the export wrote none, so the same file applied
+// into a new project created the environment persistent.
+func TestExport_EphemeralEnvironmentRoundTrips(t *testing.T) {
+	f := exportServer(t)
+	f.envs[0].Lifecycle = "ephemeral" // staging
+	data, stderr := exportBytes(t, f, exportOptions{project: "web", all: true})
+	plan := planExported(t, f, data)
+	assertNothingToDo(t, plan, data)
+	if len(plan.Environments) != 2 {
+		t.Fatalf("plan covered %d environments, want 2", len(plan.Environments))
+	}
+
+	m, err := manifest.Parse(data)
+	if err != nil {
+		t.Fatalf("parse the exported file: %v\n%s", err, data)
+	}
+	got := map[string]string{}
+	for _, e := range m.Environments {
+		got[e.Name] = e.Lifecycle
+	}
+	if got["staging"] != "ephemeral" || got["prod"] != "" {
+		t.Errorf("lifecycles written = %v, want staging ephemeral and prod unsaid (persistent is the default)\n%s", got, data)
+	}
+	if n := strings.Count(string(data), "lifecycle:"); n != 1 {
+		t.Errorf("the file says lifecycle %d times, want once:\n%s", n, data)
+	}
+	for _, out := range []string{string(data), stderr} {
+		if strings.Contains(out, "by hand") || strings.Contains(out, "does not carry it") {
+			t.Errorf("the export still asks for lifecycle to be added by hand:\n%s", out)
+		}
 	}
 }
 
