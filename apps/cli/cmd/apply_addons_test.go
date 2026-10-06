@@ -162,10 +162,8 @@ func TestComputePlan_Addons(t *testing.T) {
 	if kps.Action != ActionUpdate || len(kps.Changes) != 1 || kps.Changes[0].Field != "values" {
 		t.Fatalf("kube-prometheus-stack = %s %#v, want one values change", kps.Action, kps.Changes)
 	}
-	from, _ := kps.Changes[0].From.(string)
-	to, _ := kps.Changes[0].To.(string)
-	if !strings.HasPrefix(from, "sha256:") || !strings.HasSuffix(to, "(2 lines)") || from == to {
-		t.Errorf("values change = %q → %q, want two different digests", from, to)
+	if ch := kps.Changes[0]; ch.From != nil || ch.To != "changed (2 lines)" {
+		t.Errorf("values change = %#v → %#v, want nil → \"changed (2 lines)\"", ch.From, ch.To)
 	}
 	if !reflect.DeepEqual(prod.UnmanagedAddons, []string{"loki"}) {
 		t.Errorf("loki is on the server and not in the file — unmanaged, got %v", prod.UnmanagedAddons)
@@ -304,7 +302,7 @@ func TestRenderPlan_ShowsAddonsPerEnvironment(t *testing.T) {
 		"~ external-dns  version: (catalog default) → 1.15.0",
 		"~ external-dns  settings.policy: upsert-only → sync",
 		"~ external-dns  settings.txtOwnerId: team-a → (default)",
-		"~ kube-prometheus-stack  values: sha256:",
+		"~ kube-prometheus-stack  values: changed (2 lines)\n",
 		"add-on loki is enabled on the server and not in the file — left alone (unmanaged)",
 		"add-ons  + external-dns",
 		"1 add-on to enable · 2 to change",
@@ -353,7 +351,8 @@ func TestExecuteApply_ARefusedAddonHoldsBackOnlyItsEnvironment(t *testing.T) {
 	f.addons["staging"] = nil
 	f.refuseAddon = map[string]error{"kube-prometheus-stack": errors.New("Advanced values must be valid YAML describing a mapping")}
 	plan := planAddonManifest(t, f, addonManifest, map[string]string{"kps.yaml": "grafana:\n  replicas: 2\n"})
-	result, err := executeApply(f, &bytes.Buffer{}, ui.FormatTable, plan, "", false)
+	var out bytes.Buffer
+	result, err := executeApply(f, &out, ui.FormatTable, plan, "", false)
 	if err == nil || !strings.Contains(err.Error(), "prod addon/kube-prometheus-stack") {
 		t.Fatalf("err = %v, want the refused add-on named", err)
 	}
@@ -362,6 +361,26 @@ func TestExecuteApply_ARefusedAddonHoldsBackOnlyItsEnvironment(t *testing.T) {
 	}
 	if len(result.Errors) != 1 {
 		t.Errorf("errors = %+v", result.Errors)
+	}
+	// The held-back line names what was refused: an add-on, not a component.
+	if text := out.String(); !strings.Contains(text, "prod not deployed: an add-on change was refused") ||
+		strings.Contains(text, "component update was refused") {
+		t.Errorf("the not-deployed line misnames the refusal:\n%s", text)
+	}
+}
+
+func TestRefusedKinds_Sentence(t *testing.T) {
+	for _, tc := range []struct {
+		r    refusedKinds
+		want string
+	}{
+		{refusedKinds{component: true}, "a component update was refused"},
+		{refusedKinds{addon: true}, "an add-on change was refused"},
+		{refusedKinds{component: true, addon: true}, "a component update and an add-on change were refused"},
+	} {
+		if got := tc.r.sentence(); got != tc.want {
+			t.Errorf("%+v = %q, want %q", tc.r, got, tc.want)
+		}
 	}
 }
 

@@ -6,6 +6,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -17,6 +18,9 @@ import (
 // names, and a second apply of the same file sends nothing.
 
 const sentinel = "SENTINEL-c0ffee"
+
+// hexRun matches a run of hex long enough to be a digest prefix (the old plan printed 12).
+var hexRun = regexp.MustCompile(`[0-9a-f]{8,}`)
 
 func TestPlan_NeverPrintsAnOverridesContent(t *testing.T) {
 	f := addonServer()
@@ -40,8 +44,13 @@ func TestPlan_NeverPrintsAnOverridesContent(t *testing.T) {
 		if strings.Contains(out, sentinel) {
 			t.Errorf("the %s plan printed override content:\n%s", name, out)
 		}
-		if !strings.Contains(out, "sha256:") {
-			t.Errorf("the %s plan does not name the change by digest:\n%s", name, out)
+		// No digest either: a short hash of a low-entropy override can be brute-forced from a
+		// public CI log. The plan says THAT it changed, and how long the new text is.
+		if strings.Contains(out, "sha256") || hexRun.MatchString(out) {
+			t.Errorf("the %s plan names the override by a digest:\n%s", name, out)
+		}
+		if !strings.Contains(out, "changed (2 lines)") {
+			t.Errorf("the %s plan does not say the override changed:\n%s", name, out)
 		}
 	}
 	// The content is still what apply SENDS.

@@ -223,9 +223,16 @@ func (m *Manifest) DeclaresAddons() bool {
 	return false
 }
 
-// valuesFileRule is the sentence a values_file outside alethia.yaml's directory is refused with.
-const valuesFileRule = "a values_file must be a relative path inside the directory that holds alethia.yaml — " +
+// valuesFileRule is the sentence a values_file is refused with when it is outside alethia.yaml's
+// directory OR does not exist. The two are deliberately one sentence: a pull request that edits
+// only alethia.yaml must not learn, from a public CI log, whether a path exists on the runner —
+// including through a committed symlink, whose target cannot be checked without being followed.
+const valuesFileRule = "a values_file must name an existing file inside the directory that holds alethia.yaml — " +
 	"no absolute path, no `..` out of it, and no symlink that leads out of it"
+
+// errValuesFileUnreadable is the refusal for a confined file that exists but cannot be read (a
+// directory, no permission). The OS error is not carried: it names the runner's absolute path.
+var errValuesFileUnreadable = errors.New("cannot be read as a file")
 
 // LoadValuesFiles reads every add-on's `values_file`, relative to dir (alethia.yaml's directory).
 //
@@ -237,6 +244,10 @@ const valuesFileRule = "a values_file must be a relative path inside the directo
 // only this file could otherwise name `/home/runner/.aws/credentials`, or a symlink to it, and have
 // `apply` send the runner's credentials to the server as a values override. So an absolute path is
 // refused, and so is any path that resolves outside dir once `..` and symlinks are followed.
+//
+// The fence is the DIRECTORY, not the set of tracked files: a file a CI step writes into the
+// workspace is inside it. Every error names the path only as alethia.yaml wrote it, never the
+// runner's resolved absolute path.
 func (m *Manifest) LoadValuesFiles(dir string) error {
 	var p Problems
 	for i := range m.Environments {
@@ -246,12 +257,7 @@ func (m *Manifest) LoadValuesFiles(dir string) error {
 			if a.ValuesFile == nil || *a.ValuesFile == "" {
 				continue
 			}
-			path, err := confinedPath(dir, *a.ValuesFile)
-			if err != nil {
-				p = append(p, fmt.Sprintf("environments[%s].addons[%s]: values_file %q: %v", e.Name, a.ID, *a.ValuesFile, err))
-				continue
-			}
-			raw, err := os.ReadFile(path)
+			raw, err := readConfined(dir, *a.ValuesFile)
 			if err != nil {
 				p = append(p, fmt.Sprintf("environments[%s].addons[%s]: values_file %q: %v", e.Name, a.ID, *a.ValuesFile, err))
 				continue
@@ -265,30 +271,59 @@ func (m *Manifest) LoadValuesFiles(dir string) error {
 	return p
 }
 
+// readConfined reads rel inside dir, or refuses it. No error it returns carries an OS error,
+// because an OS error names the resolved absolute path.
+func readConfined(dir, rel string) ([]byte, error) {
+	path, err := confinedPath(dir, rel)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, errValuesFileUnreadable
+	}
+	return raw, nil
+}
+
 // confinedPath resolves rel inside dir, refusing anything that lands outside it: an absolute path,
 // a `..` that climbs out, or a symlink (anywhere on the path) that leads out. The answer is the
 // fully resolved path, so what is read is exactly what was checked.
+//
+// The LEXICAL check runs first and touches no filesystem: an absolute path or a `..` out of dir is
+// refused before anything is stat'ed, so the refusal cannot depend on whether it exists. Only a path
+// that is lexically inside is then resolved, and a failure to resolve it is refused with the same
+// sentence as a path outside, because a committed symlink can point anywhere.
 func confinedPath(dir, rel string) (string, error) {
-	if filepath.IsAbs(rel) {
-		return "", errors.New(valuesFileRule)
+	refuse := errors.New(valuesFileRule)
+	if filepath.IsAbs(rel) || filepath.VolumeName(rel) != "" {
+		return "", refuse
+	}
+	clean := filepath.Clean(rel)
+	if escapes(clean) {
+		return "", refuse
 	}
 	root, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return "", err
+		return "", errors.New("the directory that holds alethia.yaml cannot be resolved")
 	}
 	root, err = filepath.Abs(root)
 	if err != nil {
-		return "", err
+		return "", errors.New("the directory that holds alethia.yaml cannot be resolved")
 	}
-	resolved, err := filepath.EvalSymlinks(filepath.Join(root, filepath.Clean(rel)))
+	resolved, err := filepath.EvalSymlinks(filepath.Join(root, clean))
 	if err != nil {
-		return "", err
+		return "", refuse
 	}
 	inside, err := filepath.Rel(root, resolved)
-	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) || filepath.IsAbs(inside) {
-		return "", errors.New(valuesFileRule)
+	if err != nil || escapes(inside) {
+		return "", refuse
 	}
 	return resolved, nil
+}
+
+// escapes reports whether a cleaned relative path leaves the directory it is relative to.
+func escapes(clean string) bool {
+	return clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.IsAbs(clean)
 }
 
 // validateAddons checks one environment's add-ons.

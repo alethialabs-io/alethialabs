@@ -363,6 +363,101 @@ func TestLoadValuesFiles_IsConfinedToTheManifestDirectory(t *testing.T) {
 	}
 }
 
+// loadOneValuesFile loads a one-add-on manifest whose values_file is path, relative to dir.
+func loadOneValuesFile(t *testing.T, dir, path string) (*Manifest, error) {
+	t.Helper()
+	m := mustParse(t, "project: p\ncloud:\n  region: r\nenvironments:\n  - name: prod\n    stage: production\n    addons:\n      - id: loki\n        values_file: "+path+"\n")
+	return m, m.LoadValuesFiles(dir)
+}
+
+// The refusal must not be an existence oracle and must not print the runner's paths: a missing and
+// an existing outside path read IDENTICALLY, through every route out (#5567 review).
+func TestLoadValuesFiles_AnOutsidePathIsRefusedTheSameWhetherOrNotItExists(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "present"), []byte("a: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for _, name := range []string{"present", "absent"} {
+		if err := os.Symlink(filepath.Join(outside, name), filepath.Join(dir, "link-"+name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	up := "../" + filepath.Base(outside) + "/"
+	for route, pair := range map[string][2]string{
+		"a .. out":         {up + "present", up + "absent"},
+		"an absolute path": {filepath.Join(outside, "present"), filepath.Join(outside, "absent")},
+		"a symlink out":    {"link-present", "link-absent"},
+	} {
+		t.Run(route, func(t *testing.T) {
+			var texts [2]string
+			for i, path := range pair {
+				_, err := loadOneValuesFile(t, dir, path)
+				if err == nil {
+					t.Fatalf("%s was not refused", path)
+				}
+				// Strip the path as written — the only path an error may name — and compare the rest.
+				texts[i] = strings.ReplaceAll(err.Error(), path, "<path>")
+				for _, leaked := range []string{outside, dir, "no such file", "lstat"} {
+					if strings.Contains(texts[i], leaked) {
+						t.Errorf("the refusal of %s leaks %q: %s", path, leaked, err)
+					}
+				}
+			}
+			if texts[0] != texts[1] {
+				t.Errorf("an existing and a missing outside path read differently:\n  %s\n  %s", texts[0], texts[1])
+			}
+		})
+	}
+}
+
+func TestLoadValuesFiles_ADirectoryIsUnreadableWithoutItsPath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "helm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadOneValuesFile(t, dir, "helm")
+	if err == nil || !strings.Contains(err.Error(), `values_file "helm": cannot be read as a file`) || strings.Contains(err.Error(), dir) {
+		t.Errorf("a directory = %v, want it refused by the path as written", err)
+	}
+}
+
+// The folder holding alethia.yaml may itself be reached through a symlink (macOS's /var is one; a
+// CI checkout can be). Files inside it must still read, and the fence must still hold. Built from
+// t.TempDir and os.Symlink, so it runs on Linux, where TempDir is not under a symlink.
+func TestLoadValuesFiles_TheManifestFolderIsASymlink(t *testing.T) {
+	folder := t.TempDir()
+	if err := os.WriteFile(filepath.Join(folder, "v.yaml"), []byte("a: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "credentials"), []byte("SENTINEL\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// An absolute symlink INSIDE the folder folder that points back into it, written via the link.
+	if err := os.Symlink(filepath.Join(folder, "v.yaml"), filepath.Join(folder, "again.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "credentials"), filepath.Join(folder, "out.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(folder, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"v.yaml", "again.yaml"} {
+		m, err := loadOneValuesFile(t, link, path)
+		if err != nil || m.Environments[0].Addons[0].ValuesFileContent != "a: 1\n" {
+			t.Errorf("%s through a symlinked folder = %v, want it read", path, err)
+		}
+	}
+	m, err := loadOneValuesFile(t, link, "out.yaml")
+	if err == nil || !strings.Contains(err.Error(), "inside the directory that holds alethia.yaml") ||
+		strings.Contains(m.Environments[0].Addons[0].ValuesFileContent, "SENTINEL") {
+		t.Errorf("a symlink out of a symlinked folder = %v, want it refused", err)
+	}
+}
+
 func TestValidate_RefusesAnUnknownAddonSetting(t *testing.T) {
 	r := addonRules()
 	r.Addons.Addons[1].Settings = []string{"provider", "domainFilter", "apiToken"}

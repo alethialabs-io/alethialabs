@@ -701,6 +701,32 @@ type ApplyResult struct {
 	Errors []ComponentError `json:"errors,omitempty"`
 }
 
+// refusedKinds records what the server refused in one environment during an apply.
+type refusedKinds struct {
+	component bool
+	addon     bool
+}
+
+// refusedIn returns the record for env, creating it on first use.
+func refusedIn(m map[string]*refusedKinds, env string) *refusedKinds {
+	key := names.NormalizeEnvironmentName(env)
+	if m[key] == nil {
+		m[key] = &refusedKinds{}
+	}
+	return m[key]
+}
+
+// sentence says why the environment was held back from its deploy, naming what was refused.
+func (r refusedKinds) sentence() string {
+	switch {
+	case r.component && r.addon:
+		return "a component update and an add-on change were refused"
+	case r.addon:
+		return "an add-on change was refused"
+	}
+	return "a component update was refused"
+}
+
 // ComponentError is one component the server refused to update.
 type ComponentError struct {
 	Environment string `json:"environment"`
@@ -815,7 +841,8 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 		}
 	}
 
-	refused := map[string]bool{}
+	// What was refused in each environment, by kind, so the "not deployed" line names the right one.
+	refused := map[string]*refusedKinds{}
 	for _, e := range p.Environments {
 		for _, comp := range e.Components {
 			label := componentLabel(comp)
@@ -842,7 +869,7 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 				if err != nil {
 					// The refusal belongs to THIS component. Recorded and reported, and the
 					// environment is held back from its deploy; the other environments carry on.
-					refused[names.NormalizeEnvironmentName(e.Name)] = true
+					refusedIn(refused, e.Name).component = true
 					result.Errors = append(result.Errors, ComponentError{Environment: e.Name, Component: label, Error: err.Error()})
 					say(fmt.Sprintf("  %s %s in %s was not updated: %v", ui.ErrorStyle.Render(ui.SymbolError), label, e.Name, err))
 					continue
@@ -864,7 +891,7 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 			req := a.request
 			req.Project = result.ProjectID
 			if err := c.EnableAddon(req); err != nil {
-				refused[names.NormalizeEnvironmentName(e.Name)] = true
+				refusedIn(refused, e.Name).addon = true
 				result.Errors = append(result.Errors, ComponentError{Environment: e.Name, Component: label, Error: err.Error()})
 				say(fmt.Sprintf("  %s %s in %s was not applied: %v", ui.ErrorStyle.Render(ui.SymbolError), label, e.Name, err))
 				continue
@@ -904,8 +931,8 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 		if !e.Deploy {
 			continue
 		}
-		if refused[names.NormalizeEnvironmentName(e.Name)] {
-			say(ui.MutedStyle.Render(fmt.Sprintf("  %s not deployed: a component update was refused", e.Name)))
+		if r := refused[names.NormalizeEnvironmentName(e.Name)]; r != nil {
+			say(ui.MutedStyle.Render(fmt.Sprintf("  %s not deployed: %s", e.Name, r.sentence())))
 			continue
 		}
 		envID, ok := ids[names.NormalizeEnvironmentName(e.Name)]

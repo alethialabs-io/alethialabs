@@ -252,7 +252,17 @@ prometheus:
 | `mode` | `managed` or `gitops`. Omitted on a new add-on, `managed`. |
 | `settings` | The add-on's settings, by name: the same keys `alethia addon enable` sets. A key the add-on does not have is refused, and the refusal lists the keys it does have. |
 | `values` | An Advanced Helm-values override, written inline as a mapping. |
-| `values_file` | The same override, read from a file. The path is relative to `alethia.yaml` and must stay inside its directory: an absolute path, a `..` out of it, or a symlink that leads out of it is refused. Use `values` or `values_file`, not both. |
+| `values_file` | The same override, read from a file. The path is relative to `alethia.yaml` and must name an existing file inside its directory: an absolute path, a `..` out of it, a symlink that leads out of it, or a file that does not exist is refused with one message, which names the path as you wrote it. Use `values` or `values_file`, not both. See [Where a values file can come from](#where-a-values-file-can-come-from). |
+
+### Where a values file can come from
+
+The fence is the folder that holds `alethia.yaml`, not the files that Git tracks. `apply` sends any
+file inside that folder that `values_file` names. This includes a file that a CI step writes into
+the workspace, such as a kubeconfig or a credentials file. If `alethia.yaml` names that file,
+`apply` sends its contents to the server as the override.
+
+Keep each values file committed, and review it as you review `alethia.yaml`. Do not name a file
+that a pipeline step creates.
 
 ### Keep and clear
 
@@ -285,16 +295,19 @@ the server but not in the file:
     add-ons  ~ external-dns  ~ kube-prometheus-stack
     ~ external-dns  settings.domainFilter: boutique.example.com → staging.boutique.example.com
     ~ external-dns  version: (catalog default) → 1.14.5
-    ~ kube-prometheus-stack  values: sha256:4be1a07c93d2 (4 lines) → sha256:0f6e2d81c5aa (6 lines)
+    ~ kube-prometheus-stack  values: changed (6 lines)
   0 projects to create · 0 environments · 0 components · 0 add-ons to enable · 2 to change
 ```
 
 **A plan never shows what an override says.** A values file can be any file in the repository,
-and a plan is printed into CI logs, so the `values` line names each side by a digest of its content
-and its length. Two files that describe the same mapping have the same digest. `apply` still sends
-the whole file.
+and a plan is printed into CI logs. So the `values` line says only `changed (N lines)`, with N the
+line count of the new override, or `removed`. It shows no hash either: a short hash of a value
+such as a password can be guessed offline from a public log. An override that is the same mapping
+as the stored one is unchanged and gets no line, even if its whitespace differs. With `--output json`, the
+`values` change has `"from": null` and the same summary in `"to"`. `apply` still sends the whole
+file.
 
-`(default)` means a setting is reset to its default. `(none)` means there is no override. A setting
+`(default)` means a setting is reset to its default. A setting
 you reset with `null` shows as a change only while the server holds a value other than the default,
 so the reset shows once and then settles.
 

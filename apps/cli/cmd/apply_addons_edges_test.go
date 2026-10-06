@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -121,7 +122,7 @@ func TestComputePlan_AddonModeAndEmptyOverride(t *testing.T) {
 	got := plan.Environments[0].Addons[0]
 	want := []FieldChange{
 		{Field: "mode", From: "managed", To: "gitops"},
-		{Field: "values", From: overrideDigest(map[string]any{"a": 1}, "a: 1\n"), To: nil},
+		{Field: "values", From: nil, To: overrideRemoved},
 	}
 	if !reflect.DeepEqual(got.Changes, want) {
 		t.Fatalf("changes = %#v, want %#v", got.Changes, want)
@@ -130,8 +131,10 @@ func TestComputePlan_AddonModeAndEmptyOverride(t *testing.T) {
 	if got.request.ValuesYAML == nil || *got.request.ValuesYAML != "" || got.request.Mode != "gitops" {
 		t.Errorf("request = %+v, want mode gitops and the override removed", got.request)
 	}
-	if v := addonFieldValue(got.Changes[1], nil, nil); v != "(none)" {
-		t.Errorf("no override renders as %q, want (none)", v)
+	var out bytes.Buffer
+	renderAddons(&out, EnvPlan{Name: "prod", Addons: []AddonPlan{got}}, func(string) []string { return nil })
+	if !strings.Contains(out.String(), "~ loki  values: removed\n") {
+		t.Errorf("a removed override renders as:\n%s", out.String())
 	}
 }
 

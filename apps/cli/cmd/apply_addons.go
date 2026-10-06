@@ -4,9 +4,6 @@
 package cmd
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -106,11 +103,11 @@ func planAddons(env manifest.Environment, existing []api.Addon, catalog *api.Add
 				want = nil
 			}
 			if !valuesEqual(mapOrNil(want), mapOrNil(current)) {
-				// A DIGEST, never the content: a values file can be any file the repository holds,
-				// and a plan is printed into CI logs. What changed is visible; what it says is not.
+				// THAT it changed, never what it says — not even a digest: a plan is printed into CI
+				// logs, and a short hash of a low-entropy override (`password: hunter2`) falls to a
+				// dictionary attack offline. So neither side is named; `from` is always null.
 				changes = append(changes, FieldChange{Field: "values",
-					From: overrideDigest(current, derefString(row.ValuesYAML)),
-					To:   overrideDigest(want, derefString(overrideText(a)))})
+					To: overrideSummary(want, derefString(overrideText(a)))})
 			}
 		}
 		sortChanges(changes)
@@ -221,18 +218,19 @@ func parseOverride(text string) (map[string]any, error) {
 	return out, nil
 }
 
-// overrideDigest names an override without showing it: `sha256:<12 hex> (N lines)`, or nil for
-// none. The hash is over the parsed mapping's canonical JSON, so two texts that mean the same
-// mapping have the same digest and a whitespace edit does not look like a change.
-func overrideDigest(m map[string]any, text string) any {
+// overrideSummary says what a changed override becomes without naming its content in any form:
+// `removed`, or `changed (N lines)` counting the lines of the text that will be sent. No hash —
+// a digest of a low-entropy value can be brute-forced from a public CI log.
+func overrideSummary(m map[string]any, text string) string {
 	if len(m) == 0 {
-		return nil
+		return overrideRemoved
 	}
-	canonical, _ := json.Marshal(canonicalValue(m))
-	sum := sha256.Sum256(canonical)
 	lines := strings.Count(strings.TrimRight(text, "\n"), "\n") + 1
-	return fmt.Sprintf("sha256:%s (%s)", hex.EncodeToString(sum[:])[:12], plural(lines, "line"))
+	return fmt.Sprintf("changed (%s)", plural(lines, "line"))
 }
+
+// overrideRemoved is how a plan names an override the file removes.
+const overrideRemoved = "removed"
 
 // mapOrNil turns an empty mapping into nil, so "no override" compares and prints one way.
 func mapOrNil(m map[string]any) any {
@@ -341,6 +339,12 @@ func renderAddons(out io.Writer, e EnvPlan, secretKeys func(id string) []string)
 	for _, a := range e.Addons {
 		secret := append(append([]string(nil), secretKeys(a.ID)...), a.secretKeys...)
 		for _, ch := range a.Changes {
+			if ch.Field == "values" {
+				// One side only: the summary already says what happens, and the stored side is
+				// deliberately not described.
+				fmt.Fprintf(out, "    %s %s  values: %s\n", glyphFor(ActionUpdate), a.ID, formatFieldValue(ch.To))
+				continue
+			}
 			fmt.Fprintf(out, "    %s %s  %s: %s → %s\n", glyphFor(ActionUpdate), a.ID, ch.label(),
 				addonFieldValue(ch, ch.From, secret), addonFieldValue(ch, ch.To, secret))
 		}
@@ -362,9 +366,6 @@ func addonFieldValue(ch FieldChange, v any, secretKeys []string) string {
 		if v == nil {
 			return "(default)"
 		}
-	}
-	if ch.Field == "values" && v == nil {
-		return "(none)"
 	}
 	return formatFieldValue(v)
 }
