@@ -1689,3 +1689,23 @@ uniform:
   # out entirely and go back to a per-cluster image the run's own teardown reclaims.
   - variable: talos_image_cache
     reason: Hetzner-only by construction — it is the only template that BUILDS a node image (imager_image snapshots a Talos raw.xz before any cluster exists, ~5m and the floor's dominant deadline flake). EKS/AKS/GKE/ACK receive a node image from the managed control plane, so there is nothing for them to cache and no counterpart knob to add. See infra/templates/project/hetzner/README.md § The Talos snapshot cache.
+
+  # ── The Karpenter NodePool (#5527) ─────────────────────────────────────────────────────────────
+  # Single-cloud because the AUTOSCALER is. Karpenter is installed only by the aws template
+  # (`enable_karpenter`, itself on the #2004 baseline above); the other four scale nodes with their
+  # own managed-node-pool autoscalers, which have no NodePool object for these knobs to shape. Their
+  # node-pool shape is the separate per-cloud node-group surface, not a missing copy of these.
+  - variable: karpenter_capacity_types
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_architectures
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_instance_categories
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_instance_families
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_cpu_limit
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_node_labels
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_node_taints
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
