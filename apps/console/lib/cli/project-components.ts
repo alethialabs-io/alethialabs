@@ -11,7 +11,7 @@
 
 import { createHash } from "node:crypto";
 import { createInsertSchema } from "drizzle-zod";
-import { and, eq, getTableColumns, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import type { AnyColumn, SQL } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { z } from "zod";
@@ -39,6 +39,7 @@ import { getServiceDb, type Db, type Tx } from "@/lib/db";
 import { asRecord } from "@/lib/records";
 import {
 	cloudIdentities,
+	jobs,
 	projects,
 	projectCaches,
 	projectCluster,
@@ -561,9 +562,20 @@ export function rowToComponentWire(kind: string, row: unknown): ComponentWire {
 	};
 }
 
-/** A row's revision: its `updated_at` as ISO-8601 at millisecond precision, or null when the row
- * has none. Millisecond, because that is what the driver hands back (a JS `Date`), and the write
- * guard below compares against the column truncated to the same precision. */
+/**
+ * A row's revision: its `updated_at` as ISO-8601, or null when the row has none.
+ *
+ * The precision is the MILLISECOND, because that is what the driver hands back (a JS `Date`), and
+ * the write guard below compares the column truncated to the same precision. Two limits follow, and
+ * both are accepted rather than fixed, because the cure — a microsecond revision — means reading
+ * `updated_at` as text on every read path that builds a component wire, not only this one:
+ * - Two writes that stamp `updated_at` within the same millisecond share a revision.
+ * - Where the `update_updated_at()` trigger stamps the column (every component table except
+ *   `project_observability`; see lib/db/programmables.sql) it stamps `now()`, the time the writing
+ *   TRANSACTION STARTED, not the time it committed. Two transactions that start in the same
+ *   millisecond therefore share a revision even when the second commits much later, for example
+ *   after waiting on the first one's row lock.
+ */
 export function componentRevision(row: unknown): string | null {
 	const value = asRecord(row).updated_at;
 	const at = value instanceof Date ? value : typeof value === "string" ? new Date(value) : null;
@@ -571,27 +583,48 @@ export function componentRevision(row: unknown): string | null {
 }
 
 /**
- * The component statuses a write is refused in (#5551): a deploy is creating or changing the row's
- * resources (`CREATING`, `UPDATING`), or a destroy is removing them (`DESTROYING`). A change landing
- * mid-run is read by nothing that is running, and is then overwritten by the run's own write-back or
- * left on a row whose resources are gone. `PENDING`, `ACTIVE`, `FAILED` and `DESTROYED` are at rest.
+ * The jobs that act on an environment's components (#5551): a DEPLOY applies their settings, a
+ * DESTROY removes their resources. A PLAN reads them but changes nothing, so it does not block a
+ * write.
  */
-export const BUSY_COMPONENT_STATUSES: readonly string[] = ["CREATING", "UPDATING", "DESTROYING"];
+export const COMPONENT_RUN_JOB_TYPES = ["DEPLOY", "DESTROY"] as const;
 
-/** What a write to an EXISTING component is conditioned on, beyond the status gate every such write
+/** A job in one of these statuses has not finished: waiting for a runner, claimed by one, or running.
+ * The same in-flight set the canvas and the env-status convergence read (lib/reconcile/converge.ts). */
+export const RUN_IN_FLIGHT_STATUSES = ["QUEUED", "CLAIMED", "PROCESSING"] as const;
+
+/** The predicate on `jobs` that names a deploy or destroy of `environmentId` that has not finished. */
+function runInFlight(environmentId: string): SQL | undefined {
+	return and(
+		eq(jobs.environment_id, environmentId),
+		inArray(jobs.job_type, [...COMPONENT_RUN_JOB_TYPES]),
+		inArray(jobs.status, [...RUN_IN_FLIGHT_STATUSES]),
+	);
+}
+
+/** What a write to an EXISTING component is conditioned on, beyond the run gate every such write
  * gets. `ifMatch` is the revision the caller read ({@link componentRevision}); null writes
  * unconditionally, which is what every caller that sends no `If-Match` gets. */
 export interface ComponentWriteGuard {
 	ifMatch: string | null;
 }
 
-/** The unconditional guard: the status gate only. */
+/** The unconditional guard: the run gate only. */
 const NO_PRECONDITION: ComponentWriteGuard = { ifMatch: null };
 
-/** Why a guarded write was refused: the component is mid-run, or it is not the copy the caller read
- * (`component` is the server's copy now, null when it no longer exists). */
+/** The deploy or destroy that holds an environment's components, as the 409 names it. Null when the
+ * write lost to a run that had already finished by the time the refusal was explained. */
+export interface ComponentRun {
+	id: string;
+	type: string;
+	status: string;
+}
+
+/** Why a guarded write was refused: a deploy or destroy of the environment has not finished, or the
+ * component is not the copy the caller read (`component` is the server's copy now, null when it no
+ * longer exists). */
 export type ComponentWriteRefusal =
-	| { reason: "busy"; status: string; component: ComponentWire }
+	| { reason: "busy"; run: ComponentRun | null; component: ComponentWire }
 	| { reason: "changed"; component: ComponentWire | null };
 
 /** Thrown by a guarded write the server refused — the routes answer it with a 409. Thrown rather
@@ -609,21 +642,24 @@ export class ComponentWriteRefusedError extends Error {
 
 /** The 409 body a refused write answers with — `cliComponentConflictResponse` on the wire. The code
  * says which refusal, so a client can tell "wait for the run" from "re-read and retry" without
- * matching on the sentence. */
+ * matching on the sentence. `status` is the component's own status; `run` names the deploy or
+ * destroy a `component_busy` waited on. */
 export function componentWriteRefusedBody(err: ComponentWriteRefusedError): {
 	error: string;
 	code: "component_busy" | "component_changed";
 	status: string | null;
 	component: ComponentWire | null;
+	run: ComponentRun | null;
 } {
 	const r = err.refusal;
 	return r.reason === "busy"
-		? { error: err.message, code: "component_busy", status: r.status, component: r.component }
+		? { error: err.message, code: "component_busy", status: r.component.status, component: r.component, run: r.run }
 		: {
 				error: err.message,
 				code: "component_changed",
 				status: r.component?.status ?? null,
 				component: r.component,
+				run: null,
 			};
 }
 
@@ -631,8 +667,11 @@ export function componentWriteRefusedBody(err: ComponentWriteRefusedError): {
 function refusalMessage(r: ComponentWriteRefusal): string {
 	if (r.reason === "busy") {
 		const label = componentWireLabel(r.component);
-		const doing = r.status === "DESTROYING" ? "being destroyed" : "being provisioned";
-		return `${label} is ${r.status}: a component cannot be changed while it is ${doing}. Wait for the run to finish, then try again.`;
+		if (!r.run) {
+			return `${label} was not changed: a deploy or destroy of its environment was running when the change was sent, and has finished since. Try again.`;
+		}
+		const verb = r.run.type === "DESTROY" ? "destroy" : "deploy";
+		return `${label} cannot be changed while a ${verb} of its environment is ${r.run.status} (job ${r.run.id}). Wait for that ${verb} to finish, then try again.`;
 	}
 	if (!r.component) {
 		return "The component no longer exists: it was removed or replaced on the server since it was read. Read it again and retry.";
@@ -666,31 +705,68 @@ export function parseIfMatch(
 	return { ok: true, ifMatch: at.toISOString() };
 }
 
-/** The WHERE half of a guarded write: not mid-run, and — when the caller sent one — still at the
- * revision it read. In the statement itself rather than a prior read, so the row the check passes on
- * is the row the write changes: Postgres re-evaluates it on the locked row. */
-function writableWhere(cols: Record<string, AnyColumn>, guard: ComponentWriteGuard): SQL | undefined {
-	const conds: SQL[] = [];
-	if (cols.status) conds.push(notInArray(cols.status, [...BUSY_COMPONENT_STATUSES]));
-	if (guard.ifMatch !== null && cols.updated_at) {
+/**
+ * The WHERE half of a guarded write to a component of `environmentId`:
+ * - no deploy or destroy of that environment is queued or running — a `NOT EXISTS` on `jobs`, the
+ *   table a run is recorded in from the moment it is enqueued until it reaches a terminal status;
+ * - and, when the caller sent one, the row is still at the revision it read.
+ *
+ * Both sit in the write statement itself rather than in a prior read, so there is no window between
+ * a check and the write it admits. What a `NOT EXISTS` cannot see is a job whose enqueue transaction
+ * commits AFTER this statement took its snapshot. That deploy read the component rows in its own
+ * transaction, which cannot have seen this uncommitted write, so it runs on the copy it read and this
+ * write is left on the row for the next deploy — the same state as a change made just before it.
+ *
+ * Throws when a precondition is asked of a table with no `updated_at`: dropping it would turn a
+ * conditional write into an unconditional one, which {@link parseIfMatch} exists to prevent.
+ */
+function writableWhere(
+	cols: Record<string, AnyColumn>,
+	environmentId: string,
+	guard: ComponentWriteGuard,
+): SQL {
+	const conds: SQL[] = [sql`not exists (select 1 from ${jobs} where ${runInFlight(environmentId)})`];
+	if (guard.ifMatch !== null) {
+		if (!cols.updated_at) {
+			throw new Error("This component kind has no updated_at column, so an If-Match precondition cannot be checked");
+		}
 		conds.push(sql`date_trunc('milliseconds', ${cols.updated_at}) = ${guard.ifMatch}::timestamptz`);
 	}
-	return conds.length > 0 ? and(...conds) : undefined;
+	return and(...conds) ?? conds[0];
 }
 
-/** Why a guarded write matched no row: reads the row the write addressed and names the refusal, or
- * returns null when there is no such row (the caller's 404). */
+/**
+ * Why a guarded write matched no row, read after the fact: the row the write addressed (`where`)
+ * and the environment's unfinished deploy or destroy. Returns null when there is no such row (the
+ * caller's 404).
+ *
+ * A row with no run in flight was refused by the revision — unless it is still AT the revision the
+ * caller sent (or the caller sent none), in which case the only thing that could have refused it is
+ * a run that has finished since, and it is reported as busy with no run to name.
+ */
 async function refusalFor(
 	db: Db | Tx,
 	def: KindDef,
 	kind: string,
 	where: SQL | undefined,
+	environmentId: string,
+	guard: ComponentWriteGuard,
 ): Promise<ComponentWriteRefusedError | null> {
 	const [row] = await db.select().from(def.table).where(where).limit(1);
 	if (!row) return null;
 	const component = rowToComponentWire(kind, row);
-	if (BUSY_COMPONENT_STATUSES.includes(component.status)) {
-		return new ComponentWriteRefusedError({ reason: "busy", status: component.status, component });
+	const [job] = await db
+		.select()
+		.from(jobs)
+		.where(runInFlight(environmentId))
+		.orderBy(desc(jobs.created_at))
+		.limit(1);
+	if (job) {
+		const run = { id: job.id, type: job.job_type, status: job.status };
+		return new ComponentWriteRefusedError({ reason: "busy", run, component });
+	}
+	if (guard.ifMatch === null || component.updated_at === guard.ifMatch) {
+		return new ComponentWriteRefusedError({ reason: "busy", run: null, component });
 	}
 	return new ComponentWriteRefusedError({ reason: "changed", component });
 }
@@ -1080,7 +1156,8 @@ async function providerConfigToStore(
  * created/updated row's wire.
  *
  * A singleton that already exists is UPDATED, and that update is guarded like the PATCH's (#5551):
- * refused while the row is mid-run, and — when `guard.ifMatch` is set — refused unless the row is
+ * refused while a deploy or destroy of the environment is queued or running, and — when
+ * `guard.ifMatch` is set — refused unless the row is
  * still at that revision, in which case the row must exist (a precondition on a row that is gone is
  * not met, so it is never re-created). A refusal throws {@link ComponentWriteRefusedError}. */
 export async function insertProjectComponent(
@@ -1198,13 +1275,17 @@ async function insertComponentWith(
 		// amending is very often one written before this fix — repairing it on write is what makes
 		// the fix reach existing projects without a data migration.
 		//
-		// `updated_at` moves on the conflict arm, so the next `If-Match` against this row sees the change
-		// — before #5551 an upsert left it where the INSERT put it.
+		// `updated_at` must move on the conflict arm, or the next `If-Match` against this row cannot see
+		// the change. On four of the five singleton tables (network, cluster, dns, repositories) the
+		// `update_updated_at()` BEFORE UPDATE trigger (lib/db/programmables.sql) already moves it, and
+		// fires on this arm too — it overrides the value set here with `now()`. `project_observability`
+		// has NO such trigger, so there the value set here is the only thing that moves it. It is set
+		// for every table, so the precondition does not depend on which tables the trigger lists.
 		const updateValues = fabricLinked
 			? { ...values, fabric_id: insertValues.fabric_id ?? null, updated_at: new Date() }
 			: { ...values, updated_at: new Date() };
 		const scope = componentScope(cols, projectId, environmentId);
-		const writable = writableWhere(cols, guard);
+		const writable = writableWhere(cols, environmentId, guard);
 		// A precondition names a row the caller READ, so it is an UPDATE of that row and never an
 		// insert: a singleton removed since the read is a refusal, not a fresh row carrying only the
 		// fields that changed.
@@ -1216,14 +1297,16 @@ async function insertComponentWith(
 					.onConflictDoUpdate({
 						target: [cols.project_id, cols.environment_id],
 						set: updateValues,
-						// The status gate on the conflict arm: an existing row mid-run is not updated, and
-						// RETURNING then yields nothing.
+						// The run gate on the conflict arm: an existing row is not updated while a deploy or
+						// destroy of the environment is unfinished, and RETURNING then yields nothing. The
+						// INSERT arm is not gated: a singleton that does not exist yet is a create, which no
+						// running deploy has read.
 						setWhere: writable,
 					})
 					.returning();
 		if (row) return rowToComponentWire(kind, row);
 		throw (
-			(await refusalFor(db, def, kind, scope)) ??
+			(await refusalFor(db, def, kind, scope, environmentId, guard)) ??
 			new ComponentWriteRefusedError({ reason: "changed", component: null })
 		);
 	}
@@ -1273,8 +1356,8 @@ export async function componentIdentityAllowed(
  * Singletons are refused rather than handled: they have no name to address and `add` upserts
  * them, so a second write path for them would only be a second set of rules.
  *
- * The write is guarded (#5551): a row mid-run is refused, and with `guard.ifMatch` a row no longer at
- * that revision is refused — both as {@link ComponentWriteRefusedError}, in the UPDATE's own WHERE so
+ * The write is guarded (#5551): it is refused while a deploy or destroy of the environment is queued
+ * or running, and with `guard.ifMatch` a row no longer at that revision is refused — both as {@link ComponentWriteRefusedError}, in the UPDATE's own WHERE so
  * nothing can land between the check and the write. */
 export async function updateProjectComponent(
 	kind: string,
@@ -1300,11 +1383,11 @@ export async function updateProjectComponent(
 		const [row] = await q
 			.update(def.table)
 			.set({ ...set, updated_at: new Date() })
-			.where(and(target, writableWhere(cols, guard)))
+			.where(and(target, writableWhere(cols, environmentId, guard)))
 			.returning();
 		if (row) return rowToComponentWire(kind, row);
 		// Nothing matched: no such row (null, the 404), or a row the guard refused.
-		const refusal = await refusalFor(q, def, kind, target);
+		const refusal = await refusalFor(q, def, kind, target, environmentId, guard);
 		if (refusal) throw refusal;
 		return null;
 	};

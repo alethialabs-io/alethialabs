@@ -709,15 +709,24 @@ export const cliComponentsResponse = z.object({
 });
 /** POST /api/cli/projects/:id/components/:kind result. */
 export const cliComponentResponse = z.object({ component: componentWire });
+/** The deploy or destroy a `component_busy` refusal waited on: the job's id, type and status. */
+export const componentRunWire = z.object({
+	id: z.string(),
+	type: z.string(),
+	status: z.string(),
+});
 /** The 409 body of a component write that was REFUSED rather than failed (#5551): `component_busy`
- * — a deploy or a destroy is acting on it (`status`); `component_changed` — the `If-Match` revision
- * is not the server's any more. `component` is the server's copy now (null when it no longer
- * exists), so the CLI can name the fields that changed against the copy it read. */
+ * — a deploy or a destroy of the environment is queued or running (`run`; null when it finished
+ * between the refusal and its explanation); `component_changed` — the `If-Match` revision is not the
+ * server's any more. `status` is the component's own status. `component` is the server's copy now
+ * (null when it no longer exists), so the CLI can name the fields that changed against the copy it
+ * read. */
 export const cliComponentConflictResponse = z.object({
 	error: z.string(),
 	code: z.enum(["component_busy", "component_changed"]),
 	status: z.string().nullable(),
 	component: componentWire.nullable(),
+	run: componentRunWire.nullable(),
 });
 
 /** A single drifted resource (mirrors DriftDetail). */

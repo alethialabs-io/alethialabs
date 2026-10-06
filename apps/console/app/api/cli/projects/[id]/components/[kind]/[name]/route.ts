@@ -37,9 +37,9 @@ const updateComponentBody = z
  * org binding and environment resolution as POST .../components/:kind, and the same field
  * validation, so "settable" means one thing for both writes. Only the fields sent are changed.
  *
- * Two refusals, both 409 (#5551): the component is mid-run (CREATING, UPDATING, DESTROYING), or the
- * request sent `If-Match: <revision>` — the `updated_at` the caller read — and the row is no longer
- * at it. Without `If-Match` the write is unconditional, as it always was. */
+ * Two refusals, both 409 (#5551): `component_busy` — a DEPLOY or DESTROY job of the environment is
+ * queued or running; `component_changed` — the request sent `If-Match: <revision>` (the `updated_at`
+ * the caller read) and the row is no longer at it. Without `If-Match` only the first applies. */
 export async function PATCH(
 	req: Request,
 	{ params }: { params: Promise<{ id: string; kind: string; name: string }> },

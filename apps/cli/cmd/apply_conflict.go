@@ -17,8 +17,8 @@ import (
 // An update is computed against the copy `plan` read and is sent with that copy's revision as
 // If-Match. The server refuses it when the component has changed since — a console edit, another
 // apply — and returns its copy now; the reader then names the fields that differ between the two
-// copies, because "it changed" alone sends the person hunting. It also refuses any update while the
-// component is being provisioned or destroyed. Neither refusal is retried: the plan the person
+// copies, because "it changed" alone sends the person hunting. It also refuses any update while a
+// deploy or destroy of the component's environment is queued or running. Neither refusal is retried: the plan the person
 // confirmed no longer describes the server, so the next step is theirs.
 
 // rerunPlanHint is the next step after the server's copy moved under the plan.
@@ -33,12 +33,15 @@ func componentUpdateRefusal(comp ComponentPlan, err error) string {
 	}
 	label := componentLabel(comp)
 	if conflict.Busy() {
-		doing := "provisioned"
-		if conflict.Status == "DESTROYING" {
-			doing = "destroyed"
+		if conflict.Run == nil {
+			return fmt.Sprintf("%s was not changed — a deploy or destroy of this environment was running when apply sent the change, and has finished since; re-run `alethia apply`", label)
 		}
-		return fmt.Sprintf("%s is %s on the server — a component cannot be changed while it is being %s; wait for that run to finish, then re-run `alethia apply`",
-			label, conflict.Status, doing)
+		verb := "deploy"
+		if conflict.Run.Type == "DESTROY" {
+			verb = "destroy"
+		}
+		return fmt.Sprintf("%s cannot be changed while a %s of this environment is %s (job %s); follow it with `alethia jobs logs %s`, then re-run `alethia apply` once it has finished",
+			label, verb, strings.ToLower(conflict.Run.Status), conflict.Run.ID, conflict.Run.ID)
 	}
 	if conflict.Current == nil {
 		return fmt.Sprintf("%s no longer exists on the server — it was removed after `alethia plan` read it; %s", label, rerunPlanHint)

@@ -151,16 +151,20 @@ func TestUpdateComponent_AConflictCarriesTheServersCopy(t *testing.T) {
 	}
 }
 
-// TestUpdateComponent_BusyIsAConflictToo: the status gate's 409 is the same error with Busy() set.
+// TestUpdateComponent_BusyIsAConflictToo: the run gate's 409 is the same error with Busy() set, and
+// carries the deploy or destroy it waited on.
 func TestUpdateComponent_BusyIsAConflictToo(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
-		_, _ = io.WriteString(w, `{"error":"databases/orders is CREATING","code":"component_busy","status":"CREATING","component":null}`)
+		_, _ = io.WriteString(w, `{"error":"databases/orders cannot be changed while a deploy of its environment is PROCESSING","code":"component_busy","status":"ACTIVE","component":null,"run":{"id":"j-1","type":"DEPLOY","status":"PROCESSING"}}`)
 	}))
 	_, err := client.UpdateComponent("shop", "databases", "orders", "prod", map[string]any{"port": 1}, "")
 	var conflict *ComponentConflictError
-	if !errors.As(err, &conflict) || !conflict.Busy() || conflict.Status != "CREATING" {
+	if !errors.As(err, &conflict) || !conflict.Busy() || conflict.Status != "ACTIVE" {
 		t.Fatalf("err = %v, want a busy conflict", err)
+	}
+	if conflict.Run == nil || conflict.Run.ID != "j-1" || conflict.Run.Type != "DEPLOY" || conflict.Run.Status != "PROCESSING" {
+		t.Fatalf("run = %+v, want the deploy it waited on", conflict.Run)
 	}
 }
 

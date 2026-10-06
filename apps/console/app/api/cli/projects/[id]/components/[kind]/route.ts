@@ -37,7 +37,8 @@ const addComponentBody = z.object({
 /** Adds (or, for singletons, upserts) a component of `kind` to a project.
  *
  * The singleton upsert is the singleton's UPDATE path, so it carries the PATCH's two refusals, both
- * 409 (#5551): an existing row mid-run is not changed, and `If-Match: <revision>` makes the write
+ * 409 (#5551): an existing row is not changed while a deploy or destroy of the environment is queued
+ * or running, and `If-Match: <revision>` makes the write
  * conditional on the row still being at the revision the caller read. `If-Match` is read for
  * singletons only — a named component is created here, and has no revision to match yet. */
 export async function POST(

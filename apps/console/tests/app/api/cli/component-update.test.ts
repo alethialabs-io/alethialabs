@@ -54,9 +54,18 @@ const USERS: Record<string, { org: string; role: "owner" | "operator" | "viewer"
 	"u-outsider": { org: ORG_B, role: "owner" },
 };
 
+/** A job row as the fake `jobs` table holds it — only what the run gate reads. */
+interface JobRow {
+	id: string;
+	environment_id: string;
+	job_type: string;
+	status: string;
+	created_at: Date;
+}
+
 /** The calling user (null: no token), what the fake db's update chain recorded and returns, the
- * component row a SELECT on a component table answers (the refusal read, #5551), and what an upsert
- * was asked to do. */
+ * component row a SELECT on a component table answers (the refusal read, #5551), what an upsert
+ * was asked to do, and the jobs table the run gate reads. */
 interface Hoisted {
 	state: { user: string | null };
 	dbUpdate: {
@@ -65,15 +74,17 @@ interface Hoisted {
 		rows: unknown[];
 	};
 	stored: { row: Record<string, unknown> | null };
+	jobRows: { rows: JobRow[] };
 	dbInsert: {
 		conflict: Mock<(arg: { set: Record<string, unknown>; setWhere?: SQL }) => void>;
 		rows: unknown[];
 	};
 }
-const { state, dbUpdate, stored, dbInsert } = vi.hoisted((): Hoisted => ({
+const { state, dbUpdate, stored, jobRows, dbInsert } = vi.hoisted((): Hoisted => ({
 	state: { user: "u-editor" },
 	dbUpdate: { set: vi.fn(), where: vi.fn(), rows: [] },
 	stored: { row: null },
+	jobRows: { rows: [] },
 	dbInsert: { conflict: vi.fn(), rows: [] },
 }));
 
@@ -122,7 +133,7 @@ vi.mock("@/lib/authz", async () => {
 // when the predicate's tenancy admits them. The update chain records what `updateProjectComponent`
 // writes.
 vi.mock("@/lib/db", async () => {
-	const { cloudIdentities, member, projectCluster, projectDatabases, projectEnvironments } = await import(
+	const { cloudIdentities, jobs, member, projectCluster, projectDatabases, projectEnvironments } = await import(
 		"@/lib/db/schema"
 	);
 	const { PgDialect: Dialect } = await import("drizzle-orm/pg-core");
@@ -150,7 +161,30 @@ vi.mock("@/lib/db", async () => {
 			);
 		}
 		if (table === projectDatabases || table === projectCluster) return stored.row ? [stored.row] : [];
+		if (table === jobs) return jobRows.rows.filter((j) => runMatches(j, params));
 		return [];
+	};
+	/** True when job `j` is one the run predicate's parameters name: and(environment_id = $1,
+	 * job_type in (…), status in (…)) — every one of its three values is among them. */
+	const runMatches = (j: JobRow, params: unknown[]): boolean =>
+		params.includes(j.environment_id) && params.includes(j.job_type) && params.includes(j.status);
+	/**
+	 * Whether a guarded write's WHERE admits the stored row — the part of Postgres a recording db has
+	 * to stand in for, so a gate is tested by what it REFUSES and not only by its text. It reads the
+	 * two gate shapes this module has written: a run gate (a NOT EXISTS on "jobs", refused when a job
+	 * row matches its parameters), and the component-status gate it replaced (`"status" not in (…)`,
+	 * refused when the stored row's status is listed) — kept here so a regression to it fails the
+	 * at-rest tests below instead of passing them. The revision precondition is left to the tests
+	 * that set `dbUpdate.rows` themselves.
+	 */
+	const admits = (predicate: SQL | undefined): boolean => {
+		if (!predicate) return true;
+		const { sql: text, params } = new Dialect().sqlToQuery(predicate);
+		if (/not exists \(select 1 from "jobs"/.test(text) && jobRows.rows.some((j) => runMatches(j, params))) {
+			return false;
+		}
+		if (/"status" not in/.test(text) && stored.row && params.includes(stored.row.status)) return false;
+		return true;
 	};
 	return {
 		getServiceDb: () => ({
@@ -168,7 +202,7 @@ vi.mock("@/lib/db", async () => {
 					return {
 						where: (predicate: SQL) => {
 							dbUpdate.where(predicate);
-							return { returning: async () => dbUpdate.rows };
+							return { returning: async () => (admits(predicate) ? dbUpdate.rows : []) };
 						},
 					};
 				},
@@ -178,7 +212,7 @@ vi.mock("@/lib/db", async () => {
 				values: () => ({
 					onConflictDoUpdate: (arg: { set: Record<string, unknown>; setWhere?: SQL }) => {
 						dbInsert.conflict(arg);
-						return { returning: async () => dbInsert.rows };
+						return { returning: async () => (admits(arg.setWhere) ? dbInsert.rows : []) };
 					},
 				}),
 			}),
@@ -246,6 +280,7 @@ beforeEach(() => {
 	dbUpdate.rows = [];
 	dbInsert.rows = [];
 	stored.row = null;
+	jobRows.rows = [];
 	vi.mocked(updateProjectComponent).mockResolvedValue(WIRE);
 	vi.mocked(insertProjectComponent).mockResolvedValue(WIRE);
 });
@@ -468,10 +503,22 @@ describe("updateProjectComponent", () => {
 		expect(set.max_capacity).toBe(8);
 		const { sql, params } = new PgDialect().sqlToQuery(predicate);
 		expect(sql).toMatch(/"project_id" = .*"environment_id" = .*"name" = /);
-		// The status gate rides the same WHERE (#5551); no If-Match, so no revision condition.
-		expect(sql).toMatch(/"status" not in/);
+		// The run gate rides the same WHERE (#5551): no unfinished DEPLOY or DESTROY of THIS
+		// environment. No If-Match, so no revision condition, and nothing reads the component's status.
+		expect(sql).toMatch(/not exists \(select 1 from "jobs" where/);
 		expect(sql).not.toMatch(/date_trunc/);
-		expect(params).toEqual([PROJECT_ID, ENV_ID, "orders", "CREATING", "UPDATING", "DESTROYING"]);
+		expect(sql).not.toMatch(/"status" not in/);
+		expect(params).toEqual([
+			PROJECT_ID,
+			ENV_ID,
+			"orders",
+			ENV_ID,
+			"DEPLOY",
+			"DESTROY",
+			"QUEUED",
+			"CLAIMED",
+			"PROCESSING",
+		]);
 		expect(wire).toEqual({
 			id: "c1",
 			kind: "databases",
@@ -550,16 +597,99 @@ describe("PATCH: the precondition and the status gate (#5551)", () => {
 		expect(body.error).toMatch(/databases\/orders changed on the server since it was read/);
 	});
 
-	it("409 component_busy: a component being provisioned is not changed", async () => {
+	it("409 component_busy: the body names the run it waited on", async () => {
+		const run = { id: "j-1", type: "DEPLOY", status: "PROCESSING" };
 		vi.mocked(updateProjectComponent).mockRejectedValue(
-			new ComponentWriteRefusedError({ reason: "busy", status: "CREATING", component: { ...WIRE, status: "CREATING" } }),
+			new ComponentWriteRefusedError({ reason: "busy", run, component: WIRE }),
 		);
 		const res = await patch({ fields: { max_capacity: 8 } });
 		expect(res.status).toBe(409);
 		const body = await res.json();
 		expect(body.code).toBe("component_busy");
-		expect(body.status).toBe("CREATING");
-		expect(body.error).toMatch(/is CREATING: a component cannot be changed while it is being provisioned/);
+		expect(body.status).toBe("ACTIVE");
+		expect(body.run).toEqual(run);
+		expect(body.error).toMatch(/databases\/orders cannot be changed while a deploy of its environment is PROCESSING \(job j-1\)/);
+	});
+});
+
+// The run gate end to end (#5551 fix round): the route over the REAL write, over the recording db,
+// whose `admits` stands in for Postgres evaluating the gate. Busy means a DEPLOY or DESTROY job of
+// the environment is unfinished — never the component's own status, which no running deploy writes.
+describe("the run gate, route to WHERE (#5551)", () => {
+	/** The real write functions, past the route's mocks of them. */
+	async function realWrites() {
+		const mod = await vi.importActual<typeof import("@/lib/cli/project-components")>("@/lib/cli/project-components");
+		vi.mocked(updateProjectComponent).mockImplementation(mod.updateProjectComponent);
+		vi.mocked(insertProjectComponent).mockImplementation(mod.insertProjectComponent);
+	}
+	/** A job of `environment_id` in `status`. */
+	function job(job_type: string, status: string, environment_id = ENV_ID): JobRow {
+		return { id: `j-${job_type}-${status}`, environment_id, job_type, status, created_at: new Date() };
+	}
+	/** prod's orders as stored, in `status`, and the copy the UPDATE returns when it is admitted. */
+	function ordersAt(status: string) {
+		stored.row = storedOrders({ status });
+		dbUpdate.rows = [storedOrders({ status, max_capacity: 16 })];
+	}
+
+	it.each([
+		["DEPLOY", "PROCESSING"],
+		["DEPLOY", "QUEUED"],
+		["DESTROY", "CLAIMED"],
+	])("PATCH: 409 component_busy while a %s job of the environment is %s", async (type, status) => {
+		await realWrites();
+		ordersAt("ACTIVE");
+		jobRows.rows = [job(type, status)];
+		const res = await patch({ fields: { max_capacity: 16 } });
+		expect(res.status).toBe(409);
+		const body = await res.json();
+		expect(body.code).toBe("component_busy");
+		expect(body.run).toEqual({ id: `j-${type}-${status}`, type, status });
+		expect(body.error).toMatch(type === "DESTROY" ? /while a destroy of its environment/ : /while a deploy of its environment/);
+	});
+
+	it.each([
+		["a finished deploy", job("DEPLOY", "SUCCESS")],
+		["a running plan", job("PLAN", "PROCESSING")],
+		["another environment's deploy", job("DEPLOY", "PROCESSING", OTHER_ENV_ID)],
+	])("PATCH: %s does not hold the component", async (_label, other) => {
+		await realWrites();
+		ordersAt("ACTIVE");
+		jobRows.rows = [other];
+		expect((await patch({ fields: { max_capacity: 16 } })).status).toBe(200);
+	});
+
+	it.each(["CREATING", "UPDATING", "DESTROYING"])(
+		"PATCH: a component at rest in %s, with no run in flight, is changed",
+		async (status) => {
+			// finalizeDeployment leaves a data component CREATING after a SUCCESSFUL deploy when its chart
+			// is still Progressing, and nothing moves it until the next deploy — which a gate on the
+			// component status would then block.
+			await realWrites();
+			ordersAt(status);
+			const res = await patch({ fields: { max_capacity: 16 } });
+			expect(res.status).toBe(200);
+			expect((await res.json()).component.config.max_capacity).toBe(16);
+		},
+	);
+
+	it("POST: a singleton's upsert is refused while a destroy of the environment is queued", async () => {
+		await realWrites();
+		stored.row = { ...storedOrders(), name: undefined };
+		dbInsert.rows = [{ id: "k1", status: "ACTIVE", node_max_size: 5 }];
+		jobRows.rows = [job("DESTROY", "QUEUED")];
+		const res = await post("cluster", { fields: { node_max_size: 5 } });
+		expect(res.status).toBe(409);
+		const body = await res.json();
+		expect(body.code).toBe("component_busy");
+		expect(body.run).toMatchObject({ type: "DESTROY", status: "QUEUED" });
+	});
+
+	it("POST: a singleton at rest in CREATING is upserted", async () => {
+		await realWrites();
+		stored.row = { ...storedOrders({ status: "CREATING" }), name: undefined };
+		dbInsert.rows = [{ id: "k1", status: "CREATING", node_max_size: 5 }];
+		expect((await post("cluster", { fields: { node_max_size: 5 } })).status).toBe(201);
 	});
 });
 
@@ -595,6 +725,7 @@ describe("POST: a singleton's upsert is guarded the same way (#5551)", () => {
 			code: "component_changed",
 			status: null,
 			component: null,
+			run: null,
 		});
 	});
 
@@ -644,18 +775,27 @@ describe("the guarded writes, driven for real (#5551)", () => {
 		expect(wire?.updated_at).toBe("2026-10-06T10:05:00.000Z");
 	});
 
-	it.each([
-		["CREATING", /being provisioned/],
-		["UPDATING", /being provisioned/],
-		["DESTROYING", /being destroyed/],
-	])("update: a row %s is refused as busy", async (status, message) => {
-		stored.row = storedOrders({ status });
+	it("update: a write that matched nothing with no run left to name lost to a run that has finished", async () => {
+		// No If-Match, the row is there, and no job is in flight NOW: the only thing that can have
+		// refused it is a run that finished between the write and this explanation.
+		stored.row = storedOrders();
 		const { updateProjectComponent: update } = await real();
 		const err = await update("databases", PROJECT_ID, ENV_ID, "orders", { max_capacity: 16 }).catch((e: unknown) => e);
 		expect(err).toBeInstanceOf(ComponentWriteRefusedError);
 		if (!(err instanceof ComponentWriteRefusedError)) return;
-		expect(err.refusal).toMatchObject({ reason: "busy", status });
-		expect(err.message).toMatch(message);
+		expect(err.refusal).toMatchObject({ reason: "busy", run: null });
+		expect(err.message).toMatch(/has finished since\. Try again/);
+	});
+
+	it("update: a row still at the revision sent, refused, is the run and not a change", async () => {
+		stored.row = storedOrders();
+		const { updateProjectComponent: update } = await real();
+		const err = await update("databases", PROJECT_ID, ENV_ID, "orders", { max_capacity: 16 }, { ifMatch: REV }).catch(
+			(e: unknown) => e,
+		);
+		expect(err).toBeInstanceOf(ComponentWriteRefusedError);
+		if (!(err instanceof ComponentWriteRefusedError)) return;
+		expect(err.refusal.reason).toBe("busy");
 	});
 
 	it("update: a row at another revision is refused as changed, with the server's copy", async () => {
@@ -701,23 +841,25 @@ describe("the guarded writes, driven for real (#5551)", () => {
 		expect(dbInsert.conflict).not.toHaveBeenCalled();
 	});
 
-	it("singleton: the unconditional upsert carries the status gate on its conflict arm and moves updated_at", async () => {
+	it("singleton: the unconditional upsert carries the run gate on its conflict arm and moves updated_at", async () => {
 		dbInsert.rows = [{ id: "k1", status: "ACTIVE", node_max_size: 5 }];
 		const { insertProjectComponent: upsert } = await real();
 		await upsert("cluster", PROJECT_ID, ENV_ID, "", { node_max_size: 5 });
 		const arg = dbInsert.conflict.mock.calls[0]?.[0];
 		if (!arg?.setWhere) throw new Error("the conflict arm carries no guard");
-		expect(new PgDialect().sqlToQuery(arg.setWhere).sql).toMatch(/"status" not in/);
+		expect(new PgDialect().sqlToQuery(arg.setWhere).sql).toMatch(/not exists \(select 1 from "jobs"/);
+		// Set in code as well as by the trigger: project_observability has no update_updated_at trigger.
 		expect(arg.set.updated_at).toBeInstanceOf(Date);
 	});
 
-	it("singleton: an upsert whose conflict arm the gate refused reads back as busy", async () => {
-		stored.row = { ...storedOrders({ status: "DESTROYING" }), name: undefined };
+	it("singleton: an upsert whose conflict arm the gate refused reads back as busy, naming the run", async () => {
+		stored.row = { ...storedOrders(), name: undefined };
+		jobRows.rows = [{ id: "j-9", environment_id: ENV_ID, job_type: "DEPLOY", status: "PROCESSING", created_at: new Date() }];
 		const { insertProjectComponent: upsert } = await real();
 		const err = await upsert("cluster", PROJECT_ID, ENV_ID, "", { node_max_size: 5 }).catch((e: unknown) => e);
 		expect(err).toBeInstanceOf(ComponentWriteRefusedError);
 		if (!(err instanceof ComponentWriteRefusedError)) return;
-		expect(err.refusal).toMatchObject({ reason: "busy", status: "DESTROYING" });
-		expect(err.message).toMatch(/^cluster is DESTROYING/);
+		expect(err.refusal).toMatchObject({ reason: "busy", run: { id: "j-9", type: "DEPLOY", status: "PROCESSING" } });
+		expect(err.message).toMatch(/^cluster cannot be changed while a deploy of its environment is PROCESSING \(job j-9\)/);
 	});
 });

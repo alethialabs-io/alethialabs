@@ -137,21 +137,25 @@ func TestExecuteApply_AConcurrentEditNamesTheFieldsThatChanged(t *testing.T) {
 	}
 }
 
-// TestComponentUpdateRefusal_EachConflictReadsAsItsOwnNextStep covers the remaining shapes: mid-run,
-// mid-destroy, removed since the read, re-saved with no setting changed, and a plain error.
+// TestComponentUpdateRefusal_EachConflictReadsAsItsOwnNextStep covers the remaining shapes: a deploy
+// running, a destroy queued, a run that finished before the server explained it, removed since the read, re-saved with no setting changed, and a plain error.
 func TestComponentUpdateRefusal_EachConflictReadsAsItsOwnNextStep(t *testing.T) {
 	comp := ComponentPlan{Kind: "databases", Name: "orders", read: map[string]any{"max_capacity": float64(4)}}
 	for name, tc := range map[string]struct {
 		err  error
 		want []string
 	}{
-		"provisioning": {
-			&api.ComponentConflictError{Code: api.ConflictComponentBusy, Status: "CREATING"},
-			[]string{"databases/orders is CREATING on the server", "being provisioned", "re-run `alethia apply`"},
+		"deploy running": {
+			&api.ComponentConflictError{Code: api.ConflictComponentBusy, Status: "ACTIVE", Run: &api.ComponentRun{ID: "j-1", Type: "DEPLOY", Status: "PROCESSING"}},
+			[]string{"databases/orders cannot be changed while a deploy of this environment is processing (job j-1)", "`alethia jobs logs j-1`", "re-run `alethia apply`"},
 		},
-		"destroying": {
-			&api.ComponentConflictError{Code: api.ConflictComponentBusy, Status: "DESTROYING"},
-			[]string{"is DESTROYING", "being destroyed"},
+		"destroy queued": {
+			&api.ComponentConflictError{Code: api.ConflictComponentBusy, Status: "ACTIVE", Run: &api.ComponentRun{ID: "j-2", Type: "DESTROY", Status: "QUEUED"}},
+			[]string{"while a destroy of this environment is queued (job j-2)"},
+		},
+		"run finished since": {
+			&api.ComponentConflictError{Code: api.ConflictComponentBusy, Status: "ACTIVE"},
+			[]string{"was running when apply sent the change, and has finished since", "re-run `alethia apply`"},
 		},
 		"removed": {
 			&api.ComponentConflictError{Code: api.ConflictComponentChanged},

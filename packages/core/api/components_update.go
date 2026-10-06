@@ -16,8 +16,8 @@ import (
 // The two 409 codes a component write is REFUSED with (#5551), as opposed to failing. They mirror
 // cliComponentConflictResponse in apps/console/lib/validations/cli-contract.ts.
 const (
-	// ConflictComponentBusy — a deploy or a destroy is acting on the component (CREATING, UPDATING,
-	// DESTROYING); a change cannot land until it finishes.
+	// ConflictComponentBusy — a DEPLOY or DESTROY job of the component's environment is queued or
+	// running; a change cannot land until it finishes.
 	ConflictComponentBusy = "component_busy"
 	// ConflictComponentChanged — the write carried If-Match and the component is no longer at that
 	// revision: someone else changed it (or removed it) after the caller read it.
@@ -33,10 +33,18 @@ const conflictBodyLimit = 1 << 20
 // nil when the component no longer exists — so a caller holding the copy it read can name the fields
 // that changed.
 type ComponentConflict struct {
-	Error     string     `json:"error"`
-	Code      string     `json:"code"`
-	Status    *string    `json:"status"`
-	Component *Component `json:"component"`
+	Error     string        `json:"error"`
+	Code      string        `json:"code"`
+	Status    *string       `json:"status"`
+	Component *Component    `json:"component"`
+	Run       *ComponentRun `json:"run"`
+}
+
+// ComponentRun is the deploy or destroy job a component_busy refusal waited on.
+type ComponentRun struct {
+	ID     string `json:"id"`
+	Type   string `json:"type"`
+	Status string `json:"status"`
 }
 
 // ComponentConflictError is a component write the server refused with one of the two conflict codes.
@@ -44,10 +52,13 @@ type ComponentConflict struct {
 type ComponentConflictError struct {
 	Code    string
 	Message string
-	// Status is the component's status on the server, empty when the server named none.
+	// Status is the component's own status on the server, empty when the server named none.
 	Status string
 	// Current is the server's copy now, nil when the component no longer exists.
 	Current *Component
+	// Run is the deploy or destroy a busy refusal waited on — nil when it is not busy, or when that
+	// run finished between the refusal and the server explaining it.
+	Run *ComponentRun
 }
 
 // Error renders the server's sentence, which already says what to do next.
@@ -55,7 +66,7 @@ func (e *ComponentConflictError) Error() string {
 	return fmt.Sprintf("%s (status %d)", e.Message, http.StatusConflict)
 }
 
-// Busy reports whether the refusal is the status gate rather than the revision precondition.
+// Busy reports whether the refusal is the run gate rather than the revision precondition.
 func (e *ComponentConflictError) Busy() bool { return e.Code == ConflictComponentBusy }
 
 // UpdateComponent changes the settable fields of an existing NAMED component — a database, cache,
@@ -67,7 +78,8 @@ func (e *ComponentConflictError) Busy() bool { return e.Code == ConflictComponen
 //
 // ifMatch is the component's revision (Component.UpdatedAt) as the caller read it; when non-empty it
 // is sent as If-Match and the server refuses the write with a *ComponentConflictError if the
-// component changed since. Empty writes unconditionally. A component mid-run is refused either way.
+// component changed since. Empty writes unconditionally. While a deploy or destroy of the environment
+// is queued or running, the write is refused either way.
 func (c *Client) UpdateComponent(project, kind, name, env string, fields map[string]interface{}, ifMatch string) (*Component, error) {
 	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/components/%s/%s",
 		c.baseURL, url.PathEscape(project), url.PathEscape(kind), url.PathEscape(name)), env)
@@ -147,7 +159,7 @@ func (c *Client) doComponentWrite(method, endpoint string, payload interface{}, 
 		var conflict ComponentConflict
 		if json.Unmarshal(raw, &conflict) == nil &&
 			(conflict.Code == ConflictComponentBusy || conflict.Code == ConflictComponentChanged) {
-			out := &ComponentConflictError{Code: conflict.Code, Message: conflict.Error, Current: conflict.Component}
+			out := &ComponentConflictError{Code: conflict.Code, Message: conflict.Error, Current: conflict.Component, Run: conflict.Run}
 			if conflict.Status != nil {
 				out.Status = *conflict.Status
 			}
