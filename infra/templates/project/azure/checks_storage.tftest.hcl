@@ -249,3 +249,91 @@ run "cors_origins_from_every_container_are_unioned_into_one_rule" {
     error_message = "The account's one cors_rule must allow the sorted, de-duplicated union of every container's origins."
   }
 }
+
+################################################################################
+# 5. Origins Azure would accept and no browser would ever match are refused at plan
+################################################################################
+# Azure matches the browser's Origin header against these strings exactly. Each of the three below
+# is accepted by the API and then matches nothing, so CORS fails against a rule that exists.
+
+run "a_cors_origin_with_a_path_is_refused" {
+  command = plan
+
+  variables {
+    storage_containers = [{ name = "assets", cors_origins = ["https://app.example.com/upload"] }]
+  }
+
+  expect_failures = [var.storage_containers]
+}
+
+run "a_cors_origin_without_a_scheme_is_refused" {
+  command = plan
+
+  variables {
+    storage_containers = [{ name = "assets", cors_origins = ["app.example.com"] }]
+  }
+
+  expect_failures = [var.storage_containers]
+}
+
+run "a_cors_origin_with_a_non_http_scheme_is_refused" {
+  command = plan
+
+  variables {
+    storage_containers = [{ name = "assets", cors_origins = ["ftp://files.example.com"] }]
+  }
+
+  expect_failures = [var.storage_containers]
+}
+
+# The accepted shapes, so the refusals above cannot pass by refusing everything: a port, plain http
+# (local development), and `*` — which on Azure opens the whole account, as the docs say.
+run "a_port_plain_http_and_the_wildcard_are_accepted" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      { name = "assets", cors_origins = ["http://localhost:3000", "https://app.example.com:8443"] },
+      { name = "public", cors_origins = ["*"] },
+    ]
+  }
+
+  assert {
+    condition     = tolist(try(module.storage_account[0].cors_rule.allowed_origins, [])) == tolist(["*", "http://localhost:3000", "https://app.example.com:8443"])
+    error_message = "A port, plain http and `*` are valid origins and must reach the account's cors_rule."
+  }
+}
+
+################################################################################
+# 6. Azure's 64-origin limit, counted over the UNION
+################################################################################
+# 40 + 40 origins, 16 of them shared: 64 distinct, which is exactly the limit and must plan.
+run "sixty_four_distinct_origins_across_containers_plan" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      { name = "assets", cors_origins = [for i in range(0, 40) : "https://o${i}.example.com"] },
+      { name = "uploads", cors_origins = [for i in range(24, 64) : "https://o${i}.example.com"] },
+    ]
+  }
+
+  assert {
+    condition     = length(try(module.storage_account[0].cors_rule.allowed_origins, [])) == 64
+    error_message = "64 distinct origins is Azure's limit, not over it, and must reach the account's rule."
+  }
+}
+
+# One more distinct origin, split so that NO single container is over the limit: only the union is.
+run "sixty_five_distinct_origins_across_containers_are_refused" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      { name = "assets", cors_origins = [for i in range(0, 40) : "https://o${i}.example.com"] },
+      { name = "uploads", cors_origins = [for i in range(24, 65) : "https://o${i}.example.com"] },
+    ]
+  }
+
+  expect_failures = [var.storage_containers]
+}
