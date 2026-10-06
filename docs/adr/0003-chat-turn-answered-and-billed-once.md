@@ -822,33 +822,47 @@ deletes `body.cellTarget`). Change 4 binds this ADR's PR 1 if ADR 0001's PR 2 is
 Two PRs. PR 1 holds `mutex:migration` (`.claude/skills/db-pipeline/SKILL.md`).
 
 **PR 1: the server, and the transport fields the server requires.**
-1. Rebase onto `origin/dev`. Add `agentTurnClaims` and `agentThreads.revision` to
-   `lib/db/schema/agent.ts`. Generate in one worktree (`pnpm -F console db:generate`, which runs
+1. Rebase onto `origin/dev`. Add `agentTurnClaims`, `agentThreads.revision` and
+   `agentThreads.billingOrgId` to `lib/db/schema/agent.ts`. Generate in one worktree (`pnpm -F console db:generate`, which runs
    `scripts/db-generate.sh` under its lock), then `pnpm -F console check:migrations`. The column
    default backfills every row with revision 1.
 2. `programmables.sql`: the `owner_only` policy of §4.3, idempotent (`DROP POLICY IF EXISTS`).
 3. `lib/agent/turn-claims.ts`: `reserveTurn`, `heartbeatTurn`, `finalizeTurn`, `expireSilentTurns`.
+   `lib/agent/turn-key.ts`: `pendingClientToolCalls` and `turnText`, imported by the routes and
+   the transport. `lib/ai/client-tools.ts`: `CLIENT_TOOL_NAMES`, with a U test that it equals the
+   set of tools in both routes' tool sets that have no `execute`.
    `lib/billing/ai-guard.ts`: extract `reserveAiHold(tx, …)`; `assertAiAllowed` keeps its signature
-   for its other callers and calls it.
+   for its other callers and calls it. `resolveAiPlan`/`getOrgBilling` and `recordAgentTurnUsage`
+   take an optional `tx` (§5.1 step 7, §5.3).
 4. `lib/authz/guard.ts`: `resolveTurnActor` (§6.1).
 5. Both routes: `orgId` and `turn` required, the project check (§6.2), `runWithActor`, `reserveTurn`,
    the stream built from the stored transcript, finalize before `finish`, the heartbeat, the
    timeout, typed refusals. `maxDuration` removed. `lib/agent/transcript-save.ts` and
    `thread-transcript.ts`: `appendLive` / `replaceLast`; the recover branch kept.
 6. `app/server/actions/agent.ts`: `getThread` returns `revision` and `inFlight`; `createThread`'s
-   rewrite bumps `revision`; the `:119-123` comment. **#5464's PR 1 also edits this file**
+   rewrite bumps `revision` and does nothing while a claim runs (§4.2); `createThread` returns the
+   revision; the `:119-123` comment. **#5464's PR 1 also edits this file**
    (`deleteThread`'s draft purge). Whichever lands second rebases; neither changes the other's lines.
 7. The client fields of §9.1 in `use-agent-chat.ts` and `elench-conversation.tsx`, and the two
    `regenerate({ messageId })` call sites. They ship with the server because the server refuses a
    request without them.
-8. The sweep task on the reconcile loop.
-9. An `alethia-security-review` pass: seam 2 (the routes' org and project gates), seam 3 (the new
+8. **The minimum client recovery (Q2):** the `TurnRefusedError` wrapper and `onTurnRefused` of
+   §9.3: on every typed refusal, load the transcript (which refreshes `revisionRef`), clear the
+   error, and put uncommitted text back into the composer. Without it, PR 1's `transcript-stale`
+   would be a dead end between the PRs: Retry re-sends the same stale revision and gets the same
+   409, and a reload loses the words, which on dev would at least have been sent. It reuses
+   `loadInto` and the composer's `restore`, so it is small. C tests: `transcript-stale reloads the
+   transcript, restores the text, shows no error card, and the next Enter is accepted`;
+   `turn-committed-different-text keeps the edit in the composer`.
+9. `release-ai-holds` extended (§8.2, Q5): the C8 pass, the claimed-hold exclusion, retention, and
+   the corrected comment at `ai-holds.ts:27-37`. No new task.
+10. An `alethia-security-review` pass: seam 2 (the routes' org and project gates), seam 3 (the new
    policy, the service-role statements and their explicit owner predicates), and billing.
 
-**PR 2: the client half.** D20 goes live in ADR 0001's store (§9.3); the "Being answered" state; the
-`TurnRefusedError` path; mentions and the cell target read from metadata only, and the
-`pendingMentions` slot deleted (after ADR 0001's PR 2); optionally the transport sends only the last
-message.
+**PR 2: the client half on ADR 0001's store.** Needs ADR 0001's PR 2 and §9.4's changes 1-3.
+`onTurnRefused` dispatches to the store (D9d's new arms, D20) and its composer path is deleted; the
+"Being answered" state; `body.mentions`, `body.cellTarget` and the `pendingMentions` slot deleted,
+and the routes read metadata only; optionally the transport sends only the last message.
 
 **Rollout.**
 - **Open tabs on the old bundle.** After PR 1 deploys, a tab loaded before it sends no `orgId` and no
@@ -857,9 +871,23 @@ message.
   bundle cannot read the typed body; its error card shows the response text.)
 - **Order against ADR 0001.** PR 1 needs the page's org id on the client. ADR 0001's PR 2 provides
   `pageOrg`. If this PR lands first, it adds the one field itself: the `[org]` layout already
-  resolves the org's id on the server and passes it into the Elench store (Q7).
-- **No data migration.** Existing threads start at revision 1 and have no claims. A turn in flight
-  across the deploy finishes on the old process, saves wholesale, and leaves no claim.
+  resolves the org's id on the server and passes it into the Elench store. PR 1 does not need ADR
+  0001's PR 2 otherwise (it carries its own recovery, item 8), but §9.4's dependency rule decides
+  which of the two waits for D9d's new arms.
+- **No data migration.** Existing threads start at revision 1, unpinned, with no claims.
+- **The deploy window has two shapes, and neither is clean.**
+  - The helm chart's console `Deployment` (`deploy/helm/alethia/templates/console.yaml`) declares no
+    strategy, so Kubernetes' default RollingUpdate runs the old and the new pod side by side. A turn
+    on the old pod holds no claim and saves wholesale when it ends, which can overwrite turns the
+    new pod appended meanwhile, and its tab's "Reload to continue" (on the new bundle) may show
+    "No reply arrived" for a turn still being answered; a Retry there is a second answer and a
+    second hold. Its hold is unclaimed, so `release-ai-holds`' age pass covers it if it strands.
+  - Production's compose deploy (`.github/workflows/deploy-console.yml:1316`) replaces the
+    container and kills every in-flight turn. Their holds are unclaimed and are released by the age
+    pass after 60 to 75 minutes; their user turns, saved only at the end on dev, are lost.
+
+  Both are bounded to the turns in flight during one deploy, and both disappear once the old
+  process is gone.
 
 ## 11. Cases, mechanisms and tests
 
@@ -876,29 +904,30 @@ message.
 - **C**: `apps/console/tests/components/agent-turn-refusal.test.tsx`. The transport and the client
   half.
 
-Only R and O fall inside #5515's `scope:` globs; Q8 asks to widen it.
+Only R and O fall inside #5515's `scope:` globs; Q6 asks to widen it.
 
 | # | Case | Mechanism | Test |
 |---|---|---|---|
 | 1 | Lost `startThread` response, Retry bills twice | The first turn is stored by `startConversation` (ADR 0001); a Retry is an `answer` attempt on a stored, unanswered turn (§5.2); two Retries share one key | R › `two Retries of a stored first turn: one model call, one hold, the second answers turn-in-progress` |
 | 2 | Duplicated tab retries an answered turn | C4 `turn-answered`; nothing written | R › `tab B retries a turn tab A answered: 409 turn-answered, no hold row, A's answer still stored` |
-| 3 | Session org bills the turn | §6.1: the body names the org; no session fallback | O › `session on B, request names A: the hold, the ledger rows and the claim are A's` |
+| 3 | Session org bills the turn | §6.1: the body names the org of a first turn, the thread's pin every later one; no session fallback | O › `session on B, request names A: the hold, the ledger rows and the claim are A's`; R › `a turn pinned to A, retried from org B's tab: the re-armed hold, the claim and the tools are A's` (C2, Q1); O › `a caller who left the pinned org: 403 org-forbidden before the hold` |
 | 4 | Project not checked before the hold | §6.2, before `reserveTurn` | O › `a project of org B named under org A: 404 project-not-found and no hold row` |
 | 5 | Two attempts reach the model | The thread lock + C3 | I › `two concurrent accepts of one turn: one running claim, one hold row, one turn-in-progress` |
 | 6 | A stale tab's new turn replaces newer turns | §5.2 `transcript-stale`; §7 append under `revision` | R › `a new turn at an old baseRevision: 409 transcript-stale, no hold, the stored transcript unchanged`; T › `appendLive never writes a client list` |
-| 7 | HITL continuation | `continue:a:<ids>` (§3, §5.2); finalize before `finish` (§5.3) | R › `approve a plan card: the continuation is accepted after an answered turn and its outputs are merged`; R › `the same card approved in two tabs: one continuation, one turn-answered` |
+| 7 | HITL continuation | `continue:a:<P>` (§3, §5.2); finalize before `finish` (§5.3) | R › `approve a plan card: the continuation is accepted after an answered turn and its outputs are merged`; R › `the same card approved in two tabs: one continuation, one turn-answered` |
+| 7b | HITL continuation from a mixed step | `pendingClientToolCalls` reads names, not output presence, on both sides (§3, §9.1) | R › `a last step with list_projects (output stored) and propose_operation: the approval is accepted under continue:a:<proposal id>, the proposal's output is merged, and list_projects's stored output is unchanged`; U › `turnOf over the client copy and the classifier over the stored answer derive the same key for a mixed step`; U › `CLIENT_TOOL_NAMES equals the routes' tools without execute` |
 | 8 | Claim key vs RLS | §4.3: user-only policy over an org-free key; FK cascade | I › `one turn driven from org A and org B: the second accept sees the first claim and refuses`; I › `deleteThread removes the thread's claims`; I › `a claim on another user's thread id is refused although the FK would accept it` |
 | 9 | `maxDuration` is not a bound | §8.2: in-route timeout, 30 s heartbeat, 90 s silence | R › `a turn running past 90 s with heartbeats keeps its claim; a Retry answers turn-in-progress`; R › `TURN_BUDGET_MS fires onAbort and finalizes partial` |
 | 10 | Named-org resolver | `resolveTurnActor` (§6.1) | O › `enterprise: a suspended member naming their former org is 403 before the hold, not billed to their personal org`; O › `community: orgId = userId resolves` |
 | 11 | Regenerate re-bills; stale tab | `regen:a` requires `a` to be the stored last answer (§5.2, §9.1) | R › `regenerate of a displayed answer is billed once`; R › `regenerate from a tab that never saw the newer answer: turn-answered` |
-| 12 | The client half of a refusal | §9.3 | C › `turn-answered loads the transcript and shows no error card`; C › `turn-in-progress shows Being answered and reloads when inFlight clears` |
-| 13 | Mentions, `trigger`, `messageId` | §9.1, §9.2 | C › `the request carries trigger, turnId, answerId and baseRevision`; R › `mentions are read from the stored user message's metadata` |
+| 12 | The client half of a refusal | §9.3; PR 1's `onTurnRefused` (§10 item 8) | C › `turn-answered loads the transcript and shows no error card`; C › `transcript-stale reloads the transcript, restores the text, shows no error card, and the next Enter is accepted`; C › `turn-in-progress shows Being answered and reloads when inFlight clears` (PR 2) |
+| 13 | Mentions, `trigger`, `messageId` | §9.1, §9.2 | C › `the request carries trigger, turnId, answerId, toolCallIds and baseRevision`; R › `mentions are read from the stored user message's metadata`; R › `a later-turn cell prompt with body.cellTarget and no metadata lands in the named cell` |
 | 14 | Stream then disconnect, billed 0 | §8.1: `partial` answer billed, floor the reserve | R › `abort after model output: answered partial, hold settled to at least the reserve` |
 | 15 | Nested `currentActor()` | `runWithActor` (§6.3) | R › `a tool executed in step 2 resolves the named org while the session names another` |
-| 16 | Crash leaves the hold at the reserve | C8 releases to 0 | I › `a silent running claim is expired by the next accept and its hold is 0` |
+| 16 | Crash: the hold sits at the reserve for an hour | C8 releases to 0 at the next accept, or at the next `release-ai-holds` run (§8.2) | I › `a silent running claim is expired by the next accept and its hold is 0`; I › `release-ai-holds expires a silent claim and releases its hold`; I › `release-ai-holds' age pass skips a hold a running claim names` |
 | 17 | Auto-send before the save | Finalize before `finish` (§5.3) | R › `no finish chunk is written before the claim is answered` |
-| 18 | Thread deleted mid-turn | Cascade; finalize `deleted` recovers (§5.3) | R › `delete during a turn: the answer lands in a Recovered thread and is billed once` |
-| 19 | Re-send of a stored turn with edited text | `turn-committed` (§5.2) | R › `stored unanswered turn, re-sent with different text: 409 turn-committed, no hold` |
+| 18 | Thread deleted mid-turn | Cascade; the heartbeat keeps going on a tombstone; finalize `deleted` recovers (§5.3, Q4) | R › `delete during a turn: the model is not aborted, the full answer lands in a Recovered thread and is billed once` |
+| 19 | Re-send of a stored turn with edited text | `turn-committed-different-text` (§5.2), never consumed (§9.3, §9.4 change 1) | R › `stored unanswered turn, re-sent with different text: 409 turn-committed-different-text, textCommitted false, no hold`; R › `an answered turn re-sent with different text is turn-committed-different-text, not turn-answered`; U › `turnText of a D12 first send equals the trimmed stored text`; C › `turn-committed-different-text keeps the edit in the composer` |
 | 20 | Two different new turns at one base | `thread-busy` (§4.1, §5.1 step 5) | I › `two new turns at one base: one running, one thread-busy` |
 | 21 | Old bundle | 409 `client-outdated` before the hold (§10) | R › `a request without orgId or turn: 409 client-outdated, no hold` |
 
@@ -909,21 +938,27 @@ Only R and O fall inside #5515's `scope:` globs; Q8 asks to widen it.
 | C2 re-arm after `failed` | U › `a failed answer attempt is re-armed with attempt_no 2 and a new token` |
 | C5 heartbeat that matches nothing | R › `a heartbeat after expiry aborts the model` |
 | C6 lost to C8 | R › `a finalize after expiry stores nothing and does not meter` |
+| C6 settles in its transaction | I › `a metering write that fails inside finalize rolls back the answer; the claim stays running and C8 releases the hold` and I › `a committed answered claim has a settled hold row` |
+| C6m | I › `createThread's rewrite does nothing while a claim runs`; R › `a finalize whose revision moved is moved: nothing stored, hold 0` |
 | C7 | R › `a provider error before output: failed, hold 0, turn stored unanswered` |
 | 402 inside acceptance | I › `a budget refusal rolls back the claim and the appended turn` |
 | Self-host | R › `without hosted billing a claim is taken and no hold is reserved` |
-| Lock order | I › `accepts for one thread from orgs A and B do not deadlock` |
-| `getThread` | U › `getThread returns revision and inFlight` |
+| Lock order | I › `accepts for one thread from orgs A and B do not deadlock`; I › `an acceptance running C8 on a claim whose route is finalizing does not deadlock`; I › `reserveTurn opens one connection` |
+| C3 before `thread-busy` | U › `a duplicate of a running turn is turn-in-progress, not thread-busy` |
+| `getThread` | I › `getThread returns revision and inFlight, and no inFlight for a silent claim` |
 
 **Count.** 21 cases: the 13 of #5515 (1-12 and the addendum) and 8 found while reading the code
-(14-21). Each has a mechanism and at least one named test. Three wrong-code facts are corrected on
-the way: the `maxDuration` exports (deleted, §8.2), the `agent.ts:119-123` comment (§8.2), and
-`currentActor()`'s missing named-org arm (not added to it; the routes use `resolveTurnActor`, §6.1).
+(14-21), plus 7b from the review of revision 1. Each has a mechanism and at least one named test.
+Five wrong-code facts are corrected on the way: the `maxDuration` exports (deleted, §8.2), the
+`agent.ts:119-123` comment (§8.2), the `ai-holds.ts:27-37` comment's "platform's function timeout"
+and its "books the cost twice" (§1, §8.2), and `currentActor()`'s missing named-org arm (not added
+to it; the routes use `resolveTurnActor`, §6.1). Revision 1 itself stated one wrong fact, that
+nothing releases a crashed turn's hold; §1 now describes `release-ai-holds`.
 
 ## 12. Out of scope
 
 - **`/api/support/ask` and `/api/agent/[agentId]`** have the same four facts (§1) and are outside
-  #5515's `scope:`. `[agentId]` has no console caller at `f586e91e5`. Q9 asks whether PR 1 should
+  #5515's `scope:`. `[agentId]` has no console caller at `f586e91e5`. Q11 asks whether PR 1 should
   move them onto `reserveTurn` too.
 - **A disconnect that does not cancel.** A closed tab aborts the model today, and this ADR keeps
   that, because a disconnect and Stop look the same to the route. Running on after a disconnect,
@@ -934,34 +969,53 @@ the way: the `maxDuration` exports (deleted, §8.2), the `agent.ts:119-123` comm
 - `components/project-assistant/use-project-assistant.ts` has no caller and sends no `threadId`;
   it is deleted in PR 1 rather than adapted.
 
-## 13. Open questions for the maintainer
+## 13. Recommendations for the maintainer to accept or reject
 
-Each has a recommended answer.
+The design above follows every recommendation. Rejecting one changes the sections named in it.
 
-1. **The turn bound.** **Recommended: `TURN_BUDGET_MS = 900_000`** (15 minutes), above the measured
-   six-minute deep-reasoning turn. Shorter cuts real turns; longer only delays the release of a dead
-   process's claim, which the heartbeat already bounds at 90 s.
-2. **Billing a partial answer** (case 14). **Recommended: completed steps at real cost, and at least
-   the reserve (100 credits)** when any model output was stored. Today it is 0, which lets a client
-   read an answer and disconnect before its last step finishes.
-3. **A crashed attempt's hold.** **Recommended: release to 0** (C8), so the rule "billed if and only if
-   an answer is stored" holds without exception. Today it stays at the reserve by accident. The
-   alternative is to keep the reserve as the price of an unknown provider cost.
-4. **A re-send of a stored, unanswered turn with edited text** (case 19). **Recommended: refuse
-   `turn-committed` and answer only the stored text**, as ADR 0001 never rewrites a stored turn. ADR
-   0001's D9d then consumes the draft and the edit is lost from the box; ADR 0001 could keep the box
-   text when it differs from the stored turn. That is its decision, and this one does not depend on it.
-5. **Claim retention.** **Recommended: 30 days** for terminal claims; they hold no text, and the
-   thread's own deletion removes them sooner.
-6. **ADR 0001's D9d list.** **Recommended: amend it** to name this ADR's `committed: false` refusals
-   beside 400, 402, 413 and 429. It already states the principle; this names the instances.
-7. **The page org on the client before ADR 0001's PR 2.** **Recommended: land after ADR 0001's PR 2**
-   and use `pageOrg`. If this must land first, the `[org]` layout passes its resolved id into the
-   Elench store.
-8. **Widen #5515's `scope:`** to `lib/db/schema/agent.ts`, `lib/db/programmables.sql`,
-   `lib/billing/ai-guard.ts`, `lib/authz/guard.ts`, `lib/agent/transcript-save.ts`,
-   `lib/agent/thread-transcript.ts`, `lib/reconcile/`, `components/agent/agent-chat.tsx`,
-   `components/agent/elench/elench-conversation.tsx`, the migration, and the test files of §11.
-   **Recommended: approve**, with PR 1 holding `mutex:migration`.
-9. **The support and agent-identity routes** (§12). **Recommended: include them in PR 1.** Their
-   defect is the same, and `reserveTurn` takes the route's kind and project as parameters.
+1. **Pin the billing org on the thread at its first turn** (§4.2, §6.1, C2). Continuations, Retries,
+   regenerates and later turns bill to, and run their tools in, that org whichever tab sends them,
+   and are refused `org-forbidden` if the caller is no longer an active member. *Alternative:* bill
+   each request to the org its tab names; then one answer and its continuation can land in two
+   ledgers, and a re-arm can bill B for A's turn.
+2. **Put the minimum stale-transcript recovery into PR 1** (§9.3, §10 item 8): on every typed
+   refusal, load the transcript (refreshing `revisionRef`), clear the error, and put uncommitted
+   text back in the composer. It is small because it reuses `loadInto` and the composer's
+   `restore`. *Alternative:* make ADR 0001's PR 2 a hard prerequisite of PR 1; then PR 1 waits on
+   ADR 0001's whole client store.
+3. **An edited re-send is refused `turn-committed-different-text` and never consumes the draft**
+   (§5.2, §9.3, §9.4 change 1). ADR 0001 releases the edit with a fresh turn id, and the stored
+   turn keeps its own text. ADR 0001's "typed text is never lost" wins. *Alternative:* answer the
+   edit in place of the stored turn; that rewrites a stored message, which neither ADR does
+   anywhere else.
+4. **A thread delete does not abort an in-flight model** (C5, §5.3). The full answer finishes into
+   the Recovered thread, as on dev today, bounded by `TURN_BUDGET_MS`. *Alternative:* abort on
+   delete; the Recovered thread then holds a partial answer, billed at least the reserve.
+5. **One sweep owns stranded holds: `release-ai-holds`, extended** (§8.2) with the C8 pass, the
+   claimed-hold exclusion and retention, at its 15-minute interval, with the corrected comment. No
+   second sweep. *Cost:* a crashed turn whose thread nobody opens keeps its reserve for up to about
+   16.5 minutes instead of about 2.5 with a one-minute sweep. The next accept on the thread does
+   not wait for it.
+6. **Widen #5515's `scope:`** to `docs/adr/0003-*.md` (this PR; the issue names `0002-*.md`, which
+   went to #5511), and, for PR 1, to `lib/db/schema/agent.ts`, `lib/db/programmables.sql`,
+   `lib/billing/ai-guard.ts`, `lib/billing/ai-plan.ts`, `lib/billing/agent-metering.ts`,
+   `lib/authz/guard.ts`, `lib/agent/`, `lib/ai/client-tools.ts`, `lib/reconcile/ai-holds.ts`,
+   `components/agent/`, the migration, and the test files of §11. A comment on #5515 proposes it.
+   PR 1 holds `mutex:migration`.
+7. **The turn bound: `TURN_BUDGET_MS = 900_000`** (15 minutes), above the measured six-minute
+   deep-reasoning turn. Shorter cuts real turns; longer only delays the release of a dead process's
+   claim, which the heartbeat already bounds at 90 s.
+8. **Billing a partial answer** (case 14): completed steps at real cost, and **at least the reserve
+   (100 credits)** when any model output was stored. Today it is 0, which lets a client read an
+   answer and disconnect before its last step finishes.
+9. **A crashed attempt's hold, re-asked against what dev does.** Dev already releases it to 0,
+   deliberately, after 60 to 75 minutes (`release-ai-holds`, #2683, #3177); revision 1 wrongly
+   said it stayed at the reserve forever. **Recommended: keep releasing to 0, sooner** (C8, within
+   about 16.5 minutes), so "billed if and only if an answer is stored" holds without exception.
+   *Alternative:* keep the reserve as the price of an unknown provider cost; that reverses #2683's
+   decision and needs its own ruling.
+10. **Claim retention: 30 days** for terminal claims; they hold no text, and the thread's own
+    deletion removes them sooner.
+11. **The support and agent-identity routes** (§12): include them in PR 1. Their defect is the same,
+    `reserveTurn` takes the route's kind and project as parameters, and it gives their holds the
+    claim-owned release instead of the age assumption of §8.2.
