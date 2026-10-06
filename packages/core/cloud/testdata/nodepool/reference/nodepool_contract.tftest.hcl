@@ -28,7 +28,7 @@ run "nodepool_defaults_plan" {
   command = plan
 }
 
-# The docs example (cluster.mdx): a label on every node, a taint for the extra pools, and an arm64 batch pool. capacity_type is left at on-demand because Hetzner refuses spot in a validation of its own.
+# The shape of the docs example (cluster.mdx), widened: a label on every node, a taint for the extra pools, and an arm64 batch pool. capacity_type is left at on-demand because Hetzner refuses spot in a validation of its own.
 run "nodepool_accepts_the_portable_example" {
   command = plan
 
