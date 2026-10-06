@@ -54,7 +54,9 @@ const USERS: Record<string, { org: string; role: "owner" | "operator" | "viewer"
 	"u-outsider": { org: ORG_B, role: "owner" },
 };
 
-/** The calling user (null: no token), and what the fake db's update chain recorded and returns. */
+/** The calling user (null: no token), what the fake db's update chain recorded and returns, the
+ * component row a SELECT on a component table answers (the refusal read, #5551), and what an upsert
+ * was asked to do. */
 interface Hoisted {
 	state: { user: string | null };
 	dbUpdate: {
@@ -62,10 +64,17 @@ interface Hoisted {
 		where: Mock<(predicate: SQL) => void>;
 		rows: unknown[];
 	};
+	stored: { row: Record<string, unknown> | null };
+	dbInsert: {
+		conflict: Mock<(arg: { set: Record<string, unknown>; setWhere?: SQL }) => void>;
+		rows: unknown[];
+	};
 }
-const { state, dbUpdate } = vi.hoisted((): Hoisted => ({
+const { state, dbUpdate, stored, dbInsert } = vi.hoisted((): Hoisted => ({
 	state: { user: "u-editor" },
 	dbUpdate: { set: vi.fn(), where: vi.fn(), rows: [] },
+	stored: { row: null },
+	dbInsert: { conflict: vi.fn(), rows: [] },
 }));
 
 vi.mock("server-only", () => ({}));
@@ -113,7 +122,9 @@ vi.mock("@/lib/authz", async () => {
 // when the predicate's tenancy admits them. The update chain records what `updateProjectComponent`
 // writes.
 vi.mock("@/lib/db", async () => {
-	const { cloudIdentities, member, projectEnvironments } = await import("@/lib/db/schema");
+	const { cloudIdentities, member, projectCluster, projectDatabases, projectEnvironments } = await import(
+		"@/lib/db/schema"
+	);
 	const { PgDialect: Dialect } = await import("drizzle-orm/pg-core");
 	/** The rows a SELECT on `table` filtered by `predicate` returns, from the fixtures above. */
 	const rowsFor = (table: unknown, predicate: SQL): unknown[] => {
@@ -138,6 +149,7 @@ vi.mock("@/lib/db", async () => {
 						(params.length > 3 && i.scope === "personal" && i.user_id === params[3])),
 			);
 		}
+		if (table === projectDatabases || table === projectCluster) return stored.row ? [stored.row] : [];
 		return [];
 	};
 	return {
@@ -161,6 +173,15 @@ vi.mock("@/lib/db", async () => {
 					};
 				},
 			}),
+			// db.insert(t).values(v).onConflictDoUpdate({ set, setWhere }).returning() — a singleton upsert.
+			insert: () => ({
+				values: () => ({
+					onConflictDoUpdate: (arg: { set: Record<string, unknown>; setWhere?: SQL }) => {
+						dbInsert.conflict(arg);
+						return { returning: async () => dbInsert.rows };
+					},
+				}),
+			}),
 		}),
 	};
 });
@@ -181,7 +202,9 @@ vi.mock("@/lib/cli/project-components", async (importOriginal) => {
 import { PATCH } from "@/app/api/cli/projects/[id]/components/[kind]/[name]/route";
 import { POST } from "@/app/api/cli/projects/[id]/components/[kind]/route";
 import {
+	ComponentWriteRefusedError,
 	insertProjectComponent,
+	parseIfMatch,
 	updateProjectComponent,
 	validateComponentFields,
 } from "@/lib/cli/project-components";
@@ -194,6 +217,7 @@ const WIRE = {
 	status: "ACTIVE",
 	cloud_identity_id: null,
 	config: { engine: "postgres", max_capacity: 8 },
+	updated_at: "2026-10-06T10:00:00.000Z",
 };
 
 /** Calls the route as the CLI would: PATCH with a JSON body, `?env=prod`. */
@@ -220,6 +244,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	state.user = "u-editor";
 	dbUpdate.rows = [];
+	dbInsert.rows = [];
+	stored.row = null;
 	vi.mocked(updateProjectComponent).mockResolvedValue(WIRE);
 	vi.mocked(insertProjectComponent).mockResolvedValue(WIRE);
 });
@@ -231,9 +257,14 @@ describe("PATCH /api/cli/projects/:id/components/:kind/:name", () => {
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ component: WIRE });
 		expect(resolveCliProject).toHaveBeenCalledWith(ORG_A, PROJECT_ID);
-		expect(updateProjectComponent).toHaveBeenCalledWith("databases", PROJECT_ID, ENV_ID, "orders", {
-			max_capacity: 8,
-		});
+		expect(updateProjectComponent).toHaveBeenCalledWith(
+			"databases",
+			PROJECT_ID,
+			ENV_ID,
+			"orders",
+			{ max_capacity: 8 },
+			{ ifMatch: null },
+		);
 	});
 
 	it.each([
@@ -289,9 +320,14 @@ describe("PATCH /api/cli/projects/:id/components/:kind/:name", () => {
 
 	it("?env=prod resolves to THIS project's prod, never the other project's of the same name", async () => {
 		await patch({ fields: { max_capacity: 8 } });
-		expect(updateProjectComponent).toHaveBeenCalledWith("databases", PROJECT_ID, ENV_ID, "orders", {
-			max_capacity: 8,
-		});
+		expect(updateProjectComponent).toHaveBeenCalledWith(
+			"databases",
+			PROJECT_ID,
+			ENV_ID,
+			"orders",
+			{ max_capacity: 8 },
+			{ ifMatch: null },
+		);
 	});
 
 	it("403: a viewer of the project's own org cannot edit it", async () => {
@@ -432,7 +468,10 @@ describe("updateProjectComponent", () => {
 		expect(set.max_capacity).toBe(8);
 		const { sql, params } = new PgDialect().sqlToQuery(predicate);
 		expect(sql).toMatch(/"project_id" = .*"environment_id" = .*"name" = /);
-		expect(params).toEqual([PROJECT_ID, ENV_ID, "orders"]);
+		// The status gate rides the same WHERE (#5551); no If-Match, so no revision condition.
+		expect(sql).toMatch(/"status" not in/);
+		expect(sql).not.toMatch(/date_trunc/);
+		expect(params).toEqual([PROJECT_ID, ENV_ID, "orders", "CREATING", "UPDATING", "DESTROYING"]);
 		expect(wire).toEqual({
 			id: "c1",
 			kind: "databases",
@@ -440,6 +479,7 @@ describe("updateProjectComponent", () => {
 			status: "ACTIVE",
 			cloud_identity_id: null,
 			config: { environment_id: ENV_ID, engine: "postgres", max_capacity: 8 },
+			updated_at: null,
 		});
 	});
 
@@ -453,5 +493,231 @@ describe("updateProjectComponent", () => {
 		await expect(update("cluster", PROJECT_ID, ENV_ID, "", { node_max_size: 4 })).rejects.toThrow(/singleton/);
 		await expect(update("databases", PROJECT_ID, ENV_ID, "orders", {})).rejects.toThrow(/no fields/);
 		expect(dbUpdate.set).not.toHaveBeenCalled();
+	});
+});
+
+// #5551 — a write to an existing component is refused (409) while a run is acting on it, and, with
+// `If-Match`, unless it is still at the revision the caller read.
+
+const REV = "2026-10-06T10:00:00.000Z";
+/** prod's orders as the server holds it — ACTIVE, at REV unless overridden. */
+function storedOrders(extra: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		id: "c1",
+		org_id: ORG_A,
+		project_id: PROJECT_ID,
+		environment_id: ENV_ID,
+		name: "orders",
+		status: "ACTIVE",
+		engine: "postgres",
+		max_capacity: 8,
+		updated_at: new Date(REV),
+		...extra,
+	};
+}
+
+describe("PATCH: the precondition and the status gate (#5551)", () => {
+	it("passes If-Match through as the revision, normalised — quotes and a weak prefix accepted", async () => {
+		await patch({ fields: { max_capacity: 8 } }, { headers: { "If-Match": `W/"2026-10-06T12:00:00+02:00"` } });
+		expect(updateProjectComponent).toHaveBeenCalledWith(
+			"databases",
+			PROJECT_ID,
+			ENV_ID,
+			"orders",
+			{ max_capacity: 8 },
+			{ ifMatch: REV },
+		);
+	});
+
+	it("400: an If-Match that is not a revision is refused, never treated as no precondition", async () => {
+		const res = await patch({ fields: { max_capacity: 8 } }, { headers: { "If-Match": `"v7"` } });
+		expect(res.status).toBe(400);
+		expect((await res.json()).error).toMatch(/If-Match must be the component's revision/);
+		expect(updateProjectComponent).not.toHaveBeenCalled();
+	});
+
+	it("409 component_changed: names the refusal and carries the server's copy", async () => {
+		const now = { ...WIRE, config: { engine: "postgres", max_capacity: 16 }, updated_at: "2026-10-06T10:05:00.000Z" };
+		vi.mocked(updateProjectComponent).mockRejectedValue(
+			new ComponentWriteRefusedError({ reason: "changed", component: now }),
+		);
+		const res = await patch({ fields: { max_capacity: 8 } }, { headers: { "If-Match": REV } });
+		expect(res.status).toBe(409);
+		const body = await res.json();
+		expect(body.code).toBe("component_changed");
+		expect(body.status).toBe("ACTIVE");
+		expect(body.component).toEqual(now);
+		expect(body.error).toMatch(/databases\/orders changed on the server since it was read/);
+	});
+
+	it("409 component_busy: a component being provisioned is not changed", async () => {
+		vi.mocked(updateProjectComponent).mockRejectedValue(
+			new ComponentWriteRefusedError({ reason: "busy", status: "CREATING", component: { ...WIRE, status: "CREATING" } }),
+		);
+		const res = await patch({ fields: { max_capacity: 8 } });
+		expect(res.status).toBe(409);
+		const body = await res.json();
+		expect(body.code).toBe("component_busy");
+		expect(body.status).toBe("CREATING");
+		expect(body.error).toMatch(/is CREATING: a component cannot be changed while it is being provisioned/);
+	});
+});
+
+describe("POST: a singleton's upsert is guarded the same way (#5551)", () => {
+	it("passes If-Match for a singleton, and ignores it for a named create", async () => {
+		const send = (kind: string, body: unknown) =>
+			POST(
+				new Request(`https://console.local/api/cli/projects/${PROJECT_ID}/components/${kind}?env=prod`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json", Authorization: "Bearer t", "If-Match": `"${REV}"` },
+					body: JSON.stringify(body),
+				}),
+				{ params: Promise.resolve({ id: PROJECT_ID, kind }) },
+			);
+		expect((await send("cluster", { fields: { node_max_size: 5 } })).status).toBe(201);
+		expect(insertProjectComponent).toHaveBeenLastCalledWith("cluster", PROJECT_ID, ENV_ID, "", { node_max_size: 5 }, {
+			ifMatch: REV,
+		});
+		expect((await send("databases", { name: "orders", fields: {} })).status).toBe(201);
+		expect(insertProjectComponent).toHaveBeenLastCalledWith("databases", PROJECT_ID, ENV_ID, "orders", {}, {
+			ifMatch: null,
+		});
+	});
+
+	it("409: a refused upsert answers with the conflict body", async () => {
+		vi.mocked(insertProjectComponent).mockRejectedValue(
+			new ComponentWriteRefusedError({ reason: "changed", component: null }),
+		);
+		const res = await post("cluster", { fields: { node_max_size: 5 } });
+		expect(res.status).toBe(409);
+		expect(await res.json()).toEqual({
+			error: expect.stringMatching(/no longer exists/),
+			code: "component_changed",
+			status: null,
+			component: null,
+		});
+	});
+
+	it("400: an unreadable If-Match on a singleton", async () => {
+		const res = await POST(
+			new Request(`https://console.local/api/cli/projects/${PROJECT_ID}/components/cluster?env=prod`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json", Authorization: "Bearer t", "If-Match": "yesterday" },
+				body: JSON.stringify({ fields: { node_max_size: 5 } }),
+			}),
+			{ params: Promise.resolve({ id: PROJECT_ID, kind: "cluster" }) },
+		);
+		expect(res.status).toBe(400);
+		expect(insertProjectComponent).not.toHaveBeenCalled();
+	});
+});
+
+describe("parseIfMatch", () => {
+	it.each([
+		[null, null],
+		["", null],
+		["*", null],
+		[REV, REV],
+		[`"${REV}"`, REV],
+		[`W/"${REV}"`, REV],
+	])("%s → %s", (header, ifMatch) => {
+		expect(parseIfMatch(header)).toEqual({ ok: true, ifMatch });
+	});
+});
+
+describe("the guarded writes, driven for real (#5551)", () => {
+	/** The real module, past the route's mocks of it. */
+	async function real() {
+		return vi.importActual<typeof import("@/lib/cli/project-components")>("@/lib/cli/project-components");
+	}
+
+	it("update: an If-Match adds the revision to the UPDATE's own WHERE, at millisecond precision", async () => {
+		dbUpdate.rows = [storedOrders({ updated_at: new Date("2026-10-06T10:05:00.000Z") })];
+		const { updateProjectComponent: update } = await real();
+		const wire = await update("databases", PROJECT_ID, ENV_ID, "orders", { max_capacity: 16 }, { ifMatch: REV });
+		const predicate = dbUpdate.where.mock.calls[0]?.[0];
+		if (!predicate) throw new Error("the update chain was not driven");
+		const { sql, params } = new PgDialect().sqlToQuery(predicate);
+		expect(sql).toMatch(/date_trunc\('milliseconds', .*"updated_at"\) = \$\d+::timestamptz/);
+		expect(params).toContain(REV);
+		// The response carries the NEW revision, which is what the next If-Match must name.
+		expect(wire?.updated_at).toBe("2026-10-06T10:05:00.000Z");
+	});
+
+	it.each([
+		["CREATING", /being provisioned/],
+		["UPDATING", /being provisioned/],
+		["DESTROYING", /being destroyed/],
+	])("update: a row %s is refused as busy", async (status, message) => {
+		stored.row = storedOrders({ status });
+		const { updateProjectComponent: update } = await real();
+		const err = await update("databases", PROJECT_ID, ENV_ID, "orders", { max_capacity: 16 }).catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(ComponentWriteRefusedError);
+		if (!(err instanceof ComponentWriteRefusedError)) return;
+		expect(err.refusal).toMatchObject({ reason: "busy", status });
+		expect(err.message).toMatch(message);
+	});
+
+	it("update: a row at another revision is refused as changed, with the server's copy", async () => {
+		stored.row = storedOrders({ max_capacity: 16, updated_at: new Date("2026-10-06T10:05:00.000Z") });
+		const { updateProjectComponent: update } = await real();
+		const err = await update("databases", PROJECT_ID, ENV_ID, "orders", { max_capacity: 4 }, { ifMatch: REV }).catch(
+			(e: unknown) => e,
+		);
+		expect(err).toBeInstanceOf(ComponentWriteRefusedError);
+		if (!(err instanceof ComponentWriteRefusedError)) return;
+		expect(err.refusal.reason).toBe("changed");
+		expect(err.refusal.component).toMatchObject({
+			name: "orders",
+			config: { max_capacity: 16 },
+			updated_at: "2026-10-06T10:05:00.000Z",
+		});
+	});
+
+	it("update: no row at all is still the 404, not a refusal", async () => {
+		const { updateProjectComponent: update } = await real();
+		expect(await update("databases", PROJECT_ID, ENV_ID, "orders", { max_capacity: 4 }, { ifMatch: REV })).toBeNull();
+	});
+
+	it("singleton: an If-Match is an UPDATE of the row read, never an insert, and moves updated_at", async () => {
+		dbUpdate.rows = [{ ...storedOrders(), name: undefined, node_max_size: 5 }];
+		const { insertProjectComponent: upsert } = await real();
+		await upsert("cluster", PROJECT_ID, ENV_ID, "", { node_max_size: 5 }, { ifMatch: REV });
+		expect(dbInsert.conflict).not.toHaveBeenCalled();
+		const set = dbUpdate.set.mock.calls[0]?.[0];
+		expect(set?.node_max_size).toBe(5);
+		expect(set?.updated_at).toBeInstanceOf(Date);
+		const predicate = dbUpdate.where.mock.calls[0]?.[0];
+		if (!predicate) throw new Error("the update chain was not driven");
+		expect(new PgDialect().sqlToQuery(predicate).sql).toMatch(/date_trunc/);
+	});
+
+	it("singleton: an If-Match on a singleton removed since the read is refused, not re-created", async () => {
+		const { insertProjectComponent: upsert } = await real();
+		const err = await upsert("cluster", PROJECT_ID, ENV_ID, "", { node_max_size: 5 }, { ifMatch: REV }).catch(
+			(e: unknown) => e,
+		);
+		expect(err).toBeInstanceOf(ComponentWriteRefusedError);
+		expect(dbInsert.conflict).not.toHaveBeenCalled();
+	});
+
+	it("singleton: the unconditional upsert carries the status gate on its conflict arm and moves updated_at", async () => {
+		dbInsert.rows = [{ id: "k1", status: "ACTIVE", node_max_size: 5 }];
+		const { insertProjectComponent: upsert } = await real();
+		await upsert("cluster", PROJECT_ID, ENV_ID, "", { node_max_size: 5 });
+		const arg = dbInsert.conflict.mock.calls[0]?.[0];
+		if (!arg?.setWhere) throw new Error("the conflict arm carries no guard");
+		expect(new PgDialect().sqlToQuery(arg.setWhere).sql).toMatch(/"status" not in/);
+		expect(arg.set.updated_at).toBeInstanceOf(Date);
+	});
+
+	it("singleton: an upsert whose conflict arm the gate refused reads back as busy", async () => {
+		stored.row = { ...storedOrders({ status: "DESTROYING" }), name: undefined };
+		const { insertProjectComponent: upsert } = await real();
+		const err = await upsert("cluster", PROJECT_ID, ENV_ID, "", { node_max_size: 5 }).catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(ComponentWriteRefusedError);
+		if (!(err instanceof ComponentWriteRefusedError)) return;
+		expect(err.refusal).toMatchObject({ reason: "busy", status: "DESTROYING" });
+		expect(err.message).toMatch(/^cluster is DESTROYING/);
 	});
 });
