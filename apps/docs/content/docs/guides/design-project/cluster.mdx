@@ -92,10 +92,9 @@ Each value is bounded individually (1–100); the form does not enforce a min �
 ## Node labels, taints and extra pools
 
 <Callout type="warn">
-  This is the contract that each cloud implements. No cloud accepts these keys yet. Until a cloud
-  does, the server refuses them with "not a variable of this template". AWS is coming in
-  [#5534](https://github.com/alethialabs-io/alethialabs/issues/5534), Azure in
-  [#5535](https://github.com/alethialabs-io/alethialabs/issues/5535), Hetzner in
+  This is the contract that each cloud implements. Azure accepts these keys. On a cloud that does
+  not accept them yet, the server refuses them with "not a variable of this template". AWS is
+  coming in [#5534](https://github.com/alethialabs-io/alethialabs/issues/5534), Hetzner in
   [#5536](https://github.com/alethialabs-io/alethialabs/issues/5536) and GCP in
   [#5537](https://github.com/alethialabs-io/alethialabs/issues/5537).
 </Callout>
@@ -262,11 +261,56 @@ because of its instance type or Spot capacity, but never because it is less isol
 
 | | AWS | Azure | Hetzner | GCP |
 |-|-----|-------|---------|-----|
-| How a pool is built | Coming in [#5534](https://github.com/alethialabs-io/alethialabs/issues/5534) | Coming in [#5535](https://github.com/alethialabs-io/alethialabs/issues/5535) | Coming in [#5536](https://github.com/alethialabs-io/alethialabs/issues/5536) | Coming in [#5537](https://github.com/alethialabs-io/alethialabs/issues/5537) |
-| Pool size | Coming in #5534 | Coming in #5535 | A fixed count of `desired_size` until [#5538](https://github.com/alethialabs-io/alethialabs/issues/5538) | Coming in #5537 |
-| `capacity_type: spot` | Coming in #5534 | Coming in #5535. AKS also adds its own taint, `kubernetes.azure.com/scalesetpriority=spot:NoSchedule` | Refused, because Hetzner Cloud sells no Spot capacity (#5536) | Coming in #5537 |
+| How a pool is built | Coming in [#5534](https://github.com/alethialabs-io/alethialabs/issues/5534) | One AKS user node pool (`mode = User`) per entry, named for the entry. See [On Azure](#on-azure) | Coming in [#5536](https://github.com/alethialabs-io/alethialabs/issues/5536) | Coming in [#5537](https://github.com/alethialabs-io/alethialabs/issues/5537) |
+| Pool size | Coming in #5534 | The cluster autoscaler scales the pool from `min_size` to `max_size`, starting at `desired_size` | A fixed count of `desired_size` until [#5538](https://github.com/alethialabs-io/alethialabs/issues/5538) | Coming in #5537 |
+| `capacity_type: spot` | Coming in #5534 | A Spot pool, evicted with `Delete`, at up to the on-demand price. AKS also adds its own label and taint, `kubernetes.azure.com/scalesetpriority=spot:NoSchedule` | Refused, because Hetzner Cloud sells no Spot capacity (#5536) | Coming in #5537 |
 | Taints on an arm64 pool | `alethia.io/arch=arm64:NoSchedule` (#5534) | `alethia.io/arch=arm64:NoSchedule` (#5535) | `alethia.io/arch=arm64:NoSchedule` (#5536) | `alethia.io/arch=arm64:NoSchedule`, and GKE's own `kubernetes.io/arch=arm64:NoSchedule` (#5537) |
-| arm64 instance types | Coming in #5534 | Coming in #5535 | Coming in #5536 | Coming in #5537 |
+| arm64 instance types | Coming in #5534 | The Arm64 D and E sizes, whose features start with `p`: `Standard_D4ps_v5`, `Standard_D4pds_v5`, `Standard_D2pls_v5`, `Standard_E4ps_v5` and the `_v6` sizes | Coming in #5536 | Coming in #5537 |
+
+### On Azure
+
+On Azure, each entry in `extra_node_pools` becomes its own AKS user node pool. The pools that
+`aks_instance_types` makes (`pool1`, `pool2`, …) stay as they are, and share one size. A pool in
+`extra_node_pools` has its own size, and is keyed by its name: removing a pool from the middle of
+the list removes that pool only.
+
+The Azure plan also refuses a pool whose instance type is not an Azure VM size, and a pool whose
+`arch` does not match its VM size. An arm64 pool needs an Arm64 size, such as `Standard_D4ps_v5`.
+An amd64 pool cannot use an Arm64 size.
+
+This example adds a GPU pool on Spot capacity that scales to zero, and an arm64 pool for batch
+jobs, each with its own size:
+
+```yaml
+environments:
+  - name: prod
+    components:
+      cluster:
+        provider_config:
+          node_labels:
+            team: payments
+          extra_node_pools:
+            - name: gpu
+              instance_type: Standard_NC4as_T4_v3
+              capacity_type: spot
+              min_size: 0
+              max_size: 3
+              taints:
+                - key: gpu
+                  value: "true"
+                  effect: NoSchedule
+            - name: batch
+              instance_type: Standard_D4ps_v5
+              arch: arm64
+              min_size: 1
+              max_size: 4
+              desired_size: 2
+```
+
+The `gpu` pool's nodes carry the taints `gpu=true:NoSchedule` and AKS's own
+`kubernetes.azure.com/scalesetpriority=spot:NoSchedule`. A pod that runs there tolerates both. See
+[Azure resources](/concepts/runner/infrastructure-templates/azure#node-pools) for what changes
+when you edit a pool.
 
 ## Cluster Admins
 
