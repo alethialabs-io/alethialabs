@@ -112,6 +112,8 @@ type Environment struct {
 	Lifecycle string `yaml:"lifecycle,omitempty"`
 	// Components are the resources this environment carries, keyed by kind.
 	Components Components `yaml:"components,omitempty"`
+	// Addons are the catalog add-ons this environment runs, in file order (see addons.go).
+	Addons []Addon `yaml:"addons,omitempty"`
 }
 
 // Components are an environment's resources in FILE ORDER, keyed by kind.

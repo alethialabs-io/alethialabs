@@ -8,6 +8,8 @@
 //   - POST keeps what the CLI did not send (#5545): an omitted `values_yaml` carries the stored
 //     Advanced override forward, `null`/"" clears it, and `values` keys merge over the stored knobs.
 //   - GET reports the EFFECTIVE version (the pin, else the catalog default) and whether it is pinned.
+//   - GET returns each row's non-secret settings, its values_yaml and its secret setting NAMES, and
+//     never a secret value (#5528).
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -198,6 +200,8 @@ describe("GET /api/cli/projects/:id/addons — effective version", () => {
 			health: null,
 			sync_status: null,
 			last_synced_at: null,
+			values: {},
+			values_yaml: null,
 			cursor_key: "k",
 		};
 		vi.mocked(paginate).mockResolvedValue({
@@ -222,5 +226,73 @@ describe("GET /api/cli/projects/:id/addons — effective version", () => {
 			version_pinned: false,
 		});
 		expect(body.addons[1].version).toEqual(expect.any(String));
+	});
+});
+
+describe("GET /api/cli/projects/:id/addons — stored settings for the plan (#5528)", () => {
+	it("returns the non-secret settings and values_yaml, and a secret setting by NAME only", async () => {
+		const def = ADDON_CATALOG.find((d) => d.fields.some((f) => f.type === "secret" || f.secret));
+		if (!def) throw new Error("the catalog declares no secret field to test against");
+		const secretKey = def.fields.find((f) => f.type === "secret" || f.secret)?.key ?? "";
+		const envelope = { iv: "SECRET-IV", tag: "SECRET-TAG", data: "SECRET-CIPHERTEXT" };
+		vi.mocked(paginate).mockResolvedValue({
+			items: [
+				{
+					id: "r",
+					addon_id: def.id,
+					enabled: true,
+					mode: "managed",
+					version: null,
+					namespace: def.namespace,
+					status: "READY",
+					health: null,
+					sync_status: null,
+					last_synced_at: null,
+					values: { [secretKey]: envelope, replicas: 2 },
+					values_yaml: "resources:\n  limits:\n    cpu: 1\n",
+					cursor_key: "k",
+				},
+			],
+			page: { mode: "exact", limit: 100, total: 1, next_cursor: null },
+		} as never);
+
+		const res = await GET(new Request(URL_BASE), params);
+		expect(res.status).toBe(200);
+		const text = await res.text();
+		// No part of the envelope reaches the wire — not masked, absent.
+		expect(text).not.toContain("SECRET-");
+		const body = JSON.parse(text);
+		expect(body.addons[0].settings).toEqual({ replicas: 2 });
+		expect(body.addons[0].settings).not.toHaveProperty(secretKey);
+		expect(body.addons[0].secret_keys).toContain(secretKey);
+		expect(body.addons[0].values_yaml).toBe("resources:\n  limits:\n    cpu: 1\n");
+	});
+
+	it("returns no settings at all for an add-on id the catalog does not know", async () => {
+		vi.mocked(paginate).mockResolvedValue({
+			items: [
+				{
+					id: "r",
+					addon_id: "retired-addon",
+					enabled: true,
+					mode: "managed",
+					version: null,
+					namespace: null,
+					status: "READY",
+					health: null,
+					sync_status: null,
+					last_synced_at: null,
+					values: { password: "plaintext-from-an-old-row" },
+					values_yaml: null,
+					cursor_key: "k",
+				},
+			],
+			page: { mode: "exact", limit: 100, total: 1, next_cursor: null },
+		} as never);
+
+		const res = await GET(new Request(URL_BASE), params);
+		const text = await res.text();
+		expect(text).not.toContain("plaintext-from-an-old-row");
+		expect(JSON.parse(text).addons[0]).toMatchObject({ settings: {}, secret_keys: [] });
 	});
 });

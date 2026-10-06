@@ -27,8 +27,12 @@ export const CHART_VERSION_MAX_LENGTH = 64;
 /**
  * SemVer 2.0 (semver.org's recommended pattern), with an optional leading `v`. JavaScript's `$`
  * without the `m` flag matches only at the end of the input, so a trailing newline is refused.
+ *
+ * Exported because `GET /api/cli/schema/addons` publishes its source, and the CLI compiles THAT
+ * rather than holding a copy (#5528). It uses only syntax Go's RE2 reads the same way — no
+ * lookaround, no backreference — and Go's `$` also matches only at the end of the text.
  */
-const EXACT_SEMVER =
+export const CHART_VERSION_PATTERN =
 	/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
 
 /** The sentence a refused version gets — written for the person who typed it. */
@@ -42,7 +46,7 @@ export const CHART_VERSION_TOO_LONG = `A chart version is at most ${CHART_VERSIO
 export const chartVersionSchema = z
 	.string()
 	.max(CHART_VERSION_MAX_LENGTH, CHART_VERSION_TOO_LONG)
-	.regex(EXACT_SEMVER, CHART_VERSION_REFUSAL);
+	.regex(CHART_VERSION_PATTERN, CHART_VERSION_REFUSAL);
 
 /**
  * Returns why `value` is not an acceptable chart version, or null when it is. An empty string is

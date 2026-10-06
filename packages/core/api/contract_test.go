@@ -488,6 +488,15 @@ func TestContract_Addons(t *testing.T) {
 	assertNoExtraStructKeys(t, "addons.json", resp)
 }
 
+func TestContract_AddonCatalog(t *testing.T) {
+	var resp AddonCatalogDocument
+	strictDecode(t, "addon_catalog.json", &resp)
+	if len(resp.Addons) != 1 {
+		t.Fatalf("expected 1 catalog add-on, got %d", len(resp.Addons))
+	}
+	assertNoExtraStructKeys(t, "addon_catalog.json", resp)
+}
+
 func TestContract_ByoCharts(t *testing.T) {
 	var resp ProjectByoChartsPage
 	strictDecode(t, "byo_charts.json", &resp)

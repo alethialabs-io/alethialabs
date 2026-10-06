@@ -1,0 +1,42 @@
+{
+	"version": "provider-config-fixture",
+	"kinds": [
+		{
+			"kind": "cluster",
+			"singleton": true,
+			"fields": ["node_min_size", "node_max_size", "provider_config"],
+			"schema": {
+				"type": "object",
+				"properties": {
+					"node_min_size": { "type": "integer" },
+					"node_max_size": { "type": "integer" },
+					"provider_config": { "type": "object", "additionalProperties": {} }
+				}
+			}
+		},
+		{
+			"kind": "databases",
+			"singleton": false,
+			"fields": ["engine", "provider_config"],
+			"schema": {
+				"type": "object",
+				"properties": {
+					"engine": { "type": "string" },
+					"provider_config": { "type": "object", "additionalProperties": {} }
+				}
+			}
+		},
+		{
+			"kind": "repositories",
+			"singleton": true,
+			"fields": ["apps_destination_repo", "apps_path"],
+			"schema": {
+				"type": "object",
+				"properties": {
+					"apps_destination_repo": { "type": "string" },
+					"apps_path": { "type": "string" }
+				}
+			}
+		}
+	]
+}

@@ -251,12 +251,15 @@ func ensureCloudAccount(c cloudIdentityLister, out io.Writer, format, wanted str
 // The values come through the SAME resolver every other command uses — flag, environment, manifest
 // (there is none yet), form, default — so `up --no-input --project x --region y --cloud-account z`
 // authors a file without a terminal, which is the contract that makes this scriptable at all.
+//
+// addons are written into the first environment; `init --addon` passes them and `up` passes none.
 func authorManifest(
 	c applyClient,
 	token string,
 	out io.Writer,
 	format, path string,
 	values spec.Values,
+	addons ...manifest.Addon,
 ) error {
 	name, region, account := values.Get("project"), values.Get("region"), values.Get("account")
 	// The node shape is checked FIRST, before any question: a malformed or doubled shape is a
@@ -317,6 +320,10 @@ func authorManifest(
 	m := manifestFromCreate(api.CreateProjectParams{
 		ProjectName: name, Region: region, Environments: environments, NodeShape: shape,
 	}, account)
+	// `init --addon` (#5528): the first environment is the one the flags describe.
+	if len(addons) > 0 && len(m.Environments) > 0 {
+		m.Environments[0].Addons = addons
+	}
 	if err := manifest.Write(path, m, false); err != nil {
 		return err
 	}

@@ -12,11 +12,30 @@ import (
 
 // FieldChange is one field the file declares whose value differs from the server's. `From` is
 // nil when the server holds no value for the field (absent or null).
+//
+// Key is set for a field the server merges key by key (a component's `provider_config`, an
+// add-on's `settings`): the change is to that one key of the field, and `To` nil removes the key.
 type FieldChange struct {
 	Field string `json:"field"`
+	Key   string `json:"key,omitempty"`
 	From  any    `json:"from"`
 	To    any    `json:"to"`
 }
+
+// label is how a change is named to a person: `field`, or `field.key` for one key of a merged field.
+func (c FieldChange) label() string {
+	if c.Key != "" {
+		return c.Field + "." + c.Key
+	}
+	return c.Field
+}
+
+// mergedFields are the component fields the server MERGES key by key rather than replacing whole
+// (#5529): a key the request omits is kept, and a key sent as null is removed. Diffing one as a
+// single value would show a standing change whenever the server holds a key the file does not
+// declare (one set in the console's Advanced section, say), and applying it would send the file's
+// map as though it were the whole of the field.
+var mergedFields = map[string]bool{"provider_config": true}
 
 // diffFields compares the fields a file DECLARES with the values the server holds, and returns one
 // change per declared field whose value differs, sorted by field name.
@@ -28,17 +47,68 @@ type FieldChange struct {
 //
 // It is deliberately independent of component kinds: it takes two plain maps, so any other part
 // of the manifest with server-held values (add-ons, say) can reuse it.
+//
+// A field in mergedFields is compared KEY BY KEY, by the same rule one level down: a key the file
+// does not declare is kept and is no change, and `key: null` is a change only while the server
+// still holds the key — so a removal settles after one apply.
 func diffFields(declared, current map[string]any) []FieldChange {
 	var out []FieldChange
 	for field, want := range declared {
 		have := current[field]
+		if mergedFields[field] {
+			if wantKeys, ok := stringKeyed(want); ok {
+				haveKeys, _ := stringKeyed(have)
+				out = append(out, diffKeys(field, wantKeys, haveKeys)...)
+				continue
+			}
+		}
 		if valuesEqual(want, have) {
 			continue
 		}
 		out = append(out, FieldChange{Field: field, From: have, To: want})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Field < out[j].Field })
+	sortChanges(out)
 	return out
+}
+
+// diffKeys compares the keys `declared` names with the same keys of `current`, as changes to one
+// key of `field`. A declared null equals an absent key, so a removed key is a change exactly once.
+func diffKeys(field string, declared, current map[string]any) []FieldChange {
+	var out []FieldChange
+	for key, want := range declared {
+		have := current[key]
+		if valuesEqual(want, have) {
+			continue
+		}
+		out = append(out, FieldChange{Field: field, Key: key, From: have, To: want})
+	}
+	return out
+}
+
+// stringKeyed reads a decoded mapping — YAML's map[string]any or map[any]any, or JSON's — as a
+// map[string]any, and reports whether v was a mapping at all.
+func stringKeyed(v any) (map[string]any, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		return t, true
+	case map[any]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			out[fmt.Sprint(k)] = val
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// sortChanges orders changes by field, then key, so a plan reads the same on every run.
+func sortChanges(out []FieldChange) {
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Field != out[j].Field {
+			return out[i].Field < out[j].Field
+		}
+		return out[i].Key < out[j].Key
+	})
 }
 
 // valuesEqual reports whether two decoded values mean the same thing (see diffFields).
@@ -120,11 +190,22 @@ func formatFieldValue(v any) string {
 	return string(raw)
 }
 
-// changedFields is the request body of an update: the file's value for each changed field.
+// changedFields is the request body of an update: the file's value for each changed field. A change
+// to one key of a merged field is sent as a mapping holding only the changed keys — the server
+// merges it, so the keys left out are kept and a null removes its key.
 func changedFields(changes []FieldChange) map[string]any {
 	out := make(map[string]any, len(changes))
 	for _, c := range changes {
-		out[c.Field] = c.To
+		if c.Key == "" {
+			out[c.Field] = c.To
+			continue
+		}
+		keys, ok := out[c.Field].(map[string]any)
+		if !ok {
+			keys = map[string]any{}
+			out[c.Field] = keys
+		}
+		keys[c.Key] = c.To
 	}
 	return out
 }

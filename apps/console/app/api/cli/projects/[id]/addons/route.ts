@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { disableAddon, enableAddon } from "@/app/server/actions/addons";
 import { getAddOn } from "@/lib/addons/catalog";
+import { storedAddonSettings } from "@/lib/cli/addon-catalog";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
 import {
@@ -108,6 +109,8 @@ export async function GET(
 						health: projectAddons.health,
 						sync_status: projectAddons.sync_status,
 						last_synced_at: projectAddons.last_synced_at,
+						values: projectAddons.values,
+						values_yaml: projectAddons.values_yaml,
 						cursor_key: cursorKey(projectAddons.created_at),
 					})
 					.from(projectAddons)
@@ -135,6 +138,10 @@ export async function GET(
 				health: r.health,
 				sync: r.sync_status,
 				last_synced_at: r.last_synced_at?.toISOString() ?? null,
+				// What `alethia plan` diffs an `alethia.yaml` add-on against (#5528). Secret settings
+				// are REMOVED here, not masked, and only their names travel — see storedAddonSettings.
+				...storedAddonSettings(r.addon_id, r.values),
+				values_yaml: r.values_yaml,
 			})),
 			page,
 		});

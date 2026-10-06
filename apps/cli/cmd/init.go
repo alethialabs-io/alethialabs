@@ -6,6 +6,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/spec"
@@ -91,7 +92,11 @@ Pass --web-origin to supply the URL without the prompt; with --no-input and no
 		if err := ensureCloudAccount(client, os.Stdout, format, values.Get("account")); err != nil {
 			fail(err)
 		}
-		if err := authorManifest(client, token, os.Stdout, format, path, values); err != nil {
+		addons, err := initAddons(client)
+		if err != nil {
+			fail(err)
+		}
+		if err := authorManifest(client, token, os.Stdout, format, path, values, addons...); err != nil {
 			fail(err)
 		}
 		say(os.Stdout, format, fmt.Sprintf("\n%s Next: `alethia apply` — or `alethia up`, which does both.", ui.MutedStyle.Render(ui.SymbolPoint)))
@@ -131,6 +136,9 @@ var initManifestSpec = spec.Spec{
 			Description: instanceTypeDescription, Flag: fieldKeyInstanceType, Page: docsCliInitPage},
 		{Command: "alethia init manifest", Key: fieldKeyNodeSize, Title: "Node size",
 			Description: nodeSizeDescription, Flag: fieldKeyNodeSize, Page: docsCliInitPage},
+		{Command: "alethia init manifest", Key: "addon", Title: "Add-ons",
+			Description: "Catalog add-on for the first environment: an id, or id@version to pin it (repeatable; asked for on a terminal when omitted)",
+			Flag:        "addon", Repeated: true, Page: docsCliInitPage},
 		{Command: "alethia init manifest", Key: "skip-manifest", Title: "Machine setup only",
 			Description: "Set up the CLI without writing a manifest",
 			Flag:        "skip-manifest", Bool: true, Page: docsCliInitPage},
@@ -143,6 +151,82 @@ const docsCliInitPage = "apps/docs/content/docs/reference/cli/init.mdx"
 
 // initBinder holds the flag targets initManifestSpec generated. Set in init().
 var initBinder *spec.Binder
+
+// initAddons is the add-ons `init` writes into the new file's first environment (#5528): the
+// --addon flags, or — on a terminal with none given — the ones picked from the catalog. Each entry is
+// checked against the server's catalog before anything is written, so a mistyped id or a version
+// range is refused here rather than at the first `alethia apply`.
+//
+// Neither path fetches anything when no add-on is wanted: `init --no-input` without --addon reads
+// no catalog and writes a file with no `addons:` key, exactly as before.
+func initAddons(c applyClient) ([]manifest.Addon, error) {
+	flags, _ := initBinder.Strings("addon")
+	if len(flags) == 0 && !canPromptForm() {
+		return nil, nil
+	}
+	catalog, err := c.GetAddonCatalog()
+	if err != nil {
+		return nil, err
+	}
+	if len(flags) == 0 {
+		flags, err = promptInitAddons(catalog)
+		if err != nil {
+			return nil, err
+		}
+	}
+	addons, err := parseInitAddons(flags)
+	if err != nil {
+		return nil, err
+	}
+	if err := manifest.ValidateAddons("--addon", addons, catalog, addonModeValues()); err != nil {
+		return nil, err
+	}
+	return addons, nil
+}
+
+// parseInitAddons reads `--addon <id>[@<version>]` values. `id@` with nothing after it is refused:
+// omitting the version is how to ask for the catalog default, so an empty one is a typo.
+func parseInitAddons(values []string) ([]manifest.Addon, error) {
+	out := make([]manifest.Addon, 0, len(values))
+	for _, raw := range values {
+		id, version, pinned := strings.Cut(strings.TrimSpace(raw), "@")
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, fmt.Errorf("--addon %q: an add-on needs its catalog id, e.g. --addon cert-manager", raw)
+		}
+		a := manifest.Addon{ID: id}
+		if pinned {
+			version = strings.TrimSpace(version)
+			if version == "" {
+				return nil, fmt.Errorf("--addon %q: nothing after @ — give a version (%s@1.15.0) or leave the @ out for the catalog default", raw, id)
+			}
+			a.Version = &version
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// promptInitAddons asks which catalog add-ons the first environment runs. None is a valid answer.
+func promptInitAddons(catalog *api.AddonCatalogDocument) ([]string, error) {
+	field, _ := initManifestSpec.Field("addon")
+	options := make([]huh.Option[string], 0, len(catalog.Addons))
+	for _, id := range catalog.IDs() {
+		options = append(options, huh.NewOption(id, id))
+	}
+	var picked []string
+	err := runHuhForm(huh.NewGroup(
+		huh.NewMultiSelect[string]().
+			Title(field.Title).
+			Description("Optional — the first environment runs these. Pin a version with --addon <id>@<version>, or edit alethia.yaml.").
+			Options(options...).
+			Value(&picked),
+	))
+	if err != nil {
+		return nil, err
+	}
+	return picked, nil
+}
 
 // promptWebOrigin resolves the control-plane URL `init` should persist.
 //
