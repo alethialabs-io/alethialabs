@@ -1780,6 +1780,7 @@ describe("linkSubscriptionToNewOrg", () => {
 		const linked = {
 			id: "sub_1",
 			customer: "cus_1",
+			status: "active",
 			metadata: { created_by: "user-1", organization_id: "org-1" },
 		};
 		stripe.subscriptions.update.mockResolvedValue(linked);
@@ -1793,7 +1794,7 @@ describe("linkSubscriptionToNewOrg", () => {
 
 		// The retry sees the subscription as Stripe now holds it: linked to org-1.
 		stripe.subscriptions.retrieve.mockResolvedValueOnce(linked);
-		await expect(linkSubscriptionToNewOrg({ ...input, payer })).resolves.toBeUndefined();
+		await expect(linkSubscriptionToNewOrg({ ...input, payer })).resolves.toEqual({ planState: "active", paymentUrl: null });
 
 		expect(stripe.subscriptions.update).toHaveBeenCalledTimes(1);
 		expect(stripe.customers.update).toHaveBeenCalledTimes(1);
@@ -1894,6 +1895,8 @@ describe("resolveNewOrgSetup", () => {
 			subscriptionId: "sub_1",
 			customerId: "cus_1",
 			paid: true,
+			planState: "active",
+			paymentUrl: null,
 			org: { id: "org-first", slug: "acme" },
 			linked: false,
 			declared: false,
@@ -3062,5 +3065,107 @@ describe("createBillingPortalSession", () => {
 			customer: "cus_1",
 			return_url: "https://app.test/dashboard/settings/billing",
 		});
+	});
+});
+
+// ── #5522: what the link reports about the plan ─────────────────────────────
+// The sheet used to say "Subscription active" after every paid setup. The link now returns the plan
+// state it read from the subscription it just linked; each case below returned nothing on dev.
+describe("linkSubscriptionToNewOrg — the plan state it reports (#5522)", () => {
+	const input = { orgId: "org-1", subscriptionId: "sub_1", customerId: "cus_1" };
+
+	/** Arranges a link whose `subscriptions.update` returns the subscription in `status`. */
+	function linkReturns(status: string): void {
+		stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", customer: "cus_1", metadata: {} });
+		stripe.customers.retrieve.mockResolvedValue({ deleted: false, metadata: { created_by: "user-1" } });
+		db.queue.push([{ name: "LinkedCo" }]);
+		stripe.subscriptions.update.mockResolvedValue({
+			id: "sub_1",
+			status,
+			latest_invoice: "in_1",
+			metadata: { organization_id: "org-1", created_by: "user-1" },
+		});
+	}
+
+	it("an active subscription reports active, without reading its payments", async () => {
+		linkReturns("active");
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "active", paymentUrl: null });
+		expect(stripe.invoicePayments.list).not.toHaveBeenCalled();
+	});
+
+	it("an incomplete subscription whose payment succeeded reports processing", async () => {
+		linkReturns("incomplete");
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("succeeded"));
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "processing", paymentUrl: null });
+	});
+
+	it("an incomplete subscription whose payment is still in flight reports confirming, not processing", async () => {
+		linkReturns("incomplete");
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("processing"));
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "confirming", paymentUrl: null });
+		linkReturns("incomplete");
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("requires_capture"));
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "confirming", paymentUrl: null });
+	});
+
+	it("an incomplete subscription whose payment awaits the bank reports action needed, with Stripe's page for the open invoice", async () => {
+		linkReturns("incomplete");
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("requires_action"));
+		stripe.invoices.retrieve.mockResolvedValue({
+			status: "open",
+			hosted_invoice_url: "https://invoice.stripe.com/i/acct_1/test_inv",
+		});
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({
+			planState: "action_needed",
+			paymentUrl: "https://invoice.stripe.com/i/acct_1/test_inv",
+		});
+		expect(stripe.invoices.retrieve).toHaveBeenCalledWith("in_1");
+	});
+
+	it("action needed carries no page unless its host is exactly invoice.stripe.com over https", async () => {
+		for (const url of [
+			"https://evil.example/i/acct_1/test_inv",
+			"https://invoice.stripe.com.evil.example/i",
+			"http://invoice.stripe.com/i/acct_1/test_inv",
+			"https://invoice.stripe.com:8443/i",
+			"not a url",
+		]) {
+			linkReturns("incomplete");
+			stripe.invoicePayments.list.mockResolvedValue(invoicePayments("requires_payment_method"));
+			stripe.invoices.retrieve.mockResolvedValueOnce({ status: "open", hosted_invoice_url: url });
+			await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({
+				planState: "action_needed",
+				paymentUrl: null,
+			});
+		}
+	});
+
+	it("action needed carries no page when the invoice is no longer open, or its page is not https", async () => {
+		linkReturns("incomplete");
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("requires_action"));
+		stripe.invoices.retrieve.mockResolvedValueOnce({ status: "void", hosted_invoice_url: "https://invoice.stripe.com/x" });
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "action_needed", paymentUrl: null });
+		linkReturns("incomplete");
+		stripe.invoices.retrieve.mockResolvedValueOnce({ status: "open", hosted_invoice_url: "javascript:alert(1)" });
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "action_needed", paymentUrl: null });
+	});
+
+	it("a subscription closed before it was paid reports not charged", async () => {
+		linkReturns("canceled");
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("requires_payment_method"));
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "not_charged", paymentUrl: null });
+	});
+
+	it("a closed subscription whose payment went through reports not active, never not charged", async () => {
+		linkReturns("canceled");
+		stripe.invoicePayments.list.mockResolvedValue(invoicePayments("succeeded"));
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "not_active", paymentUrl: null });
+	});
+
+	it("a payments read that fails does not fail the link, and reports unconfirmed — never processing", async () => {
+		linkReturns("incomplete");
+		stripe.invoicePayments.list.mockRejectedValue(new Error("Stripe is unavailable"));
+		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ planState: "unconfirmed", paymentUrl: null });
+		expect(markPendingOrgSetupLinked).toHaveBeenCalledWith("user-1", "sub_1", "org-1");
 	});
 });
