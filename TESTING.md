@@ -340,7 +340,12 @@ the repo already uses for `lint`/`check-types`.
 - **Naming:** `*.test.ts(x)` = Vitest; `*.spec.ts` = Playwright e2e (`apps/console/e2e/**`).
   The real-DB integration tests are gated by directory (`apps/console/tests/integration/**`) +
   their own config.
-- **Go** stays co-located `*_test.go` (the language idiom).
+- **Go** stays co-located `*_test.go` (the language idiom). Never end a Go file name (before its first `.`) in a GOOS/GOARCH
+  token: Go compiles `foo_arm64_test.go`, `foo_darwin.go` or `foo_windows.pb.go` ONLY for that
+  GOOS/GOARCH, so CI's amd64 Linux runners silently skip every `_arm64`, `_darwin`, `_windows` (and
+  the like) file — `karpenter_arm64_test.go` lost its tests and coverage that way (#5579).
+  `pnpm check:go-arch-filenames` refuses such a name unless it is listed, with a reason, in
+  `scripts/check-go-arch-filenames.allowlist` and carries a matching `//go:build` line.
 
 There are **no inline tests next to app source** and no "half here, half there" — every TS test
 lives under a `tests/` directory of its owning project.

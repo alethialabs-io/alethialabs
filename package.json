@@ -39,6 +39,7 @@
     "check:closing-keyword-parsers": "node scripts/check-closing-keyword-parsers.mjs",
 		"check:shared-surface": "node scripts/check-shared-surface.mjs",
     "check:cli-surface": "node scripts/check-cli-surface.mjs",
+    "check:go-arch-filenames": "node scripts/check-go-arch-filenames.mjs",
     "gen:shared-surface": "node scripts/check-shared-surface.mjs --write",
     "check:console-routes": "node scripts/lib/console-routes.mjs --summary",
     "check:route-parity": "pnpm -C apps/console run gen:go-routes:check",

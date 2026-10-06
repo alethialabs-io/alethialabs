@@ -904,6 +904,13 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # Go is here for ONE step: check-go-arch-filenames.mjs --self-test cross-checks its hard-coded
+      # GOOS/GOARCH lists against the toolchain's internal/syslist, and FAILS under CI without a `go`
+      # (#5593) — a skip there would be a permanent silent green. No module cache: nothing is built.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache: false
       - id: setup
         run: pnpm install --frozen-lockfile
       - name: Open-core boundary (core must not import ee/)
@@ -1534,6 +1541,16 @@ jobs:
       - name: Go tests exercise real source (anti-vacuous-test tripwire, verify + runner)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-go-test-imports.mjs
+      # A `_arm64`/`_linux`/`_windows_amd64` filename suffix is an implicit Go build constraint
+      # (#5593). karpenter_arm64_test.go compiled on arm64 laptops and NEVER on these amd64
+      # runners, so its tests and coverage vanished with nothing red (#5579). Platform-specific
+      # files on purpose are listed, with a reason, in scripts/check-go-arch-filenames.allowlist.
+      - name: No Go file is skipped by an accidental GOOS/GOARCH filename suffix
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:go-arch-filenames
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-go-arch-filenames.mjs --self-test
       - name: Connector setup artifacts in sync (infra/connector ⇄ console public)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-connector-assets.mjs
