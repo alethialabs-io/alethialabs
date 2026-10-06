@@ -554,6 +554,13 @@ run "aks_nodepools_ignore_changes_setup_applies_the_cluster" {
 run "aks_nodepools_an_existing_autoscaled_pools_count_is_left_to_the_autoscaler" {
   command = plan
 
+  # No refresh: the prior state is exactly what the run above applied. OpenTofu 1.9's mock refresh
+  # reads an Optional+Computed node_count back as null ("node_count = 2 -> null"), and ignore_changes
+  # then keeps that null, which no real refresh produces: the provider's Read sets the live count.
+  plan_options {
+    refresh = false
+  }
+
   variables {
     aks_instance_types     = ["Standard_D4s_v5", "Standard_D8s_v5"]
     aks_spot_enabled       = true
