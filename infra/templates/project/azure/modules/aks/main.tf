@@ -119,6 +119,10 @@ resource "azurerm_kubernetes_cluster" "this" {
     auto_scaling_enabled = true
     max_pods             = 110
 
+    # node_labels (#5535): null when none were set, which is the argument this block has always
+    # left out, so a cluster that sets nothing plans unchanged. Updated in place, not rotated.
+    node_labels = length(var.node_labels) > 0 ? var.node_labels : null
+
     upgrade_settings {
       max_surge = "10%"
     }
@@ -163,6 +167,47 @@ resource "azurerm_kubernetes_cluster_node_pool" "extra" {
   auto_scaling_enabled  = true
   max_pods              = 110
 
+  # node_labels (#5535): null when none were set, so these pools plan exactly as before. They take
+  # none of the user's taints: those go to the named pools only (node-pool contract #5533).
+  node_labels = length(var.node_labels) > 0 ? var.node_labels : null
+
+  tags = local.common_tags
+}
+
+################################################################################
+# Named node pools (#5535): extra_node_pools at the root, one per NAME
+################################################################################
+# Keyed by name with for_each, never by position like `extra` above: removing a pool from the
+# middle of the list removes that pool and leaves every other one alone. Each has its own vm_size
+# and sizes. Isolation parity (#5533): the same subnet, OS disk size and type, and max_pods as the
+# default pool, so a pool is never cheaper because it is less isolated. Labels and taints arrive
+# already mapped by the root (nodepools.tf), the Spot label and taint included.
+resource "azurerm_kubernetes_cluster_node_pool" "named" {
+  for_each = var.named_node_pools
+
+  name                  = each.key
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
+  mode                  = "User"
+  vm_size               = each.value.vm_size
+  vnet_subnet_id        = var.vnet_subnet_id
+  os_disk_size_gb       = var.disk_size_gb
+  os_disk_type          = var.os_disk_type
+  max_pods              = 110
+
+  auto_scaling_enabled = true
+  node_count           = each.value.node_count
+  min_count            = each.value.min_count
+  max_count            = each.value.max_count
+
+  # ForceNew: changing capacity_type replaces the pool. Null on on-demand pools, so they render no
+  # spot argument at all.
+  priority        = each.value.spot ? "Spot" : null
+  eviction_policy = each.value.spot ? "Delete" : null
+  spot_max_price  = each.value.spot ? -1 : null
+
+  node_labels = each.value.node_labels
+  node_taints = length(each.value.node_taints) > 0 ? each.value.node_taints : null
+
   tags = local.common_tags
 }
 
@@ -205,6 +250,11 @@ resource "azurerm_kubernetes_cluster_node_pool" "spot" {
   min_count            = var.spot_node_min_size
   max_count            = var.spot_node_max_size
   max_pods             = 110
+
+  # node_labels (#5535): null when none were set, so the pool plans exactly as before. When set,
+  # the Spot label AKS puts on these nodes itself is declared beside them, as azurerm requires of a
+  # Spot pool that declares node_labels at all.
+  node_labels = length(var.node_labels) > 0 ? merge(var.node_labels, { "kubernetes.azure.com/scalesetpriority" = "spot" }) : null
 
   tags = local.common_tags
 }

@@ -108,6 +108,28 @@ variable "os_disk_type" {
   default     = null
 }
 
+variable "node_labels" {
+  type        = map(string)
+  description = "Labels on the nodes of every pool this module makes (#5535). Validated at the root (node-pool contract #5533). Empty renders no node_labels argument anywhere."
+  default     = {}
+  nullable    = false
+}
+
+variable "named_node_pools" {
+  type = map(object({
+    vm_size     = string
+    min_count   = number
+    max_count   = number
+    node_count  = number
+    spot        = bool
+    node_labels = map(string)
+    node_taints = list(string)
+  }))
+  description = "User node pools keyed by name (#5535), mapped by the root from extra_node_pools (nodepools.tf): sizes, Spot, labels, and taints already spelled key=value:Effect."
+  default     = {}
+  nullable    = false
+}
+
 ################################################################################
 # Spot node pool (aws parity: eks_ng_capacity_type)
 ################################################################################

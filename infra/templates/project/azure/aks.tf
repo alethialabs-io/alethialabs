@@ -33,6 +33,11 @@ module "aks" {
   # every existing cluster plans unchanged. AKS carries no OS-disk SKU or IOPS to expose.
   os_disk_type = var.aks_os_disk_type
 
+  # Node labels and named, independently sized pools (#5535, nodepools.tf). Empty by default, which
+  # renders every pool exactly as before.
+  node_labels      = local.aks_node_labels
+  named_node_pools = local.aks_named_node_pools
+
   # Spot node pool (aws parity: eks_ng_capacity_type). Off by default; when on it is an ADDITIONAL
   # pool beside the on-demand ones, because AKS refuses a Spot default pool and the three spot
   # arguments are ForceNew.

@@ -53,3 +53,45 @@ output "oms_agent_workspace_id" {
   description = "Log Analytics workspace the Container Insights add-on reports to; null when the add-on is off"
   value       = one(azurerm_kubernetes_cluster.this.oms_agent[*].log_analytics_workspace_id)
 }
+
+# Read off the PLANNED pools so the root's tofu test asserts what each pool will carry, not what the
+# root passed in (#5535). Every pool this module makes, keyed by its AKS name.
+output "node_pools" {
+  description = "Per node pool (default, pool1..N, spot, and each named pool), the planned name, mode, vm_size, sizes, priority, labels, taints, subnet, OS disk and max_pods."
+  value = merge(
+    {
+      default = {
+        name            = azurerm_kubernetes_cluster.this.default_node_pool[0].name
+        mode            = "System"
+        vm_size         = azurerm_kubernetes_cluster.this.default_node_pool[0].vm_size
+        node_count      = azurerm_kubernetes_cluster.this.default_node_pool[0].node_count
+        min_count       = azurerm_kubernetes_cluster.this.default_node_pool[0].min_count
+        max_count       = azurerm_kubernetes_cluster.this.default_node_pool[0].max_count
+        priority        = "Regular"
+        node_labels     = azurerm_kubernetes_cluster.this.default_node_pool[0].node_labels
+        node_taints     = null
+        vnet_subnet_id  = azurerm_kubernetes_cluster.this.default_node_pool[0].vnet_subnet_id
+        os_disk_size_gb = azurerm_kubernetes_cluster.this.default_node_pool[0].os_disk_size_gb
+        os_disk_type    = azurerm_kubernetes_cluster.this.default_node_pool[0].os_disk_type
+        max_pods        = azurerm_kubernetes_cluster.this.default_node_pool[0].max_pods
+      }
+    },
+    {
+      for p in concat(azurerm_kubernetes_cluster_node_pool.extra, azurerm_kubernetes_cluster_node_pool.spot, values(azurerm_kubernetes_cluster_node_pool.named)) : p.name => {
+        name            = p.name
+        mode            = p.mode
+        vm_size         = p.vm_size
+        node_count      = p.node_count
+        min_count       = p.min_count
+        max_count       = p.max_count
+        priority        = p.priority
+        node_labels     = p.node_labels
+        node_taints     = p.node_taints
+        vnet_subnet_id  = p.vnet_subnet_id
+        os_disk_size_gb = p.os_disk_size_gb
+        os_disk_type    = p.os_disk_type
+        max_pods        = p.max_pods
+      }
+    },
+  )
+}
