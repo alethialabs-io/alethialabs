@@ -50,3 +50,10 @@ output "customer_managed_key_identity_id" {
   description = "User-assigned identity the account unwraps its customer-managed key as; null under Microsoft-managed keys"
   value       = one(azurerm_storage_account.this.customer_managed_key[*].user_assigned_identity_id)
 }
+
+# Read off the PLANNED account, for checks_storage.tftest.hcl at the root (#5543). The ONE cors_rule
+# the account carries, or null when no container allowed an origin (the module then renders none).
+output "cors_rule" {
+  description = "The account's blob CORS rule (the union of every container's cors_origins); null when no container allowed an origin"
+  value       = one(azurerm_storage_account.this.blob_properties[0].cors_rule)
+}

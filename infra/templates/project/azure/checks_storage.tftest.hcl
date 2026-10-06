@@ -177,3 +177,221 @@ run "one_container_asking_for_versioning_is_enough" {
     error_message = "anytrue, not alltrue: a single container asking for versioning must turn it on for the account."
   }
 }
+
+################################################################################
+# 4. CORS origins reach the account (#5543)
+################################################################################
+# The Go provider emits `cors_origins` per container and modules/storage-account unions them into
+# the account's one cors_rule — but the ROOT `storage_containers` type did not declare the
+# attribute, and an object type discards what it does not name. So a value set on a bucket was
+# dropped at the root, the module's optional() filled in [], and the account planned no CORS rule.
+# Nothing errored. These runs set the value AT THE ROOT, which is the seam that dropped it.
+
+run "a_container_cors_origin_reaches_the_account_cors_rule" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      { name = "assets", cors_origins = ["https://app.example.com"] },
+      { name = "logs" },
+    ]
+  }
+
+  assert {
+    condition     = module.storage_account[0].cors_rule != null
+    error_message = "A container that allows an origin must plan a cors_rule on the storage account; the root storage_containers type dropped cors_origins."
+  }
+
+  assert {
+    condition     = tolist(try(module.storage_account[0].cors_rule.allowed_origins, [])) == tolist(["https://app.example.com"])
+    error_message = "The account's cors_rule must allow exactly the origin the container asked for."
+  }
+
+  # Allowing an origin must not widen what it may DO beyond the module's fixed method set.
+  assert {
+    condition     = toset(try(module.storage_account[0].cors_rule.allowed_methods, [])) == toset(["GET", "HEAD", "OPTIONS", "PUT", "POST"])
+    error_message = "The cors_rule must carry the module's fixed method set, not \"*\"."
+  }
+}
+
+# The default direction: no container names an origin, so no rule — an empty cors_rule is not "no
+# CORS", it is a rule that matches nothing and churns the plan.
+run "no_cors_origin_plans_no_cors_rule" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      { name = "assets" },
+    ]
+  }
+
+  assert {
+    condition     = module.storage_account[0].cors_rule == null
+    error_message = "With no container allowing an origin the account must plan no cors_rule."
+  }
+}
+
+# The aggregation decision, pinned as versioning's is above: CORS is an ACCOUNT property, so the
+# per-container lists are UNIONED — deduplicated and sorted, so re-ordering buckets on the canvas
+# does not produce a plan diff.
+run "cors_origins_from_every_container_are_unioned_into_one_rule" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      { name = "assets", cors_origins = ["https://b.example.com", "https://a.example.com"] },
+      { name = "uploads", cors_origins = ["https://a.example.com", "https://c.example.com"] },
+    ]
+  }
+
+  assert {
+    condition     = tolist(try(module.storage_account[0].cors_rule.allowed_origins, [])) == tolist(["https://a.example.com", "https://b.example.com", "https://c.example.com"])
+    error_message = "The account's one cors_rule must allow the sorted, de-duplicated union of every container's origins."
+  }
+}
+
+################################################################################
+# 5. Origins Azure would accept and no browser would ever match are refused at plan
+################################################################################
+# Azure matches the browser's Origin header against these strings exactly. Each of the three below
+# is accepted by the API and then matches nothing, so CORS fails against a rule that exists.
+
+run "a_cors_origin_with_a_path_is_refused" {
+  command = plan
+
+  variables {
+    storage_containers = [{ name = "assets", cors_origins = ["https://app.example.com/upload"] }]
+  }
+
+  expect_failures = [var.storage_containers]
+}
+
+run "a_cors_origin_without_a_scheme_is_refused" {
+  command = plan
+
+  variables {
+    storage_containers = [{ name = "assets", cors_origins = ["app.example.com"] }]
+  }
+
+  expect_failures = [var.storage_containers]
+}
+
+run "a_cors_origin_with_a_non_http_scheme_is_refused" {
+  command = plan
+
+  variables {
+    storage_containers = [{ name = "assets", cors_origins = ["ftp://files.example.com"] }]
+  }
+
+  expect_failures = [var.storage_containers]
+}
+
+# The accepted shapes, so the refusals above cannot pass by refusing everything: a port, plain http
+# (local development), and `*` — which on Azure opens the whole account, as the docs say.
+run "a_port_plain_http_and_the_wildcard_are_accepted" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      { name = "assets", cors_origins = ["http://localhost:3000", "https://app.example.com:8443"] },
+      { name = "public", cors_origins = ["*"] },
+    ]
+  }
+
+  assert {
+    condition     = tolist(try(module.storage_account[0].cors_rule.allowed_origins, [])) == tolist(["*", "http://localhost:3000", "https://app.example.com:8443"])
+    error_message = "A port, plain http and `*` are valid origins and must reach the account's cors_rule."
+  }
+}
+
+################################################################################
+# 6. Azure's 64-origin limit, counted over the UNION
+################################################################################
+# 40 + 40 origins, 16 of them shared: 64 distinct, which is exactly the limit and must plan. The lists
+# are literal because the CI's tofu (1.9) refuses function calls inside a run's `variables` block.
+run "sixty_four_distinct_origins_across_containers_plan" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      {
+        name = "assets"
+        cors_origins = [
+          "https://o0.example.com", "https://o1.example.com", "https://o2.example.com", "https://o3.example.com",
+          "https://o4.example.com", "https://o5.example.com", "https://o6.example.com", "https://o7.example.com",
+          "https://o8.example.com", "https://o9.example.com", "https://o10.example.com", "https://o11.example.com",
+          "https://o12.example.com", "https://o13.example.com", "https://o14.example.com", "https://o15.example.com",
+          "https://o16.example.com", "https://o17.example.com", "https://o18.example.com", "https://o19.example.com",
+          "https://o20.example.com", "https://o21.example.com", "https://o22.example.com", "https://o23.example.com",
+          "https://o24.example.com", "https://o25.example.com", "https://o26.example.com", "https://o27.example.com",
+          "https://o28.example.com", "https://o29.example.com", "https://o30.example.com", "https://o31.example.com",
+          "https://o32.example.com", "https://o33.example.com", "https://o34.example.com", "https://o35.example.com",
+          "https://o36.example.com", "https://o37.example.com", "https://o38.example.com", "https://o39.example.com",
+        ]
+      },
+      {
+        name = "uploads"
+        cors_origins = [
+          "https://o24.example.com", "https://o25.example.com", "https://o26.example.com", "https://o27.example.com",
+          "https://o28.example.com", "https://o29.example.com", "https://o30.example.com", "https://o31.example.com",
+          "https://o32.example.com", "https://o33.example.com", "https://o34.example.com", "https://o35.example.com",
+          "https://o36.example.com", "https://o37.example.com", "https://o38.example.com", "https://o39.example.com",
+          "https://o40.example.com", "https://o41.example.com", "https://o42.example.com", "https://o43.example.com",
+          "https://o44.example.com", "https://o45.example.com", "https://o46.example.com", "https://o47.example.com",
+          "https://o48.example.com", "https://o49.example.com", "https://o50.example.com", "https://o51.example.com",
+          "https://o52.example.com", "https://o53.example.com", "https://o54.example.com", "https://o55.example.com",
+          "https://o56.example.com", "https://o57.example.com", "https://o58.example.com", "https://o59.example.com",
+          "https://o60.example.com", "https://o61.example.com", "https://o62.example.com", "https://o63.example.com",
+        ]
+      },
+    ]
+  }
+
+  assert {
+    condition     = length(try(module.storage_account[0].cors_rule.allowed_origins, [])) == 64
+    error_message = "64 distinct origins is Azure's limit, not over it, and must reach the account's rule."
+  }
+}
+
+# One more distinct origin, split so that NO single container is over the limit: only the union is.
+run "sixty_five_distinct_origins_across_containers_are_refused" {
+  command = plan
+
+  variables {
+    storage_containers = [
+      {
+        name = "assets"
+        cors_origins = [
+          "https://o0.example.com", "https://o1.example.com", "https://o2.example.com", "https://o3.example.com",
+          "https://o4.example.com", "https://o5.example.com", "https://o6.example.com", "https://o7.example.com",
+          "https://o8.example.com", "https://o9.example.com", "https://o10.example.com", "https://o11.example.com",
+          "https://o12.example.com", "https://o13.example.com", "https://o14.example.com", "https://o15.example.com",
+          "https://o16.example.com", "https://o17.example.com", "https://o18.example.com", "https://o19.example.com",
+          "https://o20.example.com", "https://o21.example.com", "https://o22.example.com", "https://o23.example.com",
+          "https://o24.example.com", "https://o25.example.com", "https://o26.example.com", "https://o27.example.com",
+          "https://o28.example.com", "https://o29.example.com", "https://o30.example.com", "https://o31.example.com",
+          "https://o32.example.com", "https://o33.example.com", "https://o34.example.com", "https://o35.example.com",
+          "https://o36.example.com", "https://o37.example.com", "https://o38.example.com", "https://o39.example.com",
+        ]
+      },
+      {
+        name = "uploads"
+        cors_origins = [
+          "https://o24.example.com", "https://o25.example.com", "https://o26.example.com", "https://o27.example.com",
+          "https://o28.example.com", "https://o29.example.com", "https://o30.example.com", "https://o31.example.com",
+          "https://o32.example.com", "https://o33.example.com", "https://o34.example.com", "https://o35.example.com",
+          "https://o36.example.com", "https://o37.example.com", "https://o38.example.com", "https://o39.example.com",
+          "https://o40.example.com", "https://o41.example.com", "https://o42.example.com", "https://o43.example.com",
+          "https://o44.example.com", "https://o45.example.com", "https://o46.example.com", "https://o47.example.com",
+          "https://o48.example.com", "https://o49.example.com", "https://o50.example.com", "https://o51.example.com",
+          "https://o52.example.com", "https://o53.example.com", "https://o54.example.com", "https://o55.example.com",
+          "https://o56.example.com", "https://o57.example.com", "https://o58.example.com", "https://o59.example.com",
+          "https://o60.example.com", "https://o61.example.com", "https://o62.example.com", "https://o63.example.com",
+          "https://o64.example.com",
+        ]
+      },
+    ]
+  }
+
+  expect_failures = [var.storage_containers]
+}
