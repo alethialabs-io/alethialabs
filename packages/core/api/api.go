@@ -1872,6 +1872,8 @@ type Environment struct {
 	PlacementMode string  `json:"placement_mode"`
 	Namespace     *string `json:"namespace"`
 	Fabric        *string `json:"fabric"`
+	// Lifecycle is `persistent` (the default) or `ephemeral` (#5581).
+	Lifecycle string `json:"lifecycle"`
 }
 
 // Component is one project component, uniform across every kind. Config holds the

@@ -358,7 +358,6 @@ func buildExport(c exportClient, o exportOptions, pick envPicker) (*exported, er
 		}
 		ex.note(fmt.Sprintf("environments %s — not exported; plan lists them as unmanaged and leaves them alone", strings.Join(others, ", ")))
 	}
-	ex.note("lifecycle — the environment read does not carry it, so none is written (persistent is the default); add `lifecycle: ephemeral` by hand where it applies")
 
 	for _, e := range chosen {
 		env, err := r.environment(e, ex)
@@ -591,6 +590,11 @@ func (r *exportReader) environment(e api.Environment, ex *exported) (manifest.En
 	if e.Namespace != nil && *e.Namespace != "" && e.PlacementMode != string(types.PlacementModeDedicated) {
 		env.Namespace = *e.Namespace
 	}
+	// Written only when it is not the default, so an export of a persistent environment is the same
+	// file it was before the read carried a lifecycle.
+	if e.Lifecycle != "" && e.Lifecycle != exportDefaultLifecycle {
+		env.Lifecycle = e.Lifecycle
+	}
 	// Every per-environment read names the environment by its ID. The server resolves a NAME through
 	// a name-or-stage match that prefers the default environment, so passing `staging` reads the
 	// default environment's rows whenever that one's stage is `staging`; an id cannot collide.
@@ -613,6 +617,10 @@ func (r *exportReader) environment(e api.Environment, ex *exported) (manifest.En
 	r.byo(e, ex)
 	return env, nil
 }
+
+// exportDefaultLifecycle is the lifecycle an environment has when none is said — the column default
+// on project_environments, and what the POST route stores when the body names none.
+const exportDefaultLifecycle = "persistent"
 
 // componentGone are the statuses of a component that is being, or has been, torn down. Exporting one
 // would declare it, and apply on a new environment would create it again.

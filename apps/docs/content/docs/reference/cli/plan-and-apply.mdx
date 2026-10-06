@@ -102,6 +102,10 @@ server that the file does not mention is listed as left alone, not torn down. Wh
 reconcile — an existing environment whose stage or placement differs from the file — is shown and
 refused before a single write.
 
+A `lifecycle` change on an existing environment is not applied yet: `plan` shows no change for it,
+and the environment keeps its stored lifecycle. The `lifecycle` key takes effect only when `apply`
+creates the environment. Tracked in [#5590](https://github.com/alethialabs-io/alethialabs/issues/5590).
+
 ### Changing a component
 
 Edit a field of a component that already exists, and `plan` and `apply` show the change and make
