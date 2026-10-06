@@ -44,7 +44,7 @@ func TestWrappers_SurfaceTheirOwnContextOnFailure(t *testing.T) {
 			return err
 		}},
 		{"ExportConfiguration", "failed to export configuration", func(c *Client) error {
-			_, err := c.ExportConfiguration("my-app", "")
+			_, err := c.ExportConfiguration("my-app", "", "")
 			return err
 		}},
 		{"QueueJobWithParams", "failed to queue job", func(c *Client) error {
