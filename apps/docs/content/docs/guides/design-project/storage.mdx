@@ -56,10 +56,11 @@ Compute-only Hetzner projects provision buckets natively via Object Storage (the
 
 ### Azure
 
-Two fields behave differently on Azure, because Blob Storage puts the setting on the storage account rather than the container. An Azure project has one storage account, which holds every bucket in the project.
+Some fields behave differently on Azure. An Azure project has one storage account, which holds every bucket in the project, and Blob Storage puts some settings on that account rather than on the container.
 
 - **Versioning** is an account setting. Turning it on for one bucket versions **every** bucket in that project. Leaving it on for a bucket that no longer needs it costs storage; the alternative — ignoring a bucket that asks for it — loses data on the first overwrite, so Alethia turns versioning on for the account whenever any bucket asks for it.
 - **Public access** is applied per bucket, as it is everywhere else. The account permission that allows public containers is opened only when at least one bucket asks for public access, and stays closed otherwise.
+- **CORS origins** is an account setting. The storage account has one CORS rule, and it allows every origin that any bucket in the project lists. An origin that you allow on one bucket can therefore also call the other buckets in that project. When no bucket lists an origin, the account has no CORS rule.
 
 ### Google Cloud
 

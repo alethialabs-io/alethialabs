@@ -19,7 +19,7 @@ provisioned.
 |---|---:|---:|---:|---:|
 | alibaba | 63 | 45 | 10 | 1 |
 | aws | 159 | 122 | 51 | 0 |
-| azure | 94 | 68 | 28 | 1 |
+| azure | 95 | 69 | 28 | 1 |
 | gcp | 103 | 83 | 31 | 0 |
 | hetzner | 36 | 26 | 4 | 1 |
 
@@ -34,7 +34,7 @@ by no resource or module argument — the shape a raw variable count cannot tell
 
 | Component | alibaba | aws | azure | gcp | hetzner |
 |---|---:|---:|---:|---:|---:|
-| bucket | 0 / 2 | 3 / 16 | 1 / 8 | 4 / 11 | 0 / 9 |
+| bucket | 0 / 2 | 3 / 16 | 1 / 9 | 4 / 11 | 0 / 9 |
 | cache | 0 / 6 | 5 / 18 | 3 / 6 | 3 / 11 | — |
 | cluster | 8 / 17 | 10 / 21 | 11 / 19 | 10 / 20 | 2 / 11 |
 | database | 0 / 8 | 4 / 11 | 6 / 14 | 7 / 14 | — |

@@ -21,8 +21,8 @@
 			"dead": 0
 		},
 		"azure": {
-			"declared": 94,
-			"reachable": 68,
+			"declared": 95,
+			"reachable": 69,
 			"settable": 28,
 			"dead": 1
 		},
@@ -4686,6 +4686,27 @@
 		{
 			"cloud": "azure",
 			"component": "bucket",
+			"name": "cors_origins",
+			"kind": "list",
+			"typeExpr": "list(string)",
+			"required": false,
+			"description": "",
+			"sensitive": false,
+			"declaredAt": "infra/templates/project/azure/variables.tf:693",
+			"readBy": [
+				"azure/modules/storage-account"
+			],
+			"reportedByOutput": false,
+			"ceiling": false,
+			"reachable": true,
+			"ownedByProvider": true,
+			"typed": true,
+			"itemScope": "storage_containers",
+			"default": []
+		},
+		{
+			"cloud": "azure",
+			"component": "bucket",
 			"name": "create_storage_account",
 			"kind": "bool",
 			"typeExpr": "bool",
@@ -4771,9 +4792,9 @@
 			"component": "bucket",
 			"name": "storage_containers",
 			"kind": "list",
-			"typeExpr": "list(object({\n    name        = string\n    access_type = optional(string, \"private\")\n   \n   \n    versioning_enabled = optional(bool, false)\n   \n   \n   \n    cmek_enabled = optional(bool, false)\n  }))",
+			"typeExpr": "list(object({\n    name        = string\n    access_type = optional(string, \"private\")\n   \n   \n    versioning_enabled = optional(bool, false)\n   \n   \n   \n    cmek_enabled = optional(bool, false)\n   \n   \n   \n   \n   \n   \n   \n   \n    cors_origins = optional(list(string), [])\n  }))",
 			"required": false,
-			"description": "List of storage containers to create in the Storage Account. `cmek_enabled` on any container encrypts the whole account with a customer-managed key in the project's Key Vault (requires key_vault_purge_protection_enabled).",
+			"description": "List of storage containers to create in the Storage Account. `cmek_enabled` on any container encrypts the whole account with a customer-managed key in the project's Key Vault (requires key_vault_purge_protection_enabled). `cors_origins` from every container are unioned into the account's one blob CORS rule.",
 			"sensitive": false,
 			"declaredAt": "infra/templates/project/azure/variables.tf:693",
 			"readBy": [
@@ -4898,7 +4919,7 @@
 			"required": false,
 			"description": "Exact Azure Managed Redis sku (Balanced_B*/MemoryOptimized_M*/ComputeOptimized_X*/FlashOptimized_A*). Null = map from azure_cache_sku. Normally emitted from the project's MemoryGB.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:770",
+			"declaredAt": "infra/templates/project/azure/variables.tf:779",
 			"readBy": [
 				"azure"
 			],
@@ -5170,7 +5191,7 @@
 			"required": false,
 			"description": "Envelope-encrypt Kubernetes Secrets in etcd under a key in this project's Key Vault. On by default (AWS parity). Requires key_vault_purge_protection_enabled.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:813",
+			"declaredAt": "infra/templates/project/azure/variables.tf:822",
 			"readBy": [
 				"azure"
 			],
@@ -5295,7 +5316,7 @@
 			"required": false,
 			"description": "OPTIONAL. Name of a pre-existing user-assigned managed identity for the external-secrets operator. Requires external_secrets_identity_resource_group.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:798",
+			"declaredAt": "infra/templates/project/azure/variables.tf:807",
 			"readBy": [
 				"azure"
 			],
@@ -5315,7 +5336,7 @@
 			"required": false,
 			"description": "OPTIONAL. Resource group holding external_secrets_identity_name. Requires external_secrets_identity_name.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:804",
+			"declaredAt": "infra/templates/project/azure/variables.tf:813",
 			"readBy": [
 				"azure"
 			],
@@ -6115,7 +6136,7 @@
 			"required": false,
 			"description": "Object of custom values that can be used for extra terraform files outside of the template",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:764",
+			"declaredAt": "infra/templates/project/azure/variables.tf:773",
 			"readBy": [],
 			"reportedByOutput": false,
 			"ceiling": false,
@@ -6347,7 +6368,7 @@
 			"required": false,
 			"description": "SKU for the Azure Container Registry (Basic, Standard, or Premium)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:719",
+			"declaredAt": "infra/templates/project/azure/variables.tf:728",
 			"readBy": [
 				"azure",
 				"azure/modules/acr"
@@ -6368,7 +6389,7 @@
 			"required": false,
 			"description": "Whether to provision an Azure Container Registry",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:713",
+			"declaredAt": "infra/templates/project/azure/variables.tf:722",
 			"readBy": [
 				"azure"
 			],
@@ -6408,7 +6429,7 @@
 			"required": false,
 			"description": "Per-secret rotation keepers, keyed by secret name. Changing any value under a name re-generates that secret's password; a name absent from the map keeps its value forever. Empty (the default) is behavior-preserving.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:743",
+			"declaredAt": "infra/templates/project/azure/variables.tf:752",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -6429,7 +6450,7 @@
 			"required": false,
 			"description": "List of secrets to create in Azure Key Vault",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:729",
+			"declaredAt": "infra/templates/project/azure/variables.tf:738",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -6450,7 +6471,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:729",
+			"declaredAt": "infra/templates/project/azure/variables.tf:738",
 			"readBy": [
 				"azure/modules/key-vault"
 			],
@@ -6470,7 +6491,7 @@
 			"required": false,
 			"description": "Block purging this project's soft-deleted Key Vault until the retention window expires. IRREVERSIBLE: Azure refuses to disable purge protection once it is on, so this can only be set to false BEFORE the vault is first created. Leaving it true means a destroyed environment cannot be rebuilt under the same project + environment name for 7 days.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:749",
+			"declaredAt": "infra/templates/project/azure/variables.tf:758",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -6491,7 +6512,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:729",
+			"declaredAt": "infra/templates/project/azure/variables.tf:738",
 			"readBy": [
 				"azure/modules/key-vault"
 			],
@@ -6512,7 +6533,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:729",
+			"declaredAt": "infra/templates/project/azure/variables.tf:738",
 			"readBy": [
 				"azure",
 				"azure/modules/key-vault"
@@ -6554,7 +6575,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/azure/variables.tf:729",
+			"declaredAt": "infra/templates/project/azure/variables.tf:738",
 			"readBy": [
 				"azure/modules/key-vault"
 			],
