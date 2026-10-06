@@ -639,8 +639,8 @@ baseline:
     state: unreviewed
     issue: "#2004"
   - variable: custom_iac_vars
-    on: "aws,azure,gcp"
-    off: "alibaba,hetzner"
+    on: "aws,azure,gcp,hetzner"
+    off: "alibaba"
     state: unreviewed
     issue: "#2004"
   - variable: custom_managed_waf_rule_groups
@@ -844,8 +844,8 @@ baseline:
     state: unreviewed
     issue: "#2004"
   - variable: extra_node_pools
-    on: "aws,azure,gcp"
-    off: "alibaba,hetzner"
+    on: "aws,azure,gcp,hetzner"
+    off: "alibaba"
     state: unreviewed
     issue: "#5523"
   - variable: firestore_database_type
@@ -1092,13 +1092,13 @@ baseline:
     state: unreviewed
     issue: "#2004"
   - variable: node_labels
-    on: "aws,azure,gcp"
-    off: "alibaba,hetzner"
+    on: "aws,azure,gcp,hetzner"
+    off: "alibaba"
     state: unreviewed
     issue: "#5523"
   - variable: node_taints
-    on: "aws,azure,gcp"
-    off: "alibaba,hetzner"
+    on: "aws,azure,gcp,hetzner"
+    off: "alibaba"
     state: unreviewed
     issue: "#5523"
   - variable: oss_buckets
