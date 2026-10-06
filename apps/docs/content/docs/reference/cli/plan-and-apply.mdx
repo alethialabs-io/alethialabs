@@ -501,10 +501,10 @@ pipeline that gates on it — use `alethia project plan` below.
 
 A plan has **problems** when the file asks for something `apply` cannot do: a stage, placement or
 lifecycle that differs from an existing environment, or an add-on setting that `apply` refuses to
-send. `apply` refuses such a file before it writes anything. The exit code says whether that will
-happen, so a pipeline can stop on it at pull-request time instead of at `apply`.
+send. `apply` refuses such a file before it writes anything. The exit code of `plan` tells you so
+first, and a pipeline can stop on it when the pull request opens instead of at `apply`.
 
-By default, `plan` answers one question: will `apply` accept this file?
+By default, `plan` answers one question: does `apply` accept this file?
 
 | Code | Meaning |
 | --- | --- |
