@@ -1214,9 +1214,9 @@ func TestExport_WriteRefusesSymlinksAndRaces(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "nowhere.yaml")); err == nil {
 		t.Error("a dangling symlink's target was created")
 	}
-	// A file that appears between check() and the write is refused without --force, not clobbered.
+	// An existing file is refused without --force, not clobbered.
 	if err := writeExportFile(target, []byte("x\n"), false); err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Errorf("O_EXCL: %v", err)
+		t.Errorf("existing file: %v", err)
 	}
 	// With --force the file is replaced, and it reads as an ordinary committed file.
 	if err := writeExportFile(target, []byte("new\n"), true); err != nil {
@@ -1259,5 +1259,260 @@ func TestProviderConfigKeysEmbedded(t *testing.T) {
 	}
 	if providerConfigKeyAllowed("aws", "databases", "rds_extra_credentials") || providerConfigKeyAllowed("aws", "secrets", "value") {
 		t.Error("a credential knob is in the allow-list")
+	}
+}
+
+// A name that appears between the Lstat and the link — a file or a dangling symlink — is refused by
+// link(2) itself, which is O_EXCL's guarantee, and nothing is written there or left behind.
+func TestExport_WriteRaceIsRefusedByTheLink(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, manifest.FileName)
+	prev := exportLink
+	t.Cleanup(func() { exportLink = prev })
+	exportLink = func(oldname, newname string) error {
+		// The race: something takes the name after the Lstat said it was free.
+		if err := os.Symlink(filepath.Join(dir, "elsewhere"), newname); err != nil {
+			return err
+		}
+		return os.Link(oldname, newname)
+	}
+	if err := writeExportFile(path, []byte("x\n"), false); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("a name taken mid-write: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "elsewhere")); err == nil {
+		t.Error("the write followed the symlink that appeared")
+	}
+	// A filesystem without hard links: the error says what to do instead.
+	exportLink = func(string, string) error { return errors.New("operation not supported") }
+	_ = os.Remove(path)
+	if err := writeExportFile(path, []byte("x\n"), false); err == nil || !strings.Contains(err.Error(), "stdout") {
+		t.Errorf("no hard links: %v", err)
+	}
+	assertOnlyEntries(t, dir, "elsewhere")
+}
+
+// assertOnlyEntries fails when dir holds anything but the named entries — a partial file or a
+// temporary file left behind by a failed write.
+func assertOnlyEntries(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !oneOfString(e.Name(), names) {
+			t.Errorf("left behind in %s: %s", dir, e.Name())
+		}
+	}
+}
+
+// A write that fails part-way leaves no file: the bytes go to a temporary file, which is removed.
+func TestExport_FailedWriteLeavesNoPartialFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, manifest.FileName)
+	prev := exportChmod
+	t.Cleanup(func() { exportChmod = prev })
+	exportChmod = func(string, os.FileMode) error { return errors.New("chmod refused") }
+	for _, force := range []bool{false, true} {
+		if err := writeExportFile(path, []byte("x\n"), force); err == nil || !strings.Contains(err.Error(), "chmod refused") {
+			t.Errorf("force=%v: %v", force, err)
+		}
+		assertOnlyEntries(t, dir)
+	}
+	exportChmod = prev
+	// A new file is 0644; --force over an existing file keeps that file's mode.
+	if err := writeExportFile(path, []byte("a\n"), false); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o644 {
+		t.Errorf("new file mode %v, want 0644", info.Mode().Perm())
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeExportFile(path, []byte("b\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+		t.Errorf("--force changed the mode to %v, want the existing 0600", info.Mode().Perm())
+	}
+	if raw, _ := os.ReadFile(path); string(raw) != "b\n" {
+		t.Errorf("content %q", raw)
+	}
+	assertOnlyEntries(t, dir, manifest.FileName)
+}
+
+// A server-held string in a note — a chart ref with a carriage return — cannot end the `#` comment
+// and start a YAML line: every control character becomes a space, and plan accepts the file.
+func TestExport_NotesCannotBreakOutOfTheComment(t *testing.T) {
+	f := exportServer(t)
+	f.charts["staging"] = []api.ByoChart{{ChartPath: "charts/x\u2028y", Ref: "main\rbogus: 1 #"}, {ChartPath: "c\x1b[31m", Ref: "a\nproject: evil"}}
+	data, stderr := exportBytes(t, f, exportOptions{project: "web", env: "staging"})
+	for _, bad := range []string{"\r", "\x1b", "\u2028"} {
+		if strings.Contains(string(data), bad) || strings.Contains(stderr, bad) {
+			t.Errorf("control character %q reached the output", bad)
+		}
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "bogus:") || strings.HasPrefix(line, "project: evil") {
+			t.Errorf("a note broke out of the comment: %q", line)
+		}
+	}
+	if !strings.Contains(string(data), "BYO chart charts/x y@main bogus: 1 #") {
+		t.Errorf("the note is not kept on one line:\n%s", data)
+	}
+	assertNothingToDo(t, planExported(t, f, data), data)
+}
+
+// What the security review reproduced on 424d68ed4, after this round. Kept OUT: nested maps and
+// name/value pairs carrying a credential name — Cyrillic look-alikes included — and add-on settings
+// that are a map or a list. Still WRITTEN, and the docs say so: a credential pasted into an ordinary
+// declared field or a settable string knob. The test pins both halves so the docs cannot drift from
+// the code in either direction.
+func TestExport_SecondReviewProbes(t *testing.T) {
+	f := exportServer(t)
+	f.comps["staging"] = []api.Component{
+		{Kind: "databases", Name: "pairs", Status: "ACTIVE", Config: map[string]any{
+			"engine": "postgres", "engine_version": "PASTED_PW",
+			"provider_config": map[string]any{
+				"rds_default_username":   "TYPED_PW",
+				"rds_cluster_parameters": []any{map[string]any{"name": "master_password", "value": "R2_PAIR"}},
+			},
+		}},
+		{Kind: "secrets", Name: "keep", Status: "ACTIVE", Config: map[string]any{
+			"provider": "aws", "provider_config": map[string]any{
+				"keepers":          map[string]any{"secret": "R2_SECRET", "db_pass": "R2_PASS", "раssword": "R2_CYRILLIC"},
+				"override_special": "!#$",
+			},
+		}},
+	}
+	f.addons["staging"] = []api.Addon{{AddonID: "external-dns", Enabled: true, Mode: "managed", Settings: map[string]any{
+		"provider": map[string]any{"x": map[string]any{"pass": "R2_ADDON_MAP"}}, "policy": []any{"sync", "R2_ADDON_LIST"},
+		"txtOwnerId": "owner",
+	}}}
+	data, _ := exportBytes(t, f, exportOptions{project: "web", env: "staging"})
+	out := string(data)
+	if strings.Contains(out, "R2_") {
+		t.Errorf("a recognisable credential reached the file:\n%s", out)
+	}
+	for _, want := range []string{
+		"engine_version: PASTED_PW", "rds_default_username: TYPED_PW", "override_special: '!#$'", "txtOwnerId: owner",
+		"staging databases/pairs — left out provider_config.rds_cluster_parameters: the value looks like a credential",
+		"staging secrets/keep — left out provider_config.keepers: the value looks like a credential",
+		"staging add-on external-dns — settings policy, provider are not written: only single values",
+		"review this file before you commit it",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	assertNothingToDo(t, planExported(t, f, data), data)
+}
+
+func TestIsNestedCredentialName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"secret": true, "db_pass": true, "pwd": true, "x-auth": true, "myapikey": true, "api_key": true,
+		"private-key": true, "AccessKey": true, "раssword": true, "ΤΟΚΕΝ": true, "ｐａｓｓ": true, "Credentials": true,
+		"name": false, "value": false, "rotate": false, "max_connections": false, "region": false,
+	} {
+		if got := isNestedCredentialName(name); got != want {
+			t.Errorf("isNestedCredentialName(%q) = %v, want %v (normalized %q)", name, got, want, normalizeKeyName(name))
+		}
+	}
+	// Each nested key on its own, through holdsCredential — the path a knob's or setting's value takes.
+	for _, k := range []string{"secret", "db_pass", "раssword", "x-auth"} {
+		if !holdsCredential(map[string]any{"outer": map[string]any{k: "v"}}) {
+			t.Errorf("a nested key %q is not caught by holdsCredential", k)
+		}
+	}
+	if !holdsCredential([]any{map[string]any{"key": "db_password", "value": "x"}}) || holdsCredential([]any{map[string]any{"name": "max_connections", "value": "100"}}) {
+		t.Error("a name/value pair is a credential by its NAME value")
+	}
+	if isScalar([]any{}) || !isScalar("x") || !isScalar(float64(1)) || !isScalar(true) {
+		t.Error("isScalar: strings, numbers, booleans")
+	}
+}
+
+// The defence-in-depth layers under the allow-list, each reached with an allow-list the generated
+// file would never hold: a credential-NAMED knob, a knob whose value is not plain data, a declared
+// schema field named like a credential, and an allow-list file that does not parse.
+func TestExport_DefenceInDepthUnderTheAllowList(t *testing.T) {
+	prev := providerConfigKeys
+	t.Cleanup(func() { providerConfigKeys = prev })
+	providerConfigKeys = func() map[string]map[string][]string {
+		return map[string]map[string][]string{"aws": {"databases": {"db_password", "odd", "rds_default_username"}, "secrets": {"value"}}}
+	}
+	f := exportServer(t)
+	for i, k := range f.schema.Kinds {
+		if k.Kind == "databases" {
+			f.schema.Kinds[i].Fields = append(k.Fields, "admin_password")
+			props, _ := stringKeyed(k.Schema["properties"])
+			props["admin_password"] = map[string]any{"type": "string"}
+		}
+	}
+	f.comps["staging"] = []api.Component{
+		{Kind: "databases", Name: "d", Status: "ACTIVE", Config: map[string]any{
+			"engine": "postgres", "admin_password": "DID_PW",
+			"provider_config": map[string]any{"db_password": "DID_KNOB", "odd": struct{}{}, "rds_default_username": "app"},
+		}},
+		{Kind: "secrets", Name: "s", Status: "ACTIVE", Config: map[string]any{"provider": "aws", "provider_config": map[string]any{"value": "DID_VALUE"}}},
+	}
+	data, _ := exportBytes(t, f, exportOptions{project: "web", env: "staging"})
+	out := string(data)
+	if strings.Contains(out, "DID_") {
+		t.Errorf("a credential passed the defence in depth:\n%s", out)
+	}
+	for _, want := range []string{
+		"staging databases/d — left out admin_password, provider_config.db_password: named like a credential",
+		"staging databases/d — left out provider_config.odd: not a plain value",
+		"staging secrets/s — left out provider_config.value: named like a credential",
+		"rds_default_username: app",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if parseProviderConfigKeys([]byte("{not json")) != nil || len(parseProviderConfigKeys(providerConfigKeysJSON)) == 0 {
+		t.Error("a broken allow-list allows nothing; the embedded one parses")
+	}
+}
+
+// failWriter is a stdout that refuses every write.
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("stdout closed") }
+
+// Writing to a closed stdout is an error, not a silent empty export.
+func TestExport_OutputErrors(t *testing.T) {
+	err := runExport(exportServer(t), failWriter{}, &bytes.Buffer{}, exportOptions{project: "web", env: "prod"}, refusePick)
+	if err == nil || !strings.Contains(err.Error(), "stdout closed") {
+		t.Errorf("stdout write: %v", err)
+	}
+}
+
+// Without a login, `alethia export` stops before reading anything.
+func TestExportCommand_NeedsALogin(t *testing.T) {
+	isolatedHome(t)
+	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
+	resetFlagsAroundTest(t)
+	prevExit := exitFunc
+	exitFunc = func(code int) { panic(projExit{code}) }
+	t.Cleanup(func() { exitFunc = prevExit })
+	exited := false
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if _, ok := r.(projExit); !ok {
+					panic(r)
+				}
+				exited = true
+			}
+		}()
+		resetAllFlags()
+		execRootArgs([]string{"export", "web", "--env", "prod", "--no-input"})
+		_ = rootCmd.Execute()
+	}()
+	if !exited {
+		t.Error("export without credentials must exit")
 	}
 }

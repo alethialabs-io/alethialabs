@@ -514,10 +514,10 @@ Commit `alethia.yaml`. From now on, edit the file and run `alethia apply` — in
 </Step>
 </Steps>
 
-The file never contains a secret: `export` writes only the values that Alethia publishes as plain,
-non-secret settings, as described in
-[What is written, and what is left out](/reference/cli/configuration#what-is-written-and-what-is-left-out).
-Read the file before you commit it. The comment at its top lists what `export` left out, such as an
+`export` writes only the values that Alethia publishes as plain, non-secret settings, so a secret
+that Alethia stores is never written. It cannot recognize a password typed into an ordinary
+setting, so review the file before you commit it. See
+[What is written, and what is left out](/reference/cli/configuration#what-is-written-and-what-is-left-out). The comment at its top lists what `export` left out, such as an
 add-on's Advanced values override, and why. A value that is not in the file keeps what is stored,
 so `plan` shows no change for it and `apply` never clears it.
 

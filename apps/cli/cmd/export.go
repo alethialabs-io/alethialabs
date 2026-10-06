@@ -25,6 +25,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
+	"golang.org/x/text/unicode/norm"
 )
 
 // `alethia export` (#5531): a project built on the console canvas, written as the `alethia.yaml` that
@@ -87,12 +88,14 @@ add-ons. "alethia plan" on the file shows nothing to change.
 terminal you are asked instead). The file goes to stdout unless --out names one; an existing file is
 replaced only with --force.
 
-Only values the control plane publishes as plain settings are written: component fields the
-component schema declares and does not mark secret, provider_config keys that are settable template
-knobs on the project's cloud, and add-on settings the catalog declares and does not name secret.
-Everything else (secret settings, the Advanced values override, credential references, anything that
-looks like a credential) is left out and named in a comment at the top of the file. Omitted means
-"keep what is stored", so apply never clears it.`,
+export never writes a value Alethia stores as a secret, a credential setting, or an add-on's
+Advanced values override. It writes only component fields the component schema declares and does
+not mark secret, provider_config keys that are settable template knobs on the component's cloud,
+and single-value add-on settings the catalog declares and does not name secret. What it leaves out
+is named in a comment at the top of the file; omitted means "keep what is stored".
+
+A credential typed into an ordinary setting (a user name, a parameter list) is written as typed.
+Review the file before you commit it.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		env, _ := cmd.Flags().GetString("env")
@@ -157,51 +160,62 @@ func (o exportOptions) check() error {
 	return nil
 }
 
-// writeExportFile writes the file at path. Without force it is created with O_EXCL, so a file (or a
-// symlink, dangling or not) that appeared since check() is refused rather than clobbered or followed.
-// With force it is written to a temporary file beside it and renamed over it: a rename replaces the
-// directory entry itself, so even a symlink swapped in after the Lstat is replaced, never followed.
+// writeExportFile writes the file at path, never partly and never through a symlink.
+//
+// The bytes go to a temporary file in the same directory first. Without force that file is then
+// hard-linked to path — link(2) fails when anything, a dangling symlink included, already has the
+// name, which is O_EXCL's guarantee for a file that appeared after check() — and the temporary name is
+// removed. With force it is renamed over path, which replaces the directory entry itself, so a symlink
+// swapped in after the Lstat is replaced, never followed; the replaced file's mode is kept. Either way
+// a write that fails leaves no partial alethia.yaml behind.
 func writeExportFile(path string, data []byte, force bool) error {
-	if !force {
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if err != nil {
-			if errors.Is(err, os.ErrExist) {
-				return fmt.Errorf("%s already exists — pass --force to replace it", path)
-			}
-			return err
+	mode := os.FileMode(0o644)
+	if info, err := os.Lstat(path); err == nil {
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			return fmt.Errorf("%s is a symbolic link — export does not write through one; pass the real path", path)
+		case !force:
+			return fmt.Errorf("%s already exists — pass --force to replace it", path)
 		}
-		if _, err := f.Write(data); err != nil {
-			_ = f.Close()
-			return err
-		}
-		return f.Close()
+		mode = info.Mode().Perm()
 	}
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symbolic link — export does not write through one; pass the real path", path)
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	tmp, err := writeExportTemp(path, data, mode)
 	if err != nil {
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
-		return err
+	// After a link the temporary name is a second name for the file; after a rename it is gone.
+	defer func() { _ = os.Remove(tmp) }()
+	if force {
+		return os.Rename(tmp, path)
 	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	// CreateTemp makes the file 0600; the export is meant to be committed, so it reads as any file.
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
+	if err := exportLink(tmp, path); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("%s already exists — pass --force to replace it", path)
+		}
+		return fmt.Errorf("%w (write to stdout instead if this filesystem has no hard links)", err)
 	}
 	return nil
+}
+
+// exportChmod and exportLink are os.Chmod and os.Link, as variables so a test can make them fail.
+var (
+	exportChmod = os.Chmod
+	exportLink  = os.Link
+)
+
+// writeExportTemp writes data to a new temporary file beside path, with the given mode, and returns
+// its name. On any failure the temporary file is removed.
+func writeExportTemp(path string, data []byte, mode os.FileMode) (string, error) {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return "", err
+	}
+	_, werr := f.Write(data)
+	if err := errors.Join(werr, f.Close(), exportChmod(f.Name(), mode)); err != nil {
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 // exportClient is the slice of the API the export reads. Read routes only: an export never writes.
@@ -272,6 +286,8 @@ func (ex *exported) render() ([]byte, error) {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# %s for project %s, written by `alethia export`.\n", manifest.FileName, ex.Manifest.Project)
 	b.WriteString("# `alethia plan` on this file shows nothing to change for the environments it lists.\n")
+	b.WriteString("# No value Alethia stores as a secret is in it, but a credential typed into an ordinary setting\n")
+	b.WriteString("# is written as typed: review this file before you commit it.\n")
 	if ex.Manifest.IaC.Version != "" {
 		// The CLI cannot tell the server's default from a version someone chose, so the stored one is
 		// written — and said to be a pin, so nobody reads it as a choice they made.
@@ -280,7 +296,7 @@ func (ex *exported) render() ([]byte, error) {
 	if len(ex.Notes) > 0 {
 		b.WriteString("#\n# Not in this file (omitted means apply keeps what is stored):\n")
 		for _, n := range ex.Notes {
-			fmt.Fprintf(&b, "#   - %s\n", strings.ReplaceAll(n, "\n", " "))
+			fmt.Fprintf(&b, "#   - %s\n", n)
 		}
 	}
 	b.WriteString("\n")
@@ -357,8 +373,21 @@ func buildExport(c exportClient, o exportOptions, pick envPicker) (*exported, er
 // note records one thing the file leaves out. Empty is nothing to say.
 func (ex *exported) note(n string) {
 	if n != "" {
-		ex.Notes = append(ex.Notes, n)
+		ex.Notes = append(ex.Notes, oneLine(n))
 	}
+}
+
+// oneLine replaces every control character and line or paragraph separator with a space. A note
+// carries server-held text (a chart's ref, a path) and is written into a `#` comment and to a terminal:
+// a `\r` or `\n` in it would end the comment and start a YAML line, and an escape would reach the
+// terminal.
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Zl, unicode.Zp) {
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // matchExportProject finds the project by id, or by name case-insensitively — the server's uniqueness
@@ -774,17 +803,23 @@ func exportProviderConfig(ref, cloud, kind string, v any, lo *leftOut, ex *expor
 //go:embed provider_config_keys.json
 var providerConfigKeysJSON []byte
 
-// providerConfigKeys is provider_config_keys.json parsed: cloud → kind → the settable keys. A file
-// that does not parse allows nothing — the export then leaves every key out, which apply keeps.
+// providerConfigKeys is provider_config_keys.json parsed: cloud → kind → the settable keys. A variable
+// so a test can hand the export an allow-list the generated file would never contain.
 var providerConfigKeys = sync.OnceValue(func() map[string]map[string][]string {
+	return parseProviderConfigKeys(providerConfigKeysJSON)
+})
+
+// parseProviderConfigKeys reads the allow-list file. A file that does not parse allows nothing — the
+// export then leaves every key out, which apply keeps.
+func parseProviderConfigKeys(raw []byte) map[string]map[string][]string {
 	var doc struct {
 		Keys map[string]map[string][]string `json:"keys"`
 	}
-	if err := json.Unmarshal(providerConfigKeysJSON, &doc); err != nil {
+	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil
 	}
 	return doc.Keys
-})
+}
 
 // providerConfigKeyAllowed reports whether key is a settable template knob of kind on cloud — the
 // console's `settableProviderConfigKnobs`, as generated into provider_config_keys.json.
@@ -818,9 +853,19 @@ func isPlain(v any) bool {
 	return true
 }
 
+// isScalar reports whether a decoded value is a single string, number or boolean.
+func isScalar(v any) bool {
+	switch v.(type) {
+	case string, bool, float64, int, int64, json.Number:
+		return true
+	}
+	return false
+}
+
 // holdsCredential reports whether a value carries something that reads as a credential: a mapping key
-// (at any depth) named like one, or a string shaped like one (stringHoldsCredential). It over-matches
-// on purpose, for the reason isCredentialKeyName does: what it drops, apply keeps.
+// at any depth named like one (isNestedCredentialName), a name/value pair whose NAME is one
+// (`{name: master_password, value: …}`), or a string shaped like one (stringHoldsCredential). It
+// over-matches on purpose: what it drops, apply keeps.
 func holdsCredential(v any) bool {
 	switch t := v.(type) {
 	case string:
@@ -834,10 +879,38 @@ func holdsCredential(v any) bool {
 	default:
 		if m, ok := stringKeyed(v); ok {
 			for k, val := range m {
-				if isCredentialKeyName(k) || holdsCredential(val) {
+				if isNestedCredentialName(k) || holdsCredential(val) {
+					return true
+				}
+				// A parameter list spells the credential as a VALUE: `{name: master_password, value: …}`.
+				if name, ok := val.(string); ok && oneOfString(normalizeKeyName(k), pairNameKeys) && isNestedCredentialName(name) {
 					return true
 				}
 			}
+		}
+	}
+	return false
+}
+
+// pairNameKeys are the keys under which a name/value pair names its setting.
+var pairNameKeys = []string{"name", "key", "parameter", "param", "parameter_name", "id"}
+
+// nestedCredentialWords are the words a key INSIDE a value — a map under a knob or a setting — is
+// checked for. Broader than credentialWords, which holds the console's rule for a top-level name: a
+// nested key is free-form, so the words are matched ANYWHERE in the name once it is normalized and its
+// separators removed. `password`, `passwd` and `passphrase` are all caught by `pass`; `api_key` and
+// `private-key` read as `apikey` and `privatekey`.
+var nestedCredentialWords = []string{"secret", "pass", "pwd", "auth", "apikey", "token", "credential", "privatekey", "accesskey"}
+
+// isNestedCredentialName reports whether a key inside a value is named like a credential: one of
+// nestedCredentialWords appears in its normalized name (normalizeKeyName: NFKC, Cyrillic and Greek
+// look-alikes folded) with `_` removed. It over-matches on purpose — `bypass` and `author` match — for
+// the reason every rule here does: what it drops, apply keeps.
+func isNestedCredentialName(name string) bool {
+	joined := strings.ReplaceAll(normalizeKeyName(name), "_", "")
+	for _, w := range nestedCredentialWords {
+		if strings.Contains(joined, w) {
+			return true
 		}
 	}
 	return false
@@ -974,7 +1047,7 @@ func (r *exportReader) addons(env string, rows []api.Addon, ex *exported) ([]man
 		}
 		secret := append(append([]string(nil), entry.SecretKeys...), row.SecretKeys...)
 		settings := map[string]any{}
-		var unknown, credentialLike, unchecked []string
+		var unknown, credentialLike, unchecked, notScalar []string
 		for k, v := range row.Settings {
 			switch {
 			case v == nil, isSecretSetting(k, secret):
@@ -987,7 +1060,11 @@ func (r *exportReader) addons(env string, rows []api.Addon, ex *exported) ([]man
 				unchecked = append(unchecked, k)
 			case !oneOfString(k, entry.Settings):
 				unknown = append(unknown, k)
-			case isCredentialKeyName(k) || !isPlain(v) || holdsCredential(v):
+			case !isScalar(v):
+				// A map or a list can carry anything, nested credential keys included; an add-on
+				// setting the file writes is a single value.
+				notScalar = append(notScalar, k)
+			case isCredentialKeyName(k) || holdsCredential(v):
 				credentialLike = append(credentialLike, k)
 			default:
 				settings[k] = plainValue(v)
@@ -1006,6 +1083,10 @@ func (r *exportReader) addons(env string, rows []api.Addon, ex *exported) ([]man
 		if len(unknown) > 0 {
 			sort.Strings(unknown)
 			ex.note(fmt.Sprintf("%s — stored settings %s are not ones the catalog declares, so they are not written", ref, strings.Join(unknown, ", ")))
+		}
+		if len(notScalar) > 0 {
+			sort.Strings(notScalar)
+			ex.note(fmt.Sprintf("%s — settings %s are not written: only single values (a string, number or boolean) are exported, and these hold a list or a map; apply keeps the stored values", ref, strings.Join(notScalar, ", ")))
 		}
 		if len(unchecked) > 0 {
 			sort.Strings(unchecked)
@@ -1105,11 +1186,27 @@ func isCredentialKeyName(name string) bool {
 	return false
 }
 
-// normalizeKeyName spells a name the one way the credential rule reads it: camelCase split into
-// snake_case (acronyms too — `DBPassword` → `db_password`, `APIKey` → `api_key`), dots, dashes and
-// spaces as `_`, lower-cased. The console's normalizeKeyName, without a regular expression.
+// confusables folds the Cyrillic and Greek letters that look like Latin ones onto those Latin letters,
+// so `раssword` (Cyrillic `р`, `а`) reads as `password`. NFKC (applied first) already folds
+// full-width and compatibility forms; it leaves these alone because they are different letters.
+var confusables = strings.NewReplacer(
+	// Cyrillic, lower then upper.
+	"а", "a", "в", "b", "е", "e", "ё", "e", "з", "3", "і", "i", "ї", "i", "ј", "j", "к", "k", "м", "m",
+	"н", "h", "о", "o", "р", "p", "с", "c", "т", "t", "у", "y", "х", "x", "ѕ", "s", "ԁ", "d", "ӏ", "l",
+	"А", "A", "В", "B", "Е", "E", "З", "3", "І", "I", "Ј", "J", "К", "K", "М", "M", "Н", "H", "О", "O",
+	"Р", "P", "С", "C", "Т", "T", "У", "Y", "Х", "X", "Ѕ", "S",
+	// Greek, lower then upper.
+	"α", "a", "β", "b", "ε", "e", "ι", "i", "κ", "k", "ν", "v", "ο", "o", "ρ", "p", "τ", "t", "υ", "u",
+	"χ", "x", "ω", "w", "Α", "A", "Β", "B", "Ε", "E", "Ζ", "Z", "Η", "H", "Ι", "I", "Κ", "K", "Μ", "M",
+	"Ν", "N", "Ο", "O", "Ρ", "P", "Τ", "T", "Υ", "Y", "Χ", "X",
+)
+
+// normalizeKeyName spells a name the one way the credential rules read it: NFKC-normalized, Cyrillic
+// and Greek look-alikes folded onto Latin letters (confusables), camelCase split into snake_case
+// (acronyms too — `DBPassword` → `db_password`, `APIKey` → `api_key`), dots, dashes and spaces as `_`,
+// lower-cased. The console's normalizeKeyName, without a regular expression, plus the folding.
 func normalizeKeyName(name string) string {
-	rs := []rune(strings.TrimSpace(name))
+	rs := []rune(confusables.Replace(norm.NFKC.String(strings.TrimSpace(name))))
 	var b strings.Builder
 	for i, r := range rs {
 		switch {
