@@ -698,7 +698,7 @@ func TestExportConfiguration_DefaultFormat(t *testing.T) {
 		})
 	}))
 
-	export, err := client.ExportConfiguration("my-app", "")
+	export, err := client.ExportConfiguration("my-app", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -721,7 +721,7 @@ func TestExportConfiguration_ExplicitFormatIsForwarded(t *testing.T) {
 			"content": "{}", "filename": "c.json", "format": "json",
 		})
 	}))
-	if _, err := client.ExportConfiguration("my-app", "legacy-yaml"); err != nil {
+	if _, err := client.ExportConfiguration("my-app", "legacy-yaml", ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got != "legacy-yaml" {
@@ -1470,5 +1470,49 @@ func TestGetAgent_Success(t *testing.T) {
 	}
 	if a.Version != 2 || len(a.ToolScope) != 2 {
 		t.Errorf("unexpected agent: %+v", a)
+	}
+}
+
+// `env` is sent as `&env=`, query-escaped, and left out entirely when empty (#5531) — the route has
+// always resolved it; the client was the half that never sent it.
+func TestExportConfiguration_EnvIsForwardedEscaped(t *testing.T) {
+	var got []string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.RawQuery)
+		json.NewEncoder(w).Encode(map[string]string{"content": "{}", "filename": "c.json", "format": "json"})
+	}))
+	if _, err := client.ExportConfiguration("my-app", "", "staging/eu&x=1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := client.ExportConfiguration("my-app", "", ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"format=json&env=staging%2Feu%26x%3D1", "format=json"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("queries = %q, want %q", got, want)
+	}
+}
+
+// GetProjectSettings decodes the identity id the by-project-name read carries, and refuses a body
+// with no configuration rather than returning a zero project.
+func TestGetProjectSettings(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/api/cli/configurations/by-project-name/my%20app" {
+			t.Errorf("path = %s", r.URL.EscapedPath())
+		}
+		_, _ = w.Write([]byte(`{"configuration":{"id":"p1","project_name":"my app","region":"eu-west-1","iac_version":"1.8.0","cloud_identity_id":"ci1","cloud_provider":"aws","node_min_size":1}}`))
+	}))
+	got, err := client.GetProjectSettings("my app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "p1" || got.Region != "eu-west-1" || got.IacVersion != "1.8.0" || got.CloudIdentityID == nil || *got.CloudIdentityID != "ci1" {
+		t.Errorf("settings = %+v", got)
+	}
+	empty := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	if _, err := empty.GetProjectSettings("x"); err == nil {
+		t.Error("a response with no configuration must be refused")
 	}
 }

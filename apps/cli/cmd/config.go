@@ -107,7 +107,10 @@ var configExportCmd = &cobra.Command{
 	Short: "Export a project's configuration to stdout or a file",
 	Long: `Export a project's resolved configuration. By default the configuration
 content is written to stdout; pass --out to write it to a file, or -o json to get
-the export envelope (content + filename + format).`,
+the export envelope (content + filename + format).
+
+--env exports that environment (by name, stage or id); without it the server
+exports the project's default environment.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
@@ -125,19 +128,20 @@ the export envelope (content + filename + format).`,
 		}
 		contentFormat, _ := cmd.Flags().GetString("format")
 		outFile, _ := cmd.Flags().GetString("out")
+		env, _ := cmd.Flags().GetString("env")
 		if err := runConfigExport(
-			api.NewClient(token), os.Stdout, outputFormat(cmd), project, contentFormat, outFile,
+			api.NewClient(token), os.Stdout, outputFormat(cmd), project, contentFormat, env, outFile,
 		); err != nil {
 			failf("Failed to export configuration: %v", err)
 		}
 	},
 }
 
-// runConfigExport exports a project's configuration. It writes the raw content to
-// a file (--out), emits the full export envelope as json (-o json), or prints the
-// raw content to out (the default).
-func runConfigExport(c apiClient, out io.Writer, displayFormat, projectName, contentFormat, outFile string) error {
-	export, err := c.ExportConfiguration(projectName, contentFormat)
+// runConfigExport exports a project's configuration — env's, or the default environment's when env
+// is empty. It writes the raw content to a file (--out), emits the full export envelope as json
+// (-o json), or prints the raw content to out (the default).
+func runConfigExport(c apiClient, out io.Writer, displayFormat, projectName, contentFormat, env, outFile string) error {
+	export, err := c.ExportConfiguration(projectName, contentFormat, env)
 	if err != nil {
 		return err
 	}
@@ -577,6 +581,7 @@ func saveActiveOrg(o api.OrgSummary) error {
 func init() {
 	configExportCmd.Flags().String("format", "json", "Configuration content format")
 	configExportCmd.Flags().String("out", "", "Write the configuration to this file instead of stdout")
+	configExportCmd.Flags().String("env", "", "Environment to export, by name, stage or id (default: the project's default environment)")
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configClearContextCmd)

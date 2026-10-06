@@ -618,6 +618,36 @@ func (c *Client) GetConfigurations() ([]types.ConfigurationSummary, error) {
 	return successResp.Configurations, nil
 }
 
+// ProjectSettings is the project-level half of `alethia.yaml` as the by-project-name read returns it:
+// the region, the IaC version and the cloud identity the project provisions with. It decodes the
+// same response GetConfiguration does, keeping only these keys — `types.Configuration` predates the
+// identity id on that wire and does not model it.
+type ProjectSettings struct {
+	ID          string `json:"id"`
+	ProjectName string `json:"project_name"`
+	Region      string `json:"region"`
+	IacVersion  string `json:"iac_version"`
+	// CloudIdentityID is the cloud account the project provisions with; nil when none is linked.
+	CloudIdentityID *string `json:"cloud_identity_id"`
+	// CloudProvider is that account's cloud; nil with it.
+	CloudProvider *string `json:"cloud_provider"`
+}
+
+// GetProjectSettings reads a project's region, IaC version and cloud identity by name (#5531).
+func (c *Client) GetProjectSettings(projectName string) (*ProjectSettings, error) {
+	var resp struct {
+		Configuration *ProjectSettings `json:"configuration"`
+	}
+	endpoint := fmt.Sprintf("%s/cli/configurations/by-project-name/%s", c.baseURL, url.PathEscape(projectName))
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to read project %s: %w", projectName, err)
+	}
+	if resp.Configuration == nil {
+		return nil, fmt.Errorf("failed to read project %s: the response carried no configuration", projectName)
+	}
+	return resp.Configuration, nil
+}
+
 func (c *Client) GetConfiguration(projectName string) (*types.Configuration, error) {
 	var successResp struct {
 		Configuration *types.Configuration `json:"configuration"`
@@ -629,7 +659,11 @@ func (c *Client) GetConfiguration(projectName string) (*types.Configuration, err
 	return successResp.Configuration, nil
 }
 
-func (c *Client) ExportConfiguration(projectName, format string) (*ConfigurationExport, error) {
+// ExportConfiguration fetches one project's design document. env names the environment to export
+// (by name, stage or id, as the route resolves it); empty leaves the parameter out, so the server
+// exports the default environment exactly as it did before `--env` existed. An environment the
+// project does not have is the server's 404, carried through with its message.
+func (c *Client) ExportConfiguration(projectName, format, env string) (*ConfigurationExport, error) {
 	// json, not legacy-yaml. The old default named a format with NO producer anywhere — the route it
 	// asked for did not exist either, so this call 404'd for its whole life.
 	if format == "" {
@@ -639,6 +673,11 @@ func (c *Client) ExportConfiguration(projectName, format string) (*Configuration
 		"%s/cli/configurations/by-project-name/%s/export?format=%s",
 		c.baseURL, url.PathEscape(projectName), url.QueryEscape(format),
 	)
+	if env != "" {
+		// The route has resolved `?env=` all along (#5531); the client was the half that never sent it,
+		// so `config export --env staging` exported the default environment without saying so.
+		endpoint += "&env=" + url.QueryEscape(env)
+	}
 	var export ConfigurationExport
 	if err := c.doGet(endpoint, &export); err != nil {
 		return nil, fmt.Errorf("failed to export configuration: %w", err)
