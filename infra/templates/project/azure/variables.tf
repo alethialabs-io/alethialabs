@@ -701,9 +701,41 @@ variable "storage_containers" {
     # versioning: encryption is a property of the ACCOUNT, so any container asking for it encrypts
     # the whole account under a key in this project's Key Vault. See storage-account.tf.
     cmek_enabled = optional(bool, false)
+    # Browser origins allowed to call the account's blob endpoint (#5543). The same per-container/
+    # per-account split again: CORS is the account's blob_properties.cors_rule, so the lists are
+    # UNIONED into one rule in modules/storage-account. The default `[]` is what the module has
+    # always filled in, so a container that sets nothing plans no rule, as before.
+    #
+    # Declared HERE as well as on the module because an object type discards every attribute it
+    # does not name. Without this line the provider's per-bucket value was dropped at the root
+    # without an error, and the module's own optional() then filled in [].
+    cors_origins = optional(list(string), [])
   }))
   default     = []
-  description = "List of storage containers to create in the Storage Account. `cmek_enabled` on any container encrypts the whole account with a customer-managed key in the project's Key Vault (requires key_vault_purge_protection_enabled)."
+  description = "List of storage containers to create in the Storage Account. `cmek_enabled` on any container encrypts the whole account with a customer-managed key in the project's Key Vault (requires key_vault_purge_protection_enabled). `cors_origins` from every container are unioned into the account's one blob CORS rule."
+
+  # An origin is a scheme, a host and an optional port — nothing after it. Azure Storage matches the
+  # browser's Origin header against these strings exactly, so `https://app.example.com/` (a path),
+  # `app.example.com` (no scheme) or an ftp:// URL is accepted by the API and then matches no
+  # browser ever: the rule exists and CORS still fails. Refusing it at plan names the value.
+  # `*` is allowed, and on Azure it opens the WHOLE storage account to every origin, because the
+  # rule is the account's (see modules/storage-account) — the docs say so.
+  validation {
+    condition = alltrue(flatten([
+      for c in var.storage_containers : [
+        for o in c.cors_origins : o == "*" || can(regex("^https?://[^/?#[:space:]]+$", o))
+      ]
+    ]))
+    error_message = "Each storage_containers[*].cors_origins entry must be `*` or an absolute http:// or https:// origin with no path, query or trailing slash (for example https://app.example.com or http://localhost:3000)."
+  }
+
+  # Azure Storage allows at most 64 origins on a CORS rule, and the account has ONE rule holding the
+  # union of every container's origins (modules/storage-account). Over the limit, the API refuses the
+  # whole account update at apply; this refuses it at plan, counting what the union will hold.
+  validation {
+    condition     = length(distinct(flatten([for c in var.storage_containers : c.cors_origins]))) <= 64
+    error_message = "Azure allows at most 64 CORS origins on a storage account, and every container's cors_origins are combined into the account's one rule. Remove origins until the containers list at most 64 distinct ones in total."
+  }
 }
 
 #########################################################################
