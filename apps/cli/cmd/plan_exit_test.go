@@ -10,7 +10,7 @@ import (
 )
 
 // #5600: a pipeline gates on `alethia plan`'s exit code, so every code is pinned here, through the
-// real cobra tree, in both output forms. Before #5600 `--output json` exited 0 on a plan apply
+// real cobra tree, in every output form (table, json, csv). Before #5600 `--output json` exited 0 on a plan apply
 // refuses, and the table form exited 1 — the code of an unreachable API.
 
 // planExitHarness is applyEnv with the exit code recorded: run returns the code the command exited
@@ -66,7 +66,7 @@ func TestPlanExit_EveryCodeInBothForms(t *testing.T) {
 		{"error", "", 1, 1},
 	}
 	for _, tc := range cases {
-		for _, output := range []string{"table", "json"} {
+		for _, output := range []string{"table", "json", "csv"} {
 			for _, detailed := range []bool{false, true} {
 				name := tc.name + "/" + output
 				want := tc.def
@@ -118,7 +118,7 @@ func TestPlanExit_JSONWithProblemsIsStillTheWholeDocument(t *testing.T) {
 func TestPlanExit_ApplyRefusesWithThePlanCode(t *testing.T) {
 	// apply refuses the file the default plan exits 2 on, with the same 2 and before any write; an
 	// error that is not a refusal stays 1.
-	for _, output := range []string{"table", "json"} {
+	for _, output := range []string{"table", "json", "csv"} {
 		t.Run(output, func(t *testing.T) {
 			s := planExitServer()
 			run := planExitHarness(t, s)

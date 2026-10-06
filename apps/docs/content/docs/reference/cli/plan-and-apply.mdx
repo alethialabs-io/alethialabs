@@ -528,8 +528,13 @@ Terraform convention. Problems win over changes, because a plan with both cannot
 `alethia apply` exits `2` when it refuses a file for its problems and `1` on any other error.
 
 `plan` prints the whole plan first in every case. The code comes last. In table form, the refusal
-follows the plan on stdout. With `--output json` or `--output yaml`, stdout carries only the plan
-document and the refusal goes to stderr.
+follows the plan on stdout. With `--output json`, stdout carries only the plan document and the
+refusal goes to stderr. `--output csv` behaves the same way: the refusal goes to stderr and the exit
+code is the same. The plan has no table shape, so csv prints no rows for it; read the plan with
+`--output json`.
+
+`alethia apply --output json` also sends the refusal to stderr. Before #5600 it printed the refusal
+on stdout.
 
 ### Problems in `--output json`
 
@@ -565,7 +570,9 @@ alethia plan --output json | jq -r '.environments[] | .name as $env | .problems[
 
 ### Run `plan` on every pull request
 
-This GitHub Actions job fails a pull request when `alethia.yaml` cannot be applied. It passes when
+This GitHub Actions job fails a pull request when `alethia.yaml` cannot be applied. `plan` reads
+the add-on values files the manifest names, so list their directory under `paths` too (here
+`values/`); otherwise a pull request that changes only a values file skips the check. It passes when
 the file has changes that `apply` accepts. It signs in with a service token in the `ALETHIA_TOKEN`
 secret; `alethia token create --name ci | gh secret set ALETHIA_TOKEN` makes one:
 
@@ -573,7 +580,9 @@ secret; `alethia token create --name ci | gh secret set ALETHIA_TOKEN` makes one
 name: alethia plan
 on:
   pull_request:
-    paths: [alethia.yaml]
+    paths:
+      - alethia.yaml
+      - values/**   # the add-on values files alethia.yaml names, if it names any
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -589,8 +598,10 @@ jobs:
         run: alethia plan --no-input
 ```
 
-To also see whether the pull request changes anything, use `--detailed-exitcode` and read the code
-yourself. A step stops on the first non-zero code, so capture it:
+To also see whether the file differs from the server, use `--detailed-exitcode` and read the code
+yourself. `0` means the file matches what the server has. It does not mean `apply` does nothing:
+`apply` deploys every environment again, even when nothing differs. A step stops on the first
+non-zero code, so capture it:
 
 ```bash
 set +e
@@ -598,8 +609,8 @@ alethia plan --no-input --detailed-exitcode
 code=$?
 set -e
 case "$code" in
-  0) echo "nothing to apply" ;;
-  2) echo "changes to apply" ;;
+  0) echo "the file matches the server" ;;
+  2) echo "the file differs from the server" ;;
   *) exit "$code" ;;   # 1 error, 3 problems
 esac
 ```

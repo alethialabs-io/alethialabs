@@ -88,8 +88,9 @@ func planExitCode(p *ApplyPlan, detailed bool) int {
 }
 
 // reportRefusal prints why the plan cannot be applied. In table form it is the usual error line on
-// stdout, under the plan. With `--output json|yaml` stdout carries the document and nothing else, so
-// the sentence goes to stderr for the person reading the CI log.
+// stdout, under the plan. With `--output json` stdout carries the document and nothing else, so the
+// sentence goes to stderr for the person reading the CI log. `--output csv` takes the same arm: the
+// plan has no table shape and renders no rows, and the reason still belongs on stderr.
 func reportRefusal(err error, format string) {
 	if format == ui.FormatTable {
 		ui.Error(err.Error())
