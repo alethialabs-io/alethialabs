@@ -1,0 +1,194 @@
+{
+  "generatedBy": "pnpm -C apps/console run gen:provider-config-keys",
+  "keys": {
+    "alibaba": {
+      "cluster": [
+        "ack_cluster_admins",
+        "ack_disk_category",
+        "ack_disk_performance_level",
+        "ack_disk_provisioned_iops",
+        "ack_secrets_encryption_enabled",
+        "ack_spot_price_limit",
+        "custom_secret_keepers",
+        "secrets_provider"
+      ],
+      "dns": [
+        "dns_provider"
+      ]
+    },
+    "aws": {
+      "caches": [
+        "aws_elasticache_user_name",
+        "redis_automatic_failover_enabled",
+        "valkey_create_valkey_user_and_secret",
+        "valkey_ecpu_per_second_max",
+        "valkey_snapshot_time"
+      ],
+      "cluster": [
+        "allow_long_names",
+        "cluster_endpoint_public_access_cidrs",
+        "cluster_log_retention_in_days",
+        "ec2_spot_service_role",
+        "eks_access_entries",
+        "eks_ami_type",
+        "eks_kms_key_users",
+        "eks_volume_iops",
+        "eks_volume_type",
+        "karpenter_architectures",
+        "karpenter_capacity_types",
+        "karpenter_cpu_limit",
+        "karpenter_instance_categories",
+        "karpenter_instance_families",
+        "karpenter_node_labels",
+        "karpenter_node_taints",
+        "vpc_public_subnet_ids"
+      ],
+      "container_registries": [
+        "ecr_create_lifecycle_policy",
+        "ecr_manage_registry_scanning_configuration",
+        "ecr_registry_scan_rules",
+        "ecr_registry_scan_type",
+        "ecr_repository_encryption_type",
+        "ecr_repository_lifecycle_policy",
+        "ecr_repository_read_access_arns",
+        "ecr_repository_read_write_access_arns",
+        "ecr_repository_type",
+        "registry_provider"
+      ],
+      "databases": [
+        "rds_allowed_cidr_blocks",
+        "rds_cluster_parameters",
+        "rds_default_username"
+      ],
+      "dns": [
+        "aws_managed_waf_rule_groups",
+        "cloud_dns_zone_name",
+        "custom_managed_waf_rule_groups",
+        "dns_provider",
+        "waf_custom_rules",
+        "waf_default_action",
+        "waf_rate_limit_rules"
+      ],
+      "nosql_tables": [
+        "deletion_protection_enabled",
+        "dynamodb_attributes",
+        "enable_autoscaler",
+        "global_secondary_index_map",
+        "local_secondary_index_map",
+        "tags_enabled",
+        "ttl_attribute",
+        "ttl_enabled"
+      ],
+      "secrets": [
+        "keepers",
+        "override_special"
+      ],
+      "storage_buckets": [
+        "logging_bucket_name",
+        "privileged_principal_actions",
+        "privileged_principal_arns"
+      ]
+    },
+    "azure": {
+      "caches": [
+        "azure_cache_log_categories",
+        "azure_cache_log_workspace_id",
+        "azure_cache_sku"
+      ],
+      "cluster": [
+        "aks_authorized_ip_ranges",
+        "aks_enable_creator_admin",
+        "aks_log_retention_days",
+        "aks_os_disk_type",
+        "aks_secrets_encryption_enabled",
+        "aks_spot_eviction_policy",
+        "aks_spot_max_price",
+        "aks_spot_node_max_size",
+        "aks_spot_node_min_size",
+        "external_secrets_identity_name",
+        "external_secrets_identity_resource_group"
+      ],
+      "container_registries": [
+        "acr_sku",
+        "registry_provider"
+      ],
+      "databases": [
+        "azure_db_allowed_cidrs",
+        "azure_db_database_flags",
+        "azure_db_high_availability",
+        "azure_db_log_exports",
+        "azure_db_log_workspace_id",
+        "azure_db_storage_mb"
+      ],
+      "dns": [
+        "azure_application_gateway_capacity",
+        "azure_application_gateway_enabled",
+        "azure_waf_rules",
+        "dns_provider"
+      ],
+      "nosql_tables": [
+        "analytical_storage_enabled"
+      ],
+      "storage_buckets": [
+        "cmek_enabled"
+      ]
+    },
+    "gcp": {
+      "caches": [
+        "memorystore_auth_enabled",
+        "memorystore_transit_encryption_mode",
+        "memorystore_valkey_node_type"
+      ],
+      "cluster": [
+        "external_dns_service_account_email",
+        "external_secrets_service_account_email",
+        "gke_disk_type",
+        "gke_enable_private_endpoint",
+        "gke_enable_private_nodes",
+        "gke_master_authorized_cidr_blocks",
+        "gke_secrets_encryption_enabled",
+        "gke_secrets_encryption_rotation_period",
+        "gke_volume_iops",
+        "gke_volume_throughput"
+      ],
+      "databases": [
+        "cloud_sql_app_service_account_email",
+        "cloud_sql_backup_enabled",
+        "cloud_sql_database_flags",
+        "cloud_sql_default_username",
+        "cloud_sql_disk_size",
+        "cloud_sql_edition",
+        "cloud_sql_high_availability",
+        "cloud_sql_query_insights_enabled",
+        "cloud_sql_query_insights_record_application_tags",
+        "cloud_sql_query_insights_record_client_address"
+      ],
+      "dns": [
+        "cloud_armor_default_action",
+        "cloud_armor_rules",
+        "dns_provider"
+      ],
+      "nosql_tables": [
+        "firestore_database_type",
+        "firestore_location_id"
+      ],
+      "storage_buckets": [
+        "cmek_enabled",
+        "force_destroy",
+        "lifecycle_rules",
+        "location",
+        "storage_class"
+      ]
+    },
+    "hetzner": {
+      "cluster": [
+        "admin_kubeconfig_cert_lifetime",
+        "talos_image_cache"
+      ],
+      "dns": [
+        "dns_provider",
+        "dns_zone_ttl"
+      ]
+    }
+  }
+}

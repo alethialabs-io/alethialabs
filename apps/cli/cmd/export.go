@@ -5,14 +5,18 @@ package cmd
 
 import (
 	"bytes"
+	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/manifest"
@@ -39,25 +43,34 @@ import (
 // value written here that `plan` read differently would show as a standing change on the first plan
 // a person ran, which is the moment they decide whether to trust the file.
 //
-// # What is never written, and why each is safe to leave out
+// # What is written: an allow-list
 //
-// alethia.yaml is committed to git and read in CI logs, so the export never writes:
+// alethia.yaml is committed to git and read in CI logs, so the export writes a stored value only when
+// something PUBLISHED says it is a plain, non-secret setting — never because nothing said it was a
+// secret:
 //
-//   - a secret add-on setting (the server already removes them from the read; the catalog and the row
-//     name them, and both lists are applied again here),
-//   - an add-on's Advanced values override — it is free-form Helm values and may hold a password
-//     the catalog cannot name. It is OMITTED with a comment rather than written to a values file: a
-//     separate file next to alethia.yaml is committed just the same, so moving it there would move the
-//     leak rather than prevent it,
-//   - a component field the published schema marks `writeOnly`, or whose NAME carries a credential
-//     word — the rule `isCredentialKeyName` holds in apps/console/lib/cloud-providers/template-knobs.ts,
-//     applied to provider_config keys too, so a credential stored before #5571 refused them stays out,
-//   - a component's own `cloud_identity_id` (a credential reference; the project's account is written
-//     once, by its LABEL, as `cloud.account`).
+//   - a component field is written only if the published component schema declares it, the schema
+//     does not mark it `writeOnly` (or `format: password`), its name carries no credential word, and
+//     its value is a scalar, or a list or map of them. Server-managed columns (status, endpoints,
+//     outputs) are not in the schema, so they never are; a component's own `cloud_identity_id` is a
+//     credential reference and is never written (the project's account is, once, by its LABEL);
+//   - a `provider_config` key is written only if it is a settable template knob for that kind on the
+//     component's cloud — provider_config_keys.json, generated from the console's one definition
+//     (`settableProviderConfigKnobs`: offerable, not a credential knob, not `alethia_*`);
+//   - an add-on setting is written only if the catalog declares it and does not name it secret —
+//     neither the catalog's `secret_keys` nor the row's, compared case-insensitively. An add-on's
+//     Advanced values override is free-form Helm values and is never written: moving it to a values
+//     file next to alethia.yaml would commit it just the same.
 //
-// Each of those is safe to omit because an OMITTED field means "keep what is stored" in every part of
-// the manifest — `plan` compares only what the file declares. So the file round-trips, and what it
-// leaves out is listed at its top rather than lost silently.
+// On top of the allow-list the old heuristics still run, as defence in depth: a key NAMED like a
+// credential (`isCredentialKeyName`, the console's rule) and a value SHAPED like one
+// (`holdsCredential`: user-info in any URL of a list, a token in a query string, a bearer token, a
+// DSN with a password) are left out even where the allow-list would admit them.
+//
+// Everything left out is safe to leave out because an OMITTED field means "keep what is stored" in
+// every part of the manifest — `plan` compares only what the file declares, and provider_config and
+// add-on settings merge key by key. So the file round-trips, and what it leaves out is named at its
+// top rather than lost silently.
 
 // exportAllEnvironments is the picker's "every environment" answer. An environment name is a slug, so
 // it can never be this.
@@ -74,9 +87,12 @@ add-ons. "alethia plan" on the file shows nothing to change.
 terminal you are asked instead). The file goes to stdout unless --out names one; an existing file is
 replaced only with --force.
 
-Secrets are never written: secret add-on settings, an add-on's Advanced values override, credential
-fields and credential references are left out, and each is listed in a comment at the top of the file.
-Omitted means "keep what is stored", so apply never clears them.`,
+Only values the control plane publishes as plain settings are written: component fields the
+component schema declares and does not mark secret, provider_config keys that are settable template
+knobs on the project's cloud, and add-on settings the catalog declares and does not name secret.
+Everything else (secret settings, the Advanced values override, credential references, anything that
+looks like a credential) is left out and named in a comment at the top of the file. Omitted means
+"keep what is stored", so apply never clears it.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		env, _ := cmd.Flags().GetString("env")
@@ -123,8 +139,67 @@ func (o exportOptions) check() error {
 	if o.env != "" && o.all {
 		return errors.New("pass --env to export one environment or --all to export every one, not both")
 	}
-	if o.out != "" && !o.force && manifest.Exists(o.out) {
+	if o.out == "" {
+		return nil
+	}
+	// Lstat, not Stat: a symlink — dangling or not — is refused outright, so the export never writes
+	// through one to wherever it points. A file that exists is refused without --force. Both are
+	// checked again at write time (writeExportFile), since the reads in between take a while.
+	info, err := os.Lstat(o.out)
+	switch {
+	case err != nil:
+		return nil
+	case info.Mode()&os.ModeSymlink != 0:
+		return fmt.Errorf("%s is a symbolic link — export does not write through one; pass the real path", o.out)
+	case !o.force:
 		return fmt.Errorf("%s already exists — pass --force to replace it", o.out)
+	}
+	return nil
+}
+
+// writeExportFile writes the file at path. Without force it is created with O_EXCL, so a file (or a
+// symlink, dangling or not) that appeared since check() is refused rather than clobbered or followed.
+// With force it is written to a temporary file beside it and renamed over it: a rename replaces the
+// directory entry itself, so even a symlink swapped in after the Lstat is replaced, never followed.
+func writeExportFile(path string, data []byte, force bool) error {
+	if !force {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			if errors.Is(err, os.ErrExist) {
+				return fmt.Errorf("%s already exists — pass --force to replace it", path)
+			}
+			return err
+		}
+		if _, err := f.Write(data); err != nil {
+			_ = f.Close()
+			return err
+		}
+		return f.Close()
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symbolic link — export does not write through one; pass the real path", path)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	// CreateTemp makes the file 0600; the export is meant to be committed, so it reads as any file.
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
 	}
 	return nil
 }
@@ -173,7 +248,7 @@ func runExport(c exportClient, stdout, stderr io.Writer, o exportOptions, pick e
 			return err
 		}
 	} else {
-		if err := os.WriteFile(o.out, data, 0o644); err != nil {
+		if err := writeExportFile(o.out, data, o.force); err != nil {
 			return fmt.Errorf("write %s: %w", o.out, err)
 		}
 		fmt.Fprintf(stderr, "Wrote %s (%s)\n", o.out, plural(len(ex.Manifest.Environments), "environment"))
@@ -197,6 +272,11 @@ func (ex *exported) render() ([]byte, error) {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# %s for project %s, written by `alethia export`.\n", manifest.FileName, ex.Manifest.Project)
 	b.WriteString("# `alethia plan` on this file shows nothing to change for the environments it lists.\n")
+	if ex.Manifest.IaC.Version != "" {
+		// The CLI cannot tell the server's default from a version someone chose, so the stored one is
+		// written — and said to be a pin, so nobody reads it as a choice they made.
+		fmt.Fprintf(&b, "# iac.version pins the OpenTofu version the project uses now (%s); delete it to take the server's default.\n", ex.Manifest.IaC.Version)
+	}
 	if len(ex.Notes) > 0 {
 		b.WriteString("#\n# Not in this file (omitted means apply keeps what is stored):\n")
 		for _, n := range ex.Notes {
@@ -227,14 +307,21 @@ func buildExport(c exportClient, o exportOptions, pick envPicker) (*exported, er
 		Cloud:   manifest.Cloud{Region: settings.Region},
 		IaC:     manifest.IaC{Version: settings.IacVersion},
 	}}
+	r := &exportReader{c: c, project: project.ID}
+	if settings.CloudProvider != nil {
+		r.cloud = *settings.CloudProvider
+	}
 	if settings.CloudIdentityID != nil && *settings.CloudIdentityID != "" {
-		identities, err := c.GetCloudIdentities()
+		identities, err := r.identities()
 		if err != nil {
-			return nil, fmt.Errorf("list cloud accounts: %w", err)
+			return nil, err
 		}
 		account, note := exportAccount(identities, *settings.CloudIdentityID)
 		ex.Manifest.Cloud.Account = account
 		ex.note(note)
+		if r.cloud == "" {
+			r.cloud = identityProvider(identities, *settings.CloudIdentityID)
+		}
 	}
 
 	envs, err := c.ListEnvironments(project.ID)
@@ -257,7 +344,6 @@ func buildExport(c exportClient, o exportOptions, pick envPicker) (*exported, er
 	}
 	ex.note("lifecycle — the environment read does not carry it, so none is written (persistent is the default); add `lifecycle: ephemeral` by hand where it applies")
 
-	r := &exportReader{c: c, project: project.ID}
 	for _, e := range chosen {
 		env, err := r.environment(e, ex)
 		if err != nil {
@@ -421,8 +507,50 @@ func promptExportEnvironment(project string, envNames []string) (string, error) 
 type exportReader struct {
 	c       exportClient
 	project string
+	// cloud is the project's cloud ("aws", "gcp", …), "" when no account is linked. A component with
+	// its own account is checked against that account's cloud instead.
+	cloud   string
 	schema  *api.ComponentSchemaDocument
 	catalog *api.AddonCatalogDocument
+	// ids is the organization's cloud accounts, read once and only when something needs them.
+	ids     []api.CloudIdentity
+	idsRead bool
+}
+
+// identities reads the organization's cloud accounts, once.
+func (r *exportReader) identities() ([]api.CloudIdentity, error) {
+	if !r.idsRead {
+		ids, err := r.c.GetCloudIdentities()
+		if err != nil {
+			return nil, fmt.Errorf("list cloud accounts: %w", err)
+		}
+		r.ids, r.idsRead = ids, true
+	}
+	return r.ids, nil
+}
+
+// identityProvider is the cloud of the account with this id, or "" when the list does not hold it.
+func identityProvider(ids []api.CloudIdentity, id string) string {
+	for _, i := range ids {
+		if i.ID == id {
+			return i.Provider
+		}
+	}
+	return ""
+}
+
+// componentCloud is the cloud a component's provider_config keys are checked against: its own
+// account's when it has one, else the project's — the order the server's write path uses
+// (`componentProvider`, apps/console/lib/cli/project-components.ts).
+func (r *exportReader) componentCloud(c api.Component) (string, error) {
+	if c.CloudIdentityID == nil || *c.CloudIdentityID == "" {
+		return r.cloud, nil
+	}
+	ids, err := r.identities()
+	if err != nil {
+		return "", err
+	}
+	return identityProvider(ids, *c.CloudIdentityID), nil
 }
 
 // environment reads one environment: its placement, components, add-ons, and a note for anything
@@ -434,14 +562,17 @@ func (r *exportReader) environment(e api.Environment, ex *exported) (manifest.En
 	if e.Namespace != nil && *e.Namespace != "" && e.PlacementMode != string(types.PlacementModeDedicated) {
 		env.Namespace = *e.Namespace
 	}
-	comps, err := r.c.ListComponents(r.project, "", e.Name)
+	// Every per-environment read names the environment by its ID. The server resolves a NAME through
+	// a name-or-stage match that prefers the default environment, so passing `staging` reads the
+	// default environment's rows whenever that one's stage is `staging`; an id cannot collide.
+	comps, err := r.c.ListComponents(r.project, "", e.ID)
 	if err != nil {
 		return env, fmt.Errorf("list components of %s: %w", e.Name, err)
 	}
 	if env.Components, err = r.components(e.Name, comps, ex); err != nil {
 		return env, err
 	}
-	rows, err := r.c.GetProjectAddons(r.project, e.Name)
+	rows, err := r.c.GetProjectAddons(r.project, e.ID)
 	if err != nil {
 		return env, fmt.Errorf("list add-ons of %s: %w", e.Name, err)
 	}
@@ -450,7 +581,7 @@ func (r *exportReader) environment(e api.Environment, ex *exported) (manifest.En
 			return env, err
 		}
 	}
-	r.byo(e.Name, ex)
+	r.byo(e, ex)
 	return env, nil
 }
 
@@ -497,7 +628,11 @@ func (r *exportReader) components(env string, comps []api.Component, ex *exporte
 		}
 		kind := manifest.KindEntries{Kind: def.Kind, List: !def.Singleton}
 		for _, c := range rows {
-			entry := manifest.Component{Fields: exportFields(env, def, c, ex)}
+			fields, err := r.exportFields(env, def, c, ex)
+			if err != nil {
+				return nil, err
+			}
+			entry := manifest.Component{Fields: fields}
 			if !def.Singleton {
 				entry.Name = c.Name
 			}
@@ -516,11 +651,53 @@ func componentRef(c api.Component) string {
 	return c.Kind + "/" + c.Name
 }
 
-// exportFields is one component's settable values: the schema's fields, minus nulls, credential
-// references and secret fields, with provider_config stripped of credential keys.
-func exportFields(env string, def api.ComponentSchemaKind, c api.Component, ex *exported) map[string]any {
+// The reasons a value is left out, as the header says them. One note per component and reason, the
+// fields listed, so a component with five left-out keys is one line, not five.
+const (
+	leftOutSecretField  = "the published component schema marks it secret"
+	leftOutNotDeclared  = "the published component schema does not describe it"
+	leftOutCredential   = "named like a credential"
+	leftOutLooksSecret  = "the value looks like a credential (user-info in a URL, a token in a query string, a bearer token, a DSN with a password)"
+	leftOutNotPlain     = "not a plain value (a scalar, or a list or map of them)"
+	leftOutNoCloud      = "the component's cloud is not known, so no key can be checked against its template knobs"
+	leftOutNotAKnobTmpl = "not a settable template knob of %s on %s"
+)
+
+// leftOut collects what one component leaves out, by reason, in the order first seen.
+type leftOut struct {
+	reasons []string
+	fields  map[string][]string
+}
+
+// add records one left-out field under a reason.
+func (l *leftOut) add(reason, field string) {
+	if l.fields == nil {
+		l.fields = map[string][]string{}
+	}
+	if _, ok := l.fields[reason]; !ok {
+		l.reasons = append(l.reasons, reason)
+	}
+	l.fields[reason] = append(l.fields[reason], field)
+}
+
+// notes writes one note per reason: `prod databases/orders — left out provider_config.a, …: <reason>`.
+func (l *leftOut) notes(ref string, ex *exported) {
+	reasons := append([]string(nil), l.reasons...)
+	sort.Strings(reasons)
+	for _, reason := range reasons {
+		fields := append([]string(nil), l.fields[reason]...)
+		sort.Strings(fields)
+		ex.note(fmt.Sprintf("%s — left out %s: %s", ref, strings.Join(fields, ", "), reason))
+	}
+}
+
+// exportFields is one component's values, through the allow-list: a field is written only when the
+// published schema declares it as a non-secret property and its value is plain; provider_config is
+// filtered key by key against the settable knobs of the component's cloud.
+func (r *exportReader) exportFields(env string, def api.ComponentSchemaKind, c api.Component, ex *exported) (map[string]any, error) {
 	out := map[string]any{}
 	ref := env + " " + componentRef(c)
+	var lo leftOut
 	for _, f := range def.Fields {
 		if f == "cloud_identity_id" {
 			if c.CloudIdentityID != nil && *c.CloudIdentityID != "" {
@@ -532,68 +709,122 @@ func exportFields(env string, def api.ComponentSchemaKind, c api.Component, ex *
 		if !ok || v == nil {
 			continue
 		}
-		if schemaMarksSecret(def, f) || isCredentialKeyName(f) {
-			ex.note(fmt.Sprintf("%s — %s is a secret field and is not written", ref, f))
-			continue
-		}
-		if f == "provider_config" {
-			if pc := exportProviderConfig(ref, def.Kind, v, ex); len(pc) > 0 {
+		prop, declared := schemaProperty(def, f)
+		switch {
+		case !declared:
+			lo.add(leftOutNotDeclared, f)
+		case propertyIsSecret(prop):
+			lo.add(leftOutSecretField, f)
+		case isCredentialKeyName(f):
+			lo.add(leftOutCredential, f)
+		case f == "provider_config":
+			cloud, err := r.componentCloud(c)
+			if err != nil {
+				return nil, err
+			}
+			if pc := exportProviderConfig(ref, cloud, def.Kind, v, &lo, ex); len(pc) > 0 {
 				out[f] = pc
 			}
-			continue
+		case !isPlain(v):
+			lo.add(leftOutNotPlain, f)
+		case holdsCredential(v):
+			lo.add(leftOutLooksSecret, f)
+		default:
+			out[f] = plainValue(v)
 		}
-		if holdsCredential(v) {
-			ex.note(fmt.Sprintf("%s — %s holds what looks like a credential (a key named like one, or a URL with a user in it) and is not written", ref, f))
-			continue
-		}
-		out[f] = plainValue(v)
 	}
-	return out
+	lo.notes(ref, ex)
+	return out, nil
 }
 
-// exportProviderConfig keeps a provider_config's non-credential, non-null keys. A key named like a
-// credential is dropped by NAME — the console's rule — because its value may be one that was stored
-// before the console started refusing them. So is a key whose VALUE holds one (holdsCredential): the
-// console decides credential-ness from the template's declared type, which this side cannot see, so
-// it reads the value's own shape instead.
-func exportProviderConfig(ref, kind string, v any, ex *exported) map[string]any {
+// exportProviderConfig keeps the provider_config keys that are settable template knobs of this kind
+// on this cloud (providerConfigKeyAllowed) and hold a plain value with nothing credential-shaped in it.
+// Every other non-null key is left out and recorded in lo.
+func exportProviderConfig(ref, cloud, kind string, v any, lo *leftOut, ex *exported) map[string]any {
 	in, ok := stringKeyed(v)
 	if !ok {
 		ex.note(ref + " — provider_config is not a mapping on the server, so it is not written")
 		return nil
 	}
 	out := map[string]any{}
-	var dropped []string
+	notAKnob := fmt.Sprintf(leftOutNotAKnobTmpl, kind, cloud)
 	for k, val := range in {
-		if isCredentialKeyName(k) || (kind == "secrets" && normalizeKeyName(k) == "value") || holdsCredential(val) {
-			dropped = append(dropped, k)
-			continue
-		}
 		if val == nil {
 			continue
 		}
-		out[k] = plainValue(val)
-	}
-	if len(dropped) > 0 {
-		sort.Strings(dropped)
-		ex.note(fmt.Sprintf("%s — provider_config %s: a credential, never written (store it as a secret)", ref, strings.Join(dropped, ", ")))
+		field := "provider_config." + k
+		switch {
+		case cloud == "":
+			lo.add(leftOutNoCloud, field)
+		case !providerConfigKeyAllowed(cloud, kind, k):
+			lo.add(notAKnob, field)
+		case isCredentialKeyName(k) || (kind == "secrets" && normalizeKeyName(k) == "value"):
+			lo.add(leftOutCredential, field)
+		case !isPlain(val):
+			lo.add(leftOutNotPlain, field)
+		case holdsCredential(val):
+			lo.add(leftOutLooksSecret, field)
+		default:
+			out[k] = plainValue(val)
+		}
 	}
 	return out
 }
 
+//go:embed provider_config_keys.json
+var providerConfigKeysJSON []byte
+
+// providerConfigKeys is provider_config_keys.json parsed: cloud → kind → the settable keys. A file
+// that does not parse allows nothing — the export then leaves every key out, which apply keeps.
+var providerConfigKeys = sync.OnceValue(func() map[string]map[string][]string {
+	var doc struct {
+		Keys map[string]map[string][]string `json:"keys"`
+	}
+	if err := json.Unmarshal(providerConfigKeysJSON, &doc); err != nil {
+		return nil
+	}
+	return doc.Keys
+})
+
+// providerConfigKeyAllowed reports whether key is a settable template knob of kind on cloud — the
+// console's `settableProviderConfigKnobs`, as generated into provider_config_keys.json.
+func providerConfigKeyAllowed(cloud, kind, key string) bool {
+	return oneOfString(key, providerConfigKeys()[cloud][kind])
+}
+
+// isPlain reports whether a decoded value is plain data: a string, number or bool, or a list or
+// mapping whose every element is plain (or null).
+func isPlain(v any) bool {
+	switch t := v.(type) {
+	case nil, string, bool, float64, int, int64, json.Number:
+		return true
+	case []any:
+		for _, item := range t {
+			if !isPlain(item) {
+				return false
+			}
+		}
+		return true
+	}
+	m, ok := stringKeyed(v)
+	if !ok {
+		return false
+	}
+	for _, val := range m {
+		if !isPlain(val) {
+			return false
+		}
+	}
+	return true
+}
+
 // holdsCredential reports whether a value carries something that reads as a credential: a mapping key
-// (at any depth) named like one, or a URL with user-info — `https://x-access-token:ghp_…@github.com/…`
-// is how a git token most often ends up in a repository URL. It over-matches on purpose, for the reason
-// isCredentialKeyName does: what it drops, apply keeps.
+// (at any depth) named like one, or a string shaped like one (stringHoldsCredential). It over-matches
+// on purpose, for the reason isCredentialKeyName does: what it drops, apply keeps.
 func holdsCredential(v any) bool {
 	switch t := v.(type) {
 	case string:
-		if !strings.Contains(t, "://") {
-			return false
-		}
-		u, err := url.Parse(strings.TrimSpace(t))
-		// An unparseable value with a scheme separator in it cannot be shown to be clean.
-		return err != nil || u.User != nil
+		return stringHoldsCredential(t)
 	case []any:
 		for _, item := range t {
 			if holdsCredential(item) {
@@ -612,19 +843,71 @@ func holdsCredential(v any) bool {
 	return false
 }
 
-// schemaMarksSecret reports whether the published schema marks a field `writeOnly` — a value the
-// server accepts and never hands back as itself, which is what a secret field is.
-func schemaMarksSecret(def api.ComponentSchemaKind, field string) bool {
+// credentialQueryParams are query-string parameters that carry a credential (`?token=…`,
+// `?access_token=…`, a pre-signed URL's signature), matched after normalizeKeyName.
+var credentialQueryParams = []string{"token", "access_token", "auth", "key", "apikey", "api_key", "password", "secret", "sig", "signature", "x_amz_signature", "x_amz_credential", "code"}
+
+// stringHoldsCredential reads a string as one or more values split on commas, semicolons and
+// whitespace, and reports whether any of them is shaped like a credential:
+//
+//   - `Bearer …` / `Basic …` — an Authorization header value;
+//   - a URL with user-info (`https://x-access-token:ghp_…@github.com/…`), or with a credential in its
+//     query string (`?token=…`), or one that does not parse — "cannot be shown clean";
+//   - a DSN with a password and no scheme (`user:pw@tcp(db)/x`): a `:` before an `@`, with no `/`
+//     before it.
+//
+// Every element is checked, so `https://ok,https://u:pw@evil` is caught by its second URL.
+func stringHoldsCredential(s string) bool {
+	lower := strings.ToLower(strings.TrimSpace(s))
+	if strings.HasPrefix(lower, "bearer ") || strings.HasPrefix(lower, "basic ") {
+		return true
+	}
+	parts := strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ';' || unicode.IsSpace(r) })
+	for i, p := range parts {
+		lp := strings.ToLower(p)
+		if (lp == "bearer" || lp == "basic") && i+1 < len(parts) {
+			return true
+		}
+		if strings.Contains(p, "://") {
+			u, err := url.Parse(p)
+			if err != nil || u.User != nil {
+				return true
+			}
+			for k := range u.Query() {
+				if oneOfString(normalizeKeyName(k), credentialQueryParams) || isCredentialKeyName(k) {
+					return true
+				}
+			}
+			continue
+		}
+		if at := strings.Index(p, "@"); at > 0 {
+			before := p[:at]
+			if strings.Contains(before, ":") && !strings.Contains(before, "/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// schemaProperty returns the published schema's property for a field, when it is described by a
+// schema object — the allow-list's "the schema declares it".
+func schemaProperty(def api.ComponentSchemaKind, field string) (map[string]any, bool) {
 	props, ok := stringKeyed(def.Schema["properties"])
 	if !ok {
-		return false
+		return nil, false
 	}
-	prop, ok := stringKeyed(props[field])
-	if !ok {
-		return false
+	return stringKeyed(props[field])
+}
+
+// propertyIsSecret reports whether a schema property describes a secret: `writeOnly` — a value the
+// server accepts and never hands back as itself — or `format: password`.
+func propertyIsSecret(prop map[string]any) bool {
+	if wo, _ := prop["writeOnly"].(bool); wo {
+		return true
 	}
-	wo, _ := prop["writeOnly"].(bool)
-	return wo
+	format, _ := prop["format"].(string)
+	return format == "password"
 }
 
 // plainValue rewrites a decoded JSON value for the file: a whole-number float64 becomes an int, so
@@ -691,16 +974,21 @@ func (r *exportReader) addons(env string, rows []api.Addon, ex *exported) ([]man
 		}
 		secret := append(append([]string(nil), entry.SecretKeys...), row.SecretKeys...)
 		settings := map[string]any{}
-		var unknown, credentialLike []string
+		var unknown, credentialLike, unchecked []string
 		for k, v := range row.Settings {
 			switch {
-			case v == nil, oneOfString(k, secret):
+			case v == nil, isSecretSetting(k, secret):
 				// A secret is never written. The server removes them from this read; this is the same
-				// rule against both lists, so a key only one of them names still cannot reach the file.
-			case isCredentialKeyName(k) || holdsCredential(v):
-				credentialLike = append(credentialLike, k)
-			case entry.Settings != nil && !oneOfString(k, entry.Settings):
+				// rule against both lists, case-insensitively, so a key only one of them names — in
+				// any spelling — still cannot reach the file.
+			case entry.Settings == nil:
+				// The catalog could not list this add-on's settings, so none can be shown to be one it
+				// declares — the allow-list admits nothing.
+				unchecked = append(unchecked, k)
+			case !oneOfString(k, entry.Settings):
 				unknown = append(unknown, k)
+			case isCredentialKeyName(k) || !isPlain(v) || holdsCredential(v):
+				credentialLike = append(credentialLike, k)
 			default:
 				settings[k] = plainValue(v)
 			}
@@ -719,6 +1007,10 @@ func (r *exportReader) addons(env string, rows []api.Addon, ex *exported) ([]man
 			sort.Strings(unknown)
 			ex.note(fmt.Sprintf("%s — stored settings %s are not ones the catalog declares, so they are not written", ref, strings.Join(unknown, ", ")))
 		}
+		if len(unchecked) > 0 {
+			sort.Strings(unchecked)
+			ex.note(fmt.Sprintf("%s — settings %s are not written: the catalog did not publish this add-on's settings, so none can be checked; apply keeps the stored values", ref, strings.Join(unchecked, ", ")))
+		}
 		if row.ValuesYAML != nil && strings.TrimSpace(*row.ValuesYAML) != "" {
 			ex.note(fmt.Sprintf("%s — its Advanced values override is not written: it may hold secrets. "+
 				"apply keeps it as stored; to manage it from git, put it in a file next to %s and name it with `values_file:`",
@@ -731,8 +1023,9 @@ func (r *exportReader) addons(env string, rows []api.Addon, ex *exported) ([]man
 
 // byo notes the BYO charts and BYO IaC attached to an environment — the manifest has no section for
 // either yet. A read that fails is said as such: "could not check" must not read as "none".
-func (r *exportReader) byo(env string, ex *exported) {
-	charts, err := r.c.GetProjectByoCharts(r.project, env)
+func (r *exportReader) byo(e api.Environment, ex *exported) {
+	env := e.Name
+	charts, err := r.c.GetProjectByoCharts(r.project, e.ID)
 	switch {
 	case err != nil:
 		ex.note(fmt.Sprintf("%s BYO charts — could not be read (%v); anything attached there is not in this file", env, err))
@@ -743,7 +1036,7 @@ func (r *exportReader) byo(env string, ex *exported) {
 			ex.note(fmt.Sprintf("%s BYO chart %s@%s — BYO charts are not exported yet", env, ch.ChartPath, ch.Ref))
 		}
 	}
-	src, err := r.c.GetProjectIacSource(r.project, env)
+	src, err := r.c.GetProjectIacSource(r.project, e.ID)
 	switch {
 	case err != nil:
 		ex.note(fmt.Sprintf("%s BYO IaC — could not be read (%v); a source attached there is not in this file", env, err))
@@ -756,6 +1049,18 @@ func (r *exportReader) byo(env string, ex *exported) {
 func oneOfString(v string, list []string) bool {
 	for _, s := range list {
 		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// isSecretSetting reports whether an add-on setting is named secret by the catalog or the row,
+// compared case-insensitively: `APITOKEN` stored against `secret_keys: [apiToken]` is the same
+// secret in a different spelling, and the allow-list must not read it as a different setting.
+func isSecretSetting(key string, secret []string) bool {
+	for _, s := range secret {
+		if strings.EqualFold(s, key) {
 			return true
 		}
 	}
