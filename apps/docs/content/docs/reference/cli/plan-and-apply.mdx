@@ -158,10 +158,20 @@ setting that changed on the server:
 Run `alethia plan` again, decide which value you want, and then run `alethia apply`. A component
 that was removed after the read is refused in the same way. `apply` does not create it again.
 
-**A component that a run is changing is not changed.** While a component is `CREATING`, `UPDATING`
-or `DESTROYING`, the server refuses every change to it. The error names the status. Wait for the
-deploy or the destroy to finish, then run `alethia apply` again. `apply` does not queue the change
-for later.
+**A component is not changed while its environment is deploying or being destroyed.** From the
+moment a deploy or a destroy of an environment is queued until its job finishes, the server refuses
+every change that `apply` sends to a component of that environment. A plan job does not block a
+change. The error names the job:
+
+```
+  ✗ databases/orders in prod was not updated: databases/orders cannot be changed while a deploy
+    of this environment is processing (job 3f9c…); follow it with `alethia jobs logs 3f9c…`, then
+    re-run `alethia apply` once it has finished
+```
+
+Wait for that job to finish, then run `alethia apply` again. `apply` does not queue the change for
+later. The component's own status does not block a change: a database can stay `CREATING` after a
+successful deploy while its chart is still starting, and you can still change it.
 
 Both refusals follow the rule above: that environment is not deployed, and the other environments
 continue.
