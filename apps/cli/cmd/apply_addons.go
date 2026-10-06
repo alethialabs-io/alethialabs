@@ -275,11 +275,8 @@ func overrideText(a manifest.Addon) *string {
 		if len(a.Values) == 0 {
 			return &cleared
 		}
-		raw, err := yaml.Marshal(a.Values)
-		if err != nil {
-			// A mapping yaml.v3 just decoded always encodes.
-			return &cleared
-		}
+		// A mapping yaml.v3 just decoded always encodes, so the error has nothing to report.
+		raw, _ := yaml.Marshal(a.Values)
 		text := string(raw)
 		return &text
 	}
