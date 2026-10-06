@@ -183,7 +183,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `external_secrets_identity_name` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `external_secrets_identity_resource_group` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `external_secrets_service_account_email` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
-| `extra_node_pools` | 🚫 | ✅ | ✅ | ✅ | 🚫 | baseline |  (#5523) |
+| `extra_node_pools` | 🚫 | ✅ | ✅ | ✅ | ✅ | baseline |  (#5523) |
 | `firestore_database_type` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `firestore_location_id` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `firestore_point_in_time_recovery` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
@@ -242,8 +242,9 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `network_allowed_cidr_blocks` | ✅ | 🚫 | 🚫 | ✅ | ✅ | baseline |  (#2004) |
 | `network_cidr` | ✅ | 🚫 | 🚫 | ✅ | ✅ | baseline |  (#2004) |
 | `network_id` | ✅ | 🚫 | 🚫 | ✅ | ✅ | baseline |  (#2004) |
-| `node_labels` | 🚫 | ✅ | ✅ | ✅ | 🚫 | baseline |  (#5523) |
-| `node_taints` | 🚫 | ✅ | ✅ | ✅ | 🚫 | baseline |  (#5523) |
+| `node_labels` | 🚫 | ✅ | ✅ | ✅ | ✅ | baseline |  (#5523) |
+| `node_pool_subnet_index` | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | uniform | Hetzner-only. Each extra pool's /24 of the cluster network is derived from its name, and this override resolves two names landing on one /24 (#5536). EKS, AKS, GKE and ACK place a node pool in the cluster's existing subnets themselves, so there is no per-pool subnet to choose. |
+| `node_taints` | 🚫 | ✅ | ✅ | ✅ | ✅ | baseline |  (#5523) |
 | `oss_buckets` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `ots_tables` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `pod_cidr` | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | baseline |  (#2004) |

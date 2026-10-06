@@ -21,7 +21,7 @@ provisioned.
 | aws | 170 | 133 | 62 | 0 |
 | azure | 98 | 72 | 31 | 1 |
 | gcp | 110 | 90 | 38 | 0 |
-| hetzner | 36 | 26 | 4 | 1 |
+| hetzner | 40 | 30 | 8 | 1 |
 
 **knobs** = root variables the root module declares, plus the object attributes a leaf component's item
 passthrough reaches. **reachable** = a `provider_config` merge lands on it. **settable** = reachable, read by
@@ -36,7 +36,7 @@ by no resource or module argument — the shape a raw variable count cannot tell
 |---|---:|---:|---:|---:|---:|
 | bucket | 0 / 2 | 3 / 16 | 1 / 9 | 5 / 12 | 0 / 9 |
 | cache | 0 / 6 | 5 / 18 | 3 / 6 | 3 / 11 | — |
-| cluster | 8 / 17 | 21 / 32 | 14 / 22 | 13 / 23 | 2 / 11 |
+| cluster | 8 / 17 | 21 / 32 | 14 / 22 | 13 / 23 | 6 / 15 |
 | database | 0 / 8 | 4 / 11 | 6 / 14 | 10 / 17 | — |
 | dns | 1 / 5 | 7 / 16 | 4 / 8 | 3 / 7 | 2 / 5 |
 | network | 1 / 6 | 1 / 4 | 0 / 5 | 2 / 7 | 0 / 6 |
