@@ -79,8 +79,9 @@ locals {
   api_port_k8s        = 6443
   api_port_kube_prism = 7445
 
-  # Architectures we actually need snapshots for (dedup CP + worker arch).
-  architectures = distinct([var.control_plane_arch, var.worker_arch])
+  # Architectures we actually need snapshots for (dedup CP + worker arch + every extra pool's arch,
+  # so an arm64 pool on an amd64 cluster gets its arm64 Talos image built or reused, #5536).
+  architectures = distinct(concat([var.control_plane_arch, var.worker_arch], [for p in var.extra_node_pools : p.arch]))
   need_arm64    = contains(local.architectures, "arm64")
   need_amd64    = contains(local.architectures, "amd64")
 
