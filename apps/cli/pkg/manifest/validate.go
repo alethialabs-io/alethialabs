@@ -33,6 +33,11 @@ type Rules struct {
 	// project already exists, because the server does not apply it then and this reader must not
 	// invent a refusal the front door would not make.
 	RequireDedicated bool
+	// Addons is the server's published add-on catalog. Nil skips every catalog check (an unknown
+	// id, a version the server would refuse, a secret setting) for the reason Schema does.
+	Addons *api.AddonCatalogDocument
+	// AddonModes are the delivery modes the server accepts. Empty skips the check.
+	AddonModes []string
 }
 
 // Normalize fills the defaults a person may leave out and drops what cannot apply.
@@ -159,6 +164,7 @@ func (m *Manifest) Validate(rules Rules) error {
 			p = append(p, fmt.Sprintf("%s: lifecycle %q is not one of %s", at, e.Lifecycle, oneOfText(rules.Lifecycles)))
 		}
 		p = append(p, validateComponents(at, e.Components, rules.Schema)...)
+		p = append(p, validateAddons(at, e.Addons, rules.Addons, rules.AddonModes)...)
 	}
 	if rules.RequireDedicated && len(m.Environments) > 0 && !dedicated {
 		// The server refuses a matrix with no dedicated entry, and refuses it CONDITIONALLY:
