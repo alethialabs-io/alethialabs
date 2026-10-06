@@ -159,11 +159,13 @@ func TestComputePlan_Addons(t *testing.T) {
 		t.Errorf("external-dns = %s %#v, want update %#v", ed.Action, ed.Changes, wantED)
 	}
 	kps := addonByID(t, prod, "kube-prometheus-stack")
-	wantKPS := []FieldChange{{Field: "values",
-		From: map[string]any{"grafana": map[string]any{"replicas": 1}},
-		To:   map[string]any{"grafana": map[string]any{"replicas": 2}}}}
-	if kps.Action != ActionUpdate || !reflect.DeepEqual(kps.Changes, wantKPS) {
-		t.Errorf("kube-prometheus-stack = %s %#v, want %#v", kps.Action, kps.Changes, wantKPS)
+	if kps.Action != ActionUpdate || len(kps.Changes) != 1 || kps.Changes[0].Field != "values" {
+		t.Fatalf("kube-prometheus-stack = %s %#v, want one values change", kps.Action, kps.Changes)
+	}
+	from, _ := kps.Changes[0].From.(string)
+	to, _ := kps.Changes[0].To.(string)
+	if !strings.HasPrefix(from, "sha256:") || !strings.HasSuffix(to, "(2 lines)") || from == to {
+		t.Errorf("values change = %q → %q, want two different digests", from, to)
 	}
 	if !reflect.DeepEqual(prod.UnmanagedAddons, []string{"loki"}) {
 		t.Errorf("loki is on the server and not in the file — unmanaged, got %v", prod.UnmanagedAddons)
@@ -302,7 +304,7 @@ func TestRenderPlan_ShowsAddonsPerEnvironment(t *testing.T) {
 		"~ external-dns  version: (catalog default) → 1.15.0",
 		"~ external-dns  settings.policy: upsert-only → sync",
 		"~ external-dns  settings.txtOwnerId: team-a → (default)",
-		`~ kube-prometheus-stack  values: {"grafana":{"replicas":1}} → {"grafana":{"replicas":2}}`,
+		"~ kube-prometheus-stack  values: sha256:",
 		"add-on loki is enabled on the server and not in the file — left alone (unmanaged)",
 		"add-ons  + external-dns",
 		"1 add-on to enable · 2 to change",

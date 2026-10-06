@@ -221,6 +221,14 @@ func validateComponents(at string, comps Components, schema *api.ComponentSchema
 				}
 				namesSeen[e.Name] = true
 			}
+			// The server takes provider_config only as a mapping, merged key by key. A whole
+			// `provider_config: null` (or a scalar, or a list) is refused there, so it is refused
+			// here — with the form that does what a person writing null usually means.
+			if v, ok := e.Fields["provider_config"]; ok {
+				if _, isMap := v.(map[string]any); !isMap {
+					p = append(p, entry+": provider_config must be a mapping of key: value — to remove a key, write `key: null` under it; a whole `provider_config: null` is refused by the server")
+				}
+			}
 			var unknown []string
 			for f := range e.Fields {
 				if !oneOf(f, def.Fields) {

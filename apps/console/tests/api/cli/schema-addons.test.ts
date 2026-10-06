@@ -77,6 +77,16 @@ describe("GET /api/cli/schema/addons", () => {
 		}
 	});
 
+	it("publishes every setting key the add-on's schema declares, secret ones included", async () => {
+		const doc = await document();
+		for (const def of ADDON_CATALOG) {
+			const entry = doc.addons.find((a) => a.id === def.id);
+			expect(entry?.settings).not.toBeNull();
+			for (const f of def.fields) expect(entry?.settings).toContain(f.key);
+			for (const key of secretFieldKeys(def)) expect(entry?.settings).toContain(key);
+		}
+	});
+
 	it("publishes the server's own chart-version rule", async () => {
 		const doc = await document();
 		const re = new RegExp(doc.chart_version.pattern);

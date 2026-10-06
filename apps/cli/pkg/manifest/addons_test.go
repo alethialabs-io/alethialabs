@@ -307,3 +307,92 @@ environments:
 		t.Errorf("repositories must refuse provider_config, got %v", err)
 	}
 }
+
+func TestLoadValuesFiles_IsConfinedToTheManifestDirectory(t *testing.T) {
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "credentials")
+	if err := os.WriteFile(secret, []byte("aws_secret_access_key = SENTINEL\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(secret, filepath.Join(dir, "link.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "linkdir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "helm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "helm", "ok.yaml"), []byte("a: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "helm", "ok.yaml"), filepath.Join(dir, "inside.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		path    string
+		refused bool
+	}{
+		"an absolute path":             {secret, true},
+		"a .. that climbs out":         {"../" + filepath.Base(outside) + "/credentials", true},
+		"a .. hidden mid-path":         {"helm/../../" + filepath.Base(outside) + "/credentials", true},
+		"a symlinked file leading out": {"link.yaml", true},
+		"a symlinked directory out":    {"linkdir/credentials", true},
+		"a file inside":                {"helm/ok.yaml", false},
+		"a .. that stays inside":       {"helm/../helm/ok.yaml", false},
+		"a symlink that stays inside":  {"inside.yaml", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := "project: p\ncloud:\n  region: r\nenvironments:\n  - name: prod\n    stage: production\n    addons:\n      - id: loki\n        values_file: " + tc.path + "\n"
+			m := mustParse(t, src)
+			err := m.LoadValuesFiles(dir)
+			if !tc.refused {
+				if err != nil || m.Environments[0].Addons[0].ValuesFileContent != "a: 1\n" {
+					t.Fatalf("a path inside was refused or not read: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "inside the directory that holds alethia.yaml") {
+				t.Fatalf("LoadValuesFiles = %v, want the confinement rule named", err)
+			}
+			if strings.Contains(err.Error(), "SENTINEL") || strings.Contains(m.Environments[0].Addons[0].ValuesFileContent, "SENTINEL") {
+				t.Fatal("the outside file was read")
+			}
+		})
+	}
+}
+
+func TestValidate_RefusesAnUnknownAddonSetting(t *testing.T) {
+	r := addonRules()
+	r.Addons.Addons[1].Settings = []string{"provider", "domainFilter", "apiToken"}
+	m := mustParse(t, "project: p\ncloud:\n  region: r\nenvironments:\n  - name: prod\n    stage: production\n    addons:\n      - id: external-dns\n        settings:\n          provider: cloudflare\n          domainFiltr: x\n")
+	err := m.Validate(r)
+	if err == nil || !strings.Contains(err.Error(), "external-dns does not take the setting domainFiltr (it takes: provider, domainFilter, apiToken)") {
+		t.Fatalf("Validate = %v, want the misspelt setting refused", err)
+	}
+	// No settings list from the server is "could not check": the same file is not refused for it.
+	r.Addons.Addons[1].Settings = nil
+	if err := m.Validate(r); err != nil {
+		t.Errorf("without a settings list nothing may be refused as unknown: %v", err)
+	}
+}
+
+func TestValidate_AWholeProviderConfigNullIsRefused(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "component_schema_provider_config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema api.ComponentSchemaDocument
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	r := testRules()
+	r.Schema = &schema
+	for name, value := range map[string]string{"null": "null", "empty": "", "a list": "[a]", "a scalar": "x"} {
+		m := mustParse(t, "project: p\ncloud:\n  region: r\nenvironments:\n  - name: prod\n    stage: production\n    components:\n      cluster:\n        provider_config: "+value+"\n")
+		if err := m.Validate(r); err == nil || !strings.Contains(err.Error(), "provider_config must be a mapping") {
+			t.Errorf("%s: Validate = %v, want it refused", name, err)
+		}
+	}
+}

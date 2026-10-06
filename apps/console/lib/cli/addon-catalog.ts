@@ -20,6 +20,7 @@ import { ADDON_CATALOG, getAddOn } from "@/lib/addons/catalog";
 import { secretFieldKeys, stripAddonSecrets } from "@/lib/addons/secrets";
 import type { AddOnDef, AddOnField } from "@/lib/addons/types";
 import { asRecord } from "@/lib/records";
+import { z } from "zod";
 
 /** One catalog add-on as the CLI sees it. */
 export interface AddonCatalogEntry {
@@ -30,6 +31,9 @@ export interface AddonCatalogEntry {
 	secret_keys: string[];
 	/** What each NON-secret setting is when nothing is stored for it — the value a reset lands on. */
 	defaults: Record<string, unknown>;
+	/** Every setting key the add-on's schema declares, secret ones included; null when the schema is
+	 *  not an object whose keys can be read, which the CLI treats as "could not check". */
+	settings: string[] | null;
 }
 
 /** The catalog document `GET /api/cli/schema/addons` serves. */
@@ -51,6 +55,15 @@ export function addonSettingDefaults(def: AddOnDef): Record<string, unknown> {
 	const parsed = def.configSchema.safeParse({});
 	const raw = parsed.success ? asRecord(parsed.data) : descriptorDefaults(def.fields);
 	return stripAddonSecrets(def, raw);
+}
+
+/**
+ * Every setting key the add-on's `configSchema` declares — the schema `enableAddon` validates with,
+ * so a key outside it is one the server would drop or refuse. Null when the schema is not a plain
+ * object schema: then nothing can be said, and the CLI must not refuse on a guess.
+ */
+export function addonSettingKeys(def: AddOnDef): string[] | null {
+	return def.configSchema instanceof z.ZodObject ? Object.keys(def.configSchema.shape) : null;
 }
 
 /** The declared defaults of a list of field descriptors, one nested level deep. */
@@ -75,6 +88,7 @@ export function addonCatalogDocument(): AddonCatalogDocument {
 			version: def.version,
 			secret_keys: secretFieldKeys(def),
 			defaults: addonSettingDefaults(def),
+			settings: addonSettingKeys(def),
 		})),
 		chart_version: {
 			pattern: CHART_VERSION_PATTERN.source,

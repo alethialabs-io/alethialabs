@@ -121,7 +121,7 @@ func TestComputePlan_AddonModeAndEmptyOverride(t *testing.T) {
 	got := plan.Environments[0].Addons[0]
 	want := []FieldChange{
 		{Field: "mode", From: "managed", To: "gitops"},
-		{Field: "values", From: map[string]any{"a": 1}, To: nil},
+		{Field: "values", From: overrideDigest(map[string]any{"a": 1}, "a: 1\n"), To: nil},
 	}
 	if !reflect.DeepEqual(got.Changes, want) {
 		t.Fatalf("changes = %#v, want %#v", got.Changes, want)

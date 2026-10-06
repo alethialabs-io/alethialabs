@@ -6,7 +6,10 @@
 			"secret_keys": [
 				"string"
 			],
-			"defaults": {}
+			"defaults": {},
+			"settings": [
+				"string"
+			]
 		}
 	],
 	"chart_version": {

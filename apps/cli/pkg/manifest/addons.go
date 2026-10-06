@@ -4,6 +4,7 @@
 package manifest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -222,11 +223,20 @@ func (m *Manifest) DeclaresAddons() bool {
 	return false
 }
 
+// valuesFileRule is the sentence a values_file outside alethia.yaml's directory is refused with.
+const valuesFileRule = "a values_file must be a relative path inside the directory that holds alethia.yaml — " +
+	"no absolute path, no `..` out of it, and no symlink that leads out of it"
+
 // LoadValuesFiles reads every add-on's `values_file`, relative to dir (alethia.yaml's directory).
 //
 // Read at plan time, not apply time, so the plan diffs the file that will be sent. A missing or
 // unreadable file is an error naming the entry: silently sending no override would read as "keep",
 // which is not what a person who named a file asked for.
+//
+// CONFINED TO dir, because alethia.yaml is reviewed as code and run by CI. A pull request that edits
+// only this file could otherwise name `/home/runner/.aws/credentials`, or a symlink to it, and have
+// `apply` send the runner's credentials to the server as a values override. So an absolute path is
+// refused, and so is any path that resolves outside dir once `..` and symlinks are followed.
 func (m *Manifest) LoadValuesFiles(dir string) error {
 	var p Problems
 	for i := range m.Environments {
@@ -236,9 +246,10 @@ func (m *Manifest) LoadValuesFiles(dir string) error {
 			if a.ValuesFile == nil || *a.ValuesFile == "" {
 				continue
 			}
-			path := *a.ValuesFile
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(dir, path)
+			path, err := confinedPath(dir, *a.ValuesFile)
+			if err != nil {
+				p = append(p, fmt.Sprintf("environments[%s].addons[%s]: values_file %q: %v", e.Name, a.ID, *a.ValuesFile, err))
+				continue
 			}
 			raw, err := os.ReadFile(path)
 			if err != nil {
@@ -252,6 +263,32 @@ func (m *Manifest) LoadValuesFiles(dir string) error {
 		return nil
 	}
 	return p
+}
+
+// confinedPath resolves rel inside dir, refusing anything that lands outside it: an absolute path,
+// a `..` that climbs out, or a symlink (anywhere on the path) that leads out. The answer is the
+// fully resolved path, so what is read is exactly what was checked.
+func confinedPath(dir, rel string) (string, error) {
+	if filepath.IsAbs(rel) {
+		return "", errors.New(valuesFileRule)
+	}
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(root, filepath.Clean(rel)))
+	if err != nil {
+		return "", err
+	}
+	inside, err := filepath.Rel(root, resolved)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) || filepath.IsAbs(inside) {
+		return "", errors.New(valuesFileRule)
+	}
+	return resolved, nil
 }
 
 // validateAddons checks one environment's add-ons.
@@ -300,6 +337,19 @@ func validateAddons(at string, addons []Addon, catalog *api.AddonCatalogDocument
 				p = append(p, fmt.Sprintf("%s: version %q — a chart version is at most %d characters", where, v, catalog.ChartVersion.MaxLength))
 			case versionRule != nil && !versionRule.MatchString(v):
 				p = append(p, fmt.Sprintf("%s: version %q — %s", where, v, catalog.ChartVersion.Refusal))
+			}
+		}
+		if entry.Settings != nil {
+			var unknown []string
+			for k := range a.Settings {
+				if !oneOf(k, entry.Settings) {
+					unknown = append(unknown, k)
+				}
+			}
+			if len(unknown) > 0 {
+				sort.Strings(unknown)
+				p = append(p, fmt.Sprintf("%s: %s does not take the setting %s (it takes: %s)",
+					where, a.ID, strings.Join(unknown, ", "), strings.Join(entry.Settings, ", ")))
 			}
 		}
 		if secret := SecretSettings(a.Settings, entry.SecretKeys); len(secret) > 0 {

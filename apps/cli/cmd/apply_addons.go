@@ -4,6 +4,10 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -39,6 +43,9 @@ type AddonPlan struct {
 
 	// request is what apply sends for a `create` or an `update`.
 	request api.EnableAddonParams
+	// secretKeys are the add-on's secret settings, from the catalog AND the stored row, so a plan
+	// can redact one even when only one of the two could name it.
+	secretKeys []string
 }
 
 // addonDefaultLabel is what a version change shows for "no pin": the catalog's default applies.
@@ -79,7 +86,7 @@ func planAddons(env manifest.Environment, existing []api.Addon, catalog *api.Add
 			continue
 		}
 		if !enabled {
-			plans = append(plans, AddonPlan{ID: a.ID, Action: ActionCreate, request: addonRequest(env.Name, a, nil)})
+			plans = append(plans, AddonPlan{ID: a.ID, Action: ActionCreate, request: addonRequest(env.Name, a, nil), secretKeys: secretKeys})
 			continue
 		}
 		var changes []FieldChange
@@ -99,11 +106,15 @@ func planAddons(env manifest.Environment, existing []api.Addon, catalog *api.Add
 				want = nil
 			}
 			if !valuesEqual(mapOrNil(want), mapOrNil(current)) {
-				changes = append(changes, FieldChange{Field: "values", From: mapOrNil(current), To: mapOrNil(want)})
+				// A DIGEST, never the content: a values file can be any file the repository holds,
+				// and a plan is printed into CI logs. What changed is visible; what it says is not.
+				changes = append(changes, FieldChange{Field: "values",
+					From: overrideDigest(current, derefString(row.ValuesYAML)),
+					To:   overrideDigest(want, derefString(overrideText(a)))})
 			}
 		}
 		sortChanges(changes)
-		p := AddonPlan{ID: a.ID, Action: ActionUnchanged}
+		p := AddonPlan{ID: a.ID, Action: ActionUnchanged, secretKeys: secretKeys}
 		if len(changes) > 0 {
 			p.Action, p.Changes = ActionUpdate, changes
 			p.request = addonRequest(env.Name, a, changes)
@@ -191,9 +202,11 @@ func parseOverride(text string) (map[string]any, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, nil
 	}
+	// The parser's own message is NOT carried: it quotes the offending text, and this text may be
+	// any file in the repository.
 	var node yaml.Node
 	if err := yaml.Unmarshal([]byte(text), &node); err != nil {
-		return nil, fmt.Errorf("is not valid YAML: %w", err)
+		return nil, errors.New("is not valid YAML")
 	}
 	if len(node.Content) == 0 {
 		return nil, nil
@@ -203,9 +216,22 @@ func parseOverride(text string) (map[string]any, error) {
 	}
 	out := map[string]any{}
 	if err := node.Content[0].Decode(&out); err != nil {
-		return nil, fmt.Errorf("is not valid YAML: %w", err)
+		return nil, errors.New("is not valid YAML")
 	}
 	return out, nil
+}
+
+// overrideDigest names an override without showing it: `sha256:<12 hex> (N lines)`, or nil for
+// none. The hash is over the parsed mapping's canonical JSON, so two texts that mean the same
+// mapping have the same digest and a whitespace edit does not look like a change.
+func overrideDigest(m map[string]any, text string) any {
+	if len(m) == 0 {
+		return nil
+	}
+	canonical, _ := json.Marshal(canonicalValue(m))
+	sum := sha256.Sum256(canonical)
+	lines := strings.Count(strings.TrimRight(text, "\n"), "\n") + 1
+	return fmt.Sprintf("sha256:%s (%s)", hex.EncodeToString(sum[:])[:12], plural(lines, "line"))
 }
 
 // mapOrNil turns an empty mapping into nil, so "no override" compares and prints one way.
@@ -313,7 +339,7 @@ func renderAddons(out io.Writer, e EnvPlan, secretKeys func(id string) []string)
 		fmt.Fprintf(out, "    add-ons  %s\n", strings.Join(cells, "  "))
 	}
 	for _, a := range e.Addons {
-		secret := secretKeys(a.ID)
+		secret := append(append([]string(nil), secretKeys(a.ID)...), a.secretKeys...)
 		for _, ch := range a.Changes {
 			fmt.Fprintf(out, "    %s %s  %s: %s → %s\n", glyphFor(ActionUpdate), a.ID, ch.label(),
 				addonFieldValue(ch, ch.From, secret), addonFieldValue(ch, ch.To, secret))

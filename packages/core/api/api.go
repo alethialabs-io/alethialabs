@@ -2385,6 +2385,9 @@ type AddonCatalogEntry struct {
 	// Defaults are what each non-secret setting is when nothing is stored for it — the value a
 	// setting reset with `key: null` lands on.
 	Defaults map[string]any `json:"defaults"`
+	// Settings are every setting key the add-on declares, secret ones included. Nil when the server
+	// could not read them — "could not check", so no key is refused for being unknown.
+	Settings []string `json:"settings"`
 }
 
 // ChartVersionRule is the server's one definition of a valid chart-version pin, published so the

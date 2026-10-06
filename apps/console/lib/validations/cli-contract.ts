@@ -813,6 +813,8 @@ export const addonCatalogEntryWire = z.object({
 	secret_keys: z.array(z.string()),
 	/** What each non-secret setting is when nothing is stored for it. */
 	defaults: z.record(z.string(), z.unknown()),
+	/** Every setting key the add-on declares; null when they cannot be read ("could not check"). */
+	settings: z.array(z.string()).nullable(),
 });
 /** GET /api/cli/schema/addons — the add-on catalog the CLI checks `alethia.yaml` against. */
 export const cliAddonCatalogResponse = z.object({
