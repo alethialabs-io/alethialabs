@@ -100,6 +100,9 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `cloud_sql_high_availability` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `cloud_sql_iam_auth` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `cloud_sql_port` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
+| `cloud_sql_query_insights_enabled` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
+| `cloud_sql_query_insights_record_application_tags` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
+| `cloud_sql_query_insights_record_client_address` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `cloud_sql_tier` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `cloud_storage_buckets` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `cloudfront_waf_enabled` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |

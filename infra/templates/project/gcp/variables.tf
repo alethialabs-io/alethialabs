@@ -348,6 +348,38 @@ variable "cloud_sql_database_flags" {
   description = "List of database flags to set on the Cloud SQL instance"
 }
 
+# Query Insights (#5532) — the GCP analogue of the AWS/Azure "database log exports" row in
+# CUSTOMIZABILITY-PARITY.md. Cloud SQL already sends its engine logs to Cloud Logging without any
+# setting, and the log flags themselves are `cloud_sql_database_flags` above; what the template could
+# not do was turn on per-query latency and plan insight.
+#
+# `cloud_sql_query_insights_enabled` is deliberately NULLABLE, because `insights_config` is
+# Optional+Computed in hashicorp/google 6.50.0: a plan with no block keeps whatever the state holds,
+# so "absent" cannot mean "off". Unset (null, the default) renders NO `insights_config` block, so an
+# instance whose project never sets it plans exactly as it did before and keeps its current setting;
+# false renders the block with query_insights_enabled = false, which is what turns it off. The two
+# `record_*` switches refine Query Insights and are refused unless it is true (the
+# `terraform_data.cloud_sql_query_insights_guard` precondition in cloud-sql.tf), rather than being
+# sent to an instance that ignores them.
+variable "cloud_sql_query_insights_enabled" {
+  type        = bool
+  default     = null
+  nullable    = true
+  description = "Cloud SQL Query Insights (settings.insights_config.query_insights_enabled): per-query latency, load and execution plans in the Cloud SQL console. true turns it on; false turns it off; unset (null, the default) leaves the instance's current setting as it is."
+}
+
+variable "cloud_sql_query_insights_record_application_tags" {
+  type        = bool
+  default     = false
+  description = "Record application tags (sqlcommenter) with Query Insights. Requires cloud_sql_query_insights_enabled = true."
+}
+
+variable "cloud_sql_query_insights_record_client_address" {
+  type        = bool
+  default     = false
+  description = "Record the client IP address with Query Insights. Requires cloud_sql_query_insights_enabled = true."
+}
+
 variable "cloud_sql_authorized_networks" {
   type = list(object({
     name  = string
@@ -587,6 +619,9 @@ variable "cloud_storage_buckets" {
     })), [])
     cors_origins = optional(list(string), [])
     cors_methods = optional(list(string), [])
+    # Encrypt this bucket with a customer-managed Cloud KMS key the template creates (#5532). See
+    # cloud-storage.tf. Disabling or destroying that key makes the bucket's objects unreadable.
+    cmek_enabled = optional(bool, false)
   }))
   default     = []
   description = "List of Cloud Storage buckets to create"

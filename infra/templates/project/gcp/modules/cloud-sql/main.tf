@@ -152,6 +152,22 @@ resource "google_sql_database_instance" "this" {
       }
     }
 
+    # Query Insights (#5532). Three states, because `insights_config` is Optional+Computed in
+    # hashicorp/google 6.50.0: dropping the block does NOT turn Query Insights off, it keeps whatever
+    # the state already holds. So:
+    #   null  → no block at all, which is what every instance built before #5532 has, and leaves the
+    #           instance's current Query Insights setting alone (the default plan does not move);
+    #   true  → the block, on;
+    #   false → the block, EXPLICITLY off — the only way to turn it back off once it was on.
+    dynamic "insights_config" {
+      for_each = var.query_insights_enabled != null ? [1] : []
+      content {
+        query_insights_enabled  = var.query_insights_enabled
+        record_application_tags = var.query_insights_record_application_tags
+        record_client_address   = var.query_insights_record_client_address
+      }
+    }
+
     user_labels = merge(var.labels, {
       environment = var.environment
       managed-by  = "opentofu"
