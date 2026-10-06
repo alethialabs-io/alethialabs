@@ -13,6 +13,7 @@ import {
 	credentialKeysInDesign,
 	credentialRefusal,
 	derivedCredentialKeyCounts,
+	EMBEDDED_PROVIDER_CONFIG,
 	isCredentialKey,
 	jsonKeyCountSql,
 	providerConfigValueCountSql,
@@ -108,11 +109,13 @@ describe("the audit:credential-knobs queries (#5565 item 3)", () => {
 	/** The select list of a query — everything between its first `select` and `from`. */
 	const selectList = (sql: string) => sql.slice(sql.indexOf("select") + 6, sql.indexOf("from")).trim();
 
-	it("reads key names and counts at any depth, and never selects a value", () => {
-		const sql = jsonKeyCountSql("jobs", "config_snapshot");
+	it("reads the keys of every embedded provider_config, and never selects a value", () => {
+		const sql = jsonKeyCountSql("jobs", "config_snapshot", EMBEDDED_PROVIDER_CONFIG);
 		expect(sql).toContain('public."jobs"');
 		expect(sql).toContain('t."config_snapshot"');
-		expect(sql).toContain("'strict $.**'");
+		expect(sql).toContain("'lax $.**.provider_config'");
+		// A component table's column IS the provider_config: its own keys, not the ones inside values.
+		expect(jsonKeyCountSql("project_databases", "provider_config")).toContain("'$')");
 		expect(sql).toContain("jsonb_object_keys");
 		expect(selectList(sql)).toBe(
 			"k as key, count(distinct t.id)::int as rows, count(distinct t.project_id)::int as projects",

@@ -261,23 +261,31 @@ export function assertNoNewCredentials(design: unknown, stored: readonly Credent
 
 /**
  * The read-only query behind `audit:credential-knobs` (#5565): for one JSONB column of one table,
- * how many rows — and how many distinct projects — carry each object KEY, at ANY depth of the
- * document (`strict $.**` walks every nested object, so `[{ password: … }]` inside a knob counts).
+ * how many rows — and how many distinct projects — carry each `provider_config` KEY.
+ *
+ * `path` picks the `provider_config` objects inside the column: `$` when the column IS a
+ * component's provider_config, `lax $.**.provider_config` for a document that embeds components
+ * (a job's `config_snapshot`, a staged `project_changes.payload`). Only the keys OF those objects are
+ * listed — never the keys inside a knob's value, which are user data (`password_encryption` in a
+ * map of database flags is a setting, not a credential).
  *
  * It reads key NAMES only — `jsonb_object_keys` — and never selects a value, so no credential can
  * reach the output however the result is printed. Every key comes back and the caller keeps the
  * credential ones ({@link credentialKeyCounts} / {@link derivedCredentialKeyCounts}), so the rule is
- * the write path's and is not restated in SQL. `table` and `column` come from the Drizzle schema,
- * never from input.
+ * the write path's and is not restated in SQL. `table`, `column` and `path` are constants of the
+ * audit, never input.
  */
-export function jsonKeyCountSql(table: string, column: string): string {
+export function jsonKeyCountSql(table: string, column: string, path = "$"): string {
 	return `select k as key, count(distinct t.id)::int as rows, count(distinct t.project_id)::int as projects
   from public."${table}" t
-  cross join lateral jsonb_path_query(coalesce(t."${column}", '{}'::jsonb), 'strict $.**') as v
+  cross join lateral jsonb_path_query(coalesce(t."${column}", '{}'::jsonb), '${path}') as v
   cross join lateral jsonb_object_keys(case when jsonb_typeof(v) = 'object' then v else '{}'::jsonb end) as k
  group by k
  order by k`;
 }
+
+/** The path to every embedded component `provider_config` in a derived document. */
+export const EMBEDDED_PROVIDER_CONFIG = "lax $.**.provider_config";
 
 /**
  * Rows of a DERIVED document (a job's `config_snapshot`, a staged `project_changes.payload`) that

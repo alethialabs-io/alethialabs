@@ -19,8 +19,9 @@
 // leaves (1) at zero and (2) non-zero. Each place is reported on its own line, and the summary
 // names exactly the tables counted.
 //
-// It reads KEY NAMES ONLY. The queries are `jsonb_object_keys` over every nested object, grouped by
-// key, plus a `jsonb_path_exists` row count for a secret's `provider_config.value`; no value is ever
+// It reads KEY NAMES ONLY. The queries are `jsonb_object_keys` over each `provider_config` object
+// (the column itself, or every one embedded in a snapshot or payload) — never the keys inside a
+// knob's value, which are user data — grouped by key, plus a `jsonb_path_exists` row count for a secret's `provider_config.value`; no value is ever
 // selected, so nothing secret can reach the terminal, a log or a CI artefact however this is run. It
 // changes nothing: no delete, no migration — and the session is made read-only by the server, as in
 // audit-grant-scopes.mjs (`default_transaction_read_only` in the startup packet, read back before
@@ -59,6 +60,7 @@ import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import {
 	credentialKeyCounts,
 	derivedCredentialKeyCounts,
+	EMBEDDED_PROVIDER_CONFIG,
 	jsonKeyCountSql,
 	type KeyCount,
 	providerConfigValueCountSql,
@@ -154,7 +156,7 @@ async function main(): Promise<void> {
 			sql: jsonKeyCountSql(getTableName(table), "provider_config"),
 		})),
 		...DERIVED.flatMap(([table, column]) => [
-			{ table: getTableName(table), column, sql: jsonKeyCountSql(getTableName(table), column) },
+			{ table: getTableName(table), column, sql: jsonKeyCountSql(getTableName(table), column, EMBEDDED_PROVIDER_CONFIG) },
 			{ table: getTableName(table), column, sql: providerConfigValueCountSql(getTableName(table), column) },
 		]),
 	];
@@ -213,7 +215,7 @@ async function main(): Promise<void> {
 		}
 		for (const [table, column] of DERIVED) {
 			const name = getTableName(table);
-			const rows = await sql.unsafe(jsonKeyCountSql(name, column));
+			const rows = await sql.unsafe(jsonKeyCountSql(name, column, EMBEDDED_PROVIDER_CONFIG));
 			const counts = rows.map(toKeyCount).filter((c): c is KeyCount => c !== null);
 			for (const c of derivedCredentialKeyCounts(counts)) findings.push({ table: name, column, ...c });
 			const [valueRows] = await sql.unsafe(providerConfigValueCountSql(name, column));
