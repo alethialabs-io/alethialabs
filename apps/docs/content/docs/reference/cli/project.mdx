@@ -445,7 +445,10 @@ alethia project component remove --project boutique --kind network
 ### Components belong to an environment
 
 A component is scoped to one **environment**, not to the project as a whole — so two environments
-can hold the same kind with different configuration. `--env` takes an environment id, name or stage:
+can hold the same kind with different configuration. `--env` takes an environment id, name or stage.
+When one value matches more than one environment, the id wins, then an exact name, then a stage. Among
+stage matches, the default environment wins. So `--env staging` selects the environment named
+`staging`, even when the default environment is at stage `staging`:
 
 ```bash
 # dev and staging deploy DIFFERENT overlays of the same repo
