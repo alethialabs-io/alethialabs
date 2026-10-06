@@ -52,6 +52,13 @@ resource "google_kms_crypto_key" "storage" {
   # 90 days. New objects are written under the new primary version; existing objects stay readable
   # because Cloud KMS keeps the old versions.
   rotation_period = "7776000s"
+
+  # Turning cmek_enabled off on EVERY bucket takes this key's count to 0, and destroying a crypto key
+  # in tofu schedules all of its versions for destruction — after which objects written under it can
+  # never be read again. 30 days (the Cloud KMS maximum is 120) is pinned explicitly, rather than left
+  # to the API default, so the recovery window is a stated property of the template: a version
+  # scheduled for destruction can be restored until it ends. The docs page says this in full.
+  destroy_scheduled_duration = "2592000s"
 }
 
 # The ONE grant this feature makes, scoped to the ONE key. Not a project-level binding: #300 removed

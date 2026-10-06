@@ -27,9 +27,9 @@
 			"dead": 1
 		},
 		"gcp": {
-			"declared": 103,
-			"reachable": 83,
-			"settable": 31,
+			"declared": 107,
+			"reachable": 87,
+			"settable": 35,
 			"dead": 0
 		},
 		"hetzner": {
@@ -6613,11 +6613,11 @@
 			"component": "bucket",
 			"name": "cloud_storage_buckets",
 			"kind": "list",
-			"typeExpr": "list(object({\n    name_suffix   = string\n    location      = optional(string)\n    storage_class = optional(string, \"STANDARD\")\n    versioning    = optional(bool, false)\n    force_destroy = optional(bool, false)\n   \n   \n   \n   \n   \n   \n    public_access = optional(bool, false)\n    lifecycle_rules = optional(list(object({\n      action_type          = string\n      action_storage_class = optional(string)\n      condition_age        = optional(number)\n    })), [])\n    cors_origins = optional(list(string), [])\n    cors_methods = optional(list(string), [])\n  }))",
+			"typeExpr": "list(object({\n    name_suffix   = string\n    location      = optional(string)\n    storage_class = optional(string, \"STANDARD\")\n    versioning    = optional(bool, false)\n    force_destroy = optional(bool, false)\n   \n   \n   \n   \n   \n   \n    public_access = optional(bool, false)\n    lifecycle_rules = optional(list(object({\n      action_type          = string\n      action_storage_class = optional(string)\n      condition_age        = optional(number)\n    })), [])\n    cors_origins = optional(list(string), [])\n    cors_methods = optional(list(string), [])\n   \n   \n    cmek_enabled = optional(bool, false)\n  }))",
 			"required": false,
 			"description": "List of Cloud Storage buckets to create",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-storage"
@@ -6632,13 +6632,35 @@
 		{
 			"cloud": "gcp",
 			"component": "bucket",
+			"name": "cmek_enabled",
+			"kind": "bool",
+			"typeExpr": "bool",
+			"required": false,
+			"description": "",
+			"sensitive": false,
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
+			"readBy": [
+				"gcp",
+				"gcp/modules/cloud-storage"
+			],
+			"reportedByOutput": false,
+			"ceiling": false,
+			"reachable": true,
+			"ownedByProvider": false,
+			"typed": false,
+			"itemScope": "cloud_storage_buckets",
+			"default": false
+		},
+		{
+			"cloud": "gcp",
+			"component": "bucket",
 			"name": "cors_methods",
 			"kind": "list",
 			"typeExpr": "list(string)",
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6659,7 +6681,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6680,7 +6702,7 @@
 			"required": false,
 			"description": "Whether to create Cloud Storage buckets",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:563",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:588",
 			"readBy": [
 				"gcp"
 			],
@@ -6700,7 +6722,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6721,7 +6743,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6742,8 +6764,9 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
 			"readBy": [
+				"gcp",
 				"gcp/modules/cloud-storage"
 			],
 			"reportedByOutput": false,
@@ -6762,8 +6785,9 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
 			"readBy": [
+				"gcp",
 				"gcp/modules/cloud-storage"
 			],
 			"reportedByOutput": false,
@@ -6782,7 +6806,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6803,7 +6827,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6824,7 +6848,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:594",
 			"readBy": [
 				"gcp/modules/cloud-storage"
 			],
@@ -6845,7 +6869,7 @@
 			"required": false,
 			"description": "Whether to create a Memorystore Redis instance",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:376",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:401",
 			"readBy": [
 				"gcp"
 			],
@@ -6865,7 +6889,7 @@
 			"required": false,
 			"description": "Provision Memorystore for Valkey instead of Redis. Mutually exclusive with create_memorystore — the chosen cache engine sets exactly one.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:772",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:800",
 			"readBy": [
 				"gcp"
 			],
@@ -6885,7 +6909,7 @@
 			"required": false,
 			"description": "Whether AUTH is enabled for Memorystore. Threaded into modules/memorystore (#4320); the default matches what every instance already runs.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:406",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:431",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore"
@@ -6906,7 +6930,7 @@
 			"required": false,
 			"description": "Memory size in GB for the Memorystore instance",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:388",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:413",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore"
@@ -6927,7 +6951,7 @@
 			"required": false,
 			"description": "Redis version for Memorystore",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:394",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:419",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore"
@@ -6948,7 +6972,7 @@
 			"required": false,
 			"description": "Service tier for Memorystore (BASIC or STANDARD_HA)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:382",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:407",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore"
@@ -6969,7 +6993,7 @@
 			"required": false,
 			"description": "Transit encryption mode for Memorystore (DISABLED or SERVER_AUTHENTICATION)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:412",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:437",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore"
@@ -6990,7 +7014,7 @@
 			"required": false,
 			"description": "Valkey engine enum (VALKEY_7_2, …)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:778",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:806",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore-valkey"
@@ -7011,7 +7035,7 @@
 			"required": false,
 			"description": "Per-shard machine size for the Valkey instance",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:784",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:812",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore-valkey"
@@ -7032,7 +7056,7 @@
 			"required": false,
 			"description": "Replica nodes per Valkey shard",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:796",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:824",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore-valkey"
@@ -7053,7 +7077,7 @@
 			"required": false,
 			"description": "Number of Valkey shards (derived from the requested memory)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:790",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:818",
 			"readBy": [
 				"gcp",
 				"gcp/modules/memorystore-valkey"
@@ -7074,7 +7098,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:711",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:739",
 			"readBy": [
 				"gcp"
 			],
@@ -7094,7 +7118,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:687",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:715",
 			"readBy": [
 				"gcp"
 			],
@@ -7373,7 +7397,7 @@
 			"required": false,
 			"description": "Envelope-encrypt Kubernetes Secrets in etcd under a customer-managed Cloud KMS key. On by default (AWS parity).",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:807",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:835",
 			"readBy": [
 				"gcp"
 			],
@@ -7393,7 +7417,7 @@
 			"required": false,
 			"description": "Cloud KMS rotation period for the Secrets encryption key (default 90 days). Old versions are retained, so existing Secrets stay readable.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:813",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:841",
 			"readBy": [
 				"gcp"
 			],
@@ -7496,7 +7520,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:741",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:769",
 			"readBy": [
 				"gcp"
 			],
@@ -7516,7 +7540,7 @@
 			"required": false,
 			"description": "List of authorized networks that can connect to Cloud SQL",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:351",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:376",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-sql"
@@ -7600,7 +7624,7 @@
 			"required": false,
 			"description": "Name of the BUILT_IN admin database user. Null (the default) derives \"<project_name>-user\" — the name every existing instance has and the one the credentials secret carries. Setting it on an EXISTING instance replaces the admin user.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:366",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:391",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-sql"
@@ -7642,7 +7666,7 @@
 			"required": false,
 			"description": "Cloud SQL edition. ENTERPRISE supports the standard tiers (db-f1-micro etc.); ENTERPRISE_PLUS requires db-perf-optimized-N-* tiers. Left unset, the API now defaults to ENTERPRISE_PLUS and rejects the default tier.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:680",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:708",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-sql"
@@ -7762,6 +7786,69 @@
 		{
 			"cloud": "gcp",
 			"component": "database",
+			"name": "cloud_sql_query_insights_enabled",
+			"kind": "bool",
+			"typeExpr": "bool",
+			"required": false,
+			"description": "Turn on Cloud SQL Query Insights (settings.insights_config.query_insights_enabled): per-query latency, load and execution plans in the Cloud SQL console. Off by default.",
+			"sensitive": false,
+			"declaredAt": "infra/templates/project/gcp/variables.tf:358",
+			"readBy": [
+				"gcp",
+				"gcp/modules/cloud-sql"
+			],
+			"reportedByOutput": false,
+			"ceiling": false,
+			"reachable": true,
+			"ownedByProvider": false,
+			"typed": false,
+			"default": false
+		},
+		{
+			"cloud": "gcp",
+			"component": "database",
+			"name": "cloud_sql_query_insights_record_application_tags",
+			"kind": "bool",
+			"typeExpr": "bool",
+			"required": false,
+			"description": "Record application tags (sqlcommenter) with Query Insights. Requires cloud_sql_query_insights_enabled.",
+			"sensitive": false,
+			"declaredAt": "infra/templates/project/gcp/variables.tf:364",
+			"readBy": [
+				"gcp",
+				"gcp/modules/cloud-sql"
+			],
+			"reportedByOutput": false,
+			"ceiling": false,
+			"reachable": true,
+			"ownedByProvider": false,
+			"typed": false,
+			"default": false
+		},
+		{
+			"cloud": "gcp",
+			"component": "database",
+			"name": "cloud_sql_query_insights_record_client_address",
+			"kind": "bool",
+			"typeExpr": "bool",
+			"required": false,
+			"description": "Record the client IP address with Query Insights. Requires cloud_sql_query_insights_enabled.",
+			"sensitive": false,
+			"declaredAt": "infra/templates/project/gcp/variables.tf:370",
+			"readBy": [
+				"gcp",
+				"gcp/modules/cloud-sql"
+			],
+			"reportedByOutput": false,
+			"ceiling": false,
+			"reachable": true,
+			"ownedByProvider": false,
+			"typed": false,
+			"default": false
+		},
+		{
+			"cloud": "gcp",
+			"component": "database",
 			"name": "cloud_sql_tier",
 			"kind": "string",
 			"typeExpr": "string",
@@ -7789,7 +7876,7 @@
 			"required": false,
 			"description": "Action the Cloud Armor catch-all rule applies to every request none of cloud_armor_rules matched. Reachable through the DNS provider_config passthrough.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:544",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:569",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-armor"
@@ -7810,7 +7897,7 @@
 			"required": false,
 			"description": "Whether to create Cloud Armor security policies",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:527",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:552",
 			"readBy": [
 				"gcp"
 			],
@@ -7830,7 +7917,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:533",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:558",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-armor"
@@ -7851,7 +7938,7 @@
 			"required": false,
 			"description": "DNS domain name for the managed zone (must end with a dot)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:516",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:541",
 			"readBy": [
 				"gcp",
 				"gcp/modules/cloud-dns"
@@ -7872,7 +7959,7 @@
 			"required": false,
 			"description": "Whether to create Cloud DNS managed zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:504",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:529",
 			"readBy": [
 				"gcp"
 			],
@@ -7892,7 +7979,7 @@
 			"required": false,
 			"description": "Name of the Cloud DNS managed zone",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:510",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:535",
 			"readBy": [
 				"gcp"
 			],
@@ -8075,7 +8162,7 @@
 			"required": false,
 			"description": "Whether to create a Firestore database",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:453",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:478",
 			"readBy": [
 				"gcp"
 			],
@@ -8095,7 +8182,7 @@
 			"required": false,
 			"description": "Firestore database type (FIRESTORE_NATIVE or DATASTORE_MODE)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:459",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:484",
 			"readBy": [
 				"gcp",
 				"gcp/modules/firestore"
@@ -8116,7 +8203,7 @@
 			"required": false,
 			"description": "Location for Firestore database (defaults to the region derived from var.region if empty)",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:465",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:490",
 			"readBy": [
 				"gcp",
 				"gcp/modules/firestore"
@@ -8137,7 +8224,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:483",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:508",
 			"readBy": [
 				"gcp",
 				"gcp/modules/firestore"
@@ -8198,7 +8285,7 @@
 			"required": false,
 			"description": "Object of custom values that can be used for extra terraform files outside of the template",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:674",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:702",
 			"readBy": [],
 			"reportedByOutput": false,
 			"ceiling": false,
@@ -8389,7 +8476,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:433",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:458",
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
@@ -8410,7 +8497,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:433",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:458",
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
@@ -8430,7 +8517,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:639",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:667",
 			"readBy": [
 				"gcp",
 				"gcp/modules/artifact-registry"
@@ -8451,7 +8538,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:639",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:667",
 			"readBy": [
 				"gcp/modules/artifact-registry"
 			],
@@ -8472,7 +8559,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:639",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:667",
 			"readBy": [
 				"gcp/modules/artifact-registry"
 			],
@@ -8493,7 +8580,7 @@
 			"required": false,
 			"description": "Whether to provision Artifact Registry repositories",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:614",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:642",
 			"readBy": [
 				"gcp"
 			],
@@ -8533,7 +8620,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:639",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:667",
 			"readBy": [
 				"gcp",
 				"gcp/modules/artifact-registry"
@@ -8555,7 +8642,7 @@
 			"required": false,
 			"description": "Map of keepers for the secrets",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:664",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:692",
 			"readBy": [
 				"gcp",
 				"gcp/modules/secret-manager"
@@ -8576,7 +8663,7 @@
 			"required": false,
 			"description": "List of secrets to create in Secret Manager",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:653",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:681",
 			"readBy": [
 				"gcp",
 				"gcp/modules/secret-manager"
@@ -8597,7 +8684,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:653",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:681",
 			"readBy": [
 				"gcp/modules/secret-manager"
 			],
@@ -8617,7 +8704,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:653",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:681",
 			"readBy": [
 				"gcp/modules/secret-manager"
 			],
@@ -8638,7 +8725,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:653",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:681",
 			"readBy": [
 				"gcp",
 				"gcp/modules/secret-manager"
@@ -8680,7 +8767,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:653",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:681",
 			"readBy": [
 				"gcp/modules/secret-manager"
 			],
@@ -8701,7 +8788,7 @@
 			"required": false,
 			"description": "Whether to create Pub/Sub topics and subscriptions",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:427",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:452",
 			"readBy": [
 				"gcp"
 			],
@@ -8721,7 +8808,7 @@
 			"required": false,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:433",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:458",
 			"readBy": [
 				"gcp/modules/pubsub"
 			],
@@ -8742,7 +8829,7 @@
 			"required": false,
 			"description": "Map of Pub/Sub topics with their subscriptions",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:433",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:458",
 			"readBy": [
 				"gcp",
 				"gcp/modules/pubsub"
@@ -8763,7 +8850,7 @@
 			"required": true,
 			"description": "",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/gcp/variables.tf:433",
+			"declaredAt": "infra/templates/project/gcp/variables.tf:458",
 			"readBy": [
 				"gcp/modules/pubsub"
 			],

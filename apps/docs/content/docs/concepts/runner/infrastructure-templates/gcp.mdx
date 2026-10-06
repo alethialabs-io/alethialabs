@@ -46,3 +46,58 @@ The GCP template set (`infra/templates/project/gcp/`) provides cloud-native equi
 **GKE Autopilot** — Fully managed node provisioning. Google handles node scaling, patching, and resource optimization. Enabled via the `enable_autopilot` provider config toggle.
 
 **Cloud NAT** — Managed NAT service for outbound internet access from private subnets. Uses Cloud Router for BGP routing.
+
+## Operational settings
+
+The settings below are off by default. A project that sets none of them gets the same infrastructure as before. Each one is a template variable that you set on the component it belongs to. In the console, open the component on the canvas and set the value on its template settings card. The examples show the component's `provider_config` that the card writes.
+
+### Cloud SQL Query Insights
+
+Set `cloud_sql_query_insights_enabled` on the **database** to turn on Query Insights. Query Insights shows query latency, load and execution plans for the instance in the Cloud SQL console.
+
+```json
+{ "cloud_sql_query_insights_enabled": true }
+```
+
+Two more settings add detail to Query Insights. Both are off by default:
+
+- `cloud_sql_query_insights_record_application_tags` records the application tags that your queries carry (sqlcommenter).
+- `cloud_sql_query_insights_record_client_address` records the IP address of the client that sent each query.
+
+```json
+{
+  "cloud_sql_query_insights_enabled": true,
+  "cloud_sql_query_insights_record_application_tags": true,
+  "cloud_sql_query_insights_record_client_address": true
+}
+```
+
+The plan fails if you set either of these two without `cloud_sql_query_insights_enabled`.
+
+Cloud SQL already sends its database logs to Cloud Logging, so log export needs no setting. To change what the database logs, set log flags with `cloud_sql_database_flags`.
+
+### Bucket encryption with your own key
+
+Set `cmek_enabled` on a **bucket** to encrypt it with a customer-managed Cloud KMS key.
+
+```json
+{ "cmek_enabled": true }
+```
+
+The template creates one key, `gcs-buckets`, in the project's KMS key ring. Every bucket that sets `cmek_enabled` uses that key. Buckets that do not set it keep Google's default encryption. The template gives the Cloud Storage service agent the `roles/cloudkms.cryptoKeyEncrypterDecrypter` role on that one key only. It creates no project-level IAM binding.
+
+The key ring is in the project's region, and Cloud Storage requires a bucket and its key in the same location. So a bucket that sets `cmek_enabled` must stay in the project's region. The plan fails if the bucket's `location` is a different region or a multi-region such as `US`.
+
+The project must have the Cloud KMS API (`cloudkms.googleapis.com`) enabled. If it does not, the plan fails and tells you how to enable it.
+
+<Callout type="warn">
+Disabling or destroying the key makes the bucket unreadable. Cloud Storage needs the key to read every object written under it, so if you disable the key, or a key version is destroyed, those objects cannot be read.
+
+If you turn `cmek_enabled` off on every bucket, the template removes the key, and Cloud KMS schedules every version of it for destruction after 30 days. You can restore a version until that period ends. After it ends, objects written under the key cannot be read again. Before you turn the setting off, rewrite those objects with Google's default encryption.
+
+When you turn `cmek_enabled` on for a bucket that already exists, objects that are already in the bucket keep their current encryption. Only objects written after the change use the key.
+</Callout>
+
+### Cache logging
+
+GCP has no cache logging setting. The pinned Google provider (`hashicorp/google` 6.50.0) has no logging argument on Memorystore for Redis (`google_redis_instance`) or on Memorystore for Valkey (`google_memorystore_instance`). The template therefore has no variable for it.

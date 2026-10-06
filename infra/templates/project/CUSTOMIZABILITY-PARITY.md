@@ -74,7 +74,7 @@ remembered:
 | Template | root variables |
 |----------|----------------|
 | AWS      | 107 |
-| GCP      | 78 |
+| GCP      | 81 |
 | Azure    | 76 |
 | Alibaba  | 54 |
 | Hetzner  | 29 |
@@ -112,11 +112,11 @@ some GCP. (AWS-only knobs with no analogue — Karpenter, IRSA, CloudFront-WAF �
 | 2 | Cluster | API-server authorized CIDRs | ok | ✅ shipped | `aks_authorized_ip_ranges` (`api_server_access_profile`) |
 | 3 | Cluster | node disk type | ok | ✅ shipped | `aks_os_disk_type` (Managed/Ephemeral) |
 | 4 | Cluster | spot/preemptible nodes | ✅ shipped | ✅ shipped | `aks_spot_*` (a separate node pool); `gke_spot`/`gke_preemptible` were declared-and-dead |
-| 5 | Database | log exports | **missing** | ✅ shipped (#5530) | `cloud_sql_log_exports` / `azure_db_log_exports` (+ `azure_db_log_workspace_id` when the template creates no workspace) |
+| 5 | Database | log exports | ✅ shipped (#5532) — Cloud SQL logs reach Cloud Logging with no setting and log flags are `cloud_sql_database_flags`; the missing analogue was Query Insights: `cloud_sql_query_insights_enabled` (+ `_record_application_tags`, `_record_client_address`) | ✅ shipped (#5530) | GCP: `settings.insights_config`; Azure: `azure_db_log_exports` (+ `azure_db_log_workspace_id` when the template creates no workspace) |
 | 6 | Database | network CIDR allowlist | ok | ✅ shipped | `azure_db_allowed_cidrs` (one firewall rule per CIDR) |
 | 7 | Database | parameter/flags | ok | ✅ shipped (#5530) | `azure_db_database_flags` (TLS parameters refused) |
-| 8 | Storage | CMEK encryption | **missing** | ✅ shipped (#5530) | `encryption_algorithm` + `kms_key_name` on bucket/container objects; Azure: `storage_containers[*].cmek_enabled` (account-wide, key in the project's Key Vault) |
-| 9 | Cache | logging | **missing** | ✅ shipped (#5530) | cache log toggles; Azure: `azure_cache_log_categories` (+ `azure_cache_log_workspace_id`) |
+| 8 | Storage | CMEK encryption | ✅ shipped (#5532) — `cloud_storage_buckets[*].cmek_enabled` | ✅ shipped (#5530) | GCP: per bucket, one key in the project's KMS key ring, granted to the Cloud Storage service agent on that key only; Azure: `storage_containers[*].cmek_enabled` (account-wide, key in the project's Key Vault) |
+| 9 | Cache | logging | no analogue (provider has no argument, #5532): `hashicorp/google` 6.50.0, the locked version, has no logging argument on `google_redis_instance` or `google_memorystore_instance` | ✅ shipped (#5530) | Azure: `azure_cache_log_categories` (+ `azure_cache_log_workspace_id`); GCP declares no variable, because a knob nothing reads is the `gke_spot` shape |
 | 10 | NoSQL | PITR / replication | ✅ shipped | ✅ shipped | `firestore_point_in_time_recovery`; `cosmos_db_collections` replica regions + `cosmos_db_continuous_backup_tier` |
 
 ## Observability parity — no per-cloud TF needed
