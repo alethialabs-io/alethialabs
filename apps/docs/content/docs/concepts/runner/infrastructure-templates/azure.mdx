@@ -138,6 +138,15 @@ AKS runs your workloads on node pools. The template always makes the default poo
 more pool, `pool1`, `pool2` and so on, for each extra VM size in `aks_instance_types`, and a `spot`
 pool when `aks_spot_enabled` is `true`. Those pools share one size.
 
+The cluster autoscaler scales each of these pools between its minimum and maximum size.
+`aks_node_desired_size` is the node count that the default pool and `pool1`…`poolN` start with, and
+`aks_spot_node_min_size` is the count that the `spot` pool starts with. After a pool exists, the
+autoscaler owns its count. A later change to `aks_node_desired_size` does not change the count of
+a pool that exists. A change to a minimum or maximum size updates the pool in place.
+
+The `spot` pool declares the taint `kubernetes.azure.com/scalesetpriority=spot:NoSchedule`. AKS puts
+this taint on every Spot node, so the declaration does not add a taint to a node.
+
 Set three keys on the **cluster** to label your nodes, taint them, and add named pools that each
 have their own size. They are the same keys on every cloud. The
 [cluster guide](/guides/design-project/cluster#node-labels-taints-and-extra-pools) describes every
@@ -165,7 +174,7 @@ On AKS, the template builds them like this:
 - **`node_labels`** go on every pool: the default pool, `pool1`…`poolN`, the `spot` pool and every
   named pool.
 - **`node_taints`** go on the named pools only. The default pool runs Alethia's add-ons, and the
-  positional and `spot` pools keep the taints they had.
+  positional pools keep the taints they had. The `spot` pool has only the AKS Spot taint.
 - **Each entry in `extra_node_pools`** is one user node pool (`mode = User`), named for the entry.
   It has its own VM size and its own `min_size`, `max_size` and `desired_size`. The pool is keyed
   by its name, so removing an entry from the middle of the list removes that pool only.
@@ -194,7 +203,9 @@ When you set none of the three keys, the plan is the same as before: no pool cha
 Some changes replace a pool, and with it the pool's nodes and the pods on them. Changing a pool's
 `name` or `capacity_type` replaces it. Changing its `instance_type` keeps the pool but replaces
 every node in it: the template moves the pool's workloads to a temporary pool, rebuilds the pool on
-the new size, moves them back and deletes the temporary pool. Changing `node_labels`,
+the new size, moves them back and deletes the temporary pool. The same applies to the default pool,
+`pool1`…`poolN` and the `spot` pool when you change their entry in `aks_instance_types`,
+`aks_os_disk_type` or `aks_disk_size_gb`. Changing `node_labels`,
 `node_taints` or a pool's `labels`, `taints`, `min_size` or `max_size` updates the pool in place,
 with the azurerm provider version the template pins (4.x). A taint that you add does not evict the
 pods already on the node, unless its effect is `NoExecute`.
