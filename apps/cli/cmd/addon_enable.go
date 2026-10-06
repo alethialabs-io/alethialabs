@@ -122,8 +122,9 @@ func addonVersionFlag(cmd *cobra.Command) *string {
 //
 // The content is NOT parsed here: the server validates it as a YAML mapping through the same action
 // the console uses, so a local pre-parse would be a second opinion that can disagree with the one
-// that decides. A file that is empty or only whitespace therefore reaches the server as-is, where it
-// removes the override exactly as --values-file "" does.
+// that decides. An empty file is sent as null by the API client (packages/core/api), and a
+// whitespace-only file reaches the server as-is; either way the server removes the override exactly
+// as --values-file "" does.
 func addonValuesFileFlag(cmd *cobra.Command) (*string, error) {
 	if !cmd.Flags().Changed("values-file") {
 		return nil, nil
@@ -217,7 +218,7 @@ func init() {
 	addonEnableCmd.Flags().StringVar(&addonEnableMode, "mode", "",
 		"Delivery mode ("+strings.Join(addonModeValues(), ", ")+"): managed = Alethia applies it, gitops = written to your apps repo")
 	addonEnableCmd.Flags().StringArrayVar(&addonEnableSet, "set", nil,
-		"Add-on setting key=value (repeatable), merged over the stored settings; key=null resets it to the default")
+		"Add-on setting key=value (repeatable), merged over the stored settings; key=null resets it to the default (a stored secret is kept)")
 	addonEnableCmd.Flags().StringVar(&addonEnableValuesFile, "values-file", "",
 		`Path to a raw Helm values YAML override (Advanced); --values-file "" removes the stored override`)
 	addonEnableCmd.Flags().StringVar(&addonEnableVersion, "version", "",
