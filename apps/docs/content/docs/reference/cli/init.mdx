@@ -51,20 +51,46 @@ What the manifest declares:
 
 {/* fieldspec: alethia init manifest */}
 
-| Field              | What it is                                                                                       | Set without the form |
-| ------------------ | ------------------------------------------------------------------------------------------------ | -------------------- |
-| Manifest           | Where to write the manifest (default: ./alethia.yaml)                                            | `--file`             |
-| Project name       | Name for the project the manifest declares (asked for on a terminal when omitted)                | `--project`          |
-| Region             | Cloud region to provision into                                                                   | `--region`           |
-| Cloud account      | Cloud account to link, by its LABEL or its id                                                    | `--cloud-account`    |
-| Stage              | Stage for the environment it declares                                                            | `--stage`            |
-| Machine type       | Machine type for the cluster nodes, e.g. t3.xlarge (needs a cloud account; not with --node-size) | `--instance-type`    |
-| Node size          | Node size as vCPUxGiB, e.g. 4x16, mapped to the nearest machine type (not with --instance-type)  | `--node-size`        |
-| Machine setup only | Set up the CLI without writing a manifest                                                        | `--skip-manifest`    |
+| Field              | What it is                                                                                                                  | Set without the form |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| Manifest           | Where to write the manifest (default: ./alethia.yaml)                                                                       | `--file`             |
+| Project name       | Name for the project the manifest declares (asked for on a terminal when omitted)                                           | `--project`          |
+| Region             | Cloud region to provision into                                                                                              | `--region`           |
+| Cloud account      | Cloud account to link, by its LABEL or its id                                                                               | `--cloud-account`    |
+| Stage              | Stage for the environment it declares                                                                                       | `--stage`            |
+| Machine type       | Machine type for the cluster nodes, e.g. t3.xlarge (needs a cloud account; not with --node-size)                            | `--instance-type`    |
+| Node size          | Node size as vCPUxGiB, e.g. 4x16, mapped to the nearest machine type (not with --instance-type)                             | `--node-size`        |
+| Add-ons            | Catalog add-on for the first environment: an id, or id@version to pin it (repeatable; asked for on a terminal when omitted) | `--addon`            |
+| Machine setup only | Set up the CLI without writing a manifest                                                                                   | `--skip-manifest`    |
 
 `--instance-type` or `--node-size` (one of the two) writes the node shape into the file as a
 `cluster` component on each `dedicated` environment. Without either, the file has no `cluster`
 component, and the cluster gets the catalog's default machine type for its cloud.
+
+`--addon` writes [add-ons](/reference/cli/plan-and-apply#add-ons) into the first environment of
+the file. Give it once per add-on, as the catalog id, or as the id and a chart version joined by
+`@` to pin the version:
+
+```bash
+alethia init --no-input --project boutique --region nbg1 --cloud-account prod-account \
+  --addon loki --addon external-dns@1.14.5
+```
+
+```yaml
+environments:
+  - name: development
+    stage: development
+    placement: dedicated
+    addons:
+      - id: loki
+      - id: external-dns
+        version: 1.14.5
+```
+
+Each add-on is checked against the catalog before the file is written. An unknown id or a version
+range is refused, and nothing is written. On a terminal with no `--addon`, `init` lists the catalog
+and you pick the add-ons, or none. Add settings and a values file by editing the file; the
+[complete example](/reference/cli/plan-and-apply#add-ons) shows both.
 
 And the control-plane URL:
 

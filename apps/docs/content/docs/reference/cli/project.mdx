@@ -586,13 +586,11 @@ In `alethia.yaml`, write `null` (or `~`) as the key's value, then run `alethia a
 Deleting the line from `alethia.yaml` does not remove the key. A key that the file does not
 declare keeps its stored value.
 
-<Callout type="warn">
-  `alethia plan` compares `provider_config` as one value, not key by key. If the server holds a
-  key that `alethia.yaml` does not declare, for example one set on the canvas, `plan` shows an
-  update to `provider_config` on every run. Applying it is safe: the write merges, so the
-  undeclared key keeps its value. A key-by-key compare is tracked in
-  [#5528](https://github.com/alethialabs-io/alethialabs/issues/5528).
-</Callout>
+`alethia plan` compares `provider_config` key by key. A key the server holds and the file does
+not declare, for example one set on the canvas, shows no change. A key written as `null` shows as a
+change only while the server still holds it. A whole `provider_config: null` is refused: write each
+key you want removed as `null`. [Plan & Apply](/reference/cli/plan-and-apply#setting-and-removing-a-provider_config-key)
+has the details.
 
 `provider_config` needs a cloud. The project, or the component, must be linked to a cloud account
 first. `network` and `repositories` have no `provider_config`, and the server refuses the field on

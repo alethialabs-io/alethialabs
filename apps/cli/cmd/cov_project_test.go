@@ -316,6 +316,19 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			{"kind": "repositories", "singleton": true, "fields": []string{"apps_destination_repo", "apps_path"}, "schema": map[string]any{}},
 			{"kind": "databases", "singleton": false, "fields": []string{"engine", "engine_version"}, "schema": map[string]any{}},
 		}})
+	case p == "/api/cli/schema/addons":
+		// The add-on catalog `init --addon` and an add-on-declaring plan check against (#5528).
+		_ = enc.Encode(map[string]any{
+			"addons": []map[string]any{
+				{"id": "cert-manager", "version": "1.14.4", "secret_keys": []string{}, "defaults": map[string]any{}},
+				{"id": "external-dns", "version": "1.14.5", "secret_keys": []string{"apiToken"}, "defaults": map[string]any{}},
+			},
+			"chart_version": map[string]any{
+				"pattern":    `^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`,
+				"max_length": 64,
+				"refusal":    "A chart version must be one exact version, such as 58.2.1.",
+			},
+		})
 	case p == "/api/cli/cloud-identities":
 		s.mu.Lock()
 		empty, two := s.noIdentities, s.twoIdentities

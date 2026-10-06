@@ -790,12 +790,40 @@ export const addonWire = z.object({
 	health: z.string().nullable(),
 	sync: z.string().nullable(),
 	last_synced_at: isoNullable,
+	/** The stored NON-secret settings (#5528). Secret settings are omitted, never masked. */
+	settings: z.record(z.string(), z.unknown()),
+	/** The stored Advanced Helm-values override, or null when there is none. */
+	values_yaml: z.string().nullable(),
+	/** Names of the add-on's secret settings — names only, so `plan` can refuse one in a file. */
+	secret_keys: z.array(z.string()),
 });
 /** GET /api/cli/projects/:id/addons result (installed catalog add-ons for one environment). */
 export const cliAddonsResponse = z.object({
 	environment: z.string(),
 	addons: z.array(addonWire),
 	page: pageInfoSchema,
+});
+
+/** One catalog add-on as `GET /api/cli/schema/addons` publishes it (#5528). */
+export const addonCatalogEntryWire = z.object({
+	id: z.string(),
+	/** The catalog's default chart version. */
+	version: z.string(),
+	/** Names of the add-on's secret settings. */
+	secret_keys: z.array(z.string()),
+	/** What each non-secret setting is when nothing is stored for it. */
+	defaults: z.record(z.string(), z.unknown()),
+	/** Every setting key the add-on declares; null when they cannot be read ("could not check"). */
+	settings: z.array(z.string()).nullable(),
+});
+/** GET /api/cli/schema/addons — the add-on catalog the CLI checks `alethia.yaml` against. */
+export const cliAddonCatalogResponse = z.object({
+	addons: z.array(addonCatalogEntryWire),
+	chart_version: z.object({
+		pattern: z.string(),
+		max_length: z.number().int(),
+		refusal: z.string(),
+	}),
 });
 
 /** One attached BYO Helm chart in an environment (scan_report omitted — status only). */
@@ -1220,6 +1248,7 @@ export const cliContract = {
 	ProtectionResponse: cliProtectionResponse,
 	ProbesResponse: cliProbesResponse,
 	AddonsResponse: cliAddonsResponse,
+	AddonCatalogResponse: cliAddonCatalogResponse,
 	ByoChartsResponse: cliByoChartsResponse,
 	IacSourceResponse: cliIacSourceResponse,
 	PromotionsResponse: cliPromotionsResponse,
