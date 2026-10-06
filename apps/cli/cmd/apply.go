@@ -454,8 +454,15 @@ func computePlan(c applyClient, m *manifest.Manifest, catalog *api.AddonCatalogD
 			// Only when the file declares components for THIS environment. `existingComps` is read
 			// nowhere else, so a four-environment project declaring components on one of them was
 			// issuing three round trips whose results nobody looked at.
+			//
+			// Every per-environment read below addresses the environment by its ID, never its name
+			// (#5583). The server resolves `?env=` as id, name OR stage, so a NAME is ambiguous: with a
+			// default environment `main` at stage `staging` and a second environment literally named
+			// `staging`, the name `staging` once resolved to `main` — and this plan diffed, and apply
+			// then wrote, the other environment's components. The id is the one address that cannot
+			// land anywhere else; #5580 made the same change in export.
 			if len(env.Components) > 0 {
-				existingComps, err = c.ListComponents(plan.ProjectID, "", existing.Name)
+				existingComps, err = c.ListComponents(plan.ProjectID, "", existing.ID)
 				if err != nil {
 					return nil, fmt.Errorf("list components of %s/%s: %w", m.Project, env.Name, err)
 				}
@@ -464,7 +471,7 @@ func computePlan(c applyClient, m *manifest.Manifest, catalog *api.AddonCatalogD
 			// environment whose add-ons the file does not list still shows them as unmanaged. A file
 			// with no add-ons reads none, and plans exactly as before.
 			if m.DeclaresAddons() {
-				rows, err := c.GetProjectAddons(plan.ProjectID, existing.Name)
+				rows, err := c.GetProjectAddons(plan.ProjectID, existing.ID)
 				if err != nil {
 					return nil, fmt.Errorf("list add-ons of %s/%s: %w", m.Project, env.Name, err)
 				}
@@ -817,6 +824,15 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 		}
 	}
 
+	// The id of every environment the plan read, by normalised name. An environment this run creates
+	// joins it below, before anything is written into it.
+	ids := map[string]string{}
+	for _, e := range p.Environments {
+		if e.ID != "" {
+			ids[names.NormalizeEnvironmentName(e.Name)] = e.ID
+		}
+	}
+
 	if p.ProjectID == "" {
 		project, err := c.CreateProject(api.CreateProjectParams{
 			ProjectName:     m.Project,
@@ -840,20 +856,35 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 			if err != nil {
 				return nil, err
 			}
-			if _, err := c.AddEnvironment(api.AddEnvironmentParams{
+			created, err := c.AddEnvironment(api.AddEnvironmentParams{
 				Project:   p.ProjectID,
 				Name:      env.Name,
 				Stage:     env.Stage,
 				Placement: env.Placement,
 				Namespace: env.Namespace,
 				Lifecycle: env.Lifecycle,
-			}); err != nil {
+			})
+			if err != nil {
 				return nil, fmt.Errorf("add environment %s: %w", e.Name, err)
+			}
+			if created != nil && created.ID != "" {
+				ids[names.NormalizeEnvironmentName(e.Name)] = created.ID
 			}
 			result.Created = append(result.Created, "environment "+e.Name)
 			say(fmt.Sprintf("  %s created environment %s", ui.SymbolSuccess, e.Name))
 		}
 	}
+
+	// Every environment is addressed by its ID from here on — each component write, each add-on write
+	// and each deploy (#5583). A NAME is resolved by the server as name OR stage, so it can land in a
+	// different environment from the one the plan diffed. The ids an environment created a moment
+	// ago does not have yet — a project created with a matrix returns the project, not its
+	// environments — are read back once, and only when one is missing, so a no-op apply does not pay
+	// for the read.
+	if err := fillEnvironmentIDs(c, result.ProjectID, p.Environments, ids); err != nil {
+		return nil, err
+	}
+	envID := func(name string) string { return ids[names.NormalizeEnvironmentName(name)] }
 
 	// What was refused in each environment, by kind, so the "not deployed" line names the right one.
 	refused := map[string]*refusedKinds{}
@@ -864,7 +895,7 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 			case ActionUnchanged:
 				continue
 			case ActionCreate:
-				if _, err := c.AddComponent(result.ProjectID, comp.Kind, comp.Name, e.Name, comp.Fields); err != nil {
+				if _, err := c.AddComponent(result.ProjectID, comp.Kind, comp.Name, envID(e.Name), comp.Fields); err != nil {
 					return nil, fmt.Errorf("%s/%s: %w", e.Name, comp.Kind, err)
 				}
 			case ActionUpdate:
@@ -879,9 +910,9 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 				changed := changedFields(comp.Changes)
 				var err error
 				if comp.Name != "" {
-					_, err = c.UpdateComponent(result.ProjectID, comp.Kind, comp.Name, e.Name, changed, comp.Revision)
+					_, err = c.UpdateComponent(result.ProjectID, comp.Kind, comp.Name, envID(e.Name), changed, comp.Revision)
 				} else {
-					_, err = c.UpsertComponent(result.ProjectID, comp.Kind, e.Name, changed, comp.Revision)
+					_, err = c.UpsertComponent(result.ProjectID, comp.Kind, envID(e.Name), changed, comp.Revision)
 				}
 				if err != nil {
 					// The refusal belongs to THIS component. Recorded and reported, and the
@@ -908,6 +939,7 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 			label := "addon/" + a.ID
 			req := a.request
 			req.Project = result.ProjectID
+			req.Env = envID(e.Name)
 			if err := c.EnableAddon(req); err != nil {
 				refusedIn(refused, e.Name).addon = true
 				result.Errors = append(result.Errors, ComponentError{Environment: e.Name, Component: label, Error: err.Error()})
@@ -923,28 +955,6 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 		}
 	}
 
-	// The environment ids are read back rather than kept from the create response, because a
-	// project created with a matrix returns the project and not its environments, and an
-	// existing project's ids came from a list taken before anything was added.
-	// Re-listed only when this run CREATED something. A plan over an existing project already
-	// holds every id in `EnvPlan.ID`, and a project created here returns the project rather than
-	// its environments — so the read-back is for the ids that did not exist a moment ago, and a
-	// no-op apply should not pay for it.
-	ids := map[string]string{}
-	for _, e := range p.Environments {
-		if e.ID != "" {
-			ids[names.NormalizeEnvironmentName(e.Name)] = e.ID
-		}
-	}
-	if len(result.Created) > 0 {
-		envs, err := c.ListEnvironments(result.ProjectID)
-		if err != nil {
-			return nil, fmt.Errorf("list environments: %w", err)
-		}
-		for _, env := range envs {
-			ids[names.NormalizeEnvironmentName(env.Name)] = env.ID
-		}
-	}
 	for _, e := range p.Environments {
 		if !e.Deploy {
 			continue
@@ -953,11 +963,7 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 			say(ui.MutedStyle.Render(fmt.Sprintf("  %s not deployed: %s", e.Name, r.sentence())))
 			continue
 		}
-		envID, ok := ids[names.NormalizeEnvironmentName(e.Name)]
-		if !ok {
-			return nil, fmt.Errorf("environment %s was declared but the server does not list it after apply", e.Name)
-		}
-		params := api.QueueJobParams{JobType: "DEPLOY", ConfigurationID: result.ProjectID, EnvironmentID: envID}
+		params := api.QueueJobParams{JobType: "DEPLOY", ConfigurationID: result.ProjectID, EnvironmentID: envID(e.Name)}
 		if runnerID != "" {
 			params.AssignedRunnerID = runnerID
 		}
@@ -985,6 +991,38 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 			plural(len(result.Errors), "component"), strings.Join(lines, "\n  - "))
 	}
 	return result, nil
+}
+
+// fillEnvironmentIDs completes ids — normalised environment name to id — for every environment the
+// plan declares, reading the project's environments back once when any is missing (one this run
+// created). An environment the server still does not list is refused BEFORE anything is written
+// into it: there is no id to address it by, and a name could resolve to another environment.
+func fillEnvironmentIDs(c applyClient, projectID string, envs []EnvPlan, ids map[string]string) error {
+	missing := false
+	for _, e := range envs {
+		if ids[names.NormalizeEnvironmentName(e.Name)] == "" {
+			missing = true
+		}
+	}
+	if !missing {
+		return nil
+	}
+	listed, err := c.ListEnvironments(projectID)
+	if err != nil {
+		return fmt.Errorf("list environments: %w", err)
+	}
+	for _, env := range listed {
+		key := names.NormalizeEnvironmentName(env.Name)
+		if ids[key] == "" {
+			ids[key] = env.ID
+		}
+	}
+	for _, e := range envs {
+		if ids[names.NormalizeEnvironmentName(e.Name)] == "" {
+			return fmt.Errorf("environment %s was declared but the server does not list it after apply", e.Name)
+		}
+	}
+	return nil
 }
 
 // pastOf renders an action in the past tense for the progress line.
