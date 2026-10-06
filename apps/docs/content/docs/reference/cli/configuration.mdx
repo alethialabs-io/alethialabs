@@ -146,9 +146,18 @@ alethia project design apply -p my-project -f my-project.json
 |------|---------|-------------|
 | `--format` | `json` | The content format. `json` is the only supported value. |
 | `--out` | _(stdout)_ | Write the content to this file instead of stdout. |
+| `--env` | _(the default environment)_ | The environment to export, by name, stage or id. |
+
+```bash
+# Export the staging environment's design document, not the default environment's
+alethia config export my-project --env staging --out staging.json
+```
+
+Without `--env` the server exports the project's default environment. An environment the project
+does not have is refused with `Environment "qa" not found (status 404)`.
 
 The project name is optional — omit it in an interactive terminal to pick one from a list. Backing
-call: `GET /cli/configurations/by-project-name/<name>/export`.
+call: `GET /cli/configurations/by-project-name/<name>/export`, with `&env=` when you pass `--env`.
 
 <Callout type="warn">
   **Before 0.5.x this command did not work at all.** The route it calls did not exist, so every
@@ -156,6 +165,57 @@ call: `GET /cli/configurations/by-project-name/<name>/export`.
   ever produced. If you pinned `--format legacy-yaml`, drop it or pass `json`; the server now refuses
   that value by name rather than returning JSON labelled as YAML.
 </Callout>
+
+## `alethia export`
+
+Write a project as an [`alethia.yaml`](/reference/cli/plan-and-apply#alethiayaml): the file
+`alethia plan` and `alethia apply` read. Use it when you built the project in the console and now
+want it in git, or want to copy one environment into another project.
+
+```bash
+alethia export shop --env prod > alethia.yaml   # one environment, to stdout
+alethia export shop --all --out alethia.yaml    # every environment, to a file
+alethia plan                                    # nothing to change
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--env` | _(asked, or the only one)_ | The environment to export, by name or id. |
+| `--all` | off | Export every environment. The default environment is written first. |
+| `--out` | _(stdout)_ | Write the file here instead of stdout. |
+| `--force` | off | Replace `--out` if the file already exists. Without it, an existing file is refused. |
+
+A project with more than one environment needs `--env` or `--all`. On a terminal, `export` asks
+which one. With `--no-input`, it fails and names both flags and every environment. The project name
+is optional on a terminal, where you pick it from a list.
+
+The file holds the project's cloud account (by its label), the region, the OpenTofu version, and
+for each environment its stage, placement, namespace, components and add-ons. Each component
+carries only the fields that the [published component schema](/reference/cli/project) marks as
+settable; the server's own fields, such as an endpoint or a status, are dropped. Each add-on
+carries its version pin, its delivery mode and its non-secret settings. The output is the same on
+every run: environments, components and add-ons are in a fixed order, so a re-export shows only
+what changed.
+
+### What is never written
+
+The file is meant to be committed, so `export` leaves out every value that can be a secret:
+
+- a secret add-on setting, such as `external-dns`'s `apiToken`;
+- an add-on's **Advanced values override**, because it is free-form Helm values and can hold a
+  password that the catalog cannot name. To manage the override from git, put it in a file next to
+  `alethia.yaml` and name it with
+  [`values_file:`](/reference/cli/plan-and-apply#where-a-values-file-can-come-from);
+- a component field whose name is a credential (`password`, `token`, `api_key`, …), including a
+  `provider_config` key, and a secret component's `value`;
+- a component's own `cloud_identity_id`, which is a reference to a credential.
+
+A field that the file leaves out keeps its stored value: `apply` never clears it. A comment at the
+top of the file lists each thing that is not in it, and `export` prints the same list on stderr.
+The list also names the environments you did not export, the add-ons that are disabled, the
+components that are destroyed, and attached BYO charts and BYO IaC, which `alethia.yaml` cannot
+describe yet. The environment `lifecycle` is not exported either, because the environment read does
+not return it: add `lifecycle: ephemeral` yourself where it applies.
 
 ## Runner Credentials
 

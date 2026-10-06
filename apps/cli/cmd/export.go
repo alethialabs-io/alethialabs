@@ -186,8 +186,8 @@ func runExport(c exportClient, stdout, stderr io.Writer, o exportOptions, pick e
 	return nil
 }
 
-// render writes the manifest under a header listing what was left out, then parses the result back:
-// a file this command wrote and `plan` then refused to read would break the one promise it makes.
+// render writes the manifest under a header listing what was left out. That the result reads back
+// through `plan` is the round-trip test's to prove, not a check at run time.
 func (ex *exported) render() ([]byte, error) {
 	body, err := manifest.Render(ex.Manifest)
 	if err != nil {
@@ -204,9 +204,6 @@ func (ex *exported) render() ([]byte, error) {
 	}
 	b.WriteString("\n")
 	b.Write(body)
-	if _, err := manifest.Parse(b.Bytes()); err != nil {
-		return nil, fmt.Errorf("the exported file does not read back: %w", err)
-	}
 	return b.Bytes(), nil
 }
 
