@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -253,6 +254,10 @@ type ApplyPlan struct {
 	// Unmanaged are environments the project has that the file does not mention. They are left
 	// alone and listed, so a file that forgot one does not read as a project that lost one.
 	Unmanaged []string `json:"unmanaged,omitempty"`
+
+	// catalog is the add-on catalog the plan was computed against — nil when the file declares no
+	// add-on. Kept so rendering can tell a secret setting by name.
+	catalog *api.AddonCatalogDocument
 }
 
 // EnvPlan is one environment's difference.
@@ -264,6 +269,11 @@ type EnvPlan struct {
 	// ID is the existing environment's id; empty until created.
 	ID         string          `json:"id,omitempty"`
 	Components []ComponentPlan `json:"components"`
+	// Addons are the catalog add-ons the file declares for this environment (apply_addons.go).
+	Addons []AddonPlan `json:"addons,omitempty"`
+	// UnmanagedAddons are add-ons enabled on the server that the file does not mention. Listed,
+	// never disabled — the rule Unmanaged states for environments.
+	UnmanagedAddons []string `json:"unmanaged_addons,omitempty"`
 	// Problems are the reasons this environment cannot be reconciled from here — the file says
 	// one stage and the server has another, say. Any problem refuses the whole apply, because a
 	// deploy of an environment the file describes wrongly is not what the person asked for.
@@ -298,6 +308,9 @@ type applyClient interface {
 	QueueJobWithParams(params api.QueueJobParams) (*api.ProvisionJob, error)
 	GetJob(jobID string) (*api.ProvisionJob, error)
 	GetRunners() ([]api.Runner, error)
+	GetAddonCatalog() (*api.AddonCatalogDocument, error)
+	GetProjectAddons(project, env string) (*api.ProjectAddons, error)
+	EnableAddon(p api.EnableAddonParams) error
 }
 
 // planFromFile reads, normalises and validates the manifest, then computes the plan.
@@ -322,6 +335,19 @@ func planFromFile(c applyClient, path string) (*ApplyPlan, error) {
 			return nil, err
 		}
 	}
+	// The add-on catalog, on the same terms: fetched only when the file declares an add-on, so a file
+	// without one plans exactly as it did before add-ons existed. The values files are read here,
+	// next to the manifest, so the plan diffs the file apply will send.
+	var catalog *api.AddonCatalogDocument
+	if m.DeclaresAddons() {
+		if err := m.LoadValuesFiles(filepath.Dir(path)); err != nil {
+			return nil, err
+		}
+		catalog, err = c.GetAddonCatalog()
+		if err != nil {
+			return nil, err
+		}
+	}
 	// RequireDedicated is a CREATE-time rule and is asked as one: the server applies it when a
 	// matrix brings a project's first Fabric into being, not when a file adds an environment to a
 	// project that already has one. `computePlan` is where "does this project exist" is known, so
@@ -330,10 +356,12 @@ func planFromFile(c applyClient, path string) (*ApplyPlan, error) {
 		Stages:     environmentStages(),
 		Placements: placementModes(),
 		Schema:     schema,
+		Addons:     catalog,
+		AddonModes: addonModeValues(),
 	}); err != nil {
 		return nil, err
 	}
-	plan, err := computePlan(c, m)
+	plan, err := computePlan(c, m, catalog)
 	if err != nil {
 		return nil, err
 	}
@@ -350,9 +378,10 @@ func planFromFile(c applyClient, path string) (*ApplyPlan, error) {
 	return plan, nil
 }
 
-// computePlan compares the manifest with the organization. It reads and never writes.
-func computePlan(c applyClient, m *manifest.Manifest) (*ApplyPlan, error) {
-	plan := &ApplyPlan{Manifest: m}
+// computePlan compares the manifest with the organization. It reads and never writes. catalog is the
+// add-on catalog when the file declares add-ons, and nil otherwise.
+func computePlan(c applyClient, m *manifest.Manifest, catalog *api.AddonCatalogDocument) (*ApplyPlan, error) {
+	plan := &ApplyPlan{Manifest: m, catalog: catalog}
 
 	if m.Cloud.Account != "" {
 		identities, err := c.GetCloudIdentities()
@@ -403,6 +432,7 @@ func computePlan(c applyClient, m *manifest.Manifest) (*ApplyPlan, error) {
 		declared[key] = true
 		existing, exists := byName[key]
 		var existingComps []api.Component
+		var existingAddons []api.Addon
 		if exists {
 			ep.Action, ep.ID = ActionUnchanged, existing.ID
 			if existing.Stage != env.Stage {
@@ -419,6 +449,16 @@ func computePlan(c applyClient, m *manifest.Manifest) (*ApplyPlan, error) {
 				if err != nil {
 					return nil, fmt.Errorf("list components of %s/%s: %w", m.Project, env.Name, err)
 				}
+			}
+			// Read for EVERY existing environment once the file declares an add-on anywhere, so an
+			// environment whose add-ons the file does not list still shows them as unmanaged. A file
+			// with no add-ons reads none, and plans exactly as before.
+			if m.DeclaresAddons() {
+				rows, err := c.GetProjectAddons(plan.ProjectID, existing.Name)
+				if err != nil {
+					return nil, fmt.Errorf("list add-ons of %s/%s: %w", m.Project, env.Name, err)
+				}
+				existingAddons = rows.Addons
 			}
 		}
 		for _, kind := range env.Components {
@@ -441,6 +481,9 @@ func computePlan(c applyClient, m *manifest.Manifest) (*ApplyPlan, error) {
 				ep.Components = append(ep.Components, cp)
 			}
 		}
+		var addonProblems []string
+		ep.Addons, ep.UnmanagedAddons, addonProblems = planAddons(env, existingAddons, catalog)
+		ep.Problems = append(ep.Problems, addonProblems...)
 		plan.Environments = append(plan.Environments, ep)
 	}
 	for _, e := range existingEnvs {
@@ -593,9 +636,10 @@ func renderPlan(out io.Writer, p *ApplyPlan) {
 		for _, c := range e.Components {
 			for _, ch := range c.Changes {
 				fmt.Fprintf(out, "    %s %s  %s: %s → %s\n", glyphFor(ActionUpdate), componentLabel(c),
-					ch.Field, formatFieldValue(ch.From), formatFieldValue(ch.To))
+					ch.label(), formatFieldValue(ch.From), formatFieldValue(ch.To))
 			}
 		}
+		renderAddons(out, e, p.addonSecretKeys)
 		for _, why := range e.Problems {
 			fmt.Fprintf(out, "    %s %s\n", ui.WarningStyle.Render(ui.SymbolError), why)
 		}
@@ -612,6 +656,10 @@ func renderPlan(out io.Writer, p *ApplyPlan) {
 		plural(projects, "project"), plural(envs, "environment"), plural(comps, "component"))
 	if updates > 0 {
 		summary += fmt.Sprintf(" · %s to update", plural(updates, "component"))
+	}
+	// Only when there is something to say, so a plan without add-ons reads exactly as it did.
+	if enable, change := p.addonCounts(); enable > 0 || change > 0 {
+		summary += fmt.Sprintf(" · %s to enable · %d to change", plural(enable, "add-on"), change)
 	}
 	fmt.Fprintln(out, ui.MutedStyle.Render(summary))
 }
@@ -802,6 +850,31 @@ func executeApply(c applyClient, out io.Writer, format string, p *ApplyPlan, run
 			}
 			result.Created = append(result.Created, e.Name+" "+label)
 			say(fmt.Sprintf("  %s %s %s in %s", ui.SymbolSuccess, pastOf(comp.Action), label, e.Name))
+		}
+	}
+
+	// Add-ons after components and before any deploy, so the deploy ships them. A refusal is held
+	// like a component update's: recorded, the environment is not deployed, the others carry on.
+	for _, e := range p.Environments {
+		for _, a := range e.Addons {
+			if a.Action == ActionUnchanged {
+				continue
+			}
+			label := "addon/" + a.ID
+			req := a.request
+			req.Project = result.ProjectID
+			if err := c.EnableAddon(req); err != nil {
+				refused[names.NormalizeEnvironmentName(e.Name)] = true
+				result.Errors = append(result.Errors, ComponentError{Environment: e.Name, Component: label, Error: err.Error()})
+				say(fmt.Sprintf("  %s %s in %s was not applied: %v", ui.ErrorStyle.Render(ui.SymbolError), label, e.Name, err))
+				continue
+			}
+			result.Created = append(result.Created, e.Name+" "+label)
+			verb := "enabled"
+			if a.Action == ActionUpdate {
+				verb = "updated"
+			}
+			say(fmt.Sprintf("  %s %s %s in %s", ui.SymbolSuccess, verb, label, e.Name))
 		}
 	}
 

@@ -225,7 +225,7 @@ func TestComputePlan_AMatchingSingletonIsUnchangedAndApplySendsNothing(t *testin
 		}},
 	}
 	m := diffManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: prod\n    stage: production\n    components:\n      cluster:\n        node_max_size: 4\n      databases:\n        - name: orders\n          engine: postgres\n")
-	plan, err := computePlan(f, m)
+	plan, err := computePlan(f, m, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestComputePlan_ADifferingSingletonIsAnUpdateWithItsDiff(t *testing.T) {
 		}},
 	}
 	m := diffManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: prod\n    stage: production\n    components:\n      cluster:\n        node_max_size: 4\n")
-	plan, err := computePlan(f, m)
+	plan, err := computePlan(f, m, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestExecuteApply_ASingletonUpdateSendsOnlyWhatChanged(t *testing.T) {
 		}},
 	}
 	m := diffManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: prod\n    stage: production\n    components:\n      cluster:\n        node_size:\n          vcpu: 4\n          memory_gb: 16\n        node_max_size: 5\n")
-	plan, err := computePlan(f, m)
+	plan, err := computePlan(f, m, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestComputePlan_CloudIdentityIsComparedFromItsOwnWireField(t *testing.T) {
 		}},
 	}
 	m := diffManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: prod\n    stage: production\n    components:\n      databases:\n        - name: orders\n          cloud_identity_id: ci-1\n")
-	plan, err := computePlan(f, m)
+	plan, err := computePlan(f, m, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestComputePlan_CloudIdentityIsComparedFromItsOwnWireField(t *testing.T) {
 
 func TestRenderPlan_GoldenFieldDiff(t *testing.T) {
 	f := diffTwoEnvFake()
-	plan, err := computePlan(f, diffManifest(t, diffTwoEnvManifest))
+	plan, err := computePlan(f, diffManifest(t, diffTwoEnvManifest), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +341,7 @@ func TestRenderPlan_GoldenFieldDiff(t *testing.T) {
 }
 
 func TestPlanJSON_CarriesTheChangesArray(t *testing.T) {
-	plan, err := computePlan(diffTwoEnvFake(), diffManifest(t, diffTwoEnvManifest))
+	plan, err := computePlan(diffTwoEnvFake(), diffManifest(t, diffTwoEnvManifest), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +390,7 @@ func TestPlanJSON_CarriesTheChangesArray(t *testing.T) {
 
 func TestExecuteApply_PatchesOnlyTheChangedFields(t *testing.T) {
 	f := diffTwoEnvFake()
-	plan, err := computePlan(f, diffManifest(t, diffTwoEnvManifest))
+	plan, err := computePlan(f, diffManifest(t, diffTwoEnvManifest), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +417,7 @@ func TestExecuteApply_PatchesOnlyTheChangedFields(t *testing.T) {
 func TestExecuteApply_ARefusedUpdateIsThatComponentsErrorAndOtherEnvironmentsCarryOn(t *testing.T) {
 	f := diffTwoEnvFake()
 	f.refuse = map[string]error{"prod databases/orders": errors.New("max_capacity cannot be changed on a live database")}
-	plan, err := computePlan(f, diffManifest(t, diffTwoEnvManifest))
+	plan, err := computePlan(f, diffManifest(t, diffTwoEnvManifest), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
