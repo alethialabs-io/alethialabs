@@ -399,7 +399,10 @@ func validatePatternList(name string, values []string, pattern *regexp.Regexp, e
 }
 
 // validate applies the template's rules to the NodePool settings. It is the renderer's own guard:
-// every value it accepts is one the template's variable validations accept too.
+// every value it accepts is one the template's variable validations accept too. It refuses every
+// alethia.io key, because a user may not write one, so a platform-owned label or taint (#5534's
+// alethia.io/arch=arm64:NoSchedule on an arm64 NodePool) is added AFTER validate() has passed on the
+// user's values, never fed through it.
 func (p karpenterNodePool) validate() error {
 	if err := validateEnumList("capacity type", p.CapacityTypes, "spot", "on-demand"); err != nil {
 		return err

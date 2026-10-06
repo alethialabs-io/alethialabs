@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -16,24 +17,51 @@ import (
 )
 
 // The OpenTofu validations cannot import this package, so they carry its regexes as literals. This
-// test is what makes the Go definition the ONE definition: it parses each template variable that
-// validates a node label or taint key, collects every regex() literal in its validation blocks, and
-// fails when one of the key rules is missing or when a literal that is SHAPED like a key rule is not
-// exactly this package's.
+// test is what makes the Go definition the ONE definition. It parses each template variable that
+// validates a node label or taint key, and classifies EVERY regex() call in its validation blocks by
+// what the regex is applied to: a key (`k`, `t.key`), a value (`v`, `t.value`), a key's domain
+// (`split("/", …)[0]`), a pool name (`p.name`) or an instance type (`p.instance_type`). Each literal is
+// then compared, one by one, to the Go definition for its role. A variable that carries two copies of
+// a rule (extra_node_pools checks both its labels and its taints) has each copy checked separately, and
+// a regex applied to anything the test cannot classify fails rather than being skipped.
 //
-// Boundary: it reads regex() literals only. A validation that tests a key without regex() (a
-// startswith(), say) is invisible to it; the reference contract and the Karpenter knobs use regex()
-// for every key rule today, and each template's tofu test proves the rule refuses what it should.
+// For the cross-cloud contract it also reads the LENGTH bounds: every key regex must sit beside
+// `length(<key>) <= PortableKeyMaxLength`, and every value regex beside `length(<value>) >= 1` and
+// `length(<value>) <= ValueMaxLength`. The Karpenter knobs keep Kubernetes' own lengths (see the
+// package doc), which their tofu test pins.
+//
+// Boundary: it reads regex() and length() comparisons only. A key rule written some other way (a
+// startswith(), say) is invisible to it; both sites use regex() for every key rule today, and each
+// template's tofu test proves the rule refuses what it should.
+
+// keyRuleSite is one template file and the variables in it that carry the key rules.
+type keyRuleSite struct {
+	vars []string
+	// portable sites follow the cross-cloud contract's lengths (PortableKeyMaxLength, non-empty values).
+	portable bool
+	// nodeRestriction names the variables allowed to carry NodeRestrictionDomainRegex: only the
+	// Karpenter labels, which reach the API rather than the kubelet.
+	nodeRestriction map[string]bool
+}
 
 // keyRuleSites are the variables whose validations carry the key rules, by file relative to the repo
-// root. Each must carry the key grammar, the value grammar and the reserved-domain regex.
-var keyRuleSites = map[string][]string{
+// root.
+var keyRuleSites = map[string]keyRuleSite{
 	"infra/templates/project/aws/variables.tf": {
-		"karpenter_node_labels", "karpenter_node_taints",
+		vars:            []string{"karpenter_node_labels", "karpenter_node_taints"},
+		nodeRestriction: map[string]bool{"karpenter_node_labels": true},
 	},
 	"packages/core/cloud/testdata/nodepool/reference/variables.tf": {
-		"node_labels", "node_taints", "extra_node_pools",
+		vars:     []string{"node_labels", "node_taints", "extra_node_pools"},
+		portable: true,
 	},
+}
+
+// contractOnlyLiterals are the regexes the contract applies to things that are not node keys. They
+// are the contract's, not this package's, and are listed so that every literal has a known owner.
+var contractOnlyLiterals = map[string][]string{
+	"poolname": {`^[a-z][a-z0-9]{0,11}$`, `^pool[0-9]+$`},
+	"instance": {`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`},
 }
 
 // repoRoot is the repository root, three directories above this package.
@@ -46,9 +74,51 @@ func repoRoot(t *testing.T) string {
 	return filepath.Join(wd, "..", "..", "..")
 }
 
-// regexLiterals returns, per variable, every literal first argument of a regex() call inside its
+// ruleUse is one regex() or length() comparison found in a validation, classified by role.
+type ruleUse struct {
+	role    string // key, value, domain, poolname, instance, or the unclassified expression
+	literal string // the regex, or for a length check the operator and bound ("<= 63")
+}
+
+// operandRole names what an expression is, as the key rules see it.
+func operandRole(e hclsyntax.Expression) string {
+	switch x := e.(type) {
+	case *hclsyntax.ScopeTraversalExpr:
+		var parts []string
+		for _, step := range x.Traversal {
+			switch s := step.(type) {
+			case hcl.TraverseRoot:
+				parts = append(parts, s.Name)
+			case hcl.TraverseAttr:
+				parts = append(parts, s.Name)
+			}
+		}
+		switch strings.Join(parts, ".") {
+		case "k", "t.key":
+			return "key"
+		case "v", "t.value":
+			return "value"
+		case "p.name":
+			return "poolname"
+		case "p.instance_type":
+			return "instance"
+		}
+		return "unclassified:" + strings.Join(parts, ".")
+	case *hclsyntax.IndexExpr:
+		if call, ok := x.Collection.(*hclsyntax.FunctionCallExpr); ok && call.Name == "split" {
+			return "domain"
+		}
+	case *hclsyntax.RelativeTraversalExpr: // split("/", k)[0] parses as a traversal of a call
+		if call, ok := x.Source.(*hclsyntax.FunctionCallExpr); ok && call.Name == "split" {
+			return "domain"
+		}
+	}
+	return "unclassified expression"
+}
+
+// ruleUses returns, per variable, every regex() call and every length() comparison in its
 // validation blocks.
-func regexLiterals(t *testing.T, path string) map[string][]string {
+func ruleUses(t *testing.T, path string) (regexes, lengths map[string][]ruleUse) {
 	t.Helper()
 	src, err := os.ReadFile(path)
 	if err != nil {
@@ -62,7 +132,7 @@ func regexLiterals(t *testing.T, path string) map[string][]string {
 	if !ok {
 		t.Fatalf("%s: not native HCL syntax", path)
 	}
-	out := map[string][]string{}
+	regexes, lengths = map[string][]ruleUse{}, map[string][]ruleUse{}
 	for _, blk := range body.Blocks {
 		if blk.Type != "variable" || len(blk.Labels) != 1 {
 			continue
@@ -73,24 +143,38 @@ func regexLiterals(t *testing.T, path string) map[string][]string {
 				continue
 			}
 			hclsyntax.VisitAll(vb.Body, func(n hclsyntax.Node) hcl.Diagnostics {
-				call, ok := n.(*hclsyntax.FunctionCallExpr)
-				if !ok || call.Name != "regex" || len(call.Args) == 0 {
-					return nil
+				if call, ok := n.(*hclsyntax.FunctionCallExpr); ok && call.Name == "regex" && len(call.Args) == 2 {
+					v, d := call.Args[0].Value(nil)
+					if d.HasErrors() || v.Type() != cty.String {
+						t.Errorf("%s: variable %q passes regex() a pattern that is not a string literal; the drift test cannot read it", path, name)
+						return nil
+					}
+					regexes[name] = append(regexes[name], ruleUse{role: operandRole(call.Args[1]), literal: v.AsString()})
 				}
-				v, d := call.Args[0].Value(nil)
-				if d.HasErrors() || v.Type() != cty.String {
-					t.Errorf("%s: variable %q passes regex() a pattern that is not a string literal; the drift test cannot read it", path, name)
-					return nil
+				if op, ok := n.(*hclsyntax.BinaryOpExpr); ok {
+					call, isCall := op.LHS.(*hclsyntax.FunctionCallExpr)
+					if !isCall || call.Name != "length" || len(call.Args) != 1 {
+						return nil
+					}
+					bound, d := op.RHS.Value(nil)
+					if d.HasErrors() || bound.Type() != cty.Number {
+						return nil
+					}
+					sym := map[*hclsyntax.Operation]string{hclsyntax.OpLessThanOrEqual: "<=", hclsyntax.OpGreaterThanOrEqual: ">="}[op.Op]
+					if sym == "" {
+						return nil
+					}
+					lengths[name] = append(lengths[name], ruleUse{role: operandRole(call.Args[0]), literal: sym + " " + bound.AsBigFloat().Text('f', -1)})
 				}
-				out[name] = append(out[name], v.AsString())
 				return nil
 			})
 		}
 	}
-	return out
+	return regexes, lengths
 }
 
-// TestKeyRuleLiteralsMatchTheGoDefinition holds every template copy of the key rules to this package.
+// TestKeyRuleLiteralsMatchTheGoDefinition holds every template copy of the key rules to this package,
+// literal by literal.
 func TestKeyRuleLiteralsMatchTheGoDefinition(t *testing.T) {
 	root := repoRoot(t)
 	files := make([]string, 0, len(keyRuleSites))
@@ -99,24 +183,73 @@ func TestKeyRuleLiteralsMatchTheGoDefinition(t *testing.T) {
 	}
 	sort.Strings(files)
 	for _, rel := range files {
-		lits := regexLiterals(t, filepath.Join(root, filepath.FromSlash(rel)))
-		for _, name := range keyRuleSites[rel] {
-			got := lits[name]
-			if len(got) == 0 {
+		site := keyRuleSites[rel]
+		regexes, lengths := ruleUses(t, filepath.Join(root, filepath.FromSlash(rel)))
+		for _, name := range site.vars {
+			uses := regexes[name]
+			if len(uses) == 0 {
 				t.Errorf("%s: variable %q has no regex() in its validations (renamed or moved? update keyRuleSites)", rel, name)
 				continue
 			}
-			for _, want := range []string{QualifiedKeyRegex, ValueRegex, ReservedDomainRegex} {
-				if !contains(got, want) {
-					t.Errorf("%s: variable %q does not carry nodekeys' rule %q. Copy it exactly; a hand-edited copy is how the rule drifts", rel, name, want)
+			count := map[string]int{}
+			for i, u := range uses {
+				count[u.role]++
+				where := func() string {
+					return rel + ": variable " + strconv.Quote(name) + ", regex #" + strconv.Itoa(i+1) + " (applied to a " + u.role + ")"
+				}
+				switch u.role {
+				case "key":
+					if u.literal != QualifiedKeyRegex {
+						t.Errorf("%s is %s, nodekeys.QualifiedKeyRegex is %s", where(), u.literal, QualifiedKeyRegex)
+					}
+				case "value":
+					if u.literal != ValueRegex {
+						t.Errorf("%s is %s, nodekeys.ValueRegex is %s", where(), u.literal, ValueRegex)
+					}
+				case "domain":
+					ok := u.literal == ReservedDomainRegex || (site.nodeRestriction[name] && u.literal == NodeRestrictionDomainRegex)
+					if !ok {
+						t.Errorf("%s is %s, nodekeys.ReservedDomainRegex is %s", where(), u.literal, ReservedDomainRegex)
+					}
+					if u.literal == ReservedDomainRegex {
+						count["reserved"]++
+					}
+				case "poolname", "instance":
+					if !site.portable || !contains(contractOnlyLiterals[u.role], u.literal) {
+						t.Errorf("%s is %s, which is not one of the contract's %s rules %v", where(), u.literal, u.role, contractOnlyLiterals[u.role])
+					}
+				default:
+					t.Errorf("%s: the drift test cannot tell what this regex checks, so it cannot hold it to nodekeys: %s", where(), u.literal)
 				}
 			}
-			for _, lit := range got {
-				switch {
-				case strings.Contains(lit, `kubernetes\.io`) && lit != ReservedDomainRegex && lit != NodeRestrictionDomainRegex:
-					t.Errorf("%s: variable %q carries a reserved-domain regex that is not nodekeys.ReservedDomainRegex:\n  got  %s\n  want %s", rel, name, lit, ReservedDomainRegex)
-				case strings.Contains(lit, `[-A-Za-z0-9_.]`) && lit != QualifiedKeyRegex && lit != ValueRegex:
-					t.Errorf("%s: variable %q carries a key or value grammar that is not nodekeys': %s", rel, name, lit)
+			if count["key"] == 0 || count["value"] == 0 || count["reserved"] == 0 {
+				t.Errorf("%s: variable %q must check keys, values and reserved domains; found %d key, %d value and %d reserved-domain regexes", rel, name, count["key"], count["value"], count["reserved"])
+			}
+			if count["reserved"] != count["key"] {
+				t.Errorf("%s: variable %q checks %d keys but refuses reserved domains for %d of them", rel, name, count["key"], count["reserved"])
+			}
+			if !site.portable {
+				continue
+			}
+			want := map[string]int{
+				"key <= " + strconv.Itoa(PortableKeyMaxLength): count["key"],
+				"value <= " + strconv.Itoa(ValueMaxLength):     count["value"],
+				"value >= 1": count["value"],
+			}
+			got := map[string]int{}
+			for _, l := range lengths[name] {
+				if l.role == "key" || l.role == "value" {
+					got[l.role+" "+l.literal]++
+				}
+			}
+			for k, n := range want {
+				if got[k] != n {
+					t.Errorf("%s: variable %q has %d length checks %q, want one beside each of its %d %s regexes", rel, name, got[k], "length("+k+")", n, strings.Fields(k)[0])
+				}
+			}
+			for k, n := range got {
+				if _, ok := want[k]; !ok {
+					t.Errorf("%s: variable %q has %d length checks %q that the contract does not define", rel, name, n, "length("+k+")")
 				}
 			}
 		}
@@ -125,7 +258,8 @@ func TestKeyRuleLiteralsMatchTheGoDefinition(t *testing.T) {
 
 // TestKeyRuleSitesAreEnumeratedFromTheTemplates fails when a template validates a label or taint key
 // in a variable keyRuleSites does not name: a site the drift test does not know about is a copy that
-// can drift unseen. It scans every project template's variables.tf for the reserved-domain shape.
+// can drift unseen. It scans every project template's variables.tf for a regex applied to a key's
+// domain.
 func TestKeyRuleSitesAreEnumeratedFromTheTemplates(t *testing.T) {
 	root := repoRoot(t)
 	paths, err := filepath.Glob(filepath.Join(root, "infra", "templates", "project", "*", "variables.tf"))
@@ -136,13 +270,14 @@ func TestKeyRuleSitesAreEnumeratedFromTheTemplates(t *testing.T) {
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
 		known := map[string]bool{}
-		for _, n := range keyRuleSites[rel] {
+		for _, n := range keyRuleSites[rel].vars {
 			known[n] = true
 		}
-		for name, lits := range regexLiterals(t, p) {
-			for _, lit := range lits {
-				if strings.Contains(lit, `kubernetes\.io`) && !known[name] {
-					t.Errorf("%s: variable %q validates a reserved key domain but is not in keyRuleSites, so its copy of the rule is not held to nodekeys", rel, name)
+		regexes, _ := ruleUses(t, p)
+		for name, uses := range regexes {
+			for _, u := range uses {
+				if (u.role == "domain" || strings.Contains(u.literal, `kubernetes\.io`)) && !known[name] {
+					t.Errorf("%s: variable %q validates a key domain but is not in keyRuleSites, so its copy of the rule is not held to nodekeys", rel, name)
 				}
 			}
 		}

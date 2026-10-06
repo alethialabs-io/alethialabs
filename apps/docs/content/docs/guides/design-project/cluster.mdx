@@ -199,11 +199,16 @@ spec:
     - key: alethia.io/arch
       value: arm64
       effect: NoSchedule
+    - key: kubernetes.io/arch
+      value: arm64
+      effect: NoSchedule
 ```
 
-The `kubernetes.io/arch: arm64` selector is needed on GKE. GKE taints its own arm64 nodes with
-`kubernetes.io/arch=arm64:NoSchedule`, and adds the toleration for that taint only to a pod that
-selects `kubernetes.io/arch: arm64`. On the other clouds the selector does no harm.
+The last toleration is for GKE, which taints its own arm64 nodes with
+`kubernetes.io/arch=arm64:NoSchedule`. GKE adds that toleration by itself to a pod that selects
+`kubernetes.io/arch: arm64`, with a node selector or with node affinity. The example sets it anyway,
+so the pod does not depend on that. On the other clouds, neither the selector nor the toleration
+does any harm.
 
 ### Run a workload on arm64
 
@@ -235,9 +240,11 @@ error.
   includes `node-role.kubernetes.io/` and `node-restriction.kubernetes.io/`: a node sets its own
   labels when it starts, and Kubernetes does not let a node set either of them. Use your own
   prefix, such as `example.com/team`, or no prefix.
-- **Counts.** Each node carries at most 50 labels and 50 taints, counting the platform's. That is
-  the EKS limit, and it is why `node_labels` and `node_taints` hold at most 24 entries and a pool's
-  `labels` and `taints` at most 25.
+- **Counts.** `node_labels` and `node_taints` hold at most 24 entries each, and a pool's `labels`
+  and `taints` at most 25 each. With the label and taint that Alethia adds, a pool is configured with
+  at most 50 labels and 50 taints. That is the EKS limit for one managed node group. A cloud can add
+  taints of its own on top: GKE adds `kubernetes.io/arch=arm64:NoSchedule` to an arm64 node, so that
+  node can carry 51.
 - **Sizes.** `min_size` ≤ `desired_size` ≤ `max_size`, and `max_size` is from 1 to 100.
 - **Duplicates.** A pool name appears once. A taint key and effect pair appears once in a list.
 

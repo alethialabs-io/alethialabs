@@ -44,9 +44,13 @@
 #     (#5534), because Alethia's kaniko builds and generated Deployments are single-arch and pin no
 #     arch, so arm64 capacity must never take an untolerated pod. The AWS Karpenter knobs refuse
 #     alethia.io too (nodekeys), so no knob lets a user set or spoof either key.
-#   · COUNTS — at most 24 node_labels and 25 labels per pool. With the platform's alethia.io/pool,
-#     that is at most 50 labels on a node. At most 24 node_taints and 25 taints per pool. With the
-#     platform's arm64 taint, that is at most 50 taints on a node. 50 is EKS's cap for each.
+#   · COUNTS — at most 24 node_labels and 25 labels per pool, so a pool's CONFIGURED labels, the
+#     platform's alethia.io/pool included, number at most 50. At most 24 node_taints and 25 taints
+#     per pool, so its configured taints, the platform's arm64 taint included, number at most 50. 50
+#     is the EKS cap on the labels and on the taints of one managed NODE GROUP. It is not a cap on a
+#     node: Kubernetes sets none, and a cloud may add taints of its own outside the pool's
+#     configuration (GKE's kubernetes.io/arch=arm64:NoSchedule on an arm64 node, AKS's Spot taint),
+#     so a GKE arm64 node can carry 51.
 #   · POOLS — at most 10. A `name` matches ^[a-z][a-z0-9]{0,11}$ (AKS's Linux pool-name rule, the
 #     strictest of the clouds) and is unique. It may not be `default`, `system`, `spot` or `pool<N>`,
 #     because the templates already make pools with those names: the AKS default pool, its Spot pool,
@@ -58,7 +62,9 @@
 #     most once in one list (the shape of karpenter_node_taints, #5527).
 #
 # What each lane renders. render.tf defines it, and the reference tftest's `assert` blocks pin it.
-# Every lane carries both, so four lanes cannot render the semantics four ways:
+# Every lane carries both, so four lanes cannot render the semantics four ways. A lane BUILDS its
+# pools' labels and taints from output/local nodepool_contract_render; computing them a second way
+# beside it would let the asserted render and the applied pools disagree, and no test here sees it:
 #
 #   · node_labels reach EVERY Alethia-managed pool, the default pool included. A pool's own `labels`
 #     win over node_labels for the same key. alethia.io/pool=<name> is added last and always wins.
@@ -76,6 +82,11 @@
 #     NO_EXECUTE. AKS (node_taints) wants the string "key=value:NoSchedule". Talos on Hetzner
 #     (machine.nodeTaints) wants key → "value:NoSchedule". Each lane maps, and no lane changes the
 #     contract spelling.
+#   · THE ARM64 TAINT ON AWS KARPENTER (#5534). provisioner/karpenter.go's validate() refuses every
+#     alethia.io key, because a USER may not write one. The renderer must therefore add the
+#     platform's alethia.io/arch=arm64:NoSchedule taint to an arm64 NodePool AFTER validate() has
+#     passed on the user's values, never by feeding it through the same input, or validate() refuses
+#     the platform's own taint.
 #   · HETZNER SIZE. Until the Hetzner autoscaler (#5538), a Hetzner pool is a FIXED group of
 #     desired_size servers (min_size when desired_size is left out). min_size and max_size are still
 #     validated, so the file stays valid when the autoscaler arrives.

@@ -15,11 +15,12 @@
 //     cloud lane copies. drift_test.go reads those files and fails when a literal stops being equal
 //     to the regex here.
 //
-// LENGTH is not part of this package's shared rule, on purpose. A Karpenter NodePool's labels go
-// to the API server, so Kubernetes' own lengths apply (a prefix of up to 253 characters plus a name
-// of up to 63). A label on a managed node group goes through the cloud's API, and EKS caps the
-// WHOLE key at 63 characters (PortableKeyMaxLength). The grammar is the same; the bound is the
-// caller's.
+// LENGTH differs by caller, and both bounds live here. A Karpenter NodePool's labels go to the API
+// server, so Kubernetes' own lengths apply (ValidKey: a prefix of up to 253 characters plus a name of
+// up to 63); karpenter.go calls ValidKey. A label on a managed node group goes through the cloud's
+// API, and EKS caps the WHOLE key at 63 characters, so the cross-cloud contract bounds every key by
+// PortableKeyMaxLength and every value by 1..ValueMaxLength. Those bounds are tofu `length()`
+// checks, which drift_test.go reads and holds to these constants. The grammar is the same for both.
 package nodekeys
 
 import (
@@ -65,7 +66,8 @@ const ValueRegex = `^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$`
 const NodeRestrictionDomainRegex = `(^|\.)node-restriction\.kubernetes\.io$`
 
 // PortableKeyMaxLength is the longest key, prefix included, the cross-cloud contract accepts: the
-// EKS managed node group API caps label and taint keys at 63 characters.
+// EKS managed node group API caps label and taint keys at 63 characters. The contract's tofu
+// validations carry it as `length(k) <= 63`, held to this constant by drift_test.go.
 const PortableKeyMaxLength = 63
 
 // ValueMaxLength is the longest label or taint value Kubernetes and every cloud accept.
@@ -90,8 +92,8 @@ func reservedDomainRegex() string {
 	return "(" + strings.Join(quoted, "|") + ")$"
 }
 
-// Domain returns a key's prefix ("example.com" for "example.com/gpu"), or "" when it has none.
-func Domain(key string) string {
+// keyPrefix returns a key's prefix ("example.com" for "example.com/gpu"), or "" when it has none.
+func keyPrefix(key string) string {
 	if i := strings.Index(key, "/"); i >= 0 {
 		return key[:i]
 	}
@@ -104,7 +106,7 @@ func ValidKey(key string) bool {
 	if !qualifiedKey.MatchString(key) {
 		return false
 	}
-	prefix := Domain(key)
+	prefix := keyPrefix(key)
 	if len(prefix) > 253 {
 		return false
 	}
@@ -116,11 +118,6 @@ func ValidKey(key string) bool {
 	return true
 }
 
-// ValidPortableKey reports whether key follows the grammar AND fits PortableKeyMaxLength whole.
-func ValidPortableKey(key string) bool {
-	return len(key) <= PortableKeyMaxLength && ValidKey(key)
-}
-
 // ValidValue reports whether v is a label or taint value Kubernetes accepts (empty included).
 func ValidValue(v string) bool {
 	return len(v) <= ValueMaxLength && value.MatchString(v)
@@ -129,7 +126,7 @@ func ValidValue(v string) bool {
 // ReservedDomain returns the key's prefix and whether it is in a reserved domain. A key with no
 // prefix is never reserved.
 func ReservedDomain(key string) (string, bool) {
-	d := Domain(key)
+	d := keyPrefix(key)
 	return d, d != "" && reservedDomain.MatchString(d)
 }
 

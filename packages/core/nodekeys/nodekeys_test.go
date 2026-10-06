@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-// TestValidKey pins the grammar and Kubernetes' lengths, and the portable 63-character whole-key cap.
+// TestValidKey pins the grammar and Kubernetes' lengths, and which keys the portable 63-character
+// whole-key cap (the contract's tofu length check) additionally refuses.
 func TestValidKey(t *testing.T) {
 	cases := []struct {
 		key             string
@@ -34,8 +35,8 @@ func TestValidKey(t *testing.T) {
 		if got := ValidKey(c.key); got != c.valid {
 			t.Errorf("ValidKey(%q) = %v, want %v", c.key, got, c.valid)
 		}
-		if got := ValidPortableKey(c.key); got != c.portable {
-			t.Errorf("ValidPortableKey(%q) = %v, want %v", c.key, got, c.portable)
+		if got := c.valid && len(c.key) <= PortableKeyMaxLength; got != c.portable {
+			t.Errorf("%q within the portable bound = %v, want %v", c.key, got, c.portable)
 		}
 	}
 }
@@ -111,7 +112,7 @@ func TestReservedDomainRegexAndText(t *testing.T) {
 	if got := ReservedDomainsText(); !strings.HasPrefix(got, "kubernetes.io, k8s.io, ") || !strings.HasSuffix(got, "hetzner.cloud or alethia.io") {
 		t.Errorf("ReservedDomainsText() = %q", got)
 	}
-	if Domain("team") != "" || Domain("a.b/c") != "a.b" {
-		t.Error("Domain")
+	if keyPrefix("team") != "" || keyPrefix("a.b/c") != "a.b" {
+		t.Error("keyPrefix")
 	}
 }
