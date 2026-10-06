@@ -939,6 +939,22 @@ variable "extra_node_pools" {
     error_message = "extra_node_pools may list at most 10 pools, each with a unique name of 1 to 12 lowercase letters and digits starting with a letter (the AKS pool-name rule, applied on every cloud so the file is portable). The names default, system, spot and pool1, pool2, ... are taken by pools Alethia already makes."
   }
 
+  # A pool may not be named for another pool's temporary_name_for_rotation (#5578). modules/aks
+  # derives that name for every pool as up to six characters of its name plus six hex characters of
+  # its md5: default -> defaulc21f96, spot -> spotb2e189, pool1 -> pool15934c3. A vm_size or disk
+  # change CYCLES a pool through that name: azurerm creates the temporary pool, or ADOPTS one that
+  # already exists under the name, and deletes it at the end. A named pool carrying the name would be
+  # deleted with its nodes. pool1..pool100 covers every positional pool: AKS caps a cluster at 100
+  # node pools. The derivation is restated here because a variable validation can read no local; the
+  # tofu test in nodepools.tftest.hcl pins both copies to the same names.
+  validation {
+    condition = alltrue([for p in var.extra_node_pools : !contains([
+      for n in concat(["default", "spot"], [for i in range(1, 101) : "pool${i}"], [for q in var.extra_node_pools : q.name if q.name != p.name]) :
+      "${substr(n, 0, min(6, length(n)))}${substr(md5(n), 0, 6)}"
+    ], p.name)])
+    error_message = "extra_node_pools names may not equal the temporary pool name AKS uses to rebuild another pool on a new VM size: the default pool's (defaulc21f96), the Spot pool's (spotb2e189), pool1..pool100's (pool15934c3 for pool1), or another named pool's (up to six characters of its name plus six hex characters of its md5). Rebuilding that pool would delete the pool that carries the name. Choose another name."
+  }
+
   validation {
     condition = alltrue([for p in var.extra_node_pools :
       can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", p.instance_type)) && contains(["amd64", "arm64"], p.arch) && contains(["on-demand", "spot"], p.capacity_type)
