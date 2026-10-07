@@ -143,9 +143,16 @@ describe("GET /api/health — status scheme", () => {
 // costing a query. It must stay out of the deep document, which is bearer-gated.
 describe("GET /api/health — build identity", () => {
 	const saved = process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID;
+	const savedVersion = process.env.NEXT_PUBLIC_APP_VERSION;
+	beforeEach(() => {
+		delete process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID;
+		delete process.env.NEXT_PUBLIC_APP_VERSION;
+	});
 	afterEach(() => {
 		if (saved === undefined) delete process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID;
 		else process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID = saved;
+		if (savedVersion === undefined) delete process.env.NEXT_PUBLIC_APP_VERSION;
+		else process.env.NEXT_PUBLIC_APP_VERSION = savedVersion;
 	});
 
 	it("liveness reports the build it was compiled with", async () => {
@@ -164,10 +171,37 @@ describe("GET /api/health — build identity", () => {
 	// placeholder would let `env:verify` compare two fabrications and call them equal — the same
 	// absence-as-measurement collapse that made proof bundles unfalsifiable in #2688.
 	it("is null when no build id was compiled in, never a placeholder", async () => {
-		delete process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID;
 		const body = await (await GET(new Request("http://local/api/health?shallow=1"))).json();
 		expect(body.build).toBeNull();
 		expect(body).toMatchObject({ status: "ok", mode: "live" });
+	});
+
+	// PRODUCTION (#5623). The prod/community image never sets NEXT_PUBLIC_ALETHIA_BUILD_ID — only
+	// env-mode.sh on the sandbox does — so every production liveness answer was build: null. The
+	// image's `runner` stage sets NEXT_PUBLIC_APP_VERSION to the deploy SHA (#5621); the route reads
+	// it at REQUEST time (next-runtime-env's env(), a computed `process.env[key]` Next does not
+	// inline), which is why setting it here, after the module was imported, must be visible.
+	it("in production, reports the runner image's deploy SHA (NEXT_PUBLIC_APP_VERSION)", async () => {
+		process.env.NEXT_PUBLIC_APP_VERSION = "5f3c2a1deadbeef";
+		const body = await (await GET(new Request("http://local/api/health?shallow=1"))).json();
+		expect(body).toMatchObject({ status: "ok", mode: "live", build: "5f3c2a1deadbeef" });
+	});
+
+	// The sandbox's compile stamp answers a narrower question (is the COMPILE my tree?) and is set
+	// nowhere else, so if both are present it wins — otherwise an env that ever carried an
+	// APP_VERSION would make `pnpm env:verify` compare a SHA against a tree hash and cry MISMATCH.
+	it("the sandbox's compile stamp wins over the release when both are set", async () => {
+		process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID = "tree-abc123";
+		process.env.NEXT_PUBLIC_APP_VERSION = "5f3c2a1deadbeef";
+		const body = await (await GET(new Request("http://local/api/health?probe=live"))).json();
+		expect(body.build).toBe("tree-abc123");
+	});
+
+	// An empty value is an absence, not an id — a blank VERSION build-arg must not read as a build.
+	it("an empty NEXT_PUBLIC_APP_VERSION is null, not an empty-string build", async () => {
+		process.env.NEXT_PUBLIC_APP_VERSION = "";
+		const body = await (await GET(new Request("http://local/api/health?shallow=1"))).json();
+		expect(body.build).toBeNull();
 	});
 
 	// The liveness path must stay free of the topology detail the deep path gates behind a bearer.
