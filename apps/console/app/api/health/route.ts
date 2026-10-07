@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { env } from "next-runtime-env";
 import { isInternalAuthorized } from "@/lib/auth/internal-auth";
 import { getDeepHealth, httpStatusFor } from "@/lib/observability/health";
 
@@ -48,15 +49,25 @@ export async function GET(request: Request): Promise<Response> {
 			// there. The box is the only place anything visual can be checked, so a browser silently
 			// showing a previous bundle is a hole underneath the last line of defence.
 			//
-			// This value is deliberately read from a `NEXT_PUBLIC_` variable, which Next INLINES AT
-			// COMPILE TIME. That is the whole point and the reason it is not read from disk at
-			// request time: a value read at request time would report the file the box currently
-			// holds, which is exactly the thing that is already correct when this fails. Inlined, it
-			// reports the compile — so a stale compile returns a stale id and env-mode.sh catches it.
+			// Two sources, because the two places this runs ask two different questions:
 			//
-			// It identifies a BOOT, not a release: env-mode.sh mints it per start. Absent (a local
-			// run, or the production image) it is null, which is honest rather than a fake "unknown".
-			build: process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID ?? null,
+			//  1. The sandbox: NEXT_PUBLIC_ALETHIA_BUILD_ID, read as a literal `process.env.` member so
+			//     Next INLINES IT AT COMPILE TIME. That is the whole point: a value read at request time
+			//     would report the file the box currently holds, which is exactly the thing that is
+			//     already correct when this fails. Inlined, it reports the compile — so a stale compile
+			//     returns a stale id and `pnpm env:verify` catches it. It identifies a BOOT (env-mode.sh
+			//     mints it per start) and nothing else sets it, so it wins whenever it is present.
+			//
+			//  2. The production / community image (#5623): NEXT_PUBLIC_APP_VERSION, the deploy SHA the
+			//     Dockerfile `runner` stage sets (#5621). Read through next-runtime-env's `env()`, whose
+			//     server branch is `process.env[key]` — a COMPUTED key, which Next's define-env does not
+			//     replace (it substitutes only literal `process.env.NEXT_PUBLIC_X` members, and only for
+			//     keys set at build time). So this is the RUNNING container's value, not whatever the
+			//     `build` stage happened to carry — the same read window.__ENV and the PostHog release
+			//     tag use. Before this, production answered build: null for every release.
+			//
+			// Neither set (a local run), or set empty → null, which is honest rather than a fake "unknown".
+			build: process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID || env("NEXT_PUBLIC_APP_VERSION") || null,
 		});
 	}
 
