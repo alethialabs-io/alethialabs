@@ -1005,8 +1005,12 @@ jobs:
     #
     # The matrix expands only when the job runs. Both before and after, a label leaves the seven
     # contexts untouched and the receipt reads the successes that are already there.
+    # `success()` is the implicit default, written down (#5615): a `legs` that was skipped (a draft)
+    # or failed has no `run == 'yes'` to offer, so skipping here is intended, and
+    # scripts/ci/check-workflow-shape.mjs refuses a needs-reading `if:` that leaves it unstated.
     if: >-
-      needs.legs.outputs.run == 'yes'
+      success()
+      && needs.legs.outputs.run == 'yes'
       && (github.event.action != 'labeled'
           || contains(fromJSON('["release-gate:run","release-gate:all"]'), github.event.label.name))
     runs-on: ubuntu-latest
