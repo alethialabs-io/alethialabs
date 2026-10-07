@@ -933,6 +933,13 @@ jobs:
     needs: changes
     if: ${{ github.event_name != 'workflow_dispatch' && (needs.changes.outputs.apps != 'true' || needs.changes.outputs.runner != 'true') }}
     runs-on: ubuntu-latest
+    # Which path `stale_check` took for the CONSOLE image, for report-failure's alert (#5643):
+    #   checked:<built sha>  the source-path diff ran and found nothing changed since <built sha>
+    #   skipped:<reason>     a `::warning::… retagging anyway` path — equivalence NOT asserted
+    #   not-retagged         the apps group was rebuilt, so the console was not retagged here
+    # Empty when this job was skipped, or died before the line is written.
+    outputs:
+      console_equivalence: ${{ steps.retag.outputs.console_equivalence }}
     steps:
       # Full history: the staleness guard below asks git what changed between the commit an image
       # was built from and this one, which needs both commits present.
@@ -947,6 +954,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Retag unchanged images latest → sha
+        id: retag
         env:
           SHA: ${{ github.sha }}
           APPS_CHANGED: ${{ needs.changes.outputs.apps }}
@@ -992,10 +1000,12 @@ jobs:
               | head -n1)"
             if [ -z "$built" ] || [ "$built" = dev ]; then
               echo "::warning::$img:latest carries no usable ALETHIA_SOURCE_COMMIT — cannot prove it is current; retagging anyway."
+              [ "$img" != console ] || CONSOLE_EQUIVALENCE="skipped:no-source-commit"
               return 0
             fi
             if ! git cat-file -e "${built}^{commit}" 2>/dev/null; then
               echo "::warning::$img:latest names commit ${built}, which is not in this repository's history; retagging anyway."
+              [ "$img" != console ] || CONSOLE_EQUIVALENCE="skipped:unknown-commit"
               return 0
             fi
             # Unquoted on purpose — $paths is a space-separated pathspec list, and quoting it would
@@ -1011,8 +1021,10 @@ jobs:
               git diff --name-only "${built}" "${SHA}" -- $paths 2>/dev/null | head -20 | sed 's/^/::error::  /' || true
               echo "::error::latest is stale for this group. Retagging it would ship old code under a new SHA — rebuild instead."
               echo "::error::If those paths do NOT feed this image, the group's path list here and the changes filter have drifted apart (#2762)."
+              [ "$img" != console ] || CONSOLE_EQUIVALENCE="refused:${built}"
               return 1
             fi
+            [ "$img" != console ] || CONSOLE_EQUIVALENCE="checked:${built}"
           }
 
           retag() {
@@ -1021,6 +1033,7 @@ jobs:
             docker buildx imagetools create -t "${IMAGE_PREFIX}/$1:${SHA}" "${IMAGE_PREFIX}/$1:latest"
           }
           rc=0
+          CONSOLE_EQUIVALENCE=not-retagged
           if [ "${APPS_CHANGED}" != "true" ]; then
             for img in console console-migrate docs blog marketing admin; do retag "$img" "$APPS_PATHS" || rc=1; done
           fi
@@ -1032,6 +1045,7 @@ jobs:
           # and stopped, saying nothing about the five runner images behind it. `|| rc=1` keeps the
           # sweep going and `exit $rc` still fails the job, so one run now lists everything that
           # needs rebuilding instead of surfacing them one promotion at a time.
+          echo "console_equivalence=${CONSOLE_EQUIVALENCE}" >> "$GITHUB_OUTPUT"
           exit $rc
 
   deploy:
@@ -1564,4 +1578,6 @@ jobs:
           # "true" only when the console was rebuilt in this run — the one case where `deploy`'s
           # provenance check proved the live console IS this commit. Otherwise it is a retag.
           APPS_BUILD: ${{ needs.changes.outputs.apps_build }}
+          # Which path retag-unchanged's equivalence check took for the console (see its `outputs:`).
+          CONSOLE_EQUIVALENCE: ${{ needs.retag-unchanged.outputs.console_equivalence }}
         run: node scripts/deploy-failure-report.mjs
