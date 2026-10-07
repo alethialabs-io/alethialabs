@@ -809,10 +809,12 @@ report_image_cache() {
 # answer, as id<TAB>name<TAB>created. JSON and not `-o columns=…,created`, because that column is a
 # HUMAN rendering and the rollup has to do arithmetic on it; the JSON carries the API's own RFC 3339
 # timestamp. Returns 1 when the answer is not a JSON array — a listing that "succeeded" with
-# something unparseable has not told us what exists.
+# something unparseable has not told us what exists. A literal `null` is read as an EMPTY list, the
+# way list_orphan_clusters tolerates it with `.[]?`: if the CLI ever renders an empty list as `null`,
+# reading it as UNVERIFIABLE would exit every clean teardown 4 — a false red on an empty account.
 imager_helper_rows() {
 	printf '%s' "$1" | jq -r '
-		if type == "array" then . else error("not an array") end
+		if . == null then [] elif type == "array" then . else error("not an array") end
 		| .[] | select((.name // "") | startswith("hcloud-upload-image-"))
 		| [(.id | tostring), .name, (.created // "")] | @tsv' 2>/dev/null
 }
@@ -1289,6 +1291,11 @@ if [ "$SELF_TEST" = "1" ]; then
 	# grepped as text, so this case could not arise; now that it is parsed, a parse failure must
 	# land in the gating ledger, never read as "none present".
 	st_imager_case "a listing that answered with something unparseable is UNVERIFIABLE, not none" "Error: rate limited" "[]" no yes
+	# `null` is how some CLI renderings spell an empty list. Read as "not an array" it would turn an
+	# account with no keys into exit 4 on every teardown; it must be "none present" instead.
+	st_imager_case "a listing that answered \`null\` is an empty list — no finding, no UNVERIFIABLE" "null" "null" no no
+	# …while any OTHER valid JSON that is not an array still has not said what exists.
+	st_imager_case "a listing that answered a JSON non-array (\"garbage\") is UNVERIFIABLE" '"garbage"' "[]" no yes
 
 	# ── THE FINDING THE ROLLUP JUDGES (#5645). The warning above was the whole output for a year,
 	#    and a ::warning:: repeated nightly that nobody reads is not a guard: server 168216231 billed

@@ -247,9 +247,17 @@ teardown_receipt_path() {
 #     LEAK with age "unknown". This is a visibility report, never a delete, so the unsure case
 #     resolves toward being SEEN.
 #   · Only the HETZNER receipt of THIS run and attempt is read, the same identity rule as the
-#     teardown axis. No receipt (hetzner gated off, the verify step failed, RUN_ATTEMPT unset) ⇒ no
-#     finding here, and that leg is already reported UNMEASURED by the teardown axis — the absence
-#     is not presented as "no leak".
+#     teardown axis. With no receipt this reports NOTHING about imager servers — no banner, no
+#     IMAGER_LEAKS, no issue — and what the summary says instead depends on why there is none
+#     (teardown_outcome decides, not this function):
+#       - hetzner GATED OFF: its `Guaranteed teardown` is `skipped`, so the leg is `inert`. Nothing
+#         looked at the account that night, and the summary is SILENT about imager servers. A leak
+#         standing on such a night is only seen by the next night the leg runs.
+#       - the verify step or its upload failed, or RUN_ATTEMPT is unset: the leg reads UNMEASURED,
+#         whose banner says no measurement was attached.
+#       - the teardown was killed: UNSWEPT.
+#     In none of these is the absence presented as "no leak" — but in the gated-off case it is not
+#     presented as anything at all.
 IMAGER_LEAK_MIN_AGE_HOURS="${IMAGER_LEAK_MIN_AGE_HOURS:-12}"
 
 # teardown_receipt_for <provider> — this run+attempt's receipt for <provider>, whatever its verdict.
