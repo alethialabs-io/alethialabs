@@ -936,6 +936,8 @@ jobs:
     # Which path `stale_check` took for the CONSOLE image, for report-failure's alert (#5643):
     #   checked:<built sha>  the source-path diff ran and found nothing changed since <built sha>
     #   skipped:<reason>     a `::warning::… retagging anyway` path — equivalence NOT asserted
+    #   refused:<built sha>  the source paths DID change since <built sha>; the retag is refused and
+    #                        this job fails, so `deploy` is skipped and the alert never renders it as live
     #   not-retagged         the apps group was rebuilt, so the console was not retagged here
     # Empty when this job was skipped, or died before the line is written.
     outputs:

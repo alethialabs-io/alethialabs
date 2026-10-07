@@ -106,12 +106,11 @@ function renderJobs(jobs) {
  * checks the provenance is non-empty only, and the smoke's build-id assertion is off, so what is known
  * is whatever `retag-unchanged`'s stale_check recorded. Anything but the literal values below is read
  * as the weaker case — the claim that needs proof is the one never made by default.
- * @param {string} sha
  * @param {string} appsBuild `needs.changes.outputs.apps_build`
  * @param {string} consoleEquivalence `needs.retag-unchanged.outputs.console_equivalence`
  * @returns {string}
  */
-export function liveConsole(sha, appsBuild, consoleEquivalence) {
+export function liveConsole(appsBuild, consoleEquivalence) {
 	if (appsBuild === "true") {
 		return "**The `deploy` job succeeded and the console was rebuilt in this run, so production IS running this commit** — " +
 			"`deploy` read `ALETHIA_SOURCE_COMMIT` off the running console container and it matched this SHA. " +
@@ -165,7 +164,7 @@ export function composeReport({ deployResult, smokeResult, appsBuild, consoleEqu
 	const jobs = renderJobs(failingJobs);
 
 	if (deployResult === "success") {
-		const live = liveConsole(sha, appsBuild, consoleEquivalence);
+		const live = liveConsole(appsBuild, consoleEquivalence);
 
 		if (smokeResult !== "failure") {
 			const what =
