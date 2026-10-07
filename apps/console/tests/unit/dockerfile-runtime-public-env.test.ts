@@ -24,10 +24,12 @@
 //   - both console images are checked: Dockerfile (enterprise) and Dockerfile.community.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const CONSOLE = process.cwd();
+// Located from this file, not process.cwd(), so the test reads the same tree from any working directory.
+const CONSOLE = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REPO = join(CONSOLE, "..", "..");
 const DOCKERFILES = ["Dockerfile", "Dockerfile.community"];
 const DEPLOY_WORKFLOW = join(REPO, ".github/workflows/deploy-console.yml");
@@ -157,7 +159,32 @@ function parseStages(text: string): Stage[] {
 }
 
 const reads = runtimeReads();
-const deployWorkflow = readFileSync(DEPLOY_WORKFLOW, "utf8");
+/** The step in deploy-console.yml that writes the box's `.env` — the only place a deploy-env claim counts. */
+const ASSEMBLE_STEP = "      - name: Assemble .env from the vault and deploy";
+
+/**
+ * The executable lines of the deploy workflow's `.env` assembly step: the step's own lines up to the
+ * next step or job, with comment lines dropped, so neither a comment in that step nor any other step
+ * can satisfy a deploy-env claim. Empty when the step is not found (the caller fails on that).
+ */
+function assembleEnvStep(workflow: string): string {
+	const lines = workflow.split("\n");
+	const start = lines.findIndex((l) => l === ASSEMBLE_STEP);
+	if (start === -1) return "";
+	let end = lines.length;
+	for (let i = start + 1; i < lines.length; i++) {
+		if (/^ {6}- /.test(lines[i]) || /^ {0,4}\S/.test(lines[i])) {
+			end = i;
+			break;
+		}
+	}
+	return lines
+		.slice(start + 1, end)
+		.filter((l) => !/^\s*#/.test(l))
+		.join("\n");
+}
+
+const assembleStep = assembleEnvStep(readFileSync(DEPLOY_WORKFLOW, "utf8"));
 
 describe("runtime-read NEXT_PUBLIC_* vars (#5621)", () => {
 	it("finds the runtime reads (a scanner that finds nothing would pass everything)", () => {
@@ -166,11 +193,12 @@ describe("runtime-read NEXT_PUBLIC_* vars (#5621)", () => {
 	});
 
 	it("every ledger entry is still a runtime read, and deploy-env entries are really emitted", () => {
+		expect(assembleStep, `deploy-console.yml has no step named "${ASSEMBLE_STEP.trim()}"`).not.toBe("");
 		const unread = Object.keys(OTHER_RUNTIME_SOURCE).filter((key) => !reads.has(key));
 		const notEmitted = Object.entries(OTHER_RUNTIME_SOURCE)
 			.filter(([, src]) => src.kind === "deploy-env")
 			.map(([key]) => key)
-			.filter((key) => !new RegExp(`(echo "${key}=|emit ${key}\\b)`).test(deployWorkflow));
+			.filter((key) => !new RegExp(`(echo "${key}=|emit ${key}\\b)`).test(assembleStep));
 		expect(unread, "in the ledger but nothing reads it at runtime").toEqual([]);
 		expect(notEmitted, "claims deploy-env but deploy-console.yml never writes it").toEqual([]);
 	});

@@ -244,7 +244,8 @@ const CHECKS: Check[] = [
 		// (`--build-arg VERSION`) by the `runner` stage of apps/console/Dockerfile, so it is in the
 		// RUNNING server's process.env. next-runtime-env's `<PublicEnvScript />`
 		// (apps/console/app/layout.tsx) serialises that runtime env into `window.__ENV`. Setting it
-		// only in the `build` stage is not enough — nothing there survives into the runner, and this
+		// only in the `build` stage is not enough — an `ENV` set in the build stage does not survive
+		// into the runner (only the copied bundle files do), and this
 		// check read "unset" on every deploy until #5621; tests/unit/dockerfile-runtime-public-env.test.ts
 		// now fails if the runner stage stops setting it. Reading it
 		// from the BROWSER is the point: a value read server-side would report the file the host
