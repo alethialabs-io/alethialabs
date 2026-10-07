@@ -772,8 +772,15 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		fmt.Fprintf(stdout, "Using pre-approved plan file (skipping re-plan)\n")
 		planFile = params.PlanFile
 	} else {
-		if _, err := tf.Plan(ctx, varFile, planFile); err != nil {
-			return nil, fmt.Errorf("tofu plan failed: %w", err)
+		// A plan that fails on a transient network error (a TLS handshake timeout reaching
+		// a provider's API, #5644) is retried once; any other plan error fails as before.
+		// Apply, below, is never retried.
+		planErr := defaultPlanRetry.run(ctx, stdout, func(ctx context.Context) error {
+			_, err := tf.Plan(ctx, varFile, planFile)
+			return err
+		})
+		if planErr != nil {
+			return nil, fmt.Errorf("tofu plan failed: %w", planErr)
 		}
 	}
 
