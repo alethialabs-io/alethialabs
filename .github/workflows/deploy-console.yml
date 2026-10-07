@@ -675,9 +675,14 @@ jobs:
           cache-to: type=gha,mode=max,scope=runner-base-arm64
 
   # Stitch the runner-base digests into the multi-arch tag the runner images build FROM.
+  # The runner chain below spells out `success() &&` on purpose: a skipped or failed leg upstream
+  # SHOULD skip the merge that consumes it, and every skippable ancestor here is gated on the same
+  # `runner == 'true' || dispatch` condition. Writing the implicit `success()` down is what
+  # scripts/ci/check-workflow-shape.mjs asks for, so the next reader does not have to rediscover it
+  # (#5615 is what the bare form cost on the `smoke` job).
   merge-runner-base:
     needs: [changes, runner-base-amd64, runner-base-arm64]
-    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ success() && (needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v4
@@ -703,7 +708,7 @@ jobs:
   # Each half pushes a per-arch tag (:${sha}-<arch>); merge-runner-images stitches them into :latest/:${sha}.
   build-runner-amd64:
     needs: [changes, merge-runner-base]
-    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ success() && (needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     strategy:
       # See build-amd64: one red leg must not cancel the others, or it hides the rest.
@@ -743,7 +748,7 @@ jobs:
 
   build-runner-arm64:
     needs: [changes, merge-runner-base]
-    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ success() && (needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04-arm
     strategy:
       # See build-amd64: one red leg must not cancel the others, or it hides the rest.
@@ -784,7 +789,7 @@ jobs:
   # Stitch each per-cloud image's two per-arch tags into the multi-arch :latest + :${sha} tags.
   merge-runner-images:
     needs: [changes, build-runner-amd64, build-runner-arm64]
-    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ success() && (needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     strategy:
       # See build-amd64: one red leg must not cancel the others, or it hides the rest.
@@ -811,7 +816,7 @@ jobs:
   # `runner` amd64 half — native x86, pushed BY DIGEST (no tag) for the manifest merge.
   runner-amd64:
     needs: [changes, merge-runner-base]
-    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ success() && (needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.build.outputs.digest }}
@@ -844,7 +849,7 @@ jobs:
   # `runner` arm64 half — native arm, pushed BY DIGEST.
   runner-arm64:
     needs: [changes, merge-runner-base]
-    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ success() && (needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04-arm
     outputs:
       digest: ${{ steps.build.outputs.digest }}
@@ -877,7 +882,7 @@ jobs:
   # Stitch the two runner digests into one multi-arch tag (amd64 for the box, arm64 for the fleet).
   merge-runner:
     needs: [changes, runner-amd64, runner-arm64]
-    if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ success() && (needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v4
@@ -1426,7 +1431,14 @@ jobs:
   smoke:
     name: Post-deploy smoke (the public URL, and the build it serves)
     needs: [changes, deploy]
-    if: ${{ needs.deploy.result == 'success' && github.ref == 'refs/heads/main' }}
+    # `!cancelled() &&` is load-bearing (#5615). A job `if:` with no status function is implicitly
+    # `success() && …`, and `success()` is false when ANY job in the TRANSITIVE `needs` chain was
+    # skipped. `deploy` needs `retag-unchanged`, which is skipped whenever both image groups rebuild,
+    # so without it this job was skipped with zero steps on every real deploy (run 37597196603) while
+    # both halves of its condition were true. `deploy` succeeding already implies nothing upstream
+    # failed — its own `if:` is `!cancelled() && !failure()`. scripts/ci/check-workflow-shape.mjs
+    # refuses the bare form.
+    if: ${{ !cancelled() && needs.deploy.result == 'success' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
