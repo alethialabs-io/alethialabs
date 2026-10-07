@@ -351,7 +351,9 @@ jobs:
       # rebuilt" cannot mean two things in one run. They used to be written separately: the build
       # ran on `apps == 'true' || workflow_dispatch` while the smoke read `apps == 'true'` alone, so a
       # manual redeploy REBUILT the console and then skipped the served-build-id check as
-      # NOT ASSERTED (#5624). scripts/ci/check-workflow-shape.mjs refuses the two drifting apart.
+      # NOT ASSERTED (#5624). scripts/ci/check-workflow-shape.mjs refuses `SMOKE_EXPECTED_SHA`
+      # drifting from `build-amd64`'s `if:` — and ONLY that pair. The deploy's `APPS_BUILT` and the
+      # `retag-unchanged` condition are unguarded: keep them reading this output by hand.
       apps_build: ${{ steps.apps_build.outputs.value }}
     steps:
       - uses: actions/checkout@v7
