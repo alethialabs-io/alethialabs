@@ -553,6 +553,161 @@ function diffFingerprints(before: Map<string, number>, after: Map<string, number
 	return moved;
 }
 
+// ── settling the snapshot: the page's own writes land BEFORE it, not inside the window (#5639) ──
+//
+// THE WRITER, identified from the code rather than guessed. `account.delete` failed on #5636's first
+// gate run (job 112906793672) with "authz_activity_log 15→16". `authz_activity_log` has exactly one
+// insert path, `recordActivity` (lib/authz/activity.ts), and it is FIRE-AND-FORGET: `void
+// getServiceDb().insert(…)`, so the row can commit after the request that caused it has answered. It
+// is reached from `enforceDecision` for every DENIAL and every ALLOW whose action is not in
+// `READ_ONLY` (`view`, `view_activity`, `view_alerts`), and from a handful of explicit governance
+// writes (roles, grants, SSO) that no page load reaches.
+//
+// `account.delete` lives on `/[org]`, whose overview mounts `AlertsCard`
+// (components/overview/alerts-card.tsx), which calls `getAlertsBootstrap()` from a `useEffect` —
+// a client-side server action that starts AFTER `domcontentloaded`, i.e. while the reach chain is
+// already clicking "Account menu" → "Account settings". `getAlertsBootstrap` authorizes `view_alerts`
+// (read-only, not recorded) and then calls `canManageAlerts`, which probes the capability with
+// `getPdp().enforce(actor, "manage_alerts", …)` — ENFORCE, not `can` — so for the owner persona an
+// allowed `manage_alerts` on `alert` is recorded on EVERY overview load. That is the +1. It is a
+// product defect in its own right (a capability probe recorded as if the user had managed alerts) and
+// is filed separately; this spec's job is only to stop timing its assertion against it.
+//
+// The gate artifact did not keep the row, so its action/resource are not quoted from a run. The spec
+// now prints the new rows itself (`activityRowsSince`) whenever `authz_activity_log` moves, so the next
+// failure names its writer instead of leaving it to be deduced.
+//
+// THE MECHANISM. The before-snapshot used to be taken when the UI was ready — the reach chain's
+// overlay waits, then a fixed 300 ms floor — which says nothing about the PAGE's own requests. Now
+// both snapshots are taken when the page is quiet: no request the page started is still in flight
+// (`trackInFlight`, installed before `goto`, so page-load requests are counted), and two fingerprints
+// read across a quiet interval agree (`settledFingerprint`). The first half anchors the snapshot on
+// the writer's REQUEST finishing; the second covers the fire-and-forget tail after it.
+//
+// WHAT THIS DOES NOT CLOSE, stated rather than implied: an insert that commits more than one quiet
+// interval plus one full fingerprint scan AFTER its request answered still lands inside the window.
+// The browser cannot observe a commit, so that tail is bounded, not eliminated — but it is now
+// measured from the writer's response, not from an overlay mounting, which is what made it a race.
+
+/** Request types that legitimately never finish, so "nothing in flight" must not wait on them. */
+const LONG_LIVED_REQUESTS: ReadonlySet<string> = new Set(["eventsource", "websocket"]);
+
+/** How long a snapshot waits for the page's requests to finish before it proceeds and says so. */
+const SETTLE_IDLE_MS = 5_000;
+
+/** The interval two agreeing fingerprints must span — the bound on the fire-and-forget tail. */
+const SETTLE_QUIET_MS = 250;
+
+/** How many readings a snapshot takes before it reports the database as never having settled. */
+const SETTLE_ROUNDS = 6;
+
+interface InFlight {
+	/** Resolves once nothing tracked is in flight, or after `timeoutMs`; returns what is still open. */
+	idle: (timeoutMs: number) => Promise<string[]>;
+	/** Stops listening. */
+	dispose: () => void;
+}
+
+/**
+ * Track every request the page starts until it finishes or fails. Installed BEFORE navigation, so a
+ * request the page fires on mount — the `getAlertsBootstrap` that wrote #5639's row — is counted even
+ * when it starts while the reach chain is still clicking.
+ */
+function trackInFlight(page: Page): InFlight {
+	const open = new Set<Request>();
+	let waiters: Array<() => void> = [];
+	const onRequest = (req: Request) => {
+		if (LONG_LIVED_REQUESTS.has(req.resourceType())) return;
+		open.add(req);
+	};
+	const onDone = (req: Request) => {
+		if (!open.delete(req) || open.size > 0) return;
+		const wake = waiters;
+		waiters = [];
+		for (const w of wake) w();
+	};
+	page.on("request", onRequest);
+	page.on("requestfinished", onDone);
+	page.on("requestfailed", onDone);
+	return {
+		idle: async (timeoutMs) => {
+			if (open.size > 0) {
+				await new Promise<void>((resolve) => {
+					const done = () => {
+						clearTimeout(timer);
+						resolve();
+					};
+					const timer = setTimeout(() => {
+						waiters = waiters.filter((w) => w !== done);
+						resolve();
+					}, timeoutMs);
+					waiters.push(done);
+				});
+			}
+			return [...open].map((r) => describeRequests([r]));
+		},
+		dispose: () => {
+			page.off("request", onRequest);
+			page.off("requestfinished", onDone);
+			page.off("requestfailed", onDone);
+		},
+	};
+}
+
+interface SettledFingerprint {
+	counts: Map<string, number>;
+	/** Requests still open when the last reading was taken — evidence, never silently dropped. */
+	pending: string[];
+	/** False when no two readings agreed within {@link SETTLE_ROUNDS}: the database never went quiet. */
+	settled: boolean;
+}
+
+/**
+ * A fingerprint taken once the page is QUIET: nothing it started is in flight, and two readings a
+ * quiet interval apart agree (ambient growth excepted, exactly as the verdict excepts it). `read` is
+ * injectable so the self-tests can drive the settle with a write they control.
+ */
+async function settledFingerprint(
+	inFlight: InFlight,
+	read: () => Promise<Map<string, number>> = fingerprint,
+	quietMs = SETTLE_QUIET_MS,
+): Promise<SettledFingerprint> {
+	let pending = await inFlight.idle(SETTLE_IDLE_MS);
+	let prev = await read();
+	for (let round = 1; round < SETTLE_ROUNDS; round++) {
+		await new Promise((resolve) => setTimeout(resolve, quietMs));
+		pending = await inFlight.idle(SETTLE_IDLE_MS);
+		const now = await read();
+		if (diffFingerprints(prev, now).length === 0) return { counts: now, pending, settled: true };
+		prev = now;
+	}
+	return { counts: prev, pending, settled: false };
+}
+
+/** The highest `authz_activity_log` id right now (0 when empty) — the mark `activityRowsSince` reads from. */
+async function activityHighWater(): Promise<string> {
+	const rows = await db()<{ id: string }[]>`SELECT coalesce(max(id), 0)::text AS id FROM authz_activity_log`;
+	return rows[0]?.id ?? "0";
+}
+
+/** Every activity row written after `mark`, as `action resource → allow|deny` — the writer, named. */
+async function activityRowsSince(mark: string): Promise<string[]> {
+	const rows = await db()<{ action: string; resource_type: string; resource_id: string | null; decision: boolean; reason: string | null }[]>`
+		SELECT action, resource_type, resource_id::text AS resource_id, decision, reason
+		FROM authz_activity_log WHERE id > ${mark}::bigint ORDER BY id`;
+	return rows.map(
+		(r) => `${r.action} ${r.resource_type}${r.resource_id ? `:${r.resource_id}` : ""} → ${r.decision ? "allow" : "deny"}${r.reason ? ` (${r.reason})` : ""}`,
+	);
+}
+
+/** The settle's own account of itself, appended to a Cancel failure so a moved row is never bare. */
+function describeSettle(label: string, s: SettledFingerprint): string {
+	const parts: string[] = [];
+	if (!s.settled) parts.push(`the database never settled across ${SETTLE_ROUNDS} readings`);
+	if (s.pending.length > 0) parts.push(`still in flight after ${SETTLE_IDLE_MS} ms: ${s.pending.join(", ")}`);
+	return parts.length > 0 ? ` [${label}: ${parts.join("; ")}]` : "";
+}
+
 // ── reaching a control ──────────────────────────────────────────────────────────────────────────
 
 /**
@@ -641,18 +796,15 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				// the overlay it opened — see `awaitNewOverlay` for why a fixed 300 ms let the NEXT
 				// step's lookup fall back to the whole page and click the canvas card behind the palette.
 				//
-				// The 300 ms is KEPT after that postcondition, as a floor. What was measured: on #5636's
-				// first gate run (job 112906793672) the floor was dropped, the overlay wait returned as
-				// soon as the dialog mounted, and `account.delete` — `{open: "Account settings"}` — failed
-				// with "Cancel was pressed and rows still moved: authz_activity_log 15→16". One row landed
-				// between the before-snapshot and the assertion; its SOURCE WAS NOT IDENTIFIED (the dialog
-				// itself calls only Better Auth's `listAccounts`, so any permission check in that window,
-				// page load included, could have written it). Keeping the floor restores dev's timing —
-				// no step settles for less time than it did — and does NOT close that race; it is
-				// tracked separately, and not excused in AMBIENT_GROWTH.
+				// There is NO fixed floor after it any more. #5636 kept a 300 ms one because, without it,
+				// `account.delete` failed on its first gate run (job 112906793672) with "Cancel was pressed
+				// and rows still moved: authz_activity_log 15→16" — the overview's `getAlertsBootstrap`
+				// records a `manage_alerts` row on every load, fire-and-forget, and the snapshot was racing
+				// it. That race is now closed where it belongs, at the SNAPSHOT (`settledFingerprint`,
+				// #5639), so a step's settle answers only "is the UI ready", and an overlay that mounted
+				// answers that.
 				if (kind === "menu") await openMenu(page, opener);
 				else if (seen) await awaitNewOverlay(page, seen);
-				await page.waitForTimeout(300);
 			} finally {
 				await seen?.dispose().catch(() => {});
 			}
@@ -1340,6 +1492,9 @@ for (const entry of CONTROLS) {
 			return;
 		}
 
+		// Installed before `goto`, so the requests the page fires on load are the ones the snapshot waits
+		// out (#5639) — see `settledFingerprint`.
+		const inFlight = trackInFlight(page);
 		await page.goto(url, { waitUntil: "domcontentloaded" });
 
 		const reachFailure = await walkReach(page, entry);
@@ -1357,8 +1512,10 @@ for (const entry of CONTROLS) {
 		}
 		const trigger = resolved.locator;
 
-		// ── both observations start BEFORE the click.
-		const before = await fingerprint();
+		// ── both observations start BEFORE the click, once the page's own writes have landed (#5639).
+		const settledBefore = await settledFingerprint(inFlight);
+		const before = settledBefore.counts;
+		const activityMark = await activityHighWater();
 		// A staged control's save updates in place, which the row counts cannot see; its table is
 		// hashed as well. A registry entry that names no table is a finding, not a skipped check.
 		const stagedTable = entry.confirm === "staged" ? entry.staged?.table : undefined;
@@ -1437,7 +1594,11 @@ for (const entry of CONTROLS) {
 		}
 
 		const requests = watch.stop();
-		const after = await fingerprint();
+		// Settled the same way as `before`: a fire-and-forget write the CLICK caused is waited FOR, so it
+		// is counted rather than missed — the settle makes this assertion stricter, never looser.
+		const settledAfter = await settledFingerprint(inFlight);
+		inFlight.dispose();
+		const after = settledAfter.counts;
 		const moved = diffFingerprints(before, after);
 
 		// A staged control's way out was pressed exactly as a dialog's Cancel is. Its "nothing was
@@ -1481,7 +1642,10 @@ for (const entry of CONTROLS) {
 					`${entry.id}: \`${entry.mutation}\` was issued while the confirmation was open and Cancel was pressed — the mutation fired before the user agreed. ${describeRequests(attributable)}`,
 				).toBe(0);
 			}
-			expect(moved, `${entry.id}: Cancel was pressed and rows still moved: ${moved.join(", ")}`).toEqual([]);
+			// A moved activity log names its rows, so the writer is read off the failure, not deduced.
+			const activity = moved.some((m) => m.startsWith("authz_activity_log ")) ? ` — new authz_activity_log rows: ${(await activityRowsSince(activityMark)).join("; ")}` : "";
+			const settle = describeSettle("before", settledBefore) + describeSettle("after", settledAfter);
+			expect(moved, `${entry.id}: Cancel was pressed and rows still moved: ${moved.join(", ")}${activity}${settle}`).toEqual([]);
 		}
 
 		record({
@@ -1841,6 +2005,61 @@ test("self-test — an `open:` step waits for the overlay it opened, so a SLOW p
 	const entry: ControlEntry = { ...selfTestEntry("Remove"), reach: [{ open: "Add" }, { open: "Prometheus + Grafana" }] };
 	expect(await walkReach(page, entry), "both steps name real elements, so both must be taken").toBeNull();
 	await expect(page.locator("body"), "the second step must click the palette's option, not the card behind it").toHaveAttribute("data-hit", "option");
+});
+
+/**
+ * A fake origin the settle self-tests route: `respondAfterMs` delays the answer like a slow server
+ * action, and `onAnswered` runs once the response is sent — where `recordActivity`'s fire-and-forget
+ * insert would still be in flight.
+ */
+async function routeSlowWriter(page: Page, respondAfterMs: number, onAnswered: () => void): Promise<void> {
+	await page.route("https://settle.self-test.invalid/**", async (route) => {
+		await new Promise((resolve) => setTimeout(resolve, respondAfterMs));
+		await route.fulfill({ status: 200, body: "{}", headers: { "access-control-allow-origin": "*" } });
+		onAnswered();
+	});
+}
+
+test("self-test — the snapshot waits out a request the PAGE started, and the fire-and-forget write after it (#5639)", async ({ page }) => {
+	// `account.delete`'s shape: the overview fires `getAlertsBootstrap` on mount, the server answers,
+	// and the activity row commits AFTER the answer. The request here answers at 600 ms — past the
+	// 300 ms floor this replaced — and its "row" lands 50 ms after that. A snapshot taken when the UI
+	// was ready read 0, and the row then appeared inside the Cancel window.
+	let rows = 0;
+	await routeSlowWriter(page, 600, () => {
+		setTimeout(() => {
+			rows += 1;
+		}, 50);
+	});
+	const inFlight = trackInFlight(page);
+	await page.setContent(`<script>fetch("https://settle.self-test.invalid/bootstrap", { method: "POST" })</script>`);
+	const settled = await settledFingerprint(inFlight, async () => new Map([["authz_activity_log", rows]]));
+	inFlight.dispose();
+	expect(settled.counts.get("authz_activity_log"), "the page's own write must land BEFORE the snapshot, not inside the window").toBe(1);
+	expect(settled.settled, "two readings agreed once it had landed").toBe(true);
+	expect(settled.pending, "and nothing the page started was still open").toEqual([]);
+});
+
+test("self-test — a request that NEVER finishes bounds the wait and is NAMED, not silently dropped", async ({ page }) => {
+	// The other direction: a page with a request that never answers must not hang the snapshot, and
+	// the request must be carried into the failure message rather than forgotten.
+	await page.route("https://settle.self-test.invalid/**", () => {});
+	const inFlight = trackInFlight(page);
+	await page.setContent(`<script>fetch("https://settle.self-test.invalid/hangs")</script>`);
+	const started = Date.now();
+	const pending = await inFlight.idle(300);
+	inFlight.dispose();
+	expect(Date.now() - started, "the wait is bounded").toBeLessThan(5_000);
+	expect(pending).toEqual(["GET /hangs"]);
+	await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("self-test — a database that never stops moving is reported UNSETTLED, never as a clean reading", async () => {
+	const inFlight: InFlight = { idle: async () => [], dispose: () => {} };
+	let n = 0;
+	const settled = await settledFingerprint(inFlight, async () => new Map([["authz_activity_log", n++]]), 10);
+	expect(settled.settled).toBe(false);
+	expect(describeSettle("before", settled)).toContain(`never settled across ${SETTLE_ROUNDS} readings`);
 });
 
 test("self-test — an `open:` step that opens NO overlay is still taken, within the bound", async ({ page }) => {
