@@ -17,7 +17,7 @@
 // variant). The modal uses none of them for this; a Playwright run at a narrow viewport is the
 // rendered proof, and none exists yet.
 
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ElenchModal } from "@/components/agent/elench/elench-modal";
@@ -96,6 +96,17 @@ function renderModal({ isEmpty }: { isEmpty: boolean }): Handlers {
 	return h;
 }
 
+/**
+ * Resolves once the sheet has unmounted. base-ui keeps a closing popup mounted (`data-closed`,
+ * `data-ending-style`) until its exit animation settles, so an immediate query races it under a
+ * loaded worker — measured: green alone, red inside the full `tests/components` run.
+ */
+async function sheetClosed(): Promise<void> {
+	await waitFor(() => {
+		expect(screen.queryByRole("dialog", { name: "Chats" })).toBeNull();
+	});
+}
+
 /** The sheet, once open — the rail's narrow host. */
 async function openNarrowRail(): Promise<HTMLElement> {
 	await userEvent.click(narrowToggle());
@@ -145,14 +156,14 @@ describe("ElenchModal below lg — the thread rail is reachable (#5650)", () => 
 		const sheet = await openNarrowRail();
 		await userEvent.click(within(sheet).getByTestId("thread-rail-row"));
 		expect(h.onSelectThread).toHaveBeenCalledWith("t-1");
-		expect(screen.queryByRole("dialog", { name: "Chats" })).toBeNull();
+		await sheetClosed();
 	});
 
 	it("reaches Artifacts and Knowledge from the sheet, and can reopen it from either", async () => {
 		renderModal({ isEmpty: false });
 		await userEvent.click(within(await openNarrowRail()).getByRole("button", { name: "Artifacts" }));
 		expect(useElenchStore.getState().mainView).toBe("artifacts");
-		expect(screen.queryByRole("dialog", { name: "Chats" })).toBeNull();
+		await sheetClosed();
 		expect(screen.getByText("gallery body")).toBeInTheDocument();
 
 		await userEvent.click(within(await openNarrowRail()).getByRole("button", { name: "Knowledge" }));
