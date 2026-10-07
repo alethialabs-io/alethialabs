@@ -114,7 +114,7 @@ describe("ElenchModal below lg — the thread rail is reachable (#5650)", () => 
 
 		it(`renders a narrow toggle on ${where} while railOpen is at its default true`, () => {
 			renderModal({ isEmpty });
-			narrowToggle();
+			expect(narrowToggle()).toBeInTheDocument();
 		});
 
 		it(`opens the rail in a sheet on ${where}, and Delete chat works there`, async () => {
@@ -135,7 +135,9 @@ describe("ElenchModal below lg — the thread rail is reachable (#5650)", () => 
 		});
 		renderModal({ isEmpty: false });
 		const sheet = await openNarrowRail();
-		within(sheet).getByRole("button", { name: "Delete chat Audit chat" });
+		expect(
+			within(sheet).getByRole("button", { name: "Delete chat Audit chat" }),
+		).toBeInTheDocument();
 	});
 
 	it("closes the sheet after a chat is selected", async () => {
@@ -156,6 +158,6 @@ describe("ElenchModal below lg — the thread rail is reachable (#5650)", () => 
 		await userEvent.click(within(await openNarrowRail()).getByRole("button", { name: "Knowledge" }));
 		expect(useElenchStore.getState().mainView).toBe("knowledge");
 		expect(screen.getByText("knowledge body")).toBeInTheDocument();
-		await openNarrowRail();
+		expect(await openNarrowRail()).toBeInTheDocument();
 	});
 });
