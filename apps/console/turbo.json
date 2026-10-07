@@ -1,0 +1,13 @@
+{
+	"$schema": "https://turborepo.com/schema.json",
+	"extends": ["//"],
+	"tasks": {
+		// tests/api/health/status-page-monitors.test.ts reads deploy/status/config.yaml, which is outside
+		// this package, so turbo's default inputs leave it out of the cache key: a PR that edits only
+		// the status page config would get a cache hit and the guard would never run (#5629).
+		// $TURBO_EXTENDS$ keeps the root task's inputs (incl. the *.md exclusions) and appends this one.
+		"test": {
+			"inputs": ["$TURBO_EXTENDS$", "$TURBO_ROOT$/deploy/status/config.yaml"]
+		}
+	}
+}
