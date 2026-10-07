@@ -751,8 +751,8 @@ s3_available() {
 # so nothing is left undone and there is nothing an exit code could usefully demand.
 #
 # The FAILURE path is untouched and still gates. `probe_run` writes the UNVERIFIABLE ledger itself
-# when `hcloud server list` cannot answer, and that entry is a file write, so the `| grep` below
-# cannot launder it. A dead token here still exits 4; only a successful listing that found something
+# when `hcloud server list` cannot answer, and that entry is a file write, so the row filter below
+# cannot launder it — and an answer that is not a JSON array is recorded UNVERIFIABLE as well. A dead token here still exits 4; only a successful listing that found something
 # is downgraded.
 #
 # ── WHO ELSE WOULD SEE ONE OF THESE (measured 2026-08-28: nobody) ───────────────────────────────
@@ -805,26 +805,59 @@ report_image_cache() {
 	return 0
 }
 
+# imager_helper_rows <json> — the `hcloud-upload-image-*` entries of a `hcloud <type> list -o json`
+# answer, as id<TAB>name<TAB>created. JSON and not `-o columns=…,created`, because that column is a
+# HUMAN rendering and the rollup has to do arithmetic on it; the JSON carries the API's own RFC 3339
+# timestamp. Returns 1 when the answer is not a JSON array — a listing that "succeeded" with
+# something unparseable has not told us what exists.
+imager_helper_rows() {
+	printf '%s' "$1" | jq -r '
+		if type == "array" then . else error("not an array") end
+		| .[] | select((.name // "") | startswith("hcloud-upload-image-"))
+		| [(.id | tostring), .name, (.created // "")] | @tsv' 2>/dev/null
+}
+
+# report_imager_helpers — list the imager upload helpers, record each SERVER as a finding (#5645)
+# so the nightly rollup can judge how long it has been billing, and flag the lot UNATTRIBUTABLE.
 report_imager_helpers() {
-	local servers keys found
-	servers="$(probe_run imager-upload-helpers hcloud server list -o noheader -o columns=id,name | grep -F 'hcloud-upload-image-' || true)"
-	keys="$(probe_run imager-upload-helpers hcloud ssh-key list -o noheader -o columns=id,name | grep -F 'hcloud-upload-image-' || true)"
+	local raw servers="" keys="" found id name created
+	if raw="$(probe_run imager-upload-helpers hcloud server list -o json)"; then
+		servers="$(imager_helper_rows "$raw")" ||
+			{ probe_note_unverifiable imager-upload-helpers "server list answered with something that is not a JSON array"; servers=""; }
+	fi
+	if raw="$(probe_run imager-upload-helpers hcloud ssh-key list -o json)"; then
+		keys="$(imager_helper_rows "$raw")" ||
+			{ probe_note_unverifiable imager-upload-helpers "ssh-key list answered with something that is not a JSON array"; keys=""; }
+	fi
 	found=0
 	if [ -n "$servers" ]; then
-		echo "  · imager upload servers present (NOT swept — unlabelled, may belong to another run):"
-		printf '      %s\n' "$servers"
+		echo "  · imager upload servers present (NOT swept — unlabelled, may belong to another run; a STOPPED server still bills):"
+		while IFS="$(printf '\t')" read -r id name created; do
+			[ -n "$id" ] || continue
+			echo "      ${id} ${name} (created ${created:-unknown})"
+			# The receipt carries this to the rollup, which decides LEAK by age: only the rollup
+			# knows what "now" is for the run it reports on (#5645).
+			probe_note_finding imager-upload-server "$id" "$name" "$created"
+		done <<-ROWS
+			$servers
+		ROWS
 		found=1
 	fi
 	if [ -n "$keys" ]; then
-		echo "  · imager upload ssh-keys present (NOT swept — unlabelled, may belong to another run):"
-		printf '      %s\n' "$keys"
+		echo "  · imager upload ssh-keys present (NOT swept — unlabelled, may belong to another run; keys do not bill):"
+		while IFS="$(printf '\t')" read -r id name created; do
+			[ -n "$id" ] || continue
+			echo "      ${id} ${name} (created ${created:-unknown})"
+		done <<-ROWS
+			$keys
+		ROWS
 		found=1
 	fi
 	if [ "$found" = "0" ]; then
 		echo "  · imager upload helpers: none present"
 		return 0
 	fi
-	echo "::warning::hcloud-upload-image-* server(s)/ssh-key(s) exist and were NOT swept. The imager provider creates them unlabelled, so this label-scoped script cannot attribute them to a run. If no image build is in flight they are leaked (a stopped server still bills) — remove them by hand. Nothing else watches for them: the reaper's preflight discovery selects on the alethia_project-id label these do not carry. See #2463."
+	echo "::warning::hcloud-upload-image-* server(s)/ssh-key(s) exist and were NOT swept. The imager provider creates them unlabelled, so this label-scoped script cannot attribute them to a run. If no image build is in flight they are leaked (a stopped server still bills) — remove them by hand. The nightly rollup reports a server older than its leak threshold as a LEAK, from the teardown receipt (#5645). See #2463."
 	probe_note_unattributable imager-upload-helpers "unlabelled by the imager provider — cannot be tied to this run"
 }
 
@@ -1248,12 +1281,37 @@ if [ "$SELF_TEST" = "1" ]; then
 	}
 
 	echo "→ hcloud-cleanup.sh self-test"
-	st_imager_case "a leaked upload server is UNATTRIBUTABLE, not unverifiable" "163477937 hcloud-upload-image-77b49987" "" yes no
-	st_imager_case "a leaked upload ssh-key alone is enough" "" "117831479 hcloud-upload-image-77b49987" yes no
-	st_imager_case "an empty account raises nothing at all" "" "" no no
-	st_imager_case "an unrelated server is not mistaken for one" "163000000 alethia-prod-web" "" no no
+	st_imager_case "a leaked upload server is UNATTRIBUTABLE, not unverifiable" '[{"id":163477937,"name":"hcloud-upload-image-77b49987","created":"2026-08-24T03:41:12+00:00","labels":{}}]' "[]" yes no
+	st_imager_case "a leaked upload ssh-key alone is enough" "[]" '[{"id":117831479,"name":"hcloud-upload-image-77b49987","created":"2026-08-24T03:41:10+00:00","labels":{}}]' yes no
+	st_imager_case "an empty account raises nothing at all" "[]" "[]" no no
+	st_imager_case "an unrelated server is not mistaken for one" '[{"id":163000000,"name":"alethia-prod-web","created":"2026-08-01T00:00:00+00:00","labels":{}}]' "[]" no no
+	# An answer that is not a JSON array has not said what exists. Before #5645 the listing was
+	# grepped as text, so this case could not arise; now that it is parsed, a parse failure must
+	# land in the gating ledger, never read as "none present".
+	st_imager_case "a listing that answered with something unparseable is UNVERIFIABLE, not none" "Error: rate limited" "[]" no yes
+
+	# ── THE FINDING THE ROLLUP JUDGES (#5645). The warning above was the whole output for a year,
+	#    and a ::warning:: repeated nightly that nobody reads is not a guard: server 168216231 billed
+	#    six days under it. The rollup can only call it a LEAK if the receipt says WHICH server and
+	#    SINCE WHEN, so each server — and only a server: keys do not bill — becomes a finding
+	#    carrying the API's own creation timestamp. ──
+	probe_reset
+	ST_SERVERS='[{"id":168216231,"name":"hcloud-upload-image-d4034d08","created":"2026-10-01T03:41:12+00:00","labels":{}},{"id":163000000,"name":"alethia-prod-web","created":"2026-08-01T00:00:00+00:00","labels":{}}]'
+	ST_KEYS='[{"id":117831479,"name":"hcloud-upload-image-77b49987","created":"2026-08-24T03:41:10+00:00","labels":{}}]'
+	ST_SERVERS_RC=0
+	ST_KEYS_RC=0
+	report_imager_helpers >/dev/null 2>&1 || true
+	st_findings="$(probe_findings_json | jq -r '[.[] | "\(.kind) \(.id) \(.name) \(.created)"] | join(";")')"
+	if [ "$st_findings" = "imager-upload-server 168216231 hcloud-upload-image-d4034d08 2026-10-01T03:41:12+00:00" ]; then
+		echo "  ✓ each upload SERVER is recorded as a finding with its id and creation time — keys and unrelated servers are not"
+	else
+		echo "  ✗ each upload server is recorded as a finding — got [${st_findings}]" >&2
+		st_fails=$((st_fails + 1))
+	fi
+	ST_SERVERS=""
+	ST_KEYS=""
 	# THE HALF THAT MUST NOT MOVE. Downgrading the FINDING does not downgrade the FAILURE: a
-	# `hcloud server list` that cannot answer is still UNVERIFIABLE and still gates, and the `| grep`
+	# `hcloud server list` that cannot answer is still UNVERIFIABLE and still gates, and the row filter
 	# in report_imager_helpers cannot launder that because probe_run writes a FILE, not a status.
 	st_imager_case "a listing that COULD NOT ANSWER is still UNVERIFIABLE" "" "" no yes 1
 
@@ -1602,7 +1660,7 @@ if [ "$SELF_TEST" = "1" ]; then
 		fi
 	}
 	st_imager_finalize "a swept run whose ONLY finding is an imager helper exits 0, not 4" \
-		"163477937 hcloud-upload-image-77b49987" 0 yes
+		'[{"id":163477937,"name":"hcloud-upload-image-77b49987","created":"2026-08-24T03:41:12+00:00","labels":{}}]' 0 yes
 	# The other direction, on the same path: with nothing present the ✓ line stays exactly as it was,
 	# so a clean run cannot start crying wolf and teaching people to ignore the qualifier.
 	st_imager_finalize "a clean run's ✓ line is unchanged and mentions nothing" "" 0 no
