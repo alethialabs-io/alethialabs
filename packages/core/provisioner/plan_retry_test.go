@@ -1,0 +1,198 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+package provisioner
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+// runTLSTimeoutErr is the plan error from the 2026-10-07 hetzner floor nightly
+// (run 37605979423), in the shape tfexec returns it: the exit status, then tofu's
+// stderr — here word-wrapped across lines as tofu renders a diagnostic.
+var runTLSTimeoutErr = errors.New("exit status 1\n\nError: failed to get talos extensions versions\n\n" +
+	"  with data.talos_image_factory_extensions_versions.this,\n  on image.tf line 248\n\n" +
+	"Get \"https://factory.talos.dev/version/v1.13.6/extensions/official\": net/http: TLS\nhandshake timeout")
+
+// recordingPolicy returns a planRetryPolicy whose Sleep records each wait instead of
+// sleeping, plus a pointer to those recorded waits.
+func recordingPolicy() (planRetryPolicy, *[]time.Duration) {
+	var waits []time.Duration
+	return planRetryPolicy{
+		Backoff: 7 * time.Second,
+		Sleep: func(_ context.Context, d time.Duration) error {
+			waits = append(waits, d)
+			return nil
+		},
+	}, &waits
+}
+
+// scriptedPlan returns a plan func that returns errs[i] on its i-th call (nil past the
+// end), plus a pointer to the call count.
+func scriptedPlan(errs ...error) (func(context.Context) error, *int) {
+	calls := 0
+	return func(context.Context) error {
+		i := calls
+		calls++
+		if i < len(errs) {
+			return errs[i]
+		}
+		return nil
+	}, &calls
+}
+
+// TestPlanRetry_TransientErrorIsRetriedExactlyOnce pins the #5644 behaviour: the TLS
+// timeout from run 37605979423 is retried once, after the backoff, and the retry is logged
+// with its reason.
+func TestPlanRetry_TransientErrorIsRetriedExactlyOnce(t *testing.T) {
+	policy, waits := recordingPolicy()
+	plan, calls := scriptedPlan(runTLSTimeoutErr, nil)
+	var out bytes.Buffer
+
+	if err := policy.run(context.Background(), &out, plan); err != nil {
+		t.Fatalf("plan should succeed on its retry, got %v", err)
+	}
+	if *calls != 2 {
+		t.Fatalf("plan calls = %d, want 2 (one try, one retry)", *calls)
+	}
+	if len(*waits) != 1 || (*waits)[0] != 7*time.Second {
+		t.Fatalf("waits = %v, want exactly one backoff of 7s", *waits)
+	}
+	log := out.String()
+	if !strings.Contains(log, "retrying once") || !strings.Contains(log, "net/http: TLS handshake timeout") {
+		t.Fatalf("retry must be logged with its reason, got log %q", log)
+	}
+}
+
+// TestPlanRetry_SecondTransientFailureFails: one retry only — a second transient failure
+// fails the plan, and the error says a retry happened.
+func TestPlanRetry_SecondTransientFailureFails(t *testing.T) {
+	policy, waits := recordingPolicy()
+	second := errors.New("exit status 1\nError: Get \"https://api.hetzner.cloud/v1/servers\": dial tcp 1.2.3.4:443: i/o timeout")
+	plan, calls := scriptedPlan(runTLSTimeoutErr, second, nil)
+
+	err := policy.run(context.Background(), &bytes.Buffer{}, plan)
+	if err == nil {
+		t.Fatal("a second transient failure must fail the plan")
+	}
+	if *calls != 2 {
+		t.Fatalf("plan calls = %d, want 2 — the retry happens ONCE", *calls)
+	}
+	if len(*waits) != 1 {
+		t.Fatalf("waits = %v, want exactly one", *waits)
+	}
+	if !errors.Is(err, second) {
+		t.Fatalf("error must wrap the retry's failure, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "after one retry") {
+		t.Fatalf("error must say a retry happened, got %v", err)
+	}
+}
+
+// TestPlanRetry_NonTransientErrorIsNeverRetried: a real plan error (bad config, auth,
+// quota) fails immediately with no wait, exactly as before #5644.
+func TestPlanRetry_NonTransientErrorIsNeverRetried(t *testing.T) {
+	for _, msg := range []string{
+		"exit status 1\nError: Reference to undeclared input variable",
+		"exit status 1\nError: unable to authenticate: invalid token (401)",
+		"exit status 1\nError: server limit exceeded",
+		"exit status 1\nError: timeout while waiting for state to become 'running'",
+	} {
+		t.Run(msg, func(t *testing.T) {
+			policy, waits := recordingPolicy()
+			want := errors.New(msg)
+			plan, calls := scriptedPlan(want, nil)
+			var out bytes.Buffer
+
+			err := policy.run(context.Background(), &out, plan)
+			if !errors.Is(err, want) || err.Error() != msg {
+				t.Fatalf("error = %v, want the original error unchanged", err)
+			}
+			if *calls != 1 || len(*waits) != 0 {
+				t.Fatalf("calls = %d, waits = %v; a non-transient error must not be retried", *calls, *waits)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("no retry means no retry log, got %q", out.String())
+			}
+		})
+	}
+}
+
+// TestPlanRetry_EveryListedPatternIsTransient walks the pattern list itself, so an entry
+// added there is covered, and checks each against realistic provider error text.
+func TestPlanRetry_EveryListedPatternIsTransient(t *testing.T) {
+	samples := map[string]string{
+		"net/http: TLS handshake timeout":      `Get "https://factory.talos.dev/": net/http: TLS handshake timeout`,
+		"i/o timeout":                          "dial tcp 1.2.3.4:443: i/o timeout",
+		"connection reset by peer":             "read tcp 10.0.0.1:5555->1.2.3.4:443: read: connection reset by peer",
+		"connection refused":                   "dial tcp 127.0.0.1:443: connect: connection refused",
+		"Temporary failure in name resolution": "dial tcp: lookup api.hetzner.cloud on 127.0.0.53:53: Temporary failure in name resolution",
+		"server misbehaving":                   "dial tcp: lookup api.hetzner.cloud on 127.0.0.53:53: server misbehaving",
+	}
+	if len(samples) != len(transientPlanErrorPatterns) {
+		t.Fatalf("%d samples for %d patterns — add a sample for every pattern", len(samples), len(transientPlanErrorPatterns))
+	}
+	for _, p := range transientPlanErrorPatterns {
+		sample, ok := samples[p.pattern]
+		if !ok {
+			t.Fatalf("no sample for pattern %q", p.pattern)
+		}
+		if p.source == "" {
+			t.Fatalf("pattern %q must say where it came from", p.pattern)
+		}
+		reason, transient := transientPlanErrorReason(errors.New("exit status 1\nError: " + sample))
+		if !transient || reason != p.pattern {
+			t.Fatalf("sample %q: got (%q, %v), want (%q, true)", sample, reason, transient, p.pattern)
+		}
+	}
+	if _, transient := transientPlanErrorReason(nil); transient {
+		t.Fatal("a nil error is not transient")
+	}
+}
+
+// TestPlanRetry_CancelledContextIsNotRetried: a cancelled job stops — neither a failure
+// that arrives with ctx already done, nor one whose backoff is cut short, is retried.
+func TestPlanRetry_CancelledContextIsNotRetried(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	policy, waits := recordingPolicy()
+	plan, calls := scriptedPlan(runTLSTimeoutErr, nil)
+	if err := policy.run(ctx, &bytes.Buffer{}, plan); !errors.Is(err, runTLSTimeoutErr) {
+		t.Fatalf("error = %v, want the original", err)
+	}
+	if *calls != 1 || len(*waits) != 0 {
+		t.Fatalf("calls = %d, waits = %v; a cancelled ctx must not retry", *calls, *waits)
+	}
+
+	interrupted := planRetryPolicy{Backoff: time.Hour, Sleep: func(context.Context, time.Duration) error {
+		return context.Canceled
+	}}
+	plan2, calls2 := scriptedPlan(runTLSTimeoutErr, nil)
+	if err := interrupted.run(context.Background(), &bytes.Buffer{}, plan2); !errors.Is(err, runTLSTimeoutErr) {
+		t.Fatalf("error = %v, want the original", err)
+	}
+	if *calls2 != 1 {
+		t.Fatalf("calls = %d; an interrupted backoff must not retry", *calls2)
+	}
+}
+
+// TestSleepCtx covers the real wait: it returns nil after d, and ctx's error once
+// ctx is done.
+func TestSleepCtx(t *testing.T) {
+	if err := sleepCtx(context.Background(), time.Millisecond); err != nil {
+		t.Fatalf("sleepCtx = %v, want nil", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := sleepCtx(ctx, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Fatalf("sleepCtx on a cancelled ctx = %v, want context.Canceled", err)
+	}
+	if defaultPlanRetry.Backoff <= 0 || defaultPlanRetry.Sleep == nil {
+		t.Fatal("defaultPlanRetry must have a positive backoff and a Sleep")
+	}
+}
