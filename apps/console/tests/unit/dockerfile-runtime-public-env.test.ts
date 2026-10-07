@@ -166,13 +166,13 @@ describe("runtime-read NEXT_PUBLIC_* vars (#5621)", () => {
 	});
 
 	it("every ledger entry is still a runtime read, and deploy-env entries are really emitted", () => {
-		for (const [key, src] of Object.entries(OTHER_RUNTIME_SOURCE)) {
-			expect(reads.has(key), `${key} is in the ledger but nothing reads it at runtime`).toBe(true);
-			if (src.kind === "deploy-env") {
-				const emitted = new RegExp(`(echo "${key}=|emit ${key}\\b)`).test(deployWorkflow);
-				expect(emitted, `${key} claims deploy-env but deploy-console.yml never writes it`).toBe(true);
-			}
-		}
+		const unread = Object.keys(OTHER_RUNTIME_SOURCE).filter((key) => !reads.has(key));
+		const notEmitted = Object.entries(OTHER_RUNTIME_SOURCE)
+			.filter(([, src]) => src.kind === "deploy-env")
+			.map(([key]) => key)
+			.filter((key) => !new RegExp(`(echo "${key}=|emit ${key}\\b)`).test(deployWorkflow));
+		expect(unread, "in the ledger but nothing reads it at runtime").toEqual([]);
+		expect(notEmitted, "claims deploy-env but deploy-console.yml never writes it").toEqual([]);
 	});
 
 	for (const file of DOCKERFILES) {
