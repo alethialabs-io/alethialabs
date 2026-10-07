@@ -52,10 +52,13 @@ endpoints:
   # A degraded API still serves every request, so painting it red would
   # overstate the outage; hiding `degraded` entirely would understate it.
   #
-  # Every condition below is checked against what the route really returns by
+  # The conditions of the two /api/health rows (API, Background jobs) are checked
+  # against what the route really returns by
   # apps/console/tests/api/health/status-page-monitors.test.ts, which runs in CI
   # on a change to THIS file too (apps/console/turbo.json puts it in the test
-  # task's cache key).
+  # task's cache key). The other rows (Website, Console, Documentation) assert
+  # only `[STATUS] == 200` (Website also a response time), and nothing checks
+  # those against their routes.
   - name: API
     group: Alethia
     url: "https://alethialabs.io/api/health"
