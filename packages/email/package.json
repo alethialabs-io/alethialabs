@@ -16,7 +16,7 @@
     "@aws-sdk/client-sesv2": "^3.1143.0",
     "@react-email/components": "^1.0.12",
     "next-runtime-env": "^3.3.0",
-    "nodemailer": "^9.1.1",
+    "nodemailer": "^10.0.9",
     "resend": "^6.31.0"
   },
   "peerDependencies": {
