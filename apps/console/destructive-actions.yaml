@@ -906,7 +906,14 @@ controls:
     surface: apps/console/components/agent/thread-rail.tsx
     mutation_surface: apps/console/components/agent/elench/use-elench-threads.ts
     mutation: deleteThread
-    reach: [{ open: "Ask AI" }]
+    # TWO steps, because "Ask AI" opens the docked PANEL (`ask-ai-button.tsx` → `togglePanel` →
+    # `view: "panel"`), and the panel mounts no thread rail: its only conversation control is the
+    # switcher, which can select a chat and start one but not delete one. `ThreadRail` is imported
+    # by `elench-modal.tsx` alone, so the rail — and this control — exists only after the panel's
+    # "Expand to full screen" (`elench-panel.tsx`, `onClick={maximize}` → `view: "modal"`). The
+    # modal then shows the rail when `railOpen` (true by default) AND the viewport is `lg` or wider
+    # (`hidden … lg:flex`); the audit-interaction project runs at Desktop Chrome's 1280px.
+    reach: [{ open: "Ask AI" }, { open: "Expand to full screen" }]
     # Templated because the rail's trash IS templated — every row carries its own title. The literal
     # prefix `/Delete chat/i` is what this entry resolves on, and no other agent surface starts with
     # those two words.

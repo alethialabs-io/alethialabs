@@ -265,16 +265,19 @@ const UNREACHED: ReadonlyMap<string, string> = new Map([
 			"is seeded; the entry names a control the DOM does not have.",
 	]),
 
-	// ── the five agent entries: "Ask AI" opens the PANEL, and the panel has none of these ────────
+	// ── the four agent entries: "Ask AI" opens the PANEL, and the panel has none of these ───────
 	//
 	// Measured: `ask-ai-button.tsx` calls `togglePanel`, which sets `view: "panel"`;
 	// `elench-conversation.tsx` then renders `ElenchPanel`, and `elench-panel.tsx` imports NO
 	// `ThreadRail`, no `WidgetGrid`, no gallery and no knowledge panel — all four are mounted only
 	// by `elench-modal.tsx` (its imports at :10-11). The step between them is the panel header's
-	// `aria-label="Expand to full screen"` (`elench-panel.tsx:83`), which no entry's reach names.
+	// `aria-label="Expand to full screen"` (`elench-panel.tsx:83`), which none of these four reach.
+	//
+	// It was five. `agent.thread.delete` took the step in #5640 and left this list; the self-test
+	// "a control mounted only by the assistant MODAL reaches through the panel's expand step" now
+	// fails any entry on a modal-only surface that neither takes the step nor is declared here.
 	...(
 		[
-			"agent.thread.delete",
 			"agent.artifact.delete",
 			"agent.artifact.unshare",
 			"agent.knowledge.delete",
@@ -2127,6 +2130,56 @@ test("self-test — the UNREACHED ledger fails in BOTH directions, against the R
 	const owedFail = owedFindings(CONTROLS, dishonest, SEEDABLE_FIXTURES, UNREACHED);
 	expect(owedFail.join("\n")).toContain("owed a measurement");
 	expect(owedFail.join("\n")).toContain(owed[0]);
+});
+
+/**
+ * The agent components the assistant MODAL imports and the docked PANEL does not, as registry
+ * `surface` paths — the controls that exist only after the panel's expand step.
+ *
+ * Read from the two chrome files rather than listed, so a component moved into or out of the panel
+ * changes the answer without anyone editing this file. ⚠ BOUNDARY: DIRECT `@/components/agent/…`
+ * imports only. A control one import deeper (`widget-card.tsx`, inside `widget-grid.tsx`) or one
+ * handed to the modal as a prop (the artifact gallery, the knowledge panel) is not in this set —
+ * those entries are covered, today, only by their UNREACHED lines.
+ */
+function modalOnlySurfaces(modalSrc: string, panelSrc: string): Set<string> {
+	const imports = (src: string): Set<string> =>
+		new Set([...src.matchAll(/from "@\/components\/agent\/([^"]+)"/g)].map((m) => `apps/console/components/agent/${m[1]}.tsx`));
+	const inPanel = imports(panelSrc);
+	return new Set([...imports(modalSrc)].filter((s) => !inPanel.has(s)));
+}
+
+test("self-test — a control mounted only by the assistant MODAL reaches through the panel's expand step", async () => {
+	// #5640: `agent.thread.delete` reached with `[{open: "Ask AI"}]` alone, which opens the PANEL.
+	// The rail that renders "Delete chat …" is imported only by `elench-modal.tsx`, so every run
+	// withheld "not rendered" — an entry one click short of its control, for as long as it existed.
+	const agentDir = path.resolve(__dirname, "..", "..", "components", "agent", "elench");
+	const modalSrc = readFileSync(path.join(agentDir, "elench-modal.tsx"), "utf8");
+	const panelSrc = readFileSync(path.join(agentDir, "elench-panel.tsx"), "utf8");
+
+	// The step's NAME is read off the button that calls `maximize`, so a relabel fails here rather
+	// than turning every entry below back into a silent withhold.
+	const expand = /aria-label="([^"]+)"\s*onClick=\{maximize\}/.exec(panelSrc)?.[1];
+	expect(expand, "elench-panel.tsx has no `aria-label` on a button whose onClick is `maximize` — the reach step cannot be named").toBeTruthy();
+
+	const modalOnly = modalOnlySurfaces(modalSrc, panelSrc);
+	expect(modalOnly.has("apps/console/components/agent/thread-rail.tsx"), "the thread rail is no longer modal-only — re-read #5640 before trusting this test").toBe(true);
+
+	const subjects = CONTROLS.filter((c) => modalOnly.has(c.surface) && !UNREACHED.has(c.id));
+	expect(subjects.map((c) => c.id), "no measured entry sits on a modal-only surface, so this test asserts nothing").toContain("agent.thread.delete");
+	for (const c of subjects) {
+		expect(
+			(c.reach ?? []).some((step) => step.open === expand),
+			`${c.id} lives on ${c.surface}, which only elench-modal.tsx mounts; its reach must take {open: "${expand}"} or it is withheld "not rendered" on every run`,
+		).toBe(true);
+	}
+
+	// The modal shows the rail only at `lg` and wider (`hidden … lg:flex`). Below that, no reach
+	// step can render it — so the project this suite runs in must be at least that wide.
+	if (/\bhidden\b[^"]*\blg:flex\b/.test(modalSrc)) {
+		const width = test.info().project.use.viewport?.width ?? 1280;
+		expect(width, "the thread rail is `hidden … lg:flex`; a viewport under 1024px cannot render it").toBeGreaterThanOrEqual(1024);
+	}
 });
 
 test("self-test — SEEDABLE_FIXTURES cannot be EMPTIED to silence the floor", async () => {
