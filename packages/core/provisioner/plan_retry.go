@@ -12,15 +12,24 @@ import (
 )
 
 // transientPlanErrorPatterns are the error texts that mark a failed `tofu plan` as a
-// TRANSIENT network failure worth exactly one retry (#5644). Each is a fixed string
-// produced by Go's own networking stack (every provider tofu runs is a Go binary, and
-// tfexec appends tofu's stderr to the error it returns), so the match is on the
-// provider's error text and nothing looser. Anything not listed here fails the plan
-// immediately, as it did before #5644.
+// TRANSIENT network failure worth exactly one retry (#5644). tfexec appends tofu's stderr
+// to the error it returns, so the match is on the text tofu printed for the provider's
+// diagnostic. Each pattern is a fixed string from Go's standard library (net, net/http,
+// syscall). The providers our templates use today are written in Go, so they surface these
+// strings — but nothing enforces that a provider is a Go binary: one that words a network
+// failure differently is simply not matched and fails immediately, as before #5644.
+// Anything not listed here fails the plan immediately, as it did before #5644.
 //
 // Matching is a case-sensitive substring test over the error text with every run of
 // whitespace collapsed to one space, so a diagnostic that tofu word-wrapped across two
 // lines still matches.
+//
+// ACCEPTED COST: these patterns cannot tell a blip from a deterministic failure with the
+// same text. A `connection refused` from a kubernetes/helm provider pointed at a localhost
+// endpoint that is not there, or an `i/o timeout` against a firewalled address, fails the
+// same way every time; it is retried once anyway, costing the backoff plus one more plan
+// before it fails exactly as it would have. One wasted plan was judged cheaper than a red
+// nightly from a real blip.
 var transientPlanErrorPatterns = []struct {
 	pattern string
 	source  string
@@ -45,11 +54,11 @@ var transientPlanErrorPatterns = []struct {
 	},
 	{
 		pattern: "Temporary failure in name resolution",
-		source:  "EAI_AGAIN from the glibc resolver (Go's cgo DNS path)",
-	},
-	{
-		pattern: "server misbehaving",
-		source:  "Go's pure-Go DNS resolver on a SERVFAIL — its DNSError marks this IsTemporary",
+		source: "EAI_AGAIN from the glibc resolver (Go's cgo DNS path). Go's pure-Go resolver has " +
+			"no such text: its DNS timeout surfaces as `i/o timeout` (above), and its " +
+			"`server misbehaving` is deliberately NOT listed: net/dnsclient_unix.go renders the " +
+			"same text for a temporary SERVFAIL (errServerTemporarilyMisbehaving) and a " +
+			"non-temporary bad response (errServerMisbehaving), and the text cannot tell them apart",
 	},
 }
 

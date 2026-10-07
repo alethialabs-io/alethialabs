@@ -7,17 +7,32 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// runTLSTimeoutErr is the plan error from the 2026-10-07 hetzner floor nightly
-// (run 37605979423), in the shape tfexec returns it: the exit status, then tofu's
-// stderr — here word-wrapped across lines as tofu renders a diagnostic.
-var runTLSTimeoutErr = errors.New("exit status 1\n\nError: failed to get talos extensions versions\n\n" +
-	"  with data.talos_image_factory_extensions_versions.this,\n  on image.tf line 248\n\n" +
-	"Get \"https://factory.talos.dev/version/v1.13.6/extensions/official\": net/http: TLS\nhandshake timeout")
+// runTLSTimeoutErr is the plan error CAPTURED from the 2026-10-07 hetzner floor nightly,
+// run 37605979423: the "err" field of the runner's `job execution failed` log line
+// (`gh run view 37605979423 --log-failed`), pasted verbatim with only deploy.go's own
+// "tofu plan failed: " prefix removed — that prefix is added AFTER the retry decision.
+// Note tofu broke the line BEFORE `net/http:`, so this pattern sits on one line.
+var runTLSTimeoutErr = errors.New("exit status 1\n\nError: failed to get talos extensions versions\n\n  with data.talos_image_factory_extensions_versions.this,\n  on image.tf line 248, in data \"talos_image_factory_extensions_versions\" \"this\":\n 248: data \"talos_image_factory_extensions_versions\" \"this\" {\n\nGet \"https://factory.talos.dev/version/v1.13.6/extensions/official\":\nnet/http: TLS handshake timeout\n")
+
+// syntheticWrappedErr is NOT captured from any run. It is the case the whitespace
+// normalisation in transientPlanErrorReason exists for: tofu word-wraps a diagnostic's
+// detail (at 78 columns when stderr is not a terminal), and a break can land INSIDE a
+// pattern. Run 37605979423's break happened to fall before the pattern; this one does not.
+var syntheticWrappedErr = errors.New("exit status 1\n\nError: failed to query available provider packages\n\n" +
+	"Could not retrieve the list of available versions for provider hetznercloud/hcloud: could not\n" +
+	"connect to registry.opentofu.org: Get \"https://registry.opentofu.org/v1/providers/\": net/http: TLS\n" +
+	"handshake timeout\n")
 
 // recordingPolicy returns a planRetryPolicy whose Sleep records each wait instead of
 // sleeping, plus a pointer to those recorded waits.
@@ -66,6 +81,15 @@ func TestPlanRetry_TransientErrorIsRetriedExactlyOnce(t *testing.T) {
 	log := out.String()
 	if !strings.Contains(log, "retrying once") || !strings.Contains(log, "net/http: TLS handshake timeout") {
 		t.Fatalf("retry must be logged with its reason, got log %q", log)
+	}
+}
+
+// TestPlanRetry_PatternWrappedAcrossLinesStillMatches pins the whitespace normalisation
+// against the SYNTHETIC wrapped fixture (see syntheticWrappedErr — no run produced it).
+func TestPlanRetry_PatternWrappedAcrossLinesStillMatches(t *testing.T) {
+	reason, transient := transientPlanErrorReason(syntheticWrappedErr)
+	if !transient || reason != "net/http: TLS handshake timeout" {
+		t.Fatalf("got (%q, %v); a pattern tofu wrapped across lines must still match", reason, transient)
 	}
 }
 
@@ -132,7 +156,6 @@ func TestPlanRetry_EveryListedPatternIsTransient(t *testing.T) {
 		"connection reset by peer":             "read tcp 10.0.0.1:5555->1.2.3.4:443: read: connection reset by peer",
 		"connection refused":                   "dial tcp 127.0.0.1:443: connect: connection refused",
 		"Temporary failure in name resolution": "dial tcp: lookup api.hetzner.cloud on 127.0.0.53:53: Temporary failure in name resolution",
-		"server misbehaving":                   "dial tcp: lookup api.hetzner.cloud on 127.0.0.53:53: server misbehaving",
 	}
 	if len(samples) != len(transientPlanErrorPatterns) {
 		t.Fatalf("%d samples for %d patterns — add a sample for every pattern", len(samples), len(transientPlanErrorPatterns))
@@ -194,5 +217,83 @@ func TestSleepCtx(t *testing.T) {
 	}
 	if defaultPlanRetry.Backoff <= 0 || defaultPlanRetry.Sleep == nil {
 		t.Fatal("defaultPlanRetry must have a positive backoff and a Sleep")
+	}
+}
+
+// refusedPlanModuleTF is a provider-less module (built-in terraform_remote_state, so
+// `tofu init` downloads nothing) whose PLAN reads a remote state from a closed localhost
+// port — a real `connection refused` produced by tofu itself, at plan time, not init.
+const refusedPlanModuleTF = `terraform {
+  backend "http" {}
+}
+
+data "terraform_remote_state" "unreachable" {
+  backend = "http"
+  config = {
+    address   = "%s"
+    retry_max = 0
+  }
+}
+`
+
+// TestRunDeployV2_PlanGoesThroughTheRetry pins the CALL SITE: RunDeployV2's plan must run
+// through defaultPlanRetry. It drives the real RunDeployV2 (dry run) against a module whose
+// plan fails with a real `connection refused`, swaps only defaultPlanRetry's Sleep for a
+// recorder, and asserts exactly one backoff, the retry log line and the wrapped error.
+// Reverting deploy.go to a bare tf.Plan leaves the recorder empty and fails this test.
+func TestRunDeployV2_PlanGoesThroughTheRetry(t *testing.T) {
+	if _, err := exec.LookPath("tofu"); err != nil {
+		t.Skip("tofu not on PATH — skipping (bare CI without OpenTofu)")
+	}
+
+	// A localhost port that was just free and is now closed: dialing it is refused.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedAddr := "http://" + ln.Addr().String() + "/state"
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	modDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(modDir, "main.tf"), []byte(fmt.Sprintf(refusedPlanModuleTF, closedAddr)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var waits []time.Duration
+	saved := defaultPlanRetry
+	defaultPlanRetry.Sleep = func(_ context.Context, d time.Duration) error {
+		waits = append(waits, d)
+		return nil
+	}
+	t.Cleanup(func() { defaultPlanRetry = saved })
+
+	var out bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	_, err = RunDeployV2(ctx, DeployParams{
+		ProjectConfig: newLocalProjectConfig("alethia", "retry"+shortID(t)),
+		Provider:      "hetzner",
+		TemplatesDir:  modDir,
+		StateBackend:  testStateBackend(startTestStateServer(t)),
+		DryRun:        true,
+		Stdout:        &out,
+		Stderr:        io.Discard,
+	})
+	if err == nil {
+		t.Fatal("RunDeployV2 should fail: the remote state is unreachable on every plan")
+	}
+	if !strings.Contains(err.Error(), "tofu plan failed") || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("expected the plan to fail on connection refused, got %v", err)
+	}
+	if len(waits) != 1 || waits[0] != saved.Backoff {
+		t.Fatalf("backoff waits = %v, want exactly one of %s — RunDeployV2's plan did not go through defaultPlanRetry", waits, saved.Backoff)
+	}
+	if !strings.Contains(err.Error(), "after one retry") {
+		t.Fatalf("error must say the plan was retried once, got %v", err)
+	}
+	if !strings.Contains(out.String(), `retrying once in`) {
+		t.Fatalf("the retry must be logged to the job's stdout, got:\n%s", out.String())
 	}
 }
