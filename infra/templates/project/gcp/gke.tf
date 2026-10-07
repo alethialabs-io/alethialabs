@@ -64,4 +64,9 @@ module "gke" {
   enable_private_endpoint = var.gke_enable_private_endpoint
 
   labels = local.gcp_default_labels
+
+  # Node labels (#5537, nodepools.tf): the contract's render for the default pool, which is exactly
+  # var.node_labels. Empty by default, which renders the default pool's labels exactly as before.
+  # The extra pools are google_container_node_pool.extra at the root, not in this module.
+  node_labels = local.nodepool_contract_render["default"].labels
 }

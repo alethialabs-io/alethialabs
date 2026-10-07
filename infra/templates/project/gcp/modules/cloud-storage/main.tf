@@ -125,11 +125,30 @@ resource "google_storage_bucket" "this" {
     }
   }
 
+  # Customer-managed encryption (#5532). Gated on the bucket's BOOLEAN, never on the key id: the id
+  # is unknown until the key exists, and a block count that depends on an unknown value cannot plan.
+  # Off renders no block, which is the shape every existing bucket has.
+  dynamic "encryption" {
+    for_each = each.value.cmek_enabled ? [1] : []
+    content {
+      default_kms_key_name = var.cmek_key_name
+    }
+  }
+
   labels = merge(var.labels, {
     environment = var.environment
     managed-by  = "opentofu"
     bucket      = each.key
   })
+
+  lifecycle {
+    # The root refuses a CMEK bucket outside the key's region (cloud-storage.tf); this only pins the
+    # module's own invariant, that a bucket asking for CMEK is handed a key.
+    precondition {
+      condition     = !each.value.cmek_enabled || var.cmek_key_name != null
+      error_message = "Bucket \"${each.key}\" has cmek_enabled = true but no key was passed to the module (cmek_key_name is null)."
+    }
+  }
 }
 
 ################################################################################

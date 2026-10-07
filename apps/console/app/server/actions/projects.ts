@@ -6,6 +6,12 @@ import { notFound } from "next/navigation";
 import { evaluate, resolveK8sVersion } from "@/lib/compat";
 import { asCloudProviderSlug } from "@/lib/cloud-providers/provider-slug";
 import {
+	assertNoNewCredentials,
+	CredentialKnobRefusedError,
+	stripDesignCredentials,
+} from "@/lib/cloud-providers/credential-knobs";
+import { assertDesignStoresNoNewCredentials } from "@/lib/cloud-providers/credential-knob-store";
+import {
 	PROJECT_NAME_MAX_LENGTH,
 	helmRegistryProviderConfigSchema,
 	pickFreeProjectName,
@@ -752,6 +758,9 @@ export async function createProject(data: CreateProjectInput) {
 	const webhook_ca_consumers = webhookCaConsumersSchema.parse(
 		data.project.webhook_ca_consumers ?? [],
 	);
+	// A NEW project stores nothing yet, so no credential in a component's provider_config is
+	// grandfathered: every one is refused, behind the guard and before any row is written (#5565).
+	assertNoNewCredentials(data, []);
 	const owner = actor.userId;
 	// A project belongs to the ACTIVE ORG, not the creating user. In the community build these are the
 	// same value (`actor.orgId === userId`), so everything below is byte-identical there. They diverge
@@ -846,6 +855,11 @@ export async function tryCreateProject(
 		if (err instanceof ProjectNameTakenError) {
 			return { ok: false, error: err.message };
 		}
+		// A credential in a component's provider_config (#5565). The message names the component and
+		// the key — never the value — and says where the value goes instead.
+		if (err instanceof CredentialKnobRefusedError) {
+			return { ok: false, error: err.message };
+		}
 		if (isProjectNameTaken(err)) {
 			return {
 				ok: false,
@@ -881,6 +895,10 @@ export async function updateProjectDesign(
 			data.project;
 		void environment_stage;
 		void webhook_ca_consumers;
+		// Before ANY write, and before the clear below deletes the rows a legacy value would be
+		// recognised against: a credential in provider_config is refused unless it is already stored,
+		// unchanged, in this project (#5565). This action is also the CLI design route's write path.
+		await assertDesignStoresNoNewCredentials(tx, projectId, data);
 		await tx
 			.update(projects)
 			.set(projectFields)
@@ -1107,6 +1125,8 @@ export async function reconcileEnvironmentComponents(
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
 	return withActorScope(actor, async (tx) => {
+		// Same guard as updateProjectDesign, before the clear (#5565).
+		await assertDesignStoresNoNewCredentials(tx, projectId, data);
 		await clearComponents(tx, projectId, environmentId);
 		await writeComponents(tx, projectId, environmentId, data);
 		return { success: true };
@@ -3240,6 +3260,16 @@ export async function tryDuplicateProjectForProvider(
 		if (err instanceof ProjectNameTakenError) {
 			return { ok: false, error: err.message };
 		}
+		// The source project still holds a credential in a component's provider_config from before
+		// #5565. Its own saves keep it (it is grandfathered there), but a duplicate is a NEW project,
+		// where it would be a fresh plaintext copy, so createProject refuses it. Say which component
+		// and how to clear it — never the value.
+		if (err instanceof CredentialKnobRefusedError) {
+			return {
+				ok: false,
+				error: `This project stores a credential in a component's settings (${err.where}), and a copy would store it again in plaintext. Open that component's Advanced section in the source project, choose "Remove the stored value" once the value is in its secret store, save, and duplicate again.`,
+			};
+		}
 		// `ProjectNameTakenError` above ALREADY covers the index race that `pickFreeProjectName`'s
 		// JSDoc describes — `takenNames` is read in one transaction and the insert happens in
 		// another, so two concurrent duplicates can derive the same name and
@@ -3484,7 +3514,14 @@ export async function duplicateEnvironment(
 			.returning();
 		if (!env) throw new Error("Failed to create environment");
 		// Copy the base env's components into the new env (fresh rows, status defaults to PENDING).
-		if (baseConfig) await writeComponents(tx, projectId, env.id, baseConfig);
+		if (baseConfig) {
+			// A credential stored before #5565 stays on the base env, but is NOT copied into the new
+			// one: the copy's component starts without it, as a new component would (#5565). The
+			// guard then has nothing left to grandfather, and refuses anything that slipped through.
+			stripDesignCredentials(baseConfig);
+			await assertDesignStoresNoNewCredentials(tx, projectId, baseConfig);
+			await writeComponents(tx, projectId, env.id, baseConfig);
+		}
 		return { ok: true, environment: env };
 	}));
 }

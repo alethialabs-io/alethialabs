@@ -1813,7 +1813,13 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "CORS origins",
 						mono: true,
 						placeholder: "https://app.example.com, https://example.com",
-						description: "Comma-separated origins allowed to read from the browser.",
+						// The Azure clause is a PRODUCT DISCLOSURE, like Versioning's above (#5543): CORS
+						// is the storage ACCOUNT's blob_properties.cors_rule, an Azure project has one
+						// account, so modules/storage-account unions every bucket's origins into that one
+						// rule. "Read and write" because every cloud's rule grants PUT and POST as well as
+						// GET (buildS3Buckets, buildGCSBuckets, modules/storage-account).
+						description:
+							"Comma-separated browser origins, such as https://app.example.com, that may read and write objects (GET, PUT, POST). On Azure this is a storage-account setting: the origins of every bucket are combined into one rule, so an origin allowed here can reach every bucket in the project, and * opens the whole account to every origin.",
 						// The aminueza/minio provider does not apply CORS to Hetzner's S3 backend
 						// (s3_compat_mode skips it), so hide the field rather than imply it works.
 						visibleWhen: (_c, { provider }) => provider !== "hetzner",

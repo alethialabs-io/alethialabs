@@ -1,0 +1,19 @@
+{
+	"error": "string",
+	"code": "component_busy",
+	"status": "string",
+	"component": {
+		"id": "string",
+		"kind": "string",
+		"name": "string",
+		"status": "string",
+		"cloud_identity_id": "string",
+		"config": {},
+		"updated_at": "2026-01-01T00:00:00.000Z"
+	},
+	"run": {
+		"id": "string",
+		"type": "string",
+		"status": "string"
+	}
+}

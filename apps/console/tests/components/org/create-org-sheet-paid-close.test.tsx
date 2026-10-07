@@ -243,7 +243,7 @@ beforeEach(() => {
 		clientSecret: "pi_secret",
 		currency: "eur",
 	});
-	linkSubscription.mockResolvedValue(undefined);
+	linkSubscription.mockResolvedValue({ planState: "active" });
 	declarePayer.mockResolvedValue(undefined);
 	// The slug was free at Continue; another team created `acme-cloud` while this one paid.
 	createOrg.mockImplementation(async ({ slug }: { slug: string }) =>
@@ -920,5 +920,64 @@ describe("CreateOrgSheet — a charge the page never heard about is not replaced
 		await new Promise((r) => setTimeout(r, 50));
 		expect(createOrg).not.toHaveBeenCalled();
 		expect(window.sessionStorage.getItem(KEY)).toBeNull();
+	});
+});
+
+describe("CreateOrgSheet — the plan state a finished paid setup shows (#5522)", () => {
+	it("a link that reports 'not charged' reaches the final view as that state — not as active", async () => {
+		createOrg.mockImplementation(async ({ slug }: { slug: string }) => ({
+			data: { id: "org-new", slug },
+			error: null,
+		}));
+		linkSubscription.mockResolvedValue({ planState: "not_charged", paymentUrl: null });
+		const user = userEvent.setup();
+		await pay(user);
+
+		await screen.findByLabelText("Invite by email");
+		const status = await screen.findByRole("status");
+		expect(status).toHaveTextContent("Not charged");
+		expect(status).toHaveTextContent(/you were not charged/);
+		expect(status).not.toHaveTextContent(/active/i);
+	});
+
+	it("a setup that finished while its payment was settling re-reads the server, and the badge flips to active", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			createOrg.mockImplementation(async ({ slug }: { slug: string }) => ({
+				data: { id: "org-new", slug },
+				error: null,
+			}));
+			// The link reads the subscription while its invoice is still settling; the server's next
+			// answer (the fake resolve) says active, as Stripe would a few seconds later.
+			linkSubscription.mockResolvedValue({ planState: "processing", paymentUrl: null });
+			const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+			await pay(user);
+
+			const status = await screen.findByRole("status");
+			expect(status).toHaveTextContent("Processing");
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3_500);
+			});
+			await vi.waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Active"));
+			expect(screen.getByRole("status")).toHaveTextContent(/Your Pro plan is active/);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("an 'action needed' link carries Stripe's payment page through to the final view", async () => {
+		createOrg.mockImplementation(async ({ slug }: { slug: string }) => ({
+			data: { id: "org-new", slug },
+			error: null,
+		}));
+		linkSubscription.mockResolvedValue({
+			planState: "action_needed",
+			paymentUrl: "https://invoice.stripe.com/i/acct_1/test_inv",
+		});
+		const user = userEvent.setup();
+		await pay(user);
+
+		const link = await screen.findByRole("link", { name: /complete the payment/i });
+		expect(link).toHaveAttribute("href", "https://invoice.stripe.com/i/acct_1/test_inv");
 	});
 });

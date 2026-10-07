@@ -2,12 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { z } from "zod";
-import { authorizeCli } from "@/lib/authz/guard";
+import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
 import {
+	ComponentWriteRefusedError,
+	componentIdentityAllowed,
+	componentWriteRefusedBody,
 	deleteProjectComponent,
 	getKindDef,
 	insertProjectComponent,
 	isSingletonKind,
+	parseIfMatch,
 	validateComponentFields,
 } from "@/lib/cli/project-components";
 import {
@@ -18,6 +22,7 @@ import { cliEnvironmentError } from "@/lib/cli/respond";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import {
+	cliComponentConflictResponse,
 	cliComponentResponse,
 	cliOkResponse,
 } from "@/lib/validations/cli-contract";
@@ -29,7 +34,13 @@ const addComponentBody = z.object({
 	fields: z.record(z.string(), z.unknown()).default({}),
 });
 
-/** Adds (or, for singletons, upserts) a component of `kind` to a project. */
+/** Adds (or, for singletons, upserts) a component of `kind` to a project.
+ *
+ * The singleton upsert is the singleton's UPDATE path, so it carries the PATCH's two refusals, both
+ * 409 (#5551): an existing row is not changed while an unfinished BUILD, DEPLOY or DESTROY job of the
+ * environment, or a promotion into it, holds the environment, and `If-Match: <revision>` makes the write
+ * conditional on the row still being at the revision the caller read. `If-Match` is read for
+ * singletons only — a named component is created here, and has no revision to match yet. */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string; kind: string }> },
@@ -63,6 +74,10 @@ export async function POST(
 	if (!validated.ok) {
 		return NextResponse.json({ error: validated.error }, { status: 400 });
 	}
+	const precondition = parseIfMatch(singleton ? req.headers.get("if-match") : null);
+	if (!precondition.ok) {
+		return NextResponse.json({ error: precondition.error }, { status: 400 });
+	}
 
 	try {
 		const project = await resolveCliProject(actor.orgId, id);
@@ -78,15 +93,30 @@ export async function POST(
 			new URL(req.url).searchParams.get("env"),
 		);
 		if (!target.ok) return cliEnvironmentError(target);
+		// The identity is bound to the caller's org like the project is: a foreign one is "not
+		// found", exactly as a foreign project id is.
+		if (
+			!(await componentIdentityAllowed(
+				validated.values,
+				actor.orgId,
+				userIdIsTheCaller(auth.credential) ? actor.userId : undefined,
+			))
+		) {
+			return NextResponse.json({ error: "Cloud identity not found" }, { status: 404 });
+		}
 		const component = await insertProjectComponent(
 			kind,
 			project.id,
 			target.id,
 			name ?? "",
 			validated.values,
+			{ ifMatch: precondition.ifMatch },
 		);
 		return cliJson(cliComponentResponse, { component }, { status: 201 });
 	} catch (err: unknown) {
+		if (err instanceof ComponentWriteRefusedError) {
+			return cliJson(cliComponentConflictResponse, componentWriteRefusedBody(err), { status: 409 });
+		}
 		return errorResponse(err, name ?? kind);
 	}
 }

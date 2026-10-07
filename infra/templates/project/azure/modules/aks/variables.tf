@@ -108,6 +108,28 @@ variable "os_disk_type" {
   default     = null
 }
 
+variable "node_labels" {
+  type        = map(string)
+  description = "Labels on the nodes of every pool this module makes (#5535). Validated at the root (node-pool contract #5533). Empty renders no node_labels argument anywhere."
+  default     = {}
+  nullable    = false
+}
+
+variable "named_node_pools" {
+  type = map(object({
+    vm_size     = string
+    min_count   = number
+    max_count   = number
+    node_count  = number
+    spot        = bool
+    node_labels = map(string)
+    node_taints = list(string)
+  }))
+  description = "User node pools keyed by name (#5535), mapped by the root from extra_node_pools (nodepools.tf): sizes, Spot, labels, and taints already spelled key=value:Effect."
+  default     = {}
+  nullable    = false
+}
+
 ################################################################################
 # Spot node pool (aws parity: eks_ng_capacity_type)
 ################################################################################
@@ -122,13 +144,13 @@ variable "spot_enabled" {
 
 variable "spot_max_price" {
   type        = number
-  description = "Hourly ceiling (USD) for a Spot node; -1 means pay up to the on-demand price."
+  description = "Hourly ceiling (USD) for a Spot node, in the spot pool and every named Spot pool; -1 means pay up to the on-demand price."
   default     = -1
 }
 
 variable "spot_eviction_policy" {
   type        = string
-  description = "Eviction policy for reclaimed Spot nodes: \"Delete\" or \"Deallocate\"."
+  description = "Eviction policy for reclaimed Spot nodes, in the spot pool and every named Spot pool: \"Delete\" or \"Deallocate\"."
   default     = "Delete"
 }
 

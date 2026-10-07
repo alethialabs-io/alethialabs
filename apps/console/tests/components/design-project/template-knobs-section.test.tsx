@@ -23,17 +23,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigFields } from "@/components/design-project/canvas/inspector/config-fields";
 import {
 	getKindConfig,
+	NO_CAPABILITIES,
 	type FieldDef,
 } from "@/components/design-project/canvas/inspector/config-schema";
 import { validateNodeConfig } from "@/components/design-project/canvas/inspector/node-validation";
 import {
+	CREDENTIAL_KEEP,
 	KNOB_UNSET,
 	knobControl,
 	knobField,
 	knobFieldKey,
 	templateKnobFields,
 } from "@/components/design-project/canvas/inspector/template-knobs-section";
-import { knobsFor, type TemplateKnob } from "@/lib/cloud-providers/template-knobs";
+import {
+	TEMPLATE_KNOBS,
+	isCredentialKnob,
+	knobsFor,
+	type TemplateKnob,
+	withheldCredentialKnobs,
+} from "@/lib/cloud-providers/template-knobs";
 import { useInspectorPrefsStore } from "@/lib/stores/use-inspector-prefs-store";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 
@@ -109,7 +117,6 @@ describe("a knob's type picks its control", () => {
 	});
 
 	it("object and any → JSON", () => {
-		expect(fieldFor("database", "rds_extra_credentials").type).toBe("text");
 		expect(fieldFor("cluster", "eks_access_entries").type).toBe("text");
 	});
 
@@ -140,9 +147,9 @@ describe("a change writes provider_config[name]", () => {
 	});
 
 	it("a JSON knob parses what was typed", () => {
-		const field = fieldFor("database", "rds_extra_credentials");
-		expect(patched(writeField(field, '{"reporting":"ro"}', {}))).toEqual({
-			rds_extra_credentials: { reporting: "ro" },
+		const field = fieldFor("database", "rds_cluster_parameters");
+		expect(patched(writeField(field, '[{"name":"timezone","value":"UTC"}]', {}))).toEqual({
+			rds_cluster_parameters: [{ name: "timezone", value: "UTC" }],
 		});
 	});
 
@@ -196,8 +203,8 @@ describe("unsetting DELETES the key — it never writes null or an empty value",
 	});
 
 	it("emptying a JSON field", () => {
-		const patch = writeField(fieldFor("database", "rds_extra_credentials"), "  ", {
-			provider_config: { rds_extra_credentials: { a: "b" } },
+		const patch = writeField(fieldFor("database", "rds_cluster_parameters"), "  ", {
+			provider_config: { rds_cluster_parameters: [{ name: "a", value: "b" }] },
 		});
 		expect(patched(patch)).toEqual({});
 	});
@@ -228,10 +235,13 @@ describe("knobs the manifest excludes never render", () => {
 		expect(keys("bucket")).not.toContain("knob:s3_create");
 	});
 
-	it("every rendered field corresponds to a knob `knobsFor` still offers", () => {
-		for (const kind of ["cluster", "database", "cache", "bucket", "nosql"] as const) {
+	it("every rendered field is a knob `knobsFor` still offers, or a withheld credential's note", () => {
+		for (const kind of ["cluster", "database", "cache", "bucket", "nosql", "secret"] as const) {
 			const offered = new Set(knobsFor("aws", kind).map((k) => `knob:${k.name}`));
-			for (const key of keys(kind)) expect(offered.has(key)).toBe(true);
+			const notes = new Set(
+				withheldCredentialKnobs(TEMPLATE_KNOBS.knobs, "aws", kind).map((k) => `knob:${k.name}`),
+			);
+			for (const key of keys(kind)) expect(offered.has(key) || notes.has(key)).toBe(true);
 		}
 	});
 });
@@ -368,17 +378,17 @@ describe("per-knob validation says only what the template states", () => {
 	it("a JSON knob rejects what never parsed", () => {
 		const errors = validateNodeConfig("database", {
 			engine_family: "postgres",
-			provider_config: { rds_extra_credentials: "{reporting" },
+			provider_config: { rds_cluster_parameters: "[{timezone" },
 		});
-		expect(errors["knob:rds_extra_credentials"]).toBe("Must be valid JSON.");
+		expect(errors["knob:rds_cluster_parameters"]).toBe("Must be valid JSON.");
 	});
 
 	it("a JSON knob accepts a parsed object", () => {
 		const errors = validateNodeConfig("database", {
 			engine_family: "postgres",
-			provider_config: { rds_extra_credentials: { reporting: "ro" } },
+			provider_config: { rds_cluster_parameters: [{ name: "timezone", value: "UTC" }] },
 		});
-		expect(errors["knob:rds_extra_credentials"]).toBeUndefined();
+		expect(errors["knob:rds_cluster_parameters"]).toBeUndefined();
 	});
 
 	it("invents no constraint the template does not state — a string knob is never wrong", () => {
@@ -392,5 +402,74 @@ describe("per-knob validation says only what the template states", () => {
 		// The key is namespaced precisely because `value`, `location` and `keepers` are real knob
 		// names and each is also a plausible column key.
 		expect(knobFieldKey(knobsFor("aws", "cluster")[0])).toMatch(/^knob:/);
+	});
+});
+
+// #5565. The canvas offered two credential knobs — `rds_extra_credentials` (its type declares a
+// `password`) and a secret's `value` — and whatever was typed was stored in plaintext in the
+// component's provider_config. The rule now lives in `offerableKnobs`, the one definition both the
+// canvas and the CLI read, and the slot shows where the value goes instead.
+describe("a credential knob is never offered — a note stands in its place (#5565)", () => {
+	it("knobsFor offers no credential knob on any cloud or component", () => {
+		for (const cloud of TEMPLATE_KNOBS.clouds) {
+			for (const kind of ["cluster", "database", "cache", "bucket", "nosql", "secret", "queue", "topic", "registry", "dns"] as const) {
+				const credentials = knobsFor(cloud, kind).filter(isCredentialKnob).map((k) => k.name);
+				expect({ cloud, kind, credentials }).toEqual({ cloud, kind, credentials: [] });
+			}
+		}
+	});
+
+	it("the AWS database's rds_extra_credentials and the AWS secret's value are withheld", () => {
+		expect(knobsFor("aws", "database").map((k) => k.name)).not.toContain("rds_extra_credentials");
+		expect(knobsFor("aws", "secret").map((k) => k.name)).not.toContain("value");
+		expect(withheldCredentialKnobs(TEMPLATE_KNOBS.knobs, "aws", "database").map((k) => k.name)).toEqual([
+			"rds_extra_credentials",
+		]);
+		expect(withheldCredentialKnobs(TEMPLATE_KNOBS.knobs, "aws", "secret").map((k) => k.name)).toEqual(["value"]);
+	});
+
+	it("with nothing stored, the slot is a sentence, not a control", () => {
+		const field = fieldFor("secret", "value");
+		const note = field.unavailableWhen?.({}, { config: {}, provider: "aws", caps: NO_CAPABILITIES });
+		expect(note).toMatch(/credential/i);
+		expect(field.description).toContain("AWS Secrets Manager");
+		expect(field.description).toContain("Auto-generate value");
+		expect(fieldFor("database", "rds_extra_credentials").description).toContain("AWS Secrets Manager");
+	});
+
+	it("a value stored before is never read into the control, and only Remove writes", () => {
+		const field = fieldFor("database", "rds_extra_credentials");
+		const config = {
+			provider_config: {
+				rds_extra_credentials: { username: "u", database: "d", password: "hunter2" },
+				rds_default_username: "svc",
+			},
+		};
+		expect(field.unavailableWhen?.(config, { config, provider: "aws", caps: NO_CAPABILITIES })).toBeNull();
+		expect(readField(field, config)).toBe(CREDENTIAL_KEEP);
+		expect(JSON.stringify(field)).not.toContain("hunter2");
+		expect(patched(writeField(field, CREDENTIAL_KEEP, config))).toEqual(config.provider_config);
+		expect(patched(writeField(field, KNOB_UNSET, config))).toEqual({ rds_default_username: "svc" });
+		// Whatever arrives, nothing typed is ever stored through this field.
+		expect(patched(writeField(field, "hunter3", config))).toEqual(config.provider_config);
+	});
+
+	it("renders the note on the AWS secret card, with no box to type the value into", async () => {
+		const user = userEvent.setup();
+		const schema = getKindConfig("secret", "aws");
+		if (!schema) throw new Error("no secret schema");
+		render(
+			<ConfigFields
+				schema={schema}
+				config={{ name: "api-key", provider_config: {} }}
+				provider="aws"
+				kind="secret"
+				onChange={vi.fn()}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /Advanced/ }));
+		expect(screen.getByText(/A credential, so it is not set here/)).toBeInTheDocument();
+		expect(screen.queryByRole("textbox", { name: "value" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("combobox", { name: "value" })).not.toBeInTheDocument();
 	});
 });

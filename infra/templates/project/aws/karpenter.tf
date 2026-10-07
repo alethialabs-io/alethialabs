@@ -29,3 +29,46 @@ module "karpenter" {
   create_access_entry = false
 }
 
+
+# The Karpenter NodePool the runner renders after the cluster is up (#5527). Nothing here builds an
+# AWS resource: the NodePool is a Kubernetes object, so the values travel to the runner through the
+# `karpenter_nodepool` output (outputs.tf) and packages/core/provisioner/karpenter.go applies them.
+# They are gathered in one local so the output and its precondition read one value.
+locals {
+  karpenter_nodepool = {
+    capacity_types      = var.karpenter_capacity_types
+    architectures       = var.karpenter_architectures
+    instance_categories = var.karpenter_instance_categories
+    instance_families   = var.karpenter_instance_families
+    cpu_limit           = var.karpenter_cpu_limit
+    labels              = var.karpenter_node_labels
+    taints              = var.karpenter_node_taints
+  }
+
+  # Families whose name starts with none of the chosen categories. Karpenter ANDs the two
+  # requirements, so a family outside every category ("c7g" against the default ["t", "m"]) leaves
+  # the NodePool with no instance type it can launch — a pool that looks healthy and never scales.
+  karpenter_families_outside_categories = length(var.karpenter_instance_categories) == 0 ? [] : [
+    for f in var.karpenter_instance_families : f
+    if !anytrue([for c in var.karpenter_instance_categories : startswith(f, c)])
+  ]
+
+  # The arm64 (Graviton) NodePool (#5534): the default pool's settings with its own architecture,
+  # families and CPU limit. Null when it is not configured, so a cluster that sets nothing renders no
+  # such pool. The output carries only the user's values: the runner adds the platform taint
+  # alethia.io/arch=arm64:NoSchedule after it has validated them (provisioner/karpenter.go).
+  karpenter_arm64_nodepool = var.karpenter_arm64_nodepool == null ? null : {
+    capacity_types      = var.karpenter_capacity_types
+    architectures       = ["arm64"]
+    instance_categories = var.karpenter_instance_categories
+    instance_families   = var.karpenter_arm64_nodepool.instance_families
+    cpu_limit           = var.karpenter_arm64_nodepool.cpu_limit
+    labels              = var.karpenter_node_labels
+    taints              = var.karpenter_node_taints
+  }
+
+  karpenter_arm64_families_outside_categories = var.karpenter_arm64_nodepool == null || length(var.karpenter_instance_categories) == 0 ? [] : [
+    for f in var.karpenter_arm64_nodepool.instance_families : f
+    if !anytrue([for c in var.karpenter_instance_categories : startswith(f, c)])
+  ]
+}

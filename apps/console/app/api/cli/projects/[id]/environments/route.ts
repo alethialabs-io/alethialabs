@@ -127,6 +127,7 @@ function toEnvironmentWire(
 		placement_mode: row.placement_mode,
 		namespace: row.namespace,
 		fabric: fabricName,
+		lifecycle: row.lifecycle,
 	};
 }
 

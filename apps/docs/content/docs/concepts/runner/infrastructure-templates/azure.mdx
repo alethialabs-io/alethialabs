@@ -12,6 +12,7 @@ The Azure template set (`infra/templates/project/azure/`) provides Azure-native 
 | File | Resources Created |
 |------|------------------|
 | `aks.tf` | AKS cluster, default node pool, Azure AD integration |
+| `nodepools.tf` | Maps `node_labels`, `node_taints` and `extra_node_pools` onto the AKS node pools |
 | `vnet.tf` | Virtual Network, subnets, NSG, NAT Gateway |
 | `azure-db.tf` | Azure Database for PostgreSQL/MySQL (Flexible Server) |
 | `azure-cache-redis.tf` | Azure Cache for Redis |
@@ -19,8 +20,8 @@ The Azure template set (`infra/templates/project/azure/`) provides Azure-native 
 | `acr.tf` | Azure Container Registry |
 | `storage-account.tf` | Storage account, blob containers |
 | `service-bus.tf` | Service Bus namespace, queues, topics |
-| `azure-dns.tf` | Azure DNS zone, record sets |
-| `key-vault.tf` | Key Vault, access policies |
+| `azure-dns.tf` | Azure DNS zone |
+| `key-vault.tf` | Key Vault that uses Azure RBAC (not access policies), the provisioner's Key Vault Secrets Officer role, and secrets |
 | `azure-waf.tf` | Web application firewall policy (OWASP 3.2 plus your custom rules) |
 | `application-gateway.tf` | Application Gateway v2, its public IP, and the AGIC workload identity |
 
@@ -35,7 +36,7 @@ The Azure template set (`infra/templates/project/azure/`) provides Azure-native 
 | `modules/acr/` | Azure Container Registry |
 | `modules/storage-account/` | Azure Blob Storage |
 | `modules/service-bus/` | Service Bus queues and topics |
-| `modules/azure-dns/` | DNS zones |
+| `modules/azure-dns/` | DNS zone |
 | `modules/azure-waf/` | Web application firewall policy |
 | `modules/key-vault/` | Key Vault for secrets |
 | `modules/vnet/` | Virtual Network with subnets and NSGs |
@@ -130,3 +131,93 @@ Set `azure_cache_log_categories` on the **cache** to send Azure Managed Redis co
 ```
 
 The destination works the same way as database log exports: the template's workspace when there is one, otherwise the workspace in `azure_cache_log_workspace_id`. The plan fails if neither exists.
+
+## Node pools
+
+AKS runs your workloads on node pools. The template always makes the default pool. It makes one
+more pool, `pool1`, `pool2` and so on, for each extra VM size in `aks_instance_types`, and a `spot`
+pool when `aks_spot_enabled` is `true`. Those pools share one size.
+
+The cluster autoscaler scales each of these pools between its minimum and maximum size.
+`aks_node_desired_size` is the node count that the default pool and `pool1`…`poolN` start with, and
+`aks_spot_node_min_size` is the count that the `spot` pool starts with. After a pool exists, the
+autoscaler owns its count. A later change to `aks_node_desired_size` does not change the count of
+a pool that exists. A change to a minimum or maximum size updates the pool's settings in place and
+leaves its node count where the autoscaler put it. One case is not verified: a new minimum that is
+higher than the number of nodes the pool has now. AKS can scale the pool up to the new minimum, or
+refuse the change.
+
+The `spot` pool declares the taint `kubernetes.azure.com/scalesetpriority=spot:NoSchedule`. AKS puts
+this taint on every Spot node, so the declaration does not add a taint to a node.
+
+Set three keys on the **cluster** to label your nodes, taint them, and add named pools that each
+have their own size. They are the same keys on every cloud. The
+[cluster guide](/guides/design-project/cluster#node-labels-taints-and-extra-pools) describes every
+field and every rule.
+
+```json
+{
+  "node_labels": { "team": "payments" },
+  "node_taints": [{ "key": "dedicated", "value": "batch", "effect": "NoSchedule" }],
+  "extra_node_pools": [
+    {
+      "name": "gpu",
+      "instance_type": "Standard_NC4as_T4_v3",
+      "capacity_type": "spot",
+      "min_size": 0,
+      "max_size": 3,
+      "taints": [{ "key": "gpu", "value": "true", "effect": "NoSchedule" }]
+    }
+  ]
+}
+```
+
+On AKS, the template builds them like this:
+
+- **`node_labels`** go on every pool: the default pool, `pool1`…`poolN`, the `spot` pool and every
+  named pool.
+- **`node_taints`** go on the named pools only. The default pool runs Alethia's add-ons, and the
+  positional pools keep the taints they had. The `spot` pool has only the AKS Spot taint.
+- **Each entry in `extra_node_pools`** is one user node pool (`mode = User`), named for the entry.
+  It has its own VM size and its own `min_size`, `max_size` and `desired_size`. The pool is keyed
+  by its name, so removing an entry from the middle of the list removes that pool only.
+- **Names.** A pool name cannot be the name of the temporary pool that another pool uses for a new
+  VM size. The temporary name is up to six characters of the pool's name plus six hexadecimal
+  characters, for example `defaulc21f96` for the default pool and `spotb2e189` for the `spot` pool.
+  The plan refuses such a name, because rebuilding the other pool would delete the pool that has it.
+- **Size.** The cluster autoscaler scales each pool between `min_size` and `max_size`.
+  `desired_size` is the node count the pool starts with. After that the autoscaler owns the count,
+  so a later change to `desired_size` does nothing.
+- **Taints** use the AKS form `key=value:Effect`, or `key:Effect` when the taint has no value.
+- **Spot.** A pool with `capacity_type: spot` is a Spot pool. It uses the cluster's Spot settings,
+  the same ones as the `spot` pool: `aks_spot_eviction_policy` (`Delete` by default) and
+  `aks_spot_max_price` (`-1` by default, which means up to the on-demand price). You can set them
+  without `aks_spot_enabled`. AKS labels and taints the nodes of a Spot pool with
+  `kubernetes.azure.com/scalesetpriority=spot`, and the template declares both on the pool.
+- **arm64.** An arm64 pool needs an Arm64 VM size. In Azure's
+  [VM size names](https://learn.microsoft.com/azure/virtual-machines/vm-naming-conventions), the
+  lowercase feature letter `p` after the vCPU count marks an Arm-based processor, as in
+  `Standard_D4ps_v5`, `Standard_D2pds_v5`, `Standard_E4ps_v6` and `Standard_B2pts_v2`. A size
+  without `p`, such as `Standard_D4s_v5` or `Standard_B2s_v2`, is amd64. The plan refuses an arm64
+  pool on an amd64 size, and an amd64 pool on an Arm64 size. Alethia taints every arm64 pool with
+  `alethia.io/arch=arm64:NoSchedule`.
+- **Isolation.** A named pool uses the default pool's subnet, OS disk type and size, and maximum
+  pods per node. A pool cannot cost less because it is less isolated.
+
+When you set none of the three keys, the plan is the same as before: no pool changes.
+
+<Callout type="warn">
+Some changes replace a pool, and with it the pool's nodes and the pods on them. Changing a pool's
+`name` or `capacity_type` replaces it. Changing its `instance_type` keeps the pool but replaces
+every node in it. The azurerm provider creates a temporary pool with the new settings, deletes the
+pool, creates the pool again with the new settings, and then deletes the temporary pool. It does
+not cordon or drain the nodes first. When a node is deleted, the pods on it stop. Kubernetes
+schedules the pods that a controller such as a Deployment manages on the nodes that remain. Pods
+that no controller manages are not scheduled again. The same applies to the default pool,
+`pool1`…`poolN` and the `spot` pool when you change their entry in `aks_instance_types`,
+`aks_os_disk_type` or `aks_disk_size_gb`. Changing `node_labels`,
+`node_taints` or a pool's `labels`, `taints`, `min_size` or `max_size` updates the pool in place,
+with the azurerm provider version the template pins (4.x). The minimum-size case above is the
+exception that is not verified. A taint that you add does not evict the
+pods already on the node, unless its effect is `NoExecute`.
+</Callout>

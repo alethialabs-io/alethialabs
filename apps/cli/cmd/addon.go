@@ -114,7 +114,7 @@ func runAddonList(c apiClient, out io.Writer, format, project, env string) error
 
 func init() {
 	addonCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
-	addonCmd.PersistentFlags().StringP("env", "e", "", "Environment name, stage, or id (default: the project's default environment)")
+	addonCmd.PersistentFlags().StringP("env", "e", "", "Environment id, name or stage — an exact name wins over a stage (default: the project's default environment)")
 	addonCmd.AddCommand(addonListCmd)
 	rootCmd.AddCommand(addonCmd)
 }

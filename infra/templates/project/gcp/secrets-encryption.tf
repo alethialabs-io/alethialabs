@@ -36,6 +36,11 @@ locals {
   gke_service_agent = "serviceAccount:service-${data.google_project.current.number}@container-engine-robot.iam.gserviceaccount.com"
 
   gke_secrets_encryption = var.gke_secrets_encryption_enabled && var.provision_gke
+
+  # The key ring is the project's ONE ring, not GKE's: bucket CMEK (#5532, cloud-storage.tf) puts its
+  # own key in it. The ring keeps its `gke_secrets` address so that no existing ring moves, and when
+  # neither feature is on the count is 0 exactly as before.
+  kms_key_ring_needed = local.gke_secrets_encryption || local.storage_cmek
 }
 
 # ── The API this feature needs, checked at PLAN (#2262) ─────────────────────────────────────────
@@ -57,26 +62,26 @@ locals {
 # 1.9.0 — the version the runner applies with — does not short-circuit `||`/`&&`, so a guarded
 # index is still evaluated (#1920).
 data "google_project_service" "cloudkms" {
-  count   = local.gke_secrets_encryption ? 1 : 0
+  count   = local.kms_key_ring_needed ? 1 : 0
   project = var.project_id
   service = "cloudkms.googleapis.com"
 }
 
 resource "terraform_data" "gke_secrets_encryption_api_guard" {
-  count = local.gke_secrets_encryption ? 1 : 0
+  count = local.kms_key_ring_needed ? 1 : 0
 
   lifecycle {
     precondition {
       # The data source sets an EMPTY id when the service is not in the project's enabled list and
       # the `<project>/<service>` id when it is.
       condition     = length(try(data.google_project_service.cloudkms[0].id, "")) > 0
-      error_message = "GCP-KMS-ENC-001: Kubernetes Secrets encryption is enabled (gke_secrets_encryption_enabled, on by default) but cloudkms.googleapis.com is not enabled on this project, so the encryption key cannot be created. Apply blocked fail-closed, rather than failing partway through the cluster build. Enable it once per project (`gcloud services enable cloudkms.googleapis.com --project <id>`), or set gke_secrets_encryption_enabled = false to accept the platform's default key. Alethia deliberately holds no permission to enable services on your behalf."
+      error_message = local.gke_secrets_encryption ? "GCP-KMS-ENC-001: Kubernetes Secrets encryption is enabled (gke_secrets_encryption_enabled, on by default) but cloudkms.googleapis.com is not enabled on this project, so the encryption key cannot be created. Apply blocked fail-closed, rather than failing partway through the cluster build. Enable it once per project (`gcloud services enable cloudkms.googleapis.com --project <id>`), or set gke_secrets_encryption_enabled = false to accept the platform's default key. Alethia deliberately holds no permission to enable services on your behalf." : "GCP-KMS-ENC-001: bucket encryption with your own key is enabled (cloud_storage_buckets[*].cmek_enabled) but cloudkms.googleapis.com is not enabled on this project, so the bucket key cannot be created. Apply blocked fail-closed. Enable it once per project (`gcloud services enable cloudkms.googleapis.com --project <id>`), or turn cmek_enabled off to keep Google's default encryption. Alethia deliberately holds no permission to enable services on your behalf."
     }
   }
 }
 
 resource "google_kms_key_ring" "gke_secrets" {
-  count = local.gke_secrets_encryption ? 1 : 0
+  count = local.kms_key_ring_needed ? 1 : 0
 
   depends_on = [terraform_data.gke_secrets_encryption_api_guard]
 

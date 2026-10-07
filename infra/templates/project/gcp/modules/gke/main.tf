@@ -237,7 +237,12 @@ resource "google_container_node_pool" "default" {
       mode = "GKE_METADATA"
     }
 
-    labels = local.merged_labels
+    # node_labels (#5537): the user's labels beside the template's own. With none set this is
+    # local.merged_labels itself, the value this pool has always planned with. The root refuses a
+    # user key that collides with one of these (checks_nodepools.tf), so the merge order decides
+    # nothing. The extra pools are at the root (nodepools.tf) and carry the same isolation settings
+    # as this block; packages/core/cloud/nodepool_gcp_test.go fails if the two drift apart.
+    labels = length(var.node_labels) > 0 ? merge(local.merged_labels, var.node_labels) : local.merged_labels
 
     metadata = {
       disable-legacy-endpoints = "true"

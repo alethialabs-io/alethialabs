@@ -204,7 +204,7 @@ variable "aks_spot_enabled" {
 variable "aks_spot_max_price" {
   type        = number
   default     = -1
-  description = "Hourly ceiling (USD) for a Spot node. -1 (the default) means pay up to the on-demand price and never get evicted on price alone — only on capacity."
+  description = "Hourly ceiling (USD) for a Spot node. -1 (the default) means pay up to the on-demand price and never get evicted on price alone — only on capacity. Applies to the Spot pool and to every extra_node_pools pool with capacity_type spot."
 
   validation {
     condition     = var.aks_spot_max_price == -1 || var.aks_spot_max_price > 0
@@ -215,7 +215,7 @@ variable "aks_spot_max_price" {
 variable "aks_spot_eviction_policy" {
   type        = string
   default     = "Delete"
-  description = "What Azure does to a reclaimed Spot node: \"Delete\" (the default — the node is removed and the autoscaler replaces it) or \"Deallocate\" (the node is stopped but its quota is held)."
+  description = "What Azure does to a reclaimed Spot node: \"Delete\" (the default — the node is removed and the autoscaler replaces it) or \"Deallocate\" (the node is stopped but its quota is held). Applies to the Spot pool and to every extra_node_pools pool with capacity_type spot."
 
   validation {
     condition     = contains(["Delete", "Deallocate"], var.aks_spot_eviction_policy)
@@ -701,9 +701,41 @@ variable "storage_containers" {
     # versioning: encryption is a property of the ACCOUNT, so any container asking for it encrypts
     # the whole account under a key in this project's Key Vault. See storage-account.tf.
     cmek_enabled = optional(bool, false)
+    # Browser origins allowed to call the account's blob endpoint (#5543). The same per-container/
+    # per-account split again: CORS is the account's blob_properties.cors_rule, so the lists are
+    # UNIONED into one rule in modules/storage-account. The default `[]` is what the module has
+    # always filled in, so a container that sets nothing plans no rule, as before.
+    #
+    # Declared HERE as well as on the module because an object type discards every attribute it
+    # does not name. Without this line the provider's per-bucket value was dropped at the root
+    # without an error, and the module's own optional() then filled in [].
+    cors_origins = optional(list(string), [])
   }))
   default     = []
-  description = "List of storage containers to create in the Storage Account. `cmek_enabled` on any container encrypts the whole account with a customer-managed key in the project's Key Vault (requires key_vault_purge_protection_enabled)."
+  description = "List of storage containers to create in the Storage Account. `cmek_enabled` on any container encrypts the whole account with a customer-managed key in the project's Key Vault (requires key_vault_purge_protection_enabled). `cors_origins` from every container are unioned into the account's one blob CORS rule."
+
+  # An origin is a scheme, a host and an optional port — nothing after it. Azure Storage matches the
+  # browser's Origin header against these strings exactly, so `https://app.example.com/` (a path),
+  # `app.example.com` (no scheme) or an ftp:// URL is accepted by the API and then matches no
+  # browser ever: the rule exists and CORS still fails. Refusing it at plan names the value.
+  # `*` is allowed, and on Azure it opens the WHOLE storage account to every origin, because the
+  # rule is the account's (see modules/storage-account) — the docs say so.
+  validation {
+    condition = alltrue(flatten([
+      for c in var.storage_containers : [
+        for o in c.cors_origins : o == "*" || can(regex("^https?://[^/?#[:space:]]+$", o))
+      ]
+    ]))
+    error_message = "Each storage_containers[*].cors_origins entry must be `*` or an absolute http:// or https:// origin with no path, query or trailing slash (for example https://app.example.com or http://localhost:3000)."
+  }
+
+  # Azure Storage allows at most 64 origins on a CORS rule, and the account has ONE rule holding the
+  # union of every container's origins (modules/storage-account). Over the limit, the API refuses the
+  # whole account update at apply; this refuses it at plan, counting what the union will hold.
+  validation {
+    condition     = length(distinct(flatten([for c in var.storage_containers : c.cors_origins]))) <= 64
+    error_message = "Azure allows at most 64 CORS origins on a storage account, and every container's cors_origins are combined into the account's one rule. Remove origins until the containers list at most 64 distinct ones in total."
+  }
 }
 
 #########################################################################
@@ -814,4 +846,164 @@ variable "aks_secrets_encryption_enabled" {
   type        = bool
   default     = true
   description = "Envelope-encrypt Kubernetes Secrets in etcd under a key in this project's Key Vault. On by default (AWS parity). Requires key_vault_purge_protection_enabled."
+}
+
+# ── Node labels, node taints and named node pools (#5535, contract #5533) ─────────────────────────
+# The three blocks below are the cross-cloud node-pool contract, copied VERBATIM from
+# packages/core/cloud/testdata/nodepool/reference/variables.tf: type, default, nullable and every
+# validation. packages/core/cloud/nodepool_azure_test.go (assertNodePoolContract) fails if any of
+# them drifts, and packages/core/nodekeys/drift_test.go holds their key/value regexes to the one Go
+# definition. How AKS builds them is in nodepools.tf; what AKS adds on top (the instance-type and
+# arm64 checks) is in checks_nodepools.tf, so these blocks stay token-equal to the contract.
+#
+# Defaults ({}, [], []) render the cluster exactly as before: no pool gains a node_labels argument
+# and no azurerm_kubernetes_cluster_node_pool.named exists (nodepools.tftest.hcl proves it).
+
+variable "node_labels" {
+  type        = map(string)
+  default     = {}
+  nullable    = false
+  description = "Labels on the nodes of every Alethia-managed pool, the default pool included. A pool's own labels win for the same key. At most 24. Keys whose prefix ends in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io are refused."
+
+  validation {
+    condition = length(var.node_labels) <= 24 && alltrue([for k, v in var.node_labels :
+      length(k) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) >= 1 && length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    ])
+    error_message = "node_labels may hold at most 24 labels. A key is [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue([for k, v in var.node_labels :
+      !strcontains(k, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", k)[0]))
+    ])
+    error_message = "node_labels keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Kubernetes, the clouds and Alethia set those labels themselves, and a kubelet refuses to start with them. Use your own prefix, such as example.com/team, or none."
+  }
+}
+
+variable "node_taints" {
+  type = list(object({
+    key    = string
+    value  = optional(string)
+    effect = string
+  }))
+  default     = []
+  nullable    = false
+  description = "Taints on the nodes of every extra pool (not the default pool, which runs the platform's add-ons). A pool's own taint wins for the same key and effect. At most 24. effect is one of NoSchedule, PreferNoSchedule and NoExecute."
+
+  validation {
+    condition     = length(var.node_taints) <= 24 && alltrue([for t in var.node_taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in var.node_taints : "${t.key}:${t.effect}"])) == length(var.node_taints)
+    error_message = "node_taints may hold at most 24 taints, each effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once."
+  }
+
+  validation {
+    condition = alltrue([for t in var.node_taints :
+      length(t.key) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) >= 1 && length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+    ])
+    error_message = "node_taints key must be [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value, when set, is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue([for t in var.node_taints :
+      !strcontains(t.key, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", t.key)[0]))
+    ])
+    error_message = "node_taints keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Kubernetes, the clouds and Alethia set those taints themselves (alethia.io/arch marks arm64 pools)."
+  }
+}
+
+variable "extra_node_pools" {
+  type = list(object({
+    name          = string
+    instance_type = string
+    min_size      = number
+    max_size      = number
+    desired_size  = optional(number)
+    arch          = optional(string, "amd64")
+    capacity_type = optional(string, "on-demand")
+    labels        = optional(map(string), {})
+    taints = optional(list(object({
+      key    = string
+      value  = optional(string)
+      effect = string
+    })), [])
+  }))
+  default     = []
+  nullable    = false
+  description = "Node pools beside the default pool. Each has a name, an instance type, min/max/desired sizes, an optional arch (amd64 or arm64) and capacity_type (on-demand or spot), and its own labels and taints. Its nodes carry the label alethia.io/pool=<name>; an arm64 pool also carries the taint alethia.io/arch=arm64:NoSchedule."
+
+  validation {
+    condition = length(var.extra_node_pools) <= 10 && length(distinct([for p in var.extra_node_pools : p.name])) == length(var.extra_node_pools) && alltrue([for p in var.extra_node_pools :
+      can(regex("^[a-z][a-z0-9]{0,11}$", p.name)) && !contains(["default", "system", "spot"], p.name) && !can(regex("^pool[0-9]+$", p.name))
+    ])
+    error_message = "extra_node_pools may list at most 10 pools, each with a unique name of 1 to 12 lowercase letters and digits starting with a letter (the AKS pool-name rule, applied on every cloud so the file is portable). The names default, system, spot and pool1, pool2, ... are taken by pools Alethia already makes."
+  }
+
+  # A pool may not be named for another pool's temporary_name_for_rotation (#5578). modules/aks
+  # derives that name for every pool as up to six characters of its name plus six hex characters of
+  # its md5: default -> defaulc21f96, spot -> spotb2e189, pool1 -> pool15934c3. A vm_size or disk
+  # change CYCLES a pool through that name: azurerm creates the temporary pool, or ADOPTS one that
+  # already exists under the name, and deletes it at the end. A named pool carrying the name would be
+  # deleted with its nodes. pool1..pool100 covers every positional pool: AKS caps a cluster at 100
+  # node pools. The derivation is restated here because a variable validation can read no local; the
+  # tofu test in nodepools.tftest.hcl pins both copies to the same names.
+  validation {
+    condition = alltrue([for p in var.extra_node_pools : !contains([
+      for n in concat(["default", "spot"], [for i in range(1, 101) : "pool${i}"], [for q in var.extra_node_pools : q.name if q.name != p.name]) :
+      "${substr(n, 0, min(6, length(n)))}${substr(md5(n), 0, 6)}"
+    ], p.name)])
+    error_message = "extra_node_pools names may not equal the temporary pool name AKS uses to rebuild another pool on a new VM size: the default pool's (defaulc21f96), the Spot pool's (spotb2e189), pool1..pool100's (pool15934c3 for pool1), or another named pool's (up to six characters of its name plus six hex characters of its md5). Rebuilding that pool would delete the pool that carries the name. Choose another name."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", p.instance_type)) && contains(["amd64", "arm64"], p.arch) && contains(["on-demand", "spot"], p.capacity_type)
+    ])
+    error_message = "extra_node_pools instance_type must be a cloud instance type such as \"m7g.large\", \"e2-standard-4\", \"Standard_D4s_v5\" or \"cx32\" (letters, digits, '.', '_' and '-', up to 64); arch must be \"amd64\" or \"arm64\"; capacity_type must be \"on-demand\" or \"spot\"."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      floor(p.min_size) == p.min_size && floor(p.max_size) == p.max_size && p.min_size >= 0 && p.max_size >= 1 && p.max_size <= 100 && p.min_size <= p.max_size &&
+      (p.desired_size == null ? true : floor(p.desired_size) == p.desired_size && p.desired_size >= p.min_size && p.desired_size <= p.max_size)
+    ])
+    error_message = "extra_node_pools sizes must be whole numbers with 0 <= min_size <= desired_size <= max_size and 1 <= max_size <= 100. desired_size may be left out, and then equals min_size."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools : length(p.labels) <= 25]) && alltrue(flatten([for p in var.extra_node_pools : [for k, v in p.labels :
+      length(k) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) >= 1 && length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    ]]))
+    error_message = "extra_node_pools labels may hold at most 25 labels per pool. A key is [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue(flatten([for p in var.extra_node_pools : [for k, v in p.labels :
+      !strcontains(k, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", k)[0]))
+    ]]))
+    error_message = "extra_node_pools labels keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Alethia labels every pool alethia.io/pool=<name> itself."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      length(p.taints) <= 25 && alltrue([for t in p.taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in p.taints : "${t.key}:${t.effect}"])) == length(p.taints)
+    ])
+    error_message = "extra_node_pools taints may hold at most 25 taints per pool, each effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once in a pool."
+  }
+
+  validation {
+    condition = alltrue(flatten([for p in var.extra_node_pools : [for t in p.taints :
+      length(t.key) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) >= 1 && length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+    ]]))
+    error_message = "extra_node_pools taints key must be [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value, when set, is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue(flatten([for p in var.extra_node_pools : [for t in p.taints :
+      !strcontains(t.key, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", t.key)[0]))
+    ]]))
+    error_message = "extra_node_pools taints keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Alethia taints every arm64 pool alethia.io/arch=arm64:NoSchedule itself."
+  }
 }

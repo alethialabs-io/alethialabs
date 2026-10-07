@@ -346,3 +346,200 @@ variable "incluster_registry_hosts" {
   type        = list(string)
   default     = []
 }
+
+# ── Node labels, node taints and extra worker pools (#5536, contract #5533) ───────────────────────
+# The three blocks below are the cross-cloud node-pool contract, copied VERBATIM from
+# packages/core/cloud/testdata/nodepool/reference/variables.tf: type, default, nullable and every
+# validation. packages/core/cloud/nodepool_hetzner_test.go (assertNodePoolContract) fails if any of
+# them drifts, and packages/core/nodekeys/drift_test.go holds the key regexes to the Go definition.
+# extra_node_pools carries three Hetzner validations after the contract's (Spot refused, a Hetzner
+# server type, arch matching the server type).
+#
+# How Talos builds them is in servers.tf and talos.tf. Defaults ({}, [], []) render the cluster
+# exactly as before (nodepool_hetzner.tftest.hcl proves it).
+#
+# SIZE (contract: "HETZNER SIZE"). Hetzner has no autoscaler yet (#5538), so a pool is a FIXED
+# group of desired_size servers, or min_size when desired_size is left out. max_size is validated
+# and kept, so the same file stays valid when the autoscaler arrives; it does not add servers today.
+
+variable "node_labels" {
+  type        = map(string)
+  default     = {}
+  nullable    = false
+  description = "Labels on the nodes of every Alethia-managed pool, the default pool included. A pool's own labels win for the same key. At most 24. Keys whose prefix ends in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io are refused."
+
+  validation {
+    condition = length(var.node_labels) <= 24 && alltrue([for k, v in var.node_labels :
+      length(k) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) >= 1 && length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    ])
+    error_message = "node_labels may hold at most 24 labels. A key is [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue([for k, v in var.node_labels :
+      !strcontains(k, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", k)[0]))
+    ])
+    error_message = "node_labels keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Kubernetes, the clouds and Alethia set those labels themselves, and a kubelet refuses to start with them. Use your own prefix, such as example.com/team, or none."
+  }
+}
+
+variable "node_taints" {
+  type = list(object({
+    key    = string
+    value  = optional(string)
+    effect = string
+  }))
+  default     = []
+  nullable    = false
+  description = "Taints on the nodes of every extra pool (not the default pool, which runs the platform's add-ons). A pool's own taint wins for the same key and effect. At most 24. effect is one of NoSchedule, PreferNoSchedule and NoExecute."
+
+  validation {
+    condition     = length(var.node_taints) <= 24 && alltrue([for t in var.node_taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in var.node_taints : "${t.key}:${t.effect}"])) == length(var.node_taints)
+    error_message = "node_taints may hold at most 24 taints, each effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once."
+  }
+
+  validation {
+    condition = alltrue([for t in var.node_taints :
+      length(t.key) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) >= 1 && length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+    ])
+    error_message = "node_taints key must be [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value, when set, is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue([for t in var.node_taints :
+      !strcontains(t.key, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", t.key)[0]))
+    ])
+    error_message = "node_taints keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Kubernetes, the clouds and Alethia set those taints themselves (alethia.io/arch marks arm64 pools)."
+  }
+}
+
+variable "extra_node_pools" {
+  type = list(object({
+    name          = string
+    instance_type = string
+    min_size      = number
+    max_size      = number
+    desired_size  = optional(number)
+    arch          = optional(string, "amd64")
+    capacity_type = optional(string, "on-demand")
+    labels        = optional(map(string), {})
+    taints = optional(list(object({
+      key    = string
+      value  = optional(string)
+      effect = string
+    })), [])
+  }))
+  default     = []
+  nullable    = false
+  description = "Node pools beside the default pool. Each has a name, an instance type, min/max/desired sizes, an optional arch (amd64 or arm64) and capacity_type (on-demand or spot), and its own labels and taints. Its nodes carry the label alethia.io/pool=<name>; an arm64 pool also carries the taint alethia.io/arch=arm64:NoSchedule."
+
+  validation {
+    condition = length(var.extra_node_pools) <= 10 && length(distinct([for p in var.extra_node_pools : p.name])) == length(var.extra_node_pools) && alltrue([for p in var.extra_node_pools :
+      can(regex("^[a-z][a-z0-9]{0,11}$", p.name)) && !contains(["default", "system", "spot"], p.name) && !can(regex("^pool[0-9]+$", p.name))
+    ])
+    error_message = "extra_node_pools may list at most 10 pools, each with a unique name of 1 to 12 lowercase letters and digits starting with a letter (the AKS pool-name rule, applied on every cloud so the file is portable). The names default, system, spot and pool1, pool2, ... are taken by pools Alethia already makes."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", p.instance_type)) && contains(["amd64", "arm64"], p.arch) && contains(["on-demand", "spot"], p.capacity_type)
+    ])
+    error_message = "extra_node_pools instance_type must be a cloud instance type such as \"m7g.large\", \"e2-standard-4\", \"Standard_D4s_v5\" or \"cx32\" (letters, digits, '.', '_' and '-', up to 64); arch must be \"amd64\" or \"arm64\"; capacity_type must be \"on-demand\" or \"spot\"."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      floor(p.min_size) == p.min_size && floor(p.max_size) == p.max_size && p.min_size >= 0 && p.max_size >= 1 && p.max_size <= 100 && p.min_size <= p.max_size &&
+      (p.desired_size == null ? true : floor(p.desired_size) == p.desired_size && p.desired_size >= p.min_size && p.desired_size <= p.max_size)
+    ])
+    error_message = "extra_node_pools sizes must be whole numbers with 0 <= min_size <= desired_size <= max_size and 1 <= max_size <= 100. desired_size may be left out, and then equals min_size."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools : length(p.labels) <= 25]) && alltrue(flatten([for p in var.extra_node_pools : [for k, v in p.labels :
+      length(k) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) >= 1 && length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    ]]))
+    error_message = "extra_node_pools labels may hold at most 25 labels per pool. A key is [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue(flatten([for p in var.extra_node_pools : [for k, v in p.labels :
+      !strcontains(k, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", k)[0]))
+    ]]))
+    error_message = "extra_node_pools labels keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Alethia labels every pool alethia.io/pool=<name> itself."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      length(p.taints) <= 25 && alltrue([for t in p.taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in p.taints : "${t.key}:${t.effect}"])) == length(p.taints)
+    ])
+    error_message = "extra_node_pools taints may hold at most 25 taints per pool, each effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once in a pool."
+  }
+
+  validation {
+    condition = alltrue(flatten([for p in var.extra_node_pools : [for t in p.taints :
+      length(t.key) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) >= 1 && length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+    ]]))
+    error_message = "extra_node_pools taints key must be [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value, when set, is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue(flatten([for p in var.extra_node_pools : [for t in p.taints :
+      !strcontains(t.key, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", t.key)[0]))
+    ]]))
+    error_message = "extra_node_pools taints keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Alethia taints every arm64 pool alethia.io/arch=arm64:NoSchedule itself."
+  }
+
+
+  # ── Hetzner's own rules (#5536). The contract allows a lane to ADD validations; these are the
+  #    three things the contract's grammar admits that a Hetzner pool cannot be.
+
+  # Hetzner Cloud sells no interruptible capacity: there is no Spot, preemptible or low-priority
+  # server, so "spot" here could only be honoured by silently building on-demand servers at the
+  # on-demand price. Refused instead, so the bill is never a surprise.
+  validation {
+    condition     = alltrue([for p in var.extra_node_pools : p.capacity_type != "spot"])
+    error_message = "extra_node_pools capacity_type \"spot\" is not available on Hetzner: Hetzner Cloud has no interruptible (Spot) servers, so every pool is on-demand. Leave capacity_type out, or set it to \"on-demand\"."
+  }
+
+  # A Hetzner server type is a family prefix and a two- or three-digit size: cx22, cpx31, ccx23
+  # (amd64) or cax21 (arm64). The size is compared with its own number's rendering, so "1e2", "-1",
+  # "1.5" and a leading zero are refused. No regex(): this is the instance type, not a node key, and
+  # nodekeys/drift_test.go classifies every regex() in this variable. Checked here, at plan, so an instance type from another cloud ("m7g.large") is refused
+  # with a sentence instead of by the hcloud API halfway through an apply.
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      anytrue([for f in ["cx", "cpx", "ccx", "cax"] : startswith(p.instance_type, f) && try(tostring(tonumber(trimprefix(p.instance_type, f))), "") == trimprefix(p.instance_type, f) && length(trimprefix(p.instance_type, f)) >= 2 && length(trimprefix(p.instance_type, f)) <= 3])
+    ])
+    error_message = "extra_node_pools instance_type must be a Hetzner Cloud server type: cx, cpx or ccx (amd64) or cax (arm64) followed by its size, such as \"cpx31\", \"ccx23\" or \"cax21\"."
+  }
+
+  # The server type decides the CPU: cax* is Ampere arm64, every other family is amd64. The pool's
+  # arch picks the Talos image it boots and whether it carries the alethia.io/arch taint, so the two
+  # must agree, as worker_arch must agree with worker_server_type (checks.tf).
+  validation {
+    condition     = alltrue([for p in var.extra_node_pools : startswith(p.instance_type, "cax") == (p.arch == "arm64")])
+    error_message = "extra_node_pools arch must match instance_type on Hetzner: cax* server types are arm64 (set arch = \"arm64\"), and cx*, cpx* and ccx* are amd64 (leave arch out, or set \"amd64\")."
+  }
+}
+
+# Hetzner only (#5536): which /24 of the cluster network an extra pool takes. Normally left empty —
+# a pool's /24 is derived from its NAME (servers.tf, ADDRESSING), so adding, removing or reordering
+# pools never moves another pool. Set an entry only when the plan refuses two pools on one /24, and
+# set it for the pool being ADDED: changing it for a pool that exists moves its subnet and replaces
+# its servers. A key that names no pool in extra_node_pools is refused (servers.tf), never ignored.
+variable "node_pool_subnet_index" {
+  type        = map(number)
+  default     = {}
+  nullable    = false
+  description = "Hetzner only. For an extra pool, by name, the number of the /24 of the cluster network it takes (1 is the /24 after the node subnet). Leave empty: each pool's /24 is chosen from its name. Set it for a pool the plan reports on the same /24 as another."
+
+  validation {
+    condition     = alltrue([for name, n in var.node_pool_subnet_index : floor(n) == n && n >= 1])
+    error_message = "node_pool_subnet_index values must be whole numbers of 1 or more: the number of a /24 of the cluster network after the node subnet (number 0)."
+  }
+}

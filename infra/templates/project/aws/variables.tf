@@ -266,6 +266,180 @@ variable "eks_ng_capacity_type" {
   }
 }
 
+# ── Node labels, taints and extra EKS managed node groups (#5534) ────────────────────────────────
+#
+# The cross-cloud node-pool contract (#5533). The three blocks below are COPIES of
+# packages/core/cloud/testdata/nodepool/reference/variables.tf: the `type`, `default`, `nullable` and
+# every `validation` must stay token-equal to it (packages/core/cloud/nodepool_aws_test.go holds them
+# there), and the key/value regexes are packages/core/nodekeys (drift_test.go). Read the reference
+# for what each rule is and why. AWS adds one rule of its own on extra_node_pools (the instance type
+# and its architecture).
+#
+# eks.tf renders what each pool's nodes carry (local.nodepool_contract_render), and modules/eks builds
+# the node groups from that render: node_labels reach eks_workers and every extra group, node_taints and the arm64
+# platform taint only the extra groups.
+
+variable "node_labels" {
+  type        = map(string)
+  default     = {}
+  nullable    = false
+  description = "Labels on the nodes of every Alethia-managed pool, the default pool included. A pool's own labels win for the same key. At most 24. Keys whose prefix ends in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io are refused."
+
+  validation {
+    condition = length(var.node_labels) <= 24 && alltrue([for k, v in var.node_labels :
+      length(k) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) >= 1 && length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    ])
+    error_message = "node_labels may hold at most 24 labels. A key is [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue([for k, v in var.node_labels :
+      !strcontains(k, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", k)[0]))
+    ])
+    error_message = "node_labels keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Kubernetes, the clouds and Alethia set those labels themselves, and a kubelet refuses to start with them. Use your own prefix, such as example.com/team, or none."
+  }
+}
+
+variable "node_taints" {
+  type = list(object({
+    key    = string
+    value  = optional(string)
+    effect = string
+  }))
+  default     = []
+  nullable    = false
+  description = "Taints on the nodes of every extra pool (not the default pool, which runs the platform's add-ons). A pool's own taint wins for the same key and effect. At most 24. effect is one of NoSchedule, PreferNoSchedule and NoExecute."
+
+  validation {
+    condition     = length(var.node_taints) <= 24 && alltrue([for t in var.node_taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in var.node_taints : "${t.key}:${t.effect}"])) == length(var.node_taints)
+    error_message = "node_taints may hold at most 24 taints, each effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once."
+  }
+
+  validation {
+    condition = alltrue([for t in var.node_taints :
+      length(t.key) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) >= 1 && length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+    ])
+    error_message = "node_taints key must be [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value, when set, is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue([for t in var.node_taints :
+      !strcontains(t.key, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", t.key)[0]))
+    ])
+    error_message = "node_taints keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Kubernetes, the clouds and Alethia set those taints themselves (alethia.io/arch marks arm64 pools)."
+  }
+}
+
+variable "extra_node_pools" {
+  type = list(object({
+    name          = string
+    instance_type = string
+    min_size      = number
+    max_size      = number
+    desired_size  = optional(number)
+    arch          = optional(string, "amd64")
+    capacity_type = optional(string, "on-demand")
+    labels        = optional(map(string), {})
+    taints = optional(list(object({
+      key    = string
+      value  = optional(string)
+      effect = string
+    })), [])
+  }))
+  default     = []
+  nullable    = false
+  description = "Node pools beside the default pool. Each has a name, an instance type, min/max/desired sizes, an optional arch (amd64 or arm64) and capacity_type (on-demand or spot), and its own labels and taints. Its nodes carry the label alethia.io/pool=<name>; an arm64 pool also carries the taint alethia.io/arch=arm64:NoSchedule."
+
+  validation {
+    condition = length(var.extra_node_pools) <= 10 && length(distinct([for p in var.extra_node_pools : p.name])) == length(var.extra_node_pools) && alltrue([for p in var.extra_node_pools :
+      can(regex("^[a-z][a-z0-9]{0,11}$", p.name)) && !contains(["default", "system", "spot"], p.name) && !can(regex("^pool[0-9]+$", p.name))
+    ])
+    error_message = "extra_node_pools may list at most 10 pools, each with a unique name of 1 to 12 lowercase letters and digits starting with a letter (the AKS pool-name rule, applied on every cloud so the file is portable). The names default, system, spot and pool1, pool2, ... are taken by pools Alethia already makes."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", p.instance_type)) && contains(["amd64", "arm64"], p.arch) && contains(["on-demand", "spot"], p.capacity_type)
+    ])
+    error_message = "extra_node_pools instance_type must be a cloud instance type such as \"m7g.large\", \"e2-standard-4\", \"Standard_D4s_v5\" or \"cx32\" (letters, digits, '.', '_' and '-', up to 64); arch must be \"amd64\" or \"arm64\"; capacity_type must be \"on-demand\" or \"spot\"."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      floor(p.min_size) == p.min_size && floor(p.max_size) == p.max_size && p.min_size >= 0 && p.max_size >= 1 && p.max_size <= 100 && p.min_size <= p.max_size &&
+      (p.desired_size == null ? true : floor(p.desired_size) == p.desired_size && p.desired_size >= p.min_size && p.desired_size <= p.max_size)
+    ])
+    error_message = "extra_node_pools sizes must be whole numbers with 0 <= min_size <= desired_size <= max_size and 1 <= max_size <= 100. desired_size may be left out, and then equals min_size."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools : length(p.labels) <= 25]) && alltrue(flatten([for p in var.extra_node_pools : [for k, v in p.labels :
+      length(k) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) >= 1 && length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    ]]))
+    error_message = "extra_node_pools labels may hold at most 25 labels per pool. A key is [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue(flatten([for p in var.extra_node_pools : [for k, v in p.labels :
+      !strcontains(k, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", k)[0]))
+    ]]))
+    error_message = "extra_node_pools labels keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Alethia labels every pool alethia.io/pool=<name> itself."
+  }
+
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      length(p.taints) <= 25 && alltrue([for t in p.taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in p.taints : "${t.key}:${t.effect}"])) == length(p.taints)
+    ])
+    error_message = "extra_node_pools taints may hold at most 25 taints per pool, each effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once in a pool."
+  }
+
+  validation {
+    condition = alltrue(flatten([for p in var.extra_node_pools : [for t in p.taints :
+      length(t.key) <= 63 && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) >= 1 && length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+    ]]))
+    error_message = "extra_node_pools taints key must be [prefix/]name, 1 to 63 characters in all, where the prefix is a lowercase DNS name and the name starts and ends with a letter or digit and holds letters, digits, '-', '_' or '.'. A value, when set, is 1 to 63 of the same characters, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue(flatten([for p in var.extra_node_pools : [for t in p.taints :
+      !strcontains(t.key, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", t.key)[0]))
+    ]]))
+    error_message = "extra_node_pools taints keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Alethia taints every arm64 pool alethia.io/arch=arm64:NoSchedule itself."
+  }
+  # AWS's own rule, beside the contract's: an EC2 instance type (family.size, the family being letters
+  # then a generation digit, as every EC2 family since the first is), whose architecture is
+  # the pool's arch. Graviton families are a1, and those with a "g" right after their generation
+  # digit (m7g, c6gn, t4g, g5g). An arm64 pool on an x86 type, or the reverse, fails at apply with an AMI/instance
+  # mismatch, so it is refused here, at plan.
+  validation {
+    condition = alltrue([for p in var.extra_node_pools :
+      can(regex("^[a-z]+[0-9][a-z0-9-]*\\.[a-z0-9-]+$", p.instance_type)) && (p.arch == "arm64") == can(regex("^(a1([.]|$)|[a-z]+[0-9]+g)", p.instance_type))
+    ])
+    error_message = "extra_node_pools instance_type must be an EC2 instance type (family.size, such as \"m7i.large\") whose architecture matches the pool's arch: an arm64 pool needs a Graviton type such as \"m7g.large\", \"c7g.xlarge\" or \"a1.large\", and an amd64 pool an x86 type such as \"m7i.large\" or \"g5.xlarge\"."
+  }
+  # AWS: an AMI exists for every pool, in eks_workers' OS family (eks.tf, local.eks_ami_families; the
+  # GPU regex is eks.tf's local.eks_nvidia_instance_type, written out because a validation cannot
+  # read a local that reads this variable).
+  # Without this, a missing AMI would leave the group on the module default, eks_workers' x86 AMI.
+  validation {
+    condition = length(var.extra_node_pools) == 0 || (
+      contains(keys(local.eks_ami_family_of), var.eks_ami_type) &&
+      alltrue([for p in var.extra_node_pools :
+        contains(["amd64", "arm64"], p.arch) ? local.eks_ami_families[lookup(local.eks_ami_family_of, var.eks_ami_type, "al2023")][p.arch][
+          can(regex("^(g[0-9]+[a-z]*|gr[0-9]+[a-z]*|p[0-9]+[a-z]*)[.]", p.instance_type)) && !startswith(p.instance_type, "g4ad.") ? "gpu" : "cpu"
+        ] != null : true
+      ])
+    )
+    error_message = "extra_node_pools need an x86 eks_ami_type to take their OS family from (BOTTLEROCKET_x86_64, BOTTLEROCKET_x86_64_NVIDIA, BOTTLEROCKET_x86_64_FIPS, AL2023_x86_64_STANDARD, AL2023_x86_64_NVIDIA, AL2023_x86_64_NEURON, AL2_x86_64 or AL2_x86_64_GPU), and an EKS AMI must exist for each pool: there is no FIPS Bottlerocket AMI for a GPU instance type, and no AL2 AMI for an arm64 GPU instance type."
+  }
+
+
+}
+
 #########################################################################
 ##                   RDS Variables                                     ##
 #########################################################################
@@ -779,6 +953,158 @@ variable "ec2_spot_service_role" {
   type        = bool
   default     = false
   description = "Configure EC2 spot service role provisioning."
+}
+
+# ── The Karpenter NodePool (#5527) ───────────────────────────────────────────────────────────────
+#
+# None of these builds an AWS resource. Karpenter's NodePool is a Kubernetes object the RUNNER applies
+# after the cluster is up (packages/core/provisioner/karpenter.go), so they are gathered into
+# `local.karpenter_nodepool` (karpenter.tf) and handed to it through the `karpenter_nodepool` output.
+#
+# Every default is the literal the runner hard-coded before these existed, so a cluster that sets
+# nothing renders a byte-identical NodePool. The runner re-checks every value before it applies the
+# manifest with cluster-admin rights, because a validation that lives only here is bypassed by a
+# hand-edited state or output.
+
+variable "karpenter_capacity_types" {
+  type        = list(string)
+  default     = ["on-demand"]
+  description = "Karpenter capacity types: any of \"spot\" and \"on-demand\". With both, Karpenter prefers Spot and falls back to on-demand."
+
+  validation {
+    condition     = length(var.karpenter_capacity_types) > 0 && length(distinct(var.karpenter_capacity_types)) == length(var.karpenter_capacity_types) && alltrue([for c in var.karpenter_capacity_types : contains(["spot", "on-demand"], c)])
+    error_message = "karpenter_capacity_types must list \"spot\", \"on-demand\" or both, each at most once."
+  }
+}
+
+variable "karpenter_architectures" {
+  type        = list(string)
+  default     = ["amd64"]
+  description = "CPU architectures the default Karpenter NodePool may launch. Only \"amd64\" is accepted: arm64 runs on the separate, tainted NodePool karpenter_arm64_nodepool creates (#5534)."
+
+  validation {
+    condition     = length(var.karpenter_architectures) > 0 && length(distinct(var.karpenter_architectures)) == length(var.karpenter_architectures) && alltrue([for a in var.karpenter_architectures : a == "amd64"])
+    error_message = "karpenter_architectures must be [\"amd64\"]. arm64 is not offered on the default Karpenter NodePool: the managed node group is x86_64 and most images Alethia builds are amd64-only, so an arm64 node in the only pool would crash them with exec format error. arm64 needs a separate, tainted NodePool: set karpenter_arm64_nodepool instead."
+  }
+}
+
+variable "karpenter_instance_categories" {
+  type        = list(string)
+  default     = ["t", "m"]
+  description = "EC2 instance categories Karpenter may launch (the letters before the generation: \"c\", \"m\", \"r\", \"t\", ...). An empty list puts no category requirement on the NodePool."
+
+  validation {
+    condition     = length(distinct(var.karpenter_instance_categories)) == length(var.karpenter_instance_categories) && alltrue([for c in var.karpenter_instance_categories : can(regex("^[a-z]{1,8}$", c))])
+    error_message = "karpenter_instance_categories entries must be lowercase EC2 instance categories such as \"c\", \"m\" or \"r\" (1-8 letters), each at most once."
+  }
+}
+
+variable "karpenter_instance_families" {
+  type        = list(string)
+  default     = []
+  description = "EC2 instance families Karpenter may launch, for example [\"c7g\", \"m7g\"]. Empty (the default) puts no family requirement on the NodePool. Each family must belong to one of karpenter_instance_categories, unless that list is empty."
+
+  validation {
+    condition     = length(distinct(var.karpenter_instance_families)) == length(var.karpenter_instance_families) && alltrue([for f in var.karpenter_instance_families : can(regex("^[a-z][a-z0-9-]{0,15}$", f))])
+    error_message = "karpenter_instance_families entries must be EC2 instance families such as \"c7g\" or \"m7i-flex\" (lowercase letters, digits and hyphens, starting with a letter), each at most once."
+  }
+}
+
+variable "karpenter_cpu_limit" {
+  type        = number
+  default     = 100
+  description = "The most vCPU the Karpenter NodePool may launch in total, from 1 to 1000. It is the only bound on the size of Karpenter's fleet: Karpenter launches EC2 outside OpenTofu, so plan-time cost guards do not see it."
+
+  validation {
+    condition     = var.karpenter_cpu_limit >= 1 && var.karpenter_cpu_limit <= 1000 && floor(var.karpenter_cpu_limit) == var.karpenter_cpu_limit
+    error_message = "karpenter_cpu_limit must be a whole number of vCPU from 1 to 1000."
+  }
+}
+
+variable "karpenter_node_labels" {
+  type        = map(string)
+  default     = {}
+  description = "Labels on every node Karpenter launches. Keys whose prefix ends in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io are refused, except node-restriction.kubernetes.io/."
+
+  validation {
+    condition = alltrue([for k, v in var.karpenter_node_labels :
+      length(split("/", k)[0]) <= 253 && alltrue([for l in split(".", split("/", k)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", k)) &&
+      length(v) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", v))
+    ])
+    error_message = "karpenter_node_labels keys must be Kubernetes label keys ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and values must be up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue([for k, v in var.karpenter_node_labels :
+      !strcontains(k, "/") || can(regex("(^|\\.)node-restriction\\.kubernetes\\.io$", split("/", k)[0])) || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", k)[0]))
+    ])
+    error_message = "karpenter_node_labels keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io (node-restriction.kubernetes.io/ is allowed). Kubernetes, Karpenter, the clouds and Alethia own those labels; the list is packages/core/nodekeys."
+  }
+}
+
+variable "karpenter_node_taints" {
+  type = list(object({
+    key    = string
+    value  = optional(string)
+    effect = string
+  }))
+  default     = []
+  description = "Taints on every node Karpenter launches, so only pods that tolerate them schedule there. effect is one of NoSchedule, PreferNoSchedule and NoExecute."
+
+  validation {
+    condition     = alltrue([for t in var.karpenter_node_taints : contains(["NoSchedule", "PreferNoSchedule", "NoExecute"], t.effect)]) && length(distinct([for t in var.karpenter_node_taints : "${t.key}:${t.effect}"])) == length(var.karpenter_node_taints)
+    error_message = "karpenter_node_taints effect must be one of NoSchedule, PreferNoSchedule and NoExecute, and each key/effect pair may appear only once."
+  }
+
+  validation {
+    condition = alltrue([for t in var.karpenter_node_taints :
+      length(split("/", t.key)[0]) <= 253 && alltrue([for l in split(".", split("/", t.key)[0]) : length(l) <= 63]) && can(regex("^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$", t.key)) &&
+      (t.value == null ? true : length(t.value) <= 63 && can(regex("^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$", t.value)))
+    ])
+    error_message = "karpenter_node_taints key must be a Kubernetes key ([prefix/]name: a DNS prefix of up to 253 characters, 63 per label, and a name of up to 63 characters) and value, when set, up to 63 letters, digits, '-', '_' or '.', starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition = alltrue([for t in var.karpenter_node_taints :
+      !strcontains(t.key, "/") || !can(regex("(kubernetes\\.io|k8s\\.io|karpenter\\.sh|karpenter\\.k8s\\.aws|amazonaws\\.com|cloud\\.google\\.com|gke\\.io|azure\\.com|hetzner\\.cloud|alethia\\.io)$", split("/", t.key)[0]))
+    ])
+    error_message = "karpenter_node_taints keys may not use a prefix ending in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io. Kubernetes, Karpenter, the clouds and Alethia set those taints themselves (alethia.io/arch marks arm64 capacity); the list is packages/core/nodekeys."
+  }
+}
+
+# The arm64 (Graviton) Karpenter NodePool (#5534), beside `default`. Null (the default) renders no
+# such pool. The runner renders it with kubernetes.io/arch In ["arm64"] and ALWAYS adds the taint
+# alethia.io/arch=arm64:NoSchedule itself, after it has validated the user's values: the images
+# Alethia builds (kaniko) and the Deployments it generates are single-arch and pin no arch, so arm64
+# capacity must never take a pod that did not ask for it. A workload opts in with a toleration for
+# that taint and a kubernetes.io/arch=arm64 nodeSelector, and needs a multi-arch (or arm64) image.
+# The pool shares the default pool's capacity types, instance categories, labels and taints; it has
+# its own instance families and its own CPU limit.
+variable "karpenter_arm64_nodepool" {
+  type = object({
+    instance_families = optional(list(string), [])
+    cpu_limit         = optional(number, 100)
+  })
+  default     = null
+  description = "An arm64 (Graviton) Karpenter NodePool beside the default one, or null for none. Its nodes carry the taint alethia.io/arch=arm64:NoSchedule, so only pods that tolerate it run there. instance_families (empty: any Graviton family in karpenter_instance_categories) and cpu_limit (1 to 1000 vCPU) are its own; capacity types, categories, labels and taints are the default pool's."
+
+  validation {
+    condition = var.karpenter_arm64_nodepool == null ? true : (
+      length(distinct(var.karpenter_arm64_nodepool.instance_families)) == length(var.karpenter_arm64_nodepool.instance_families) &&
+      alltrue([for f in var.karpenter_arm64_nodepool.instance_families : can(regex("^[a-z][a-z0-9-]{0,15}$", f)) && can(regex("^(a1([.]|$)|[a-z]+[0-9]+g)", f))])
+    )
+    error_message = "karpenter_arm64_nodepool.instance_families entries must be Graviton EC2 instance families such as \"m7g\", \"c7gn\" or \"t4g\" (a \"g\" right after the generation digit), each at most once."
+  }
+
+  validation {
+    condition     = var.karpenter_arm64_nodepool == null ? true : !contains(var.karpenter_arm64_nodepool.instance_families, "a1")
+    error_message = "karpenter_arm64_nodepool.instance_families may not list \"a1\": both Karpenter NodePools require instance generation 3 or later (karpenter.k8s.aws/instance-generation Gt 2), so a1 (Graviton 1) could never launch. An extra_node_pools entry can use an a1 instance type."
+  }
+
+  validation {
+    condition     = var.karpenter_arm64_nodepool == null ? true : var.karpenter_arm64_nodepool.cpu_limit >= 1 && var.karpenter_arm64_nodepool.cpu_limit <= 1000 && floor(var.karpenter_arm64_nodepool.cpu_limit) == var.karpenter_arm64_nodepool.cpu_limit
+    error_message = "karpenter_arm64_nodepool.cpu_limit must be a whole number of vCPU from 1 to 1000."
+  }
 }
 
 ################################################################################

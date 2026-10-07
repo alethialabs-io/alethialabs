@@ -68,7 +68,7 @@ func TestRenderKarpenterNodeClass_ValidYAMLAndFields(t *testing.T) {
 		SubnetIDs:       []string{"subnet-aaa", "subnet-bbb", "subnet-ccc"},
 		SecurityGroupID: "sg-0abc123",
 		Tags:            sortedTagPairs(tags),
-		CPULimit:        karpenterCPULimit,
+		NodePool:        defaultKarpenterNodePool(),
 	})
 	if err != nil {
 		t.Fatalf("render failed: %v", err)
@@ -176,8 +176,8 @@ func TestRenderKarpenterNodeClass_ValidYAMLAndFields(t *testing.T) {
 
 	// limits.cpu present; disruption consolidation policy set.
 	limits, _ := npSpec["limits"].(map[string]interface{})
-	if limits["cpu"] != karpenterCPULimit {
-		t.Errorf("limits.cpu = %v, want %q", limits["cpu"], karpenterCPULimit)
+	if limits["cpu"] != "100" {
+		t.Errorf("limits.cpu = %v, want \"100\"", limits["cpu"])
 	}
 	disruption, _ := npSpec["disruption"].(map[string]interface{})
 	if disruption["consolidationPolicy"] != "WhenEmptyOrUnderutilized" {
