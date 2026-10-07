@@ -79,3 +79,25 @@ token-based database login, so a database on either stays on the password path e
 on. See [Keyless database auth](/guides/design-project/keyless-database-auth) for how it works per
 cloud and its current rollout status.
 </Callout>
+
+## The extra database user (AWS)
+
+On AWS, Alethia creates a second database user beside the master user. Alethia generates its
+password and stores the user name, password and database name in AWS Secrets Manager. After the
+deploy, the database records the secret's ARN as `extra_secret_ref`. Read the credentials from that
+secret.
+
+You cannot set this user on the canvas or with `provider_config`. The template variable
+`rds_extra_credentials` holds the user name, the database name and the password in one value, and
+Alethia does not store a credential in a component's configuration. The **Advanced** section shows a
+note in its place. Because the three fields are one variable, the user name and database name are
+not settable either: every new database gets the template defaults, user `demouser` on database
+`demodb`. Read them from the same Secrets Manager secret as the password.
+
+<Callout type="warn">
+A project saved before this change can still hold an `rds_extra_credentials` value. Alethia keeps it
+and still applies it, and it never shows the value. To stop storing it, open the database's
+**Advanced** section and choose **Remove the stored value**. The next deploy then rewrites the
+secret with the template's default user name and database and a generated password. Update the
+services that read the old credentials.
+</Callout>

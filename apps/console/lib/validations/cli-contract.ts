@@ -20,6 +20,7 @@ import {
 } from "@/lib/db/schema";
 import {
 	cloudProvider,
+	environmentLifecycle,
 	kubeconfigMintShape,
 	kubeconfigMintTier,
 } from "@/lib/db/schema/enums";
@@ -450,6 +451,10 @@ export const environmentWire = z.object({
 	/** The Fabric this environment is placed on, BY NAME rather than id — the whole point is to
 	 *  show at a glance that several environments share one, and a uuid does not read as shared. */
 	fabric: z.string().nullable(),
+	/** `persistent` (the default) or `ephemeral`. Carried so `alethia export` can write it back —
+	 *  without it an exported ephemeral environment applied into a new project came back
+	 *  persistent (#5581). */
+	lifecycle: z.enum(environmentLifecycle.enumValues),
 });
 
 /** A project component (GET /api/cli/projects/:id/components, POST .../components/:kind).
@@ -465,6 +470,10 @@ export const componentWire = z.object({
 	status: z.string(),
 	cloud_identity_id: z.string().nullable(),
 	config: jsonObject,
+	/** The row's revision — its `updated_at` — or null when the table has none. `alethia plan` keeps
+	 *  the value it read and `alethia apply` sends it back as `If-Match`, so a write is refused (409)
+	 *  when the component changed on the server in between (#5551). */
+	updated_at: isoNullable,
 });
 
 /** Latest published CLI release (GET /api/releases/cli) — drives the update notice. */
@@ -705,6 +714,26 @@ export const cliComponentsResponse = z.object({
 });
 /** POST /api/cli/projects/:id/components/:kind result. */
 export const cliComponentResponse = z.object({ component: componentWire });
+/** What a `component_busy` refusal waited on: a BUILD, DEPLOY or DESTROY job (its id, type and
+ * status), or a promotion into the environment (`type` PROMOTION, the promotion's id and status). */
+export const componentRunWire = z.object({
+	id: z.string(),
+	type: z.string(),
+	status: z.string(),
+});
+/** The 409 body of a component write that was REFUSED rather than failed (#5551): `component_busy`
+ * — a run holds the environment: a BUILD, DEPLOY or DESTROY job, or a promotion into it (`run`;
+ * null when it finished between the refusal and its explanation); `component_changed` — the `If-Match` revision is not the
+ * server's any more. `status` is the component's own status. `component` is the server's copy now
+ * (null when it no longer exists), so the CLI can name the fields that changed against the copy it
+ * read. */
+export const cliComponentConflictResponse = z.object({
+	error: z.string(),
+	code: z.enum(["component_busy", "component_changed"]),
+	status: z.string().nullable(),
+	component: componentWire.nullable(),
+	run: componentRunWire.nullable(),
+});
 
 /** A single drifted resource (mirrors DriftDetail). */
 export const driftDetailWire = z.object({
@@ -790,12 +819,40 @@ export const addonWire = z.object({
 	health: z.string().nullable(),
 	sync: z.string().nullable(),
 	last_synced_at: isoNullable,
+	/** The stored NON-secret settings (#5528). Secret settings are omitted, never masked. */
+	settings: z.record(z.string(), z.unknown()),
+	/** The stored Advanced Helm-values override, or null when there is none. */
+	values_yaml: z.string().nullable(),
+	/** Names of the add-on's secret settings — names only, so `plan` can refuse one in a file. */
+	secret_keys: z.array(z.string()),
 });
 /** GET /api/cli/projects/:id/addons result (installed catalog add-ons for one environment). */
 export const cliAddonsResponse = z.object({
 	environment: z.string(),
 	addons: z.array(addonWire),
 	page: pageInfoSchema,
+});
+
+/** One catalog add-on as `GET /api/cli/schema/addons` publishes it (#5528). */
+export const addonCatalogEntryWire = z.object({
+	id: z.string(),
+	/** The catalog's default chart version. */
+	version: z.string(),
+	/** Names of the add-on's secret settings. */
+	secret_keys: z.array(z.string()),
+	/** What each non-secret setting is when nothing is stored for it. */
+	defaults: z.record(z.string(), z.unknown()),
+	/** Every setting key the add-on declares; null when they cannot be read ("could not check"). */
+	settings: z.array(z.string()).nullable(),
+});
+/** GET /api/cli/schema/addons — the add-on catalog the CLI checks `alethia.yaml` against. */
+export const cliAddonCatalogResponse = z.object({
+	addons: z.array(addonCatalogEntryWire),
+	chart_version: z.object({
+		pattern: z.string(),
+		max_length: z.number().int(),
+		refusal: z.string(),
+	}),
 });
 
 /** One attached BYO Helm chart in an environment (scan_report omitted — status only). */
@@ -1215,11 +1272,13 @@ export const cliContract = {
 	DestroyTreeResponse: cliDestroyTreeResponse,
 	ComponentsResponse: cliComponentsResponse,
 	ComponentResponse: cliComponentResponse,
+	ComponentConflictResponse: cliComponentConflictResponse,
 	DriftResponse: cliDriftResponse,
 	CostResponse: cliCostResponse,
 	ProtectionResponse: cliProtectionResponse,
 	ProbesResponse: cliProbesResponse,
 	AddonsResponse: cliAddonsResponse,
+	AddonCatalogResponse: cliAddonCatalogResponse,
 	ByoChartsResponse: cliByoChartsResponse,
 	IacSourceResponse: cliIacSourceResponse,
 	PromotionsResponse: cliPromotionsResponse,

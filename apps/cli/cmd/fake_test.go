@@ -58,6 +58,7 @@ type fakeClient struct {
 	classDims      []api.ClassificationDimension
 	classAssigns   []api.ClassificationAssignment
 	configExport   *api.ConfigurationExport
+	exportEnv      string // the env the last ExportConfiguration asked for
 	repos          []api.Repository
 	providerStat   *api.ProviderStatus
 	verifyResult   *api.ConnectIdentityResponse
@@ -226,7 +227,8 @@ func (f *fakeClient) GetConfigurations() ([]types.ConfigurationSummary, error) {
 	return f.configs, f.err
 }
 
-func (f *fakeClient) ExportConfiguration(projectName, format string) (*api.ConfigurationExport, error) {
+func (f *fakeClient) ExportConfiguration(projectName, format, env string) (*api.ConfigurationExport, error) {
+	f.exportEnv = env
 	return f.configExport, f.err
 }
 

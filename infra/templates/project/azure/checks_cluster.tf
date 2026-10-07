@@ -57,16 +57,21 @@ check "aks_spot_pool_scales" {
 # ── CLUSTER-006 · Spot settings with no Spot pool reach nothing ─────────────────────────────────
 # A price ceiling or an eviction policy configured while aks_spot_enabled is false is not an error
 # anywhere — tofu accepts it, no resource reads it, and the customer is left believing they have
-# capped, interruptible capacity. Silence is the failure here, so the plan stops instead.
+# capped, interruptible capacity. Silence is the failure here, so the plan stops instead. A named
+# Spot pool in extra_node_pools (#5535) also reads the price ceiling and the eviction policy, so
+# those two reach something when one exists; the Spot pool's sizes still do not.
+locals {
+  aks_named_spot_pool = anytrue([for p in var.extra_node_pools : p.capacity_type == "spot"])
+}
+
 check "aks_spot_settings_have_a_pool" {
   assert {
     condition = var.aks_spot_enabled || (
-      var.aks_spot_max_price == -1 &&
-      var.aks_spot_eviction_policy == "Delete" &&
+      (local.aks_named_spot_pool || (var.aks_spot_max_price == -1 && var.aks_spot_eviction_policy == "Delete")) &&
       var.aks_spot_node_min_size == 0 &&
       var.aks_spot_node_max_size == 3
     )
-    error_message = "CLUSTER-006: Spot settings were configured with aks_spot_enabled = false — no node pool reads them; terraform_data.aks_spot_guard blocks apply."
+    error_message = "CLUSTER-006: Spot settings were configured that no node pool reads (aks_spot_enabled = false, and no extra_node_pools pool is Spot for the price and eviction policy); terraform_data.aks_spot_guard blocks apply."
   }
 }
 
@@ -81,12 +86,11 @@ resource "terraform_data" "aks_spot_guard" {
 
     precondition {
       condition = var.aks_spot_enabled || (
-        var.aks_spot_max_price == -1 &&
-        var.aks_spot_eviction_policy == "Delete" &&
+        (local.aks_named_spot_pool || (var.aks_spot_max_price == -1 && var.aks_spot_eviction_policy == "Delete")) &&
         var.aks_spot_node_min_size == 0 &&
         var.aks_spot_node_max_size == 3
       )
-      error_message = "CLUSTER-006: aks_spot_max_price / aks_spot_eviction_policy / aks_spot_node_min_size / aks_spot_node_max_size are only read when aks_spot_enabled = true. Apply blocked fail-closed — otherwise the settings are accepted, no node pool exists to honor them, and the cluster silently has no interruptible capacity at all."
+      error_message = "CLUSTER-006: aks_spot_node_min_size / aks_spot_node_max_size are only read when aks_spot_enabled = true, and aks_spot_max_price / aks_spot_eviction_policy only when aks_spot_enabled = true or an extra_node_pools pool has capacity_type spot. Apply blocked fail-closed — otherwise the settings are accepted, no node pool exists to honor them, and the cluster silently has no interruptible capacity at all."
     }
   }
 }

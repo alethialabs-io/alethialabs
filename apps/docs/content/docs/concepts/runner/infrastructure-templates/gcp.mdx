@@ -11,17 +11,19 @@ The GCP template set (`infra/templates/project/gcp/`) provides cloud-native equi
 
 | File | Resources Created |
 |------|------------------|
-| `main.tf` | GKE cluster with Workload Identity, node pool |
-| `vpn.tf` | VPC network, subnets, Cloud NAT, Cloud Router |
-| `cloudsql.tf` | Cloud SQL instances (PostgreSQL/MySQL), HA configuration |
-| `memorystore.tf` | Memorystore Redis instance |
+| `gke.tf` | GKE cluster with Workload Identity and its default node pool, or an Autopilot cluster |
+| `nodepools.tf` | Maps `node_labels`, `node_taints` and `extra_node_pools` onto the GKE node pools |
+| `networking.tf` | VPC network, subnets, Cloud NAT, Cloud Router, firewall rules, private services access |
+| `cloud-sql.tf` | Cloud SQL instance (PostgreSQL or MySQL) with backups and optional regional high availability |
+| `memorystore.tf` | Memorystore for Redis instance |
+| `memorystore-valkey.tf` | Memorystore for Valkey instance |
 | `firestore.tf` | Firestore database, indexes |
-| `artifact-registry.tf` | Artifact Registry repository |
-| `cloud-storage.tf` | Cloud Storage buckets |
-| `cloud-dns.tf` | Cloud DNS managed zones, record sets |
+| `artifact-registry.tf` | Artifact Registry repositories |
+| `cloud-storage.tf` | Cloud Storage buckets, and the Cloud KMS key for buckets that use your own key |
+| `cloud-dns.tf` | Cloud DNS managed zone |
 | `pubsub.tf` | Pub/Sub topics and subscriptions |
 | `secret-manager.tf` | Secret Manager secrets |
-| `cloud-armor.tf` | Cloud Armor security policies (WAF) |
+| `cloud-armor.tf` | Cloud Armor security policy (WAF) |
 
 ## Modules
 
@@ -29,13 +31,14 @@ The GCP template set (`infra/templates/project/gcp/`) provides cloud-native equi
 |--------|---------|
 | `modules/gke/` | GKE cluster with Workload Identity, Autopilot option |
 | `modules/cloud-sql/` | Cloud SQL instance with HA, backups |
-| `modules/memorystore/` | Memorystore Redis |
+| `modules/memorystore/` | Memorystore for Redis |
+| `modules/memorystore-valkey/` | Memorystore for Valkey |
 | `modules/firestore/` | Firestore database |
 | `modules/artifact-registry/` | Container image registry |
 | `modules/cloud-storage/` | GCS buckets |
-| `modules/cloud-armor/` | WAF policies |
-| `modules/cloud-dns/` | DNS zones and records |
-| `modules/pubsub/` | Pub/Sub topics |
+| `modules/cloud-armor/` | WAF policy |
+| `modules/cloud-dns/` | DNS managed zone |
+| `modules/pubsub/` | Pub/Sub topics and subscriptions |
 | `modules/secret-manager/` | Secrets |
 | `modules/vpc-network/` | VPC with subnets and Cloud NAT |
 
@@ -46,3 +49,160 @@ The GCP template set (`infra/templates/project/gcp/`) provides cloud-native equi
 **GKE Autopilot** — Fully managed node provisioning. Google handles node scaling, patching, and resource optimization. Enabled via the `enable_autopilot` provider config toggle.
 
 **Cloud NAT** — Managed NAT service for outbound internet access from private subnets. Uses Cloud Router for BGP routing.
+
+## Operational settings
+
+The settings below are off by default. A project that sets none of them gets the same infrastructure as before. Each one is a template variable that you set on the component it belongs to. In the console, open the component on the canvas and set the value on its template settings card. The examples show the component's `provider_config` that the card writes.
+
+### Node pools
+
+GKE runs your workloads on node pools. The template always makes one default pool, sized by
+`gke_node_min_size`, `gke_node_max_size` and `gke_node_desired_size`. Set three keys on the
+**cluster** to label your nodes, taint them, and add pools of other machine types, Spot pools
+included. They are the same keys on every cloud. The
+[cluster guide](/guides/design-project/cluster#node-labels-taints-and-extra-pools) describes every
+field and every rule.
+
+This example labels every node with its team and adds a Spot batch pool that scales to zero. Only
+pods that tolerate the `dedicated=batch` taint run there:
+
+```json
+{
+  "node_labels": { "team": "payments" },
+  "node_taints": [{ "key": "dedicated", "value": "batch", "effect": "NoSchedule" }],
+  "extra_node_pools": [
+    {
+      "name": "batch",
+      "instance_type": "e2-standard-8",
+      "capacity_type": "spot",
+      "min_size": 0,
+      "max_size": 6
+    }
+  ]
+}
+```
+
+A pod for that pool selects it by the label `alethia.io/pool=batch` and tolerates the taint:
+
+```yaml
+spec:
+  nodeSelector:
+    alethia.io/pool: batch
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: batch
+      effect: NoSchedule
+```
+
+On GKE, the template builds them like this:
+
+- **`node_labels`** go on every pool: the default pool and every extra pool. They sit beside the
+  labels the template already puts on every node (`environment`, `service`, `managed-by` and the
+  project's classification tags). The plan refuses a key with one of those names.
+- **`node_taints`** go on the extra pools only. The default pool runs Alethia's add-ons.
+- **Each entry in `extra_node_pools`** is one GKE node pool, named `<cluster name>-<name>`. A name
+  that would pass GKE's 40-character limit is shortened with a hash, the same way as the default
+  pool's name. The pool is keyed by its name, so removing an entry from the middle of the list
+  removes that pool only.
+- **Size.** The cluster autoscaler keeps the whole pool between `min_size` and `max_size`, across
+  all its zones. GKE creates a pool's first nodes per zone. On a zonal cluster (a `region` such as
+  `europe-west3-a`) the pool starts with `desired_size` nodes, or `min_size` when you leave it out.
+  On a regional cluster the pool is in three zones and starts with the same number in each, so it
+  starts with a multiple of three: `desired_size` rounded up, and lowered if that passes
+  `max_size`. It never starts below `min_size`, because the autoscaler does not add nodes only to
+  reach `min_size`. If no multiple of three lies between `min_size` and `max_size` (for example
+  `min_size: 4` and `max_size: 5`), the pool starts on the multiple above `min_size`, up to two nodes
+  over `max_size`, and the autoscaler can then remove the extra nodes. After the pool exists, the
+  autoscaler owns the count, so a later change to `desired_size` does nothing.
+- **Taints** use GKE's effect names: `NoSchedule` becomes `NO_SCHEDULE`, `PreferNoSchedule`
+  becomes `PREFER_NO_SCHEDULE`, and `NoExecute` becomes `NO_EXECUTE`.
+- **Spot.** A pool with `capacity_type: spot` runs on Spot VMs. GKE labels its nodes
+  `cloud.google.com/gke-spot=true`, and Google can reclaim them at any time.
+- **arm64.** An arm64 pool needs a machine type from one of these Arm families: `t2a` (for example
+  `t2a-standard-4`), `c4a`, `n4a` and `a4x` (A4X and A4X Max, for example `a4x-highgpu-4g`). The
+  template treats a machine type from any other family as amd64. The plan refuses an arm64 pool on
+  an amd64 machine type, and an amd64 pool on an Arm one. Alethia taints every arm64 pool with
+  `alethia.io/arch=arm64:NoSchedule`, and GKE adds its own `kubernetes.io/arch=arm64:NoSchedule`
+  to every Arm node. A pod that runs on an arm64 pool tolerates both.
+- **Autopilot.** An Autopilot cluster (`gke_enable_autopilot`) has no node pools for you to manage,
+  so the plan refuses all three keys there.
+- **Isolation.** An extra pool uses the default pool's node service account, the GKE metadata server
+  (`workload_metadata_config` mode `GKE_METADATA`), shielded nodes with secure boot and integrity
+  monitoring, the same boot disk settings and disk encryption, and the same node management. A pool
+  cannot cost less because it is less isolated.
+
+When you set none of the three keys, the plan is the same as before: no pool changes.
+
+<Callout type="warn">
+Some changes replace a pool, and with it the pool's nodes and the pods on them. Changing a pool's
+`name` or `capacity_type` replaces it. Changing its `instance_type` keeps the pool, and GKE
+recreates its nodes on the new machine type. Changing `node_labels`, `node_taints` or a pool's
+`labels`, `taints`, `min_size` or `max_size` updates the pool in place. A taint that you add does
+not evict the pods already on the node, unless its effect is `NoExecute`.
+</Callout>
+
+### Cloud SQL Query Insights
+
+Set `cloud_sql_query_insights_enabled` on the **database** to turn on Query Insights. Query Insights shows query latency, load and execution plans for the instance in the Cloud SQL console.
+
+```json
+{ "cloud_sql_query_insights_enabled": true }
+```
+
+Two more settings add detail to Query Insights. Both are off by default:
+
+- `cloud_sql_query_insights_record_application_tags` records the application tags that your queries carry (sqlcommenter).
+- `cloud_sql_query_insights_record_client_address` records the IP address of the client that sent each query.
+
+```json
+{
+  "cloud_sql_query_insights_enabled": true,
+  "cloud_sql_query_insights_record_application_tags": true,
+  "cloud_sql_query_insights_record_client_address": true
+}
+```
+
+The plan fails if you set either of these two without `cloud_sql_query_insights_enabled` set to `true`.
+
+To turn Query Insights off, set `cloud_sql_query_insights_enabled` to `false`:
+
+```json
+{ "cloud_sql_query_insights_enabled": false }
+```
+
+Removing the setting does not turn Query Insights off. When `cloud_sql_query_insights_enabled` is not set, the template sends no Query Insights setting, and the instance keeps whatever Query Insights setting it already has.
+
+Cloud SQL already sends its database logs to Cloud Logging, so log export needs no setting. To change what the database logs, set log flags with `cloud_sql_database_flags`.
+
+### Bucket encryption with your own key
+
+Set `cmek_enabled` on a **bucket** to encrypt it with a customer-managed Cloud KMS key.
+
+```json
+{ "cmek_enabled": true }
+```
+
+The template creates one key, `gcs-buckets`, in the project's KMS key ring. Every bucket that sets `cmek_enabled` uses that key. Buckets that do not set it keep Google's default encryption. The template gives the Cloud Storage service agent the `roles/cloudkms.cryptoKeyEncrypterDecrypter` role on that one key only. It creates no project-level IAM binding.
+
+The key ring is in the project's region, and Cloud Storage requires a bucket and its key in the same location. So a bucket that sets `cmek_enabled` must stay in the project's region. The plan fails if the bucket's `location` is a different region or a multi-region such as `US`.
+
+The project must have the Cloud KMS API (`cloudkms.googleapis.com`) enabled. If it does not, the plan fails and tells you how to enable it.
+
+<Callout type="warn">
+Disabling or destroying the key makes the bucket unreadable. Cloud Storage needs the key to read every object written under it, so if you disable the key, or a key version is destroyed, those objects cannot be read.
+
+If you turn `cmek_enabled` off on every bucket, the template removes the key, and Cloud KMS schedules every version of it for destruction after 30 days. You can restore a version until that period ends. After it ends, objects written under the key cannot be read again. Before you turn the setting off, rewrite those objects with Google's default encryption.
+
+When you turn `cmek_enabled` on for a bucket that already exists, objects that are already in the bucket keep their current encryption. Only objects written after the change use the key.
+</Callout>
+
+<Callout type="warn">
+After the template stops using your own key, you cannot turn `cmek_enabled` on again in the same project. This happens when you turn `cmek_enabled` off on every bucket, when you remove the last bucket that sets it, or when you set `create_cloud_storage` to `false`. Cloud KMS never deletes a key or a key ring. It only destroys key versions. The key named `gcs-buckets` therefore stays in the project after the template removes it. When you turn `cmek_enabled` on again, the template tries to create a key with the same name, and Cloud KMS refuses it with `409 AlreadyExists`. If the project does not use GKE Secrets encryption, the template also removes the key ring, and creating the key ring again fails in the same way.
+
+To keep the option of using your own key, keep Cloud Storage on and leave `cmek_enabled` on for at least one bucket.
+</Callout>
+
+### Cache logging
+
+The template has no cache logging setting. The Google provider (`hashicorp/google` 6.50.0) exposes no logging argument for Memorystore: not on Memorystore for Redis (`google_redis_instance`) and not on Memorystore for Valkey (`google_memorystore_instance`). The template therefore has no variable for it.

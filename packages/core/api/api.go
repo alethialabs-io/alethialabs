@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -617,6 +618,36 @@ func (c *Client) GetConfigurations() ([]types.ConfigurationSummary, error) {
 	return successResp.Configurations, nil
 }
 
+// ProjectSettings is the project-level half of `alethia.yaml` as the by-project-name read returns it:
+// the region, the IaC version and the cloud identity the project provisions with. It decodes the
+// same response GetConfiguration does, keeping only these keys — `types.Configuration` predates the
+// identity id on that wire and does not model it.
+type ProjectSettings struct {
+	ID          string `json:"id"`
+	ProjectName string `json:"project_name"`
+	Region      string `json:"region"`
+	IacVersion  string `json:"iac_version"`
+	// CloudIdentityID is the cloud account the project provisions with; nil when none is linked.
+	CloudIdentityID *string `json:"cloud_identity_id"`
+	// CloudProvider is that account's cloud; nil with it.
+	CloudProvider *string `json:"cloud_provider"`
+}
+
+// GetProjectSettings reads a project's region, IaC version and cloud identity by name (#5531).
+func (c *Client) GetProjectSettings(projectName string) (*ProjectSettings, error) {
+	var resp struct {
+		Configuration *ProjectSettings `json:"configuration"`
+	}
+	endpoint := fmt.Sprintf("%s/cli/configurations/by-project-name/%s", c.baseURL, url.PathEscape(projectName))
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to read project %s: %w", projectName, err)
+	}
+	if resp.Configuration == nil {
+		return nil, fmt.Errorf("failed to read project %s: the response carried no configuration", projectName)
+	}
+	return resp.Configuration, nil
+}
+
 func (c *Client) GetConfiguration(projectName string) (*types.Configuration, error) {
 	var successResp struct {
 		Configuration *types.Configuration `json:"configuration"`
@@ -628,7 +659,11 @@ func (c *Client) GetConfiguration(projectName string) (*types.Configuration, err
 	return successResp.Configuration, nil
 }
 
-func (c *Client) ExportConfiguration(projectName, format string) (*ConfigurationExport, error) {
+// ExportConfiguration fetches one project's design document. env names the environment to export
+// (by name, stage or id, as the route resolves it); empty leaves the parameter out, so the server
+// exports the default environment exactly as it did before `--env` existed. An environment the
+// project does not have is the server's 404, carried through with its message.
+func (c *Client) ExportConfiguration(projectName, format, env string) (*ConfigurationExport, error) {
 	// json, not legacy-yaml. The old default named a format with NO producer anywhere — the route it
 	// asked for did not exist either, so this call 404'd for its whole life.
 	if format == "" {
@@ -638,6 +673,11 @@ func (c *Client) ExportConfiguration(projectName, format string) (*Configuration
 		"%s/cli/configurations/by-project-name/%s/export?format=%s",
 		c.baseURL, url.PathEscape(projectName), url.QueryEscape(format),
 	)
+	if env != "" {
+		// The route has resolved `?env=` all along (#5531); the client was the half that never sent it,
+		// so `config export --env staging` exported the default environment without saying so.
+		endpoint += "&env=" + url.QueryEscape(env)
+	}
 	var export ConfigurationExport
 	if err := c.doGet(endpoint, &export); err != nil {
 		return nil, fmt.Errorf("failed to export configuration: %w", err)
@@ -1832,6 +1872,8 @@ type Environment struct {
 	PlacementMode string  `json:"placement_mode"`
 	Namespace     *string `json:"namespace"`
 	Fabric        *string `json:"fabric"`
+	// Lifecycle is `persistent` (the default) or `ephemeral` (#5581).
+	Lifecycle string `json:"lifecycle"`
 }
 
 // Component is one project component, uniform across every kind. Config holds the
@@ -1844,6 +1886,10 @@ type Component struct {
 	Status          string                 `json:"status"`
 	CloudIdentityID *string                `json:"cloud_identity_id"`
 	Config          map[string]interface{} `json:"config"`
+	// UpdatedAt is the component's revision, nil when its table has none. `plan` keeps it and
+	// `apply` sends it back as If-Match, so a component changed on the server in between is refused
+	// rather than overwritten (#5551).
+	UpdatedAt *string `json:"updated_at"`
 }
 
 // CreateProjectParams is the payload for CreateProject. CloudIdentityID/Stage are
@@ -2311,6 +2357,13 @@ type Addon struct {
 	Health        *string `json:"health"`
 	Sync          *string `json:"sync"`
 	LastSyncedAt  *string `json:"last_synced_at"`
+	// Settings are the stored NON-secret settings (#5528). A secret setting is absent from this map
+	// — the server removes it rather than masking it — and named in SecretKeys instead.
+	Settings map[string]any `json:"settings"`
+	// ValuesYAML is the stored Advanced Helm-values override; nil when there is none.
+	ValuesYAML *string `json:"values_yaml"`
+	// SecretKeys are the names of the add-on's secret settings. Names only, never values.
+	SecretKeys []string `json:"secret_keys"`
 }
 
 // ProjectAddons is the installed catalog add-ons for one environment.
@@ -2367,6 +2420,75 @@ func (c *Client) getProjectAddonsPage(project, env, cursor string) (*ProjectAddo
 	return &page, nil
 }
 
+// AddonCatalogEntry is one catalog add-on as `GET /api/cli/schema/addons` publishes it (#5528).
+type AddonCatalogEntry struct {
+	ID string `json:"id"`
+	// Version is the catalog's default chart version — what applies when no pin is stored.
+	Version string `json:"version"`
+	// SecretKeys are the names of the add-on's secret settings.
+	SecretKeys []string `json:"secret_keys"`
+	// Defaults are what each non-secret setting is when nothing is stored for it — the value a
+	// setting reset with `key: null` lands on.
+	Defaults map[string]any `json:"defaults"`
+	// Settings are every setting key the add-on declares, secret ones included. Nil when the server
+	// could not read them — "could not check", so no key is refused for being unknown.
+	Settings []string `json:"settings"`
+}
+
+// ChartVersionRule is the server's one definition of a valid chart-version pin, published so the
+// CLI compiles it rather than holding a copy (apps/console/lib/addons/chart-version.ts).
+type ChartVersionRule struct {
+	Pattern   string `json:"pattern"`
+	MaxLength int    `json:"max_length"`
+	Refusal   string `json:"refusal"`
+}
+
+// AddonCatalogDocument is the add-on catalog the CLI checks `alethia.yaml` against.
+type AddonCatalogDocument struct {
+	Addons       []AddonCatalogEntry `json:"addons"`
+	ChartVersion ChartVersionRule    `json:"chart_version"`
+}
+
+// Addon returns one catalog entry by id.
+func (d *AddonCatalogDocument) Addon(id string) (AddonCatalogEntry, bool) {
+	if d == nil {
+		return AddonCatalogEntry{}, false
+	}
+	for _, a := range d.Addons {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return AddonCatalogEntry{}, false
+}
+
+// IDs is every catalog add-on id, sorted.
+func (d *AddonCatalogDocument) IDs() []string {
+	if d == nil {
+		return nil
+	}
+	out := make([]string, 0, len(d.Addons))
+	for _, a := range d.Addons {
+		out = append(out, a.ID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// GetAddonCatalog fetches the published add-on catalog. A catalog with zero add-ons is refused, for
+// the reason GetComponentSchema refuses zero kinds: cached, it would reject every add-on the server
+// accepts.
+func (c *Client) GetAddonCatalog() (*AddonCatalogDocument, error) {
+	var doc AddonCatalogDocument
+	if err := c.doGet(fmt.Sprintf("%s/cli/schema/addons", c.baseURL), &doc); err != nil {
+		return nil, fmt.Errorf("failed to fetch the add-on catalog: %w", err)
+	}
+	if len(doc.Addons) == 0 {
+		return nil, fmt.Errorf("the add-on catalog published zero add-ons — refusing a document that would reject every add-on")
+	}
+	return &doc, nil
+}
+
 // EnableAddonParams is the payload for EnableAddon. Values is the add-on's own knob map, validated
 // server-side by that add-on's configSchema — the definition that owns them — rather than by a
 // second schema in the CLI that would drift from the catalog.
@@ -2375,13 +2497,19 @@ func (c *Client) getProjectAddonsPage(project, env, cursor string) (*ProjectAddo
 // field out of the body (the stored pin is kept), a pointer to "" sends null (the pin is cleared and
 // the catalog default applies again), and anything else is sent as the pin — validated server-side
 // by the one definition of a chart version (apps/console/lib/addons/chart-version.ts).
+//
+// ValuesYAML is the Advanced raw Helm-values override and follows the same three states (#5545): nil
+// leaves it out (the stored override is kept), a pointer to "" sends null (the override is removed),
+// and anything else replaces the stored override whole. Values is merged key by key over the stored
+// knobs server-side; a key whose value is nil is sent as JSON null, which resets that knob to the
+// add-on's default.
 type EnableAddonParams struct {
 	Project    string
 	Env        string
 	AddonID    string
 	Mode       string
 	Values     map[string]interface{}
-	ValuesYAML string
+	ValuesYAML *string
 	Version    *string
 }
 
@@ -2396,8 +2524,12 @@ func (c *Client) EnableAddon(p EnableAddonParams) error {
 	if len(p.Values) > 0 {
 		payload["values"] = p.Values
 	}
-	if p.ValuesYAML != "" {
-		payload["values_yaml"] = p.ValuesYAML
+	if p.ValuesYAML != nil {
+		if *p.ValuesYAML == "" {
+			payload["values_yaml"] = nil
+		} else {
+			payload["values_yaml"] = *p.ValuesYAML
+		}
 	}
 	if p.Version != nil {
 		if *p.Version == "" {

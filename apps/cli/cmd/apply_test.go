@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -166,7 +167,7 @@ environments:
 	if strings.Contains(out, "+ project") {
 		t.Errorf("an existing project was planned for creation:\n%s", out)
 	}
-	for _, want := range []string{"= environment  ~ cluster", "+ environment  + repositories", "staging is on the server and not in the file", "0 projects to create · 1 environment · 2 components"} {
+	for _, want := range []string{"= environment  ~ cluster", "+ environment  + repositories", "staging is on the server and not in the file", "~ cluster  node_max_size: (unset) → 4", "0 projects to create · 1 environment · 1 component · 1 component to update"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
@@ -189,6 +190,67 @@ func TestApply_PlanRefusesWhatItCannotReconcile(t *testing.T) {
 	}
 	if len(s.posts) != 0 {
 		t.Errorf("a refused plan wrote to the control plane: %+v", s.posts)
+	}
+}
+
+func TestApply_ALifecycleChangeOnAnExistingEnvironmentIsRefused(t *testing.T) {
+	// #5590: the server sets `lifecycle` only when it creates an environment and has no route that
+	// changes it afterwards, so a file that flips it on an existing environment is a difference
+	// plan must SHOW and apply must REFUSE — before #5590 plan printed `=` and apply ignored it.
+	s := &projServer{envs: []map[string]any{
+		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "lifecycle": "persistent", "status": "ACTIVE", "is_default": true},
+		{"id": "e2", "name": "preview", "stage": "development", "placement_mode": "namespace", "lifecycle": "ephemeral", "status": "ACTIVE"},
+	}}
+	// production: persistent → ephemeral, stated. preview: ephemeral → persistent, by OMITTING the
+	// key — an omitted lifecycle means the default, which is what apply would create.
+	flipped := "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n    lifecycle: ephemeral\n  - name: preview\n    stage: development\n"
+	h := applyEnv(t, s)
+	read := projCaptureStdout(t)
+	if !h.run("plan", "--file", applyWriteManifest(t, flipped), "--no-input") {
+		t.Error("a plan that changes an existing environment's lifecycle must be refused")
+	}
+	out := read()
+	for _, want := range []string{
+		"the file says lifecycle ephemeral, the server has persistent",
+		"the file says lifecycle persistent, the server has ephemeral",
+		"set only when an environment is created",
+		// production: the server holds the default, so both spellings of keeping it are named.
+		"remove `lifecycle` or set it to `lifecycle: persistent`",
+		// preview: the server holds ephemeral, so the one spelling is.
+		"To keep this environment, set it to `lifecycle: ephemeral`",
+		// A new environment does not replace the old one, and is not placed like it by default.
+		"this environment keeps running until it is destroyed",
+		"with `namespace` placement unless the file sets `placement`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the plan does not show %q:\n%s", want, out)
+		}
+	}
+	h = applyEnv(t, s)
+	if !h.run("apply", "--file", applyWriteManifest(t, flipped), "--yes", "--no-input") {
+		t.Error("apply must refuse a lifecycle change it cannot make")
+	}
+	if len(s.posts) != 0 {
+		t.Errorf("a refused apply wrote: %+v", s.posts)
+	}
+
+	// The same lifecycle, stated or left to the default, is no difference.
+	same := "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n  - name: preview\n    stage: development\n    lifecycle: ephemeral\n"
+	h = applyEnv(t, s)
+	read = projCaptureStdout(t)
+	if h.run("plan", "--file", applyWriteManifest(t, same), "--no-input") {
+		t.Errorf("a matching lifecycle was refused:\n%s", read())
+	} else if out := read(); strings.Contains(out, "lifecycle") {
+		t.Errorf("a matching lifecycle was reported as a difference:\n%s", out)
+	}
+
+	// A server that does not report a lifecycle (before #5581) is not compared against.
+	old := &projServer{envs: []map[string]any{
+		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
+	}}
+	h = applyEnv(t, old)
+	if h.run("plan", "--file", applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: production\n    lifecycle: ephemeral\n"), "--no-input") {
+		t.Error("a server that sends no lifecycle cannot disagree with the file")
 	}
 }
 
@@ -469,7 +531,7 @@ func TestApply_ReconcilesAnExistingProjectByAddingWhatIsMissing(t *testing.T) {
 		},
 		comps: []map[string]any{
 			{"id": "c0", "kind": "cluster", "name": "cluster", "status": "ACTIVE", "config": map[string]any{}},
-			{"id": "c1", "kind": "databases", "name": "orders", "status": "ACTIVE", "config": map[string]any{}},
+			{"id": "c1", "kind": "databases", "name": "orders", "status": "ACTIVE", "config": map[string]any{"engine": "postgres"}},
 		},
 	}
 	h := applyEnv(t, s)
@@ -495,22 +557,31 @@ func TestApply_ReconcilesAnExistingProjectByAddingWhatIsMissing(t *testing.T) {
 	}}
 	h2 := applyEnv(t, s2)
 	read2 := projCaptureStdout(t)
-	// The fake never lists dev-1 after the add, so the deploy step refuses — which is itself an
-	// arm worth pinning: a declared environment the server does not list is fatal, not skipped.
-	if !h2.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input") {
-		t.Error("an environment the server does not list after apply must be fatal")
+	// The fake never LISTS dev-1 after the add, but the add's own response carries its id (e9) — and
+	// that id, not the name, is what dev-1's components and deploy are addressed by (#5583). A name
+	// is resolved by the server as name OR stage, so it could land in another environment. (The
+	// arm where no id can be found at all is TestExecuteApply_AnEnvironmentWithNoIdIsRefusedBeforeAnyWrite.)
+	if h2.run("apply", "--file", path, "--yes", "--runner", "primary", "--no-wait", "--no-input") {
+		t.Error("an environment whose add returned its id must apply")
 	}
 	out := read2()
 	if !strings.Contains(out, "created environment dev-1") {
 		t.Errorf("the add-environment arm did not run:\n%s", out)
 	}
 	var posts []string
+	var deployed []any
 	for _, p := range s2.posts {
 		posts = append(posts, p.Method+" "+p.Path)
+		if p.Path == "/api/jobs" {
+			deployed = append(deployed, p.Body["environment_id"])
+		}
 	}
-	// production deploys first, in file order, and dev-1's refusal comes after it.
-	if strings.Join(posts, " ") != "POST /api/cli/projects/p1/environments POST /api/cli/projects/p1/components/databases POST /api/cli/projects/p1/components/databases POST /api/jobs" {
+	// production deploys first, in file order, then dev-1 by the id its add returned.
+	if strings.Join(posts, " ") != "POST /api/cli/projects/p1/environments POST /api/cli/projects/p1/components/databases POST /api/cli/projects/p1/components/databases POST /api/jobs POST /api/jobs" {
 		t.Errorf("requests: %v", posts)
+	}
+	if !reflect.DeepEqual(deployed, []any{"e1", "e9"}) {
+		t.Errorf("deployed %v, want [e1 e9]", deployed)
 	}
 
 	// And the POST itself failing is reported by environment.
@@ -718,16 +789,17 @@ func TestApply_RefusalsThroughTheApplyCommand(t *testing.T) {
 }
 
 func TestApply_PlanJSONOfARefusalStillPrintsTheTypedPlan(t *testing.T) {
-	// `--output json` on plan renders the plan and returns: the problems are IN the document, and
-	// a script reads them from there rather than from an exit code with prose beside it.
+	// `--output json` on plan renders the whole plan, problems IN the document, and THEN exits
+	// non-zero (#5600): a CI step gating on the exit code must not pass a file apply refuses.
+	// plan_exit_test.go pins the exact codes.
 	s := &projServer{envs: []map[string]any{
 		{"id": "e1", "name": "production", "stage": "production", "placement_mode": "dedicated", "status": "ACTIVE", "is_default": true},
 	}}
 	h := applyEnv(t, s)
 	mismatch := applyWriteManifest(t, "project: web\ncloud:\n  region: eu-west-1\nenvironments:\n  - name: production\n    stage: staging\n")
 	read := projCaptureStdout(t)
-	if h.run("plan", "--file", mismatch, "--no-input", "--output", "json") {
-		t.Error("plan --output json is a document, not a refusal")
+	if !h.run("plan", "--file", mismatch, "--no-input", "--output", "json") {
+		t.Error("plan --output json of a plan apply refuses must exit non-zero")
 	}
 	var got ApplyPlan
 	if err := json.Unmarshal([]byte(read()), &got); err != nil {

@@ -178,6 +178,16 @@ variable "labels" {
   default     = {}
 }
 
+# #5537. The user's node_labels (the node-pool contract, #5533), already validated at the root and
+# already checked not to collide with a key the template sets itself. Empty (the default) renders
+# the default pool's labels exactly as before.
+variable "node_labels" {
+  type        = map(string)
+  description = "Kubernetes labels added to the default pool's nodes, beside the template's own. Empty leaves the pool's labels unchanged."
+  default     = {}
+  nullable    = false
+}
+
 # #2004. The Cloud KMS key that envelope-encrypts Kubernetes Secrets in etcd. Empty (the default)
 # leaves Secrets under Google's default key, which is what every cluster did before this landed.
 variable "secrets_kms_key_id" {

@@ -5,9 +5,16 @@
 // turned into a control that writes `provider_config[name]`.
 //
 // The manifest (`lib/cloud-providers/template-knobs.ts`) has already answered the only question
-// that matters — which knobs are OFFERABLE — and `knobsFor` applies all three filters (`reachable`,
-// `!ownedByProvider`, `!typed`). Nothing here re-asks any of them: a control this file renders is a
-// control the manifest says lands on tofu, and a knob it excludes is one no user should be shown.
+// that matters — which knobs are OFFERABLE — and `knobsFor` applies every filter (`reachable`, read,
+// `!ceiling`, `!ownedByProvider`, `!typed`, and not a credential). Nothing here re-asks any of them:
+// a control this file renders is a control the manifest says lands on tofu, and a knob it excludes is
+// one no user should be shown.
+//
+// One exclusion is still SHOWN, as a note rather than a control: a credential knob (#5565). The
+// canvas used to offer `rds_extra_credentials` and a secret's `value`, which stored whatever was
+// typed in plaintext in `provider_config`. A user who remembers that control finds, where it was, a
+// sentence saying where the value goes now — and, on a component that still holds a value from
+// before, a way to remove it that never shows it (`withheldCredentialField`).
 //
 // What is left is the mapping from a tofu type to a control, and the one rule that makes the whole
 // section honest: UNSETTING A KNOB DELETES THE KEY. A `provider_config` entry holding `null` or `""`
@@ -16,7 +23,13 @@
 // sentinel as a value.
 
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
-import { knobsFor, type TemplateKnob } from "@/lib/cloud-providers/template-knobs";
+import {
+	credentialGuidance,
+	knobsFor,
+	TEMPLATE_KNOBS,
+	type TemplateKnob,
+	withheldCredentialKnobs,
+} from "@/lib/cloud-providers/template-knobs";
 import { toRecord, toStr, toStrArray } from "@/lib/coerce";
 import type { NodeKind } from "../graph/types";
 import type { FieldDef, FieldOption } from "./config-schema";
@@ -337,6 +350,46 @@ export function knobField(knob: TemplateKnob): FieldDef {
 	}
 }
 
+/** The option that keeps a credential value stored before #5565 — a non-empty sentinel, like {@link KNOB_UNSET}. */
+export const CREDENTIAL_KEEP = "__stored_credential__";
+
+/**
+ * The note that stands where a credential knob's control used to be (#5565).
+ *
+ * Nothing stored (every new component): the slot renders prose — through `unavailableWhen`, the
+ * inspector's existing "this field cannot be honoured here" channel — saying where the value is
+ * supplied instead. There is no control, so there is nothing to type a secret into.
+ *
+ * A value stored before #5565: the server keeps accepting it unchanged (so saving an unrelated edit
+ * still works), and this renders a two-option select — keep it, or remove it. The value itself is
+ * never read into the control, so it never reaches the DOM. Removing is the ONLY write this field
+ * can make; "keep" rewrites nothing.
+ */
+function withheldCredentialField(knob: TemplateKnob): FieldDef {
+	const guidance = credentialGuidance(knob.component, knob.name);
+	const stored = (config: AnyConfig) => readKnob(knob, config) !== undefined;
+	return {
+		key: knobFieldKey(knob),
+		type: "select",
+		label: knob.name,
+		description: `${guidance} A value stored here before is kept and still applied, and is never shown. Remove it once the value is in place.`,
+		options: [
+			{ value: CREDENTIAL_KEEP, label: "Keep the stored value" },
+			{ value: KNOB_UNSET, label: "Remove the stored value" },
+		],
+		unavailableWhen: (config) =>
+			stored(config)
+				? null
+				: "A credential, so it is not set here: Alethia would store it in plaintext.",
+		// Empty when nothing is stored, so the collapsed section's summary shows no chip for it.
+		get: (config) => (stored(config) ? CREDENTIAL_KEEP : ""),
+		set: (value, config) =>
+			toStr(value) === KNOB_UNSET
+				? writeKnob(knob, config, undefined)
+				: { provider_config: toRecord(config.provider_config) },
+	};
+}
+
 /**
  * Every knob one component can set on one cloud, as inspector fields.
  *
@@ -351,5 +404,8 @@ export function templateKnobFields(
 	provider: CloudProviderSlug,
 	kind: NodeKind,
 ): FieldDef[] {
-	return knobsFor(provider, kind).map(knobField);
+	return [
+		...knobsFor(provider, kind).map(knobField),
+		...withheldCredentialKnobs(TEMPLATE_KNOBS.knobs, provider, kind).map(withheldCredentialField),
+	];
 }

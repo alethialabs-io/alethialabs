@@ -42,12 +42,17 @@ var addonEnableCmd = &cobra.Command{
 	Args:  cobra.MaximumNArgs(1),
 	Long: `Enables a marketplace add-on in one environment, or reconfigures one already enabled.
 
-Re-running enable on an installed add-on UPDATES it — the knobs you pass are merged over what
-is stored, so you can change one value without restating the rest. A secret you do not resend
-is preserved rather than blanked.
+Re-running enable on an installed add-on UPDATES it, and a flag you leave out keeps what is stored:
+the settings, the Advanced values override, the mode and the version pin.
+
+--set settings are merged key by key over the stored ones, so you can change one value without
+restating the rest; --set key=null resets that setting to the add-on's default. A secret you do not
+resend is preserved rather than blanked.
+
+--values-file replaces the stored Advanced override whole; --values-file "" removes it.
 
 --version pins the add-on's chart version in this environment; --version "" removes the pin so the
-catalog's default version applies again. Without the flag, a stored pin is kept.
+catalog's default version applies again.
 
 Omit the add-on id on a terminal and the add-ons installed in the environment are offered to
 reconfigure. Installing one that is not yet enabled needs its catalog id, which the marketplace
@@ -73,7 +78,7 @@ in the console gives you.`,
 		if err != nil {
 			fail(err)
 		}
-		valuesYAML, err := readAddonValuesFile(addonEnableValuesFile)
+		valuesYAML, err := addonValuesFileFlag(cmd)
 		if err != nil {
 			fail(err)
 		}
@@ -109,19 +114,31 @@ func addonVersionFlag(cmd *cobra.Command) *string {
 	return &v
 }
 
-// readAddonValuesFile reads the raw Helm-values override, or returns "" when no file was named.
+// addonValuesFileFlag returns the Advanced values override as the API's three-state value, the same
+// rule --version follows (#5545): nil when the flag was not given (the stored override is kept), a
+// pointer to "" when it was given empty (the override is removed), and the file's content otherwise.
+// Before #5545 an absent flag and an empty one were both sent as "nothing", and the server read
+// "nothing" as "remove" — so changing one --set key silently dropped the whole override.
+//
 // The content is NOT parsed here: the server validates it as a YAML mapping through the same action
 // the console uses, so a local pre-parse would be a second opinion that can disagree with the one
-// that decides.
-func readAddonValuesFile(path string) (string, error) {
-	if path == "" {
-		return "", nil
+// that decides. An empty file is sent as null by the API client (packages/core/api), and a
+// whitespace-only file reaches the server as-is; either way the server removes the override exactly
+// as --values-file "" does.
+func addonValuesFileFlag(cmd *cobra.Command) (*string, error) {
+	if !cmd.Flags().Changed("values-file") {
+		return nil, nil
 	}
-	raw, err := os.ReadFile(path)
+	if addonEnableValuesFile == "" {
+		cleared := ""
+		return &cleared, nil
+	}
+	raw, err := os.ReadFile(addonEnableValuesFile)
 	if err != nil {
-		return "", fmt.Errorf("read --values-file: %w", err)
+		return nil, fmt.Errorf("read --values-file: %w", err)
 	}
-	return string(raw), nil
+	content := string(raw)
+	return &content, nil
 }
 
 // runAddonEnable enables the add-on and confirms it, naming the environment when one was given.
@@ -200,8 +217,10 @@ func init() {
 	// enum reaches the help text and the refusal without anyone editing a list here.
 	addonEnableCmd.Flags().StringVar(&addonEnableMode, "mode", "",
 		"Delivery mode ("+strings.Join(addonModeValues(), ", ")+"): managed = Alethia applies it, gitops = written to your apps repo")
-	addonEnableCmd.Flags().StringArrayVar(&addonEnableSet, "set", nil, "Add-on setting key=value (repeatable)")
-	addonEnableCmd.Flags().StringVar(&addonEnableValuesFile, "values-file", "", "Path to a raw Helm values YAML override (Advanced)")
+	addonEnableCmd.Flags().StringArrayVar(&addonEnableSet, "set", nil,
+		"Add-on setting key=value (repeatable), merged over the stored settings; key=null resets it to the default (a stored secret is kept)")
+	addonEnableCmd.Flags().StringVar(&addonEnableValuesFile, "values-file", "",
+		`Path to a raw Helm values YAML override (Advanced); --values-file "" removes the stored override`)
 	addonEnableCmd.Flags().StringVar(&addonEnableVersion, "version", "",
 		`Pin the chart version, e.g. 58.2.1; --version "" removes the pin (catalog default)`)
 	addYesFlag(addonDisableCmd, &addonDisableYes)

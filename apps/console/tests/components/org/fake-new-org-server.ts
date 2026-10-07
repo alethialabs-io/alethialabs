@@ -80,6 +80,8 @@ export async function fakeResolve(input: {
 		subscriptionId: input.subscriptionId,
 		customerId: input.customerId,
 		paid: true,
+		planState: "active",
+		paymentUrl: null,
 		org,
 		linked: !!linkedTo && linkedTo === org?.id,
 		declared: false,

@@ -1,0 +1,20 @@
+{
+	"addons": [
+		{
+			"id": "string",
+			"version": "string",
+			"secret_keys": [
+				"string"
+			],
+			"defaults": {},
+			"settings": [
+				"string"
+			]
+		}
+	],
+	"chart_version": {
+		"pattern": "string",
+		"max_length": 0,
+		"refusal": "string"
+	}
+}

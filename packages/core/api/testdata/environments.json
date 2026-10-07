@@ -9,7 +9,8 @@
 			"region": "string",
 			"placement_mode": "string",
 			"namespace": "string",
-			"fabric": "string"
+			"fabric": "string",
+			"lifecycle": "persistent"
 		}
 	],
 	"page": {

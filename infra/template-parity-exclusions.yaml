@@ -438,6 +438,21 @@ baseline:
     off: "alibaba,aws,azure,hetzner"
     state: unreviewed
     issue: "#2004"
+  - variable: cloud_sql_query_insights_enabled
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_query_insights_record_application_tags
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_query_insights_record_client_address
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
   - variable: cloud_sql_tier
     on: "gcp"
     off: "alibaba,aws,azure,hetzner"
@@ -624,8 +639,8 @@ baseline:
     state: unreviewed
     issue: "#2004"
   - variable: custom_iac_vars
-    on: "aws,azure,gcp"
-    off: "alibaba,hetzner"
+    on: "aws,azure,gcp,hetzner"
+    off: "alibaba"
     state: unreviewed
     issue: "#2004"
   - variable: custom_managed_waf_rule_groups
@@ -828,6 +843,11 @@ baseline:
     off: "alibaba,aws,azure,hetzner"
     state: unreviewed
     issue: "#2004"
+  - variable: extra_node_pools
+    on: "aws,azure,gcp,hetzner"
+    off: "alibaba"
+    state: unreviewed
+    issue: "#5523"
   - variable: firestore_database_type
     on: "gcp"
     off: "alibaba,aws,azure,hetzner"
@@ -1071,6 +1091,16 @@ baseline:
     off: "aws,azure"
     state: unreviewed
     issue: "#2004"
+  - variable: node_labels
+    on: "aws,azure,gcp,hetzner"
+    off: "alibaba"
+    state: unreviewed
+    issue: "#5523"
+  - variable: node_taints
+    on: "aws,azure,gcp,hetzner"
+    off: "alibaba"
+    state: unreviewed
+    issue: "#5523"
   - variable: oss_buckets
     on: "alibaba"
     off: "aws,azure,gcp,hetzner"
@@ -1597,6 +1627,15 @@ uniform:
   - variable: incluster_registry_hosts
     reason: Hetzner has no registry product, so its `registry` kind is an in-cluster Harbor the kubelet must be told to trust over plain HTTP (a Talos machine.registries.mirrors entry). The other four provision a real cloud registry their nodes authenticate to over TLS with their own identity — there is no host to trust and no equivalent knob to add.
 
+  # ── Extra node pool subnets (#5536) ───────────────────────────────────────────────
+  # Single-cloud because the ADDRESSING is. On Hetzner each extra pool is a group of Talos servers
+  # that the template must give its own /24 of the cluster network, chosen from the pool's name; two
+  # names can land on one /24, and this is the override. The managed clouds place a node pool's
+  # nodes in the cluster's existing subnets themselves (EKS/AKS/GKE/ACK), so there is no per-pool
+  # subnet to choose and nothing to add there.
+  - variable: node_pool_subnet_index
+    reason: "Hetzner-only. Each extra pool's /24 of the cluster network is derived from its name, and this override resolves two names landing on one /24 (#5536). EKS, AKS, GKE and ACK place a node pool in the cluster's existing subnets themselves, so there is no per-pool subnet to choose."
+
   # #2004's own switches. Each cloud names its own — there is no shared spelling for "encrypt
   # Secrets in etcd" — so the four are one capability under four names rather than four asymmetries.
   # The capability itself is uniform: every cloud that CAN do it, does, by default.
@@ -1674,3 +1713,25 @@ uniform:
   # out entirely and go back to a per-cluster image the run's own teardown reclaims.
   - variable: talos_image_cache
     reason: Hetzner-only by construction — it is the only template that BUILDS a node image (imager_image snapshots a Talos raw.xz before any cluster exists, ~5m and the floor's dominant deadline flake). EKS/AKS/GKE/ACK receive a node image from the managed control plane, so there is nothing for them to cache and no counterpart knob to add. See infra/templates/project/hetzner/README.md § The Talos snapshot cache.
+
+  # ── The Karpenter NodePool (#5527) ─────────────────────────────────────────────────────────────
+  # Single-cloud because the AUTOSCALER is. Karpenter is installed only by the aws template
+  # (`enable_karpenter`, itself on the #2004 baseline above); the other four scale nodes with their
+  # own managed-node-pool autoscalers, which have no NodePool object for these knobs to shape. Their
+  # node-pool shape is the separate per-cloud node-group surface, not a missing copy of these.
+  - variable: karpenter_capacity_types
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_architectures
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_instance_categories
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_instance_families
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_cpu_limit
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_node_labels
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_node_taints
+    reason: Shapes the Karpenter NodePool, which only the aws template installs (enable_karpenter). The other clouds autoscale through their managed node pools and have no NodePool to configure.
+  - variable: karpenter_arm64_nodepool
+    reason: Adds the arm64 Karpenter NodePool beside the default one (#5534), which only the aws template installs (enable_karpenter). The other clouds put arm64 on an extra node pool through extra_node_pools.

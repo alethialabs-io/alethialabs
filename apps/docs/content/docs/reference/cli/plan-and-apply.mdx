@@ -50,7 +50,8 @@ environments:
 | `environments[].stage` | `development`, `staging` or `production`. |
 | `environments[].placement` | `dedicated`, `vcluster` or `namespace`. Optional: the **first** environment defaults to `dedicated` and owns the Fabric; every later one defaults to `namespace` and shares it. |
 | `environments[].namespace` | The destination namespace for a shared placement. Optional; derived from the name. Ignored on `dedicated`. |
-| `environments[].lifecycle` | `persistent` (default) or `ephemeral`. |
+| `environments[].lifecycle` | `persistent` (default) or `ephemeral`. Set when the environment is created, and not changed after that. |
+| `environments[].addons` | The catalog add-ons the environment runs, as a list of `{ id, version, mode, settings, values, values_file }`. See [Add-ons](#add-ons). |
 | `environments[].components` | The environment's resources, keyed by kind. A one-per-environment kind (`cluster`, `network`, `dns`, `observability`, `repositories`) is written as its fields; a named kind (`databases`, `caches`, `queues`, …) as a list of entries, each with a `name`. `alethia project component kinds` lists them and the fields each takes. |
 
 A misspelt key, a stage outside the allowed set, a component kind the server does not publish or a
@@ -98,8 +99,151 @@ Apply these changes? Yes
 `apply` is idempotent. Re-run it on a project that already matches the file and it creates
 nothing, marks each environment `=`, and deploys again. It **never deletes**: an environment on the
 server that the file does not mention is listed as left alone, not torn down. What it cannot
-reconcile — an existing environment whose stage or placement differs from the file — is shown and
-refused before a single write.
+reconcile — an existing environment whose stage, placement or lifecycle differs from the file — is
+shown and refused before a single write. A refusal exits with code `2`, the code `alethia plan` gives
+the same file (see [Exit codes](#exit-codes)); any other error exits `1`. `alethia up` runs the same
+apply, so it exits the same way.
+
+An environment's `lifecycle` is set once, when the environment is created. Nothing changes it after
+that: not `apply`, and not the console. A file that leaves `lifecycle` out means `persistent`. If the
+file says a different lifecycle than the server holds for an existing environment, `plan` shows the
+difference and `apply` refuses the whole file:
+
+```
+  preview  namespace  = environment
+    ✗ the file says lifecycle persistent, the server has ephemeral — a lifecycle is set only when an environment is created, …
+```
+
+To keep the environment, make the file match the server. If the server holds `persistent`, remove
+`lifecycle` or set it to `persistent`. If the server holds `ephemeral`, set `lifecycle: ephemeral`.
+
+To get the other lifecycle, declare a new environment with it, and `apply` creates that
+environment. Two things do not happen on their own:
+
+- The old environment is not removed. `apply` never deletes, so it keeps running until it is
+  destroyed.
+- The new environment gets `namespace` placement unless the file sets `placement`. The one
+  exception is an environment listed first in the file, which gets `dedicated`.
+
+### Changing a component
+
+Edit a field of a component that already exists, and `plan` and `apply` show the change and make
+it. Each row starts with a mark:
+
+| Mark | Meaning |
+| --- | --- |
+| `+` | It does not exist yet. `apply` creates it. |
+| `~` | It exists, and at least one field the file declares has a different value on the server. `apply` changes those fields. |
+| `=` | It exists, and every field the file declares already matches. `apply` sends nothing for it. |
+
+Under each `~` row, one line names each changed field with the server's value and the file's value.
+Here the file raises `max_capacity` of the `orders` database in `prod` from `4` to `8`:
+
+```
+▸ Reading alethia.yaml · boutique · hetzner/nbg1
+  prod   dedicated  = environment  = cluster  ~ databases/orders
+    ~ databases/orders  max_capacity: 4 → 8
+  dev-1  namespace  = environment  = repositories
+  0 projects to create · 0 environments · 0 components · 1 component to update
+```
+
+`(unset)` means the server has no value for that field.
+
+- **A field you leave out is never cleared.** `apply` compares only the fields the file names, and
+  sends only the ones that changed. This is true for every kind: a named component such as a
+  database, and a one-per-environment kind such as `cluster`. To change one field of a database,
+  write that field; the other fields keep their values.
+- **A `cloud_identity_id` must be one you can use.** It must name a cloud account of your
+  organization, or your own personal one. Any other id is refused as `Cloud identity not found`.
+- **Values compare by meaning.** `2` and `2.0` are the same number. Lists and maps compare item by
+  item, and the order of a list counts.
+- **A refused change does not stop the others.** If the server refuses a change, `apply` reports it
+  for that component, does not deploy that environment, and continues with the other environments.
+  Then it exits with an error that names each refused component.
+
+### When the server changes first
+
+`apply` changes a component only if the server still holds the copy that `apply` read. There is no
+saved plan file: `apply` reads every component again, computes the changes against that read, and
+then makes them. Two rules protect that read.
+
+**A component changed after the read is not overwritten.** `apply` sends the component's revision
+(its `updated_at`) with each change. If someone changed the component in the meantime, for example
+in the console or with another `apply`, the server refuses the change. `apply` then names each
+setting that changed on the server:
+
+```
+  ✗ databases/orders in prod was not updated: databases/orders changed on the server after
+    `alethia plan` read it: max_capacity: 4 → 16; re-run `alethia plan` to see the difference
+    against the server's copy now, then apply again
+```
+
+Run `alethia plan` again, decide which value you want, and then run `alethia apply`. A component
+that was removed after the read is refused in the same way. `apply` does not create it again.
+
+**A component is not changed while its environment is deploying or being destroyed.** The server
+refuses every change that `apply` makes to an existing component while one of these is unfinished
+for that environment:
+
+- a deploy job, or the image build that starts a deploy of an environment with services built from
+  a repository;
+- a destroy job;
+- a promotion into the environment, from the moment its plan is queued, through approval, until its
+  deploy finishes. The promotion deploys the design that its plan read, so a change made in between
+  would not be part of that deploy.
+
+A job counts from the moment it is queued until it finishes. Other jobs, such as a plan that is not
+part of a promotion or a drift check, do not block a change. The error names what holds the
+environment:
+
+```
+  ✗ databases/orders in prod was not updated: databases/orders cannot be changed while a deploy
+    of this environment is processing (job 3f9c…); follow it with
+    `alethia jobs logs 3f9c… --follow`, then re-run `alethia apply` once it has finished
+```
+
+Wait for that job or promotion to finish, then run `alethia apply` again. `apply` does not queue the
+change for later.
+
+The rule has three limits:
+
+- The component's own status does not block a change. A database can stay `CREATING` after a
+  successful deploy while its chart is still starting, and you can still change it.
+- Adding a component that does not exist yet is not refused. `apply` creates it even while a deploy
+  is running. That deploy does not include it; the next deploy does.
+- A deploy reads the components a moment before its job is queued. A change that lands in that
+  moment is accepted and is not part of that deploy. It stays saved, and the next deploy applies it.
+
+Both refusals follow the rule above: that environment is not deployed, and the other environments
+continue.
+
+### Setting and removing a `provider_config` key
+
+A component's `provider_config` holds its template knobs, the same ones the console's **Advanced**
+section sets. `plan` and `apply` treat it **key by key**, not as one value:
+
+```yaml
+      databases:
+        - name: orders
+          engine: postgres
+          provider_config:
+            rds_backup_retention_period: 14   # set this key
+            rds_performance_insights: null    # remove this key
+```
+
+- A key you write is set to the file's value.
+- A key you write as `null` is removed. `plan` shows it as a change only while the server still
+  holds the key, so the removal shows once and then settles.
+- A key you do not write is kept, and shows no change. A key set in the console stays set.
+- `provider_config` itself must be a mapping. A whole `provider_config: null`, or an empty
+  `provider_config:`, is refused before anything is sent, because the server refuses it. To remove
+  every key, write each one as `null`.
+
+`apply` sends only the keys that changed. The keys a component accepts depend on its cloud;
+[Setting template knobs](/reference/cli/project#setting-template-knobs) explains how to find them.
+
+`apply` changes the component's **settings**. It does not tell you whether the next deploy replaces
+the cloud resource. To see that, read the OpenTofu plan of the deploy: `alethia project plan`.
 
 The runner: `--runner` takes a name or an id. Omitted, the only online runner is used without a
 question; with several online you are asked on a terminal, and under `--no-input` the job is left
@@ -115,7 +259,173 @@ for the server to place.
 | Confirm      | Apply without asking (required with --no-input)                                               | `--yes`              |
 | Wait         | Queue the deploys and return instead of waiting for them                                      | `--no-wait`          |
 
-`--output json` prints the plan and the result as typed objects instead of the lines above.
+`--output json` prints the plan and the result as typed objects instead of the lines above. In the
+plan, a component with the action `update` carries a `changes` array, one entry per changed field:
+
+```json
+{
+  "kind": "databases",
+  "name": "orders",
+  "action": "update",
+  "fields": { "engine": "postgres", "max_capacity": 8 },
+  "changes": [{ "field": "max_capacity", "from": 4, "to": 8 }]
+}
+```
+
+`from` is `null` when the server has no value for the field. A `create` or `unchanged` component has
+no `changes` key. A component that exists also carries `revision`, the server's `updated_at` that the
+plan read, which `apply` sends back with the change. In the result, an `errors` array lists each change the server refused, as
+`{ "environment", "component", "error" }`.
+
+## Add-ons
+
+An environment can declare the [catalog add-ons](/reference/cli/addons) it runs. `plan` shows what
+would change, and `apply` makes it so. This file declares two environments. `staging` runs
+external-dns pinned to chart version `1.14.5` with two settings, and kube-prometheus-stack with a
+Helm values file. `prod` runs loki at the catalog's default version:
+
+```yaml
+project: boutique
+cloud:
+  account: prod-account
+  region: nbg1
+environments:
+  - name: prod
+    stage: production
+    placement: dedicated
+    addons:
+      - id: loki                         # no version: the catalog's default version
+        settings:
+          retentionDays: 30
+  - name: staging
+    stage: staging
+    placement: namespace
+    namespace: boutique-staging
+    addons:
+      - id: external-dns
+        version: 1.14.5                  # pin the chart version
+        settings:
+          provider: cloudflare
+          domainFilter: staging.boutique.example.com
+      - id: kube-prometheus-stack
+        settings:
+          retentionDays: 7
+        values_file: helm/kps-staging.yaml   # relative to alethia.yaml
+```
+
+`helm/kps-staging.yaml` is an ordinary Helm values file, next to `alethia.yaml` in the repository:
+
+```yaml
+grafana:
+  replicas: 2
+prometheus:
+  prometheusSpec:
+    resources:
+      requests:
+        memory: 2Gi
+```
+
+| Key | What it is |
+| --- | --- |
+| `id` | The add-on's catalog id. Required. An id the catalog does not have is refused, and the refusal lists the ids it does have. |
+| `version` | A chart-version pin: one exact version, such as `1.14.5`. A range such as `^1.14` is refused. |
+| `mode` | `managed` or `gitops`. Omitted on a new add-on, `managed`. |
+| `settings` | The add-on's settings, by name: the same keys `alethia addon enable` sets. A key the add-on does not have is refused, and the refusal lists the keys it does have. |
+| `values` | An Advanced Helm-values override, written inline as a mapping. |
+| `values_file` | The same override, read from a file. The path is relative to `alethia.yaml` and must name an existing file inside its directory: an absolute path, a `..` out of it, a symlink that leads out of it, or a file that does not exist is refused with one message, which names the path as you wrote it. Use `values` or `values_file`, not both. See [Where a values file can come from](#where-a-values-file-can-come-from). |
+
+### Where a values file can come from
+
+The fence is the folder that holds `alethia.yaml`, not the files that Git tracks. `apply` sends any
+file inside that folder that `values_file` names. This includes a file that a CI step writes into
+the workspace, such as a kubeconfig or a credentials file. If `alethia.yaml` names that file,
+`apply` sends its contents to the server as the override.
+
+Keep each values file committed, and review it as you review `alethia.yaml`. Do not name a file
+that a pipeline step creates.
+
+### Keep and clear
+
+Each key means what the same flag of [`alethia addon enable`](/reference/cli/addons) means, because
+`apply` sends the same request:
+
+| You write | `apply` does |
+| --- | --- |
+| nothing for a key | keeps what is stored: the pin, the mode, each setting, the override |
+| `version: 1.14.5` | pins the chart version |
+| `version: ""` or `version: null` | removes the pin, so the catalog's default version applies |
+| `settings: { key: value }` | sets that one setting and keeps the others |
+| `settings: { key: null }` | resets that setting to the add-on's default |
+| `values` or `values_file: path` | replaces the whole stored override |
+| `values_file: ""` or `values: null` | removes the override |
+
+### What `plan` shows
+
+Add-ons get one line per environment, with the same marks as components. Under it, one line names
+each changed field. Here staging's external-dns runs the catalog's default version and an older
+domain filter, kube-prometheus-stack's values file changed, and reloader in `prod` is enabled on
+the server but not in the file:
+
+```
+▸ Reading alethia.yaml · boutique · hetzner/nbg1
+  prod     dedicated  = environment
+    add-ons  = loki
+    add-on reloader is enabled on the server and not in the file — left alone (unmanaged)
+  staging  namespace  = environment
+    add-ons  ~ external-dns  ~ kube-prometheus-stack
+    ~ external-dns  settings.domainFilter: boutique.example.com → staging.boutique.example.com
+    ~ external-dns  version: (catalog default) → 1.14.5
+    ~ kube-prometheus-stack  values: changed (6 lines)
+  0 projects to create · 0 environments · 0 components · 0 add-ons to enable · 2 to change
+```
+
+**A plan never shows what an override says.** A values file can be any file in the repository,
+and a plan is printed into CI logs. So the `values` line says only `changed (N lines)`, with N the
+line count of the new override, or `removed`. It shows no hash either: a short hash of a value
+such as a password can be guessed offline from a public log. An override that is the same mapping
+as the stored one is unchanged and gets no line, even if its whitespace differs. With `--output json`, the
+`values` change has `"from": null` and the same summary in `"to"`. `apply` still sends the whole
+file.
+
+`(default)` means a setting is reset to its default. A setting
+you reset with `null` shows as a change only while the server holds a value other than the default,
+so the reset shows once and then settles.
+
+`--output json` puts the add-ons on each environment as `addons`, each with an `id`, an `action`
+and, for an `update`, the same `changes` array components carry. A change to one setting has the
+setting's name in `key`. Add-ons that are on the server but not in the file are in
+`unmanaged_addons`.
+
+### What `apply` never does
+
+- **It never disables an add-on.** An add-on that is enabled on the server and not in the file is
+  listed as unmanaged and keeps running. Disable one with
+  [`alethia addon disable`](/reference/cli/addons).
+- **It never takes a secret from the file.** `alethia.yaml` is committed to git, so a secret setting
+  in it is refused before anything is sent. The refusal names the setting. Set a secret with
+  `alethia addon enable <id> --set <key>=…` or in the console. `apply` keeps a stored secret as it
+  is, and `plan` never prints a secret's value.
+
+<Callout type="info">
+  **A secret for an environment that `apply` creates.** The file cannot carry a secret, and
+  `alethia addon enable --env <name>` needs the environment to exist. So the first `apply` installs
+  the add-on without it: external-dns on a token provider such as Cloudflare comes up and cannot
+  write DNS records yet. Set the token once the environment exists, here from an environment
+  variable so it stays out of your shell history, and deploy again:
+
+  ```bash
+  alethia apply --yes
+  alethia addon enable external-dns --project boutique --env staging --set apiToken="$CLOUDFLARE_API_TOKEN"
+  alethia apply --yes
+  ```
+
+  The second `apply` leaves the token as it is. On a workload-identity provider (`aws`, `google`,
+  `azure`) there is no token: set `workloadIdentity` under `settings` in the file, because it is an
+  identifier and not a secret.
+</Callout>
+
+`apply` enables add-ons after it creates components and before it deploys. If the server refuses an
+add-on, `apply` reports it, does not deploy that environment, and continues with the others.
 
 ## `alethia up`
 
@@ -167,22 +477,192 @@ the catalog's default machine type for its cloud. The two flags are mutually exc
 
 ## `alethia plan`
 
-The same comparison, with the writes left out: what `apply` would create, what already matches,
-and anything it would refuse. Nothing is written and no job is queued.
+The same comparison, with the writes left out: what `apply` would create, what it would change
+(field by field, as in [Changing a component](#changing-a-component)), what already matches, and
+anything it would refuse. Nothing is written and no job is queued.
 
 ```bash
 alethia plan
 alethia plan --file staging.yaml --output json
+alethia plan --detailed-exitcode
 ```
 
 {/* fieldspec: alethia plan */}
 
-| Field    | What it is                                         | Set without the form |
-| -------- | -------------------------------------------------- | -------------------- |
-| Manifest | The alethia.yaml to plan (default: ./alethia.yaml) | `--file`             |
+| Field              | What it is                                                                                                           | Set without the form  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| Manifest           | The alethia.yaml to plan (default: ./alethia.yaml)                                                                   | `--file`              |
+| Detailed exit code | Exit 0 with no changes, 2 with changes, 3 with problems (1 is an error). Default: 0 unless the plan has problems (2) | `--detailed-exitcode` |
 
 The per-environment OpenTofu plan runs inside every deploy. To queue one on its own — for a
 pipeline that gates on it — use `alethia project plan` below.
+
+### Exit codes
+
+A plan has **problems** when the file asks for something `apply` cannot do: a stage, placement or
+lifecycle that differs from an existing environment, or an add-on setting that `apply` refuses to
+send. `apply` refuses such a file before it writes anything. The exit code of `plan` tells you so
+first, and a pipeline can stop on it when the pull request opens instead of at `apply`.
+
+By default, `plan` answers one question: does `apply` accept this file?
+
+| Code | Meaning |
+| --- | --- |
+| `0` | `apply` accepts the file. There can be changes. |
+| `1` | Error. The file could not be read or validated, or the server could not be reached. |
+| `2` | The plan has problems. `apply` refuses the file. |
+
+A plan with changes and no problems exits `0`, so a pipeline that runs `plan` and then `apply`
+keeps working.
+
+With `--detailed-exitcode`, the code also says whether there is anything to apply. This is the
+Terraform convention. Problems win over changes, because a plan with both cannot be applied:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | No changes and no problems. |
+| `1` | Error. |
+| `2` | Changes, and no problems. |
+| `3` | The plan has problems. `apply` refuses the file. |
+
+`alethia apply` exits `2` when it refuses a file for its problems and `1` on any other error.
+
+`plan` prints the whole plan first in every case. The code comes last. In table form, the refusal
+follows the plan on stdout. With `--output json`, stdout carries only the plan document and the
+refusal goes to stderr. `--output csv` behaves the same way: the refusal goes to stderr and the exit
+code is the same. The plan has no table shape, so csv prints no rows for it; read the plan with
+`--output json`.
+
+`alethia apply --output json` also sends the refusal to stderr. Before #5600 it printed the refusal
+on stdout.
+
+### Problems in `--output json`
+
+Each environment in `environments` lists its problems in `problems`, one sentence each. An
+environment without problems has no `problems` key. This is a plan with one problem; the `manifest`
+key, which repeats the file as read, is left out:
+
+```json
+{
+  "project_id": "4b1d2c9e-7f3a-4e55-9c1d-2a6f0b8e1c37",
+  "environments": [
+    {
+      "name": "production",
+      "stage": "staging",
+      "placement": "dedicated",
+      "action": "unchanged",
+      "id": "9e2f4a10-3c6b-4d8e-a1f7-5b0c6d2e8f94",
+      "components": null,
+      "problems": [
+        "the file says stage staging, the server has production — a stage cannot be changed from here; edit it in the console or the file"
+      ],
+      "deploy": true
+    }
+  ]
+}
+```
+
+A script can list every problem with `jq`:
+
+```bash
+alethia plan --output json | jq -r '.environments[] | .name as $env | .problems[]? | "\($env): \(.)"'
+```
+
+### Run `plan` on every pull request
+
+This GitHub Actions job fails a pull request when `alethia.yaml` cannot be applied. `plan` reads
+the add-on values files the manifest names, so list their directory under `paths` too (here
+`values/`); otherwise a pull request that changes only a values file skips the check. It passes when
+the file has changes that `apply` accepts. It signs in with a service token in the `ALETHIA_TOKEN`
+secret; `alethia token create --name ci | gh secret set ALETHIA_TOKEN` makes one:
+
+```yaml
+name: alethia plan
+on:
+  pull_request:
+    paths:
+      - alethia.yaml
+      - values/**   # the add-on values files alethia.yaml names, if it names any
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Alethia CLI
+        run: |
+          curl -fsSL https://get.alethialabs.io | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Plan
+        env:
+          ALETHIA_TOKEN: ${{ secrets.ALETHIA_TOKEN }}
+        run: alethia plan --no-input
+```
+
+To also see whether the file differs from the server, use `--detailed-exitcode` and read the code
+yourself. `0` means the file matches what the server has. It does not mean `apply` does nothing:
+`apply` deploys every environment again, even when nothing differs. A step stops on the first
+non-zero code, so capture it:
+
+```bash
+set +e
+alethia plan --no-input --detailed-exitcode
+code=$?
+set -e
+case "$code" in
+  0) echo "the file matches the server" ;;
+  2) echo "the file differs from the server" ;;
+  *) exit "$code" ;;   # 1 error, 3 problems
+esac
+```
+
+## Start from an existing project
+
+A project that you built in the console has no `alethia.yaml` yet.
+[`alethia export`](/reference/cli/configuration#alethia-export) writes one from what the project has
+now, so you can manage the project from git from that point on.
+
+<Steps>
+<Step>
+
+Write the file. This example takes every environment of the project; you can also export one of
+them.
+
+```bash
+alethia export shop --all --out alethia.yaml
+```
+
+</Step>
+<Step>
+
+Plan it. The file describes what the project already has, so there is nothing to do:
+
+```bash
+alethia plan
+```
+
+```
+▸ Reading alethia.yaml · shop · aws/eu-west-1
+  prod     dedicated  = environment  = cluster  = databases/orders
+    add-ons  = cert-manager  = external-dns
+  staging  namespace  = environment  = databases/orders
+  0 projects to create · 0 environments · 0 components
+```
+
+</Step>
+<Step>
+
+Commit `alethia.yaml`. From now on, edit the file and run `alethia apply` — in a pipeline,
+`alethia apply --yes --no-input`.
+
+</Step>
+</Steps>
+
+`export` writes only the values that Alethia publishes as plain, non-secret settings, so a secret
+that Alethia stores is never written. It cannot recognize a password typed into an ordinary
+setting, so review the file before you commit it. See
+[What is written, and what is left out](/reference/cli/configuration#what-is-written-and-what-is-left-out). The comment at its top lists what `export` left out, such as an
+add-on's Advanced values override, and why. A value that is not in the file keeps what is stored,
+so `plan` shows no change for it and `apply` never clears it.
 
 ## The `project` job commands
 

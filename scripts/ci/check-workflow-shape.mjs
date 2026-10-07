@@ -34,8 +34,11 @@
 // line parser that stops matching finds nothing and reports success, so the blindness guards below
 // are not optional decoration; they are what makes a green result mean anything.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DIR = ".github/workflows";
 
@@ -466,6 +469,152 @@ export function scanServiceGuards(text) {
 	return { serviceJobs: withServices.size, problems };
 }
 
+/**
+ * A reference to the `needs` context: `needs` not preceded by `.`/a word character, and followed by
+ * `.`, `[` or `)` — so `needs.X…`, `needs.*…`, `needs['X']` and `toJSON(needs)` match, while a label
+ * string such as `'needs-triage'` does not.
+ */
+const NEEDS_REF = /(^|[^.\w'-])needs\s*[.[)]/;
+
+/** A status-check function anywhere in a job `if:`. Its presence switches off the implicit `success()`. */
+const STATUS_FN = /(^|[^.\w])(success|always|failure|cancelled)\s*\(\s*\)/;
+
+/**
+ * Jobs whose `if:` reads `needs.<job>.result`/`.outputs` with NO status-check function, below an
+ * ancestor that can be skipped — so GitHub's implicit `success()` decides the job, not the condition.
+ *
+ * WHY THIS IS WORTH A CHECK. A job `if:` without `success()`, `always()`, `failure()` or `cancelled()`
+ * is implicitly `success() && <if>`, and `success()` is false when ANY job in the TRANSITIVE `needs`
+ * chain was skipped — not just a direct one. `deploy-console.yml`'s `smoke` job read
+ * `needs.deploy.result == 'success' && github.ref == 'refs/heads/main'`, and on run 37597196603 both
+ * halves were true: `deploy` succeeded on main. `smoke` was SKIPPED WITH ZERO STEPS anyway, because
+ * `deploy` needs `retag-unchanged`, which is skipped whenever both image groups rebuild — every real
+ * deploy. The production smoke had never run once (#5615), and a skipped job is not red, so nothing
+ * said so. `deploy` itself already carried `!cancelled() && !failure()` for exactly this reason; its
+ * child did not inherit the lesson.
+ *
+ * THE SUBJECT, stated: a job-level `if:` (4-space indent under `jobs:`) that references the `needs`
+ * context in ANY form and contains no status function, where some transitive ancestor can be
+ * skipped. "References `needs`" is a token match on `needs` not preceded by `.` or a word character:
+ * it reads `needs.X.result`, `needs.X.outputs.y`, `needs['X']`, `needs.*.result` and
+ * `contains(needs.*.result, 'failure')`, and `toJSON(needs)` alike, because each of them is an `if:`
+ * that claims to decide on an upstream job and each gets the same implicit `success()`. It does NOT
+ * read a `needs` that reaches the job only through an `env:`/`outputs:` value or a reusable
+ * workflow's inputs — those are not the job's own `if:`.
+ *
+ * "CAN BE SKIPPED" is a job-level `if:` other than a bare `always()` (with or without `${{ }}`). A
+ * bare `always()` job is never skipped, so it is not counted — but its own ancestors still are,
+ * because `success()` reads the WHOLE transitive chain, so the walk goes through it. `always() && x`
+ * IS counted (it is skipped whenever `x` is false), and so is `!cancelled() && …`, which is skipped
+ * on a cancel and whenever its other conjuncts are false. A job with no `if:` is skipped only when an
+ * ancestor is, and the walk reaches that ancestor. A job with no `if:` at all is the same implicit
+ * `success()` as the subject, and is NOT read here: it does not CLAIM to decide on an upstream
+ * result, so nothing on the page says something the runner does not mean.
+ *
+ * THE TWO FIXES, and the error names both. If the job should run whenever its condition holds —
+ * a smoke, a report, a summary — write `!cancelled() && needs.X.result == 'success' && …`. If a
+ * skipped ancestor genuinely SHOULD skip it (a merge of legs that were skipped), write the
+ * `success() &&` that was already implied. That second form is accepted on purpose: it changes
+ * nothing at runtime and states the intent where a reader can see it, which is the entire defect
+ * here. It is also this check's cheapest escape route, so the error says what `success()` costs.
+ *
+ * Line-scanned like the rest of this file. `needs:` is read inline (`x`, `[a, b]`), as a flow
+ * sequence wrapped across lines, and as a block list. `if:` is read inline, as a block scalar (`|`,
+ * `>`, with either indicator order), and as a PLAIN scalar continued on deeper-indented lines — every
+ * one of those spellings is the same expression to Actions, so reading only the first line would
+ * let a condition wrapped for width pass unread.
+ *
+ * @param {string} text
+ * @returns {{jobs: number, reading: number, problems: {line: number, job: string, expr: string, skippable: string[]}[]}}
+ */
+export function scanImplicitSuccessNeeds(text) {
+	const lines = text.split("\n");
+	const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+	if (jobsAt === -1) return { jobs: 0, reading: 0, problems: [] };
+
+	/** @type {Map<string, {needs: string[], expr: string | null, line: number}>} */
+	const jobs = new Map();
+	let job = null;
+	for (let i = jobsAt + 1; i < lines.length; i++) {
+		// A top-level key after `jobs:` ends the block.
+		if (/^[A-Za-z0-9_-]+:/.test(lines[i])) break;
+		const head = lines[i].match(/^ {2}([A-Za-z0-9_-]+):\s*(?:#.*)?$/);
+		if (head !== null) {
+			job = { needs: [], expr: null, line: i + 1 };
+			jobs.set(head[1], job);
+			continue;
+		}
+		if (job === null) continue;
+
+		const needs = lines[i].match(/^ {4}needs:\s*(.*?)\s*(?:#.*)?$/);
+		if (needs !== null) {
+			let v = needs[1];
+			if (v.startsWith("[") && !v.includes("]")) {
+				// A flow sequence wrapped over several lines.
+				for (let j = i + 1; j < lines.length && !v.includes("]"); j++) v += ` ${lines[j].replace(/#.*$/, "").trim()}`;
+			} else if (v === "") {
+				// A block list: `- a` items at a deeper indent.
+				for (let j = i + 1; j < lines.length; j++) {
+					const item = lines[j].match(/^ {5,}-\s*([A-Za-z0-9_-]+)/);
+					if (item === null) break;
+					v += ` ${item[1]}`;
+				}
+			}
+			job.needs = v.replace(/[[\]'"]/g, " ").split(/[\s,]+/).filter(Boolean);
+			continue;
+		}
+
+		const iff = lines[i].match(/^ {4}if:\s*(.*?)\s*$/);
+		if (iff !== null) {
+			let v = iff[1];
+			// A block scalar's body, or a plain scalar's continuation lines: both sit deeper than the
+			// job's keys. A comment line ends a plain scalar, and is skipped inside a block one only
+			// because no expression in this repo starts with `#`.
+			const block = v === "" || /^[|>](?:\d[-+]?|[-+]\d?)?$/.test(v);
+			const parts = block ? [] : [v];
+			for (let j = i + 1; j < lines.length; j++) {
+				if (lines[j].trim() === "" || !/^ {5,}\S/.test(lines[j]) || /^\s*#/.test(lines[j])) break;
+				parts.push(lines[j].trim());
+			}
+			v = parts.join(" ");
+			job.expr = v;
+			job.line = i + 1;
+		}
+	}
+
+	/** A job-level `if:` that is a bare `always()` — the one condition under which a job is never skipped. */
+	const neverSkipped = (expr) => /^(\$\{\{\s*)?always\s*\(\s*\)(\s*\}\})?$/.test(expr.trim());
+
+	/** Every transitive ancestor of `name` that can be skipped. The walk continues THROUGH a never-skipped one. */
+	const skippableAncestors = (name) => {
+		const seen = new Set();
+		const out = [];
+		const stack = [...(jobs.get(name)?.needs ?? [])];
+		while (stack.length > 0) {
+			const n = stack.pop();
+			if (n === undefined || seen.has(n)) continue;
+			seen.add(n);
+			const j = jobs.get(n);
+			if (j === undefined) continue;
+			if (j.expr !== null && !neverSkipped(j.expr)) out.push(n);
+			stack.push(...j.needs);
+		}
+		return out.sort();
+	};
+
+	let reading = 0;
+	const problems = [];
+	for (const [name, j] of jobs) {
+		if (j.expr === null || !NEEDS_REF.test(j.expr)) continue;
+		reading += 1;
+		if (STATUS_FN.test(j.expr)) continue;
+		const skippable = skippableAncestors(name);
+		if (skippable.length === 0) continue;
+		problems.push({ line: j.line, job: name, expr: j.expr, skippable });
+	}
+	return { jobs: jobs.size, reading, problems };
+}
+
 /** @returns {string[]} failures */
 export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.readFileSync(p, "utf8")) {
 	const out = [];
@@ -484,6 +633,7 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 	let unreadable = 0;
 	let permissionEntries = 0;
 	let serviceJobs = 0;
+	let needsReading = 0;
 	// The largest scalar seen, templated or not. NOT printed from here — `check()` returns problems
 	// and nothing else; the green line is built in `main()` below and takes its own measurement.
 	// This copy exists for one thing: the blindness test at the bottom, which refuses a tree in which
@@ -566,6 +716,18 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 					"job's `actions/checkout` an `id:` if it has none.",
 			);
 		}
+		const implicit = scanImplicitSuccessNeeds(text);
+		needsReading += implicit.reading;
+		for (const n of implicit.problems) {
+			out.push(
+				`${dir}/${f}:${n.line}: the job \`${n.job}\` decides on \`${n.expr}\` with no status-check function, so GitHub runs it as ` +
+					"`success() && …` — and `success()` is false when ANY job in the TRANSITIVE `needs` chain was skipped. Upstream of it, " +
+					`${n.skippable.map((a) => `\`${a}\``).join(", ")} can be skipped, and when one is this job is skipped with ZERO steps however its own ` +
+					"condition reads. That is how deploy-console.yml's production smoke never ran once (#5615, run 37597196603). " +
+					"If it should run whenever its condition holds, write `!cancelled() && <condition>`. If a skipped ancestor genuinely " +
+					"SHOULD skip it, write the `success() && (<condition>)` that is already implied — it changes nothing at runtime and states the intent.",
+			);
+		}
 		for (const p of problems) {
 			out.push(
 				`${dir}/${f}:${p.line}: the step \`${p.name}\` has neither \`run:\` nor \`uses:\`. ` +
@@ -609,6 +771,14 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 		out.push(
 			`parsed ${files.length} workflow file(s) and found ZERO \`run:\`/\`script:\` BLOCK scalars. There are ~180, so the ` +
 				"expression-budget scanner has stopped matching — and a byte limit nobody measures is how release-gate.yml was refused by GitHub with no red anywhere.",
+		);
+	}
+	// And for the implicit-success scanner. Several jobs here decide on an upstream output, so finding
+	// none means the job-level `if:`/`needs:` matcher stopped matching.
+	if (needsReading === 0) {
+		out.push(
+			`parsed ${files.length} workflow file(s) and found ZERO job-level \`if:\` referencing the \`needs\` context. ` +
+				"Several jobs here gate on an upstream output, so the implicit-success scanner has stopped matching — fix it rather than trusting the green.",
 		);
 	}
 	if (unreadable === files.length) {
@@ -664,7 +834,11 @@ jobs:
 			// Revert this one line and five permission assertions go red, NONE of them mentioning block
 			// scalars — the failure misattributes, which is the cost of a shared fixture and the reason
 			// this comment names the coupling instead of leaving the next reader to find it.
-			() => `name: x\n${body}jobs:\n  a:\n    runs-on: ubuntu-latest\n    services:\n      postgres:\n        image: postgres:17-alpine\n    steps:\n      - run: |\n          true\n`,
+			// The second job reads `needs.a.outputs` for the implicit-success scanner's blindness guard,
+			// with no skippable ancestor, so it is a reading and not a finding.
+			() =>
+				`name: x\n${body}jobs:\n  a:\n    runs-on: ubuntu-latest\n    services:\n      postgres:\n        image: postgres:17-alpine\n    steps:\n      - run: |\n          true\n` +
+				"  b:\n    needs: a\n    if: needs.a.outputs.go == 'yes'\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n",
 		);
 
 	const REAL = "permissions:\n  contents: read\n  administration: read # the #3229 regression\n  issues: write\n";
@@ -905,6 +1079,119 @@ jobs:
 	const noSteps = check("d", () => ["a.yml"], () => "jobs:\n  a:\n    runs-on: x\n");
 	ok("finding zero steps across every file fails", noSteps.some((p) => /found ZERO steps/.test(p)), JSON.stringify(noSteps));
 
+	// ── a job `if:` left to the implicit success() (#5615) ───────────────────────────────────────
+	//
+	// The planted case is deploy-console.yml's shape as it stood for run 37597196603, cut down to the
+	// four jobs that decide it: `retag-unchanged` is skipped on a full rebuild, `deploy` survives that
+	// with `!cancelled() && !failure()`, and `smoke` — whose own condition was true — does not.
+	const implicitWf = (smokeIf, extra = "") =>
+		"name: x\npermissions:\n  contents: read\njobs:\n" +
+		"  changes:\n    runs-on: ubuntu-latest\n    services:\n      postgres:\n        image: postgres:17-alpine\n    steps:\n      - run: |\n          true\n" +
+		"  retag-unchanged:\n    needs: changes\n    if: ${{ needs.changes.outputs.apps != 'true' }}\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n" +
+		"  deploy:\n    needs: [changes, retag-unchanged]\n    if: ${{ !cancelled() && !failure() }}\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n" +
+		`  smoke:\n    needs: [changes, deploy]\n    if: ${smokeIf}\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n${extra}`;
+	const PLANTED_IF = "${{ needs.deploy.result == 'success' && github.ref == 'refs/heads/main' }}";
+	const implicitOf = (text) => scanImplicitSuccessNeeds(text).problems;
+	const planted = implicitOf(implicitWf(PLANTED_IF));
+	ok("the #5615 smoke job is caught", planted.length === 1 && planted[0].job === "smoke", JSON.stringify(planted));
+	// `deploy` is a direct need; `retag-unchanged` is the TRANSITIVE one that actually skipped. Naming
+	// only the direct one would send the reader to a job that succeeded.
+	ok("...and the transitive skippable ancestor is named", planted[0]?.skippable.includes("retag-unchanged") === true, JSON.stringify(planted));
+	ok("...at the line of its `if:`", planted[0]?.line === implicitWf(PLANTED_IF).split("\n").indexOf(`    if: ${PLANTED_IF}`) + 1, JSON.stringify(planted));
+
+	// The legitimate verdicts. Each is a shape this repo now uses.
+	const BANG = "${{ !cancelled() && needs.deploy.result == 'success' && github.ref == 'refs/heads/main' }}";
+	const EXPLICIT = "${{ success() && (needs.deploy.result == 'success') }}";
+	const ALWAYS_N = "${{ always() && needs.deploy.result == 'success' }}";
+	ok("the `!cancelled() &&` fix is clean", implicitOf(implicitWf(BANG)).length === 0, JSON.stringify(implicitOf(implicitWf(BANG))));
+	ok("an explicit `success() &&` (the runner chain's intent) is clean", implicitOf(implicitWf(EXPLICIT)).length === 0);
+	ok("`always() &&` is clean", implicitOf(implicitWf(ALWAYS_N)).length === 0);
+	ok("a `cancelled()` inside a step id is not a status function",
+		implicitOf(implicitWf("${{ needs.deploy.outputs.not_cancelled() == 'x' }}")).length === 1);
+	// No skippable ancestor: `changes` has no `if:`, so `success()` can only be false on a FAILURE,
+	// which is what the author meant. release-please.yml's `release-runner` is this shape.
+	const rooted = "name: x\njobs:\n  a:\n    runs-on: x\n    steps:\n      - run: true\n  b:\n    needs: a\n    if: needs.a.outputs.go == 'yes'\n    runs-on: x\n    steps:\n      - run: true\n";
+	ok("a needs-reading if: with NO skippable ancestor is not reported", implicitOf(rooted).length === 0 && scanImplicitSuccessNeeds(rooted).reading === 1);
+	ok("a job if: that does not read needs is not reported",
+		implicitOf(implicitWf("${{ github.ref == 'refs/heads/main' }}")).length === 0);
+	ok("a STEP-level if: reading needs is not a job if:",
+		implicitOf(implicitWf(BANG, "  late:\n    needs: smoke\n    runs-on: x\n    steps:\n      - if: needs.smoke.result == 'success'\n        run: true\n")).length === 0);
+	// Transitive through a job with NO `if:` of its own: c → b (no if) → a (if). Reading only direct
+	// needs would miss it, and that is the exact depth #5615 sat at.
+	const deep = "name: x\njobs:\n  a:\n    if: github.ref == 'refs/heads/main'\n    runs-on: x\n    steps:\n      - run: true\n  b:\n    needs: a\n    runs-on: x\n    steps:\n      - run: true\n  c:\n    needs: b\n    if: needs.b.result == 'success'\n    runs-on: x\n    steps:\n      - run: true\n";
+	ok("a skippable ancestor two hops up is found", implicitOf(deep)[0]?.skippable.join() === "a", JSON.stringify(implicitOf(deep)));
+	// The `needs:` spellings this repo uses: a flow list wrapped over lines (report-failure), and a
+	// block list. A parser that read only one line would see no ancestors and pass everything.
+	const wrapped = deep.replace("  c:\n    needs: b\n", "  c:\n    needs: [x,\n            b]\n");
+	const blockList = deep.replace("  c:\n    needs: b\n", "  c:\n    needs:\n      - x\n      - b\n");
+	ok("the fixture mutations applied", wrapped !== deep && blockList !== deep);
+	ok("a wrapped flow-sequence needs: is followed", implicitOf(wrapped).length === 1, JSON.stringify(implicitOf(wrapped)));
+	ok("a block-list needs: is followed", implicitOf(blockList).length === 1, JSON.stringify(implicitOf(blockList)));
+	// release-gate.yml's `gate` writes its condition as a folded block scalar.
+	const folded = (head) => deep.replace("    if: needs.b.result == 'success'\n", `    if: >-\n      ${head}needs.b.result == 'success'\n      && github.ref == 'refs/heads/main'\n`);
+	ok("a folded if: is read whole, and a bare one is caught", implicitOf(folded("")).length === 1, JSON.stringify(implicitOf(folded(""))));
+	ok("...and a folded one with success() on its own line is clean", implicitOf(folded("success()\n      && ")).length === 0, JSON.stringify(implicitOf(folded("success()\n      && "))));
+
+	// Literal `|` block, and a PLAIN scalar wrapped onto deeper lines — the same expression to Actions.
+	const literal = deep.replace("    if: needs.b.result == 'success'\n", "    if: |\n      needs.b.result == 'success'\n");
+	const plainWrapped = (head) => deep.replace("    if: needs.b.result == 'success'\n", `    if: github.ref == 'refs/heads/main'\n      && ${head}needs.b.result == 'success'\n`);
+	ok("a literal `|` if: is read", implicitOf(literal).length === 1, JSON.stringify(implicitOf(literal)));
+	// The first line names no `needs` at all; only the continuation does. Reading one line misses it.
+	ok("a plain if: continued on the next line is read whole", implicitOf(plainWrapped("")).length === 1, JSON.stringify(implicitOf(plainWrapped(""))));
+	ok("...and a status function on the continuation line counts", implicitOf(plainWrapped("!cancelled() && ")).length === 0);
+	ok("...and the continuation does not swallow the next key",
+		scanImplicitSuccessNeeds(plainWrapped("")).problems[0]?.expr === "github.ref == 'refs/heads/main' && needs.b.result == 'success'",
+		JSON.stringify(implicitOf(plainWrapped(""))));
+
+	// Which ancestors COUNT as skippable. `a` is the only conditional ancestor in `deep`.
+	const ancestorIf = (expr) => implicitOf(deep.replace("    if: github.ref == 'refs/heads/main'\n", `    if: ${expr}\n`));
+	ok("an ancestor whose if: is a bare always() is never skipped, so not counted", ancestorIf("always()").length === 0, JSON.stringify(ancestorIf("always()")));
+	ok("...nor `${{ always() }}`", ancestorIf("${{ always() }}").length === 0);
+	ok("`always() && x` CAN be skipped (x false), so it is counted", ancestorIf("always() && github.ref == 'refs/heads/main'").length === 1);
+	ok("a `!cancelled()` ancestor CAN be skipped (a cancel), so it is counted", ancestorIf("${{ !cancelled() }}").length === 1);
+	// The walk goes THROUGH a never-skipped job: success() reads the whole chain, so a conditional
+	// job above an `always()` one still skips the reader.
+	const through = "name: x\njobs:\n  p:\n    if: github.ref == 'refs/heads/main'\n    runs-on: x\n    steps:\n      - run: true\n" +
+		"  a:\n    needs: p\n    if: always()\n    runs-on: x\n    steps:\n      - run: true\n" +
+		"  c:\n    needs: a\n    if: needs.a.result == 'success'\n    runs-on: x\n    steps:\n      - run: true\n";
+	ok("...but the walk goes THROUGH it to a skippable job above", implicitOf(through)[0]?.skippable.join() === "p", JSON.stringify(implicitOf(through)));
+
+	// Every spelling of the `needs` context is a reference; a label that merely contains the word is not.
+	const readsOf = (expr) => scanImplicitSuccessNeeds(deep.replace("    if: needs.b.result == 'success'\n", `    if: ${expr}\n`)).problems.length;
+	ok("`contains(needs.*.result, 'failure')` is read", readsOf("contains(needs.*.result, 'failure')") === 1);
+	ok("`toJSON(needs)` is read", readsOf("toJSON(needs) != '{}'") === 1);
+	ok("`needs['b'].result` is read", readsOf("needs['b'].result == 'success'") === 1);
+	ok("a label string containing `needs-` is not", readsOf("github.event.label.name == 'needs-triage'") === 0);
+
+	// End to end through check(), and the refusal names both fixes and the cost.
+	const viaImplicit = check("wf", () => ["w.yml"], () => implicitWf(PLANTED_IF));
+	ok("the planted job is refused through check()", viaImplicit.some((p) => /the job `smoke`/.test(p) && /`retag-unchanged`/.test(p)), JSON.stringify(viaImplicit));
+	ok("...and the refusal names both fixes", viaImplicit.some((p) => /!cancelled\(\) && <condition>/.test(p) && /success\(\) && \(<condition>\)/.test(p)));
+	ok("...and the fixed tree is clean through check()", check("wf", () => ["w.yml"], () => implicitWf(BANG)).length === 0, JSON.stringify(check("wf", () => ["w.yml"], () => implicitWf(BANG))));
+	// Blindness: a tree with no needs-reading job `if:` at all is the scanner not matching.
+	const noReadsWf = implicitWf("${{ github.ref == 'refs/heads/main' }}").replace("needs.changes.outputs.apps != 'true'", "github.event_name == 'push'");
+	const noReads = check("wf", () => ["w.yml"], () => noReadsWf);
+	ok("a tree with ZERO needs-reading job if:s FAILS rather than passing", noReads.some((p) => /ZERO job-level `if:` referencing the `needs` context/.test(p)), JSON.stringify(noReads));
+
+	// THE EXIT CODE, which is the actual contract with CI: run this script as CI does, in a planted
+	// tree, and require a non-zero exit — then the same tree fixed, and require zero. Asserting on the
+	// problem list alone would stay green if `main` ever stopped turning problems into an exit status.
+	const runIn = (wf) => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "wf-shape-"));
+		try {
+			fs.mkdirSync(path.join(root, DIR), { recursive: true });
+			fs.writeFileSync(path.join(root, DIR, "w.yml"), wf);
+			return spawnSync(process.execPath, [fileURLToPath(import.meta.url)], { cwd: root, encoding: "utf8" });
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	};
+	const red = runIn(implicitWf(PLANTED_IF));
+	ok("the planted tree exits NON-ZERO", red.status !== 0 && red.status !== null, `status=${red.status} stderr=${red.stderr}`);
+	ok("...and its stderr names the job", /the job `smoke`/.test(red.stderr ?? ""), red.stderr);
+	const green = runIn(implicitWf(BANG));
+	ok("the fixed tree exits ZERO", green.status === 0, `status=${green.status} stderr=${green.stderr}`);
+
 	if (fails > 0) {
 		console.error(`\ncheck-workflow-shape self-test: ${fails} failure(s)`);
 		process.exit(1);
@@ -922,7 +1209,8 @@ if (process.argv.includes("--self-test")) {
 		console.error(
 			`\n${problems.length} problem(s). Each is a workflow that does not mean what it says: either Actions rejects the file ` +
 				"outright — zero jobs, an empty rollup, nothing red — or a step runs past a failed `Initialize containers` and reports " +
-				"a cause that was never true.",
+				"a cause that was never true, or a job decides on an upstream result while an implicit `success()` decides for it, so a " +
+				"skipped ancestor skips it with zero steps and nothing goes red (#5615).",
 		);
 		process.exit(1);
 	}
@@ -930,6 +1218,7 @@ if (process.argv.includes("--self-test")) {
 	let steps = 0;
 	let perms = 0;
 	let svcJobs = 0;
+	let needsJobs = 0;
 	let scalars = 0;
 	let biggest = { bytes: 0, chars: 0, file: "", line: 0, key: "" };
 	// The largest scalar of ANY kind, printed beside it. The templated one is what the limit BINDS
@@ -941,6 +1230,7 @@ if (process.argv.includes("--self-test")) {
 		steps += scanWorkflow(text).steps;
 		perms += scanPermissions(text).length;
 		svcJobs += scanServiceGuards(text).serviceJobs;
+		needsJobs += scanImplicitSuccessNeeds(text).reading;
 		for (const b of scanExpressionBudget(text)) {
 			scalars += 1;
 			if (b.templated && b.bytes > biggest.bytes) biggest = { ...b, file: f };
@@ -954,6 +1244,7 @@ if (process.argv.includes("--self-test")) {
 			`${perms} permission entr(ies), every scope and level one Actions accepts; ` +
 			`${svcJobs} job(s) with \`services:\`, none of them running a step past a failed \`Initialize containers\`; ` +
 			"no `name:` losing text to an unquoted `#`; " +
+			`${needsJobs} job \`if:\`(s) reading \`needs.*\`, none left to an implicit \`success()\` below a skippable ancestor; ` +
 			`largest TEMPLATED block scalar ${biggest.bytes} bytes of ${EXPRESSION_BUDGET} budgeted (${EXPRESSION_LIMIT} is where Actions refuses the file) ` +
 			`— ${biggest.file}:${biggest.line}, of ${scalars} block scalar(s) measured; ` +
 			`largest of ANY kind ${overall.bytes} bytes — ${overall.file}:${overall.line}` +

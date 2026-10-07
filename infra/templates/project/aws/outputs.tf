@@ -270,6 +270,31 @@ output "karpenter_node_tags" {
   value = length(module.karpenter) > 0 ? local.aws_default_tags : null
 }
 
+# The Karpenter NodePool settings (#5527): capacity types, architectures, instance categories and
+# families, the CPU limit, and node labels and taints. Read by packages/core/provisioner/karpenter.go,
+# which renders the NodePool from it; when this output is absent (state from an older template) the
+# runner falls back to the literals these variables default to. Null when Karpenter is not
+# provisioned, on the same guard as karpenter_node_tags. Non-sensitive.
+output "karpenter_nodepool" {
+  description = "Settings the runner renders the Karpenter NodePool from. Null when Karpenter is disabled."
+  value       = length(module.karpenter) > 0 ? local.karpenter_nodepool : null
+
+  precondition {
+    condition     = length(module.karpenter) == 0 || length(local.karpenter_families_outside_categories) == 0
+    error_message = "karpenter_instance_families ${jsonencode(local.karpenter_families_outside_categories)} belong to none of karpenter_instance_categories ${jsonencode(var.karpenter_instance_categories)}. Karpenter requires both, so it could launch no instance. Add the category, or set karpenter_instance_categories to []."
+  }
+}
+
+output "karpenter_arm64_nodepool" {
+  description = "Settings the runner renders the arm64 (Graviton) Karpenter NodePool from (#5534). Null when Karpenter is disabled or karpenter_arm64_nodepool is not set; the runner then deletes any arm64 NodePool an earlier apply created."
+  value       = length(module.karpenter) > 0 ? local.karpenter_arm64_nodepool : null
+
+  precondition {
+    condition     = length(module.karpenter) == 0 || length(local.karpenter_arm64_families_outside_categories) == 0
+    error_message = "karpenter_arm64_nodepool.instance_families ${jsonencode(local.karpenter_arm64_families_outside_categories)} belong to none of karpenter_instance_categories ${jsonencode(var.karpenter_instance_categories)}. Karpenter requires both, so the arm64 NodePool could launch no instance. Add the category, or set karpenter_instance_categories to []."
+  }
+}
+
 output "fluentbit_sa_role_arn" {
   description = "IAM Role ARN for Fluent Bit Service Account"
   value       = try(module.irsa_fluentbit_cloudwatch[0].iam_role_arn, null) != null ? module.irsa_fluentbit_cloudwatch[0].iam_role_arn : null

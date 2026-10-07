@@ -10,6 +10,22 @@ locals {
     Project     = var.project_name
     ManagedBy   = "opentofu"
   })
+
+  # The node_labels ARGUMENT the default pool and the positional pools render (#5535). Null when
+  # none were set, which is the argument those blocks have always left out, so a cluster that sets
+  # nothing plans unchanged. One expression for both, output below so the root's tofu test can tell
+  # null from {} (a mocked plan reads both back as {}).
+  node_labels_argument = length(var.node_labels) > 0 ? var.node_labels : null
+
+  # temporary_name_for_rotation for the pools this module names itself (#5578): the default pool,
+  # pool1..N and spot. The same derivation as the named pools below, inside AKS's 12-character
+  # pool-name rule: up to six characters of the pool's name (which starts with a letter) plus six
+  # hex characters of its hash, so no two pools share one and none is itself a pool's name.
+  # Rendered: default -> defaulc21f96, spot -> spotb2e189, pool1 -> pool15934c3.
+  rotation_names = {
+    for name in concat(["default", "spot"], [for i in range(1, max(length(var.machine_types), 1)) : "pool${i}"]) :
+    name => "${substr(name, 0, min(6, length(name)))}${substr(md5(name), 0, 6)}"
+  }
 }
 
 ################################################################################
@@ -109,15 +125,26 @@ resource "azurerm_kubernetes_cluster" "this" {
     os_disk_size_gb = var.disk_size_gb
     # OS-disk PLACEMENT (Managed vs Ephemeral), not a disk SKU — AKS exposes no OS-disk SKU or IOPS
     # at all; it derives both from vm_size. Null renders no argument, which is exactly the config
-    # this block carried before the knob existed. ForceNew: changing it on a live cluster replaces
-    # the default node pool.
+    # this block carried before the knob existed. NOT ForceNew in azurerm 4.x: like vm_size and
+    # os_disk_size_gb, changing it CYCLES the pool through temporary_name_for_rotation below, which
+    # replaces every node in the pool but not the pool or the cluster.
     os_disk_type = var.os_disk_type
+
+    # A change to vm_size, os_disk_type, os_disk_size_gb, max_pods or vnet_subnet_id cycles the pool
+    # through this temporary system pool instead of failing the apply (#5578). Adding the argument
+    # is not one of those changes: it is stored in state and sent with one update of the pool, which
+    # carries the pool's current settings and moves no node.
+    temporary_name_for_rotation = local.rotation_names["default"]
 
     node_count           = var.node_desired_size
     min_count            = var.node_min_size
     max_count            = var.node_max_size
     auto_scaling_enabled = true
     max_pods             = 110
+
+    # node_labels (#5535): null when none were set, which is the argument this block has always
+    # left out, so a cluster that sets nothing plans unchanged. Updated in place, not rotated.
+    node_labels = local.node_labels_argument
 
     upgrade_settings {
       max_surge = "10%"
@@ -142,6 +169,15 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 
   tags = local.common_tags
+
+  # The autoscaler owns the default pool's node count once the cluster exists (#5578).
+  # node_count (aks_node_desired_size) is where the pool STARTS. Without this, every plan after the
+  # autoscaler moved shows a node_count change, and azurerm refuses to apply it: "cannot change
+  # `node_count` when `auto_scaling_enabled` is set to `true`". That also blocked every other change
+  # to the default pool. Ignoring the one attribute leaves the rest of the cluster managed.
+  lifecycle {
+    ignore_changes = [default_node_pool[0].node_count]
+  }
 }
 
 ################################################################################
@@ -163,7 +199,75 @@ resource "azurerm_kubernetes_cluster_node_pool" "extra" {
   auto_scaling_enabled  = true
   max_pods              = 110
 
+  # A vm_size change (a new size at this position of aks_instance_types), or a change to the OS
+  # disk, max_pods or subnet, cycles the pool through this temporary pool instead of failing the
+  # apply (#5578). Adding it to a live pool is an update in place that moves no node.
+  temporary_name_for_rotation = local.rotation_names["pool${count.index + 1}"]
+
+  # node_labels (#5535): null when none were set, so these pools plan exactly as before. They take
+  # none of the user's taints: those go to the named pools only (node-pool contract #5533).
+  node_labels = local.node_labels_argument
+
   tags = local.common_tags
+
+  # Every positional pool is autoscaled (auto_scaling_enabled above is fixed at true), so the
+  # autoscaler owns the count once the pool exists (#5578). node_count is where the pool STARTS;
+  # without this, every plan after the autoscaler moved would send the pool back to
+  # aks_node_desired_size.
+  lifecycle {
+    ignore_changes = [node_count]
+  }
+}
+
+################################################################################
+# Named node pools (#5535): extra_node_pools at the root, one per NAME
+################################################################################
+# Keyed by name with for_each, never by position like `extra` above: removing a pool from the
+# middle of the list removes that pool and leaves every other one alone. Each has its own vm_size
+# and sizes. Isolation parity (#5533): the same subnet, OS disk size and type, and max_pods as the
+# default pool, so a pool is never cheaper because it is less isolated. Labels and taints arrive
+# already mapped by the root (nodepools.tf), the Spot label and taint included.
+resource "azurerm_kubernetes_cluster_node_pool" "named" {
+  for_each = var.named_node_pools
+
+  name                  = each.key
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
+  mode                  = "User"
+  vm_size               = each.value.vm_size
+
+  # A vm_size change CYCLES the pool through this temporary pool instead of failing: azurerm
+  # creates it, moves the workload off, rebuilds the pool on the new size and deletes it again.
+  # The name is derived from the pool's own, inside AKS's 12-character pool-name rule: up to six
+  # characters of the name (which starts with a letter) plus six hex characters of its hash, so
+  # two pools never share one and none collides with a reserved name.
+  temporary_name_for_rotation = "${substr(each.key, 0, min(6, length(each.key)))}${substr(md5(each.key), 0, 6)}"
+  vnet_subnet_id              = var.vnet_subnet_id
+  os_disk_size_gb             = var.disk_size_gb
+  os_disk_type                = var.os_disk_type
+  max_pods                    = 110
+
+  auto_scaling_enabled = true
+  node_count           = each.value.node_count
+  min_count            = each.value.min_count
+  max_count            = each.value.max_count
+
+  # ForceNew: changing capacity_type replaces the pool. Null on on-demand pools, so they render no
+  # spot argument at all. A Spot pool uses the cluster's Spot settings (aks_spot_eviction_policy,
+  # aks_spot_max_price at the root), the same ones the `spot` pool below uses.
+  priority        = each.value.spot ? "Spot" : null
+  eviction_policy = each.value.spot ? var.spot_eviction_policy : null
+  spot_max_price  = each.value.spot ? var.spot_max_price : null
+
+  node_labels = each.value.node_labels
+  node_taints = length(each.value.node_taints) > 0 ? each.value.node_taints : null
+
+  tags = local.common_tags
+
+  # The autoscaler owns the node count once the pool exists. node_count (desired_size) is where the
+  # pool STARTS; without this, every plan after the autoscaler moved would scale the pool back.
+  lifecycle {
+    ignore_changes = [node_count]
+  }
 }
 
 ################################################################################
@@ -180,9 +284,15 @@ resource "azurerm_kubernetes_cluster_node_pool" "extra" {
 # `count = 0` by default, so a cluster that did not ask for Spot plans exactly as it did before.
 #
 # Azure taints these nodes `kubernetes.azure.com/scalesetpriority=spot:NoSchedule` and labels them
-# `kubernetes.azure.com/scalesetpriority=spot` on its own — deliberately NOT restated here as
-# node_taints/node_labels, which are also ForceNew and would only be a second, drifting copy of
-# something the platform already guarantees.
+# `kubernetes.azure.com/scalesetpriority=spot` on its own. azurerm documents that a Spot pool must
+# declare BOTH, the label in node_labels and the taint in node_taints, and the two differ in how the
+# provider reads them back. node_labels is Optional+Computed, so a label the config leaves out is
+# not a diff. node_taints is Optional and NOT Computed ("Node Taints ... should not be computed and
+# must be specified"), and the provider reads it back from the pool's nodeTaints as AKS reports
+# them, so a taint AKS reports there is a diff against a config that leaves it out. The provider's
+# own Spot acceptance tests declare it for that reason. The pool therefore declares the taint
+# always (#5578), and the label once node_labels is set (#5535). In azurerm 4.x node_taints is neither ForceNew nor a property that cycles the pool:
+# it updates the pool in place.
 resource "azurerm_kubernetes_cluster_node_pool" "spot" {
   count = var.spot_enabled ? 1 : 0
 
@@ -206,7 +316,28 @@ resource "azurerm_kubernetes_cluster_node_pool" "spot" {
   max_count            = var.spot_node_max_size
   max_pods             = 110
 
+  # node_labels (#5535): null when none were set, so the pool plans exactly as before. When set,
+  # the Spot label AKS puts on these nodes itself is declared beside them, as azurerm requires of a
+  # Spot pool that declares node_labels at all.
+  node_labels = length(var.node_labels) > 0 ? merge(var.node_labels, { "kubernetes.azure.com/scalesetpriority" = "spot" }) : null
+
+  # The taint AKS puts on every Spot node, declared so the plan matches the pool AKS reports (see
+  # the block comment above). It adds nothing to a node: AKS tainted these nodes when it made them.
+  # It is not one of the user's taints; those go to the named pools only.
+  node_taints = ["kubernetes.azure.com/scalesetpriority=spot:NoSchedule"]
+
+  # A vm_size change (a new first entry in aks_instance_types), or a change to the OS disk or
+  # subnet, cycles the pool through this temporary pool instead of failing the apply (#5578).
+  # Adding it to a live pool is an update in place that moves no node.
+  temporary_name_for_rotation = local.rotation_names["spot"]
+
   tags = local.common_tags
+
+  # Autoscaled from aks_spot_node_min_size, which is also where it STARTS. Once the autoscaler adds
+  # a node, every plan would otherwise send the pool back to the minimum (#5578).
+  lifecycle {
+    ignore_changes = [node_count]
+  }
 }
 
 ################################################################################

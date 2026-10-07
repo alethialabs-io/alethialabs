@@ -25,7 +25,7 @@ type apiClient interface {
 	ApplyDesign(p api.ApplyDesignParams) (*api.DesignApplyResult, error)
 	GetClusters() ([]api.ClusterSummary, error)
 	GetConfigurations() ([]types.ConfigurationSummary, error)
-	ExportConfiguration(projectName, format string) (*api.ConfigurationExport, error)
+	ExportConfiguration(projectName, format, env string) (*api.ConfigurationExport, error)
 	GetRepositories(provider string) ([]api.Repository, error)
 	ListServiceTokens() ([]api.ServiceToken, error)
 	CreateServiceToken(name string, expiresInDays int) (*api.CreatedServiceToken, error)

@@ -418,6 +418,13 @@ func TestContract_Component(t *testing.T) {
 	assertNoExtraStructKeys(t, "component.json", resp)
 }
 
+// TestContract_ComponentConflict pins the 409 body of a refused component write (#5551).
+func TestContract_ComponentConflict(t *testing.T) {
+	var resp ComponentConflict
+	strictDecode(t, "component_conflict.json", &resp)
+	assertNoExtraStructKeys(t, "component_conflict.json", resp)
+}
+
 func TestContract_SigningKeys(t *testing.T) {
 	var resp SigningKeysResponse
 	strictDecode(t, "signing_keys.json", &resp)
@@ -486,6 +493,15 @@ func TestContract_Addons(t *testing.T) {
 		t.Fatalf("expected 1 add-on, got %d", len(resp.Addons))
 	}
 	assertNoExtraStructKeys(t, "addons.json", resp)
+}
+
+func TestContract_AddonCatalog(t *testing.T) {
+	var resp AddonCatalogDocument
+	strictDecode(t, "addon_catalog.json", &resp)
+	if len(resp.Addons) != 1 {
+		t.Fatalf("expected 1 catalog add-on, got %d", len(resp.Addons))
+	}
+	assertNoExtraStructKeys(t, "addon_catalog.json", resp)
 }
 
 func TestContract_ByoCharts(t *testing.T) {

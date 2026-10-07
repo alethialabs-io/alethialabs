@@ -349,7 +349,7 @@ func init() {
 	// even though, unlike them, it is consulted only when the PLAN removes something.
 	addYesFlag(projectDesignApplyCmd, &designApplyYes)
 	projectDesignCmd.PersistentFlags().StringP("project", "p", "", "Project name or id")
-	projectDesignCmd.PersistentFlags().StringP("env", "e", "", "Environment name, stage, or id (default: the project's default environment)")
+	projectDesignCmd.PersistentFlags().StringP("env", "e", "", "Environment id, name or stage — an exact name wins over a stage (default: the project's default environment)")
 	projectDesignCmd.AddCommand(projectDesignApplyCmd)
 	projectCmd.AddCommand(projectDesignCmd)
 }
