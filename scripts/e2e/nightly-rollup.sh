@@ -1794,7 +1794,7 @@ run_self_test() {
 	# it must be read BEFORE the red filer's all-green `exit 0`, which ENDS THE STEP. A filer below
 	# that line is unreachable in precisely the case it exists for: every leg green and the accounts
 	# not empty, which is the state the teardown axis was made orthogonal in order to report.
-	local wf red_exit use_line green_line
+	local wf red_exit use_line green_line post_line
 	wf="$(dirname "${BASH_SOURCE[0]}")/../../.github/workflows/e2e-nightly.yml"
 	if [ -f "$wf" ]; then
 		use_line="$(grep -nE '\$\{RESIDUAL[^_]|\$RESIDUAL([^_A-Za-z0-9]|$)' "$wf" | grep -vE ':[[:space:]]*#' | head -n1 | cut -d: -f1)"
@@ -1888,12 +1888,17 @@ run_self_test() {
 	_a "1" "$(grep -c '| `168216231` | `hcloud-upload-image-d4034d08` | unknown | unknown | yes |' "$c/out/summary.md")" \
 		"(I3) …and says its age is unknown rather than inventing one"
 
-	# (I4) The workflow READS the key outside a comment, before the all-green exit — the V3d argument:
-	#      a correct producer with no consumer is the state #5645 was filed about.
+	# (I4) The workflow BRANCHES on the key and POSTS the body, both before the all-green exit — the
+	#      V3d argument: a correct producer with no consumer is the state #5645 was filed about.
+	#      BOUNDARY: this reads the workflow's text, so it proves the consumer is present and placed
+	#      above the exit, not that GitHub runs it. A mention in an `echo` does not count — the guard
+	#      line is matched whole, which is what made a first cut of this check pass with the branch
+	#      disabled.
 	if [ -f "$wf" ]; then
-		use_line="$(grep -nE '\$\{IMAGER_LEAKS|\$IMAGER_LEAKS([^_A-Za-z0-9]|$)' "$wf" | grep -vE ':[[:space:]]*#' | head -n1 | cut -d: -f1)"
-		_a "reachable" "$([ -n "$use_line" ] && [ -n "$red_exit" ] && [ "$use_line" -lt "$red_exit" ] && echo reachable || echo UNREACHABLE-OR-UNREAD)" \
-			"(I4) e2e-nightly.yml reads IMAGER_LEAKS before the red filer's all-green exit"
+		use_line="$(grep -nF 'if [ -n "${IMAGER_LEAKS// /}" ]; then' "$wf" | head -n1 | cut -d: -f1)"
+		post_line="$(grep -nE 'gh issue (create|edit) .*issue-imager-leak\.md' "$wf" | grep -vE ':[[:space:]]*#' | head -n1 | cut -d: -f1)"
+		_a "reachable" "$([ -n "$use_line" ] && [ -n "$post_line" ] && [ -n "$red_exit" ] && [ "$use_line" -lt "$post_line" ] && [ "$post_line" -lt "$red_exit" ] && echo reachable || echo UNREACHABLE-OR-UNREAD)" \
+			"(I4) e2e-nightly.yml branches on IMAGER_LEAKS and posts the body before the red filer's all-green exit"
 	fi
 
 	# (V4) THE DISTINCTION THIS WHOLE CHANGE TURNS ON. `we asked and it was empty` and `we could not
