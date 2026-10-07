@@ -1542,50 +1542,23 @@ jobs:
       contents: read
       issues: write
     steps:
+      # Only the one script — nothing else in the tree is read here.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/deploy-failure-report.mjs
+          sparse-checkout-cone-mode: false
+      # What the issue says production is running comes from `needs.deploy.result` (#5643): a red
+      # smoke after a GREEN deploy is a live release with a failing check, not a commit production
+      # never received, and it is filed under its own title so the two never update each other's
+      # issue. The case table, and the self-test that pins it, live in the script. Both results
+      # must be DIRECT needs above — the `needs` context carries nothing transitive.
       - name: Open or update the deploy-broken issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          TITLE="prod: Deploy Console is red on main — production is not receiving new code"
-
-          # Name the jobs that actually failed, so the issue body is a diagnosis rather than a link.
-          jobs_json="$(gh api "repos/${REPO}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" --paginate 2>/dev/null || echo '{"jobs":[]}')"
-          bad="$(printf '%s' "$jobs_json" | jq -r '.jobs[]? | select(.conclusion=="failure" or .conclusion=="cancelled") | "- `\(.name)` — \(.conclusion)"' | head -40)"
-          [ -n "$bad" ] || bad="- (could not enumerate jobs — see the run)"
-
-          # Static Markdown comes from QUOTED heredocs (backticks stay literal, nothing expands);
-          # dynamic values are printf'd in between with plain %s formats. Keeping the two apart is
-          # what lets the body carry backticks without shellcheck reading them as substitutions.
-          # The heredoc bodies sit at this block's indent on purpose: YAML strips it, so the closing
-          # MD lands at column 0 for the shell.
-          {
-            cat <<'MD'
-          `Deploy Console` failed on `main` at commit:
-          MD
-            printf '%s\n\n' "$SHA"
-            cat <<'MD'
-          **The `deploy` job is gated `!cancelled() && !failure()`, so production did NOT receive this commit.**
-          
-          Failing jobs:
-          MD
-            printf '%s\n\n' "$bad"
-            printf 'Run: %s\n\n' "$RUN_URL"
-            cat <<'MD'
-          Do not close this until a `Deploy Console` run on main reaches `deploy: success`. A green run is
-          not sufficient on its own — `retag-unchanged` can report success while shipping a stale image, so
-          confirm the deployed `ALETHIA_SOURCE_COMMIT` matches the promoted SHA.
-          MD
-          } > /tmp/deploy-failure-body.md
-
-          existing="$(gh issue list --repo "$REPO" --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')"
-          if [ -n "$existing" ]; then
-            echo "Updating existing issue #${existing}"
-            gh issue comment "$existing" --repo "$REPO" --body-file /tmp/deploy-failure-body.md
-          else
-            echo "Opening a new issue"
-            gh issue create --repo "$REPO" --title "$TITLE" --body-file /tmp/deploy-failure-body.md
-          fi
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+        run: node scripts/deploy-failure-report.mjs
