@@ -27,11 +27,23 @@
 //           literal handed straight to an `fs` read. Anchored expressions are folded through
 //           `path.join` / `resolve` / `dirname`, `fileURLToPath`, `new URL(x, import.meta.url)`,
 //           `const` bindings, and calls to local single-expression helpers such as
-//           `const repo = (...p) => resolve(__dirname, "../..", ...p)`. A path that lands on a
-//           tracked FILE is a read; a template substitution the evaluator cannot fold becomes `*`
-//           within that one segment, so `fixture.${cloud}.json` reads every file it can match. A
-//           relative import that lands outside apps/console is a read too (vitest loads it; turbo
-//           never sees it).
+//           `const repo = (...p) => resolve(__dirname, "../..", ...p)`. Then:
+//             - a path that lands on a tracked FILE is a read;
+//             - a template substitution that will not fold becomes `*` within that one segment,
+//               so `fixture.${cloud}.json` reads every file it can match;
+//             - at an `fs` read, a known non-root directory joined with segments that will not
+//               fold (`join(FIXTURES, name)`) reads `<dir>/*`;
+//             - a directory handed to an `fs` read (`readdirSync`) reads every file under it —
+//               its listing changes exactly when one is added or removed;
+//             - a relative import that lands outside apps/console is a read (vitest loads it;
+//               turbo never sees it);
+//             - a string literal spelling a tracked repo path outside apps/console (with a `/`)
+//               is a read when it sits in a module that reads files, or in a module a test
+//               imports directly while that test reads `resolve(REPO_ROOT, <data>)` — the
+//               `it.each` row or lib constant the read's path actually came from.
+//           Path expressions are taken from the WHOLE module, including functions no test calls,
+//           so the set over-approximates: an extra entry costs a cache miss, a missing one costs
+//           a replayed green.
 //
 //   HASHED  `turbo run test --filter=console --dry=json`: the `inputs` of `console#test` and of
 //           every task it transitively depends on (`^build` of each workspace package — whose
@@ -46,20 +58,23 @@
 //
 // ── MARKDOWN, MEASURED ──────────────────────────────────────────────────────────────────────────
 //
-// The root's `!**/*.md` / `!**/*.mdx` only ever excludes files INSIDE the package: with turbo 2.11.7
-// an explicit `$TURBO_ROOT$/docs/legal/GDPR_ACCOUNTABILITY.md` (and even `$TURBO_ROOT$/docs/legal/*.md`)
+// The root's `!**/*.md` / `!**/*.mdx` only ever excludes files INSIDE a package: with turbo 2.11.7 an
+// explicit `$TURBO_ROOT$/docs/legal/GDPR_ACCOUNTABILITY.md` (and even `$TURBO_ROOT$/docs/legal/*.md`)
 // is hashed whichever side of `$TURBO_EXTENDS$` it is written on, while an explicit in-package
-// `README.md` is NOT hashed in either order — the negation wins. So the exclusion stays (in-package
-// docs churn should not re-run 2,500 test files), an outside markdown read is declared like any other
-// path, and an IN-package markdown read cannot be fixed with an input line at all: this guard says so.
+// `README.md` is NOT hashed in either order — the negation wins. The suite reads in-package markdown
+// (apps/console/README.md via scripts/check-route-states.mjs, docs/ui-conformance/*.md via
+// scripts/audit-report.mjs), so apps/console/turbo.json does not extend the root's test inputs and
+// carries no markdown negation; the root keeps it for every other package. Should the negation come
+// back, an in-package markdown read cannot be fixed with an input line at all, and this guard says so.
 //
 // ── BOUNDARY — WHAT THIS CANNOT SEE ─────────────────────────────────────────────────────────────
 //
 //   * A path built from a value the evaluator cannot fold — a parameter, a loop variable, a
 //     function's return value other than a local single-expression helper's, a path walked up to
 //     at runtime (`consoleRoot()`, `repoRoot()` loops). Joined onto an anchor, these are COUNTED
-//     and printed as "dynamic", never checked. A directory handed to `readdirSync` is in that
-//     class too: what is read from inside it is a runtime join.
+//     and printed as "dynamic" (`--verbose` lists them), never checked. A root-anchored join with
+//     a part that will not fold (`resolve(REPO_ROOT, file)`) is in that class unless a path
+//     literal in scope supplies the file (see READS).
 //   * A file read by a subprocess the test spawns, or by a module reached through a bare package
 //     specifier (`next`, `@repo/ui`): node_modules is keyed by the lockfile and workspace
 //     packages by their own task hash, so neither needs a line here.
@@ -72,9 +87,14 @@
 // and want deleting together) or the evaluator rotted, and both need a human.
 //
 // Cost of the fix it asks for: every declared input re-runs the WHOLE console `test` task when it
-// changes, not just the one test that reads it.
+// changes, not just the one test that reads it. Measured over the 2,184 commits on dev in the 90
+// days to 2026-10-07: 80 touched a declared input and nothing else in console#test's key — those are
+// the runs the cache used to replay, now ~7 min each of the "Unit tests" step. `--force` for a
+// parity subset would pay its share of that on every CI run instead, including the many that change
+// nothing it reads.
 //
 //   node scripts/check-console-test-inputs.mjs              # the repo
+//   node scripts/check-console-test-inputs.mjs --verbose    # ...and list the dynamic reads
 //   node scripts/check-console-test-inputs.mjs --self-test  # the evaluator and both directions
 
 import { execFileSync } from "node:child_process";
@@ -434,12 +454,12 @@ export function pathsIn(file, text) {
 			if (fsReadOf(ctx, callee) && n.arguments.length > 0) {
 				record(n, evaluate(ctx, n.arguments[0], paramsInScope(n)), true);
 			} else if (pathFnOf(ctx, callee) || (ts.isIdentifier(callee) && (ctx.b.urlToPath.has(callee.text) || isLocalFn(ctx, callee.text)))) {
-				const v = evaluate(ctx, n);
+				const v = evaluate(ctx, n, paramsInScope(n));
 				// An anchored expression that would not fold is reported only when it reaches a read.
 				if (v !== UNKNOWN) record(n, v, false);
 			}
 		} else if (ts.isNewExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "URL") {
-			const v = evaluate(ctx, n);
+			const v = evaluate(ctx, n, paramsInScope(n));
 			if (v !== UNKNOWN) record(n, v, false);
 		}
 		ts.forEachChild(n, visit);
@@ -736,6 +756,11 @@ const F = path.posix.join(import.meta.dirname, "../../../../../packages/brand/sr
 const notAPath = Promise.resolve("x");
 const alsoNot = ["a", "b"].join("/");
 function walk(dir: string) { return readdirSync(join(ROOT, dir)); }
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "../../../../../packages/core/api/testdata");
+function loadFixture(name: string) { return readFileSync(join(FIXTURES, name), "utf8"); }
+const name = "shadowed.json";
+const RUNNERS = join(__dirname, "../../../../..", "infra/templates/runner");
+readdirSync(RUNNERS);
 `;
 	const got = pathsIn(file, src);
 	const rel = (p) => path.relative(REPO, p.abs);
@@ -751,6 +776,12 @@ function walk(dir: string) { return readdirSync(join(ROOT, dir)); }
 	]) {
 		check(`folds ${want.replace(STAR, "*")}`, folded.includes(want), JSON.stringify(folded.map((f) => f.replace(STAR, "*"))));
 	}
+	check(
+		"a parameter joined onto a known non-root directory at a read is `<dir>/*`, and does not fold to a same-named const",
+		folded.includes(`packages/core/api/testdata/${STAR}`) && !folded.includes("packages/core/api/testdata/shadowed.json"),
+		JSON.stringify(folded.map((f) => f.replace(STAR, "*"))),
+	);
+	check("a directory handed to readdirSync is a sink read", got.some((p) => p.sink && rel(p) === "infra/templates/runner"));
 	check("Promise.resolve / Array#join are not path functions", !folded.some((f) => f === "x" || f.endsWith("a/b")), JSON.stringify(folded));
 	check("a parameter joined onto an anchor at a read is DYNAMIC, not dropped", got.some((p) => p.dynamic));
 
@@ -770,7 +801,15 @@ function walk(dir: string) { return readdirSync(join(ROOT, dir)); }
 	check("an outside read turbo does not hash FAILS", red.missing.some((m) => m.rel === victim), JSON.stringify(red.missing));
 	const staleRed = verdict({ reads: derived.reads, hashed, declared: [...declared, "infra/nothing-reads-this.yaml"] });
 	check("a declared input nothing reads FAILS (stale)", staleRed.stale.includes("infra/nothing-reads-this.yaml"));
-	const silent = report({ reads: new Map(), dynamic: [], modules: 0 }, { missing: [], stale: [] });
+	// Muted: the ::error:: line it prints is the EXPECTED outcome here and must not annotate the run.
+	const [log, err] = [console.log, console.error];
+	console.log = console.error = () => {};
+	let silent;
+	try {
+		silent = report({ reads: new Map(), dynamic: [], modules: 0 }, { missing: [], stale: [] });
+	} finally {
+		[console.log, console.error] = [log, err];
+	}
 	check("zero outside reads fails CLOSED", silent === 1);
 
 	if (fails > 0) {

@@ -115,9 +115,50 @@ if (enforcedBy.size === 0) {
 }
 
 // --- does the enforcing job produce ee/dist? -------------------------------------------------
-const turboCfg = existsSync("turbo.json") ? JSON.parse(readFileSync("turbo.json", "utf8")) : null;
-const turboTasks = turboCfg ? turboCfg.tasks || turboCfg.pipeline || {} : {};
-const testDependsOnBuild = ((turboTasks.test || {}).dependsOn || []).includes("^build");
+/**
+ * Parse a turbo.json, which turbo reads as JSONC: a package-level one carries `//` comments
+ * (apps/console/turbo.json does), so a bare JSON.parse would throw on it. Strips comments outside
+ * strings and trailing commas; no dependency, because this guard runs in a de-hydrated worktree.
+ */
+function readTurbo(file) {
+	if (!existsSync(file)) return null;
+	const src = readFileSync(file, "utf8");
+	let out = "";
+	for (let i = 0; i < src.length; i++) {
+		const c = src[i];
+		if (c === '"') {
+			const start = i;
+			for (i++; i < src.length && src[i] !== '"'; i++) if (src[i] === "\\") i++;
+			out += src.slice(start, i + 1);
+		} else if (c === "/" && src[i + 1] === "/") {
+			while (i < src.length && src[i] !== "\n") i++;
+			out += "\n";
+		} else if (c === "/" && src[i + 1] === "*") {
+			i = src.indexOf("*/", i + 2);
+			if (i < 0) break;
+			i++;
+		} else out += c;
+	}
+	return JSON.parse(out.replace(/,(\s*[}\]])/g, "$1"));
+}
+
+/** A turbo config's task map, under either the v2 (`tasks`) or v1 (`pipeline`) key. */
+function tasksOf(cfg) {
+	return cfg ? cfg.tasks || cfg.pipeline || {} : {};
+}
+
+const rootTasks = tasksOf(readTurbo("turbo.json"));
+
+/**
+ * Whether `<dir>`'s `test` task depends on `^build`. A package-level turbo.json that sets
+ * `test.dependsOn` REPLACES the root's (turbo merges task definitions field by field), so the root
+ * alone is the wrong answer for a package that overrides it — apps/console has had its own
+ * turbo.json since #5635, overriding `test.inputs` only (#5638).
+ */
+function testDependsOnBuild(dir) {
+	const own = (tasksOf(readTurbo(path.join(dir, "turbo.json"))).test || {}).dependsOn;
+	return (own ?? (rootTasks.test || {}).dependsOn ?? []).includes("^build");
+}
 
 /** Workspace package directories, from pnpm-workspace.yaml's globs (one level deep, as used here). */
 function workspaceDirs() {
@@ -151,7 +192,10 @@ function workspaceDirs() {
 // packages/ui — which depends on nothing enterprise, yet is correctly measured with the dist
 // present because apps/console's test task built it earlier in the same `turbo run test`.
 
-/** Every workspace package that reaches @alethia/ee through a stanza turbo would traverse. */
+/**
+ * Every workspace package that reaches @alethia/ee through a stanza turbo would traverse: it
+ * depends on @alethia/ee AND its own effective `test.dependsOn` carries `^build`.
+ */
 function eeDependents() {
 	const out = [];
 	for (const dir of workspaceDirs()) {
@@ -163,7 +207,10 @@ function eeDependents() {
 		} catch {
 			continue;
 		}
-		if (["dependencies", "optionalDependencies", "devDependencies"].some((k) => (d[k] || {})["@alethia/ee"] !== undefined)) {
+		if (
+			["dependencies", "optionalDependencies", "devDependencies"].some((k) => (d[k] || {})["@alethia/ee"] !== undefined) &&
+			testDependsOnBuild(dir)
+		) {
 			out.push(d.name || dir);
 		}
 	}
@@ -179,7 +226,7 @@ function jobBuildsEeDist(job) {
 	// `turbo run test` with no --filter fans out across the whole workspace, so any ee dependent's
 	// test task drags @alethia/ee#build in via `test.dependsOn: ["^build"]`.
 	const m = job.body.match(/turbo run [^\n]*\btest\b[^\n]*/);
-	if (m && testDependsOnBuild && EE_DEPENDENTS.length > 0) {
+	if (m && EE_DEPENDENTS.length > 0) {
 		const filtered = /--filter/.test(m[0]);
 		if (!filtered) {
 			return {
