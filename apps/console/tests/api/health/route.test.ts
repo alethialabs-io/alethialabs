@@ -8,6 +8,8 @@
 // internal topology and is gated behind the platform-internal bearer (ALETHIA_CRON_SECRET); anonymous
 // callers get only the sanitized aggregate so an LB readiness probe keeps working without a secret.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execute = vi.fn();
@@ -185,6 +187,17 @@ describe("GET /api/health — build identity", () => {
 		process.env.NEXT_PUBLIC_APP_VERSION = "5f3c2a1deadbeef";
 		const body = await (await GET(new Request("http://local/api/health?shallow=1"))).json();
 		expect(body).toMatchObject({ status: "ok", mode: "live", build: "5f3c2a1deadbeef" });
+	});
+
+	// The test above cannot tell a runtime read from a build-time one: vitest inlines nothing, so a
+	// literal `process.env.NEXT_PUBLIC_APP_VERSION` would pass it too — and in `next build` that
+	// literal is replaced by the BUILD stage's value. Pin the read form instead. Boundary: this reads
+	// the route's own source text, so it catches the literal member (dotted or bracketed with a
+	// string) in this file only, not an inlined read hidden behind a helper elsewhere.
+	it("reads NEXT_PUBLIC_APP_VERSION at runtime via env(), never as a member Next would inline", () => {
+		const src = readFileSync(join(__dirname, "../../../app/api/health/route.ts"), "utf8");
+		expect(src).toMatch(/\benv\(\s*"NEXT_PUBLIC_APP_VERSION"\s*\)/);
+		expect(src).not.toMatch(/process\.env(\.NEXT_PUBLIC_APP_VERSION\b|\[\s*["'`]NEXT_PUBLIC_APP_VERSION)/);
 	});
 
 	// The sandbox's compile stamp answers a narrower question (is the COMPILE my tree?) and is set
