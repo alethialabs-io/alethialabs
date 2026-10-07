@@ -638,13 +638,15 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				// the overlay it opened — see `awaitNewOverlay` for why a fixed 300 ms let the NEXT
 				// step's lookup fall back to the whole page and click the canvas card behind the palette.
 				//
-				// The 300 ms is KEPT after that postcondition, as a floor, and the reason is measured: on
-				// this PR's first gate run (job 112906793672) the overlay wait alone returned as soon as
-				// the dialog mounted, and `account.delete` — `{open: "Account settings"}` — failed with
-				// "Cancel was pressed and rows still moved: authz_activity_log 15→16". Opening that dialog
-				// sets off a fire-and-forget activity write (lib/authz/activity.ts), and the old fixed
-				// settle had been what let it land BEFORE the fingerprint. So the wait is added to the
-				// settle, never substituted for it: no step now settles for less time than it did.
+				// The 300 ms is KEPT after that postcondition, as a floor. What was measured: on #5636's
+				// first gate run (job 112906793672) the floor was dropped, the overlay wait returned as
+				// soon as the dialog mounted, and `account.delete` — `{open: "Account settings"}` — failed
+				// with "Cancel was pressed and rows still moved: authz_activity_log 15→16". One row landed
+				// between the before-snapshot and the assertion; its SOURCE WAS NOT IDENTIFIED (the dialog
+				// itself calls only Better Auth's `listAccounts`, so any permission check in that window,
+				// page load included, could have written it). Keeping the floor restores dev's timing —
+				// no step settles for less time than it did — and does NOT close that race; it is
+				// tracked separately, and not excused in AMBIENT_GROWTH.
 				if (kind === "menu") await openMenu(page, opener);
 				else if (seen) await awaitNewOverlay(page, seen);
 				await page.waitForTimeout(300);
