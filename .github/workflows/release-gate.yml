@@ -824,6 +824,9 @@ jobs:
           }
 
           const ranMd = autoLegs.length > 0 ? ["", `The legs its specs imply run without the label (#4777): \`${autoLegs.join("`, `")}\` — measuring ${measured.length} changed path(s).`] : [];
+          // On the FAILURE path below the same legs do NOT run: this step failing fails `legs`, and the
+          // `gate` job's `success()` skips it even though `pick` already emitted `run=yes` (#5615).
+          const notRanMd = autoLegs.length > 0 ? ["", `**The legs its specs imply (\`${autoLegs.join("`, `")}\`) will NOT run either.** \`pick\` selected them without the label (#4777), but this check failing fails \`legs\`, and the \`gate\` job runs only on a green \`legs\`. Labelling the PR is what runs them.`] : [];
           if (rows.length === 0 && autoLegs.length > 0) {
             summarise(["## Release gate — running the legs this PR's specs imply", ...ranMd]);
             console.log(`every changed path on the gate's surface is measured by a leg that runs: ${autoLegs.join(", ")}`);
@@ -843,7 +846,7 @@ jobs:
           // A BOOLEAN ABOUT A STRUCTURE MUST PRINT THE STRUCTURE: every path, the legs it implies
           // and the rule that says so — as annotations in the log AND as a table in the summary.
           const SHOWN = 25;
-          const partial = autoLegs.length > 0 ? `only \`${autoLegs.join("`, `")}\` run (its specs imply them), not the legs these paths need` : "so NOT ONE leg runs on the change that needs it";
+          const partial = autoLegs.length > 0 ? `so NOT ONE leg runs — not even \`${autoLegs.join("`, `")}\`, which its specs imply, because this check failing fails \`legs\` and the gate needs a green one` : "so NOT ONE leg runs on the change that needs it";
           console.error(`::error::${rows.length} of this PR's ${changed.length} changed path(s) are on the release gate's surface, and it carries neither \`release-gate:run\` nor \`release-gate:all\` — ${partial}. A leg's verdict should exist for every PR that changes what it measures.`);
           for (const r of rows.slice(0, SHOWN)) console.error(`::error file=${r.file}::${r.file} → ${r.legs} (${r.why})`);
           if (rows.length > SHOWN) console.error(`::error::…and ${rows.length - SHOWN} further path(s) on the surface, listed in the job summary.`);
@@ -852,7 +855,7 @@ jobs:
             "## Release gate — a leg would never run on what this PR changes",
             "",
             `**${rows.length} of ${changed.length} changed path(s)** are on the gate's surface, and this PR carries neither \`release-gate:run\` nor \`release-gate:all\`.`,
-            ...ranMd,
+            ...notRanMd,
             "",
             `**Add \`release-gate:run\`** and the gate runs: ${env.WOULD_RUN}. \`release-gate:all\` runs every leg.`,
             "",
@@ -1005,9 +1008,14 @@ jobs:
     #
     # The matrix expands only when the job runs. Both before and after, a label leaves the seven
     # contexts untouched and the receipt reads the successes that are already there.
-    # `success()` is the implicit default, written down (#5615): a `legs` that was skipped (a draft)
-    # or failed has no `run == 'yes'` to offer, so skipping here is intended, and
-    # scripts/ci/check-workflow-shape.mjs refuses a needs-reading `if:` that leaves it unstated.
+    # `success()` IS LOAD-BEARING, not decoration (#5615). It was always implied; it is written down
+    # because the output test alone does NOT keep the gate off a red `legs`. `pick` emits `run=yes`
+    # as soon as a PR's own specs imply a leg (#4777), and only AFTERWARDS can `require-label` fail
+    # `legs` (paths on the surface that those auto legs do not measure). On that run `outputs.run`
+    # IS `yes`, and `success()` is the only thing that skips the gate. That is the decision: a red
+    # `legs` runs no leg, and `require-label`'s summary says so. A skipped `legs` (a draft) has no
+    # output at all. scripts/ci/check-workflow-shape.mjs refuses this `if:` with the `success()`
+    # left unstated, so deleting it is visible.
     if: >-
       success()
       && needs.legs.outputs.run == 'yes'
