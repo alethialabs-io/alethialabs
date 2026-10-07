@@ -480,6 +480,78 @@ const NEEDS_REF = /(^|[^.\w'-])needs\s*[.[)]/;
 const STATUS_FN = /(^|[^.\w])(success|always|failure|cancelled)\s*\(\s*\)/;
 
 /**
+ * Read the jobs of one workflow: each job's `needs:`, its job-level `if:` expression, and the line
+ * range its block spans. `null` when the file has no `jobs:` block.
+ *
+ * Shared by the scanners that reason about a job's CONDITION, so the `needs:`/`if:` spellings they
+ * read (inline, wrapped flow list, block list; inline, block scalar, plain continuation) are read
+ * one way. `start`/`end` are 0-based line indexes, `end` exclusive.
+ *
+ * @param {string} text
+ * @returns {Map<string, {needs: string[], expr: string | null, line: number, start: number, end: number}> | null}
+ */
+function parseJobs(text) {
+	const lines = text.split("\n");
+	const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+	if (jobsAt === -1) return null;
+
+	/** @type {Map<string, {needs: string[], expr: string | null, line: number, start: number, end: number}>} */
+	const jobs = new Map();
+	let job = null;
+	for (let i = jobsAt + 1; i < lines.length; i++) {
+		// A top-level key after `jobs:` ends the block.
+		if (/^[A-Za-z0-9_-]+:/.test(lines[i])) {
+			if (job !== null) job.end = i;
+			break;
+		}
+		const head = lines[i].match(/^ {2}([A-Za-z0-9_-]+):\s*(?:#.*)?$/);
+		if (head !== null) {
+			if (job !== null) job.end = i;
+			job = { needs: [], expr: null, line: i + 1, start: i, end: lines.length };
+			jobs.set(head[1], job);
+			continue;
+		}
+		if (job === null) continue;
+
+		const needs = lines[i].match(/^ {4}needs:\s*(.*?)\s*(?:#.*)?$/);
+		if (needs !== null) {
+			let v = needs[1];
+			if (v.startsWith("[") && !v.includes("]")) {
+				// A flow sequence wrapped over several lines.
+				for (let j = i + 1; j < lines.length && !v.includes("]"); j++) v += ` ${lines[j].replace(/#.*$/, "").trim()}`;
+			} else if (v === "") {
+				// A block list: `- a` items at a deeper indent.
+				for (let j = i + 1; j < lines.length; j++) {
+					const item = lines[j].match(/^ {5,}-\s*([A-Za-z0-9_-]+)/);
+					if (item === null) break;
+					v += ` ${item[1]}`;
+				}
+			}
+			job.needs = v.replace(/[[\]'"]/g, " ").split(/[\s,]+/).filter(Boolean);
+			continue;
+		}
+
+		const iff = lines[i].match(/^ {4}if:\s*(.*?)\s*$/);
+		if (iff !== null) {
+			let v = iff[1];
+			// A block scalar's body, or a plain scalar's continuation lines: both sit deeper than the
+			// job's keys. A comment line ends a plain scalar, and is skipped inside a block one only
+			// because no expression in this repo starts with `#`.
+			const block = v === "" || /^[|>](?:\d[-+]?|[-+]\d?)?$/.test(v);
+			const parts = block ? [] : [v];
+			for (let j = i + 1; j < lines.length; j++) {
+				if (lines[j].trim() === "" || !/^ {5,}\S/.test(lines[j]) || /^\s*#/.test(lines[j])) break;
+				parts.push(lines[j].trim());
+			}
+			v = parts.join(" ");
+			job.expr = v;
+			job.line = i + 1;
+		}
+	}
+	return jobs;
+}
+
+/**
  * Jobs whose `if:` reads `needs.<job>.result`/`.outputs` with NO status-check function, below an
  * ancestor that can be skipped — so GitHub's implicit `success()` decides the job, not the condition.
  *
@@ -528,59 +600,8 @@ const STATUS_FN = /(^|[^.\w])(success|always|failure|cancelled)\s*\(\s*\)/;
  * @returns {{jobs: number, reading: number, problems: {line: number, job: string, expr: string, skippable: string[]}[]}}
  */
 export function scanImplicitSuccessNeeds(text) {
-	const lines = text.split("\n");
-	const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
-	if (jobsAt === -1) return { jobs: 0, reading: 0, problems: [] };
-
-	/** @type {Map<string, {needs: string[], expr: string | null, line: number}>} */
-	const jobs = new Map();
-	let job = null;
-	for (let i = jobsAt + 1; i < lines.length; i++) {
-		// A top-level key after `jobs:` ends the block.
-		if (/^[A-Za-z0-9_-]+:/.test(lines[i])) break;
-		const head = lines[i].match(/^ {2}([A-Za-z0-9_-]+):\s*(?:#.*)?$/);
-		if (head !== null) {
-			job = { needs: [], expr: null, line: i + 1 };
-			jobs.set(head[1], job);
-			continue;
-		}
-		if (job === null) continue;
-
-		const needs = lines[i].match(/^ {4}needs:\s*(.*?)\s*(?:#.*)?$/);
-		if (needs !== null) {
-			let v = needs[1];
-			if (v.startsWith("[") && !v.includes("]")) {
-				// A flow sequence wrapped over several lines.
-				for (let j = i + 1; j < lines.length && !v.includes("]"); j++) v += ` ${lines[j].replace(/#.*$/, "").trim()}`;
-			} else if (v === "") {
-				// A block list: `- a` items at a deeper indent.
-				for (let j = i + 1; j < lines.length; j++) {
-					const item = lines[j].match(/^ {5,}-\s*([A-Za-z0-9_-]+)/);
-					if (item === null) break;
-					v += ` ${item[1]}`;
-				}
-			}
-			job.needs = v.replace(/[[\]'"]/g, " ").split(/[\s,]+/).filter(Boolean);
-			continue;
-		}
-
-		const iff = lines[i].match(/^ {4}if:\s*(.*?)\s*$/);
-		if (iff !== null) {
-			let v = iff[1];
-			// A block scalar's body, or a plain scalar's continuation lines: both sit deeper than the
-			// job's keys. A comment line ends a plain scalar, and is skipped inside a block one only
-			// because no expression in this repo starts with `#`.
-			const block = v === "" || /^[|>](?:\d[-+]?|[-+]\d?)?$/.test(v);
-			const parts = block ? [] : [v];
-			for (let j = i + 1; j < lines.length; j++) {
-				if (lines[j].trim() === "" || !/^ {5,}\S/.test(lines[j]) || /^\s*#/.test(lines[j])) break;
-				parts.push(lines[j].trim());
-			}
-			v = parts.join(" ");
-			job.expr = v;
-			job.line = i + 1;
-		}
-	}
+	const jobs = parseJobs(text);
+	if (jobs === null) return { jobs: 0, reading: 0, problems: [] };
 
 	/** A job-level `if:` that is a bare `always()` — the one condition under which a job is never skipped. */
 	const neverSkipped = (expr) => /^(\$\{\{\s*)?always\s*\(\s*\)(\s*\}\})?$/.test(expr.trim());
@@ -615,6 +636,151 @@ export function scanImplicitSuccessNeeds(text) {
 	return { jobs: jobs.size, reading, problems };
 }
 
+/** The env key whose value is the build id the production smoke asserts the public URL serves. */
+const EXPECTED_SHA_KEY = "SMOKE_EXPECTED_SHA";
+
+/**
+ * Strip a `${{ … }}` wrapper and one pair of outer parentheses, and collapse whitespace — so two
+ * spellings of the same expression compare equal and nothing else does.
+ *
+ * @param {string} expr
+ * @returns {string}
+ */
+function normaliseExpr(expr) {
+	let v = expr.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, "$1").replace(/\s+/g, " ").trim();
+	// Only a pair that wraps the WHOLE expression: `(a) && (b)` starts and ends with a paren too.
+	if (v.startsWith("(") && v.endsWith(")")) {
+		let depth = 0;
+		let wraps = true;
+		for (let i = 0; i < v.length; i++) {
+			if (v[i] === "(") depth++;
+			else if (v[i] === ")") depth--;
+			if (depth === 0 && i < v.length - 1) {
+				wraps = false;
+				break;
+			}
+		}
+		if (wraps) v = v.slice(1, -1).trim();
+	}
+	return v;
+}
+
+/**
+ * Does `expr` contain `||` OUTSIDE every parenthesis? Such a condition cannot be written bare in front
+ * of `&& github.sha`: `&&` binds tighter, so `a || b && github.sha || ''` is `a || (b && github.sha)
+ * || ''`, which evaluates to `true` — not a SHA — whenever `a` holds.
+ *
+ * @param {string} expr
+ * @returns {boolean}
+ */
+function hasTopLevelOr(expr) {
+	let depth = 0;
+	let quoted = false;
+	for (let i = 0; i < expr.length; i++) {
+		const c = expr[i];
+		if (c === "'") quoted = !quoted;
+		if (quoted) continue;
+		if (c === "(") depth++;
+		else if (c === ")") depth--;
+		else if (depth === 0 && c === "|" && expr[i + 1] === "|") return true;
+	}
+	return false;
+}
+
+/**
+ * Every `SMOKE_EXPECTED_SHA` whose condition is not the console build job's own condition.
+ *
+ * WHY THIS IS WORTH A CHECK. The smoke compares the build id the public URL serves against
+ * `SMOKE_EXPECTED_SHA`, and reads an EMPTY value as "do not compare" — a skip with a reason, never a
+ * pass, but also never red. The value is therefore only honest when it is set exactly when THIS run
+ * rebuilt the console. It was written as `needs.changes.outputs.apps == 'true' && github.sha || ''`
+ * while `build-amd64` ran on `apps == 'true' || github.event_name == 'workflow_dispatch'`: a manual
+ * redeploy REBUILT the console and then skipped the very assertion a manual redeploy is for (#5624).
+ * Nothing is red when this drifts, because the drift's only symptom is a skipped comparison.
+ *
+ * THE SUBJECT, stated: every line in the file whose key is `SMOKE_EXPECTED_SHA:` (job or step `env:`).
+ * Its value must be `${{ C && github.sha || '' }}` — or `${{ github.sha }}` when the build job has no
+ * `if:` — where C is, after `normaliseExpr`, TEXTUALLY EQUAL to the job-level `if:` of THE CONSOLE
+ * BUILD JOB: the one job in the file whose matrix carries `image: console`. Textual equality is a
+ * stronger demand than equivalence, deliberately: two spellings of one condition are refused (a false
+ * red, fixed by copying), never two conditions accepted. The way to keep them equal is to decide the
+ * question once, in a job output both read — `changes.outputs.apps_build` in deploy-console.yml.
+ *
+ * C written BARE with a top-level `||` is refused even when the text matches: `&&` binds tighter, so
+ * `a || b && github.sha || ''` evaluates to `true` whenever `a` holds. Parenthesise it.
+ *
+ * And every `needs.<job>` that C reads must be in the reading job's own `needs:`. The `needs` context
+ * holds DIRECT needs only, so without it `needs.changes.outputs.x` evaluates empty, the expected SHA is
+ * `''`, and the comparison is skipped while both conditions still read identically.
+ *
+ * What it does NOT read: a smoke that receives the expected SHA under another name, or a console image
+ * built outside a matrix `image: console` entry. A file with the key but no such build job is
+ * REPORTED, not skipped — that is this scanner no longer finding its subject.
+ *
+ * @param {string} text
+ * @returns {{subjects: number, problems: {line: number, job: string, message: string}[]}}
+ */
+export function scanExpectedShaDrift(text) {
+	const lines = text.split("\n");
+	const sites = [];
+	for (let i = 0; i < lines.length; i++) {
+		const m = lines[i].match(new RegExp(`^\\s+${EXPECTED_SHA_KEY}:\\s*(.*?)\\s*$`));
+		if (m !== null) sites.push({ index: i, value: m[1] });
+	}
+	if (sites.length === 0) return { subjects: 0, problems: [] };
+
+	const jobs = parseJobs(text) ?? new Map();
+	const jobAt = (index) => [...jobs].find(([, j]) => index >= j.start && index < j.end);
+	const builders = [...jobs].filter(([, j]) => lines.slice(j.start, j.end).some((l) => /^\s+-?\s*image:\s*['"]?console['"]?\s*(?:#.*)?$/.test(l)));
+
+	const problems = [];
+	for (const site of sites) {
+		const owner = jobAt(site.index);
+		const job = owner?.[0] ?? "?";
+		if (builders.length !== 1) {
+			problems.push({
+				line: site.index + 1,
+				job,
+				message: `found ${builders.length} jobs whose matrix carries \`image: console\` (${builders.map(([n]) => `\`${n}\``).join(", ") || "none"}), so there is no single console build condition to hold \`${EXPECTED_SHA_KEY}\` to — the scanner has lost its subject, which is not the same as passing.`,
+			});
+			continue;
+		}
+		const [builder, b] = builders[0];
+		const buildCond = b.expr === null ? null : normaliseExpr(b.expr);
+		const wrapped = buildCond !== null && hasTopLevelOr(buildCond) ? `(${buildCond})` : buildCond;
+		const want = buildCond === null ? "${{ github.sha }}" : `\${{ ${wrapped} && github.sha || '' }}`;
+		const value = normaliseExpr(site.value);
+		const m = value.match(/^([\s\S]+?)\s*&&\s*github\.sha\s*\|\|\s*''$/);
+		// A bare top-level `||` in front of `&& github.sha` is a different expression from the one it reads as.
+		const cond = m === null || hasTopLevelOr(m[1]) ? null : normaliseExpr(m[1]);
+		const matches = buildCond === null ? value === "github.sha" : cond === buildCond;
+		if (!matches) {
+			problems.push({
+				line: site.index + 1,
+				job,
+				message:
+					`\`${EXPECTED_SHA_KEY}: ${site.value}\` is not set on the condition \`${builder}\` rebuilds the console on (\`${b.expr ?? "no if: — always"}\`). ` +
+					"An empty expected SHA makes the smoke SKIP the served-build-id assertion (NOT ASSERTED, never red), so when the two drift a run that " +
+					"rebuilt the console ships unverified — a manual dispatch did exactly that (#5624) — or a run that only retagged asserts a SHA it never built. " +
+					`Write \`${want}\`, and decide the question ONCE in a job output both read.`,
+			});
+			continue;
+		}
+		const reads = [...new Set([...(buildCond ?? "").matchAll(/(?:^|[^.\w])needs\.([A-Za-z0-9_-]+)/g)].map((r) => r[1]))];
+		const missing = reads.filter((n) => !(owner?.[1].needs ?? []).includes(n));
+		if (missing.length > 0) {
+			problems.push({
+				line: site.index + 1,
+				job,
+				message:
+					`\`${EXPECTED_SHA_KEY}\` reads ${missing.map((n) => `\`needs.${n}\``).join(", ")}, but \`${job}\` does not list ${missing.length === 1 ? "it" : "them"} in its own \`needs:\`. ` +
+					"The `needs` context carries DIRECT needs only, so the expression evaluates empty and the smoke skips the build-id assertion while the text still matches the build condition.",
+			});
+		}
+	}
+	return { subjects: sites.length, problems };
+}
+
 /** @returns {string[]} failures */
 export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.readFileSync(p, "utf8")) {
 	const out = [];
@@ -634,6 +800,7 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 	let permissionEntries = 0;
 	let serviceJobs = 0;
 	let needsReading = 0;
+	let expectedShaSites = 0;
 	// The largest scalar seen, templated or not. NOT printed from here — `check()` returns problems
 	// and nothing else; the green line is built in `main()` below and takes its own measurement.
 	// This copy exists for one thing: the blindness test at the bottom, which refuses a tree in which
@@ -728,6 +895,11 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 					"SHOULD skip it, write the `success() && (<condition>)` that is already implied — it changes nothing at runtime and states the intent.",
 			);
 		}
+		const drift = scanExpectedShaDrift(text);
+		expectedShaSites += drift.subjects;
+		for (const d of drift.problems) {
+			out.push(`${dir}/${f}:${d.line}: in job \`${d.job}\`, ${d.message}`);
+		}
 		for (const p of problems) {
 			out.push(
 				`${dir}/${f}:${p.line}: the step \`${p.name}\` has neither \`run:\` nor \`uses:\`. ` +
@@ -779,6 +951,14 @@ export function check(dir = DIR, readdir = fs.readdirSync, readFile = (p) => fs.
 		out.push(
 			`parsed ${files.length} workflow file(s) and found ZERO job-level \`if:\` referencing the \`needs\` context. ` +
 				"Several jobs here gate on an upstream output, so the implicit-success scanner has stopped matching — fix it rather than trusting the green.",
+		);
+	}
+	// And for the expected-SHA scanner. Its subject is ONE line in deploy-console.yml, so "found none"
+	// is the key having been renamed or moved out of reach — and the drift it guards would go unread.
+	if (expectedShaSites === 0) {
+		out.push(
+			`parsed ${files.length} workflow file(s) and found ZERO \`${EXPECTED_SHA_KEY}:\` lines. deploy-console.yml's production smoke ` +
+				"reads one, so the expected-SHA scanner has stopped matching (#5624) — fix it rather than trusting the green.",
 		);
 	}
 	if (unreadable === files.length) {
@@ -835,10 +1015,13 @@ jobs:
 			// scalars — the failure misattributes, which is the cost of a shared fixture and the reason
 			// this comment names the coupling instead of leaving the next reader to find it.
 			// The second job reads `needs.a.outputs` for the implicit-success scanner's blindness guard,
-			// with no skippable ancestor, so it is a reading and not a finding.
+			// with no skippable ancestor, so it is a reading and not a finding. It is also the console
+			// build job, and `c` carries the matching `SMOKE_EXPECTED_SHA`, for the expected-SHA
+			// scanner's blindness guard — same reason, same coupling.
 			() =>
 				`name: x\n${body}jobs:\n  a:\n    runs-on: ubuntu-latest\n    services:\n      postgres:\n        image: postgres:17-alpine\n    steps:\n      - run: |\n          true\n` +
-				"  b:\n    needs: a\n    if: needs.a.outputs.go == 'yes'\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n",
+				"  b:\n    needs: a\n    if: needs.a.outputs.go == 'yes'\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        include:\n          - image: console\n    steps:\n      - run: true\n" +
+				"  c:\n    needs: a\n    runs-on: ubuntu-latest\n    env:\n      SMOKE_EXPECTED_SHA: ${{ needs.a.outputs.go == 'yes' && github.sha || '' }}\n    steps:\n      - run: true\n",
 		);
 
 	const REAL = "permissions:\n  contents: read\n  administration: read # the #3229 regression\n  issues: write\n";
@@ -1089,7 +1272,10 @@ jobs:
 		"  changes:\n    runs-on: ubuntu-latest\n    services:\n      postgres:\n        image: postgres:17-alpine\n    steps:\n      - run: |\n          true\n" +
 		"  retag-unchanged:\n    needs: changes\n    if: ${{ needs.changes.outputs.apps != 'true' }}\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n" +
 		"  deploy:\n    needs: [changes, retag-unchanged]\n    if: ${{ !cancelled() && !failure() }}\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n" +
-		`  smoke:\n    needs: [changes, deploy]\n    if: ${smokeIf}\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n${extra}`;
+		// The console build job and the smoke's expected SHA, for the expected-SHA scanner's blindness
+		// guard. The build `if:` reads no `needs`, so the ZERO-readings fixture below stays zero.
+		"  build-amd64:\n    needs: changes\n    if: github.event_name == 'push'\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        include:\n          - image: console\n    steps:\n      - run: true\n" +
+		`  smoke:\n    needs: [changes, deploy]\n    if: ${smokeIf}\n    runs-on: ubuntu-latest\n    env:\n      SMOKE_EXPECTED_SHA: \${{ github.event_name == 'push' && github.sha || '' }}\n    steps:\n      - run: true\n${extra}`;
 	const PLANTED_IF = "${{ needs.deploy.result == 'success' && github.ref == 'refs/heads/main' }}";
 	const implicitOf = (text) => scanImplicitSuccessNeeds(text).problems;
 	const planted = implicitOf(implicitWf(PLANTED_IF));
@@ -1192,6 +1378,70 @@ jobs:
 	const green = runIn(implicitWf(BANG));
 	ok("the fixed tree exits ZERO", green.status === 0, `status=${green.status} stderr=${green.stderr}`);
 
+	// ── the smoke's expected SHA drifting from the console build condition (#5624) ────────────────
+	//
+	// The planted case is deploy-console.yml as it stood: the build ran on "apps changed OR a manual
+	// dispatch", the expected SHA on "apps changed" alone, so a dispatch rebuilt the console and the
+	// smoke skipped the build-id assertion.
+	const DISPATCH_BUILD = "${{ needs.changes.outputs.apps == 'true' || github.event_name == 'workflow_dispatch' }}";
+	const ONE_SIGNAL = "${{ needs.changes.outputs.apps_build == 'true' }}";
+	const shaWf = (buildIf, expected, smokeNeeds = "[changes, deploy]") =>
+		"name: x\npermissions:\n  contents: read\njobs:\n" +
+		"  changes:\n    runs-on: ubuntu-latest\n    services:\n      postgres:\n        image: postgres:17-alpine\n    steps:\n      - run: |\n          true\n" +
+		`  build-amd64:\n    needs: changes\n${buildIf === null ? "" : `    if: ${buildIf}\n`}    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        include:\n          - image: console\n            file: apps/console/Dockerfile\n          - image: docs\n    steps:\n      - run: true\n` +
+		"  deploy:\n    needs: [changes, build-amd64]\n    if: ${{ !cancelled() && !failure() }}\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n" +
+		`  smoke:\n    needs: ${smokeNeeds}\n    if: \${{ !cancelled() && needs.deploy.result == 'success' }}\n    runs-on: ubuntu-latest\n    env:\n      SMOKE_BASE_URL: https://example.test\n      SMOKE_EXPECTED_SHA: ${expected}\n    steps:\n      - run: true\n`;
+	const driftOf = (text) => scanExpectedShaDrift(text).problems;
+	const PLANTED_SHA = "${{ needs.changes.outputs.apps == 'true' && github.sha || '' }}";
+	const plantedDrift = driftOf(shaWf(DISPATCH_BUILD, PLANTED_SHA));
+	ok("the #5624 drift (build on apps||dispatch, SHA on apps) is caught", plantedDrift.length === 1 && plantedDrift[0].job === "smoke", JSON.stringify(plantedDrift));
+	ok("...at the SMOKE_EXPECTED_SHA line",
+		plantedDrift[0]?.line === shaWf(DISPATCH_BUILD, PLANTED_SHA).split("\n").findIndex((l) => l.includes("SMOKE_EXPECTED_SHA:")) + 1, JSON.stringify(plantedDrift));
+	// `&&` binds tighter than `||`, so the prescription must parenthesise a disjunction — the first
+	// draft of this check prescribed the bare form, which evaluates to `true` on every apps push.
+	ok("...and the message prescribes the exact value, parenthesised",
+		plantedDrift[0]?.message.includes("Write `${{ (needs.changes.outputs.apps == 'true' || github.event_name == 'workflow_dispatch') && github.sha || '' }}`") === true,
+		plantedDrift[0]?.message);
+	ok("the BARE disjunction is refused even though its text matches the build condition",
+		driftOf(shaWf(DISPATCH_BUILD, "${{ needs.changes.outputs.apps == 'true' || github.event_name == 'workflow_dispatch' && github.sha || '' }}")).length === 1);
+	ok("a `||` inside a quoted string is not a disjunction", hasTopLevelOr("x == 'a||b'") === false && hasTopLevelOr("a || b") === true && hasTopLevelOr("(a || b)") === false);
+	// The other direction: the build condition NARROWS and the SHA keeps asserting on a retag.
+	ok("a build condition narrower than the SHA's is caught too",
+		driftOf(shaWf("${{ needs.changes.outputs.apps == 'true' && github.ref == 'refs/heads/main' }}", PLANTED_SHA)).length === 1);
+	// The fix this PR ships, and the spellings of it that must stay clean.
+	const FIXED_SHA = "${{ needs.changes.outputs.apps_build == 'true' && github.sha || '' }}";
+	ok("one shared output, read by both, is clean", driftOf(shaWf(ONE_SIGNAL, FIXED_SHA)).length === 0, JSON.stringify(driftOf(shaWf(ONE_SIGNAL, FIXED_SHA))));
+	ok("...with the condition parenthesised and spaced differently",
+		driftOf(shaWf(ONE_SIGNAL, "${{ (needs.changes.outputs.apps_build  == 'true') && github.sha || '' }}")).length === 0);
+	ok("...and with the build if: written without `${{ }}`",
+		driftOf(shaWf("needs.changes.outputs.apps_build == 'true'", FIXED_SHA)).length === 0);
+	ok("copying the OLD two-part condition verbatim is also correct, and clean",
+		driftOf(shaWf(DISPATCH_BUILD, "${{ (needs.changes.outputs.apps == 'true' || github.event_name == 'workflow_dispatch') && github.sha || '' }}")).length === 0);
+	// Parenthesisation that does NOT wrap the whole expression must not be stripped as if it did.
+	ok("`(a) && (b)` is not unwrapped into `a) && (b`", normaliseExpr("(a) && (b)") === "(a) && (b)" && normaliseExpr("${{ (a && b) }}") === "a && b");
+	ok("a value with no `|| ''` fallback is refused (it asserts on a retag)", driftOf(shaWf(ONE_SIGNAL, "${{ github.sha }}")).length === 1);
+	ok("an empty value is refused", driftOf(shaWf(ONE_SIGNAL, "''")).length === 1);
+	ok("a build job with NO if: wants an unconditional github.sha", driftOf(shaWf(null, "${{ github.sha }}")).length === 0 && driftOf(shaWf(null, FIXED_SHA)).length === 1);
+	// The condition matches as TEXT but the smoke cannot read it: `needs` carries direct needs only.
+	const noNeeds = driftOf(shaWf(ONE_SIGNAL, FIXED_SHA, "deploy"));
+	ok("a SHA reading needs.changes from a job that does not need `changes` is caught", noNeeds.length === 1 && /DIRECT needs only/.test(noNeeds[0]?.message ?? ""), JSON.stringify(noNeeds));
+	// Losing the subject is reported, not passed.
+	const noBuilder = driftOf(shaWf(ONE_SIGNAL, FIXED_SHA).replace("          - image: console\n", "          - image: konsole\n"));
+	ok("no `image: console` build job is a problem, not a pass", noBuilder.length === 1 && /lost its subject/.test(noBuilder[0]?.message ?? ""), JSON.stringify(noBuilder));
+	ok("a file with no SMOKE_EXPECTED_SHA is not this scanner's subject", scanExpectedShaDrift(rooted).subjects === 0 && driftOf(rooted).length === 0);
+	// End to end, and the exit code.
+	const viaSha = check("wf", () => ["w.yml"], () => shaWf(DISPATCH_BUILD, PLANTED_SHA));
+	ok("the planted drift is refused through check()", viaSha.some((p) => /in job `smoke`/.test(p) && /#5624/.test(p)), JSON.stringify(viaSha));
+	ok("...and the fixed tree is clean through check()", check("wf", () => ["w.yml"], () => shaWf(ONE_SIGNAL, FIXED_SHA)).length === 0,
+		JSON.stringify(check("wf", () => ["w.yml"], () => shaWf(ONE_SIGNAL, FIXED_SHA))));
+	const noShaTree = check("wf", () => ["w.yml"], () => shaWf(ONE_SIGNAL, FIXED_SHA).replace("SMOKE_EXPECTED_SHA:", "SMOKE_WANTED_SHA:"));
+	ok("a tree with ZERO SMOKE_EXPECTED_SHA lines FAILS rather than passing", noShaTree.some((p) => /ZERO `SMOKE_EXPECTED_SHA:` lines/.test(p)), JSON.stringify(noShaTree));
+	const shaRed = runIn(shaWf(DISPATCH_BUILD, PLANTED_SHA));
+	ok("the planted #5624 tree exits NON-ZERO", shaRed.status !== 0 && shaRed.status !== null, `status=${shaRed.status} stderr=${shaRed.stderr}`);
+	ok("...and its stderr names the smoke job and the build job", /in job `smoke`/.test(shaRed.stderr ?? "") && /`build-amd64`/.test(shaRed.stderr ?? ""), shaRed.stderr);
+	const shaGreen = runIn(shaWf(ONE_SIGNAL, FIXED_SHA));
+	ok("the fixed #5624 tree exits ZERO", shaGreen.status === 0, `status=${shaGreen.status} stderr=${shaGreen.stderr}`);
+
 	if (fails > 0) {
 		console.error(`\ncheck-workflow-shape self-test: ${fails} failure(s)`);
 		process.exit(1);
@@ -1210,7 +1460,8 @@ if (process.argv.includes("--self-test")) {
 			`\n${problems.length} problem(s). Each is a workflow that does not mean what it says: either Actions rejects the file ` +
 				"outright — zero jobs, an empty rollup, nothing red — or a step runs past a failed `Initialize containers` and reports " +
 				"a cause that was never true, or a job decides on an upstream result while an implicit `success()` decides for it, so a " +
-				"skipped ancestor skips it with zero steps and nothing goes red (#5615).",
+				"skipped ancestor skips it with zero steps and nothing goes red (#5615), or the production smoke's expected " +
+				"SHA is set on a different condition from the console build, so a rebuilt console ships with its build id unasserted (#5624).",
 		);
 		process.exit(1);
 	}
@@ -1219,6 +1470,7 @@ if (process.argv.includes("--self-test")) {
 	let perms = 0;
 	let svcJobs = 0;
 	let needsJobs = 0;
+	let shaSites = 0;
 	let scalars = 0;
 	let biggest = { bytes: 0, chars: 0, file: "", line: 0, key: "" };
 	// The largest scalar of ANY kind, printed beside it. The templated one is what the limit BINDS
@@ -1231,6 +1483,7 @@ if (process.argv.includes("--self-test")) {
 		perms += scanPermissions(text).length;
 		svcJobs += scanServiceGuards(text).serviceJobs;
 		needsJobs += scanImplicitSuccessNeeds(text).reading;
+		shaSites += scanExpectedShaDrift(text).subjects;
 		for (const b of scanExpressionBudget(text)) {
 			scalars += 1;
 			if (b.templated && b.bytes > biggest.bytes) biggest = { ...b, file: f };
@@ -1245,6 +1498,7 @@ if (process.argv.includes("--self-test")) {
 			`${svcJobs} job(s) with \`services:\`, none of them running a step past a failed \`Initialize containers\`; ` +
 			"no `name:` losing text to an unquoted `#`; " +
 			`${needsJobs} job \`if:\`(s) reading \`needs.*\`, none left to an implicit \`success()\` below a skippable ancestor; ` +
+			`${shaSites} \`${EXPECTED_SHA_KEY}\`(s), each set on exactly the condition the console is rebuilt on; ` +
 			`largest TEMPLATED block scalar ${biggest.bytes} bytes of ${EXPRESSION_BUDGET} budgeted (${EXPRESSION_LIMIT} is where Actions refuses the file) ` +
 			`— ${biggest.file}:${biggest.line}, of ${scalars} block scalar(s) measured; ` +
 			`largest of ANY kind ${overall.bytes} bytes — ${overall.file}:${overall.line}` +

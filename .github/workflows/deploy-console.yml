@@ -345,6 +345,16 @@ jobs:
     outputs:
       apps: ${{ steps.filter.outputs.apps }}
       runner: ${{ steps.filter.outputs.runner }}
+      # IS THE APPS GROUP (console included) REBUILT IN THIS RUN? `true` or `false`, never empty.
+      # This is the ONE place that question is answered. `build-amd64` runs on it, and the smoke's
+      # `SMOKE_EXPECTED_SHA` and the deploy's provenance assertion read it, so "was the console
+      # rebuilt" cannot mean two things in one run. They used to be written separately: the build
+      # ran on `apps == 'true' || workflow_dispatch` while the smoke read `apps == 'true'` alone, so a
+      # manual redeploy REBUILT the console and then skipped the served-build-id check as
+      # NOT ASSERTED (#5624). scripts/ci/check-workflow-shape.mjs refuses `SMOKE_EXPECTED_SHA`
+      # drifting from `build-amd64`'s `if:` — and ONLY that pair. The deploy's `APPS_BUILT` and the
+      # `retag-unchanged` condition are unguarded: keep them reading this output by hand.
+      apps_build: ${{ steps.apps_build.outputs.value }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -377,6 +387,20 @@ jobs:
               - 'apps/runner/**'
               - 'packages/core/**'
               - 'infra/templates/**'
+      # A manual dispatch rebuilds every group regardless of the path filter (`retag-unchanged` is
+      # skipped on it), so the apps verdict is "changed, or dispatched".
+      - name: Decide whether the apps group is rebuilt
+        id: apps_build
+        env:
+          APPS_CHANGED: ${{ steps.filter.outputs.apps }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$APPS_CHANGED" = true ] || [ "$EVENT_NAME" = workflow_dispatch ]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
 
   # Native per-arch builds — NO QEMU. The control-plane box is Hetzner CX (x86) so its
   # images are linux/amd64 (built natively on ubuntu-latest); the fleet VMs are Hetzner
@@ -389,7 +413,8 @@ jobs:
   # amd64 box images (single-arch, tagged) — native x86. Skipped when no app/package changed.
   build-amd64:
     needs: changes
-    if: ${{ needs.changes.outputs.apps == 'true' || github.event_name == 'workflow_dispatch' }}
+    # Decided ONCE, in `changes` (apps_build) — the smoke's expected SHA reads the same output.
+    if: ${{ needs.changes.outputs.apps_build == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       # Every leg runs to completion. These matrices build INDEPENDENT images, so cancelling the
@@ -1022,7 +1047,8 @@ jobs:
       id-token: write # assume the read-only vault role via GitHub OIDC — no stored secrets
     env:
       IMAGE_TAG: ${{ github.sha }}
-      APPS_CHANGED: ${{ needs.changes.outputs.apps }}
+      # Whether `build-amd64` rebuilt the apps images in THIS run (a dispatch does, whatever changed).
+      APPS_BUILT: ${{ needs.changes.outputs.apps_build }}
       ASM_SECRET_ID: alethia/prod/env
       ASM_REGION: eu-central-1
     steps:
@@ -1292,7 +1318,7 @@ jobs:
           # On the box: checkout the built SHA, swap in .env, render s3.json from the
           # same storage creds (checkout -f resets that tracked file), compose up behind
           # the tunnel. `bash -s` gets IMAGE_TAG + the apps build verdict from the ssh env.
-          ssh $SSHOPTS "root@${HOST}" "IMAGE_TAG='${IMAGE_TAG}' APPS_CHANGED='${APPS_CHANGED}' bash -s" <<'REMOTE'
+          ssh $SSHOPTS "root@${HOST}" "IMAGE_TAG='${IMAGE_TAG}' APPS_BUILT='${APPS_BUILT}' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/alethia
           git fetch origin main
@@ -1338,11 +1364,11 @@ jobs:
             echo "::error::Running console carries no ALETHIA_SOURCE_COMMIT provenance."
             exit 1
           fi
-          if [ "$APPS_CHANGED" = true ] && [ "$deployed_commit" != "$IMAGE_TAG" ]; then
+          if [ "$APPS_BUILT" = true ] && [ "$deployed_commit" != "$IMAGE_TAG" ]; then
             echo "::error::Running console provenance '${deployed_commit:-missing}' does not match promoted SHA '$IMAGE_TAG'."
             exit 1
           fi
-          echo "✓ running console carries ALETHIA_SOURCE_COMMIT=$deployed_commit (apps changed: $APPS_CHANGED)"
+          echo "✓ running console carries ALETHIA_SOURCE_COMMIT=$deployed_commit (apps rebuilt: $APPS_BUILT)"
           # `git checkout` replaces tracked files atomically. Caddy bind-mounts one
           # tracked file, so its existing mount can stay attached to the old inode
           # even though /opt/alethia now shows the new routes. Compose cannot detect
@@ -1424,7 +1450,8 @@ jobs:
   # Chromium plus a pnpm install do not belong in the job that holds it. The blast radius of a
   # compromised browser dependency should not include the production host key.
   #
-  # `SMOKE_EXPECTED_SHA` is set only when the apps group actually rebuilt. On a runner-only push the
+  # `SMOKE_EXPECTED_SHA` is set only when the apps group actually rebuilt — `changes.outputs.apps_build`,
+  # the SAME output `build-amd64` runs on, so a manual dispatch (which rebuilds) asserts too. On a runner-only push the
   # console images are re-tagged rather than rebuilt, so the served build id is the PREVIOUS commit
   # and asserting equality would red every runner-only deploy. Empty means "do not compare", which
   # the smoke script reads as a skip with its reason, never as a pass.
@@ -1444,7 +1471,7 @@ jobs:
       contents: read
     env:
       SMOKE_BASE_URL: ${{ vars.PUBLIC_APP_URL || 'https://alethialabs.io' }}
-      SMOKE_EXPECTED_SHA: ${{ needs.changes.outputs.apps == 'true' && github.sha || '' }}
+      SMOKE_EXPECTED_SHA: ${{ needs.changes.outputs.apps_build == 'true' && github.sha || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
