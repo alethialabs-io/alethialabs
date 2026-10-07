@@ -32,9 +32,26 @@ any separate host:
 
 ## What it checks
 
-See `config.yaml`. Each endpoint asserts `[STATUS] == 200` (plus a latency budget
-on the console and a JSON-body check on `/api/health`, which returns
-`{"status":"ok"}` after a DB ping). Add or adjust endpoints there.
+See `config.yaml`. Every row asserts `[STATUS] == 200`.
+
+| Row | Probes | Down when |
+|---|---|---|
+| Website | `/` (anonymous `/` is the marketing app) | not 200, or slower than 800 ms |
+| Console | `/login` | not 200 |
+| API | `/api/health` (readiness) | the route answers 503 / `unhealthy` — the database is unreachable |
+| Background jobs | `/api/health` (readiness) | the aggregate is anything but `healthy` — a supervised background loop is stuck (`degraded`), or the API is down |
+| Documentation | `/docs` | not 200 |
+
+`/api/health` without a query is the **readiness** probe. Its body's `status` is
+`healthy`, `degraded` or `unhealthy`, and it answers 503 only for `unhealthy`.
+It never returns `ok` — that is the liveness path (`?shallow=1`) only. A
+`degraded` API still serves requests, so the API row stays up and the
+Background jobs row carries the degradation.
+
+If you add or change a `[BODY].status` condition on an `/api/health` row,
+`apps/console/tests/api/health/status-page-monitors.test.ts` runs the real route
+for every health state and fails if the condition names a value the route
+cannot return, or if the row would be down while everything is healthy.
 
 ## Next steps (optional)
 
