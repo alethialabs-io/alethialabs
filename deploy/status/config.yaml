@@ -40,7 +40,8 @@ endpoints:
   # /api/health with no query is the READINESS probe
   # (apps/console/app/api/health/route.ts). Its anonymous body is
   # {"status": "healthy" | "degraded" | "unhealthy", ...}; it answers 503 only
-  # for `unhealthy` (the database is unreachable). It NEVER returns "ok" -- only
+  # for `unhealthy` (the database is unreachable, or the health computation
+  # itself failed -- fail-closed). It NEVER returns "ok" -- only
   # the liveness path (?shallow=1) does.
   #
   # The status page shows the readiness answer as TWO rows, because Gatus can
@@ -51,8 +52,10 @@ endpoints:
   # A degraded API still serves every request, so painting it red would
   # overstate the outage; hiding `degraded` entirely would understate it.
   #
-  # Every `[BODY].status` value below is checked against what the route really
-  # returns by apps/console/tests/api/health/status-page-monitors.test.ts.
+  # Every condition below is checked against what the route really returns by
+  # apps/console/tests/api/health/status-page-monitors.test.ts, which runs in CI
+  # on a change to THIS file too (apps/console/turbo.json puts it in the test
+  # task's cache key).
   - name: API
     group: Alethia
     url: "https://alethialabs.io/api/health"

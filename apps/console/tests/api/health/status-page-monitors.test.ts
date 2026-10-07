@@ -30,6 +30,10 @@
 //    REACHED (DB down, a loop stuck) is route.test.ts's and health.test.ts's job.
 //  - Any condition shape, header, method or body this evaluator does not understand FAILS the test
 //    instead of being skipped — extend the evaluator rather than letting a row go unchecked.
+//
+// IT MUST RE-RUN WHEN ONLY THE CONFIG CHANGES. Turbo's default inputs for console#test are the files
+// under apps/console, so a PR editing deploy/status/config.yaml alone would get a cache hit and this
+// file would never read it. apps/console/turbo.json adds that one file to the task's inputs.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -92,7 +96,9 @@ interface Observed {
 type Condition =
 	| { kind: "status"; expected: number }
 	| { kind: "body-status"; accepted: string[] }
-	| { kind: "response-time" };
+	| { kind: "response-time" }
+	/** No operator Gatus recognises: Gatus records "invalid condition" and the row is DOWN forever. */
+	| { kind: "invalid"; raw: string };
 
 /** Load and validate the Gatus endpoints from deploy/status/config.yaml. */
 function loadEndpoints(): Endpoint[] {
@@ -104,25 +110,43 @@ function healthEndpoints(): Endpoint[] {
 	return loadEndpoints().filter((e) => new URL(e.url).pathname === "/api/health");
 }
 
-/**
- * Parse one Gatus condition string. Supports `[STATUS] == N`, `[BODY].status == v`,
- * `[BODY].status == any(a, b)` and `[RESPONSE_TIME] < N`; anything else throws so it cannot be
- * silently skipped.
- */
-function parseCondition(raw: string): Condition {
-	const status = /^\[STATUS\]\s*==\s*(\d+)$/.exec(raw.trim());
-	if (status) return { kind: "status", expected: Number(status[1]) };
-	const body = /^\[BODY\]\.status\s*==\s*(.+)$/.exec(raw.trim());
-	if (body) {
-		const rhs = body[1].trim();
-		const any = /^any\((.*)\)$/.exec(rhs);
-		const accepted = any ? any[1].split(",").map((o) => o.trim()) : [rhs];
-		return { kind: "body-status", accepted };
-	}
-	if (/^\[RESPONSE_TIME\]\s*<\s*\d+$/.test(raw.trim())) return { kind: "response-time" };
+/** Throw for a condition shape this evaluator does not model, so a row is never silently skipped. */
+function unsupported(raw: string): never {
 	throw new Error(
 		`unsupported Gatus condition on an /api/health row: ${JSON.stringify(raw)} — extend parseCondition`,
 	);
+}
+
+/**
+ * Parse one Gatus condition string the way Gatus v5 does (config/endpoint/condition.go): it looks for
+ * the operator WITH its surrounding spaces — `" == "` first, then `" != "`, `" <= "`, `" >= "`,
+ * `" > "`, `" < "` — splits on it, and trims each side. A condition containing none of them is
+ * "invalid" and always fails, so `[BODY].status==healthy` is a row that is down forever, not a
+ * spelling of `== healthy`. Supports `[STATUS] == N`, `[BODY].status == v`,
+ * `[BODY].status == any(a, b)` and `[RESPONSE_TIME] < N`; any other operand or operator throws.
+ */
+function parseCondition(raw: string): Condition {
+	if (raw.includes(" == ")) {
+		const sides = raw.split(" == ").map((s) => s.trim());
+		if (sides.length !== 2) unsupported(raw);
+		const [lhs, rhs] = sides;
+		if (lhs === "[STATUS]" && /^\d+$/.test(rhs)) return { kind: "status", expected: Number(rhs) };
+		if (lhs === "[BODY].status") {
+			const any = /^any\((.*)\)$/.exec(rhs);
+			const accepted = any ? any[1].split(",").map((o) => o.trim()) : [rhs];
+			return { kind: "body-status", accepted };
+		}
+		unsupported(raw);
+	}
+	if ([" != ", " <= ", " >= ", " > "].some((op) => raw.includes(op))) unsupported(raw);
+	if (raw.includes(" < ")) {
+		const sides = raw.split(" < ").map((s) => s.trim());
+		if (sides.length === 2 && sides[0] === "[RESPONSE_TIME]" && /^\d+$/.test(sides[1])) {
+			return { kind: "response-time" };
+		}
+		unsupported(raw);
+	}
+	return { kind: "invalid", raw };
 }
 
 /** Refuse a row whose request this test cannot reproduce faithfully. */
@@ -151,6 +175,7 @@ function passes(conditions: Condition[], seen: Observed): boolean {
 		if (c.kind === "body-status") {
 			return typeof seen.bodyStatus === "string" && c.accepted.includes(seen.bodyStatus);
 		}
+		if (c.kind === "invalid") return false;
 		return true;
 	});
 }
@@ -166,6 +191,26 @@ async function verdicts(endpoint: Endpoint): Promise<Map<HealthStatus, { up: boo
 	}
 	return out;
 }
+
+describe("parseCondition — reads a condition the way Gatus does", () => {
+	it("an operator without its spaces is an INVALID condition, which Gatus fails on every check", () => {
+		const c = parseCondition("[BODY].status==healthy");
+		expect(c).toEqual({ kind: "invalid", raw: "[BODY].status==healthy" });
+		expect(passes([c], { status: 200, bodyStatus: "healthy" })).toBe(false);
+	});
+
+	it("extra whitespace around a spaced operator is trimmed, as Gatus trims it", () => {
+		expect(parseCondition("[BODY].status  ==  any(healthy,degraded)")).toEqual({
+			kind: "body-status",
+			accepted: ["healthy", "degraded"],
+		});
+	});
+
+	it("an operator or operand it does not model throws instead of being skipped", () => {
+		expect(() => parseCondition("[BODY].status != unhealthy")).toThrow(/unsupported/);
+		expect(() => parseCondition("[BODY].db.reachable == true")).toThrow(/unsupported/);
+	});
+});
 
 describe("deploy/status/config.yaml — the /api/health rows match what the route returns", () => {
 	it("finds at least one /api/health row (an empty selection would pass everything below)", () => {
@@ -195,12 +240,17 @@ describe("deploy/status/config.yaml — the /api/health rows match what the rout
 		const downWhenHealthy: string[] = [];
 		for (const endpoint of healthEndpoints()) {
 			const healthy = (await verdicts(endpoint)).get("healthy");
-			if (!healthy?.up) downWhenHealthy.push(`${endpoint.name} saw ${JSON.stringify(healthy?.seen)}`);
+			if (healthy?.up) continue;
+			const invalid = endpoint.conditions.filter((c) => parseCondition(c).kind === "invalid");
+			downWhenHealthy.push(
+				`${endpoint.name} saw ${JSON.stringify(healthy?.seen)}` +
+					(invalid.length ? ` — Gatus cannot parse ${JSON.stringify(invalid)} (operators need spaces)` : ""),
+			);
 		}
 		expect(downWhenHealthy).toEqual([]);
 	});
 
-	it("every READINESS row (its answer depends on health) goes DOWN when the database is unreachable", async () => {
+	it("every READINESS row (its answer depends on health) goes DOWN when unhealthy (DB unreachable or the health compute failed)", async () => {
 		const blind: string[] = [];
 		for (const endpoint of healthEndpoints()) {
 			const v = await verdicts(endpoint);
