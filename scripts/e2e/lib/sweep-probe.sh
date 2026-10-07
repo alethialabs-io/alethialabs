@@ -91,6 +91,14 @@ PROBE_ERR_DIR="${PROBE_ERR_DIR:-}"
 # with a marker is one careless `grep` away from collapsing them back together, which is the exact
 # regression this file now tests for in both directions.
 PROBE_UNATTRIB_LEDGER="${PROBE_UNATTRIB_LEDGER:-}"
+# A THIRD file, and not a third state (#5645). Neither ledger above can carry WHAT was found: they
+# hold `type(reason)` lines and the receipt publishes only the type names, so the one fact a
+# consumer needs to decide "is this a leak" — WHICH resource, and since WHEN — died with the
+# sweeper. Each line is one compact JSON object (see probe_note_finding). It changes no verdict and
+# no exit code: it is evidence carried alongside the UNATTRIBUTABLE finding, so the rollup can judge
+# persistence without asking the cloud again. Defaults beside PROBE_LEDGER, so the parent-side
+# `--record-verdict` finds it through the same env path the sweeper wrote it under.
+PROBE_FINDINGS_LEDGER="${PROBE_FINDINGS_LEDGER:-}"
 
 # ── THE ATTESTATION AND THE RECEIPT (#4398). Both empty by default, so every existing caller —
 #    the always() teardown, the out-of-band reaper's PREFLIGHT, a hand-run sweep — behaves exactly
@@ -143,9 +151,12 @@ probe_reset() {
 	# has nothing to do with the cloud: a verification that can only ever say "I could not look".
 	[ -n "$PROBE_ERR_DIR" ] || PROBE_ERR_DIR="$(dirname "$PROBE_LEDGER")"
 	[ -n "$PROBE_UNATTRIB_LEDGER" ] || PROBE_UNATTRIB_LEDGER="${PROBE_LEDGER}.unattributable"
+	[ -n "$PROBE_FINDINGS_LEDGER" ] || PROBE_FINDINGS_LEDGER="${PROBE_LEDGER}.findings"
 	local reset_rc=0
 	: >"$PROBE_LEDGER" 2>/dev/null || reset_rc=4
 	: >"$PROBE_UNATTRIB_LEDGER" 2>/dev/null || reset_rc=4
+	# A stale finding is a claim about a resource this run has not looked at — same as the attest.
+	: >"$PROBE_FINDINGS_LEDGER" 2>/dev/null || reset_rc=4
 	# A stale attestation is worse than none: it is a positive claim about a cloud this process has
 	# not looked at yet. Truncated with the ledgers, at the one point that starts a run.
 	if [ -n "$PROBE_ATTEST_FILE" ]; then
@@ -205,6 +216,47 @@ probe_unverifiable_detail() {
 probe_note_unattributable() {
 	[ -n "$PROBE_UNATTRIB_LEDGER" ] || probe_reset
 	printf '%s(%s)\n' "$1" "$2" >>"$PROBE_UNATTRIB_LEDGER"
+}
+
+# probe_findings_path — where the findings ledger lives: the explicit env path, else beside
+# PROBE_LEDGER. Resolved lazily because `--record-verdict` never calls probe_reset (it must not
+# truncate what it is reading), so the default has to be derivable without it.
+probe_findings_path() {
+	if [ -n "$PROBE_FINDINGS_LEDGER" ]; then
+		printf '%s' "$PROBE_FINDINGS_LEDGER"
+	elif [ -n "$PROBE_LEDGER" ]; then
+		printf '%s' "${PROBE_LEDGER}.findings"
+	fi
+}
+
+# probe_note_finding <kind> <id> <name> <created> — record ONE resource that was found, as a JSON
+# line {kind, id, name, created}. `created` is the cloud's own creation timestamp, verbatim (empty
+# when the API gave none); judging its age is the CONSUMER's call, because only the consumer knows
+# what "too old" means for that kind. Never gates and never fails the caller: a finding that cannot
+# be written is lost evidence, not a reason to change a verdict, so it warns and returns 0.
+probe_note_finding() {
+	local f line
+	[ -n "$PROBE_LEDGER" ] || probe_reset
+	f="$(probe_findings_path)"
+	line="$(jq -cn --arg kind "$1" --arg id "$2" --arg name "$3" --arg created "$4" \
+		'{kind: $kind, id: $id, name: $name, created: $created}' 2>/dev/null)" || line=""
+	if [ -z "$line" ] || ! printf '%s\n' "$line" >>"$f" 2>/dev/null; then
+		echo "::warning::could not record the finding ${1} ${2} (${3}) — it is still in this log, but the receipt will not carry it." >&2
+	fi
+	return 0
+}
+
+# probe_findings_json — every recorded finding as one JSON array; `[]` when none or unreadable.
+# Unparseable lines are dropped rather than failing the whole array: one bad line must not erase
+# the others from the receipt.
+probe_findings_json() {
+	local f
+	f="$(probe_findings_path)"
+	if [ -z "$f" ] || [ ! -s "$f" ]; then
+		printf '[]'
+		return 0
+	fi
+	jq -cRn '[inputs | fromjson? | select(type == "object")]' "$f" 2>/dev/null || printf '[]'
 }
 
 # probe_has_unattributable — true when at least one probe answered with something unattributable.
@@ -561,6 +613,7 @@ probe_write_verdict() {
 		--argjson exit_code "$rc_json" \
 		--arg unver "$(probe_unverifiable_types)" --arg unattr "$(probe_unattributable_types)" \
 		--arg detail "$(probe_unverifiable_detail | sed -E 's/^ *· //')" \
+		--argjson findings "$(probe_findings_json)" \
 		--arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		'{schema: "alethia.e2e.teardown-verify/1",
 		  provider: $cloud, run_tag: $run_tag, scope: $scope,
@@ -568,6 +621,7 @@ probe_write_verdict() {
 		  unverifiable: ($unver | split(" ") | map(select(length > 0))),
 		  unattributable: ($unattr | split(" ") | map(select(length > 0))),
 		  unverifiable_detail: ($detail | split("\n") | map(select(length > 0))),
+		  findings: $findings,
 		  measured_at: $at}' >"$PROBE_VERDICT_FILE" || return 1
 	printf '✓ teardown verification receipt for %s: %s (exit %s) → %s\n' \
 		"$cloud" "$verdict" "$rc" "$PROBE_VERDICT_FILE"
@@ -1191,6 +1245,47 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	else
 		bad "…and the VERDICT survives the scrub" "got '$(jq -r .verdict "$st_ext/out/teardown-verify.json" 2>/dev/null)'"
 	fi
+	# ── A FINDING REACHES THE PUBLISHED RECEIPT (#5645). ────────────────────────────────────────
+	#
+	# The rollup can only call an imager helper a LEAK if it knows WHICH server and SINCE WHEN, and
+	# the receipt is the only thing that crosses from the provision job to the rollup job. Driven
+	# through the real `--record-verdict` entry point and the real scrub, because a finding that is
+	# written by the sweeper and then lost by the parent is exactly the failure this pins.
+	st_ext="$(mktemp -d "${TMPDIR:-/tmp}/alethia-probe-findings.XXXXXX")"
+	mkdir -p "$st_ext/out"
+	st_prev_ledger="$PROBE_LEDGER"
+	st_prev_unattr="$PROBE_UNATTRIB_LEDGER"
+	st_prev_findings="$PROBE_FINDINGS_LEDGER"
+	PROBE_LEDGER="$st_ext/ledger"
+	PROBE_UNATTRIB_LEDGER="$st_ext/unattr"
+	PROBE_FINDINGS_LEDGER=""
+	probe_reset
+	probe_note_finding imager-upload-server 168216231 hcloud-upload-image-d4034d08 "2026-10-01T03:41:12+00:00"
+	probe_note_unattributable imager-upload-helpers "unlabelled"
+	PROBE_LEDGER="$st_prev_ledger"
+	PROBE_UNATTRIB_LEDGER="$st_prev_unattr"
+	PROBE_FINDINGS_LEDGER="$st_prev_findings"
+	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		PROBE_ATTEST_FILE="$st_ext/attest" PROBE_VERDICT_FILE="$st_ext/out/teardown-verify.json" \
+		bash "${BASH_SOURCE[0]}" --record-verdict hetzner "nightly-777-1" "run 777-1" 0 >/dev/null 2>&1 || true
+	if [ "$(jq -r '[.findings[]? | select(.kind == "imager-upload-server") | .id, .name, .created] | join(" ")' "$st_ext/out/teardown-verify.json" 2>/dev/null)" = "168216231 hcloud-upload-image-d4034d08 2026-10-01T03:41:12+00:00" ]; then
+		ok "a recorded finding (id, name, created) survives into the PUBLISHED receipt"
+	else
+		bad "a recorded finding survives into the published receipt" "got '$(jq -c '.findings' "$st_ext/out/teardown-verify.json" 2>/dev/null)'"
+	fi
+	# The other direction: no finding recorded ⇒ an EMPTY array, never a missing key. A missing key
+	# and "none found" must not look alike to the reader.
+	: >"$st_ext/ledger.findings"
+	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
+		PROBE_ATTEST_FILE="$st_ext/attest" PROBE_VERDICT_FILE="$st_ext/out/teardown-verify.json" \
+		bash "${BASH_SOURCE[0]}" --record-verdict hetzner "nightly-777-1" "run 777-1" 0 >/dev/null 2>&1 || true
+	if [ "$(jq -c '.findings' "$st_ext/out/teardown-verify.json" 2>/dev/null)" = "[]" ]; then
+		ok "…and no finding recorded publishes \`findings: []\`, not an absent key"
+	else
+		bad "…and no finding recorded publishes findings: []" "got '$(jq -c '.findings' "$st_ext/out/teardown-verify.json" 2>/dev/null)'"
+	fi
+	rm -rf "$st_ext"
+
 	# ── THE SCRUB CAN CORRUPT THE RECEIPT, AND THAT MUST NOT SILENTLY LOSE THE VERDICT. ─────────
 	#
 	# scrub_stream is a TEXT rewriter, not a JSON transform. Its bare-key rule's value class
