@@ -571,7 +571,7 @@ function diffFingerprints(before: Map<string, number>, after: Map<string, number
 // `getPdp().enforce(actor, "manage_alerts", …)` — ENFORCE, not `can` — so for the owner persona an
 // allowed `manage_alerts` on `alert` is recorded on EVERY overview load. That is the +1. It is a
 // product defect in its own right (a capability probe recorded as if the user had managed alerts) and
-// is filed separately; this spec's job is only to stop timing its assertion against it.
+// is #5660; this spec's job is only to stop timing its assertion against it.
 //
 // The gate artifact did not keep the row, so its action/resource are not quoted from a run. The spec
 // now prints the new rows itself (`activityRowsSince`) whenever `authz_activity_log` moves, so the next
@@ -2023,16 +2023,21 @@ async function routeSlowWriter(page: Page, respondAfterMs: number, onAnswered: (
 test("self-test — the snapshot waits out a request the PAGE started, and the fire-and-forget write after it (#5639)", async ({ page }) => {
 	// `account.delete`'s shape: the overview fires `getAlertsBootstrap` on mount, the server answers,
 	// and the activity row commits AFTER the answer. The request here answers at 600 ms — past the
-	// 300 ms floor this replaced — and its "row" lands 50 ms after that. A snapshot taken when the UI
-	// was ready read 0, and the row then appeared inside the Cancel window.
+	// 300 ms floor this replaced — and its "row" lands 150 ms after that, inside one quiet interval,
+	// so a single reading taken the moment the request finished misses it as surely as one taken
+	// when the UI was ready.
 	let rows = 0;
 	await routeSlowWriter(page, 600, () => {
 		setTimeout(() => {
 			rows += 1;
-		}, 50);
+		}, 150);
 	});
 	const inFlight = trackInFlight(page);
+	// Awaited so the test starts from "the request is in flight", which is where the reach chain
+	// leaves `account.delete`; whether the page has fired it yet is not the subject.
+	const started = page.waitForRequest("https://settle.self-test.invalid/bootstrap");
 	await page.setContent(`<script>fetch("https://settle.self-test.invalid/bootstrap", { method: "POST" })</script>`);
+	await started;
 	const settled = await settledFingerprint(inFlight, async () => new Map([["authz_activity_log", rows]]));
 	inFlight.dispose();
 	expect(settled.counts.get("authz_activity_log"), "the page's own write must land BEFORE the snapshot, not inside the window").toBe(1);
@@ -2045,7 +2050,9 @@ test("self-test — a request that NEVER finishes bounds the wait and is NAMED, 
 	// the request must be carried into the failure message rather than forgotten.
 	await page.route("https://settle.self-test.invalid/**", () => {});
 	const inFlight = trackInFlight(page);
+	const fired = page.waitForRequest("https://settle.self-test.invalid/hangs");
 	await page.setContent(`<script>fetch("https://settle.self-test.invalid/hangs")</script>`);
+	await fired;
 	const started = Date.now();
 	const pending = await inFlight.idle(300);
 	inFlight.dispose();
