@@ -18,20 +18,23 @@ import (
 	"time"
 )
 
-// runTLSTimeoutErr is the plan error CAPTURED from the 2026-10-07 hetzner floor nightly,
+// errRunTLSTimeout is the plan error CAPTURED from the 2026-10-07 hetzner floor nightly,
 // run 37605979423: the "err" field of the runner's `job execution failed` log line
 // (`gh run view 37605979423 --log-failed`), pasted verbatim with only deploy.go's own
 // "tofu plan failed: " prefix removed — that prefix is added AFTER the retry decision.
 // Note tofu broke the line BEFORE `net/http:`, so this pattern sits on one line.
-var runTLSTimeoutErr = errors.New("exit status 1\n\nError: failed to get talos extensions versions\n\n  with data.talos_image_factory_extensions_versions.this,\n  on image.tf line 248, in data \"talos_image_factory_extensions_versions\" \"this\":\n 248: data \"talos_image_factory_extensions_versions\" \"this\" {\n\nGet \"https://factory.talos.dev/version/v1.13.6/extensions/official\":\nnet/http: TLS handshake timeout\n")
+var errRunTLSTimeout = errors.New("exit status 1\n\nError: failed to get talos extensions versions\n\n  with data.talos_image_factory_extensions_versions.this,\n  on image.tf line 248, in data \"talos_image_factory_extensions_versions\" \"this\":\n 248: data \"talos_image_factory_extensions_versions\" \"this\" {\n\nGet \"https://factory.talos.dev/version/v1.13.6/extensions/official\":\nnet/http: TLS handshake timeout\n")
 
-// syntheticWrappedErr is NOT captured from any run. It is the case the whitespace
+// errSyntheticWrapped is NOT captured from any run. It is the case the whitespace
 // normalisation in transientPlanErrorReason exists for: tofu word-wraps a diagnostic's
-// detail (at 78 columns when stderr is not a terminal), and a break can land INSIDE a
-// pattern. Run 37605979423's break happened to fall before the pattern; this one does not.
-var syntheticWrappedErr = errors.New("exit status 1\n\nError: failed to query available provider packages\n\n" +
-	"Could not retrieve the list of available versions for provider hetznercloud/hcloud: could not\n" +
-	"connect to registry.opentofu.org: Get \"https://registry.opentofu.org/v1/providers/\": net/http: TLS\n" +
+// detail, and a break can land INSIDE a
+// pattern. It is the captured run-37605979423 diagnostic (a PLAN-time data-source read) with
+// only the line break moved inside the pattern; in the real run the break fell before it.
+var errSyntheticWrapped = errors.New("exit status 1\n\nError: failed to get talos extensions versions\n\n" +
+	"  with data.talos_image_factory_extensions_versions.this,\n" +
+	"  on image.tf line 248, in data \"talos_image_factory_extensions_versions\" \"this\":\n" +
+	" 248: data \"talos_image_factory_extensions_versions\" \"this\" {\n\n" +
+	"Get \"https://factory.talos.dev/version/v1.13.6/extensions/official\": net/http: TLS\n" +
 	"handshake timeout\n")
 
 // recordingPolicy returns a planRetryPolicy whose Sleep records each wait instead of
@@ -66,7 +69,7 @@ func scriptedPlan(errs ...error) (func(context.Context) error, *int) {
 // with its reason.
 func TestPlanRetry_TransientErrorIsRetriedExactlyOnce(t *testing.T) {
 	policy, waits := recordingPolicy()
-	plan, calls := scriptedPlan(runTLSTimeoutErr, nil)
+	plan, calls := scriptedPlan(errRunTLSTimeout, nil)
 	var out bytes.Buffer
 
 	if err := policy.run(context.Background(), &out, plan); err != nil {
@@ -85,9 +88,9 @@ func TestPlanRetry_TransientErrorIsRetriedExactlyOnce(t *testing.T) {
 }
 
 // TestPlanRetry_PatternWrappedAcrossLinesStillMatches pins the whitespace normalisation
-// against the SYNTHETIC wrapped fixture (see syntheticWrappedErr — no run produced it).
+// against the SYNTHETIC wrapped fixture (see errSyntheticWrapped — no run produced it).
 func TestPlanRetry_PatternWrappedAcrossLinesStillMatches(t *testing.T) {
-	reason, transient := transientPlanErrorReason(syntheticWrappedErr)
+	reason, transient := transientPlanErrorReason(errSyntheticWrapped)
 	if !transient || reason != "net/http: TLS handshake timeout" {
 		t.Fatalf("got (%q, %v); a pattern tofu wrapped across lines must still match", reason, transient)
 	}
@@ -98,7 +101,7 @@ func TestPlanRetry_PatternWrappedAcrossLinesStillMatches(t *testing.T) {
 func TestPlanRetry_SecondTransientFailureFails(t *testing.T) {
 	policy, waits := recordingPolicy()
 	second := errors.New("exit status 1\nError: Get \"https://api.hetzner.cloud/v1/servers\": dial tcp 1.2.3.4:443: i/o timeout")
-	plan, calls := scriptedPlan(runTLSTimeoutErr, second, nil)
+	plan, calls := scriptedPlan(errRunTLSTimeout, second, nil)
 
 	err := policy.run(context.Background(), &bytes.Buffer{}, plan)
 	if err == nil {
@@ -184,8 +187,8 @@ func TestPlanRetry_CancelledContextIsNotRetried(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	policy, waits := recordingPolicy()
-	plan, calls := scriptedPlan(runTLSTimeoutErr, nil)
-	if err := policy.run(ctx, &bytes.Buffer{}, plan); !errors.Is(err, runTLSTimeoutErr) {
+	plan, calls := scriptedPlan(errRunTLSTimeout, nil)
+	if err := policy.run(ctx, &bytes.Buffer{}, plan); !errors.Is(err, errRunTLSTimeout) {
 		t.Fatalf("error = %v, want the original", err)
 	}
 	if *calls != 1 || len(*waits) != 0 {
@@ -195,8 +198,8 @@ func TestPlanRetry_CancelledContextIsNotRetried(t *testing.T) {
 	interrupted := planRetryPolicy{Backoff: time.Hour, Sleep: func(context.Context, time.Duration) error {
 		return context.Canceled
 	}}
-	plan2, calls2 := scriptedPlan(runTLSTimeoutErr, nil)
-	if err := interrupted.run(context.Background(), &bytes.Buffer{}, plan2); !errors.Is(err, runTLSTimeoutErr) {
+	plan2, calls2 := scriptedPlan(errRunTLSTimeout, nil)
+	if err := interrupted.run(context.Background(), &bytes.Buffer{}, plan2); !errors.Is(err, errRunTLSTimeout) {
 		t.Fatalf("error = %v, want the original", err)
 	}
 	if *calls2 != 1 {
