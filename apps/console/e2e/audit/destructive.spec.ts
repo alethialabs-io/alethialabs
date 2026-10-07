@@ -637,9 +637,17 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				// menu (`openMenu` fails the step when none opens); an `open:` step waits, bounded, for
 				// the overlay it opened — see `awaitNewOverlay` for why a fixed 300 ms let the NEXT
 				// step's lookup fall back to the whole page and click the canvas card behind the palette.
+				//
+				// The 300 ms is KEPT after that postcondition, as a floor, and the reason is measured: on
+				// this PR's first gate run (job 112906793672) the overlay wait alone returned as soon as
+				// the dialog mounted, and `account.delete` — `{open: "Account settings"}` — failed with
+				// "Cancel was pressed and rows still moved: authz_activity_log 15→16". Opening that dialog
+				// sets off a fire-and-forget activity write (lib/authz/activity.ts), and the old fixed
+				// settle had been what let it land BEFORE the fingerprint. So the wait is added to the
+				// settle, never substituted for it: no step now settles for less time than it did.
 				if (kind === "menu") await openMenu(page, opener);
 				else if (seen) await awaitNewOverlay(page, seen);
-				else await page.waitForTimeout(300);
+				await page.waitForTimeout(300);
 			} finally {
 				await seen?.dispose().catch(() => {});
 			}
