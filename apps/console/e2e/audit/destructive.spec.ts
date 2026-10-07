@@ -553,9 +553,9 @@ function diffFingerprints(before: Map<string, number>, after: Map<string, number
 	return moved;
 }
 
-// ── settling the snapshot: the page's own writes land BEFORE it, not inside the window (#5639) ──
+// ── settling the snapshot: NARROWING the window the page's own writes can land in (#5639) ──────
 //
-// THE WRITER, identified from the code rather than guessed. `account.delete` failed on #5636's first
+// THE WRITER, INFERRED from the code — not observed in a run (see below). `account.delete` failed on #5636's first
 // gate run (job 112906793672) with "authz_activity_log 15→16". `authz_activity_log` has exactly one
 // insert path, `recordActivity` (lib/authz/activity.ts), and it is FIRE-AND-FORGET: `void
 // getServiceDb().insert(…)`, so the row can commit after the request that caused it has answered. It
@@ -569,13 +569,15 @@ function diffFingerprints(before: Map<string, number>, after: Map<string, number
 // already clicking "Account menu" → "Account settings". `getAlertsBootstrap` authorizes `view_alerts`
 // (read-only, not recorded) and then calls `canManageAlerts`, which probes the capability with
 // `getPdp().enforce(actor, "manage_alerts", …)` — ENFORCE, not `can` — so for the owner persona an
-// allowed `manage_alerts` on `alert` is recorded on EVERY overview load. That is the +1. It is a
-// product defect in its own right (a capability probe recorded as if the user had managed alerts) and
-// is #5660; this spec's job is only to stop timing its assertion against it.
+// allowed `manage_alerts` on `alert` is recorded on EVERY overview load (`enforceDecision` records an
+// allow whose action is not READ_ONLY). That chain is the INFERRED source of the +1: it is the only
+// path the code offers that writes this table on a plain `/[org]` load, but the row itself was never
+// read. It is a product defect in its own right (a capability probe recorded as if the user had
+// managed alerts) and is #5660; this spec's job is only to stop timing its assertion against it.
 //
 // The gate artifact did not keep the row, so its action/resource are not quoted from a run. The spec
 // now prints the new rows itself (`activityRowsSince`) whenever `authz_activity_log` moves, so the next
-// failure names its writer instead of leaving it to be deduced.
+// failure names its writer instead of leaving it to be deduced — and confirms or refutes the inference.
 //
 // THE MECHANISM. The before-snapshot used to be taken when the UI was ready — the reach chain's
 // overlay waits, then a fixed 300 ms floor — which says nothing about the PAGE's own requests. Now
@@ -584,15 +586,38 @@ function diffFingerprints(before: Map<string, number>, after: Map<string, number
 // read across a quiet interval agree (`settledFingerprint`). The first half anchors the snapshot on
 // the writer's REQUEST finishing; the second covers the fire-and-forget tail after it.
 //
-// WHAT THIS DOES NOT CLOSE, stated rather than implied: an insert that commits more than one quiet
-// interval plus one full fingerprint scan AFTER its request answered still lands inside the window.
-// The browser cannot observe a commit, so that tail is bounded, not eliminated — but it is now
-// measured from the writer's response, not from an overlay mounting, which is what made it a race.
+// THE RACE IS NARROWED, NOT CLOSED, and every comment that mentions it says so. `recordActivity`'s
+// `void getServiceDb().insert(…)` ties the commit to nothing the browser can see — not to the HTTP
+// response, not to anything after it. Network-idle plus the quiet-interval re-read bound the window;
+// an insert that commits more than one quiet interval plus one full fingerprint scan after its request
+// answered still lands inside it. What changed is what the bound is measured FROM: the writer's
+// response, not an overlay mounting.
+//
+// WHAT THE SETTLE ABSORBS, and why that is this spec's model rather than a hole in it. The before-
+// snapshot settles everything the page did up to the trigger click: page load, and every reach step —
+// including OPENING the surface the trigger lives in (here, the Account settings dialog). A write
+// caused by any of that is never charged to the control. That was already the model — the snapshot
+// was always taken after the reach — the settle only stops a slow one from leaking into the window.
+// What it does NOT absorb: the trigger click, the CONFIRMATION opening, and Cancel all happen after
+// the before-snapshot, and the after-snapshot is settled too, so a fire-and-forget write any of those
+// cause is waited FOR and counted. Opening the confirmation is part of the measured window.
 
-/** Request types that legitimately never finish, so "nothing in flight" must not wait on them. */
+/**
+ * Request types that legitimately never finish, so "nothing in flight" must not wait on them.
+ *
+ * A STREAMING `fetch` is not in this list because it cannot be: at request time it is a `fetch` like
+ * every server action, and excluding `fetch` would exclude the very request that wrote #5639's row.
+ * It is handled by the bound instead — {@link SETTLE_IDLE_MS} is a TOTAL per snapshot, so one stream
+ * that never finishes costs at most that once — and by naming it: whatever is still open is carried
+ * into the Cancel failure (`describeSettle`), never dropped.
+ */
 const LONG_LIVED_REQUESTS: ReadonlySet<string> = new Set(["eventsource", "websocket"]);
 
-/** How long a snapshot waits for the page's requests to finish before it proceeds and says so. */
+/**
+ * The TOTAL time one snapshot spends waiting for the page's requests to finish, across all its
+ * readings — not per reading, so a request that never finishes cannot multiply it by
+ * {@link SETTLE_ROUNDS} and eat the test's budget. Past it, the snapshot proceeds and says so.
+ */
 const SETTLE_IDLE_MS = 5_000;
 
 /** The interval two agreeing fingerprints must span — the bound on the fire-and-forget tail. */
@@ -626,9 +651,17 @@ function trackInFlight(page: Page): InFlight {
 		waiters = [];
 		for (const w of wake) w();
 	};
+	const dispose = () => {
+		page.off("request", onRequest);
+		page.off("requestfinished", onDone);
+		page.off("requestfailed", onDone);
+	};
 	page.on("request", onRequest);
 	page.on("requestfinished", onDone);
 	page.on("requestfailed", onDone);
+	// A test that THROWS between `goto` and its last snapshot never reaches an explicit dispose; the
+	// page closing does it instead.
+	page.once("close", dispose);
 	return {
 		idle: async (timeoutMs) => {
 			if (open.size > 0) {
@@ -646,11 +679,7 @@ function trackInFlight(page: Page): InFlight {
 			}
 			return [...open].map((r) => describeRequests([r]));
 		},
-		dispose: () => {
-			page.off("request", onRequest);
-			page.off("requestfinished", onDone);
-			page.off("requestfailed", onDone);
-		},
+		dispose,
 	};
 }
 
@@ -671,12 +700,15 @@ async function settledFingerprint(
 	inFlight: InFlight,
 	read: () => Promise<Map<string, number>> = fingerprint,
 	quietMs = SETTLE_QUIET_MS,
+	idleBudgetMs = SETTLE_IDLE_MS,
 ): Promise<SettledFingerprint> {
-	let pending = await inFlight.idle(SETTLE_IDLE_MS);
+	const deadline = Date.now() + idleBudgetMs;
+	const remaining = () => Math.max(0, deadline - Date.now());
+	let pending = await inFlight.idle(remaining());
 	let prev = await read();
 	for (let round = 1; round < SETTLE_ROUNDS; round++) {
 		await new Promise((resolve) => setTimeout(resolve, quietMs));
-		pending = await inFlight.idle(SETTLE_IDLE_MS);
+		pending = await inFlight.idle(remaining());
 		const now = await read();
 		if (diffFingerprints(prev, now).length === 0) return { counts: now, pending, settled: true };
 		prev = now;
@@ -704,7 +736,7 @@ async function activityRowsSince(mark: string): Promise<string[]> {
 function describeSettle(label: string, s: SettledFingerprint): string {
 	const parts: string[] = [];
 	if (!s.settled) parts.push(`the database never settled across ${SETTLE_ROUNDS} readings`);
-	if (s.pending.length > 0) parts.push(`still in flight after ${SETTLE_IDLE_MS} ms: ${s.pending.join(", ")}`);
+	if (s.pending.length > 0) parts.push(`still in flight after the ${SETTLE_IDLE_MS} ms budget: ${s.pending.join(", ")}`);
 	return parts.length > 0 ? ` [${label}: ${parts.join("; ")}]` : "";
 }
 
@@ -800,9 +832,16 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				// `account.delete` failed on its first gate run (job 112906793672) with "Cancel was pressed
 				// and rows still moved: authz_activity_log 15→16" — the overview's `getAlertsBootstrap`
 				// records a `manage_alerts` row on every load, fire-and-forget, and the snapshot was racing
-				// it. That race is now closed where it belongs, at the SNAPSHOT (`settledFingerprint`,
-				// #5639), so a step's settle answers only "is the UI ready", and an overlay that mounted
-				// answers that.
+				// it. That race is now NARROWED where it belongs, at the SNAPSHOT (`settledFingerprint`,
+				// #5639: network-idle plus a quiet-interval re-read; a write landing later than that is
+				// still possible, see there), so a step's settle answers only "is the UI ready", and an
+				// overlay that mounted answers that.
+				//
+				// What removing the floor changes, stated: EVERY multi-step reach now takes its next step
+				// as soon as the overlay is up, 300 ms sooner than on dev. One green gate run backs that
+				// (37694683768: 30 measured, 0 errored, the same verdicts as #5651's baseline). If a step
+				// starts failing on an overlay that mounted but is not yet interactive, that is the cause
+				// to suspect first — and the fix is a postcondition on that step, not the floor back.
 				if (kind === "menu") await openMenu(page, opener);
 				else if (seen) await awaitNewOverlay(page, seen);
 			} finally {
@@ -1499,6 +1538,7 @@ for (const entry of CONTROLS) {
 
 		const reachFailure = await walkReach(page, entry);
 		if (reachFailure) {
+			inFlight.dispose();
 			withholdWithFixture(entry, reachFailure);
 			return;
 		}
@@ -1507,12 +1547,14 @@ for (const entry of CONTROLS) {
 		// withheld — see `resolveAfterReach`.
 		const resolved = await resolveAfterReach(page, entry, url);
 		if ("withhold" in resolved) {
+			inFlight.dispose();
 			withholdWithFixture(entry, resolved.withhold);
 			return;
 		}
 		const trigger = resolved.locator;
 
-		// ── both observations start BEFORE the click, once the page's own writes have landed (#5639).
+		// ── both observations start BEFORE the click, once the page has gone quiet (#5639) — which
+		// narrows, and does not close, the window a fire-and-forget write of its own can land in.
 		const settledBefore = await settledFingerprint(inFlight);
 		const before = settledBefore.counts;
 		const activityMark = await activityHighWater();
@@ -2058,6 +2100,25 @@ test("self-test — a request that NEVER finishes bounds the wait and is NAMED, 
 	inFlight.dispose();
 	expect(Date.now() - started, "the wait is bounded").toBeLessThan(5_000);
 	expect(pending).toEqual(["GET /hangs"]);
+	await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("self-test — the in-flight wait is a TOTAL per snapshot, so a request that never finishes is paid for once", async ({ page }) => {
+	// A stream that never finishes, on a page whose database never settles either: every round runs.
+	// Per-round, the 300 ms budget would be paid SETTLE_ROUNDS times (~1.8 s here, ~30 s with the real
+	// budget, twice per test); as a total it is paid once.
+	await page.route("https://settle.self-test.invalid/**", () => {});
+	const inFlight = trackInFlight(page);
+	const fired = page.waitForRequest("https://settle.self-test.invalid/stream");
+	await page.setContent(`<script>fetch("https://settle.self-test.invalid/stream")</script>`);
+	await fired;
+	let n = 0;
+	const started = Date.now();
+	const settled = await settledFingerprint(inFlight, async () => new Map([["authz_activity_log", n++]]), 10, 300);
+	const elapsed = Date.now() - started;
+	inFlight.dispose();
+	expect(elapsed, "one budget for the whole snapshot, not one per reading").toBeLessThan(1_000);
+	expect(settled.pending, "and the request that ate it is named").toEqual(["GET /stream"]);
 	await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
