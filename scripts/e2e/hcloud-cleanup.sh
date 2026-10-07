@@ -812,6 +812,8 @@ report_image_cache() {
 # something unparseable has not told us what exists. A literal `null` is read as an EMPTY list, the
 # way list_orphan_clusters tolerates it with `.[]?`: if the CLI ever renders an empty list as `null`,
 # reading it as UNVERIFIABLE would exit every clean teardown 4 — a false red on an empty account.
+# DEFENSIVE ONLY: the pinned hcloud CLI (v1.67.0) prints `[]` for an empty list. The guard exists so
+# a CLI or API change to `null` cannot turn into a nightly false red, not because it happens today.
 imager_helper_rows() {
 	printf '%s' "$1" | jq -r '
 		if . == null then [] elif type == "array" then . else error("not an array") end
@@ -1303,13 +1305,13 @@ if [ "$SELF_TEST" = "1" ]; then
 	#    SINCE WHEN, so each server — and only a server: keys do not bill — becomes a finding
 	#    carrying the API's own creation timestamp. ──
 	probe_reset
-	ST_SERVERS='[{"id":168216231,"name":"hcloud-upload-image-d4034d08","created":"2026-10-01T03:41:12+00:00","labels":{}},{"id":163000000,"name":"alethia-prod-web","created":"2026-08-01T00:00:00+00:00","labels":{}}]'
+	ST_SERVERS='[{"id":168216231,"name":"hcloud-upload-image-d4034d08","created":"2026-10-01T03:41:12.123456Z","labels":{}},{"id":163000000,"name":"alethia-prod-web","created":"2026-08-01T00:00:00+00:00","labels":{}}]'
 	ST_KEYS='[{"id":117831479,"name":"hcloud-upload-image-77b49987","created":"2026-08-24T03:41:10+00:00","labels":{}}]'
 	ST_SERVERS_RC=0
 	ST_KEYS_RC=0
 	report_imager_helpers >/dev/null 2>&1 || true
 	st_findings="$(probe_findings_json | jq -r '[.[] | "\(.kind) \(.id) \(.name) \(.created)"] | join(";")')"
-	if [ "$st_findings" = "imager-upload-server 168216231 hcloud-upload-image-d4034d08 2026-10-01T03:41:12+00:00" ]; then
+	if [ "$st_findings" = "imager-upload-server 168216231 hcloud-upload-image-d4034d08 2026-10-01T03:41:12.123456Z" ]; then
 		echo "  ✓ each upload SERVER is recorded as a finding with its id and creation time — keys and unrelated servers are not"
 	else
 		echo "  ✗ each upload server is recorded as a finding — got [${st_findings}]" >&2

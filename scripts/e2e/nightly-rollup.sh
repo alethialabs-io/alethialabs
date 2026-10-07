@@ -256,8 +256,14 @@ teardown_receipt_path() {
 #       - the verify step or its upload failed, or RUN_ATTEMPT is unset: the leg reads UNMEASURED,
 #         whose banner says no measurement was attached.
 #       - the teardown was killed: UNSWEPT.
-#     In none of these is the absence presented as "no leak" — but in the gated-off case it is not
-#     presented as anything at all.
+#       - teardown_outcome's `unknown` arm — the jobs payload is absent or unreadable, or holds no
+#         `Guaranteed teardown` step for the leg: the teardown axis has no case for it, so the
+#         summary is SILENT about the account (the jobs-payload warning, when it fires, is the only
+#         trace).
+#       - job_exists is not `yes` (no matrix job for hetzner in the payload): teardown_outcome is
+#         never asked, so the summary is SILENT here too.
+#     In none of these is the absence presented as "no leak" — but in the gated-off, `unknown` and
+#     no-job cases it is not presented as anything at all.
 IMAGER_LEAK_MIN_AGE_HOURS="${IMAGER_LEAK_MIN_AGE_HOURS:-12}"
 
 # teardown_receipt_for <provider> — this run+attempt's receipt for <provider>, whatever its verdict.
@@ -1847,25 +1853,31 @@ run_self_test() {
 		jq --arg at "$at" '.measured_at = $at' "${dir}/teardown-verify.json" >"$work/r" && mv "$work/r" "${dir}/teardown-verify.json"
 		rm -rf "$work"
 	}
+	# THE TIMESTAMP FORMATS. hcloud CLI v1.67.0 (pinned in e2e-nightly.yml) renders `-o json` through
+	# Go's json.Encoder over hcloud-go's schema.Server.Created (a time.Time), so the RECORDED shape
+	# is RFC 3339 with nanoseconds and a `Z` — 168216231 below. jq's fromdateiso8601 accepts
+	# neither the fraction nor an offset, so both are normalised, and each form has a case that goes
+	# red if its normalisation is dropped. The young server's `+00:00` is SYNTHETIC: the pinned CLI
+	# does not emit it; it pins the offset branch for an API or CLI that renders one.
 	c="$tmp/i1-imager-leak"
 	mkdir -p "$c/proofs"
 	cp "$jobs_real" "$c/jobs.json"
 	write_summary "$c/proofs/e2e-proof-hetzner-r/s" hetzner "nightly-34453355398-1" success applied
 	write_imager_verdict "$c/proofs/e2e-teardown-verify-hetzner-r" "nightly-34453355398-1" "2026-10-07T04:31:00Z" \
-		"168216231:hcloud-upload-image-d4034d08:2026-10-01T03:41:12+00:00" \
+		"168216231:hcloud-upload-image-d4034d08:2026-10-01T03:41:12.123456Z" \
 		"170000001:hcloud-upload-image-aaaa0001:2026-10-07T04:20:00+00:00"
 	CASE_RUN_ID=34453355398 CASE_MATRIX=success _derive "$c" >/dev/null
 	_a "168216231" "$(_state "$c/out" IMAGER_LEAKS)" \
 		"(I1) a six-day-old upload server reaches state.env as a LEAK — and the 11-minute-old one does not"
 	_a "1" "$(grep -c 'LEAK — hcloud-upload-image server(s) still billing: 168216231' "$c/out/summary.md")" \
 		"(I1) the step summary carries a LEAK banner naming the server id"
-	_a "1" "$(grep -c '^> | `168216231` | `hcloud-upload-image-d4034d08` | 2026-10-01T03:41:12+00:00 | 144h | yes |$' "$c/out/summary.md")" \
+	_a "1" "$(grep -c '^> | `168216231` | `hcloud-upload-image-d4034d08` | 2026-10-01T03:41:12.123456Z | 144h | yes |$' "$c/out/summary.md")" \
 		"(I1) …with its first-seen (creation) time, its age at this nightly, and that it bills while stopped"
 	_a "1" "$(grep -c 'younger than 12h: 170000001' "$c/out/summary.md")" \
 		"(I1) the young one is NAMED, but as a possibly in-flight build, not a leak"
 	_a "e2e nightly: hetzner LEAK — hcloud-upload-image server(s) still billing" \
 		"$(cat "$c/out/issue-imager-leak.title" 2>/dev/null)" "(I1) an issue title is rendered for the workflow to file"
-	_a "1" "$(grep -c '^| `168216231` | `hcloud-upload-image-d4034d08` | 2026-10-01T03:41:12+00:00 | 144h | yes |$' "$c/out/issue-imager-leak.md" 2>/dev/null || true)" \
+	_a "1" "$(grep -c '^| `168216231` | `hcloud-upload-image-d4034d08` | 2026-10-01T03:41:12.123456Z | 144h | yes |$' "$c/out/issue-imager-leak.md" 2>/dev/null || true)" \
 		"(I1) …and its body carries the same row"
 	_a "0" "$(grep -c '170000001' "$c/out/issue-imager-leak.md" 2>/dev/null || true)" \
 		"(I1) …and does NOT call the young one a leak"
@@ -1879,7 +1891,7 @@ run_self_test() {
 	cp "$jobs_real" "$c/jobs.json"
 	write_summary "$c/proofs/e2e-proof-hetzner-r/s" hetzner "nightly-34453355398-1" success applied
 	write_imager_verdict "$c/proofs/e2e-teardown-verify-hetzner-r" "nightly-34453355398-2" "2026-10-07T04:31:00Z" \
-		"168216231:hcloud-upload-image-d4034d08:2026-10-01T03:41:12+00:00"
+		"168216231:hcloud-upload-image-d4034d08:2026-10-01T03:41:12.123456Z"
 	CASE_RUN_ID=34453355398 CASE_MATRIX=success _derive "$c" >/dev/null
 	_a "" "$(_state "$c/out" IMAGER_LEAKS)" "(I2) another attempt's receipt does not report a leak for this one"
 	_a "absent" "$([ -e "$c/out/issue-imager-leak.md" ] && echo present || echo absent)" "(I2) …and renders no issue body"

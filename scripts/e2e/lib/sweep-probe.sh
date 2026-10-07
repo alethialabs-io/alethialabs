@@ -1260,7 +1260,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	PROBE_UNATTRIB_LEDGER="$st_ext/unattr"
 	PROBE_FINDINGS_LEDGER=""
 	probe_reset
-	probe_note_finding imager-upload-server 168216231 hcloud-upload-image-d4034d08 "2026-10-01T03:41:12+00:00"
+	probe_note_finding imager-upload-server 168216231 hcloud-upload-image-d4034d08 "2026-10-01T03:41:12.123456Z"
 	probe_note_unattributable imager-upload-helpers "unlabelled"
 	PROBE_LEDGER="$st_prev_ledger"
 	PROBE_UNATTRIB_LEDGER="$st_prev_unattr"
@@ -1268,7 +1268,7 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	PROBE_LEDGER="$st_ext/ledger" PROBE_UNATTRIB_LEDGER="$st_ext/unattr" \
 		PROBE_ATTEST_FILE="$st_ext/attest" PROBE_VERDICT_FILE="$st_ext/out/teardown-verify.json" \
 		bash "${BASH_SOURCE[0]}" --record-verdict hetzner "nightly-777-1" "run 777-1" 0 >/dev/null 2>&1 || true
-	if [ "$(jq -r '[.findings[]? | select(.kind == "imager-upload-server") | .id, .name, .created] | join(" ")' "$st_ext/out/teardown-verify.json" 2>/dev/null)" = "168216231 hcloud-upload-image-d4034d08 2026-10-01T03:41:12+00:00" ]; then
+	if [ "$(jq -r '[.findings[]? | select(.kind == "imager-upload-server") | .id, .name, .created] | join(" ")' "$st_ext/out/teardown-verify.json" 2>/dev/null)" = "168216231 hcloud-upload-image-d4034d08 2026-10-01T03:41:12.123456Z" ]; then
 		ok "a recorded finding (id, name, created) survives into the PUBLISHED receipt"
 	else
 		bad "a recorded finding survives into the published receipt" "got '$(jq -c '.findings' "$st_ext/out/teardown-verify.json" 2>/dev/null)'"
