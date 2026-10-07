@@ -27,6 +27,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { parseDockerfileStages } from "../../scripts/lib/dockerfile-stages.mjs";
 
 // Located from this file, not process.cwd(), so the test reads the same tree from any working directory.
 const CONSOLE = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -107,57 +108,6 @@ function runtimeReads(): Map<string, string[]> {
 	return reads;
 }
 
-/** One Dockerfile stage: its name and the ENV / ARG keys it declares (with ENV values). */
-interface Stage {
-	name: string;
-	env: Map<string, string>;
-	args: Set<string>;
-}
-
-/** Split `k=v k2=v2` (or the legacy `k v`) into pairs. Values here carry no quoted spaces. */
-function pairs(rest: string): [string, string][] {
-	const tokens = rest.trim().split(/\s+/).filter(Boolean);
-	if (tokens.length === 2 && !tokens[0].includes("=")) return [[tokens[0], tokens[1]]];
-	return tokens.map((t) => {
-		const eq = t.indexOf("=");
-		return eq === -1 ? [t, ""] : [t.slice(0, eq), t.slice(eq + 1).replace(/^"(.*)"$/, "$1")];
-	});
-}
-
-/** Parse a Dockerfile into stages, joining `\` continuations and dropping comment lines. */
-function parseStages(text: string): Stage[] {
-	const logical: string[] = [];
-	let buf = "";
-	for (const raw of text.split("\n")) {
-		if (/^\s*#/.test(raw)) continue;
-		const line = raw.replace(/\s+$/, "");
-		if (line.endsWith("\\")) {
-			buf += `${line.slice(0, -1)} `;
-			continue;
-		}
-		logical.push(buf + line);
-		buf = "";
-	}
-	if (buf) logical.push(buf);
-
-	const stages: Stage[] = [];
-	for (const line of logical) {
-		const m = /^\s*([A-Za-z]+)\s+(.*)$/.exec(line);
-		if (!m) continue;
-		const op = m[1].toUpperCase();
-		if (op === "FROM") {
-			const as = /\s+AS\s+([A-Za-z0-9_.-]+)\s*$/i.exec(m[2]);
-			stages.push({ name: as ? as[1] : `#${stages.length}`, env: new Map(), args: new Set() });
-			continue;
-		}
-		const stage = stages.at(-1);
-		if (!stage) continue;
-		if (op === "ENV") for (const [k, v] of pairs(m[2])) stage.env.set(k, v);
-		if (op === "ARG") for (const [k] of pairs(m[2])) stage.args.add(k);
-	}
-	return stages;
-}
-
 const reads = runtimeReads();
 /** The step in deploy-console.yml that writes the box's `.env` — the only place a deploy-env claim counts. */
 const ASSEMBLE_STEP = "      - name: Assemble .env from the vault and deploy";
@@ -205,7 +155,7 @@ describe("runtime-read NEXT_PUBLIC_* vars (#5621)", () => {
 
 	for (const file of DOCKERFILES) {
 		describe(`apps/console/${file}`, () => {
-			const stages = parseStages(readFileSync(join(CONSOLE, file), "utf8"));
+			const stages = parseDockerfileStages(readFileSync(join(CONSOLE, file), "utf8"));
 			const runner = stages.find((s) => s.name === "runner");
 
 			it("has a runner stage", () => {
