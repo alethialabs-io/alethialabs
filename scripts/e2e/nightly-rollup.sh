@@ -43,6 +43,9 @@
 #   OUT_DIR       (default `$RUNNER_TEMP` or a temp dir) where the rendered artifacts land.
 #   MATRIX_RESULT the `needs.provision.result` aggregate.
 #   RUN_URL       link used in the issue bodies.
+#   IMAGER_LEAK_MIN_AGE_HOURS (default 12) — how old an `hcloud-upload-image-*` server must be,
+#                 at the moment the hetzner receipt was measured, before it is reported as a LEAK
+#                 rather than a possibly in-flight image build. See imager_leak_rows.
 #   E2E_DIMENSION one of resolve-dimension.sh's DIMENSIONS (`--dimensions` prints them; plus the
 #                 legacy `byo`, an alias of `gitops`) — which dimension this run proved. Every
 #                 one is dispatchable; only `floor` is scheduled. Absent ⇒ `floor`, matching that
@@ -53,13 +56,16 @@
 #   state.env               REDS / SKIPS / JOB_NO_SUMMARY / DIED_EARLY / POST_CAPTURE / UNSWEPT /
 #                           RESIDUAL / TEARDOWN_UNVERIFIABLE / TEARDOWN_UNMEASURED /
 #                           ENABLED_N / SKIP_N / TOTAL / COV_TITLE / COV_LABEL / RESIDUAL_LABEL /
-#                           DIMENSION / DIMENSION_LABEL
+#                           DIMENSION / DIMENSION_LABEL / IMAGER_LEAKS
 #   failed-steps-<p>.txt    the failing step names for a POST_CAPTURE leg — written only for those
 #   issue-red-<id>.md       one body per red leg, with its title on the first `title:` line
 #   issue-body-coverage.md  the standing coverage-issue body
 #   issue-residual-<p>.md   one body per cloud on the RESIDUAL list, with its title in the matching
 #                           `.title` file — a MEASURED billing leak, filed separately from the reds
 #                           because it is a separate claim (#4620)
+#   issue-imager-leak.md    written only when IMAGER_LEAKS is non-empty, title in the matching `.title`
+#                           — an unlabelled `hcloud-upload-image-*` server old enough to be a leak
+#                           (#5645; see imager_leak_rows)
 #   ledger.tsv              provider<TAB>verdict<TAB>detail<TAB>bundle — one row per PASS/FAIL leg;
 #                           only PROVABLY gate-off SKIPs are omitted. The ledger step reuses this
 #                           discovery instead of repeating the join that just lost a whole run.
@@ -207,6 +213,84 @@ teardown_receipt_path() {
 		$(find "${PROOFS_DIR:-proofs}" -type f -name "$TEARDOWN_VERIFY_FILE" 2>/dev/null | LC_ALL=C sort)
 	EOF
 	return 0
+}
+
+# ── THE IMAGER UPLOAD HELPERS (#5645). ─────────────────────────────────────────────────────────
+#
+# The hcloud-talos/imager provider boots a rescue server named `hcloud-upload-image-<hex>` and
+# labels it with NOTHING, so no scope-locked sweep can reach it and hcloud-cleanup.sh only reports
+# it. For a year that report was a `::warning::` in a job log: server 168216231 appeared in the
+# 2026-10-01 nightly teardown and was still listed in every nightly through 2026-10-07 — six days
+# billing, under a warning printed every night. A warning nobody reads is not a guard.
+#
+# So the hetzner post-teardown receipt now carries each such server as a finding — id, name and
+# the API's own `created` timestamp — and this script promotes it to a LEAK in the step summary and
+# in its own issue body.
+#
+# ── HOW PERSISTENCE IS KNOWN, AND ITS BOUNDARY ───────────────────────────────────────────────────
+#
+# The issue's threshold is "existed across two or more consecutive nightlies", because an imager
+# build takes minutes. This script is PURE — no network, no gh — and holds no history, so it does
+# not count sightings. It reads AGE instead: `measured_at − created`, both from the one receipt.
+# The server's creation time is the cloud's own fact, so it needs no state carried between runs and
+# cannot be reset by a lost artifact or a renamed issue.
+#
+#   · The threshold is IMAGER_LEAK_MIN_AGE_HOURS, default 12. A helper born in nightly N's apply is
+#     ~24h old when nightly N+1 measures it, so it is reported on its SECOND nightly — the issue's
+#     threshold. One born in a dispatched run between nightlies is reported by the first nightly at
+#     least 12h later. 12h is two orders of magnitude above a build's lifetime, so a build still in
+#     flight on a concurrent run cannot be called a leak.
+#   · "First seen" is reported as the creation time. It is the earliest moment ANY nightly could
+#     have seen it, not the id of the nightly run that first did — that would need history this
+#     script does not have. The age column says how many nightly slots it has spanned.
+#   · A finding whose age cannot be computed (no `created`, or a timestamp jq cannot parse) is a
+#     LEAK with age "unknown". This is a visibility report, never a delete, so the unsure case
+#     resolves toward being SEEN.
+#   · Only the HETZNER receipt of THIS run and attempt is read, the same identity rule as the
+#     teardown axis. No receipt (hetzner gated off, the verify step failed, RUN_ATTEMPT unset) ⇒ no
+#     finding here, and that leg is already reported UNMEASURED by the teardown axis — the absence
+#     is not presented as "no leak".
+IMAGER_LEAK_MIN_AGE_HOURS="${IMAGER_LEAK_MIN_AGE_HOURS:-12}"
+
+# teardown_receipt_for <provider> — this run+attempt's receipt for <provider>, whatever its verdict.
+# The findings ride on every verdict: an imager helper is UNATTRIBUTABLE, which does not change it.
+teardown_receipt_for() {
+	local want="$1" f self_tag
+	[ -n "${RUN_ATTEMPT:-}" ] || return 0
+	self_tag="nightly-${RUN_ID:-}-${RUN_ATTEMPT}"
+	while IFS= read -r f; do
+		[ -n "$f" ] || continue
+		jq -e --arg p "$want" --arg t "$self_tag" \
+			'(.provider // "") == $p and (.run_tag // "") == $t' "$f" >/dev/null 2>&1 || continue
+		printf '%s\n' "$f"
+		return 0
+	done <<-EOF
+		$(find "${PROOFS_DIR:-proofs}" -type f -name "$TEARDOWN_VERIFY_FILE" 2>/dev/null | LC_ALL=C sort)
+	EOF
+	return 0
+}
+
+# imager_leak_rows — every imager upload server on THIS run's hetzner receipt, one per line, as
+# id<TAB>name<TAB>created<TAB>age-hours<TAB>LEAK|YOUNG. A field with no value is the word `unknown`,
+# never empty: TAB is IFS whitespace, so `read` would collapse an empty field and shift every column
+# after it — an unknown age would be read as the class. An unknown age is always LEAK (see above).
+imager_leak_rows() {
+	local receipt min="$IMAGER_LEAK_MIN_AGE_HOURS"
+	case "$min" in '' | *[!0-9]*) min=12 ;; esac
+	receipt="$(teardown_receipt_for hetzner)"
+	[ -n "$receipt" ] || return 0
+	jq -r --argjson min "$min" '
+		def ts: (. // "") | sub("\\.[0-9]+"; "") | sub("(\\+00:00|\\+0000|Z)$"; "Z")
+			| (try fromdateiso8601 catch null);
+		(.measured_at | ts) as $now
+		| (.findings // [])[]
+		| select(type == "object" and .kind == "imager-upload-server")
+		| ((.created | ts) as $c | if $c == null or $now == null then null else (($now - $c) / 3600 | floor) end) as $age
+		| [(.id // "unknown" | tostring), (.name // "unknown"),
+		   (if (.created // "") == "" then "unknown" else .created end),
+		   (if $age == null then "unknown" else ($age | tostring) end),
+		   (if $age == null or $age >= $min then "LEAK" else "YOUNG" end)]
+		| @tsv' "$receipt" 2>/dev/null || true
 }
 
 # summary_for <provider> <run_id> — the first bundle claiming this provider AND this run.
@@ -487,6 +571,20 @@ failed_steps() {
 }
 
 # ── derivation ─────────────────────────────────────────────────────────────────────────────────
+# imager_leak_table <rows> — the LEAK rows of imager_leak_rows as a markdown table.
+imager_leak_table() {
+	local id name created age class
+	printf '%s\n' "| server id | name | created (first seen) | age at this nightly | bills while stopped |"
+	printf '%s\n' "|---|---|---|---|---|"
+	while IFS="$(printf '\t')" read -r id name created age class; do
+		[ "$class" = "LEAK" ] || continue
+		case "$age" in '' | *[!0-9]*) age="unknown" ;; *) age="${age}h" ;; esac
+		printf '| `%s` | `%s` | %s | %s | yes |\n' "$id" "$name" "${created:-unknown}" "$age"
+	done <<-EOF
+		$1
+	EOF
+}
+
 derive() {
 	local run_id="${RUN_ID:?RUN_ID is required — it is what scopes a bundle to this run}"
 	local out="${OUT_DIR:-${RUNNER_TEMP:-}}"
@@ -654,6 +752,21 @@ derive() {
 		reds="$reds matrix"
 	fi
 
+	# The imager upload helpers (#5645): LEAK rows go to a banner, the state file and an issue body;
+	# YOUNG rows are named but not called leaks, because a concurrent build may still own them.
+	local imager_rows imager_leaks="" imager_young="" i_id i_class
+	imager_rows="$(imager_leak_rows)"
+	while IFS="$(printf '\t')" read -r i_id _ _ _ i_class; do
+		[ -n "$i_id" ] || continue
+		if [ "$i_class" = "LEAK" ]; then
+			imager_leaks="${imager_leaks} ${i_id}"
+		else
+			imager_young="${imager_young} ${i_id}"
+		fi
+	done <<-EOF
+		$imager_rows
+	EOF
+
 	local skip_n enabled_n
 	skip_n="$(printf '%s' "$skips" | wc -w | tr -d ' ')"
 	enabled_n=$((TOTAL - skip_n))
@@ -723,6 +836,19 @@ derive() {
 			echo "> THIS pipeline, not a finding about the cloud. Expected on any run whose provision job predates"
 			echo "> the \`VERIFY_ONLY=1\` step (#4398); if it persists after that step is live on the default branch,"
 			echo "> the step or its artifact upload is broken and the money signal is silently off."
+		fi
+		if [ -n "${imager_leaks// /}" ]; then
+			echo
+			echo "> 💸 **LEAK — hcloud-upload-image server(s) still billing:${imager_leaks}** — an unlabelled imager"
+			echo "> upload helper at least ${IMAGER_LEAK_MIN_AGE_HOURS}h old, so it has outlived any image build. **A stopped"
+			echo "> server still bills.** No sweep deletes it: it carries no label, so nothing can tie it to a run (#2463)."
+			echo ">"
+			imager_leak_table "$imager_rows" | sed 's/^/> /'
+		fi
+		if [ -n "${imager_young// /}" ]; then
+			echo
+			echo "> ℹ️ hcloud-upload-image server(s) younger than ${IMAGER_LEAK_MIN_AGE_HOURS}h:${imager_young} — possibly a"
+			echo "> concurrent run's image build still in flight, so NOT yet a leak. The next nightly re-judges it."
 		fi
 	} >>"$out/summary.md"
 
@@ -934,6 +1060,21 @@ derive() {
 		} >"$out/issue-residual-${cloud}.md"
 	done
 
+	# ── The imager leak issue body (#5645). ONE issue for the account, deduped by TITLE: the servers
+	#    are unattributable, so there is no cloud-or-run identity finer than "hetzner" to key on, and
+	#    the workflow refreshes the open issue's body each night so its list and ages stay current.
+	if [ -n "${imager_leaks// /}" ]; then
+		printf '%s\n' "e2e nightly: hetzner LEAK — hcloud-upload-image server(s) still billing" >"$out/issue-imager-leak.title"
+		{
+			printf '%s\n\n' "The hetzner post-teardown re-list found unlabelled \`hcloud-upload-image-*\` server(s) at least **${IMAGER_LEAK_MIN_AGE_HOURS}h** old. The hcloud-talos/imager provider boots one per image build and normally deletes it within minutes; one this old has outlived its build. **A stopped server still bills.**"
+			printf '%s\n\n' "Run: ${RUN_URL:-}"
+			imager_leak_table "$imager_rows"
+			printf '\n%s\n\n' "**Created** is the API's own creation time — the earliest moment any nightly could have seen it, not the id of the first nightly that did. **Age** is measured against the receipt's \`measured_at\` in the \`e2e-teardown-verify-hetzner-${run_id}\` artifact."
+			printf '%s\n\n' "**Why nothing deleted it.** It carries no label, so no scope-locked sweep can tie it to a run (#2463), and the hcloud account is shared with prod. Deleting by age is a maintainer decision, not something this pipeline does. Confirm no image build is in flight, then: \`hcloud server delete <id>\` (and the matching \`hcloud-upload-image-*\` ssh-key)."
+			printf '%s\n' "_Auto-created by the e2e-nightly rollup, deduped by title, and refreshed each night while a leak persists. Close it once the account is confirmed empty of them._"
+		} >"$out/issue-imager-leak.md"
+	fi
+
 	# Shell-quoted so the workflow can `.` this file: every value here is a space-separated list or
 	# a sentence, and an unquoted `SKIPS=hetzner aws gcp …` sources as a COMMAND (it ran the real
 	# aws CLI the first time this was written).
@@ -969,6 +1110,9 @@ derive() {
 		# dimension from the trigger a third time (#1755).
 		echo "DIMENSION='${dim}'"
 		echo "DIMENSION_LABEL='${dim_label}'"
+		# Unlabelled imager upload servers old enough to be leaks (#5645). Ids only — orthogonal to
+		# REDS and to RESIDUAL, which is a claim about THIS run's labelled resources.
+		echo "IMAGER_LEAKS='${imager_leaks# }'"
 	} >"$out/state.env"
 
 	echo "coverage:${enabled_n}/${TOTAL} dimension:${dim} reds:${reds:-<none>} skips:${skips:-<none>}"
@@ -1662,6 +1806,94 @@ run_self_test() {
 			"(V3d) …and reads it BEFORE the red filer's all-green exit, which ends the step"
 	else
 		_a "readable" "MISSING" "(V3d) the workflow this script feeds is readable from the self-test"
+	fi
+
+	# ── (I · #5645) AN IMAGER UPLOAD SERVER THAT OUTLIVED ITS BUILD IS A LEAK, NOT A WARNING. ────
+	#
+	# The recorded shape: server 168216231 `hcloud-upload-image-d4034d08`, created during the
+	# 2026-10-01 nightly and still listed on 2026-10-07. Before #5645 the only trace of it was a
+	# `::warning::` in the hetzner job log — this rollup said nothing, and these cases are red there.
+	#
+	# The receipt is written by the REAL producer (sweep-probe.sh's probe_note_finding and
+	# probe_write_verdict, the same library the workflow runs), then `measured_at` is PINNED: the
+	# producer stamps "now", and an age judged against the wall clock would turn the young fixture
+	# into a leak as the calendar moves — a dated fixture rotting into a red.
+	write_imager_verdict() { # <dir> <tag> <measured_at> <id:name:created>...
+		local dir="$1" tag="$2" at="$3" work spec
+		shift 3
+		work="$(mktemp -d)"
+		mkdir -p "$dir"
+		(
+			export PROBE_LEDGER="$work/ledger" PROBE_UNATTRIB_LEDGER="$work/unattrib" \
+				PROBE_ATTEST_FILE="$work/attest" PROBE_VERDICT_FILE="${dir}/teardown-verify.json"
+			# shellcheck source=scripts/e2e/lib/sweep-probe.sh
+			. "$verdict_lib"
+			probe_reset
+			for spec in "$@"; do
+				probe_note_finding imager-upload-server "${spec%%:*}" "$(printf '%s' "$spec" | cut -d: -f2)" "${spec#*:*:}"
+			done
+			probe_note_unattributable imager-upload-helpers "unlabelled"
+			probe_gate hetzner "run ${tag}" >/dev/null 2>&1 || true
+			probe_write_verdict hetzner "$tag" "run ${tag}" 0 >/dev/null
+		)
+		jq --arg at "$at" '.measured_at = $at' "${dir}/teardown-verify.json" >"$work/r" && mv "$work/r" "${dir}/teardown-verify.json"
+		rm -rf "$work"
+	}
+	c="$tmp/i1-imager-leak"
+	mkdir -p "$c/proofs"
+	cp "$jobs_real" "$c/jobs.json"
+	write_summary "$c/proofs/e2e-proof-hetzner-r/s" hetzner "nightly-34453355398-1" success applied
+	write_imager_verdict "$c/proofs/e2e-teardown-verify-hetzner-r" "nightly-34453355398-1" "2026-10-07T04:31:00Z" \
+		"168216231:hcloud-upload-image-d4034d08:2026-10-01T03:41:12+00:00" \
+		"170000001:hcloud-upload-image-aaaa0001:2026-10-07T04:20:00+00:00"
+	CASE_RUN_ID=34453355398 CASE_MATRIX=success _derive "$c" >/dev/null
+	_a "168216231" "$(_state "$c/out" IMAGER_LEAKS)" \
+		"(I1) a six-day-old upload server reaches state.env as a LEAK — and the 11-minute-old one does not"
+	_a "1" "$(grep -c 'LEAK — hcloud-upload-image server(s) still billing: 168216231' "$c/out/summary.md")" \
+		"(I1) the step summary carries a LEAK banner naming the server id"
+	_a "1" "$(grep -c '^> | `168216231` | `hcloud-upload-image-d4034d08` | 2026-10-01T03:41:12+00:00 | 144h | yes |$' "$c/out/summary.md")" \
+		"(I1) …with its first-seen (creation) time, its age at this nightly, and that it bills while stopped"
+	_a "1" "$(grep -c 'younger than 12h: 170000001' "$c/out/summary.md")" \
+		"(I1) the young one is NAMED, but as a possibly in-flight build, not a leak"
+	_a "e2e nightly: hetzner LEAK — hcloud-upload-image server(s) still billing" \
+		"$(cat "$c/out/issue-imager-leak.title" 2>/dev/null)" "(I1) an issue title is rendered for the workflow to file"
+	_a "1" "$(grep -c '^| `168216231` | `hcloud-upload-image-d4034d08` | 2026-10-01T03:41:12+00:00 | 144h | yes |$' "$c/out/issue-imager-leak.md" 2>/dev/null || true)" \
+		"(I1) …and its body carries the same row"
+	_a "0" "$(grep -c '170000001' "$c/out/issue-imager-leak.md" 2>/dev/null || true)" \
+		"(I1) …and does NOT call the young one a leak"
+	_a "" "$(_state "$c/out" RESIDUAL)" "(I1) an imager leak is NOT a RESIDUAL — that is a claim about this run's LABELLED resources"
+	_a "not-red" "$(case " $(_state "$c/out" REDS) " in *" hetzner "*) echo red ;; *) echo not-red ;; esac)" \
+		"(I1) …and it does not red the hetzner leg: the account and the product are different questions"
+
+	# (I2) The receipt of ANOTHER attempt carries the same server — it must not answer for this one.
+	c="$tmp/i2-other-attempt"
+	mkdir -p "$c/proofs"
+	cp "$jobs_real" "$c/jobs.json"
+	write_summary "$c/proofs/e2e-proof-hetzner-r/s" hetzner "nightly-34453355398-1" success applied
+	write_imager_verdict "$c/proofs/e2e-teardown-verify-hetzner-r" "nightly-34453355398-2" "2026-10-07T04:31:00Z" \
+		"168216231:hcloud-upload-image-d4034d08:2026-10-01T03:41:12+00:00"
+	CASE_RUN_ID=34453355398 CASE_MATRIX=success _derive "$c" >/dev/null
+	_a "" "$(_state "$c/out" IMAGER_LEAKS)" "(I2) another attempt's receipt does not report a leak for this one"
+	_a "absent" "$([ -e "$c/out/issue-imager-leak.md" ] && echo present || echo absent)" "(I2) …and renders no issue body"
+
+	# (I3) A finding with no usable creation time resolves toward being SEEN.
+	c="$tmp/i3-no-created"
+	mkdir -p "$c/proofs"
+	cp "$jobs_real" "$c/jobs.json"
+	write_summary "$c/proofs/e2e-proof-hetzner-r/s" hetzner "nightly-34453355398-1" success applied
+	write_imager_verdict "$c/proofs/e2e-teardown-verify-hetzner-r" "nightly-34453355398-1" "2026-10-07T04:31:00Z" \
+		"168216231:hcloud-upload-image-d4034d08:"
+	CASE_RUN_ID=34453355398 CASE_MATRIX=success _derive "$c" >/dev/null
+	_a "168216231" "$(_state "$c/out" IMAGER_LEAKS)" "(I3) an upload server whose age cannot be computed is a LEAK, not silence"
+	_a "1" "$(grep -c '| `168216231` | `hcloud-upload-image-d4034d08` | unknown | unknown | yes |' "$c/out/summary.md")" \
+		"(I3) …and says its age is unknown rather than inventing one"
+
+	# (I4) The workflow READS the key outside a comment, before the all-green exit — the V3d argument:
+	#      a correct producer with no consumer is the state #5645 was filed about.
+	if [ -f "$wf" ]; then
+		use_line="$(grep -nE '\$\{IMAGER_LEAKS|\$IMAGER_LEAKS([^_A-Za-z0-9]|$)' "$wf" | grep -vE ':[[:space:]]*#' | head -n1 | cut -d: -f1)"
+		_a "reachable" "$([ -n "$use_line" ] && [ -n "$red_exit" ] && [ "$use_line" -lt "$red_exit" ] && echo reachable || echo UNREACHABLE-OR-UNREAD)" \
+			"(I4) e2e-nightly.yml reads IMAGER_LEAKS before the red filer's all-green exit"
 	fi
 
 	# (V4) THE DISTINCTION THIS WHOLE CHANGE TURNS ON. `we asked and it was empty` and `we could not
