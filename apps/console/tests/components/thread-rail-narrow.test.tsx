@@ -19,7 +19,7 @@
 
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ElenchModal } from "@/components/agent/elench/elench-modal";
 import type { AgentThread } from "@/lib/db/schema";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
@@ -114,6 +114,10 @@ async function openNarrowRail(): Promise<HTMLElement> {
 }
 
 describe("ElenchModal below lg — the thread rail is reachable (#5650)", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
 	beforeEach(() => {
 		act(() => {
 			useElenchStore.setState({ railOpen: true, mainView: "chat" });
@@ -137,18 +141,37 @@ describe("ElenchModal below lg — the thread rail is reachable (#5650)", () => 
 			const confirm = await screen.findByRole("alertdialog");
 			await userEvent.click(within(confirm).getByRole("button", { name: "Delete chat" }));
 			expect(h.onDeleteThread).toHaveBeenCalledWith("t-1");
+			// Deleting is not navigating: the sheet stays, so several chats can be cleared.
+			await waitFor(() => {
+				expect(screen.queryByRole("alertdialog")).toBeNull();
+			});
+			expect(screen.getByRole("dialog", { name: "Chats" })).toBeInTheDocument();
+		});
+
+		// With the docked rail collapsed the lg-only "Open sidebar" renders too; it must stay
+		// `hidden` below lg on BOTH surfaces, or a narrow screen shows two toggles (one inert).
+		it(`opens the sheet on ${where} when the docked rail is collapsed`, async () => {
+			act(() => {
+				useElenchStore.setState({ railOpen: false });
+			});
+			renderModal({ isEmpty });
+			const sheet = await openNarrowRail();
+			expect(
+				within(sheet).getByRole("button", { name: "Delete chat Audit chat" }),
+			).toBeInTheDocument();
 		});
 	}
 
-	it("opens the sheet when the docked rail is collapsed, beside the lg-only toggle", async () => {
-		act(() => {
-			useElenchStore.setState({ railOpen: false });
-		});
+	it("announces the narrow toggle as a dialog trigger with its expanded state", async () => {
 		renderModal({ isEmpty: false });
-		const sheet = await openNarrowRail();
-		expect(
-			within(sheet).getByRole("button", { name: "Delete chat Audit chat" }),
-		).toBeInTheDocument();
+		const toggle = narrowToggle();
+		expect(toggle).toHaveAttribute("aria-haspopup", "dialog");
+		expect(toggle).toHaveAttribute("aria-expanded", "false");
+		await openNarrowRail();
+		expect(screen.getByTestId("elench-narrow-rail-toggle")).toHaveAttribute(
+			"aria-expanded",
+			"true",
+		);
 	});
 
 	it("closes the sheet after a chat is selected", async () => {
@@ -157,6 +180,35 @@ describe("ElenchModal below lg — the thread rail is reachable (#5650)", () => 
 		await userEvent.click(within(sheet).getByTestId("thread-rail-row"));
 		expect(h.onSelectThread).toHaveBeenCalledWith("t-1");
 		await sheetClosed();
+	});
+
+	it("closes the sheet when the viewport widens to lg", async () => {
+		// A controllable `matchMedia`: jsdom has none. The sheet is `lg:hidden`, and a hidden open
+		// dialog keeps focus trapped and swallows the next click — so reaching lg must CLOSE it.
+		const listeners = new Set<(e: { matches: boolean }) => void>();
+		const mql = {
+			matches: false,
+			media: "(min-width: 64rem)",
+			onchange: null,
+			addEventListener: (_t: string, l: (e: { matches: boolean }) => void) => listeners.add(l),
+			removeEventListener: (_t: string, l: (e: { matches: boolean }) => void) =>
+				listeners.delete(l),
+			addListener: () => {},
+			removeListener: () => {},
+			dispatchEvent: () => true,
+		};
+		const matchMedia = vi.fn(() => mql);
+		vi.stubGlobal("matchMedia", matchMedia);
+
+		renderModal({ isEmpty: false });
+		await openNarrowRail();
+		expect(matchMedia).toHaveBeenCalledWith("(min-width: 64rem)");
+		expect(listeners.size).toBe(1);
+		act(() => {
+			for (const l of listeners) l({ matches: true });
+		});
+		await sheetClosed();
+		expect(listeners.size).toBe(0);
 	});
 
 	it("reaches Artifacts and Knowledge from the sheet, and can reopen it from either", async () => {

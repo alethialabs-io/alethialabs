@@ -31,6 +31,29 @@ function clamp(n: number, lo: number, hi: number): number {
 	return Math.min(hi, Math.max(lo, n));
 }
 
+/** Tailwind v4's `lg` (64rem); the console overrides no breakpoint. */
+const LG_QUERY = "(min-width: 64rem)";
+
+/**
+ * Calls `onReachLg` when the viewport widens to `lg` while `active` is true. The narrow sheet is
+ * `lg:hidden`, but hiding a popup does not close it: base-ui keeps the dialog open (focus trapped
+ * in a `display:none` popup, and an invisible internal backdrop that swallows the next click). So
+ * crossing to `lg` CLOSES the sheet rather than merely hiding it. A missing `matchMedia` (an old
+ * engine, jsdom) leaves the sheet as it is.
+ */
+function useCloseAtLg(active: boolean, onReachLg: () => void): void {
+	useEffect(() => {
+		if (!active || typeof window.matchMedia !== "function") return;
+		const mq = window.matchMedia(LG_QUERY);
+		/** Closes on the transition INTO `lg`; narrowing again is not an event to act on. */
+		const onChange = (e: { matches: boolean }) => {
+			if (e.matches) onReachLg();
+		};
+		mq.addEventListener("change", onChange);
+		return () => mq.removeEventListener("change", onChange);
+	}, [active, onReachLg]);
+}
+
 /**
  * The thread rail's toggle BELOW `lg` (#5650). The docked rail column is `hidden … lg:flex`, so
  * under 1024px the store's `railOpen` changes nothing on screen; this button opens the rail as a
@@ -39,9 +62,12 @@ function clamp(n: number, lo: number, hi: number): number {
  * and the `railOpen`-driven toggle keeps the job it always had.
  */
 function NarrowRailToggle({
+	open,
 	onOpen,
 	className,
 }: {
+	/** Whether the sheet this toggle opens is open — announced as `aria-expanded`. */
+	open: boolean;
 	onOpen: () => void;
 	className: string;
 }) {
@@ -49,6 +75,8 @@ function NarrowRailToggle({
 		<button
 			type="button"
 			aria-label="Open sidebar"
+			aria-haspopup="dialog"
+			aria-expanded={open}
 			data-testid="elench-narrow-rail-toggle"
 			onClick={onOpen}
 			className={className}
@@ -110,6 +138,8 @@ export function ElenchModal({
 	// docked column's, persists across minimize, and must not open an overlay when the window
 	// later widens; a sheet is a transient thing the user opened just now.
 	const [narrowRailOpen, setNarrowRailOpen] = useState(false);
+	const closeNarrowRail = useCallback(() => setNarrowRailOpen(false), []);
+	useCloseAtLg(narrowRailOpen, closeNarrowRail);
 
 	// The generative-UI split pane is LAYERED: the per-chat widget grid is the base
 	// view (gridOpen) and the project/job inspector (artifact) overlays it on demand.
@@ -206,7 +236,11 @@ export function ElenchModal({
 				{/* The same rail below `lg`, as a left sheet over the modal (#5650). Navigating —
 				    a chat, New chat, Artifacts, Knowledge — closes it, because the destination is
 				    what the user wanted to see and the sheet covers most of a phone. Deleting does
-				    NOT: the row disappears in place, and the user may be clearing several. */}
+				    NOT: the row disappears in place, and the user may be clearing several.
+				    NO SCRIM: the sheet mounts inside the modal, so base-ui treats it as a nested
+				    dialog and its backdrop renders only with `forceRender`, which `SheetContent`
+				    does not pass. The modal behind it is therefore not dimmed — a recorded choice
+				    of this unit, since a scrim needs an @repo/ui change. */}
 				<Sheet open={narrowRailOpen} onOpenChange={setNarrowRailOpen}>
 					<SheetContent
 						side="left"
@@ -270,6 +304,7 @@ export function ElenchModal({
 							    is — without it the sheet that opened them could not be reopened. */}
 							<div className="flex flex-none items-center border-b border-border px-3 py-1.5 lg:hidden">
 								<NarrowRailToggle
+									open={narrowRailOpen}
 									onOpen={() => setNarrowRailOpen(true)}
 									className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 								/>
@@ -291,7 +326,8 @@ export function ElenchModal({
 								</button>
 							)}
 							<NarrowRailToggle
-								onOpen={() => setNarrowRailOpen(true)}
+								open={narrowRailOpen}
+									onOpen={() => setNarrowRailOpen(true)}
 								className="absolute left-4 top-4 z-[var(--z-raised)] flex size-8 items-center justify-center rounded-none border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground lg:hidden"
 							/>
 							{/* The empty state hides the top-bar grid toggle — so if the split
@@ -334,6 +370,7 @@ export function ElenchModal({
 									</button>
 								)}
 								<NarrowRailToggle
+									open={narrowRailOpen}
 									onOpen={() => setNarrowRailOpen(true)}
 									className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
 								/>
