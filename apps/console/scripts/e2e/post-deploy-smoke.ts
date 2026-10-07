@@ -241,8 +241,12 @@ const CHECKS: Check[] = [
 		id: "build-id",
 		name: "the served build id equals the promoted SHA",
 		// THE CHECK THAT CATCHES A STALE DEPLOY. `NEXT_PUBLIC_APP_VERSION` is set from the deploy SHA
-		// in apps/console/Dockerfile and reaches the browser through next-runtime-env's
-		// `<PublicEnvScript />` (apps/console/app/layout.tsx), which writes `window.__ENV`. Reading it
+		// (`--build-arg VERSION`) by the `runner` stage of apps/console/Dockerfile, so it is in the
+		// RUNNING server's process.env. next-runtime-env's `<PublicEnvScript />`
+		// (apps/console/app/layout.tsx) serialises that runtime env into `window.__ENV`. Setting it
+		// only in the `build` stage is not enough — nothing there survives into the runner, and this
+		// check read "unset" on every deploy until #5621; tests/unit/dockerfile-runtime-public-env.test.ts
+		// now fails if the runner stage stops setting it. Reading it
 		// from the BROWSER is the point: a value read server-side would report the file the host
 		// currently holds, which is exactly what is already correct when this fails.
 		async run(ctx) {
