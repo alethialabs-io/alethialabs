@@ -84,7 +84,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { expect, test, type Browser, type Locator, type Page, type Request } from "@playwright/test";
+import { expect, test, type Browser, type JSHandle, type Locator, type Page, type Request } from "@playwright/test";
 
 import { db, closeDb } from "../helpers/db";
 import { restoreContext, materialize, resolveOrgSlug, resolveOwner, saveContext, seedRouteFixtures, type AuditContext } from "./context";
@@ -610,6 +610,11 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 			// resolved `{open: "Prometheus + Grafana"}` to the canvas card BEHIND the palette: an
 			// element the modal overlay covers, so the click waited on actionability until the test
 			// timeout ate it (addons.remove, 118s, no reason recorded).
+			//
+			// The scope is only as good as the PREVIOUS step's wait: `openOverlay` counts without
+			// waiting, so an overlay still opening reads as "none" and the lookup falls back to the
+			// page — the same collision, now clickable because nothing covers the card yet (#5631).
+			// That is why an `open:` step ends by waiting for the overlay it opened, below.
 			const root = await openOverlay(page);
 			const named = new RegExp(escapeRe(name), "i");
 			const opener = root
@@ -619,13 +624,35 @@ async function walkReach(page: Page, entry: ControlEntry): Promise<string | null
 				.or(root.getByLabel(named))
 				.first();
 			await opener.waitFor({ state: "visible", timeout: 8_000 });
+			// What was already up BEFORE the click, so the wait below can tell the overlay this click
+			// opens from the one it was clicked inside.
+			const seen = kind === "open" ? await visibleOverlays(page) : null;
 			// An EXPLICIT timeout, same as the wait above. Without one the click inherits the test's
 			// 120s budget, so a step that resolves to something un-clickable (covered, clipped by an
 			// `overflow: clip` ancestor) hangs, times the test out and records NO verdict — where
 			// the catch below would have withheld it WITH the step that could not be taken.
-			await opener.click({ timeout: 8_000 });
-			if (kind === "menu") await openMenu(page, opener);
-			await page.waitForTimeout(300);
+			try {
+				await opener.click({ timeout: 8_000 });
+				// The step's settle is a POSTCONDITION, not a sleep (#5631). A `menu:` step waits for its
+				// menu (`openMenu` fails the step when none opens); an `open:` step waits, bounded, for
+				// the overlay it opened — see `awaitNewOverlay` for why a fixed 300 ms let the NEXT
+				// step's lookup fall back to the whole page and click the canvas card behind the palette.
+				//
+				// The 300 ms is KEPT after that postcondition, as a floor. What was measured: on #5636's
+				// first gate run (job 112906793672) the floor was dropped, the overlay wait returned as
+				// soon as the dialog mounted, and `account.delete` — `{open: "Account settings"}` — failed
+				// with "Cancel was pressed and rows still moved: authz_activity_log 15→16". One row landed
+				// between the before-snapshot and the assertion; its SOURCE WAS NOT IDENTIFIED (the dialog
+				// itself calls only Better Auth's `listAccounts`, so any permission check in that window,
+				// page load included, could have written it). Keeping the floor restores dev's timing —
+				// no step settles for less time than it did — and does NOT close that race; it is
+				// tracked separately, and not excused in AMBIENT_GROWTH.
+				if (kind === "menu") await openMenu(page, opener);
+				else if (seen) await awaitNewOverlay(page, seen);
+				await page.waitForTimeout(300);
+			} finally {
+				await seen?.dispose().catch(() => {});
+			}
 		} catch (err) {
 			await attachReachEvidence(page, entry.id, `${kind}: ${name}`);
 			// A step that failed for a reason we MEASURED says it. Everything else — a locator that
@@ -727,15 +754,16 @@ async function openMenu(page: Page, trigger: Locator): Promise<void> {
  * they get different words; the observation comes first and the amendment is appended, never
  * substituted, because what the run SAW is still that the item was not on the page.
  *
- * Evidence is attached on this path for the same reason `attachReachEvidence` exists: a withheld
- * control fails no test, so Playwright keeps nothing, and #4852 spent two PRs on a cause nobody
- * could look at.
+ * Evidence for this path is attached by the caller, `resolveAfterReach`, through
+ * `attachTriggerEvidence` — for every reached control withheld "not rendered", of which a lost menu
+ * is one case (#5631; it used to be attached here, and only here). The reason is unchanged: a
+ * withheld control fails no test, so Playwright keeps nothing, and #4852 spent two PRs on a cause
+ * nobody could look at.
  */
 async function amendForClosedMenu(page: Page, entry: ControlEntry, reason: string): Promise<string> {
 	const step = [...(entry.reach ?? [])].reverse().find((s) => typeof s.menu === "string");
 	if (!step?.menu || !reason.includes("is not rendered")) return reason;
 	if (await openMenuLocator(page).isVisible().catch(() => false)) return reason;
-	await attachReachEvidence(page, entry.id, `menu: ${step.menu}`);
 	return `${reason} — and no menu was open when the item was read, so the menu opened by {menu: "${step.menu}"} was lost between the reach and the count; the item's absence says nothing about the persona`;
 }
 
@@ -782,11 +810,41 @@ async function resolveAfterReach(page: Page, entry: ControlEntry, where: string,
 	}
 	if ("locator" in resolved) return resolved;
 	const amended = await amendForClosedMenu(page, entry, resolved.withhold);
-	if (rewalks === 0) return { withhold: amended };
-	const retried = rewalkFailure
-		? `the reach was re-walked ${rewalks} time(s) and the last re-walk could not be taken: ${rewalkFailure}`
-		: `the reach was re-walked ${rewalks} time(s) and the item was still not on the page`;
-	return { withhold: `${amended} (${retried})` };
+	const retried =
+		rewalks === 0
+			? null
+			: rewalkFailure
+				? `the reach was re-walked ${rewalks} time(s) and the last re-walk could not be taken: ${rewalkFailure}`
+				: `the reach was re-walked ${rewalks} time(s) and the item was still not on the page`;
+	const withhold = retried ? `${amended} (${retried})` : amended;
+	await attachTriggerEvidence(page, entry, withhold);
+	return { withhold };
+}
+
+/**
+ * Attach what the page looked like when a control was withheld as NOT RENDERED after its reach
+ * chain was walked successfully (#5631).
+ *
+ * {@link attachReachEvidence} covers a reach STEP that failed. This is the other way a reached
+ * control is lost: every step "succeeds" and the trigger count is 0. `addons.remove` withheld
+ * exactly so on run 37640391109, and the artifact held nothing about what had rendered — so whether
+ * the reach had clicked the palette's option or the canvas card behind it could only be inferred.
+ *
+ * Only for an entry WITH a reach chain: a control with none withholds "not rendered" against the
+ * route itself, which is a fixture question its own reason already names. Distinct file names from
+ * `reach-*`, because a failed re-walk attaches those too. Best effort, like its sibling — a capture
+ * that fails never changes the verdict.
+ */
+async function attachTriggerEvidence(page: Page, entry: ControlEntry, reason: string): Promise<void> {
+	if ((entry.reach ?? []).length === 0 || !reason.includes("is not rendered")) return;
+	try {
+		const info = test.info();
+		await info.attach(`trigger-${entry.id}.png`, { body: await page.screenshot({ timeout: 5_000 }), contentType: "image/png" });
+		const tree = await page.locator("body").ariaSnapshot({ timeout: 5_000 });
+		await info.attach(`trigger-${entry.id}.aria.yml`, { body: `# reach taken; withheld: ${reason}\n${tree}`, contentType: "text/plain" });
+	} catch {
+		// No evidence is still a withheld verdict with its reason; the capture is a diagnostic.
+	}
 }
 
 /**
@@ -821,8 +879,75 @@ async function attachReachEvidence(page: Page, id: string, step: string): Promis
  * overlay opened later is appended later.
  */
 async function openOverlay(page: Page): Promise<Page | Locator> {
-	const overlay = page.locator('[role="dialog"]:visible, [role="alertdialog"]:visible, [role="menu"]:visible').last();
+	const overlay = page.locator(OVERLAY_ROLES.map((role) => `[role="${role}"]:visible`).join(", ")).last();
 	return (await overlay.count()) > 0 ? overlay : page;
+}
+
+/** The roles that make a surface an OVERLAY for {@link openOverlay} and {@link awaitNewOverlay} — one list, so the two cannot disagree. */
+const OVERLAY_ROLES: readonly string[] = ["dialog", "alertdialog", "menu"];
+
+/**
+ * How long an `open:` step waits for the overlay its click may have opened.
+ *
+ * An `open:` step does not declare what it opens, and the console gives no signal to read: the
+ * canvas toolbar's **Add** is a plain `<Button onClick={() => setPaletteOpen(true)}>` with no
+ * `aria-haspopup`. Some opens raise an overlay (the node palette, a sheet), others expand a section
+ * in place (`{open: "Danger zone"}`) and never will. So the wait is BOUNDED and its expiry is not a
+ * failure — a step that opened no overlay is still taken, and its only cost is this bound, paid
+ * once per such step. 3 s is ten times the 300 ms that was being missed.
+ */
+const OVERLAY_OPEN_WAIT_MS = 3_000;
+
+/** The overlays visible right now, as element handles — the "before" an `open:` click is compared against. */
+async function visibleOverlays(page: Page): Promise<JSHandle<Element[]>> {
+	return page.evaluateHandle((roles) => {
+		const shown = (el: Element): boolean => {
+			const box = el.getBoundingClientRect();
+			return box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden";
+		};
+		return [...document.querySelectorAll(roles.map((r) => `[role="${r}"]`).join(", "))].filter(shown);
+	}, [...OVERLAY_ROLES]);
+}
+
+/**
+ * Wait, bounded, for an overlay that was NOT up before the `open:` click — the one the click opened.
+ *
+ * ── WHY (#5631) ─────────────────────────────────────────────────────────────────────────────────
+ *
+ * `addons.remove` reaches through `[{open: "Add"}, {open: "Prometheus + Grafana"}]`. The second
+ * step's lookup is scoped by {@link openOverlay} to the open overlay — but `openOverlay` counts
+ * WITHOUT waiting, and the walker used to give the first click a fixed 300 ms. If the node palette
+ * was not up by then, the scope fell back to the whole page, where `getByLabel` also matches the
+ * canvas add-on card carrying the same label (the collision `walkReach`'s ⚠ describes). That card
+ * is visible and clickable while no modal covers it, so the step was "taken" against the wrong
+ * element; the palette then opened over the page, and `{button: "Remove"}` counted 0 for the full
+ * settle. Run 37640391109 withheld exactly that, in 10.6 s against ~3 s on green runs. That this is
+ * what happened there is INFERRED from the code and the timing — the run attached nothing (which
+ * is the other half of #5631) — but the race is real in the code either way.
+ *
+ * ── WHAT IT ASKS ────────────────────────────────────────────────────────────────────────────────
+ *
+ * Is an overlay visible that is not one of `seen`? IDENTITY, not a count: `{menu: "More"}, {open:
+ * "Environment settings"}` closes one overlay as it opens another, so the count does not move. A
+ * visible overlay that was already up (the step was clicked INSIDE it) is not what this waits for.
+ * Expiry returns quietly — see {@link OVERLAY_OPEN_WAIT_MS} — so the bound costs time, never a
+ * verdict.
+ */
+async function awaitNewOverlay(page: Page, seen: JSHandle<Element[]>, timeout = OVERLAY_OPEN_WAIT_MS): Promise<boolean> {
+	return page
+		.waitForFunction(
+			({ roles, before }) => {
+				const shown = (el: Element): boolean => {
+					const box = el.getBoundingClientRect();
+					return box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden";
+				};
+				return [...document.querySelectorAll(roles.map((r) => `[role="${r}"]`).join(", "))].some((el) => shown(el) && !before.includes(el));
+			},
+			{ roles: [...OVERLAY_ROLES], before: seen },
+			{ timeout },
+		)
+		.then(() => true)
+		.catch(() => false);
 }
 
 /**
@@ -1478,7 +1603,10 @@ test("the run measured something — a withheld verdict is not a pass", async ()
 // one match, two identically-named controls, a visible control beside an A11Y-HIDDEN duplicate (NOT
 // ambiguity), a visible control beside a ZERO-BOX duplicate (ambiguity), and a name that is a
 // mid-word PREFIX of another control's (not a candidate). A seventh test drives `walkReach`'s
-// overlay scoping, the step before it, and two more drive `resolveAfterReach`'s bounded re-walk of a
+// overlay scoping, the step before it; three more drive the `open:` step's wait for the overlay it
+// opened (a SLOW palette still scopes the next step; an in-place open is taken within the bound; a
+// replacing overlay is seen by identity — #5631), and two the evidence a reached-but-not-rendered
+// withhold attaches (and does not, with no reach). Two more drive `resolveAfterReach`'s bounded re-walk of a
 // LOST menu in both directions (re-opened → measured; lost for good → still withheld, #5023). Each drives the REAL
 // function, not a restatement of it — a self-test that re-implements the rule verifies a copy.
 //
@@ -1612,6 +1740,97 @@ test("self-test — `walkReach` resolves a step INSIDE the open overlay, not the
 	const entry: ControlEntry = { ...selfTestEntry("Remove"), reach: [{ open: "Prometheus + Grafana" }] };
 	expect(await walkReach(page, entry), "the step names a real option in the open dialog, so it must be taken").toBeNull();
 	await expect(page.locator("body")).toHaveAttribute("data-hit", "option");
+});
+
+test("self-test — an `open:` step waits for the overlay it opened, so a SLOW palette still scopes the next step", async ({ page }) => {
+	// #5631, `addons.remove`'s whole chain: `{open: "Add"}` opens the palette, `{open: "Prometheus +
+	// Grafana"}` names an option inside it, and the canvas card behind carries the same label. Here
+	// the palette mounts 1 s after the click — slower than the fixed 300 ms the walker used to sleep,
+	// well inside `OVERLAY_OPEN_WAIT_MS`. With the sleep, the second lookup ran against the whole
+	// page and clicked the card (data-hit="card"); the step still read as taken.
+	//
+	// This is a TIMED test on purpose, because time is the subject. Both margins are wide — 700 ms
+	// past the old sleep, 2 s inside the new bound — and `waitForFunction` polls on animation frames.
+	await page.setContent(`
+		<main>
+			<div role="group" aria-label="Prometheus + Grafana" onclick="document.body.dataset.hit='card'">card</div>
+			<button onclick="setTimeout(() => {
+				const d = document.createElement('div');
+				d.setAttribute('role', 'dialog');
+				d.setAttribute('aria-label', 'Add a service');
+				d.innerHTML = '<div role=&quot;listbox&quot;><div role=&quot;option&quot; onclick=&quot;document.body.dataset.hit=\\'option\\'&quot;>Prometheus + Grafana</div></div>';
+				document.body.appendChild(d);
+			}, 1000)">Add</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Remove"), reach: [{ open: "Add" }, { open: "Prometheus + Grafana" }] };
+	expect(await walkReach(page, entry), "both steps name real elements, so both must be taken").toBeNull();
+	await expect(page.locator("body"), "the second step must click the palette's option, not the card behind it").toHaveAttribute("data-hit", "option");
+});
+
+test("self-test — an `open:` step that opens NO overlay is still taken, within the bound", async ({ page }) => {
+	// The other direction: `{open: "Danger zone"}` expands a section in place and never raises an
+	// overlay. The wait for one must expire quietly — a step is not failed for opening what it opens.
+	await page.setContent(`
+		<main>
+			<button onclick="document.body.dataset.opened='yes'">Danger zone</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Delete"), reach: [{ open: "Danger zone" }] };
+	const started = Date.now();
+	expect(await walkReach(page, entry), "an in-place expand is a step taken").toBeNull();
+	expect(Date.now() - started, "and the wait for an overlay that never comes is bounded").toBeLessThan(OVERLAY_OPEN_WAIT_MS + 5_000);
+	await expect(page.locator("body")).toHaveAttribute("data-opened", "yes");
+});
+
+test("self-test — an overlay that REPLACES another counts as opened, by identity not by count", async ({ page }) => {
+	// `{menu: "More"}, {open: "Environment settings"}`'s shape: the click closes the overlay it was
+	// made in and opens another, so the number of overlays never moves. The new one is what the
+	// wait is for.
+	await page.setContent(`
+		<main>
+			<div role="menu" id="old"><div role="menuitem" tabindex="-1">Environment settings</div></div>
+		</main>`);
+	const seen = await visibleOverlays(page);
+	await page.evaluate(() => {
+		setTimeout(() => {
+			document.getElementById("old")?.remove();
+			const d = document.createElement("div");
+			d.setAttribute("role", "dialog");
+			d.textContent = "settings";
+			document.body.appendChild(d);
+		}, 500);
+	});
+	expect(await awaitNewOverlay(page, seen), "a different overlay appeared, so the wait must see it").toBe(true);
+	await seen.dispose();
+	// And one that was ALREADY up is not mistaken for a new one.
+	const again = await visibleOverlays(page);
+	expect(await awaitNewOverlay(page, again, 500), "nothing new opened, so the wait expires").toBe(false);
+	await again.dispose();
+});
+
+test("self-test — a reached control withheld as NOT RENDERED attaches its evidence", async ({ page }, testInfo) => {
+	// #5631's second half. Every reach step succeeds, the trigger count is 0, and the verdict is
+	// withheld — a withhold fails no test, so before this the run kept nothing about what rendered.
+	await page.setContent(`
+		<main>
+			<button onclick="document.body.dataset.opened='yes'">Open card</button>
+		</main>`);
+	const entry: ControlEntry = { ...selfTestEntry("Remove"), id: "self-test.evidence", reach: [{ open: "Open card" }] };
+	expect(await walkReach(page, entry), "premise: the reach is taken").toBeNull();
+	const resolved = await resolveAfterReach(page, entry, "about:self-test", 500);
+	expect("withhold" in resolved && resolved.withhold, "the trigger is absent, so the verdict is withheld").toContain("is not rendered");
+	const names = testInfo.attachments.map((a) => a.name);
+	expect(names, "a screenshot of what rendered").toContain("trigger-self-test.evidence.png");
+	expect(names, "and the accessibility tree").toContain("trigger-self-test.evidence.aria.yml");
+});
+
+test("self-test — a control with NO reach chain attaches nothing on `not rendered`", async ({ page }, testInfo) => {
+	// The bound on the above: with no reach there was nothing to walk, and "not rendered" against the
+	// route is a fixture question its reason already names — 20-odd screenshots a run would bury the
+	// ones that mean something.
+	await page.setContent(`<main><button>Keep</button></main>`);
+	const resolved = await resolveAfterReach(page, selfTestEntry("Remove"), "about:self-test", 500);
+	expect("withhold" in resolved).toBe(true);
+	expect(testInfo.attachments.map((a) => a.name).filter((n) => n.startsWith("trigger-"))).toEqual([]);
 });
 
 test("self-test — a `menu:` step re-clicks a trigger whose first click was LOST, so the item is measured", async ({ page }) => {
