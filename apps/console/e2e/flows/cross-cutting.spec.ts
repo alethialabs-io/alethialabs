@@ -102,13 +102,13 @@ function describeViolations(violations: A11yViolation[]): string[] {
  * AN ENTRY IS DEBT, NEVER AN EXEMPTION: adding one without an issue number is refused by the
  * ratchet (`/^BUG: .+#\d+/`), and leaving one in place after its issue closes turns the ledger's
  * `{fixme}` into a skip that outlives its subject — which is the failure an exception list makes
- * silently. #4612's own ledger note says to regenerate this file's slice with the fix.
+ * silently. That happened once: `org:evidence` cited #4612 for a fortnight after #4762 fixed the
+ * product and closed it, so the evidence scan did not run at all. #5416 deleted the entry and
+ * regenerated this file's ledger slice from a real `qa` run.
+ *
+ * EMPTY IS THE EXPECTED STATE. The map and `debtFor` stay because both loops read them.
  */
-const A11Y_DEBT: Record<string, string> = {
-	"org:evidence":
-		"BUG: the evidence table paints non-disabled informational text in the disabled ink tier " +
-		"(--text-disabled on --surface is 1.95:1 against a 4.5:1 bar), 15 nodes #4612",
-};
+const A11Y_DEBT: Record<string, string> = {};
 
 /** The recorded debt for one surface, or undefined. `scope` is what keeps the two lists apart. */
 function debtFor(scope: "org" | "project", label: string): string | undefined {

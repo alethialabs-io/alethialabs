@@ -24,6 +24,7 @@
     "apps/marketing",
     "ee",
     "packages/format",
+    "packages/org-slug",
     "packages/plan-catalog",
     "packages/ui"
   ]

@@ -62,6 +62,7 @@ const INSTALL: AddonInstallState = {
 	mode: "managed",
 	values: { retentionDays: 30, grafana: true },
 	valuesYaml: null,
+	version: null,
 	status: "PENDING",
 	health: null,
 	sync: null,

@@ -14,8 +14,14 @@ const IDENTITY = "11111111-1111-4111-8111-111111111111";
 const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 const TX = { tx: true };
 
-vi.mock("@/lib/authz/guard", () => ({
-	authorizeCli: vi.fn(async () => ({ actor: { userId: "user-1", orgId: "org-1" } })),
+vi.mock("@/lib/authz/guard", async (importOriginal) => ({
+	// Real: the identity lookup asks it which arms the credential gets (#5481).
+	userIdIsTheCaller: (await importOriginal<typeof import("@/lib/authz/guard")>())
+		.userIdIsTheCaller,
+	authorizeCli: vi.fn(async () => ({
+		actor: { userId: "user-1", orgId: "org-1" },
+		credential: "session",
+	})),
 }));
 vi.mock("@/lib/db", () => ({
 	getServiceDb: () => ({

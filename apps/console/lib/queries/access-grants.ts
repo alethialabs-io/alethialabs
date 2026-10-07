@@ -4,6 +4,7 @@
 import "server-only";
 import { and, desc, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
 import type { AccessGrantRow } from "@/app/server/actions/grants";
+import { roleDisplayName } from "@/lib/authz/registry";
 import { getServiceDb } from "@/lib/db";
 import { likeTerm } from "@/lib/db/like";
 import {
@@ -94,11 +95,12 @@ function roleKey(roleName: string | null, permissionKey: string | null): string 
 	return permissionKey ? `${PERMISSION_PREFIX}${permissionKey}` : NO_ROLE;
 }
 
-/** The human label for a role-facet value. */
+/** The human label for a role-facet value: a direct permission grant shows its key, a role its
+ *  on-screen name from the registry (`owner` → `Owner`; a custom name exactly as typed). */
 function roleLabel(value: string): string {
 	return value.startsWith(PERMISSION_PREFIX)
 		? value.slice(PERMISSION_PREFIX.length)
-		: value;
+		: roleDisplayName(value);
 }
 
 /** The predicate selecting the role-facet values in `values` (undefined = no filter). */

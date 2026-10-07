@@ -49,5 +49,113 @@ module "aks" {
   # BYOC AZ-SELF-ADMIN — grant the apply/runner identity RBAC Cluster Admin (default true).
   enable_creator_admin = var.aks_enable_creator_admin
 
+  # Container Insights → the workspace below, only when aks_log_retention_days created one. The
+  # boolean gates the oms_agent block (an id is unknown on first apply); false renders none, which
+  # is what every cluster carried before the knob existed.
+  log_analytics_enabled      = local.aks_log_retention
+  log_analytics_workspace_id = one(azurerm_log_analytics_workspace.aks[*].id) != null ? one(azurerm_log_analytics_workspace.aks[*].id) : ""
+
   tags = local.azure_default_tags
+}
+
+################################################################################
+# Control-plane and container log retention (aks_log_retention_days)
+################################################################################
+# CUSTOMIZABILITY-PARITY top gap #1 — the AWS template has had eks_cloudwatch_log_group_retention_in_days
+# since it was written. Null (the default) creates NONE of the four resources below, so a cluster
+# that never set the knob plans exactly as before and starts paying for nothing: a Log Analytics
+# workspace bills per GB ingested, and a diagnostic setting is what makes it ingest.
+#
+# Set, it builds the one shape Azure documents for Container Insights under managed-identity auth:
+#   · a workspace whose retention IS the knob (control-plane and container logs share it),
+#   · the cluster's oms_agent pointed at it (module above),
+#   · a data collection rule + association — MSI-mode Container Insights reads its configuration
+#     from the DCR, and without one the add-on installs and collects nothing,
+#   · a diagnostic setting shipping kube-apiserver and kube-audit-admin. kube-audit-admin, not
+#     kube-audit: it drops the get/list audit events that are most of kube-audit's volume and none
+#     of a reviewer's questions, which is the cost line this knob otherwise moves the most.
+#
+# Gated on provision_aks too: a workspace for a cluster that does not exist would be billed for
+# logs nothing sends.
+
+locals {
+  aks_log_retention = var.provision_aks && var.aks_log_retention_days != null
+
+  # 4-63 characters, alphanumerics and hyphens, ending alphanumeric (Log Analytics' rule; a DCR's
+  # 64-character cap is looser). The readable form mirrors aks_name; truncation only bites a name
+  # AKS itself would have refused, and only one workspace exists per resource group.
+  aks_log_workspace_name = replace(substr(replace("log-${local.location_short}-${var.environment}-${var.project_name}", "/[^a-zA-Z0-9-]/", "-"), 0, 63), "/-+$/", "")
+}
+
+resource "azurerm_log_analytics_workspace" "aks" {
+  count = local.aks_log_retention ? 1 : 0
+
+  name                = local.aks_log_workspace_name
+  location            = var.location
+  resource_group_name = azurerm_resource_group.main.name
+  sku                 = "PerGB2018"
+  retention_in_days   = var.aks_log_retention_days
+
+  tags = local.azure_default_tags
+}
+
+resource "azurerm_monitor_data_collection_rule" "aks_container_insights" {
+  count = local.aks_log_retention ? 1 : 0
+
+  name                = "dcr-${local.aks_log_workspace_name}"
+  location            = var.location
+  resource_group_name = azurerm_resource_group.main.name
+
+  destinations {
+    log_analytics {
+      name                  = "ciworkspace"
+      workspace_resource_id = one(azurerm_log_analytics_workspace.aks[*].id)
+    }
+  }
+
+  data_flow {
+    streams      = ["Microsoft-ContainerInsights-Group-Default"]
+    destinations = ["ciworkspace"]
+  }
+
+  data_sources {
+    extension {
+      name           = "ContainerInsightsExtension"
+      extension_name = "ContainerInsights"
+      streams        = ["Microsoft-ContainerInsights-Group-Default"]
+      extension_json = jsonencode({
+        dataCollectionSettings = {
+          interval               = "1m"
+          namespaceFilteringMode = "Off"
+          enableContainerLogV2   = true
+        }
+      })
+    }
+  }
+
+  tags = local.azure_default_tags
+}
+
+resource "azurerm_monitor_data_collection_rule_association" "aks_container_insights" {
+  count = local.aks_log_retention ? 1 : 0
+
+  name                    = "ContainerInsightsExtension"
+  target_resource_id      = try(module.aks[0].cluster_id, null) != null ? module.aks[0].cluster_id : ""
+  data_collection_rule_id = one(azurerm_monitor_data_collection_rule.aks_container_insights[*].id)
+}
+
+resource "azurerm_monitor_diagnostic_setting" "aks_control_plane" {
+  count = local.aks_log_retention ? 1 : 0
+
+  name                       = "aks-control-plane-logs"
+  target_resource_id         = try(module.aks[0].cluster_id, null) != null ? module.aks[0].cluster_id : ""
+  log_analytics_workspace_id = one(azurerm_log_analytics_workspace.aks[*].id)
+
+  enabled_log {
+    category = "kube-apiserver"
+  }
+
+  enabled_log {
+    category = "kube-audit-admin"
+  }
 }

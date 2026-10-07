@@ -29,6 +29,7 @@
 // stand-ins. A hand-written expander here would prove this file's model of tuple expansion, which
 // is precisely the thing that was wrong: `grantObject` was a second, independent model of it.
 
+import type { SQL } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import {
 	type FgaTuple,
@@ -39,7 +40,13 @@ import {
 } from "@/lib/authz/fga-tuples";
 import { EMPTY_SCOPE_DENIES } from "@/lib/authz/grant-scope";
 import { BUILT_IN_ROLES, PERMISSIONS } from "@/lib/authz/registry";
-import { type TupleReader, grantObject, readAllTuples } from "./fga-tuple-sync";
+import {
+	type TupleReader,
+	grantObject,
+	isActiveTeamOrgMember,
+	memberTuplesInOrg,
+	readAllTuples,
+} from "./fga-tuple-sync";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const PROJECT = "22222222-2222-4222-8222-222222222222";
@@ -321,5 +328,119 @@ describe("readAllTuples walks Read's pagination to exhaustion", () => {
 			/exceeded 1000 pages/,
 		);
 		expect(n).toBe(1000);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// #5472: revoking a member in ONE org must not touch their tuples in another. The revoke used to
+// read by subject alone across the whole store, so suspending or removing U in org A asked for U's
+// tuples in every org — org B's included. `memberTuplesInOrg` is what the revoke deletes now.
+
+/**
+ * An in-memory store answering Read the way OpenFGA does for the filters used here: `user` and
+ * `relation` match exactly when given, and an `object` ending in `:` is a TYPE filter.
+ */
+function storeReader(store: FgaTuple[]): TupleReader {
+	return {
+		read(body) {
+			const tuples = store.filter(
+				(t) =>
+					(body?.user === undefined || t.user === body.user) &&
+					(body?.relation === undefined || t.relation === body.relation) &&
+					(body?.object === undefined ||
+						(body.object.endsWith(":")
+							? t.object.startsWith(body.object)
+							: t.object === body.object)),
+			);
+			return Promise.resolve({ tuples: tuples.map((key) => ({ key })), continuation_token: "" });
+		},
+	};
+}
+
+describe("memberTuplesInOrg — a member's tuples in ONE org", () => {
+	const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+	const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+	const u = `user:${USER}`;
+	const inA = [
+		{ user: u, relation: "project_view", object: `org:${A}` },
+		{ user: u, relation: "perm_view", object: "project:pa" },
+		// A project of A whose `parent` tuple is missing from the store; Postgres lists it.
+		{ user: u, relation: "perm_view", object: "project:pa-unparented" },
+		{ user: u, relation: "member", object: "team:ta" },
+	];
+	const inB = [
+		{ user: u, relation: "project_view", object: `org:${B}` },
+		{ user: u, relation: "perm_view", object: "project:pb" },
+		{ user: u, relation: "perm_view", object: "runner:rb" },
+		{ user: u, relation: "member", object: "team:tb" },
+	];
+	const hierarchy = [
+		{ user: `org:${A}`, relation: "parent", object: "project:pa" },
+		{ user: `org:${B}`, relation: "parent", object: "project:pb" },
+		{ user: `org:${B}`, relation: "parent", object: "runner:rb" },
+	];
+	const client = storeReader([...inA, ...inB, ...hierarchy]);
+
+	it("returns the org object's, the org's instances' and the org's teams' tuples, and nothing of org B", async () => {
+		const got = await memberTuplesInOrg(client, A, USER, {
+			instanceTypes: ["project", "runner"],
+			orgResourceIds: async (type) => (type === "project" ? ["pa", "pa-unparented"] : []),
+			teamIds: ["ta"],
+		});
+		expect(got).toEqual(expect.arrayContaining(inA));
+		expect(got).toHaveLength(inA.length);
+	});
+
+	it("finds an instance through its `parent` tuple alone when Postgres lists nothing", async () => {
+		const got = await memberTuplesInOrg(client, B, USER, {
+			instanceTypes: ["project", "runner"],
+			orgResourceIds: async () => [],
+			teamIds: [],
+		});
+		expect(got).toEqual(expect.arrayContaining(inB.filter((t) => !t.object.startsWith("team:"))));
+		expect(got.some((t) => t.object.startsWith("team:"))).toBe(false);
+		expect(got.some((t) => inA.includes(t))).toBe(false);
+	});
+});
+
+// #5484. better-auth adds a SUSPENDED member to a team without reading their status, and
+// `afterAddTeamMember` → `syncTeamMember` wrote the team tuple for them; OpenFGA's instance checks
+// are not bound to an org, so the tuple alone carried the team's grants. `syncTeamMember` now
+// writes only when this answers true. The suite may not instantiate `FgaTupleSync` (see above),
+// so the predicate is tested here; its SQL was run against real Postgres for the PR (suspended →
+// false, reactivated → true).
+describe("isActiveTeamOrgMember", () => {
+	/** Every string literal inside a built `SQL`, joined (the same walk as scope.test.ts). */
+	function queryText(query: SQL): string {
+		const seen = new Set<object>();
+		const parts: string[] = [];
+		const walk = (node: unknown): void => {
+			if (typeof node === "string") parts.push(node);
+			else if (Array.isArray(node)) for (const item of node) walk(item);
+			else if (typeof node === "object" && node !== null && !seen.has(node)) {
+				seen.add(node);
+				const values: unknown[] = Object.values(node);
+				for (const value of values) walk(value);
+			}
+		};
+		walk(query);
+		return parts.join(" ").replace(/\s+/g, " ");
+	}
+
+	const TEAM = "44444444-4444-4444-8444-444444444444";
+
+	it("asks for an ACTIVE member row in the team's org, and answers from whether one came back", async () => {
+		const queries: string[] = [];
+		const answering = (rows: unknown[]) => ({
+			execute: async (query: SQL): Promise<unknown[]> => {
+				queries.push(queryText(query));
+				return rows;
+			},
+		});
+
+		expect(await isActiveTeamOrgMember(answering([]), TEAM, USER)).toBe(false);
+		expect(await isActiveTeamOrgMember(answering([{ active: 1 }]), TEAM, USER)).toBe(true);
+		expect(queries[0]).toContain("join member m on m.organization_id = t.organization_id");
+		expect(queries[0]).toContain("m.status = 'active'");
 	});
 });

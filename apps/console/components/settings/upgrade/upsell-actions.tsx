@@ -20,6 +20,12 @@ export function UpsellActions({ feature }: { feature: GatedFeature }) {
 	const meta = FEATURE_UPSELLS[feature];
 	const planName = planMeta(meta.requiredPlan).name;
 
+	// Contact Sales and Learn more are `<a href>` that open a new tab, so they are LINKS, and
+	// `@repo/ui/button` now says so for any `render` element with an `href` (#5444). base-ui's
+	// Button merges `{role: "button"}` onto every non-native element (`use-button/useButton.js`);
+	// before #5444 this file overrode that with its own `role="link"` (#5413), one call site at a
+	// time. tests/components/settings/upsell-actions-link-role.test.tsx still pins the result here.
+	// "Upgrade to …" opens a sheet in place and stays a button.
 	return (
 		<div className="flex flex-wrap items-center justify-center gap-2">
 			{meta.requiredPlan === "enterprise" ? (

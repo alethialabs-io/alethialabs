@@ -21,6 +21,7 @@ import {
 	AccordionForm,
 	type FormSectionDef,
 } from "@/components/forms/accordion-form";
+import { roleDisplayName } from "@/lib/authz/registry";
 import { useInvalidateRoles } from "@/lib/query/use-roles-query";
 import { type RoleInput, roleInputSchema } from "@/lib/validations/roles";
 import { Button } from "@repo/ui/button";
@@ -156,9 +157,9 @@ export function RoleSheet({
 												shouldValidate: true,
 											})
 										}
-										className="rounded-md border border-border px-2 py-1 text-ui-xs capitalize text-text-secondary transition-colors hover:border-border-strong"
+										className="rounded-md border border-border px-2 py-1 text-ui-xs text-text-secondary transition-colors hover:border-border-strong"
 									>
-										{t.name}
+										{roleDisplayName(t.name, t.builtin)}
 									</button>
 								))}
 							</div>

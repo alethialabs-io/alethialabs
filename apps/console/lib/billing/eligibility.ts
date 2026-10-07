@@ -18,6 +18,10 @@
 // FAIL-CLOSED everywhere. Every unknown — no acceptance row, no billing country, an unrecognised
 // capacity, an empty PAID_MARKETS — refuses the sale. The failure mode of refusing a lawful sale is
 // a support ticket; the failure mode of allowing an unlawful one is a regulator.
+//
+// ONE waiver, and only of the market check: `testModeMarketOpen` lets a Stripe TEST-mode console
+// with the release gate's flag past `market_closed`, so the gate can exercise the real checkout
+// (#5412). It cannot open a live sale — a live key refuses whatever the flag says.
 
 import { and, eq } from "drizzle-orm";
 import {
@@ -25,6 +29,7 @@ import {
 	paidMarketEnabled,
 } from "@repo/legal/commerce";
 import { LEGAL_DOCUMENTS } from "@repo/legal/documents";
+import { stripeSecretKey } from "@/lib/billing/stripe-key";
 import { getServiceDb } from "@/lib/db";
 import { legalAcceptance, organizationBilling } from "@/lib/db/schema";
 
@@ -97,6 +102,50 @@ export async function hasAcceptedCurrentDocuments(
 }
 
 /**
+ * The gate-only flag that opens the market check for a Stripe TEST-mode console (#5412).
+ *
+ * Set by `.github/workflows/release-gate.yml` on the legs that promise `stripe`, and nowhere else —
+ * and that is enforced, not just stated: `scripts/check-billing-test-market-flag.mjs` (CI, the
+ * `guards` job) fails when the name appears in any tracked file outside its short allowlist, which
+ * covers every deploy workflow, `deploy/`, `infra/` and env assembly (#5443).
+ */
+export const TEST_MODE_MARKET_FLAG = "ALETHIA_BILLING_TEST_MARKET";
+
+/**
+ * Whether the `market_closed` check is waived because no real money can move (#5412).
+ *
+ * The release gate has to drive the real checkout — the subscription intent, Stripe.js's card
+ * fields, the hosted Checkout session — or the day a market opens is the first day it runs.
+ * `PAID_MARKETS` is empty and must stay empty, so the gate needs a second way past the market check
+ * that cannot open a live sale. BOTH halves are required, and each one closes a different hole:
+ *
+ *  - the key must be a TEST secret (`sk_test_…`). A test-mode Stripe account cannot charge a card,
+ *    so a sale this lets through is not a sale. A live key with the flag set — a copied env, a
+ *    mistaken deploy — still refuses, which is the case the maintainer's ruling names.
+ *  - the flag must be exactly "1". A test key alone is every sandbox env and every developer's
+ *    `.env`; they keep measuring the product as it ships, refusals included.
+ *
+ * Only the MARKET check is waived. Terms acceptance, the payer's declared capacity and the billing
+ * country are still asked first, so the gate run walks the same declaration a customer does.
+ *
+ * Read from `process.env` at call time, not at import, so a test can flip it between calls. That is
+ * NOT what keeps it out of a client bundle, and an earlier version of this comment said it was:
+ * Next inlines only `NEXT_PUBLIC_*` names (plus any listed under `next.config`'s `env`, which the
+ * console does not use), so a server-only name such as this one is never baked in however it is
+ * read. `scripts/check-billing-test-market-flag.mjs` fails if the name ever appears in
+ * `next.config` or any other env assembly.
+ *
+ * The key is read through `stripeSecretKey`, the same accessor the Stripe client is built from, so
+ * the key this waiver judges is the key that would move the money (#5443).
+ */
+export function testModeMarketOpen(
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+	const key = stripeSecretKey(env);
+	return key.startsWith("sk_test_") && env[TEST_MODE_MARKET_FLAG] === "1";
+}
+
+/**
  * Refuses the sale unless every commercial precondition holds. Throws
  * PaidConversionNotAllowedError; returns nothing on success, so a caller cannot accidentally use a
  * truthy return as "allowed" while ignoring a rejection.
@@ -128,11 +177,18 @@ export async function assertPaidConversionAllowed(
 			"Add a billing address before subscribing.",
 		);
 	}
-	if (!paidMarketEnabled(country, ctx.capacity)) {
+	if (!paidMarketEnabled(country, ctx.capacity) && !testModeMarketOpen()) {
+		// No word about a trial (#5443). This sentence used to add "and the Pro trial is
+		// unaffected", but the gate is what REFUSES a trial on the most-used path: the public "Start
+		// free trial" CTA lands on /start, which opens a Pro Checkout carrying a 30-day trial, and this
+		// is the refusal it renders under "We can't start your trial checkout". The card-less trial
+		// (`startProTrial`) really is ungated, but it is reachable only from onboarding and the
+		// create-org sheet, and only while the account has not used it — so no page that shows this
+		// sentence can promise it.
 		throw new PaidConversionNotAllowedError(
 			"market_closed",
 			"Alethia is not yet able to sell to customers in this country in this capacity. " +
-				"Community remains free and unlimited in time, and the Pro trial is unaffected. " +
+				"Community remains free and unlimited in time. " +
 				"Contact sales@alethialabs.io and we will tell you when it opens.",
 		);
 	}

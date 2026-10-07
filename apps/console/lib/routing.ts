@@ -61,6 +61,36 @@ export const RESERVED_SLUGS = new Set([
 	...MARKETING_RESERVED_SEGMENTS,
 ]);
 
+/** The sentence for an org slug a console route or sibling app owns. The create-a-team sheet, the
+ * Settings slug rename and the server-side organization hooks (ee/) all say exactly this, so a
+ * refusal reads the same whichever of them caught it. */
+export const ORG_SLUG_RESERVED_MESSAGE = "That slug is reserved — try another.";
+
+/** The machine-readable code the organization hooks attach to that refusal, so a client can tell
+ * "reserved" from "taken" without matching on the sentence. */
+export const ORG_SLUG_RESERVED_CODE = "ORGANIZATION_SLUG_RESERVED";
+
+/** A reserved-slug refusal: the code a client branches on and the sentence it shows. */
+export interface OrgSlugRefusal {
+	code: typeof ORG_SLUG_RESERVED_CODE;
+	message: string;
+}
+
+/**
+ * Why `slug` cannot be an organization's slug because a console route, the marketing zone or a
+ * sibling app owns that first path segment — or `null` when nothing reserves it.
+ *
+ * Normalized the way every slug check here normalizes (trim + lowercase), so `Docs` is refused like
+ * `docs`: a URL segment is matched case-insensitively by nobody, but a slug stored as `Docs` would
+ * still be one keystroke from shadowing `/docs`. This answers RESERVED only; whether another org
+ * already holds the slug is a database question and is answered where the database is.
+ */
+export function reservedOrgSlugRefusal(slug: string): OrgSlugRefusal | null {
+	return RESERVED_SLUGS.has(slug.trim().toLowerCase())
+		? { code: ORG_SLUG_RESERVED_CODE, message: ORG_SLUG_RESERVED_MESSAGE }
+		: null;
+}
+
 /** `/{org}` — org overview (its projects). */
 export function orgHref(orgSlug: string): string {
 	return `/${orgSlug}`;

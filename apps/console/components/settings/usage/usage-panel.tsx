@@ -227,10 +227,11 @@ export function UsagePanel() {
 						</Button>
 					) : (
 						// A plain `<Link>`, not `<Button render={<Link/>} nativeButton={false}>`:
-						// base-ui's non-native branch puts `role="button"` on the anchor, and this
-						// is navigation to the billing page, not an action on this one. The
+						// this is navigation to the billing page, not an action on this one. The
 						// console uses the Button form for links that ARE the page's action; a
-						// "go and read the other page" affordance stays a link.
+						// "go and read the other page" affordance is styled as text. (The other
+						// reason this comment once gave — base-ui putting `role="button"` on the
+						// anchor — is gone: `@repo/ui/button` announces an href as a link, #5444.)
 						<Link
 							href={`/${orgSlug}/settings/billing`}
 							className="inline-flex items-center gap-1 text-ui-sm text-text-secondary transition-colors hover:text-text-primary"

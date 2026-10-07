@@ -86,8 +86,10 @@ export function TeamsList() {
 	const filters = useTeamsFilters((s) => s.filters);
 	const set = useTeamsFilters((s) => s.set);
 	const reset = useTeamsFilters((s) => s.reset);
-	useFilterUrlSync(useTeamsFilters, DEFAULT_TEAMS_FILTERS);
-	const search = useDebouncedValue(filters.search);
+	const urlRead = useFilterUrlSync(useTeamsFilters, DEFAULT_TEAMS_FILTERS);
+	// Seeded from the URL once it is read, so a pasted `?search=…` asks first for the key the
+	// link names rather than spending one debounce on the pristine one (#4999, members).
+	const search = useDebouncedValue(filters.search, 250, { urlRead });
 	const query = useMemo(
 		() => normalizeTeamsQuery(filters, search),
 		[filters, search],
@@ -111,6 +113,17 @@ export function TeamsList() {
 		for (const o of teamsQuery.data?.facets.sizes ?? []) byBucket[o.value] = o.count;
 		return byBucket;
 	}, [teamsQuery.data]);
+	// The list is BUSY while what it shows may not answer the URL and the bar: before the link has
+	// been read into the store, before the first answer, while the rows are the previous query's
+	// placeholder, and while a typed search is still inside its debounce — the jobs, runners,
+	// members, alerts and activity lists' rule (#4980, #5045, #5471). Before the first answer this
+	// page is a skeleton with no count, no table and no empty state; `aria-busy` is what tells
+	// assistive tech — and the audit's F8–F9 `settle()` — that it is loading, not empty (#5494).
+	const busy =
+		!urlRead ||
+		teamsQuery.isPending ||
+		teamsQuery.isPlaceholderData ||
+		filters.search !== search;
 
 	const invalidate = useCallback(() => {
 		void qc.invalidateQueries({ queryKey: ["teams", org] });
@@ -241,7 +254,7 @@ export function TeamsList() {
 
 	if (teamsQuery.isPending) {
 		return (
-			<div className="space-y-4">
+			<div className="space-y-4" aria-busy>
 				<Skeleton className="h-20 w-full" />
 				<Skeleton className="h-48 w-full" />
 			</div>
@@ -266,7 +279,7 @@ export function TeamsList() {
 	);
 
 	return (
-		<div>
+		<div aria-busy={busy}>
 			<PageToolbar
 				className="mb-4"
 				description="Grant access to a group of members at once."

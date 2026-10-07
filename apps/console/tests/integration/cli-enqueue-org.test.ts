@@ -34,7 +34,11 @@ import { describeIfDb } from "./db";
 
 vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
-vi.mock("@/lib/authz/guard", () => ({
+vi.mock("@/lib/authz/guard", async (importOriginal) => ({
+	// Real: the pure credential mapping the DESTROY_RUNNER branch reads.
+	userIdIsTheCaller: (await importOriginal<typeof import("@/lib/authz/guard")>())
+		.userIdIsTheCaller,
+	// DESTROY_RUNNER runs the console's `destroyRunner` action, which authorizes first (#5481).
 	authorize: vi.fn(),
 	authorizeCli: vi.fn(),
 	ensureCliOrgAccess: vi.fn(),
@@ -48,11 +52,17 @@ vi.mock("@/app/server/actions/projects", () => ({
 	destroyProject: vi.fn(),
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// DESTROY_RUNNER asks the PDP for runner:destroy (#5479). Allowed here: this suite's subject is the
+// org stamp, and the permission is pinned in tests/api/jobs/route.test.ts.
+vi.mock("@/lib/authz", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/authz")>()),
+	getPdp: () => ({ can: async () => ({ allowed: true }) }),
+}));
 
 import { POST as deployRunnerPost } from "@/app/api/cli/runners/deploy/route";
 import { POST as jobsPost } from "@/app/api/jobs/route";
 import { getActiveScope } from "@/lib/auth/scope";
-import { authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
+import { authorize, authorizeCli, ensureCliOrgAccess } from "@/lib/authz/guard";
 import { verifyCliToken } from "@/lib/cli/auth";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, jobs, runners } from "@/lib/db/schema";
@@ -99,6 +109,41 @@ async function seedRunner(expectOrg: string, orgId?: string): Promise<string> {
 	return row.id;
 }
 
+/**
+ * Seeds a deployed runner to TEAR DOWN and returns its id (#5481: the route derives the job from
+ * this row). `orgId` omitted is the pre-#3874 personal-org shape, as in {@link seedRunner}. Each
+ * test seeds its own: a second DESTROY_RUNNER on a runner with one still in flight is refused.
+ */
+async function seedTarget(expectOrg: string, orgId?: string): Promise<string> {
+	const name = `it-5481-target-${randomUUID().slice(0, 12)}`;
+	const [row] = await getServiceDb()
+		.insert(runners)
+		.values({
+			user_id: USER,
+			...(orgId ? { org_id: orgId } : {}),
+			name,
+			operator: "self",
+			provisioning: "deployed",
+			token_hash: `hash-${name}`,
+			status: "OFFLINE",
+			cloud_identity_id: identityId,
+			metadata: {
+				deploy_config: {
+					region: "us-east-1",
+					cloud_provider: "aws",
+					image_tag: "latest",
+					alethia_url: "https://console.local",
+					cpu: 512,
+					memory: 1024,
+					image_repository: "ghcr.io/alethialabs-io/runner",
+				},
+			},
+		})
+		.returning({ id: runners.id, org_id: runners.org_id });
+	expect(row.org_id).toBe(expectOrg);
+	return row.id;
+}
+
 /** Reads back the org a row actually holds — the value claim_next_job compares. */
 async function jobOrg(jobId: string): Promise<string | null> {
 	const [row] = await getServiceDb()
@@ -109,16 +154,18 @@ async function jobOrg(jobId: string): Promise<string | null> {
 	return row.org_id;
 }
 
-/** Posts a DESTROY_RUNNER enqueue as USER acting in TEAM_ORG, and returns the created job id. */
-async function destroyRunnerJob(assignedRunnerId: string | null): Promise<Response> {
+/** Posts a DESTROY_RUNNER of `targetId` as USER acting in TEAM_ORG. */
+async function destroyRunnerJob(
+	targetId: string,
+	assignedRunnerId: string | null,
+): Promise<Response> {
 	return jobsPost(
 		new Request("https://console.local/api/jobs", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
 				job_type: "DESTROY_RUNNER",
-				cloud_identity_id: identityId,
-				config_snapshot: { runner_name: "teardown" },
+				config_snapshot: { runner_id: targetId },
 				...(assignedRunnerId ? { assigned_runner_id: assignedRunnerId } : {}),
 			}),
 		}),
@@ -175,6 +222,7 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 			orgId: TEAM_ORG,
 		} as never);
 		vi.mocked(ensureCliOrgAccess).mockResolvedValue(null);
+		vi.mocked(authorize).mockResolvedValue({ userId: USER, orgId: TEAM_ORG } as never);
 		vi.mocked(authorizeCli).mockResolvedValue({
 			actor: { userId: USER, orgId: TEAM_ORG },
 		} as never);
@@ -182,7 +230,10 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 
 	// ── 1. THE REGRESSION THE NO-BACKFILL DESIGN EXISTS TO AVOID ────────────────────────────
 	it("keeps a legacy runner's DESTROY_RUNNER in the active org and still claims it", async () => {
-		const jobId = await createdJobId(await destroyRunnerJob(legacyRunner));
+		// The runner being destroyed is ALSO a legacy personal-org one: since #5481 that is the only
+		// teardown a personal-org executor may run.
+		const target = await seedTarget(USER);
+		const jobId = await createdJobId(await destroyRunnerJob(target, legacyRunner));
 
 		const [runnerRow] = await getServiceDb()
 			.select({ org_id: runners.org_id, token_hash: runners.token_hash })
@@ -205,7 +256,8 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 
 	// ── 2. The forward case: a runner already in the actor's org ────────────────────────────
 	it("DESTROY_RUNNER for a runner in the ACTOR's org gets the actor's org", async () => {
-		const jobId = await createdJobId(await destroyRunnerJob(modernRunner));
+		const target = await seedTarget(TEAM_ORG, TEAM_ORG);
+		const jobId = await createdJobId(await destroyRunnerJob(target, modernRunner));
 
 		expect(await jobOrg(jobId)).toBe(TEAM_ORG);
 		expect(await jobOrg(jobId)).not.toBe(USER);
@@ -220,7 +272,8 @@ describeIfDb("CLI enqueue org stamp (#3874)", () => {
 
 	// ── 2b. No runner named: the actor's org, which is the half the defect got wrong ────────
 	it("DESTROY_RUNNER with no assigned runner falls back to the ACTOR's org, not the personal org", async () => {
-		const jobId = await createdJobId(await destroyRunnerJob(null));
+		const target = await seedTarget(TEAM_ORG, TEAM_ORG);
+		const jobId = await createdJobId(await destroyRunnerJob(target, null));
 		// This is the branch the trigger used to decide, and it decided `user_id`. The stamp is
 		// now explicit, so the GUC-less service connection no longer chooses the tenancy.
 		expect(await jobOrg(jobId)).toBe(TEAM_ORG);

@@ -7,7 +7,8 @@ import {
 	streamText,
 	type UIMessage,
 } from "ai";
-import { saveThreadMessages } from "@/app/server/actions/agent";
+import { saveThreadTranscript } from "@/lib/agent/thread-transcript";
+import { transcriptNotSaved } from "@/lib/ai/transcript-not-saved";
 import { cachedSystemMessage } from "@/lib/ai/provider-options";
 import { supportSystemPrompt } from "@/lib/ai/support/prompt";
 import { buildSupportTools } from "@/lib/ai/tools/support";
@@ -136,7 +137,12 @@ export async function POST(req: Request) {
 		return result.toUIMessageStreamResponse({
 			originalMessages: messages,
 			onFinish: ({ messages }) => {
-				if (threadId) void saveThreadMessages(threadId, messages);
+				if (threadId) {
+					void saveThreadTranscript(
+						{ owner: actor.userId, threadId, kind: "support", projectId: null },
+						messages,
+					).catch(transcriptNotSaved(threadId));
+				}
 			},
 		});
 	} catch (e) {

@@ -41,3 +41,15 @@ output "oidc_issuer_url" {
   description = "The OIDC issuer URL of the AKS cluster (for federated workload identity)"
   value       = azurerm_kubernetes_cluster.this.oidc_issuer_url
 }
+
+output "cluster_id" {
+  description = "Resource id of the AKS cluster (the target of the root's control-plane diagnostic setting and data collection rule association)"
+  value       = azurerm_kubernetes_cluster.this.id
+}
+
+# Read off the PLANNED resource so the root's tofu test asserts what the cluster will carry, not
+# what the root passed in. Null when the add-on is off.
+output "oms_agent_workspace_id" {
+  description = "Log Analytics workspace the Container Insights add-on reports to; null when the add-on is off"
+  value       = one(azurerm_kubernetes_cluster.this.oms_agent[*].log_analytics_workspace_id)
+}

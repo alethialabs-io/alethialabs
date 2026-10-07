@@ -46,6 +46,7 @@ const ITEMS: AddonMarketItem[] = [
 			mode: "managed",
 			values: {},
 			valuesYaml: null,
+			version: null,
 			status: "PENDING",
 			health: null,
 			sync: null,

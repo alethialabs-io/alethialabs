@@ -36,6 +36,12 @@ export const organizationBilling = pgTable("organization_billing", {
 	// subscription maps back to exactly one org from webhook events.
 	stripeCustomerId: text().unique(),
 	stripeSubscriptionId: text().unique(),
+	// Stripe's `created` time of the newest event applied for `stripeSubscriptionId` — the
+	// out-of-order / redelivery watermark (#5514). An event for the SAME subscription that is
+	// older than this is refused by the conditional upsert in lib/billing/queries.ts, so a stale
+	// or replayed event cannot regress the row. Null when no event time has been recorded (a row
+	// written by a server action or the operator plane, or one that predates the column).
+	stripeSubscriptionEventAt: timestamp({ withTimezone: true }),
 	// Purchased seats (per-seat Team tier); null for flat tiers / no subscription.
 	seats: integer(),
 	// Start of the current paid period — the window start for usage metering
@@ -58,6 +64,8 @@ export const organizationBilling = pgTable("organization_billing", {
 	// Lifecycle of the AI subscription (mirrors Stripe). Only `trialing`/`active` keep a
 	// paid `ai_tier` effective; anything else falls back to `ai_free` (effectiveAiTier).
 	aiSubscriptionStatus: billingStatus().default("none").notNull(),
+	// The same event-time watermark as `stripeSubscriptionEventAt`, for `aiStripeSubscriptionId`.
+	aiStripeSubscriptionEventAt: timestamp({ withTimezone: true }),
 	// Admin AI-spend limits (Claude-Enterprise style), in credits/week. NULL = no admin
 	// limit → use the tier's default caps. When set, they only ever TIGHTEN the effective
 	// budget (min(tier, cap)): an org-wide weekly ceiling and a per-seat weekly ceiling, so

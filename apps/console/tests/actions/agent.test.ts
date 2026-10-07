@@ -25,24 +25,28 @@ vi.mock("drizzle-orm", async (importActual) => {
 	};
 });
 
+import * as agentActions from "@/app/server/actions/agent";
 import {
 	createThread,
 	deleteThread,
 	getThread,
 	listThreads,
 	renameThread,
-	saveThreadMessages,
 } from "@/app/server/actions/agent";
+import { MAX_USER_MESSAGE_CHARS } from "@/lib/ai/message-limits";
 import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
-import { eq, isNull } from "drizzle-orm";
+import { eq, isNull, SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { agentThreads } from "@/lib/db/schema";
 
 /**
  * A drizzle-ish chain whose every builder returns itself, awaits to `rows`, and records the
  * args handed to the mutating verbs so tests can assert the exact write.
  */
-function mockChain(rows: unknown[]) {
+function mockChain(rows: unknown[], sequence: unknown[][] = []) {
 	const calls = {
 		insert: vi.fn(),
 		values: vi.fn(),
@@ -52,6 +56,8 @@ function mockChain(rows: unknown[]) {
 		delete: vi.fn(),
 		orderBy: vi.fn(),
 		limit: vi.fn(),
+		onConflictDoNothing: vi.fn(),
+		returning: vi.fn(),
 	};
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
@@ -63,7 +69,14 @@ function mockChain(rows: unknown[]) {
 			calls.values(...a);
 			return db;
 		},
-		returning: () => db,
+		returning: (...a: unknown[]) => {
+			calls.returning(...a);
+			return db;
+		},
+		onConflictDoNothing: (...a: unknown[]) => {
+			calls.onConflictDoNothing(...a);
+			return db;
+		},
 		select: () => db,
 		from: () => db,
 		orderBy: (...a: unknown[]) => {
@@ -90,14 +103,16 @@ function mockChain(rows: unknown[]) {
 			calls.delete(...a);
 			return db;
 		},
-		then: (resolve: (v: unknown) => void) => resolve(rows),
+		// Each awaited query takes the next queued result, then `rows` once the queue is empty.
+		then: (resolve: (v: unknown) => void) => resolve(sequence.shift() ?? rows),
 	});
 	return { db, calls };
 }
 
-/** Wire withOwnerScope to invoke the real callback against the given chain. */
-function useChain(rows: unknown[]) {
-	const { db, calls } = mockChain(rows);
+/** Wire withOwnerScope to invoke the real callback against the given chain. `sequence` holds
+ * per-query results in await order (e.g. the first-turn lookup, then the insert). */
+function useChain(rows: unknown[], sequence: unknown[][] = []) {
+	const { db, calls } = mockChain(rows, sequence);
 	vi.mocked(withOwnerScope).mockImplementation(
 		((_owner: unknown, cb: (tx: unknown) => unknown) => cb(db)) as never,
 	);
@@ -153,6 +168,113 @@ describe("createThread", () => {
 		expect(title.length).toBe(58); // 57 chars + ellipsis
 		expect(title.endsWith("…")).toBe(true);
 		expect(title.startsWith("a".repeat(57))).toBe(true);
+	});
+
+	// #5414 / the #5423 ruling: the assistant reply is persisted only by the streaming route's
+	// onFinish, which never runs when the turn fails (AI off → 503 before any stream). The user's
+	// first message must therefore be stored BY THE INSERT, or the row keeps zero messages,
+	// listThreads hides it, and the typed message vanishes on reload.
+	it("stores the first user turn as the thread's transcript in the same insert", async () => {
+		// The idempotency lookup finds no row holding this turn, so the insert runs.
+		const { calls } = useChain([{ id: "t-turn" }], [[]]);
+		await createThread("persisted elench thread", undefined, {
+			id: "msg-1",
+			text: "persisted elench thread",
+		});
+		expect(calls.insert).toHaveBeenCalledTimes(1);
+		expect(calls.update).not.toHaveBeenCalled();
+		expect(calls.values).toHaveBeenCalledWith({
+			user_id: "user-1",
+			org_id: "user-1",
+			title: "persisted elench thread",
+			messages: [
+				{
+					id: "msg-1",
+					role: "user",
+					parts: [{ type: "text", text: "persisted elench thread" }],
+				},
+			],
+		});
+	});
+
+	it("stores the first turn on a project-scoped thread too", async () => {
+		const { calls } = useChain([{ id: "t-pturn" }], [[]]);
+		await createThread("Deploy prod", "proj-9", { id: "msg-2", text: "Deploy prod" });
+		const values = calls.values.mock.calls[0][0];
+		expect(values.project_id).toBe("proj-9");
+		expect(values.messages).toEqual([
+			{ id: "msg-2", role: "user", parts: [{ type: "text", text: "Deploy prod" }] },
+		]);
+	});
+
+	it("leaves the transcript to its column default when no first turn is given", async () => {
+		const { calls } = useChain([{ id: "t-art" }]);
+		await createThread("An artifact", undefined, undefined);
+		expect(calls.values.mock.calls[0][0]).not.toHaveProperty("messages");
+	});
+
+	it("refuses a blank first turn before touching the database", async () => {
+		useChain([{ id: "t-blank" }]);
+		await expect(
+			createThread("x", undefined, { id: "msg-3", text: "   " }),
+		).rejects.toThrow();
+		await expect(
+			createThread("x", undefined, { id: "", text: "hello" }),
+		).rejects.toThrow();
+		expect(withOwnerScope).not.toHaveBeenCalled();
+	});
+
+	// The stored first turn is capped by the SAME constant the chat routes 413 on and the
+	// composer refuses at — one number, so the action never rejects a turn the route would take.
+	it("stores a first turn of exactly the shared limit and refuses one character more", async () => {
+		const { calls } = useChain([{ id: "t-max" }], [[]]);
+		const atLimit = "a".repeat(MAX_USER_MESSAGE_CHARS);
+		await createThread("long", undefined, { id: "msg-max", text: atLimit });
+		expect(calls.values.mock.calls[0][0].messages[0].parts[0].text).toHaveLength(
+			MAX_USER_MESSAGE_CHARS,
+		);
+		vi.mocked(withOwnerScope).mockClear();
+		await expect(
+			createThread("long", undefined, { id: "msg-over", text: `${atLimit}a` }),
+		).rejects.toThrow();
+		expect(withOwnerScope).not.toHaveBeenCalled();
+	});
+
+	// The #5423 review: a server action can fail AFTER its insert committed (the response is
+	// lost). The client retries with the SAME first-turn id; a second insert would leave two
+	// threads holding one message, one of them never answered.
+	it("returns the row a lost response already committed for this turn id, inserting nothing", async () => {
+		const stored = {
+			id: "t-committed",
+			messages: [{ id: "msg-r", role: "user", parts: [{ type: "text", text: "hello" }] }],
+		};
+		const rewritten = { ...stored, title: "hello" };
+		// 1st await: the lookup finds the committed row; 2nd: the rewrite returns it.
+		const { calls } = useChain([], [[stored], [rewritten]]);
+		const thread = await createThread("hello", undefined, { id: "msg-r", text: "hello" });
+		expect(thread).toBe(rewritten);
+		expect(calls.insert).not.toHaveBeenCalled();
+		expect(calls.update).toHaveBeenCalledTimes(1);
+		expect(calls.set.mock.calls[0][0]).toMatchObject({
+			title: "hello",
+			messages: [{ id: "msg-r", role: "user", parts: [{ type: "text", text: "hello" }] }],
+		});
+	});
+
+	it("keeps the committed row when it already holds more than the first turn", async () => {
+		const stored = { id: "t-answered", messages: [] };
+		// The rewrite is guarded to a one-message transcript; it matches nothing here.
+		const { calls } = useChain([], [[stored], []]);
+		const thread = await createThread("hello", undefined, { id: "msg-a", text: "hello" });
+		expect(thread).toBe(stored);
+		expect(calls.insert).not.toHaveBeenCalled();
+	});
+
+	it("does not look a turn up when no first turn is given (an artifact's new chat)", async () => {
+		const { calls } = useChain([{ id: "t-plain" }]);
+		await createThread("An artifact");
+		expect(calls.where).not.toHaveBeenCalled();
+		expect(calls.insert).toHaveBeenCalledTimes(1);
 	});
 
 	it("throws when there is no authenticated owner", async () => {
@@ -225,27 +347,87 @@ describe("renameThread", () => {
 	});
 });
 
-describe("saveThreadMessages", () => {
-	it("persists the transcript (and bumps updated_at) for the thread", async () => {
-		const { calls } = useChain([]);
-		const messages = [
-			{ id: "m-1", role: "user", parts: [] },
-		] as unknown as UIMessage[];
-		await saveThreadMessages("t-9", messages);
-		expect(calls.update).toHaveBeenCalledTimes(1);
-		const setArg = calls.set.mock.calls[0][0];
-		expect(setArg.messages).toBe(messages);
-		expect(setArg.updated_at).toBeDefined();
+// #5423 review (security): `saveThreadMessages` lived in this "use server" file, so Next compiled it
+// into a POST-addressable action — and once it could INSERT, any client could create a thread with
+// an id, kind, project and transcript of its choosing. Every export of this file is reachable from
+// a browser; the transcript write is not one of them.
+describe("the action surface", () => {
+	it("exports no transcript write: only the thread actions a client may call", () => {
+		expect(Object.keys(agentActions).sort()).toEqual([
+			"createThread",
+			"deleteThread",
+			"getThread",
+			"listThreads",
+			"renameThread",
+		]);
+	});
+
+	it("keeps the transcript write in a module that is not a server action and is server-only", () => {
+		const src = readFileSync(
+			path.resolve(__dirname, "../../lib/agent/thread-transcript.ts"),
+			"utf8",
+		);
+		expect(src).not.toMatch(/^\s*["']use server["'];?\s*$/m);
+		expect(src).toMatch(/^import "server-only";$/m);
 	});
 });
 
 describe("deleteThread", () => {
-	it("issues a scoped delete for the given id", async () => {
-		const { calls } = useChain([]);
+	// A late save (a turn still streaming at the delete) must be able to tell the user's delete from
+	// the reap of an empty row, or it recreates the thread the user just deleted (#5423 review).
+	it("replaces the row with a tombstone under the same id, carrying no title and no messages", async () => {
+		const removed = { user_id: "user-1", org_id: "org-1", project_id: "proj-3", kind: "agent" };
+		const { calls } = useChain([], [[removed], []]);
 		await deleteThread("t-1");
 		expect(calls.delete).toHaveBeenCalledTimes(1);
-		expect(calls.where).toHaveBeenCalledTimes(1);
+		expect(calls.insert).toHaveBeenCalledWith(agentThreads);
+		expect(calls.values).toHaveBeenCalledWith({
+			id: "t-1",
+			user_id: "user-1",
+			org_id: "org-1",
+			project_id: "proj-3",
+			kind: "agent",
+			title: "",
+			status: "deleted",
+		});
 		// Owner scope is forwarded.
 		expect(vi.mocked(withOwnerScope).mock.calls[0][0]).toBe("user-1");
+	});
+
+	it("writes no tombstone when there was no live thread to delete", async () => {
+		const { calls } = useChain([], [[]]);
+		await deleteThread("t-none");
+		expect(calls.delete).toHaveBeenCalledTimes(1);
+		expect(calls.insert).not.toHaveBeenCalled();
+	});
+});
+
+describe("a deleted thread's tombstone is no thread", () => {
+	/** The SQL text and params of a recorded `.where()` predicate, as Postgres would receive them. */
+	function compiled(where: unknown): { sql: string; params: unknown[] } {
+		if (!(where instanceof SQL)) throw new Error("not a drizzle predicate");
+		return new PgDialect().sqlToQuery(where);
+	}
+
+	it("getThread and renameThread match only a live row", async () => {
+		const { calls } = useChain([]);
+		await getThread("t-1");
+		await renameThread("t-1", "x");
+		for (const [where] of calls.where.mock.calls) {
+			const q = compiled(where);
+			expect(q.sql).toMatch(/"status" <> \$\d/);
+			expect(q.params).toContain("deleted");
+		}
+		expect(calls.where).toHaveBeenCalledTimes(2);
+	});
+
+	it("listThreads lists only live rows, and reaps a tombstone a day after the delete", async () => {
+		const { calls } = useChain([]);
+		await listThreads();
+		const [reap, list] = calls.where.mock.calls.map(([w]) => compiled(w));
+		expect(reap.sql).toMatch(/"status" = \$\d and "agent_threads"\."updated_at" < now\(\) - interval '1 day'/);
+		// The hourly reap of an EMPTY row never takes a tombstone: it is what a late save reads.
+		expect(reap.sql).toMatch(/"status" <> \$\d and jsonb_array_length/);
+		expect(list.sql).toMatch(/"status" <> \$\d/);
 	});
 });

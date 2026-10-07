@@ -399,7 +399,9 @@ test.describe("RBAC — Teams (Enterprise gate)", () => {
 // ---------------------------------------------------------------------------
 test.describe("RBAC — Roles", () => {
 	// Rail rows expose an accessible name of "<Role> <permission-count>" (name span + count span),
-	// so match by prefix, not an exact string.
+	// so match by prefix, not an exact string. A built-in is named by its LABEL ("Owner"), not
+	// its registry key under CSS `capitalize` — which left the accessible name lowercase and
+	// re-cased custom role names (#5413) — so the case-sensitive prefix is the claim.
 	const rail = (page: import("@playwright/test").Page, role: string) =>
 		page.getByRole("button", { name: new RegExp(`^${role}\\b`) });
 
@@ -409,14 +411,20 @@ test.describe("RBAC — Roles", () => {
 		for (const r of ["Owner", "Admin", "Operator", "Viewer"]) {
 			await expect(rail(owner.page, r).first()).toBeVisible({ timeout: 30_000 });
 		}
-		await expect(owner.page.getByText(/4 built-in/)).toBeVisible();
+		// The "4 built-in · 0 custom" line went when Settings moved onto the filter standard
+		// (#2928); the count is the page toolbar's count pill, built-in + custom.
+		await expect(
+			owner.page.locator('[data-slot="page-toolbar"] [data-slot="count-pill"]'),
+		).toHaveText("4");
 	});
 
 	test("default detail panel shows the Owner built-in role (read-only)", async ({ owner }) => {
 		await owner.page.goto(rolesUrl(owner.orgSlug));
 		await expect(owner.page.getByText("Built-in").first()).toBeVisible({ timeout: 30_000 });
+		// The copy is `BUILT_IN_ROLE_DESCRIPTIONS` in lib/authz/registry.ts, made the single source
+		// by #428. A literal, not an import: the spec pins what the user reads.
 		await expect(
-			owner.page.getByText("Full control of the organization, including members and billing."),
+			owner.page.getByText("Full control, including billing and member management."),
 		).toBeVisible();
 	});
 
@@ -424,7 +432,9 @@ test.describe("RBAC — Roles", () => {
 		await owner.page.goto(rolesUrl(owner.orgSlug));
 		await expect(rail(owner.page, "Viewer")).toBeVisible({ timeout: 30_000 });
 		await rail(owner.page, "Viewer").click();
-		await expect(owner.page.getByText("Read-only access to everything.")).toBeVisible();
+		// registry.ts `BUILT_IN_ROLE_DESCRIPTIONS.viewer` (#428). Exact, so the short string cannot
+		// substring-match some longer copy elsewhere on the page.
+		await expect(owner.page.getByText("Read-only access.", { exact: true })).toBeVisible();
 	});
 
 	test("no custom roles yet — the rail shows the empty custom section", async ({ owner }) => {

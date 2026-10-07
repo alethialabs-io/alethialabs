@@ -243,6 +243,13 @@ export function isProjectNameTaken(err: unknown): boolean {
 	return violates(err, "projects_org_id_project_name_key");
 }
 
+/** Whether this error is the environment-name unique violation (`project_environments.(project_id,
+ * name)`) — the loser of two concurrent adds of one name, mapped by `addEnvironment` /
+ * `duplicateEnvironment` onto the same refusal as the ordinary duplicate. */
+export function isEnvironmentNameTaken(err: unknown): boolean {
+	return violates(err, "project_environments_project_id_name_key");
+}
+
 /** Whether a driver error names a particular constraint. `constraint_name` is what postgres-js
  * surfaces; the message is checked too because a wrapped error can lose the field. */
 function violates(err: unknown, constraint: string): boolean {

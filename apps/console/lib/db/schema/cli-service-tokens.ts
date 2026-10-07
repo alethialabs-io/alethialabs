@@ -38,8 +38,8 @@ export const cliServiceTokens = pgTable("cli_service_tokens", {
 	 * NO FOREIGN KEY, deliberately — and this is a trap worth stating rather than a shortcut.
 	 *
 	 * An org id is not always a row in `organization`. A community user's PERSONAL org is their own
-	 * profile id (`Actor.orgId === userId`; `isOrgMember` returns true for that case without reading
-	 * a table). A `references(() => organization.id)` would therefore reject a token minted by every
+	 * profile id (`Actor.orgId === userId`; guard.ts's `isActiveOrgMember` returns true for that case
+	 * without reading a table). A `references(() => organization.id)` would therefore reject a token minted by every
 	 * single-user account on the platform, at INSERT time, with a foreign-key violation that names
 	 * the wrong problem entirely.
 	 *

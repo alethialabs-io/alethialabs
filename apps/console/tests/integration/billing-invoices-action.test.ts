@@ -29,7 +29,7 @@ import { BUILTIN_ROLE_IDS } from "@/lib/authz/registry";
 import { seedAuthz } from "@/lib/authz/seed";
 import type { Actor, Entitlements } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
-import { authzActivityLog, grants, invoice, organization, user } from "@/lib/db/schema";
+import { authzActivityLog, grants, invoice, member, organization, user } from "@/lib/db/schema";
 import { describeIfDb, purgeAuthzActivityLog } from "./db";
 
 const ORG = randomUUID();
@@ -74,6 +74,9 @@ describeIfDb("listInvoices without Stripe configured (#3731)", () => {
 			{ id: ORG, name: `inv-${ORG.slice(0, 8)}` },
 			{ id: OTHER_ORG, name: `inv-other-${OTHER_ORG.slice(0, 8)}` },
 		]);
+		// The PDP grants nothing in a non-personal org to an actor who is not an ACTIVE member of it
+		// (#5472), so the owner is a member, as they are in production.
+		await db.insert(member).values({ organizationId: ORG, userId: OWNER, role: "owner" });
 		await db.insert(grants).values({
 			org_id: ORG,
 			principal_type: "user",

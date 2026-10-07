@@ -19,7 +19,7 @@ provisioned.
 |---|---:|---:|---:|---:|
 | alibaba | 63 | 45 | 10 | 1 |
 | aws | 159 | 122 | 51 | 0 |
-| azure | 87 | 61 | 21 | 1 |
+| azure | 94 | 68 | 28 | 1 |
 | gcp | 103 | 83 | 31 | 0 |
 | hetzner | 36 | 26 | 4 | 1 |
 
@@ -34,10 +34,10 @@ by no resource or module argument — the shape a raw variable count cannot tell
 
 | Component | alibaba | aws | azure | gcp | hetzner |
 |---|---:|---:|---:|---:|---:|
-| bucket | 0 / 2 | 3 / 16 | 0 / 7 | 4 / 11 | 0 / 9 |
-| cache | 0 / 6 | 5 / 18 | 1 / 4 | 3 / 11 | — |
-| cluster | 8 / 17 | 10 / 21 | 10 / 18 | 10 / 20 | 2 / 11 |
-| database | 0 / 8 | 4 / 11 | 3 / 11 | 7 / 14 | — |
+| bucket | 0 / 2 | 3 / 16 | 1 / 8 | 4 / 11 | 0 / 9 |
+| cache | 0 / 6 | 5 / 18 | 3 / 6 | 3 / 11 | — |
+| cluster | 8 / 17 | 10 / 21 | 11 / 19 | 10 / 20 | 2 / 11 |
+| database | 0 / 8 | 4 / 11 | 6 / 14 | 7 / 14 | — |
 | dns | 1 / 5 | 7 / 16 | 4 / 8 | 3 / 7 | 2 / 5 |
 | network | 1 / 6 | 1 / 4 | 0 / 5 | 2 / 7 | 0 / 6 |
 | nosql | 0 / 2 | 8 / 20 | 1 / 10 | 2 / 4 | — |
@@ -64,7 +64,7 @@ Each cell is **settable / declared**. A `—` means the cloud declares nothing t
 | Cloud | Component | Knob | Declared at |
 |---|---|---|---|
 | alibaba | dns | `alidns_managed_certificate` | infra/templates/project/alibaba/variables.tf:242 |
-| azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:484 |
+| azure | dns | `azure_dns_zone_name` | infra/templates/project/azure/variables.tf:601 |
 | hetzner | dns | `dns_hosted_zone` | infra/templates/project/hetzner/variables.tf:247 |
 
 ## Provider ceilings

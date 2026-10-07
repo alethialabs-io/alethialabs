@@ -75,7 +75,7 @@ remembered:
 |----------|----------------|
 | AWS      | 107 |
 | GCP      | 78 |
-| Azure    | 72 |
+| Azure    | 76 |
 | Alibaba  | 54 |
 | Hetzner  | 29 |
 
@@ -108,16 +108,16 @@ some GCP. (AWS-only knobs with no analogue — Karpenter, IRSA, CloudFront-WAF �
 
 | # | Component | Knob | GCP | Azure | Analogue to add |
 |---|-----------|------|-----|-------|-----------------|
-| 1 | Cluster | log retention | none — GKE has no per-cluster retention (#4320) | **missing** | `aks_log_retention_days` (Log Analytics) |
-| 2 | Cluster | API-server authorized CIDRs | ok | **missing** | `aks_master_authorized_cidr_blocks` |
+| 1 | Cluster | log retention | none — GKE has no per-cluster retention (#4320) | ✅ shipped (#5530) | `aks_log_retention_days` — a Log Analytics workspace with that retention, the `oms_agent` add-on and a `kube-apiserver`/`kube-audit-admin` diagnostic setting; null creates none |
+| 2 | Cluster | API-server authorized CIDRs | ok | ✅ shipped | `aks_authorized_ip_ranges` (`api_server_access_profile`) |
 | 3 | Cluster | node disk type | ok | ✅ shipped | `aks_os_disk_type` (Managed/Ephemeral) |
 | 4 | Cluster | spot/preemptible nodes | ✅ shipped | ✅ shipped | `aks_spot_*` (a separate node pool); `gke_spot`/`gke_preemptible` were declared-and-dead |
-| 5 | Database | log exports | **missing** | **missing** | `cloud_sql_log_exports` / `azure_db_log_exports` |
-| 6 | Database | network CIDR allowlist | ok | **missing** | `azure_db_allowed_cidr_blocks` |
-| 7 | Database | parameter/flags | ok | **missing** | `azure_db_database_flags` |
-| 8 | Storage | CMEK encryption | **missing** | **missing** | `encryption_algorithm` + `kms_key_name` on bucket/container objects |
-| 9 | Cache | logging | **missing** | **missing** | cache log toggles |
-| 10 | NoSQL | PITR / replication | **missing** | **missing** | Firestore PITR / Cosmos multi-region |
+| 5 | Database | log exports | **missing** | ✅ shipped (#5530) | `cloud_sql_log_exports` / `azure_db_log_exports` (+ `azure_db_log_workspace_id` when the template creates no workspace) |
+| 6 | Database | network CIDR allowlist | ok | ✅ shipped | `azure_db_allowed_cidrs` (one firewall rule per CIDR) |
+| 7 | Database | parameter/flags | ok | ✅ shipped (#5530) | `azure_db_database_flags` (TLS parameters refused) |
+| 8 | Storage | CMEK encryption | **missing** | ✅ shipped (#5530) | `encryption_algorithm` + `kms_key_name` on bucket/container objects; Azure: `storage_containers[*].cmek_enabled` (account-wide, key in the project's Key Vault) |
+| 9 | Cache | logging | **missing** | ✅ shipped (#5530) | cache log toggles; Azure: `azure_cache_log_categories` (+ `azure_cache_log_workspace_id`) |
+| 10 | NoSQL | PITR / replication | ✅ shipped | ✅ shipped | `firestore_point_in_time_recovery`; `cosmos_db_collections` replica regions + `cosmos_db_continuous_backup_tier` |
 
 ## Observability parity — no per-cloud TF needed
 

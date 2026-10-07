@@ -29,7 +29,15 @@ import { listOrgResourceIds } from "@/lib/authz/resource-tables";
 import { orgAc, orgRoles } from "@/lib/authz/org-access-control";
 import { canOrgCreateTeams, canOrgInvite } from "@/lib/billing/collaboration";
 import { syncOrgSeats } from "@/lib/billing/seats";
-import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
+import { removalOwnerRefusal, roleChangeOwnerRefusal } from "@/lib/authz/active-owner";
+import {
+  ensureMemberGrant,
+  inviterRefusal,
+  isNonActiveMember,
+  lacksActiveMembership,
+  revokeMemberGrant,
+} from "@/lib/authz/grants";
+import { INSTANCE_TYPES } from "@/lib/authz/fga-hierarchy";
 import { rolePermissionKeys } from "@/lib/authz/role-permissions";
 import type { TupleSync } from "@/lib/authz/tuple-sync";
 import type { Actor, Entitlements, Pdp } from "@/lib/authz/types";
@@ -37,6 +45,14 @@ import { resolveOrgEntitlements } from "@/lib/billing/queries";
 import { getOpenFgaConfig, isOpenFgaEnabled } from "@/lib/config/openfga";
 import { getServiceDb } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/email/notify-email";
+import { isMember } from "@/lib/platform/provision";
+import { reservedOrgSlugRefusal } from "@/lib/routing";
+import { orgSlugShapeRefusal } from "@repo/org-slug";
+import {
+  keepStoredNewOrgMarker,
+  recordNewOrgCreated,
+  stampNewOrgMetadata,
+} from "@/lib/billing/pending-org-setup";
 
 /**
  * Capabilities the core injects into the enterprise module. `ee/` queries through
@@ -66,6 +82,65 @@ export interface CoreContext {
    * non-Enterprise org without ee/ importing core billing.
    */
   canOrgCreateTeams: typeof canOrgCreateTeams;
+  /**
+   * Why a slug is reserved (a console route / the marketing zone / a sibling app owns that path),
+   * or null. Injected so the organization plugin's beforeCreateOrganization /
+   * beforeUpdateOrganization hooks refuse a reserved slug SERVER-SIDE — the client checks were the
+   * only enforcement, so a direct `/organization/create` with slug `docs` succeeded (#5445) — without
+   * ee/ importing core's routing table.
+   */
+  reservedOrgSlugRefusal: typeof reservedOrgSlugRefusal;
+  /**
+   * Why a slug breaks the org-slug rule's shape (too long, or its characters), or null — the one
+   * rule every console form checks (@repo/org-slug). Injected for the same two hooks, so a direct
+   * `/organization/create` or `/organization/update` cannot store `-acme` or a 64-character slug
+   * that every form refuses (#5509).
+   */
+  orgSlugShapeRefusal: typeof orgSlugShapeRefusal;
+  /**
+   * The paid create-a-team setup's two organization-create hooks (#5445): `stampMetadata` keeps the
+   * marker that ties a new org to its charge only for the user who owns that charge's setup record
+   * (and refuses a second org for one charge); `recordCreated` writes the new org onto that record;
+   * `keepStoredMarker` makes an update carry the stored marker, never the request's. Injected so the organization plugin's create hooks can run them without ee/ importing core billing.
+   */
+  /**
+   * Whether a user already holds a membership in an organization. Injected so the organization
+   * plugin's `beforeAcceptInvitation` refuses an invitation accepted by an existing member with a
+   * reason, instead of the raw unique violation the `member` index raises (#5445).
+   */
+  isOrgMember: typeof isMember;
+  /**
+   * Why a member role change would leave the org with no active owner, or null. Injected so the
+   * organization plugin's `beforeUpdateMemberRole` refuses it (#5465) without ee/ importing core's
+   * role reading or the database.
+   */
+  roleChangeOwnerRefusal: typeof roleChangeOwnerRefusal;
+  /**
+   * Why removing a member would leave the org with no active owner, or null. Injected so the
+   * organization plugin's `beforeRemoveMember` refuses it (#5472).
+   */
+  removalOwnerRefusal: typeof removalOwnerRefusal;
+  /**
+   * Whether a user's member row in an org has a status other than `active`. Injected so the
+   * organization plugin's `beforeCreateInvitation` refuses a suspended inviter (#5472).
+   */
+  isNonActiveMember: typeof isNonActiveMember;
+  /**
+   * Whether a user is not an active member of an org (a non-active row, or no row outside their
+   * personal scope). Injected so the OpenFGA PDP denies such an actor before reading a tuple, the
+   * rule `PostgresRbacPDP` applies in its own query (#5472).
+   */
+  lacksActiveMembership: typeof lacksActiveMembership;
+  /**
+   * Why an invitation may not be accepted because its inviter is no longer an active member, or
+   * null. Injected so the organization plugin's `beforeAcceptInvitation` refuses it (#5472).
+   */
+  inviterRefusal: typeof inviterRefusal;
+  newOrgSetup: {
+    stampMetadata: typeof stampNewOrgMetadata;
+    recordCreated: typeof recordNewOrgCreated;
+    keepStoredMarker: typeof keepStoredNewOrgMarker;
+  };
   /**
    * Reconciles an org's per-seat subscription quantity with its billable membership
    * (prorated). Injected so the organization plugin's member lifecycle hooks keep
@@ -114,6 +189,11 @@ export interface CoreContext {
     denyChecksFor: typeof denyChecksFor;
     enforceDecision: typeof enforceDecision;
     listOrgResourceIds: typeof listOrgResourceIds;
+    /**
+     * The resource kinds with their own per-instance FGA object (each carries a `parent` tuple to
+     * its org). The tuple writer reads them to find which of a user's tuples live in one org.
+     */
+    instanceTypes: typeof INSTANCE_TYPES;
     isEnabled: typeof isOpenFgaEnabled;
     getConfig: typeof getOpenFgaConfig;
   };
@@ -207,6 +287,19 @@ function loadEnterprise(): void {
       sendInviteEmail,
       canOrgInvite,
       canOrgCreateTeams,
+      reservedOrgSlugRefusal,
+      orgSlugShapeRefusal,
+      isOrgMember: isMember,
+      roleChangeOwnerRefusal,
+      removalOwnerRefusal,
+      isNonActiveMember,
+      lacksActiveMembership,
+      inviterRefusal,
+      newOrgSetup: {
+        stampMetadata: stampNewOrgMetadata,
+        recordCreated: recordNewOrgCreated,
+        keepStoredMarker: keepStoredNewOrgMarker,
+      },
       syncOrgSeats,
       emitAlertEvent: emitAlertEventSafe,
       recordActivity,
@@ -222,6 +315,7 @@ function loadEnterprise(): void {
         denyChecksFor,
         enforceDecision,
         listOrgResourceIds,
+        instanceTypes: INSTANCE_TYPES,
         isEnabled: isOpenFgaEnabled,
         getConfig: getOpenFgaConfig,
       },

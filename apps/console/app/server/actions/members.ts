@@ -10,7 +10,7 @@ import {
 } from "@/app/server/actions/billing";
 import { ensureMemberGrant, revokeMemberGrant } from "@/lib/authz/grants";
 import { authorize, currentActor } from "@/lib/authz/guard";
-import { toDisplayRole } from "@/lib/authz/org-access-control";
+import { toDisplayRole, toPdpRole } from "@/lib/authz/org-access-control";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -229,8 +229,15 @@ export async function getInvitations(): Promise<InvitationRow[]> {
 
 /**
  * Suspends or reactivates a member. Suspending keeps the member row + role but revokes
- * their PDP grant (no access); reactivating restores the grant. Owner-gated; refuses on
- * the org owner and on members from a different org.
+ * their PDP grant (no access) and cancels the invitations they sent that are still pending;
+ * reactivating restores the grant. Owner-gated; refuses on
+ * members from a different org, and refuses to SUSPEND any owner.
+ *
+ * "Owner" is read the way the PDP reads it (`toPdpRole`): any comma-joined part that is
+ * `owner` makes the member an owner (#5465). The old `role === "owner"` let `owner,admin` be
+ * suspended, which could leave the org with no active owner. Refusing every owner means a
+ * suspension never lowers the org's count of active owners. Reactivating is not refused: it
+ * can only add an active owner back.
  */
 export async function setMemberSuspended(
 	memberId: string,
@@ -249,7 +256,9 @@ export async function setMemberSuspended(
 		.where(eq(member.id, memberId))
 		.limit(1);
 	if (!m || m.orgId !== actor.orgId) throw new Error("Member not found.");
-	if (m.role === "owner") throw new Error("The owner can't be suspended.");
+	if (suspended && toPdpRole(m.role) === "owner") {
+		throw new Error("The owner can't be suspended.");
+	}
 
 	await db
 		.update(member)
@@ -258,6 +267,20 @@ export async function setMemberSuspended(
 
 	if (suspended) {
 		await revokeMemberGrant(m.orgId, m.userId);
+		// The member's pending invitations into this org are cancelled with them (#5472): an
+		// admin who invited a second account they control should not see that account get in after
+		// the suspension. `beforeAcceptInvitation` refuses such an invitation at acceptance anyway;
+		// this takes it off the pending list, and reactivating does not bring it back.
+		await db
+			.update(invitation)
+			.set({ status: "canceled" })
+			.where(
+				and(
+					eq(invitation.organizationId, m.orgId),
+					eq(invitation.inviterId, m.userId),
+					eq(invitation.status, "pending"),
+				),
+			);
 	} else {
 		await ensureMemberGrant(m.orgId, m.userId, m.role);
 	}

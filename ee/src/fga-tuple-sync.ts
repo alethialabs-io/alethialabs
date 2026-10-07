@@ -7,7 +7,7 @@
 // (raw SQL) — no core runtime import. Standup-verified (needs a running OpenFGA).
 
 import { OpenFgaClient } from "@openfga/sdk";
-import { sql } from "drizzle-orm";
+import { type SQL, sql } from "drizzle-orm";
 import type { FgaTuple, GrantScope } from "@/lib/authz/fga-tuples";
 import type { HierarchyEdge, ScopedGrant, TupleSync } from "@/lib/authz/tuple-sync";
 import type { CoreContext } from "@/lib/enterprise";
@@ -35,8 +35,8 @@ function grantSubject(g: { principalType: "user" | "team"; principalId: string }
  *
  * A thousand pages is far beyond anything a grant expansion reaches at any page size OpenFGA
  * serves: `PERMISSIONS` is under a hundred keys, so a subject's tuples on one object are in the
- * tens, and even the whole-store-by-subject read in `revokeMemberGrant` is bounded by that times
- * the objects one member is granted on. Reaching this means the server is misbehaving, not that
+ * tens, and even the by-subject-and-type reads in `memberTuplesInOrg` are bounded by that times
+ * the objects of one type a member is granted on, across the store. Reaching this means the server is misbehaving, not that
  * the subject is unusually privileged.
  */
 const MAX_READ_PAGES = 1000;
@@ -85,7 +85,7 @@ export interface TupleReader {
  */
 export async function readAllTuples(
 	client: TupleReader,
-	filter: { user?: string; object?: string },
+	filter: { user?: string; object?: string; relation?: string },
 ): Promise<FgaTuple[]> {
 	const out: FgaTuple[] = [];
 	const seen = new Set<string>();
@@ -112,6 +112,81 @@ export async function readAllTuples(
 	throw new Error(
 		`OpenFGA Read exceeded ${MAX_READ_PAGES} pages for ${JSON.stringify(filter)}; refusing to read further`,
 	);
+}
+
+/** What `memberTuplesInOrg` needs to know about the org besides the store. */
+export interface OrgDimension<T extends string> {
+	/** The resource kinds with their own per-instance object (`<type>:<id>`). */
+	instanceTypes: readonly T[];
+	/** Postgres's ids of `type` in the org — a second source beside the store's `parent` tuples. */
+	orgResourceIds: (type: T) => Promise<string[]>;
+	/** The ids of the org's teams. */
+	teamIds: readonly string[];
+}
+
+/**
+ * Every tuple whose subject is `user:<userId>` and whose object belongs to org `orgId` (#5472): the
+ * org object itself, each instance object the org owns, and the org's teams' `member` tuples.
+ *
+ * The store has no org column, so "belongs to the org" is read from what does say it: an instance
+ * object's `parent` tuple naming `org:<orgId>` (the hierarchy the PDP walks), unioned with the ids
+ * Postgres lists for that kind in the org, so an object whose `parent` tuple is missing is still
+ * found when Postgres knows it; a team's org comes from `teamIds`. Reads are by subject plus a
+ * TYPE-only object, the form OpenFGA's Read accepts for a user filter.
+ *
+ * It replaced a read filtered by subject ALONE, which named no object type and covered the whole
+ * store: whatever it returned, it was not "this user's tuples in this org", so a revoke in one org
+ * was free to delete the user's tuples in every other org they belong to.
+ */
+export async function memberTuplesInOrg<T extends string>(
+	client: TupleReader,
+	orgId: string,
+	userId: string,
+	org: OrgDimension<T>,
+): Promise<FgaTuple[]> {
+	const user = `user:${userId}`;
+	const out = await readAllTuples(client, { user, object: `org:${orgId}` });
+	for (const type of org.instanceTypes) {
+		const [mine, parents, listed] = await Promise.all([
+			readAllTuples(client, { user, object: `${type}:` }),
+			readAllTuples(client, { user: `org:${orgId}`, relation: "parent", object: `${type}:` }),
+			org.orgResourceIds(type),
+		]);
+		const inOrg = new Set([
+			...parents.map((t) => t.object),
+			...listed.map((id) => `${type}:${id}`),
+		]);
+		out.push(...mine.filter((t) => inOrg.has(t.object)));
+	}
+	if (org.teamIds.length > 0) {
+		const teams = new Set(org.teamIds.map((id) => `team:${id}`));
+		const mine = await readAllTuples(client, { user, object: "team:" });
+		out.push(...mine.filter((t) => teams.has(t.object)));
+	}
+	return out;
+}
+
+/** The one capability `isActiveTeamOrgMember` needs: a tagged-SQL runner returning rows. */
+export interface MembershipQueryRunner {
+	execute(query: SQL): Promise<unknown[]>;
+}
+
+/**
+ * Whether `userId` holds an ACTIVE member row in the org that owns team `teamId` (#5484). False for
+ * a suspended member, for a user with no member row there, and for a team that does not exist.
+ */
+export async function isActiveTeamOrgMember(
+	db: MembershipQueryRunner,
+	teamId: string,
+	userId: string,
+): Promise<boolean> {
+	const rows = await db.execute(sql`
+		select 1 as active from team t
+		join member m on m.organization_id = t.organization_id
+		where t.id = ${teamId}::uuid and m.user_id = ${userId}::uuid and m.status = 'active'
+		limit 1
+	`);
+	return rows.length > 0;
 }
 
 /**
@@ -248,14 +323,35 @@ export class FgaTupleSync implements TupleSync {
 		// Replace: drop the user's existing org-wide tuples, then write the new set.
 		await this.deleteTuples(await this.existingFor(`user:${userId}`, `org:${orgId}`));
 		await this.writeTuples(tuples);
+		// And their membership of the org's teams, from `team_member`: `revokeMemberGrant` deletes
+		// those tuples, so a member granted again (reactivation) gets them back here.
+		const teams = await this.core.db.execute<{ team_id: string }>(sql`
+			select tm.team_id from team_member tm
+			join team t on t.id = tm.team_id
+			where tm.user_id = ${userId} and t.organization_id = ${orgId}
+		`);
+		await this.writeTuples(
+			teams.map((t) => this.core.fga.teamMemberTuple(t.team_id, userId)),
+		);
 	}
 
-	async revokeMemberGrant(_orgId: string, userId: string): Promise<void> {
-		// Remove every tuple where this user is the subject (org-wide + any scoped). This one is
-		// filtered by SUBJECT ALONE, across every object in the store, so it is the call here most
-		// certain to exceed a page: a member with an org-wide role plus scoped grants on a few
-		// projects clears 50 tuples without being remarkable. It walks the pages for that reason.
-		await this.deleteTuples(await readAllTuples(this.client, { user: `user:${userId}` }));
+	/**
+	 * Removes the user's tuples IN THIS ORG — org-wide, scoped and team membership — and none in any
+	 * other org (#5472); see `memberTuplesInOrg` for how the org's objects are found. Postgres's
+	 * `revokeMemberGrant` deletes the matching grant rows; the team tuples go too because a team
+	 * tuple is what lets FGA resolve a team grant, and `syncMemberGrant` writes them back.
+	 */
+	async revokeMemberGrant(orgId: string, userId: string): Promise<void> {
+		const teams = await this.core.db.execute<{ id: string }>(
+			sql`select id from team where organization_id = ${orgId}`,
+		);
+		await this.deleteTuples(
+			await memberTuplesInOrg(this.client, orgId, userId, {
+				instanceTypes: this.core.fga.instanceTypes,
+				orgResourceIds: (type) => this.core.fga.listOrgResourceIds(type, orgId),
+				teamIds: teams.map((t) => t.id),
+			}),
+		);
 	}
 
 	async syncScopedGrant(grant: ScopedGrant): Promise<void> {
@@ -283,7 +379,15 @@ export class FgaTupleSync implements TupleSync {
 		await this.deleteTuples([this.core.fga.hierarchyTuple(edge)]);
 	}
 
+	/**
+	 * Writes the `team:<teamId>#member@user:<userId>` tuple, but only for a user who is an ACTIVE
+	 * member of the team's org (#5484). better-auth adds a SUSPENDED member to a team without reading
+	 * their status, and OpenFGA's instance checks are not bound to an org, so the tuple alone would
+	 * carry the team's grants to them. `syncMemberGrant` writes the org's team tuples back when the
+	 * member is reactivated.
+	 */
 	async syncTeamMember(teamId: string, userId: string): Promise<void> {
+		if (!(await isActiveTeamOrgMember(this.core.db, teamId, userId))) return;
 		await this.writeTuples([this.core.fga.teamMemberTuple(teamId, userId)]);
 	}
 

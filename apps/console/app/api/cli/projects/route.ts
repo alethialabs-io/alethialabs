@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { authorizeCli } from "@/lib/authz/guard";
+import { authorizeCli, userIdIsTheCaller } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
+import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { environmentStage, placementMode } from "@/lib/db/schema/enums";
 import { insertProjectWithDefaultFabric } from "@/lib/queries/projects";
 import { NextResponse } from "next/server";
@@ -117,7 +117,17 @@ export async function POST(req: Request) {
 			const [ci] = await db
 				.select({ id: cloudIdentities.id, provider: cloudIdentities.provider })
 				.from(cloudIdentities)
-				.where(eq(cloudIdentities.id, body.cloud_identity_id))
+				// By id AND the identity RLS policy's tenancy (#5479, #5481): an `org` identity of
+				// this org, or — for a session — the caller's own `personal` one. Matching `org_id`
+				// alone admitted another member's personal identity, which carries the org it was
+				// created in.
+				.where(
+					actorIdentityWhere(
+						body.cloud_identity_id,
+						actor.orgId,
+						userIdIsTheCaller(auth.credential) ? actor.userId : undefined,
+					),
+				)
 				.limit(1);
 			if (!ci) {
 				return NextResponse.json(

@@ -17,6 +17,8 @@ import type { CoreContext, EnterpriseModule } from "@/lib/enterprise";
 import { FgaTupleSync } from "./fga-tuple-sync";
 import { resolveInstanceLicense } from "./license";
 import { OpenFgaPdp } from "./openfga-pdp";
+import { newOrgSetupHooks } from "./new-org-setup-hooks";
+import { orgSlugHooks } from "./org-slug-hooks";
 import { resolveActiveScope } from "./scope";
 
 /** One OpenFGA client when configured (shared by the engine + the dual-write writer). */
@@ -66,6 +68,8 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
   core,
 ) => {
   const fgaClient = buildFgaClient(core);
+  const slugHooks = orgSlugHooks(core.reservedOrgSlugRefusal, core.orgSlugShapeRefusal);
+  const setupHooks = newOrgSetupHooks(core.newOrgSetup);
   const tupleSync = fgaClient ? new FgaTupleSync(core, fgaClient) : undefined;
 
   // Resolve + log the instance license once at boot (fire-and-forget — never blocks or crashes
@@ -122,10 +126,76 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
         // Sync org membership → PDP grants on every lifecycle event, so the PDP
         // (which authorizes from grants, not member.role) actually grants access.
         organizationHooks: {
+          // A slug a console route / the marketing zone / a sibling app owns (#5445), or one that
+          // breaks the org-slug shape every form checks (#5509), is refused HERE, in the endpoint,
+          // so a request that skips the console's forms is refused too.
+          beforeUpdateOrganization: async (data) => {
+            await slugHooks.beforeUpdateOrganization(data);
+            return setupHooks.beforeUpdateOrganization(data);
+          },
+          // The reserved-slug and slug-shape refusals first; then the paid create-a-team marker is kept only for the
+          // user who owns that charge's setup record, and stamped with them (#5445).
+          beforeCreateOrganization: async (data) => {
+            await slugHooks.beforeCreateOrganization(data);
+            return setupHooks.beforeCreateOrganization(data);
+          },
+          // An invitation accepted by someone who is ALREADY in the team is refused with a reason
+          // (#5445). better-auth's accept does not check, and `member` is unique on (organization,
+          // user) — so the insert failed with a raw unique violation the person saw only as an
+          // unexplained error. Before the index it inserted a second row: a second billable seat.
+          //
+          // An invitation whose inviter is no longer an active member of the org is refused too
+          // (#5472): better-auth's accept does not re-check the inviter, so an admin who invited a
+          // second account they control and was then suspended or removed still got it in at the
+          // role they chose. This holds for every invitation that is accepted through better-auth,
+          // including the ones `POST /api/cli/orgs/:id/members` and `provisionOrg` insert directly.
+          //
+          // A member whose row is NOT active (suspended) is refused with that reason instead (#5463):
+          // "already a member, nothing to accept" told them they were in when they are locked out,
+          // and an invitation does not reactivate a membership — reactivating is an admin's action.
+          beforeAcceptInvitation: async ({ invitation, user }) => {
+            if (await core.isOrgMember(invitation.organizationId, user.id)) {
+              if (await core.isNonActiveMember(invitation.organizationId, user.id)) {
+                throw new APIError("FORBIDDEN", {
+                  code: "MEMBER_NOT_ACTIVE",
+                  message:
+                    "Your membership in this team is not active, and an invitation can't reactivate it. Ask a team admin to reactivate your membership.",
+                });
+              }
+              throw new APIError("BAD_REQUEST", {
+                code: "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION",
+                message: "You're already a member of this team, so there is nothing to accept.",
+              });
+            }
+            const refusal = await core.inviterRefusal(
+              invitation.organizationId,
+              invitation.inviterId,
+            );
+            if (refusal) {
+              throw new APIError("FORBIDDEN", { code: "INVITER_NOT_ACTIVE", message: refusal });
+            }
+          },
           // Pay-to-collaborate: a card-less Pro trial is solo. Block invites until
           // the org is on a paid (or card-backed) subscription — enforced here so
           // it holds regardless of the client (the UI shows the upsell separately).
-          beforeCreateInvitation: async ({ invitation }) => {
+          //
+          // An inviter whose membership is not active is refused too (#5472): better-auth
+          // authorizes an invitation from `member.role` alone, so a suspended admin could invite a
+          // second account they control and `afterAcceptInvitation` granted it as an active admin.
+          // The auth route refuses this before better-auth runs; this hook holds it inside
+          // better-auth's create-invitation endpoint, whichever HTTP route reached that endpoint.
+          // It does NOT see an invitation row written outside better-auth: `POST
+          // /api/cli/orgs/:id/members` inserts one directly, and is authorized by `authorizeCliOrg`
+          // (an ACTIVE member row and the route's permission in the path org, #5480) and by the PDP,
+          // which denies a member who is not active. `beforeAcceptInvitation` re-checks the inviter
+          // of every invitation at acceptance, whichever path wrote it.
+          beforeCreateInvitation: async ({ invitation, inviter }) => {
+            if (await core.isNonActiveMember(invitation.organizationId, inviter.id)) {
+              throw new APIError("FORBIDDEN", {
+                code: "MEMBER_NOT_ACTIVE",
+                message: "Your membership in this team is not active, so you can't invite.",
+              });
+            }
             if (!(await core.canOrgInvite(invitation.organizationId))) {
               throw new APIError("FORBIDDEN", {
                 message:
@@ -142,8 +212,9 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
               });
             }
           },
-          afterCreateOrganization: async ({ organization: org, user }) => {
-            await core.ensureMemberGrant(org.id, user.id, "owner");
+          afterCreateOrganization: async (data) => {
+            await core.ensureMemberGrant(data.organization.id, data.user.id, "owner");
+            await setupHooks.afterCreateOrganization(data);
           },
           afterAddMember: async ({ organization: org, user, member }) => {
             await core.ensureMemberGrant(org.id, user.id, member.role);
@@ -198,6 +269,21 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
               resource_id: user.id,
             });
           },
+          // A role change that would leave the org with no ACTIVE owner is refused (#5465), and so
+          // is one that makes a suspended member an owner (#5472). better-auth refuses only an
+          // owner demoting themselves as the last member whose role contains `owner`, and it
+          // counts suspended owners; core's rule counts active ones.
+          beforeUpdateMemberRole: async ({ member, newRole, organization: org }) => {
+            const refusal = await core.roleChangeOwnerRefusal(org.id, member.id, newRole);
+            if (refusal) {
+              throw new APIError("BAD_REQUEST", {
+                code: "ORGANIZATION_NEEDS_AN_ACTIVE_OWNER",
+                message: refusal,
+              });
+            }
+          },
+          // ensureMemberGrant writes no grant for a member who is not active (#5465), so
+          // promoting a suspended member changes their stored role and nothing they can reach.
           afterUpdateMemberRole: async ({
             organization: org,
             user,
@@ -214,6 +300,18 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
                 id: user.id,
               },
             );
+          },
+          // A removal that would leave the org with no ACTIVE owner is refused (#5472).
+          // better-auth refuses removing an owner only when no other member's role contains
+          // `owner`, and it counts suspended owners.
+          beforeRemoveMember: async ({ member, organization: org }) => {
+            const refusal = await core.removalOwnerRefusal(org.id, member.id);
+            if (refusal) {
+              throw new APIError("BAD_REQUEST", {
+                code: "ORGANIZATION_NEEDS_AN_ACTIVE_OWNER",
+                message: refusal,
+              });
+            }
           },
           afterRemoveMember: async ({ organization: org, user }) => {
             await core.revokeMemberGrant(org.id, user.id);

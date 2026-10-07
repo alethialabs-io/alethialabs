@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Does every {fixme} in the release gate's ledger still cite an OPEN issue? (#5410, epic #4264)
+#
+# The ratchet (scripts/e2e-ratchet.mjs) keeps a `{fixme}` in apps/console/e2e/gate-baseline.json
+# SKIPPED, so a bug fixed behind one can never show as passing — the issue number is the only thing
+# that can say the skip is over, and nothing compared it with the issue's state.
+# scripts/check-gate-fixme-issues.mjs asks; this runs it daily.
+#
+# When this was written (origin/dev @ 95a82e64b, 2026-10-03) all four fixmes in the ledger cited
+# closed issues (#4633 ×3, #4612 ×1). Those entries have since been moved: on origin/dev @ 214d3e4b3
+# (2026-10-04) the ledger carries no {fixme}, and the check says so in its own words rather than
+# reporting green as if it had checked something. This workflow never edits the ledger.
+#
+# THREE OUTCOMES, all on the job's colour:
+#   0  every cited issue is OPEN (or there is no fixme, stated as such) → green
+#   1  a fixme cites a CLOSED issue, named with project, spec, test and issue → red
+#   2  the instrument could not answer (unreadable state, unparseable fixme, unreadable ledger) → red.
+#      "I did not check" must never render as "fine".
+#
+# THIS WORKFLOW has no pull_request trigger, but the check DOES run on PRs: the release gate's
+# `Gate ledger` job (.github/workflows/release-gate.yml, #5417) runs the same script on every
+# non-draft PR. There `--self-test` always runs; the live check runs unconditionally on a PR into
+# main or staging and on a dispatch, and on a PR into dev only when the PR changes
+# apps/console/e2e/gate-baseline.json, scripts/check-gate-fixme-issues.mjs or scripts/e2e-ratchet.mjs
+# — an issue closing is a state change in GitHub, not in the diff, so asking on every dev PR would
+# red PRs that touched nothing. That job is not a required check.
+#
+# WARNING: the daily schedule runs only once this workflow is on `main`. `schedule:` fires the
+# DEFAULT branch's copy of this file and of the script and ledger it reads, so until this has ridden
+# dev → staging → main it runs on no schedule at all, and afterwards it measures main's ledger.
+# `workflow_dispatch` against a branch exercises it before then.
+
+name: Gate fixme currency
+
+on:
+  schedule:
+    - cron: "23 5 * * *" # daily, 05:23 UTC (off the hour)
+  workflow_dispatch:
+
+# `issues: read` is the one scope the check needs: `gh issue view --json state`. The workflow-level
+# block makes every unlisted scope NONE.
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: gate-fixme-currency
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Every gate {fixme} cites an OPEN issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # The instrument's own proof first, hermetic: fixtures plus the OPEN → CLOSED mutation control.
+      - name: Self-test the fixme currency check
+        run: node scripts/check-gate-fixme-issues.mjs --self-test
+      - name: Every {fixme} in gate-baseline.json cites an OPEN issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-gate-fixme-issues.mjs

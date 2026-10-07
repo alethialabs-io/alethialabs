@@ -84,8 +84,12 @@ resource "azurerm_user_assigned_identity" "aks" {
 #
 # "Crypto Officer" rather than "Crypto User" because this identity CREATES the key; the cluster
 # identity below keeps the narrower "Crypto User", which is all it needs to wrap/unwrap.
+#
+# Also the grant that lets the storage CMEK key (storage-account.tf) be created. One assignment
+# serves both: Azure rejects a second identical (scope, role, principal) with 409
+# RoleAssignmentExists, so two count-gated copies would fail whenever both features are on.
 resource "azurerm_role_assignment" "provisioner_crypto_officer" {
-  count = local.azure_secrets_encryption ? 1 : 0
+  count = local.azure_secrets_encryption || local.storage_cmek ? 1 : 0
 
   scope                = module.key_vault.vault_id
   role_definition_name = "Key Vault Crypto Officer"

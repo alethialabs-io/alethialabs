@@ -178,7 +178,7 @@ controls:
     route: /[org]/[project]/architecture
     surface: apps/console/components/design-project/canvas/cards/env-settings-card.tsx
     mutation_surface: apps/console/components/design-project/canvas/design-project-canvas.tsx
-    mutation: destroyProject
+    mutation: tryDestroyProject
     # The ⋯ menu's button is named "More" (`aria-label`); its item docks the Environment settings
     # card on the rail, which holds the danger zone (#4775 — it used to sit on the project node's
     # inspector, and the project node is not rendered on the board).
@@ -196,7 +196,7 @@ controls:
   # (#5261). Clicking it reads `getDestroyTree` first, so the dialog it opens is a different one: it
   # lists every environment the cascade takes, tenants first and the owner last, and its two buttons
   # are "Destroy children first" (the way out — it cancels and explains the order) and "Destroy all
-  # <n> environments" (`destroyProject` with `cascade: true`, disabled until the project name is
+  # <n> environments" (`tryDestroyProject` with `cascade: true`, disabled until the project name is
   # typed). There is no button named Cancel, so `cancel_action` names the way out for the spec.
   - id: env.destroy.cascade
     route: /[org]/[project]/architecture
@@ -204,7 +204,7 @@ controls:
     # canvas/cards/destroy-environment-dialog.tsx.
     surface: apps/console/components/design-project/canvas/cards/env-settings-card.tsx
     mutation_surface: apps/console/components/design-project/canvas/design-project-canvas.tsx
-    mutation: destroyProject
+    mutation: tryDestroyProject
     reach: [{ menu: "More" }, { open: "Environment settings" }, { section: "Destroy environment" }]
     control: { role: button, name: "Destroy" }
     confirm: confirm-dialog

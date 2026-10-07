@@ -37,7 +37,7 @@ import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { safeNext } from "@/lib/auth/safe-next";
 import type { PrimaryOrg } from "@/lib/auth/onboarding";
 import { orgHost } from "@/lib/org-url";
-import { slugifyOrEmpty } from "@/lib/utils/slugify";
+import { finishSlugDraft, slugifyDraft, slugifyOrEmpty } from "@/lib/utils/slugify";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { Button } from "@repo/ui/button";
@@ -95,8 +95,20 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 		if (!nameValid || busy) return;
 		setBusy(true);
 		setSlugError(null);
+		// The field holds a draft while typed (#5453); the finished slug is what is submitted.
+		const finished = finishSlugDraft(slug);
+		if (finished !== slug) setSlug(finished);
 		try {
-			const res = await configureOnboardingOrg({ name, slug });
+			const res = await configureOnboardingOrg({ name, slug: finished });
+			if (!res.ok) {
+				// A refusal the user can fix (name, slug format, reserved, taken) arrives as a value:
+				// a thrown one is redacted to a digest in a production build (#4644, #5415). Open the
+				// URL editor so the slug the sentence is about is right there to change.
+				setSlugError(res.error);
+				setShowUrl(true);
+				setBusy(false);
+				return;
+			}
 			setSlug(res.slug);
 			track("org_created", { plan });
 			if (plan === "community") {
@@ -124,9 +136,9 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 			setCurrency(intent.currency);
 			setBusy(false);
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : "Couldn't create the organization";
-			if (/slug|name|reserved|taken/i.test(msg)) setSlugError(msg);
-			else toast.error(msg);
+			// Only an UNEXPECTED failure lands here; its message may be a production digest, so it
+			// is a toast and never sniffed for a field-level error.
+			toast.error(e instanceof Error ? e.message : "Couldn't create the organization");
 			setBusy(false);
 		}
 	}
@@ -316,13 +328,21 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 							autoComplete="off"
 							onChange={(e) => {
 								setSlugTouched(true);
-								setSlug(slugifyOrEmpty(e.target.value));
+								// A draft, so a hyphen can be typed: `slugifyOrEmpty` trimmed it on every
+								// keystroke, and `acme-` became `acme` before the next letter arrived
+								// (#5453). The dash at the end is trimmed on blur and on submit.
+								setSlug(slugifyDraft(e.target.value));
 								setSlugError(null);
 							}}
+							onBlur={() => setSlug(finishSlugDraft(slug))}
 						/>
 					</div>
 				)}
-				{slugError && <p className="text-ui-xs text-destructive">{slugError}</p>}
+				{slugError && (
+					<p role="alert" className="text-ui-xs text-destructive">
+						{slugError}
+					</p>
+				)}
 			</div>
 
 			{/* Logo (optional) */}

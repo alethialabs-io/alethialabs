@@ -17,6 +17,7 @@
 
 import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
+import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { signedJob } from "@/lib/db/signed-job";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
@@ -32,6 +33,35 @@ import { withActorScope } from "@/lib/db";
 
 /** Jobs the environment is still working through. */
 const IN_FLIGHT = ["QUEUED", "CLAIMED", "PROCESSING"] as const;
+
+/**
+ * What {@link queueClusterProbe} and {@link queueEnvironmentAudit} answer: the queued job, or a
+ * refusal the user can act on, as a VALUE.
+ *
+ * WHY A VALUE (#5454). Both used to THROW "Run a plan first", "never been deployed", "already
+ * running" and the free daily job quota. In a production build Next replaces a message thrown out
+ * of a `"use server"` export with a digest, so the Run menu's toast showed noise where the reason
+ * belonged. The same fix #5445 made for Plan and Detect drift. "Environment not found" and an
+ * authorization failure still throw: neither is something the person at the menu can fix, and an
+ * unexpected error's redaction is the correct behaviour.
+ */
+export type CanvasJobResult =
+	| { ok: true; jobId: string }
+	| { ok: false; error: string };
+
+/**
+ * Runs the free daily job quota check and returns its refusal as a sentence, or null when the job
+ * may queue. Only {@link UsageLimitError} is a refusal; anything else rethrows.
+ */
+async function jobQuotaRefusal(orgId: string): Promise<string | null> {
+	try {
+		await assertJobQuotaAllowed(orgId);
+		return null;
+	} catch (err) {
+		if (err instanceof UsageLimitError) return err.message;
+		throw err;
+	}
+}
 
 /** The environment must belong to a project in the caller's org. */
 async function assertEnvInOrg(
@@ -112,26 +142,34 @@ async function hasInFlight(
  * The scheduled sweeper could already do this; a person could not. Reuses the last successful
  * DEPLOY's snapshot, because the probe reads that environment's state outputs to reach the API
  * server. An environment that was never deployed has nothing to probe.
+ *
+ * A refusal the user can act on is RETURNED (see {@link CanvasJobResult}).
  */
 export async function queueClusterProbe(
 	projectId: string,
 	environmentId: string,
-): Promise<{ jobId: string }> {
+): Promise<CanvasJobResult> {
 	const actor = await authorize("deploy", { type: "project", id: projectId });
 	await assertEnvInOrg(projectId, environmentId, actor.orgId);
 
 	const src = await lastDeploy(projectId, environmentId);
 	if (!src) {
-		throw new Error(
-			"This environment has never been deployed, so there's no cluster to probe.",
-		);
+		return {
+			ok: false,
+			error:
+				"This environment has never been deployed, so there's no cluster to probe.",
+		};
 	}
 	// One probe at a time per environment — the sweeper enforces the same rule, and a queue of
 	// identical probes tells you nothing a single one wouldn't.
 	if (await hasInFlight(projectId, environmentId, "PROBE_CLUSTER")) {
-		throw new Error("A cluster probe is already running for this environment.");
+		return {
+			ok: false,
+			error: "A cluster probe is already running for this environment.",
+		};
 	}
-	await assertJobQuotaAllowed(actor.orgId);
+	const quota = await jobQuotaRefusal(actor.orgId);
+	if (quota) return { ok: false, error: quota };
 
 	const jobId = await withActorScope(actor, async (tx) => {
 		const [job] = await tx
@@ -151,7 +189,7 @@ export async function queueClusterProbe(
 	});
 
 	notifyScaler();
-	return { jobId };
+	return { ok: true, jobId };
 }
 
 /**
@@ -163,11 +201,13 @@ export async function queueClusterProbe(
  *
  * A plan is required, and that's the honest constraint: auditing is a judgement about a concrete
  * set of resources, and without a plan there is nothing concrete to judge.
+ *
+ * A refusal the user can act on is RETURNED (see {@link CanvasJobResult}).
  */
 export async function queueEnvironmentAudit(
 	projectId: string,
 	environmentId: string,
-): Promise<{ jobId: string }> {
+): Promise<CanvasJobResult> {
 	const actor = await authorize("audit", { type: "project", id: projectId });
 	await assertEnvInOrg(projectId, environmentId, actor.orgId);
 
@@ -188,12 +228,19 @@ export async function queueEnvironmentAudit(
 
 	const planResult = plan?.metadata?.plan_result;
 	if (!planResult) {
-		throw new Error("Run a plan first — there's nothing to audit yet.");
+		return {
+			ok: false,
+			error: "Run a plan first — there's nothing to audit yet.",
+		};
 	}
 	if (await hasInFlight(projectId, environmentId, "AUDIT")) {
-		throw new Error("An audit is already running for this environment.");
+		return {
+			ok: false,
+			error: "An audit is already running for this environment.",
+		};
 	}
-	await assertJobQuotaAllowed(actor.orgId);
+	const quota = await jobQuotaRefusal(actor.orgId);
+	if (quota) return { ok: false, error: quota };
 
 	const jobId = await withActorScope(actor, async (tx) => {
 		const [job] = await tx
@@ -218,7 +265,7 @@ export async function queueEnvironmentAudit(
 	});
 
 	notifyScaler();
-	return { jobId };
+	return { ok: true, jobId };
 }
 
 /** One row in the canvas's activity rail. */
