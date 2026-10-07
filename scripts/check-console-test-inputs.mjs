@@ -81,6 +81,10 @@
 //   * A path that does not exist on disk (a fixture a test writes, an `existsSync` probe) — there is
 //     nothing to hash yet.
 //   * Non-test files of apps/console that no test imports.
+//   * A directory listing whose directory is reached only through a dynamic path — e.g.
+//     gen-go-vocab.test.ts lists the top-level `packages/` (and walks apps/) by a binding the
+//     evaluator cannot fold, so which entries exist there is not in the cache key. Pre-existing,
+//     and of the same class as the dynamic reads above.
 //
 // It fails CLOSED when it derives no out-of-package read at all, or cannot read turbo's answer:
 // either the suite stopped reading outside files (then this guard and the entries are both dead

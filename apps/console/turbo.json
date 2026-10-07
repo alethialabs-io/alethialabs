@@ -6,9 +6,13 @@
 		// the infra templates, the deploy workflow, the e2e fixtures, a docs/legal page. turbo's
 		// default inputs are this package's files only, so a PR that edits only one of those got a
 		// cache hit and CI replayed the old green log without running the guard (#5629, #5638).
-		// Every path below is one a console test reads; `pnpm check:console-test-inputs` DERIVES
-		// that set from the test sources and fails when a read is missing here, or when a line here
-		// is read by nothing. Add what it names; do not curate this by hand.
+		// Every path below is one a console test MAY read, as `pnpm check:console-test-inputs`
+		// derives it by static analysis of the test sources and the modules they import. It fails
+		// when a derived read is missing here, or when a line here matches no derived read. The
+		// derivation over-approximates: it takes whole modules, so some entries are never opened at
+		// runtime (brand_gen.go / vocab_gen.go are generator OUTPUT paths; check-destructive-actions
+		// and check-shared-surface are named as paths but not read). An extra entry costs a cache
+		// miss; a missing one costs a replayed green. Add what it names; do not curate this by hand.
 		//
 		// NOT `$TURBO_EXTENDS$`, on purpose: that would carry the root's `!**/*.md` / `!**/*.mdx`,
 		// and turbo lets that negation win over an explicit in-package path (measured on 2.11.7:

@@ -150,14 +150,19 @@ function tasksOf(cfg) {
 const rootTasks = tasksOf(readTurbo("turbo.json"));
 
 /**
- * Whether `<dir>`'s `test` task depends on `^build`. A package-level turbo.json that sets
- * `test.dependsOn` REPLACES the root's (turbo merges task definitions field by field), so the root
- * alone is the wrong answer for a package that overrides it — apps/console has had its own
- * turbo.json since #5635, overriding `test.inputs` only (#5638).
+ * Whether `<dir>`'s `test` task depends on `^build`. turbo merges task definitions field by field:
+ * a package-level turbo.json that sets `test.dependsOn` REPLACES the root's, unless the list carries
+ * `$TURBO_EXTENDS$`, which keeps the root's entries and appends the package's. So the root alone is
+ * the wrong answer for a package that overrides it — apps/console has had its own turbo.json since
+ * #5635, overriding `test.inputs` only (#5638). Boundary: one level of `extends` (the package over
+ * the root `//`); a package extending another package is not followed.
  */
 function testDependsOnBuild(dir) {
+	const root = (rootTasks.test || {}).dependsOn ?? [];
 	const own = (tasksOf(readTurbo(path.join(dir, "turbo.json"))).test || {}).dependsOn;
-	return (own ?? (rootTasks.test || {}).dependsOn ?? []).includes("^build");
+	if (own === undefined) return root.includes("^build");
+	const effective = own.includes("$TURBO_EXTENDS$") ? [...root, ...own.filter((d) => d !== "$TURBO_EXTENDS$")] : own;
+	return effective.includes("^build");
 }
 
 /** Workspace package directories, from pnpm-workspace.yaml's globs (one level deep, as used here). */
