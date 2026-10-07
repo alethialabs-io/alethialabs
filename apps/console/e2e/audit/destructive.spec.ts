@@ -953,6 +953,72 @@ async function awaitNewOverlay(page: Page, seen: JSHandle<Element[]>, timeout = 
 		.catch(() => false);
 }
 
+/** Everything the spec treats as a confirmation dialog — one selector, so the snapshot and the lookup cannot disagree. */
+const DIALOG_SELECTOR = '[data-slot="alert-dialog-content"], [role="alertdialog"], [role="dialog"]';
+
+/** The confirmation-dialog candidates visible right now, as element handles — the "before" a trigger click is compared against. */
+async function visibleDialogs(page: Page): Promise<JSHandle<Element[]>> {
+	return page.evaluateHandle((sel) => {
+		const shown = (el: Element): boolean => {
+			const box = el.getBoundingClientRect();
+			return box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden";
+		};
+		return [...document.querySelectorAll(sel)].filter(shown);
+	}, DIALOG_SELECTOR);
+}
+
+/**
+ * The dialog the trigger click OPENED, pinned — or null when the click opened none.
+ *
+ * ── WHY (#5640) ─────────────────────────────────────────────────────────────────────────────────
+ *
+ * The lookup used to be `page.locator(DIALOG_SELECTOR).first()`, and a selector list resolves in
+ * DOCUMENT order, not in the order the selectors are written. `agent.thread.delete`'s trigger sits
+ * in the thread rail INSIDE the assistant modal (`role="dialog"`), and the confirmation it opens is
+ * a portal appended after it. So `.first()` was the modal: the run reached the control, the click
+ * opened "Delete Audit chat?", and the spec then looked for "Delete chat" inside the HOST — which
+ * is `aria-hidden` while the confirmation is up — and failed with no verdict recorded (run
+ * 37678527100).
+ *
+ * The same `.first()` also made "a dialog appeared" TRUE BEFORE THE CLICK whenever the reach chain
+ * left a dialog open (`account.delete`, `teams.member.remove`, `env.destroy`, `addons.remove`, and
+ * now `agent.thread.delete`): a trigger inside a dialog whose click opened nothing would have read
+ * as confirmed. So the old lookup is NOT kept as a fallback. No new dialog means none appeared.
+ *
+ * ── WHAT IT ASKS ────────────────────────────────────────────────────────────────────────────────
+ *
+ * Is a dialog visible that was not one of `before`? IDENTITY, as {@link awaitNewOverlay} asks it.
+ * The LAST new one in document order wins, because a nested confirmation is appended after its
+ * host. It is pinned by id via {@link pinDialog}, and by a marker attribute when it has no id.
+ *
+ * ⚠ A confirmation that re-renders INSIDE its host element (same node, new content) is not new by
+ * identity, so it reads as "none appeared" — a mismatch, loud, never a silent pass. None of the
+ * registry's confirmations has that shape today: each is its own `ConfirmDialog` / dialog root.
+ */
+async function confirmationDialog(page: Page, before: JSHandle<Element[]>): Promise<Locator | null> {
+	const found = await page.evaluate(
+		({ sel, seen, mark }) => {
+			const shown = (el: Element): boolean => {
+				const box = el.getBoundingClientRect();
+				return box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden";
+			};
+			document.querySelectorAll(`[${mark}]`).forEach((el) => el.removeAttribute(mark));
+			const fresh = [...document.querySelectorAll(sel)].filter((el) => shown(el) && !seen.includes(el));
+			const last = fresh[fresh.length - 1];
+			if (!last) return false;
+			// Marked rather than addressed by index: an index into the selector list moves when the host
+			// re-opens after Cancel (`manage-team-dialog.tsx` closes while its confirmation is up).
+			last.setAttribute(mark, "");
+			return true;
+		},
+		{ sel: DIALOG_SELECTOR, seen: before, mark: CONFIRMATION_MARK },
+	);
+	return found ? pinDialog(page, page.locator(`[${CONFIRMATION_MARK}]`)) : null;
+}
+
+/** The attribute {@link confirmationDialog} puts on the dialog it chose, so the choice survives DOM changes. */
+const CONFIRMATION_MARK = "data-destructive-audit-confirmation";
+
 /**
  * Measure a `confirm: undo` control: the click has already fired, so press the entry's undo chord
  * and check that the thing it removed is back.
@@ -1306,11 +1372,18 @@ for (const entry of CONTROLS) {
 		}
 		const watch = watchMutations(page);
 
+		// The dialogs already up BEFORE the click — so the confirmation can be told from the surface
+		// the trigger lives in (#5640: the thread rail is inside the assistant modal).
+		const dialogsBefore = await visibleDialogs(page);
 		await trigger.click();
 		await page.waitForTimeout(500);
 
-		const dialog = page.locator('[data-slot="alert-dialog-content"], [role="alertdialog"], [role="dialog"]').first();
-		const dialogAppeared = await dialog.isVisible().catch(() => false);
+		// A dialog APPEARED only if the click opened one: a dialog already up (the modal or sheet the
+		// reach chain left open) is the trigger's host, not its confirmation. `dialog` is never read
+		// when nothing appeared — every branch below checks `dialogAppeared` first.
+		const opened = await confirmationDialog(page, dialogsBefore).finally(() => dialogsBefore.dispose().catch(() => {}));
+		const dialogAppeared = opened !== null;
+		const dialog = opened ?? page.locator(DIALOG_SELECTOR).first();
 
 		const expectsDialog = entry.confirm === "alert-dialog" || entry.confirm === "confirm-dialog";
 		let observed: Observed;
@@ -1342,8 +1415,8 @@ for (const entry of CONTROLS) {
 				})
 				.first();
 			await expect(cancel, `${entry.id}: a confirmation with no way out is worse than none`).toBeVisible();
-			// Pinned BEFORE the click: `dialog` is a lazy `.first()` over every dialog on the page,
-			// re-resolved on each poll, so after Cancel it can bind to a DIFFERENT dialog.
+			// Pinned BEFORE the click, so after Cancel it cannot re-resolve to a DIFFERENT dialog.
+			// `confirmationDialog` already pinned it by id; pinning twice is a no-op.
 			const confirmation = await pinDialog(page, dialog);
 			await cancel.click();
 			await expect(confirmation, `${entry.id}: Cancel should close the dialog`).toBeHidden({ timeout: 5_000 });
@@ -1810,6 +1883,42 @@ test("self-test — an overlay that REPLACES another counts as opened, by identi
 	await again.dispose();
 });
 
+test("self-test — a confirmation NESTED over the dialog holding its trigger is the one measured, not the host", async ({ page }) => {
+	// #5640's shape: the trigger lives inside a modal, and its confirmation is a portal appended after.
+	await page.setContent(`
+		<div role="dialog" aria-label="Host"><button id="t">Delete chat Audit chat</button></div>
+		<script>
+			document.getElementById("t").addEventListener("click", () => {
+				const d = document.createElement("div");
+				d.setAttribute("role", "alertdialog");
+				d.id = "confirm";
+				d.innerHTML = "<h2>Delete Audit chat?</h2><button>Cancel</button><button>Delete chat</button>";
+				document.body.appendChild(d);
+			});
+		</script>`);
+	const before = await visibleDialogs(page);
+	await page.locator("#t").click();
+	const dialog = await confirmationDialog(page, before);
+	await before.dispose();
+	expect(dialog, "the click opened a confirmation, so one must be found").not.toBeNull();
+	await expect(dialog ?? page.locator("#none")).toHaveAttribute("id", "confirm");
+	await expect((dialog ?? page.locator("#none")).getByRole("button", { name: /^Delete chat$/ })).toBeVisible();
+	// The hazard it replaces: document order puts the HOST first.
+	await expect(page.locator(DIALOG_SELECTOR).first()).toHaveAttribute("aria-label", "Host");
+});
+
+test("self-test — a trigger INSIDE an open dialog whose click opens nothing has NO confirmation", async ({ page }) => {
+	// The old lookup answered "a dialog appeared" from the HOST, before the click had done anything.
+	await page.setContent(`<div role="dialog" aria-label="Host"><button>Delete</button></div>`);
+	const before = await visibleDialogs(page);
+	await page.getByRole("button", { name: "Delete" }).click();
+	const dialog = await confirmationDialog(page, before);
+	await before.dispose();
+	expect(dialog, "the host dialog was up before the click; it is not this control's confirmation").toBeNull();
+	// What the old `.first().isVisible()` read here — the false "confirmed" this replaces.
+	expect(await page.locator(DIALOG_SELECTOR).first().isVisible()).toBe(true);
+});
+
 test("self-test — a reached control withheld as NOT RENDERED attaches its evidence", async ({ page }, testInfo) => {
 	// #5631's second half. Every reach step succeeds, the trigger count is 0, and the verdict is
 	// withheld — a withhold fails no test, so before this the run kept nothing about what rendered.
@@ -2177,8 +2286,10 @@ test("self-test — a control mounted only by the assistant MODAL reaches throug
 	// The modal shows the rail only at `lg` and wider (`hidden … lg:flex`). Below that, no reach
 	// step can render it — so the project this suite runs in must be at least that wide.
 	if (/\bhidden\b[^"]*\blg:flex\b/.test(modalSrc)) {
-		const width = test.info().project.use.viewport?.width ?? 1280;
-		expect(width, "the thread rail is `hidden … lg:flex`; a viewport under 1024px cannot render it").toBeGreaterThanOrEqual(1024);
+		// No fallback width: a project with no declared viewport is a finding here, not a 1280 assumed.
+		const width = test.info().project.use.viewport?.width;
+		expect(width, "the project declares no viewport, so whether the `lg:flex` rail can render is unknown").toBeDefined();
+		expect(width ?? 0, "the thread rail is `hidden … lg:flex`; a viewport under 1024px cannot render it").toBeGreaterThanOrEqual(1024);
 	}
 });
 

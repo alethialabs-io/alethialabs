@@ -907,8 +907,8 @@ controls:
     mutation_surface: apps/console/components/agent/elench/use-elench-threads.ts
     mutation: deleteThread
     # TWO steps, because "Ask AI" opens the docked PANEL (`ask-ai-button.tsx` → `togglePanel` →
-    # `view: "panel"`), and the panel mounts no thread rail: its only conversation control is the
-    # switcher, which can select a chat and start one but not delete one. `ThreadRail` is imported
+    # `view: "panel"`), and the panel mounts no thread rail: its conversation controls are the
+    # switcher (select a chat, start one) and "New conversation" — neither deletes. `ThreadRail` is imported
     # by `elench-modal.tsx` alone, so the rail — and this control — exists only after the panel's
     # "Expand to full screen" (`elench-panel.tsx`, `onClick={maximize}` → `view: "modal"`). The
     # modal then shows the rail when `railOpen` (true by default) AND the viewport is `lg` or wider
