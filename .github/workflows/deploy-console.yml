@@ -1550,8 +1550,8 @@ jobs:
       # What the issue says production is running comes from `needs.deploy.result` (#5643): a red
       # smoke after a GREEN deploy is a live release with a failing check, not a commit production
       # never received, and it is filed under its own title so the two never update each other's
-      # issue. The case table, and the self-test that pins it, live in the script. Both results
-      # must be DIRECT needs above — the `needs` context carries nothing transitive.
+      # issue. The case table, and the self-test that pins it, live in the script. `changes`,
+      # `deploy` and `smoke` must be DIRECT needs above — the `needs` context carries nothing transitive.
       - name: Open or update the deploy-broken issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1561,4 +1561,7 @@ jobs:
           SHA: ${{ github.sha }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
           SMOKE_RESULT: ${{ needs.smoke.result }}
+          # "true" only when the console was rebuilt in this run — the one case where `deploy`'s
+          # provenance check proved the live console IS this commit. Otherwise it is a retag.
+          APPS_BUILD: ${{ needs.changes.outputs.apps_build }}
         run: node scripts/deploy-failure-report.mjs

@@ -23,11 +23,19 @@
 //                                 untouched: `deploy` can fail AFTER `docker compose up -d` (the
 //                                 provenance check, the Caddy reload, the served-URL poll), so what
 //                                 the box runs depends on where it stopped. The body says so.
-//   deploy success              → SMOKE. `deploy` read `ALETHIA_SOURCE_COMMIT` off the running console
-//                                 container and saw the public URL answer, so the release IS live.
-//                                 The body names the smoke's result and its failing assertions.
+//   deploy success, smoke failure
+//                               → SMOKE. The body names the smoke's failing assertions. What it says is
+//                                 LIVE depends on `needs.changes.outputs.apps_build`: "true" means the
+//                                 console was rebuilt and `deploy`'s provenance check matched it to
+//                                 this SHA, so production IS running this commit. Anything else is a
+//                                 RETAG of an earlier build that nothing in the run proved equivalent,
+//                                 and the body says exactly that.
+//   deploy success, smoke anything else (cancelled, skipped, success — a run cancelled after the
+//   deploy, or a smoke job that timed out)
+//                               → SMOKE_INCOMPLETE. Same "what is live" sentence; the smoke never went
+//                                 red, so the body says the run tells you nothing about the release.
 //
-// The two kinds carry DIFFERENT titles and dedupe separately: a smoke-only red never comments on an
+// The three kinds carry DIFFERENT titles and dedupe separately: a smoke-only red never comments on an
 // open "not receiving new code" issue, nor the reverse. NOT_DEPLOYED keeps the exact title the inline
 // script used, so an issue already open under it keeps being updated rather than duplicated.
 //
@@ -48,7 +56,11 @@ export const TITLE_NOT_DEPLOYED =
 
 /** The title of a red run whose deploy succeeded and whose post-deploy smoke did not pass. */
 export const TITLE_SMOKE =
-	"prod: the post-deploy smoke is red on main — production IS running the deployed commit";
+	"prod: the post-deploy smoke is red on main — the deploy itself succeeded";
+
+/** The title of a run whose deploy succeeded and whose smoke did not complete (cancelled or skipped). */
+export const TITLE_SMOKE_INCOMPLETE =
+	"prod: Deploy Console deployed main but the post-deploy smoke did not complete";
 
 /** The `needs.<job>.result` values GitHub Actions can produce. */
 const RESULTS = ["success", "failure", "cancelled", "skipped"];
@@ -87,13 +99,15 @@ function renderJobs(jobs) {
  * @param {object} input
  * @param {string} input.deployResult `needs.deploy.result`
  * @param {string} input.smokeResult `needs.smoke.result`
+ * @param {string} input.appsBuild `needs.changes.outputs.apps_build` — "true" only when the apps
+ *   group (console included) was rebuilt in this run
  * @param {string} input.sha the commit the run deployed (`github.sha`)
  * @param {string} input.runUrl
  * @param {{name: string, conclusion: string, errors: string[]}[]} input.failingJobs
- * @returns {{kind: "not-deployed" | "smoke", title: string, body: string}}
+ * @returns {{kind: "not-deployed" | "smoke" | "smoke-incomplete", title: string, body: string}}
  * @throws on a result value Actions cannot produce — an unread input is not a case to guess at.
  */
-export function composeReport({ deployResult, smokeResult, sha, runUrl, failingJobs }) {
+export function composeReport({ deployResult, smokeResult, appsBuild, sha, runUrl, failingJobs }) {
 	for (const [k, v] of [
 		["deploy", deployResult],
 		["smoke", smokeResult],
@@ -108,22 +122,64 @@ export function composeReport({ deployResult, smokeResult, sha, runUrl, failingJ
 	const jobs = renderJobs(failingJobs);
 
 	if (deployResult === "success") {
+		// WHICH console is live. Only an apps REBUILD lets this say "this commit": then `deploy`'s
+		// provenance check compared the running container's ALETHIA_SOURCE_COMMIT to the SHA and
+		// would have failed on a mismatch. On a retag NOTHING asserted equivalence: `deploy` checks the
+		// provenance is non-empty only, `retag-unchanged`'s stale_check has two `::warning::… retagging
+		// anyway` paths that skip its diff, and SMOKE_EXPECTED_SHA is empty so the smoke's build-id
+		// check is off. Anything but the literal "true" is read as a retag — the claim that needs
+		// proof is the one that must not be made by default.
+		const rebuilt = appsBuild === "true";
+		const live = rebuilt
+			? "**The `deploy` job succeeded and the console was rebuilt in this run, so production IS running this commit** — " +
+				"`deploy` read `ALETHIA_SOURCE_COMMIT` off the running console container and it matched this SHA. " +
+				"Do not roll back or redeploy on the strength of this issue alone."
+			: "**The `deploy` job succeeded, but the console was NOT rebuilt in this run: production is running a RETAGGED image of an earlier console build.** " +
+				"Nothing in this run asserted equivalence between that build and this commit — `deploy` compares provenance to the SHA only on a rebuild, " +
+				"`retag-unchanged` can retag with a `::warning::` and no equivalence check when the old image carries no usable or known source commit, " +
+				"and the smoke's build-id assertion is off on a retag. Read `retag-unchanged`'s warnings and `deploy`'s " +
+				"`running console carries ALETHIA_SOURCE_COMMIT=` line to see which build is live.";
+		const staleCaveat =
+			"A green run is not sufficient on its own either — `retag-unchanged` can report success while shipping a stale image, " +
+			"so confirm the deployed `ALETHIA_SOURCE_COMMIT` is the commit you expect.";
+
+		if (smokeResult !== "failure") {
+			// A run cancelled after a green deploy (or a smoke that timed out) — `report-failure`
+			// fires on `cancelled()`. The smoke never reported red, so it says nothing about the release.
+			const body = [
+				"`Deploy Console` was deployed from `main` at commit:",
+				sha,
+				"",
+				live,
+				"",
+				`The post-deploy smoke did not complete (\`smoke: ${smokeResult}\`) — the run was cancelled, or the smoke job was. ` +
+					"That is NOT a red smoke: this run says nothing either way about whether the live release is healthy.",
+				"",
+				"Failing or cancelled jobs:",
+				jobs,
+				"",
+				`Run: ${runUrl}`,
+				"",
+				"Close this when a `Deploy Console` run on main reaches `smoke: success`, or re-run this run's smoke job and close on its result. " +
+					staleCaveat,
+				"",
+			].join("\n");
+			return { kind: "smoke-incomplete", title: TITLE_SMOKE_INCOMPLETE, body };
+		}
+
 		const smokeJob = failingJobs.find((j) => j.name.startsWith("Post-deploy smoke"));
 		const assertions = smokeJob && smokeJob.errors.length > 0
 			? smokeJob.errors.map((e) => `- ${e.replace(/\s+/g, " ").slice(0, 300)}`).join("\n")
 			: "- (the smoke job emitted no error annotations — read its log, and the `post-deploy-smoke` artifact if it uploaded one)";
 		const body = [
-			"`Deploy Console` deployed `main` at commit:",
+			"`Deploy Console` was deployed from `main` at commit:",
 			sha,
 			"",
-			"**The `deploy` job succeeded, so production IS running this commit. Do not roll back or redeploy on the strength of this issue alone.**",
+			live,
 			"",
-			`What did not pass is the post-deploy smoke (\`smoke: ${smokeResult}\`), which runs after the deploy and checks the public URL from the outside. ` +
-				"`deploy` had already read `ALETHIA_SOURCE_COMMIT` off the running console container and seen the public URL answer 2xx/3xx; " +
-				"the smoke asks more than that, so a red smoke means something about the LIVE release is wrong.",
-			"",
-			"One caveat on \"this commit\": when the console image was re-tagged rather than rebuilt (`retag-unchanged`, a runner-only change), " +
-				"the console container carries the earlier, code-equivalent source commit and only the runner images are new.",
+			"What failed is the post-deploy smoke (`smoke: failure`), which runs after the deploy and checks the public URL from the outside. " +
+				"`deploy` had already seen the public URL answer 2xx/3xx; the smoke asks more than that, so a red smoke means something about what " +
+				"the public URL serves now is wrong.",
 			"",
 			"Failing smoke assertions:",
 			assertions,
@@ -134,7 +190,8 @@ export function composeReport({ deployResult, smokeResult, sha, runUrl, failingJ
 			`Run: ${runUrl}`,
 			"",
 			"Close this when a `Deploy Console` run on main reaches `smoke: success`. If the failing assertion turns out to be a defect in the smoke " +
-				"rather than in the release, fix the smoke and link the fix here before closing.",
+				"rather than in the release, fix the smoke and link the fix here before closing. " +
+				staleCaveat,
 			"",
 		].join("\n");
 		return { kind: "smoke", title: TITLE_SMOKE, body };
@@ -221,7 +278,7 @@ export function failingJobs(gh, repo, runId) {
 export function fileReport(gh, repo, report, bodyFile) {
 	writeFileSync(bodyFile, report.body);
 	const listed = JSON.parse(
-		gh(["issue", "list", "--repo", repo, "--state", "open", "--search", `in:title "${report.title}"`, "--json", "number,title"]) || "[]",
+		gh(["issue", "list", "--repo", repo, "--state", "open", "--search", `in:title "${report.title}"`, "--limit", "100", "--json", "number,title"]) || "[]",
 	);
 	const existing = listed.find((i) => i.title === report.title);
 	if (existing) {
@@ -252,6 +309,9 @@ function live() {
 	const report = composeReport({
 		deployResult: need("DEPLOY_RESULT"),
 		smokeResult: need("SMOKE_RESULT"),
+		// Not `need()`: empty is possible when `changes` did not succeed, and composeReport reads
+		// anything but "true" as the unproven (retag) case.
+		appsBuild: process.env.APPS_BUILD ?? "",
 		sha: need("SHA"),
 		runUrl: need("RUN_URL"),
 		failingJobs: failingJobs(gh, repo, need("RUN_ID")),
@@ -300,7 +360,7 @@ export function wiringProblems(text) {
 		}
 	}
 	const needs = (needsText.match(/\[([^\]]*)\]/)?.[1] ?? "").split(",").map((s) => s.trim());
-	for (const j of ["deploy", "smoke"]) {
+	for (const j of ["changes", "deploy", "smoke"]) {
 		if (!needs.includes(j)) problems.push(`report-failure does not directly need \`${j}\`, so needs.${j}.result is empty`);
 	}
 	if (!/^    if: \$\{\{ \(failure\(\) \|\| cancelled\(\)\) && github\.ref == 'refs\/heads\/main' \}\}$/m.test(src)) {
@@ -309,6 +369,7 @@ export function wiringProblems(text) {
 	for (const want of [
 		"DEPLOY_RESULT: ${{ needs.deploy.result }}",
 		"SMOKE_RESULT: ${{ needs.smoke.result }}",
+		"APPS_BUILD: ${{ needs.changes.outputs.apps_build }}",
 		"run: node scripts/deploy-failure-report.mjs",
 	]) {
 		if (!src.includes(want)) problems.push(`report-failure is missing \`${want}\``);
@@ -342,19 +403,37 @@ function selfTest() {
 	};
 
 	// ── the case table ────────────────────────────────────────────────────────────────────────────
-	// #5620 / run 37618768056: deploy green, only the smoke red. The inline script said production
-	// did NOT receive the commit.
-	const smoke = composeReport({ ...base, deployResult: "success", smokeResult: "failure", failingJobs: [smokeJob] });
+	// #5620 / run 37618768056: deploy green, only the smoke red, console rebuilt (the smoke compared a
+	// build id, so SMOKE_EXPECTED_SHA was set). The inline script said production did NOT receive it.
+	const smoke = composeReport({ ...base, deployResult: "success", smokeResult: "failure", appsBuild: "true", failingJobs: [smokeJob] });
 	ok("deploy success + smoke failure is the SMOKE kind", smoke.kind === "smoke" && smoke.title === TITLE_SMOKE);
 	ok("...and never says production did not receive the commit", !/did NOT receive|not receiving/i.test(smoke.title + smoke.body), smoke.body);
-	ok("...and says production IS running it, with the SHA", /production IS running this commit/.test(smoke.body) && smoke.body.includes(SHA));
+	ok("...and, on a REBUILD, says production IS running it, with the SHA", /production IS running this commit/.test(smoke.body) && smoke.body.includes(SHA));
 	ok("...and names the smoke's failing assertion", smoke.body.includes("build-id: the browser is running build unset"));
 	ok("...and closes on `smoke: success`, not on `deploy: success`", /reaches `smoke: success`/.test(smoke.body) && !/reaches `deploy: success`/.test(smoke.body));
-	ok("...and keeps the retag-unchanged caveat", /retag-unchanged/.test(smoke.body));
+	ok("...and keeps the stale-image caveat", /can report success while shipping a stale image/.test(smoke.body));
 
-	const smokeCancelled = composeReport({ ...base, deployResult: "success", smokeResult: "cancelled", failingJobs: [] });
-	ok("deploy success + smoke cancelled is the SMOKE kind and names the result", smokeCancelled.kind === "smoke" && smokeCancelled.body.includes("`smoke: cancelled`"));
-	ok("...and says when it has no assertion to quote", /emitted no error annotations/.test(smokeCancelled.body));
+	// The RETAG path. Nothing in the run proved the retagged console equals this commit, so the body
+	// must not claim it — the claim itself is what is asserted, not a keyword near it.
+	for (const appsBuild of ["false", "", "garbage"]) {
+		const retag = composeReport({ ...base, deployResult: "success", smokeResult: "failure", appsBuild, failingJobs: [smokeJob] });
+		const claims = retag.title + "\n" + retag.body;
+		ok(`retag (apps_build=${JSON.stringify(appsBuild)}): no "IS running this commit" anywhere`, !/IS running this commit|IS running the deployed commit/i.test(claims), claims);
+		ok("...and no \"code-equivalent\" or \"equivalent to this commit\" claim", !/code-equivalent|is equivalent to this commit/i.test(claims), claims);
+		ok("...and says it is a RETAGGED image of an earlier build, equivalence NOT asserted", /RETAGGED image of an earlier console build/.test(retag.body) && /Nothing in this run asserted/.test(retag.body));
+		ok("...and keeps the stale-image caveat", /can report success while shipping a stale image/.test(retag.body));
+	}
+
+	// A run cancelled after a green deploy: the smoke never went red.
+	for (const smokeResult of ["cancelled", "skipped", "success"]) {
+		const inc = composeReport({ ...base, deployResult: "success", smokeResult, appsBuild: "true", failingJobs: [] });
+		ok(`deploy success + smoke ${smokeResult} is SMOKE_INCOMPLETE, not "the smoke is red"`, inc.kind === "smoke-incomplete" && inc.title === TITLE_SMOKE_INCOMPLETE && !/is red/.test(inc.title), inc.title);
+		ok("...and names the result and says it tells nothing about the release", inc.body.includes(`\`smoke: ${smokeResult}\``) && /NOT a red smoke/.test(inc.body) && !/something about .* is wrong/.test(inc.body), inc.body);
+	}
+	const incRetag = composeReport({ ...base, deployResult: "success", smokeResult: "cancelled", appsBuild: "false", failingJobs: [] });
+	ok("SMOKE_INCOMPLETE on a retag makes no \"IS running this commit\" claim either", !/IS running this commit/.test(incRetag.body) && /RETAGGED/.test(incRetag.body));
+	const noAnn = composeReport({ ...base, deployResult: "success", smokeResult: "failure", appsBuild: "true", failingJobs: [] });
+	ok("a red smoke with no annotations says so", /emitted no error annotations/.test(noAnn.body));
 
 	const skipped = composeReport({ ...base, deployResult: "skipped", smokeResult: "skipped", failingJobs: [{ name: "build-amd64", conclusion: "failure", errors: [] }] });
 	ok("deploy skipped is NOT_DEPLOYED with today's title", skipped.kind === "not-deployed" && skipped.title === TITLE_NOT_DEPLOYED);
@@ -366,8 +445,9 @@ function selfTest() {
 		ok(`deploy ${r} is NOT_DEPLOYED`, ran.kind === "not-deployed" && ran.title === TITLE_NOT_DEPLOYED);
 		ok(`...and does not claim production is untouched (deploy can fail after compose up)`, !/did NOT receive/.test(ran.body) && ran.body.includes(`ended \`${r}\``), ran.body);
 	}
-	ok("the two kinds have different titles", TITLE_SMOKE !== TITLE_NOT_DEPLOYED);
-	ok("neither title contains the other (the search is a phrase match)", !TITLE_SMOKE.includes(TITLE_NOT_DEPLOYED) && !TITLE_NOT_DEPLOYED.includes(TITLE_SMOKE));
+	const titles = [TITLE_NOT_DEPLOYED, TITLE_SMOKE, TITLE_SMOKE_INCOMPLETE];
+	ok("the three kinds have different titles", new Set(titles).size === 3);
+	ok("no title contains another (the search is a phrase match)", titles.every((t) => titles.every((u) => t === u || !t.includes(u))));
 
 	let threw = false;
 	try {
@@ -431,6 +511,7 @@ function selfTest() {
 	ok(`${WORKFLOW} wires report-failure to this script with both results`, problems.length === 0, problems.join("\n       "));
 	// Mutation controls: the wiring check must go red on each way the wiring can break.
 	ok("control: dropping `smoke` from needs is caught", wiringProblems(live.replace(/retag-unchanged, deploy, smoke\]/, "retag-unchanged, deploy]")).some((p) => /directly need `smoke`/.test(p)));
+	ok("control: dropping APPS_BUILD is caught", wiringProblems(live.replace("APPS_BUILD: ${{ needs.changes.outputs.apps_build }}", "")).some((p) => /APPS_BUILD/.test(p)));
 	ok("control: dropping DEPLOY_RESULT is caught", wiringProblems(live.replace("DEPLOY_RESULT: ${{ needs.deploy.result }}", "")).some((p) => /DEPLOY_RESULT/.test(p)));
 	ok("control: an `always()` condition is caught", wiringProblems(live.replace("(failure() || cancelled()) && github.ref == 'refs/heads/main'", "always() && github.ref == 'refs/heads/main'")).some((p) => /`if:`/.test(p)));
 	ok("control: a missing job is caught", wiringProblems("jobs:\n  deploy:\n").length === 1);
