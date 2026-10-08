@@ -34,6 +34,9 @@ import { describe, expect, it } from "vitest";
 import {
 	assertServedBuild,
 	BUILD_ID_PATH,
+	CONSOLE_BUILD,
+	MARKETING_BUILD,
+	type BuildTarget,
 	type ServedBuild,
 } from "../../scripts/e2e/build-id-check";
 
@@ -158,11 +161,16 @@ function upstreamFor(pathname: string): string {
 }
 
 /** Runs the real build-id check against a fake browser; returns what it visited and reported. */
-async function runCheck(served: ServedBuild, expected: string | undefined) {
+async function runCheck(
+	served: ServedBuild,
+	expected: string | undefined,
+	target: BuildTarget = CONSOLE_BUILD,
+) {
 	const visited: string[] = [];
 	const failures: string[] = [];
 	const notes: string[] = [];
 	await assertServedBuild(
+		target,
 		{
 			/** Records the visit and answers with the canned page. */
 			async read(pathname) {
@@ -192,6 +200,12 @@ describe("the edge resolver can tell the apps apart (the controls)", () => {
 
 	it("names the console image as the `app` service production runs", () => {
 		expect(PROD_COMPOSE).toMatch(/^ {2}app:\n {4}image: "ghcr\.io\/alethialabs-io\/console:/m);
+	});
+
+	it("names the marketing image as the `marketing` service production runs", () => {
+		expect(PROD_COMPOSE).toMatch(
+			/^ {2}marketing:\n(?: {4}\S.*\n)*? {4}image: "ghcr\.io\/alethialabs-io\/marketing:/m,
+		);
 	});
 });
 
@@ -230,5 +244,50 @@ describe("post-deploy smoke: build-id", () => {
 		const r = await runCheck({ version: SHA, finalPathname: BUILD_ID_PATH }, undefined);
 		expect(r.failures).toEqual([]);
 		expect(r.notes.join()).toContain("NOT ASSERTED");
+	});
+});
+
+// #5697: the same check, aimed at the marketing site. Its image now sets NEXT_PUBLIC_APP_VERSION in
+// the runner stage (dockerfile-runtime-public-env.test.ts), so `/` has a build id worth asserting.
+describe("post-deploy smoke: marketing-build-id", () => {
+	it("reads the build id from exactly one page, and marketing serves it", async () => {
+		const { visited } = await runCheck({ version: SHA, finalPathname: "/" }, SHA, MARKETING_BUILD);
+		expect(visited).toEqual([MARKETING_BUILD.path]);
+		expect(upstreamFor(visited[0])).toBe("marketing:3000");
+	});
+
+	it("passes only on an exact match, and names marketing", async () => {
+		const r = await runCheck({ version: SHA, finalPathname: "/" }, SHA, MARKETING_BUILD);
+		expect(r.failures).toEqual([]);
+		expect(r.notes.join()).toContain(`marketing build ${SHA}`);
+	});
+
+	it("fails when marketing's page carries no build id", async () => {
+		const r = await runCheck({ version: null, finalPathname: "/" }, SHA, MARKETING_BUILD);
+		expect(r.failures).toHaveLength(1);
+		expect(r.failures[0]).toContain("the marketing at / is running build unset");
+	});
+
+	it("fails on a different marketing build", async () => {
+		const r = await runCheck({ version: "0".repeat(40), finalPathname: "/" }, SHA, MARKETING_BUILD);
+		expect(r.failures).toHaveLength(1);
+		expect(r.failures[0]).toContain("stale bytes");
+	});
+
+	it("fails when `/` redirected elsewhere, even on a matching id", async () => {
+		const r = await runCheck({ version: SHA, finalPathname: "/login" }, SHA, MARKETING_BUILD);
+		expect(r.failures).toHaveLength(1);
+		expect(r.notes).toEqual([]);
+	});
+
+	it("says NOT ASSERTED when the apps group was retagged rather than rebuilt", async () => {
+		const r = await runCheck({ version: "0".repeat(40), finalPathname: "/" }, undefined, MARKETING_BUILD);
+		expect(r.failures).toEqual([]);
+		expect(r.notes.join()).toContain("NOT ASSERTED");
+	});
+
+	it("the two checks read different apps — neither can stand in for the other", () => {
+		expect(upstreamFor(CONSOLE_BUILD.path)).toBe("app:3000");
+		expect(upstreamFor(MARKETING_BUILD.path)).toBe("marketing:3000");
 	});
 });
