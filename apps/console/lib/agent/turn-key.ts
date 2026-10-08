@@ -96,9 +96,10 @@ const outputStatusSchema = z.object({ status: z.string() });
  * True when `message` carries an accepted approval (ADR 0003 §5.2): one of its client-tool parts
  * has a stored output whose `status` is its tool's accepted status (`approved` for
  * `propose_operation`, a plan or deploy was queued; `submitted` for `create_support_case`, a case
- * was opened). Such an answer is never regenerated away. Only the `status` is read, not the full
- * schema, so a stored output that predates validation still counts: refusing a regenerate is the
- * safe direction.
+ * was opened). Such an answer is never regenerated away. An accepted `propose_changes` does not
+ * count: it was applied to the canvas in the browser and queued nothing server-side, so its
+ * tool has no accepted status. Only the `status` is read, not the full schema, so a stored
+ * output that predates validation still counts: refusing a regenerate is the safe direction.
  */
 export function hasAcceptedApproval(message: UIMessage): boolean {
 	for (const step of clientToolPartsBySteps(message)) {

@@ -15,9 +15,15 @@ import { z } from "zod";
 /**
  * The names of the client tools. A test pins this list to the tools without `execute` in
  * `buildAgentTools`, `buildProjectAgentTools` and `buildSupportTools`, so a new HITL tool
- * cannot be added to a route without being added here.
+ * cannot be added to a route without being added here. `propose_changes` is the project
+ * assistant's canvas proposal (`lib/ai/tools/compose.ts`): it has no `execute` either, so its
+ * output also arrives from the browser and is validated like the other two.
  */
-export const CLIENT_TOOL_NAMES = ["propose_operation", "create_support_case"] as const;
+export const CLIENT_TOOL_NAMES = [
+	"propose_operation",
+	"create_support_case",
+	"propose_changes",
+] as const;
 
 /** One of {@link CLIENT_TOOL_NAMES}. */
 export type ClientToolName = (typeof CLIENT_TOOL_NAMES)[number];
@@ -66,21 +72,38 @@ export const createSupportCaseOutputSchema = z.discriminatedUnion("status", [
 	z.object({ status: z.literal("dismissed") }),
 ]);
 
+/**
+ * `propose_changes`' output: what `components/agent/render-tool-parts/project-tool-parts.tsx`
+ * sends when the user clicks Accept, the only output that card produces. `label` echoes the
+ * proposal's own label, which the model wrote, so it has no length rule of its own: the
+ * 4,096-byte cap on the whole output bounds it.
+ */
+export const proposeChangesOutputSchema = z.object({
+	status: z.literal("accepted"),
+	label: z.string(),
+});
+
 /** The output schema of each client tool, keyed by its name. */
 export const CLIENT_TOOL_OUTPUT_SCHEMAS = {
 	propose_operation: proposeOperationOutputSchema,
 	create_support_case: createSupportCaseOutputSchema,
+	propose_changes: proposeChangesOutputSchema,
 } satisfies Record<ClientToolName, z.ZodType>;
 
 /**
- * The output `status` that means the card's action already ran and cannot be undone: a plan or
- * deploy was queued, or a support case was opened. An answer holding one "carries an accepted
- * approval" (ADR 0003 §5.2) and is never regenerated away.
+ * The output `status` that means the card's action already ran on the SERVER and cannot be
+ * undone: a plan or deploy was queued, or a support case was opened. An answer holding one
+ * "carries an accepted approval" (ADR 0003 §5.2) and is never regenerated away.
+ *
+ * `propose_changes` has none (`null`): an accepted canvas proposal is applied in the browser,
+ * to the canvas the user is editing, and queues nothing server-side, so it is not an accepted
+ * approval and does not stop a regenerate.
  */
 export const CLIENT_TOOL_ACCEPTED_STATUS = {
 	propose_operation: "approved",
 	create_support_case: "submitted",
-} satisfies Record<ClientToolName, string>;
+	propose_changes: null,
+} satisfies Record<ClientToolName, string | null>;
 
 /** Narrows a tool name to a {@link ClientToolName}. */
 export function isClientToolName(name: string): name is ClientToolName {

@@ -214,6 +214,20 @@ describe("hasAcceptedApproval", () => {
 		}
 		expect(hasAcceptedApproval(assistant("a", [proposal("c")]))).toBe(false);
 	});
+
+	it("is false for an accepted propose_changes: it ran in the browser and queued nothing", () => {
+		const accepted = assistant("a", [
+			{
+				type: "tool-propose_changes",
+				toolCallId: "pc",
+				state: "output-available",
+				input: { label: "Add a database", actions: [] },
+				output: { status: "accepted", label: "Add a database" },
+			},
+		]);
+		expect(pendingClientToolCalls(accepted)).toEqual(["pc"]);
+		expect(hasAcceptedApproval(accepted)).toBe(false);
+	});
 });
 
 describe("CLIENT_TOOL_NAMES", () => {
@@ -234,7 +248,7 @@ describe("CLIENT_TOOL_NAMES", () => {
 });
 
 describe("parseClientToolOutput", () => {
-	it("accepts every output the two cards produce", () => {
+	it("accepts every output the three cards produce", () => {
 		for (const output of [
 			APPROVED,
 			{ ...APPROVED, operation: "provision_project", environmentId: PROJECT },
@@ -250,6 +264,10 @@ describe("parseClientToolOutput", () => {
 		]) {
 			expect(parseClientToolOutput("create_support_case", output).ok).toBe(true);
 		}
+		expect(
+			parseClientToolOutput("propose_changes", { status: "accepted", label: "Add a database" })
+				.ok,
+		).toBe(true);
 	});
 
 	it("refuses an output that fails its schema", () => {
@@ -261,6 +279,10 @@ describe("parseClientToolOutput", () => {
 			parseClientToolOutput("propose_operation", { ...APPROVED, jobId: "not-a-uuid" }).ok,
 		).toBe(false);
 		expect(parseClientToolOutput("create_support_case", APPROVED).ok).toBe(false);
+		expect(parseClientToolOutput("propose_changes", { status: "accepted" }).ok).toBe(false);
+		expect(parseClientToolOutput("propose_changes", { status: "rejected", label: "x" }).ok).toBe(
+			false,
+		);
 		expect(parseClientToolOutput("propose_operation", undefined).ok).toBe(false);
 		expect(
 			parseClientToolOutput("propose_operation", { status: "denied", reason: "x".repeat(2001) })
@@ -599,6 +621,10 @@ describe("classifyTurn — the continuation rows", () => {
 	});
 
 	it("CLIENT_TOOL_NAMES is the list the classifier reads", () => {
-		expect(CLIENT_TOOL_NAMES).toEqual(["propose_operation", "create_support_case"]);
+		expect(CLIENT_TOOL_NAMES).toEqual([
+			"propose_operation",
+			"create_support_case",
+			"propose_changes",
+		]);
 	});
 });
