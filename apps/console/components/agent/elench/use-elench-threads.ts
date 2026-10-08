@@ -67,7 +67,7 @@ export function useElenchThreads() {
 	// An empty list resolves to an EMPTY ephemeral conversation — nothing is persisted until
 	// the first send (see `startThread`).
 	//
-	// `threadId` must NOT be a dep here: resuming calls `selectStore(id)`, which changes the
+	// `threadId` must NOT be a dep here: resuming calls `resumeStore(id)`, which changes the
 	// store's threadId — as a dep that re-ran this effect, and its cleanup flipped `cancelled`
 	// so `setInitialResolved(true)` never landed, wedging the body on its loading skeleton.
 	// It only reproduces once a thread exists (an empty list never resumes), which is how it
