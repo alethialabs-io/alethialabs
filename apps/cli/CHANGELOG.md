@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.8.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.7.0...cli-v0.8.0) (2026-10-08)
+
+
+### Features
+
+* **addons:** pin a catalog add-on's chart version — console, CLI, API ([#5525](https://github.com/alethialabs-io/alethialabs/issues/5525)) ([#5540](https://github.com/alethialabs-io/alethialabs/issues/5540)) ([6baf233](https://github.com/alethialabs-io/alethialabs/commit/6baf233a5076d6e9977c6c0c4f08e3a50661b6d0))
+* **catalog:** the catalog is the single source of node defaults; --instance-type / --node-size on every create path ([#5266](https://github.com/alethialabs-io/alethialabs/issues/5266), [#5268](https://github.com/alethialabs-io/alethialabs/issues/5268)) ([#5290](https://github.com/alethialabs-io/alethialabs/issues/5290)) ([12d8640](https://github.com/alethialabs-io/alethialabs/commit/12d8640b0057fba0b68b94d2b23e0f76c14a6216))
+* **cli,console:** alethia.yaml declares add-ons per environment — init, plan, apply ([#5528](https://github.com/alethialabs-io/alethialabs/issues/5528)) ([#5567](https://github.com/alethialabs-io/alethialabs/issues/5567)) ([a3bad99](https://github.com/alethialabs-io/alethialabs/commit/a3bad99100dcce2f9be26002e8db39f6a54e06a3))
+* **cli,console:** apply changes edited fields on existing components; plan shows a field diff ([#5541](https://github.com/alethialabs-io/alethialabs/issues/5541)) ([18d2179](https://github.com/alethialabs-io/alethialabs/commit/18d21792ffba30489189bc83e9bb1560ebe98426))
+* **cli:** `alethia cluster kubeconfig` and `alethia cluster token` with an on-disk credential cache ([#5320](https://github.com/alethialabs-io/alethialabs/issues/5320)) ([0b2c581](https://github.com/alethialabs-io/alethialabs/commit/0b2c581a99dd57dc964ebca5613ddb59845c7205)), closes [#5284](https://github.com/alethialabs-io/alethialabs/issues/5284)
+* **cli:** alethia export writes a project as alethia.yaml; config export takes --env ([#5531](https://github.com/alethialabs-io/alethialabs/issues/5531)) ([#5580](https://github.com/alethialabs-io/alethialabs/issues/5580)) ([31c2ee4](https://github.com/alethialabs-io/alethialabs/commit/31c2ee47ef839d75530d7512ab51f65b3acded82))
+* **cli:** the environments read carries lifecycle, so alethia export round-trips an ephemeral environment ([#5581](https://github.com/alethialabs-io/alethialabs/issues/5581)) ([#5588](https://github.com/alethialabs-io/alethialabs/issues/5588)) ([051eecb](https://github.com/alethialabs-io/alethialabs/commit/051eecb60f487a72efdcbba918832773618b9697))
+* **cluster:** carry node_size end to end under a one-writer rule; keep a moved cluster's machine on its new cloud ([#5289](https://github.com/alethialabs-io/alethialabs/issues/5289)) ([0ec4f3e](https://github.com/alethialabs-io/alethialabs/commit/0ec4f3e8d2830c2fda0f0b985ee0f0c1e8013355))
+* **clusters:** serve the kubeconfig command for every cloud from one place; print it in `cluster get` ([#5264](https://github.com/alethialabs-io/alethialabs/issues/5264)) ([70f7d8b](https://github.com/alethialabs-io/alethialabs/commit/70f7d8b1f5937558a43d6d91863e58b4f0f44a65))
+* **kubeaccess:** seams contract for short-lived kubeconfig mints ([#5292](https://github.com/alethialabs-io/alethialabs/issues/5292)) ([30b07f5](https://github.com/alethialabs-io/alethialabs/commit/30b07f524567e7626fd38837f12a97e572e0d3ed))
+* **kubeaccess:** the mint is every cloud's kubeconfig command; refuse shared-cluster mints up front ([#5333](https://github.com/alethialabs-io/alethialabs/issues/5333)) ([e77ffe0](https://github.com/alethialabs-io/alethialabs/commit/e77ffe043589e35fe5a29a80cb03c3ad684d6f8f))
+
+
+### Bug Fixes
+
+* **breakglass:** refuse BREAKGLASS_DEV_EMAIL in production; docs say break-glass needs alethia login ([#5503](https://github.com/alethialabs-io/alethialabs/issues/5503)) ([3726f54](https://github.com/alethialabs-io/alethialabs/commit/3726f5480b281c518dd3a416ecb1f2ddf73a8a8a))
+* **cli,console:** apply refuses to overwrite a component changed since plan read it, and any update mid-provisioning ([#5551](https://github.com/alethialabs-io/alethialabs/issues/5551)) ([#5573](https://github.com/alethialabs-io/alethialabs/issues/5573)) ([109cec0](https://github.com/alethialabs-io/alethialabs/commit/109cec05691fdf65db58a580278c819bf1881e4a))
+* **cli:** addon enable keeps what it was not told to change — the Advanced override, settings and mode ([#5545](https://github.com/alethialabs-io/alethialabs/issues/5545)) ([#5557](https://github.com/alethialabs-io/alethialabs/issues/5557)) ([6ce6e96](https://github.com/alethialabs-io/alethialabs/commit/6ce6e962af536c2f7c82af2b5540938c7a9ac51f))
+* **cli:** alethia logout deletes the kubeconfig credential cache ([#5348](https://github.com/alethialabs-io/alethialabs/issues/5348)) ([36ad973](https://github.com/alethialabs-io/alethialabs/commit/36ad97385ce2cc9678ad4e3f077a7c524da37b09)), closes [#5323](https://github.com/alethialabs-io/alethialabs/issues/5323)
+* **cli:** alethia plan exits non-zero when the plan has problems, plus --detailed-exitcode ([#5600](https://github.com/alethialabs-io/alethialabs/issues/5600)) ([#5604](https://github.com/alethialabs-io/alethialabs/issues/5604)) ([67e9e99](https://github.com/alethialabs-io/alethialabs/commit/67e9e996212af19abba522747d887692737cbc07))
+* **cli:** plan and apply address environments by id; the env resolver ranks exact name over stage ([#5583](https://github.com/alethialabs-io/alethialabs/issues/5583)) ([#5589](https://github.com/alethialabs-io/alethialabs/issues/5589)) ([4018224](https://github.com/alethialabs-io/alethialabs/commit/4018224d17f09ca74887e19c4f6579985a6717b1))
+* **cli:** plan shows and apply refuses a lifecycle change on an existing environment ([#5590](https://github.com/alethialabs-io/alethialabs/issues/5590)) ([#5599](https://github.com/alethialabs-io/alethialabs/issues/5599)) ([1cc01c9](https://github.com/alethialabs-io/alethialabs/commit/1cc01c9d8123e5852eb314a1a04263fe98bac9fa))
+* **destroy:** refuse to destroy a Fabric owner while tenants are placed on it; --cascade destroys them first ([#5259](https://github.com/alethialabs-io/alethialabs/issues/5259)) ([6faafba](https://github.com/alethialabs-io/alethialabs/commit/6faafba835df44cf35ec72e860813bce2c623e4c))
+* **kubeconfig:** bind a mint to the credential that asked; service tokens mint read-only only ([#5350](https://github.com/alethialabs-io/alethialabs/issues/5350)) ([ba743f0](https://github.com/alethialabs-io/alethialabs/commit/ba743f0464192b3073327b07e9f85795bd8b630e)), closes [#5310](https://github.com/alethialabs-io/alethialabs/issues/5310)
+
 ## [0.7.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.6.1...cli-v0.7.0) (2026-09-24)
 
 
