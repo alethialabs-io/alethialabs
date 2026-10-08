@@ -43,6 +43,7 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 		pendingOrgSetupBillingSchema: actual.pendingOrgSetupBillingSchema,
 		pendingOrgSetupSlugSchema: actual.pendingOrgSetupSlugSchema,
 		REPLACEABLE_SUBSCRIPTION_STATUSES: actual.REPLACEABLE_SUBSCRIPTION_STATUSES,
+		UNLINKED_SETUP_CUSTOMER_CAP: actual.UNLINKED_SETUP_CUSTOMER_CAP,
 		// The open-setup guard and its closer (#5714). By default no open setup names the org and the
 		// closer changes nothing; the tests of ADR 0002's C-cases opt into the REAL closer
 		// (`useRealCloser`), which then runs its compare-and-set writes over the queue below.
@@ -345,7 +346,7 @@ beforeEach(() => {
 	stripe.invoices.retrieve.mockResolvedValue({ status: "open" });
 	stripe.invoices.voidInvoice.mockResolvedValue({ status: "void" });
 	// Default: the caller has no earlier unfinished setup record, so no customer to reuse or sweep.
-	vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue([]);
+	vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: [] });
 	// Default: the org has no billing row. `clearAllMocks` keeps an implementation a test set, and the
 	// link reads the row before it writes (#5714) — a leftover live row would refuse it. Reset, not
 	// cleared: a `mockResolvedValueOnce` a failed test never consumed would leak into the next one.
@@ -1503,7 +1504,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 	// beside the first. The customer is now taken from the caller's own unfinished setup records.
 	it("with no customerId, reuses the customer of the caller's unfinished setup and refuses beside its processing payment", async () => {
 		db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
-		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue(["cus_first"]);
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: ["cus_first"] });
 		stripe.customers.retrieve.mockResolvedValue({
 			id: "cus_first",
 			deleted: false,
@@ -1528,7 +1529,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 	});
 
 	it("with no customerId and nothing in flight, mints on the recorded customer rather than a new one", async () => {
-		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue(["cus_first"]);
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: ["cus_first"] });
 		stripe.customers.retrieve.mockResolvedValue({
 			id: "cus_first",
 			deleted: false,
@@ -1547,7 +1548,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 	});
 
 	it("sweeps every recorded customer, not only the one passed: a payment settling on an older one refuses", async () => {
-		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue(["cus_older"]);
+		vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: ["cus_older"] });
 		stripe.customers.retrieve.mockResolvedValue({
 			id: "cus_prior",
 			deleted: false,
@@ -1629,7 +1630,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 			vi.mocked(unlinkedPendingOrgSetupCustomers).mockImplementation(async () => {
 				inside += 1;
 				if (inside > 1) overlapped = true;
-				return [];
+				return { kind: "all", customers: [] };
 			});
 			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
 			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
@@ -3782,8 +3783,8 @@ describe("ADR 0002 S1 (#5714)", () => {
 
 // ── ADR 0002 S2 (#5741): the user: purchase lease ───────────────────────────────────────────────────
 //
-// The create-a-team purchase and its link run under `user:<userId>` (a `purchase_leases` row) AND, for
-// one release, the old `new-org:<userId>` advisory key. Every Stripe write renews the lease first (rule
+// The create-a-team purchase and its link run under `user:<userId>` (a `purchase_leases` row) — from S3
+// (#5754) alone, without S2's one-release `new-org:<userId>` advisory key. Every Stripe write renews the lease first (rule
 // 1); the mint needs the renewal to leave more than its worst case (rule 2); the secret leaves only after
 // a renewal made after the create returned (rule 3); a failed gate closes out what was minted — void
 // first, cancel stamped `alethia:closeout` only after a proven void — and writes nothing else (rule 4).
@@ -3889,17 +3890,16 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 		});
 	});
 
-	it("takes the user: lease and, inside it, the old new-org: advisory key", async () => {
+	it("takes the user: lease and NO advisory key — S3 dropped S2's one-release new-org: key", async () => {
 		stripe.customers.retrieve.mockResolvedValue(ownedCustomer);
 		stripe.subscriptions.create.mockResolvedValue(minted);
 
-		await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" });
+		await expect(
+			createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" }),
+		).resolves.toMatchObject({ kind: "intent" });
 
 		expect(withPurchaseLease).toHaveBeenCalledWith("user:user-1", expect.any(Function));
-		expect(withPurchaseLock).toHaveBeenCalledWith("new-org:user-1", expect.any(Function));
-		expect(vi.mocked(withPurchaseLease).mock.invocationCallOrder[0]).toBeLessThan(
-			vi.mocked(withPurchaseLock).mock.invocationCallOrder[0],
-		);
+		expect(withPurchaseLock).not.toHaveBeenCalled();
 	});
 
 	it("mints with an idempotency key naming the holder, after a renewal that demands the mint's worst case", async () => {
@@ -4049,13 +4049,13 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 			stripe.subscriptions.update.mockResolvedValue({ id: "sub_1", metadata: { organization_id: "org-1" } });
 		}
 
-		it("runs under the user: lease and the old new-org: key, renewing before each Stripe write", async () => {
+		it("runs under the user: lease alone (no advisory key, S3), renewing before each Stripe write", async () => {
 			unlinkedX();
 
 			await linkSubscriptionToNewOrg(input);
 
 			expect(withPurchaseLease).toHaveBeenCalledWith("user:user-1", expect.any(Function));
-			expect(withPurchaseLock).toHaveBeenCalledWith("new-org:user-1", expect.any(Function));
+			expect(withPurchaseLock).not.toHaveBeenCalled();
 			const renewals = purchaseLease.renewLease.mock.invocationCallOrder;
 			expect(renewals).toHaveLength(2);
 			expect(renewals[0]).toBeLessThan(stripe.customers.update.mock.invocationCallOrder[0]);
@@ -4080,6 +4080,299 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 			await expect(linkSubscriptionToNewOrg(input)).rejects.toThrow(PURCHASE_IN_PROGRESS);
 			expect(stripe.customers.update).toHaveBeenCalledTimes(1);
 			expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+		});
+	});
+});
+
+// ── ADR 0002 S3 (#5754): sweep classification, paging and customer reuse ────────────────────────────
+//
+// C18: the create-a-team sweep touches only the user's own create-a-team subscriptions (its OWN metadata
+// has `created_by = U` and no `organization_id`); anything else on a swept customer is alerted on and left
+// alone, and does not refuse. C20: the sweep's list is paged to the end, and refuses over 1000. C55: a
+// customer naming an organization is never reused for create-a-team. The S2 hand-offs: a close-out that
+// did not cancel raises an operator alert, and a mint answered with no invoice or no client secret is
+// closed out before the error is thrown.
+describe("ADR 0002 S3 (#5754)", () => {
+	const TOO_MANY = /more unfinished checkouts than we can check automatically/;
+	const mine = (id: string) => newOrgSub({ created_by: "user-1" }, "incomplete", id);
+	const minted = {
+		id: "sub_z",
+		latest_invoice: { id: "in_z", confirmation_secret: { client_secret: "cs_z" } },
+	};
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	/** The `subscriptions.list` page answering `customer` from `pages`, chosen by `starting_after`. */
+	function pagedList(pages: Record<string, { data: unknown[]; has_more: boolean }>): void {
+		stripe.subscriptions.list.mockImplementation(
+			async ({ customer, starting_after }: { customer: string; starting_after?: string }) =>
+				pages[`${customer}:${starting_after ?? ""}`] ?? { data: [], has_more: false },
+		);
+	}
+
+	describe("C18 — another payer's subscription on a shared customer is left alone and alerted on", () => {
+		it("cancels only U's own create-a-team subscription, alerts on the rest, and still mints", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			// U's record names a customer an org now shares (a previous link rewrote it): swept, not reused.
+			vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: ["cus_shared"] });
+			stripe.customers.retrieve.mockResolvedValue({
+				id: "cus_shared",
+				deleted: false,
+				metadata: { created_by: "user-1", organization_id: "org-9" },
+			});
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+			const orgPlan = newOrgSub({ organization_id: "org-9" }, "incomplete", "sub_orgplan");
+			const ai = newOrgSub({ organization_id: "org-9", product_type: "ai_subscription" }, "incomplete", "sub_ai");
+			const linkedByU = newOrgSub({ created_by: "user-1", organization_id: "org-9" }, "incomplete", "sub_linked");
+			const otherUser = newOrgSub({ created_by: "user-2" }, "incomplete", "sub_other_user");
+			pagedList({
+				"cus_shared:": { data: [orgPlan, ai, mine("sub_mine"), linkedByU, otherUser], has_more: false },
+			});
+			stripe.subscriptions.create.mockResolvedValue(minted);
+
+			const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo" });
+
+			expect(r).toMatchObject({ kind: "intent", customerId: "cus_new" });
+			expect(stripe.subscriptions.cancel).toHaveBeenCalledTimes(1);
+			expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_mine");
+			expect(stripe.invoices.voidInvoice).toHaveBeenCalledTimes(1);
+			expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_sub_mine");
+			// Not even read: the first-payment read is only for the user's own.
+			expect(stripe.invoicePayments.list).not.toHaveBeenCalledWith(expect.objectContaining({ invoice: "in_sub_orgplan" }));
+			for (const foreign of ["sub_orgplan", "sub_ai", "sub_linked", "sub_other_user"]) {
+				expect(emitAlertEvent).toHaveBeenCalledWith(
+					"org-platform",
+					"system.platform.payment_needs_support",
+					expect.objectContaining({
+						resource_type: "stripe_subscription",
+						resource_id: foreign,
+						summary: expect.stringContaining("It was not cancelled"),
+					}),
+				);
+			}
+			// Its own summary — never alertPaymentNeedsSupport's "cancelled or was replacing" (§4.2 (1)).
+			for (const [, , ctx] of vi.mocked(emitAlertEvent).mock.calls) {
+				expect(ctx.summary).not.toMatch(/cancelled or was replacing/);
+			}
+		});
+
+		it("a foreign subscription whose payment is processing does not refuse U's purchase", async () => {
+			vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: ["cus_shared"] });
+			stripe.customers.retrieve.mockResolvedValue({ id: "cus_shared", deleted: false, metadata: { created_by: "user-1" } });
+			pagedList({ "cus_shared:": { data: [newOrgSub({ organization_id: "org-9" }, "incomplete", "sub_orgplan")], has_more: false } });
+			stripe.invoicePayments.list.mockResolvedValue(invoicePayments("processing"));
+			stripe.subscriptions.create.mockResolvedValue(minted);
+
+			await expect(createNewOrgSubscriptionIntent("team", { orgName: "NewCo" })).resolves.toMatchObject({ kind: "intent" });
+			expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("C20 — the sweep pages to the end, and refuses over the cap", () => {
+		it("reads page 2: a processing subscription there refuses the purchase", async () => {
+			stripe.customers.retrieve.mockResolvedValue({ id: "cus_own", deleted: false, metadata: { created_by: "user-1" } });
+			pagedList({
+				"cus_own:": { data: [mine("sub_p1")], has_more: true },
+				"cus_own:sub_p1": { data: [mine("sub_p2")], has_more: false },
+			});
+			stripe.invoicePayments.list.mockImplementation(async (p: { invoice: string }) =>
+				invoicePayments(p.invoice === "in_sub_p2" ? "processing" : "requires_payment_method"),
+			);
+			stripe.subscriptions.create.mockResolvedValue(minted);
+
+			const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" });
+
+			expect(r).toEqual({ kind: "refused", message: expect.stringMatching(/still being processed/) });
+			expect(stripe.subscriptions.list).toHaveBeenCalledWith(
+				expect.objectContaining({ customer: "cus_own", status: "incomplete", limit: 100, starting_after: "sub_p1" }),
+			);
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+
+		/** `pages` full pages of 100 of U's never-paid subscriptions; the last says `lastHasMore`. */
+		function fullPages(pages: number, lastHasMore: boolean): void {
+			const answers: Record<string, { data: unknown[]; has_more: boolean }> = {};
+			let after = "";
+			for (let p = 0; p < pages; p++) {
+				const data = Array.from({ length: 100 }, (_, i) => mine(`sub_${p}_${i}`));
+				answers[`cus_own:${after}`] = { data, has_more: p < pages - 1 || lastHasMore };
+				after = `sub_${p}_99`;
+			}
+			pagedList(answers);
+		}
+
+		it("more than 1000 incomplete subscriptions refuses, alerts, and touches none of them", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			stripe.customers.retrieve.mockResolvedValue({ id: "cus_own", deleted: false, metadata: { created_by: "user-1" } });
+			fullPages(10, true);
+			stripe.subscriptions.create.mockResolvedValue(minted);
+
+			const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" });
+
+			expect(r).toEqual({ kind: "refused", message: expect.stringMatching(TOO_MANY) });
+			expect(stripe.subscriptions.list).toHaveBeenCalledTimes(10);
+			expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({ resource_type: "stripe_customer", resource_id: "cus_own" }),
+			);
+		});
+
+		it("exactly 1000, with nothing after them, is read in full and swept — the cap is not hit", async () => {
+			stripe.customers.retrieve.mockResolvedValue({ id: "cus_own", deleted: false, metadata: { created_by: "user-1" } });
+			fullPages(10, false);
+			stripe.subscriptions.create.mockResolvedValue(minted);
+
+			const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" });
+
+			expect(r).toMatchObject({ kind: "intent" });
+			expect(stripe.subscriptions.cancel).toHaveBeenCalledTimes(1000);
+		});
+
+		it("the org-plan purchase's sweep pages too, and refuses over the cap", async () => {
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_own", plan: "community", status: "none" } as never);
+			fullPages(10, true);
+			stripe.subscriptions.create.mockResolvedValue(minted);
+
+			await expect(createSubscriptionIntent("team")).resolves.toEqual({ error: expect.stringMatching(TOO_MANY) });
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+
+		it("unfinished setups on more customers than the cap refuse before any Stripe call", async () => {
+			vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "over_cap" });
+
+			const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo" });
+
+			expect(r).toEqual({ kind: "refused", message: expect.stringMatching(TOO_MANY) });
+			expect(stripe.subscriptions.list).not.toHaveBeenCalled();
+			expect(stripe.customers.create).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("C55 — a customer that names an organization is never reused for create-a-team", () => {
+		const orgCustomer = { id: "cus_org", deleted: false, metadata: { created_by: "user-1", organization_id: "org-9" } };
+
+		it("from the browser: a fresh customer is minted instead", async () => {
+			stripe.customers.retrieve.mockResolvedValue(orgCustomer);
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+			stripe.subscriptions.create.mockResolvedValue(minted);
+
+			const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_org" });
+
+			expect(r).toMatchObject({ kind: "intent", customerId: "cus_new" });
+			expect(stripe.subscriptions.create).toHaveBeenCalledWith(
+				expect.objectContaining({ customer: "cus_new" }),
+				expect.anything(),
+			);
+		});
+
+		it("from a record: a fresh customer is minted instead", async () => {
+			vi.mocked(unlinkedPendingOrgSetupCustomers).mockResolvedValue({ kind: "all", customers: ["cus_org"] });
+			stripe.customers.retrieve.mockResolvedValue(orgCustomer);
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+			stripe.subscriptions.create.mockResolvedValue(minted);
+
+			const r = await createNewOrgSubscriptionIntent("team", { orgName: "NewCo" });
+
+			expect(r).toMatchObject({ kind: "intent", customerId: "cus_new" });
+			expect(stripe.customers.create).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe("the S2 hand-offs", () => {
+		/** The lease holds through the mint, and is found lost at the artifact gate. */
+		function loseLeaseAfterMint(): void {
+			purchaseLease.renewLease.mockImplementation(async () => stripe.subscriptions.create.mock.calls.length === 0);
+		}
+
+		it("a close-out that could not cancel, on a customer this request created, alerts that no sweep can find it", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			db.queue.push([{ email: "owner@test.io", name: "Owner" }]);
+			stripe.customers.create.mockResolvedValue({ id: "cus_new" });
+			stripe.subscriptions.create.mockResolvedValue(minted);
+			loseLeaseAfterMint();
+			stripe.invoices.voidInvoice.mockRejectedValue(new Error("Stripe is unavailable"));
+			stripe.invoices.retrieve.mockResolvedValue({ status: "open" });
+
+			await expect(createNewOrgSubscriptionIntent("team", { orgName: "NewCo" })).resolves.toMatchObject({ kind: "refused" });
+
+			expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({
+					resource_id: "sub_z",
+					summary: expect.stringMatching(/customer cus_new.*no purchase sweep will find it/),
+				}),
+			);
+		});
+
+		it("a close-out that could not cancel, on a reused customer, alerts that the next purchase sweeps it", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			stripe.customers.retrieve.mockResolvedValue({ id: "cus_own", deleted: false, metadata: { created_by: "user-1" } });
+			stripe.subscriptions.create.mockResolvedValue(minted);
+			loseLeaseAfterMint();
+			stripe.invoices.voidInvoice.mockResolvedValue({ status: "void" });
+			stripe.subscriptions.cancel.mockRejectedValue(new Error("Stripe is unavailable"));
+
+			await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" });
+
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({ resource_id: "sub_z", summary: expect.stringMatching(/next purchase sweeps it/) }),
+			);
+		});
+
+		it("a close-out that cancelled raises no alert", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			stripe.customers.retrieve.mockResolvedValue({ id: "cus_own", deleted: false, metadata: { created_by: "user-1" } });
+			stripe.subscriptions.create.mockResolvedValue(minted);
+			loseLeaseAfterMint();
+
+			await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" });
+
+			expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_z", { cancellation_details: { comment: "alethia:closeout" } });
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+		});
+
+		it("a mint answered with no client secret is closed out — void first, cancel stamped — before the error", async () => {
+			stripe.customers.retrieve.mockResolvedValue({ id: "cus_own", deleted: false, metadata: { created_by: "user-1" } });
+			stripe.subscriptions.create.mockResolvedValue({ id: "sub_z", latest_invoice: { id: "in_z", confirmation_secret: null } });
+
+			await expect(
+				createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" }),
+			).rejects.toThrow(/client secret/);
+
+			expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_z");
+			expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_z", { cancellation_details: { comment: "alethia:closeout" } });
+			expect(recordPendingOrgSetup).not.toHaveBeenCalled();
+		});
+
+		it("a mint answered with no invoice is closed out too: nothing is voidable, so it is not cancelled, and it is alerted on", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			stripe.customers.retrieve.mockResolvedValue({ id: "cus_own", deleted: false, metadata: { created_by: "user-1" } });
+			stripe.subscriptions.create.mockResolvedValue({ id: "sub_z", latest_invoice: null });
+
+			await expect(
+				createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" }),
+			).rejects.toThrow(/did not return an invoice/);
+
+			expect(stripe.subscriptions.cancel).not.toHaveBeenCalled();
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({ resource_id: "sub_z" }),
+			);
 		});
 	});
 });

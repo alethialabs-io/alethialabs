@@ -1894,12 +1894,15 @@ function mintDeadlineMs(): number {
 const CLOSEOUT_STAMP = "alethia:closeout";
 
 /**
- * Where the customer of a just-minted create-a-team subscription came from, which decides whether any
- * later sweep can find that subscription: `reused` — passed by the browser or named by an unfinished
- * setup record, so the user's next purchase sweeps it; `created` — minted by this request, and named
- * nowhere else until this request records the setup.
+ * The customer a just-minted create-a-team subscription hangs off, and where it came from — which
+ * decides whether any later sweep can find that subscription: `reused` — passed by the browser or named
+ * by an unfinished setup record, so the user's next purchase sweeps it; `created` — minted by this
+ * request, and named nowhere else until this request records the setup.
  */
-type MintedCustomerOrigin = "reused" | "created";
+interface MintedCustomer {
+	customerId: string;
+	origin: "reused" | "created";
+}
 
 /**
  * THE CLOSE-OUT (ADR 0002 §4.4 rule 4). The subscription `sub` this request minted must be closed with
@@ -1916,12 +1919,12 @@ type MintedCustomerOrigin = "reused" | "created";
  * is logged and left the same way.
  *
  * A close-out that did not cancel (`cancelled=false` on the log event) leaves `sub` `incomplete` with no
- * secret anywhere, and raises an operator alert. What finds it afterwards depends on `customerOrigin`:
+ * secret anywhere, and raises an operator alert. What finds it afterwards depends on `mintedOn.origin`:
  * on a `reused` customer the user's next purchase sweeps it (after `readFirstPayment` proves it unpaid);
  * on a customer this request `created`, NO sweep can find it — nothing names that customer — so the
  * alert is its only trace, and Stripe expires it after about 23h.
  */
-async function closeOutMintedSubscription(sub: Stripe.Subscription, customerOrigin: MintedCustomerOrigin): Promise<void> {
+async function closeOutMintedSubscription(sub: Stripe.Subscription, mintedOn: MintedCustomer): Promise<void> {
 	const stripe = getPurchaseStripe();
 	const invoiceId =
 		typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
@@ -1956,11 +1959,11 @@ async function closeOutMintedSubscription(sub: Stripe.Subscription, customerOrig
 		cancelled: cancelled ? "true" : "false",
 	});
 	if (cancelled) return;
-	const customerId = subscriptionCustomerId(sub);
+	const { customerId } = mintedOn;
 	await alertOperator({
 		title: "A create-a-team close-out could not cancel the subscription it minted",
 		subject: { type: "stripe_subscription", id: sub.id },
-		summary: `Subscription ${sub.id} (customer ${customerId}) was minted by a create-a-team purchase that then had to close it out without handing out its client secret, but the close-out ${voided ? "could not cancel it after voiding its first invoice" : `could not prove its first invoice ${invoiceId ?? "(none)"} void, so it was not cancelled`}. It stays incomplete. ${customerOrigin === "created" ? "Its customer was created by that request and is named nowhere else, so no purchase sweep will find it; Stripe expires it after about 23h unless it is closed by hand." : "Its customer is reused, so the user's next purchase sweeps it once its first payment is proven unpaid."}`,
+		summary: `Subscription ${sub.id} (customer ${customerId}) was minted by a create-a-team purchase that then had to close it out without handing out its client secret, but the close-out ${voided ? "could not cancel it after voiding its first invoice" : `could not prove its first invoice ${invoiceId ?? "(none)"} void, so it was not cancelled`}. It stays incomplete. ${mintedOn.origin === "created" ? "Its customer was created by that request and is named nowhere else, so no purchase sweep will find it; Stripe expires it after about 23h unless it is closed by hand." : "Its customer is reused, so the user's next purchase sweeps it once its first payment is proven unpaid."}`,
 	});
 }
 
@@ -2056,7 +2059,7 @@ async function startNewOrgSubscription(
 	if (!customerId && recordedCustomers[0]) {
 		customerId = await ownedCustomer(recordedCustomers[0], actor.userId);
 	}
-	const customerOrigin: MintedCustomerOrigin = customerId ? "reused" : "created";
+	const origin: MintedCustomer["origin"] = customerId ? "reused" : "created";
 	if (!customerId) {
 		const [u] = await getServiceDb()
 			.select({ email: user.email, name: user.name })
@@ -2071,6 +2074,7 @@ async function startNewOrgSubscription(
 		});
 		customerId = customer.id;
 	}
+	const mintedOn: MintedCustomer = { customerId, origin };
 
 	// Belt-and-suspenders: void any other dangling incomplete subs on this customer (e.g. a
 	// prior attempt whose id wasn't threaded back), so they can't accumulate as FAILED draft
@@ -2139,7 +2143,7 @@ async function startNewOrgSubscription(
 		console.error(`[billing] the artifact gate could not renew ${lease.key}:`, e);
 	}
 	if (!gateHeld) {
-		await closeOutMintedSubscription(sub, customerOrigin);
+		await closeOutMintedSubscription(sub, mintedOn);
 		return { kind: "refused", message: PURCHASE_IN_PROGRESS };
 	}
 
@@ -2147,12 +2151,12 @@ async function startNewOrgSubscription(
 	// the error is thrown (§4.4 rule 4) — it used to be left minted, `incomplete` and uncancelled.
 	const invoice = sub.latest_invoice;
 	if (!invoice || typeof invoice === "string") {
-		await closeOutMintedSubscription(sub, customerOrigin);
+		await closeOutMintedSubscription(sub, mintedOn);
 		throw new Error("Stripe did not return an invoice for the subscription.");
 	}
 	const clientSecret = invoice.confirmation_secret?.client_secret;
 	if (!clientSecret) {
-		await closeOutMintedSubscription(sub, customerOrigin);
+		await closeOutMintedSubscription(sub, mintedOn);
 		throw new Error("Stripe did not return a payment client secret.");
 	}
 	// The server-side record of this setup (#5445), written BEFORE the client holds anything it could
@@ -2169,7 +2173,7 @@ async function startNewOrgSubscription(
 			slug: (parsedSlug.success && parsedSlug.data) || slugifyOrEmpty(opts.orgName),
 		});
 	} catch (e) {
-		await cancelUnrecordedSubscription(sub, fence, customerOrigin);
+		await cancelUnrecordedSubscription(sub, fence, mintedOn);
 		throw new Error("Couldn't start the purchase — try again.", { cause: e });
 	}
 	return { kind: "intent", clientSecret, subscriptionId: sub.id, customerId, currency };
@@ -2184,13 +2188,13 @@ async function startNewOrgSubscription(
 async function cancelUnrecordedSubscription(
 	sub: Stripe.Subscription,
 	fence: StripeWriteFence,
-	customerOrigin: MintedCustomerOrigin,
+	mintedOn: MintedCustomer,
 ): Promise<void> {
 	try {
 		await fence();
 	} catch (e) {
 		console.error(`[billing] the lease was not held before cancelling ${sub.id}; closing it out instead:`, e);
-		await closeOutMintedSubscription(sub, customerOrigin);
+		await closeOutMintedSubscription(sub, mintedOn);
 		return;
 	}
 	try {
