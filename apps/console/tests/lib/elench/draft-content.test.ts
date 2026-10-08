@@ -8,7 +8,9 @@
 // dependency of the console: a failure names its seed, and the same seed replays it.
 
 import { createRequire } from "node:module";
+import type { UIMessage } from "ai";
 import { describe, expect, it } from "vitest";
+import { turnText } from "@/lib/agent/turn-key";
 import { mentionsSchema } from "@/lib/ai/mentions";
 import { MAX_USER_MESSAGE_CHARS } from "@/lib/ai/message-limits";
 import {
@@ -84,6 +86,20 @@ describe("normalizeDraftText / isNormalizedDraftText", () => {
 			expect(isNormalizedDraftText(raw), `seed ${seed}`).toBe(once === raw);
 			expect(once.includes("\u0000"), `seed ${seed}`).toBe(false);
 			expect(once.isWellFormed(), `seed ${seed}`).toBe(true);
+		}
+	});
+
+	it("accepts every turnText output: ADR 0003's turn text is always a normalized draft text (seeded, 2,000 cases)", () => {
+		for (let seed = 1; seed <= 2_000; seed++) {
+			const next = rng(seed);
+			// One to three text parts, so a surrogate pair or a CRLF can also straddle two parts.
+			const parts: UIMessage["parts"] = [];
+			const count = 1 + Math.floor(next() * 3);
+			for (let i = 0; i < count; i++) {
+				parts.push({ type: "text", text: `${randomRawText(next)}\r\n${randomRawText(next)}` });
+			}
+			const text = turnText({ id: `m${seed}`, role: "user", parts });
+			expect(isNormalizedDraftText(text), `seed ${seed}`).toBe(true);
 		}
 	});
 });
