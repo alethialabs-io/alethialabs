@@ -118,8 +118,11 @@ locals {
 # Firewall: allow Talos apid (50000/50001), the Kubernetes API (6443), and all
 # intra-cluster traffic on the private network.
 resource "hcloud_firewall" "this" {
-  name   = local.cluster_name
-  labels = local.default_labels
+  name = local.cluster_name
+  # The extra pools' subnet ledger (#5595) rides on these labels: see servers.tf, ADDRESSING. It is
+  # empty when there are no extra pools, so this is then exactly local.default_labels. The ledger
+  # merges LAST; its "subnet.alethia.io/" keys never collide with the `cluster` base label.
+  labels = merge(local.default_labels, local.node_pool_ledger_labels)
 
   rule {
     description = "Talos apid"

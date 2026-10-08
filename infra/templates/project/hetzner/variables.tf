@@ -358,9 +358,10 @@ variable "incluster_registry_hosts" {
 # How Talos builds them is in servers.tf and talos.tf. Defaults ({}, [], []) render the cluster
 # exactly as before (nodepool_hetzner.tftest.hcl proves it).
 #
-# SIZE (contract: "HETZNER SIZE"). Hetzner has no autoscaler yet (#5538), so a pool is a FIXED
-# group of desired_size servers, or min_size when desired_size is left out. max_size is validated
-# and kept, so the same file stays valid when the autoscaler arrives; it does not add servers today.
+# SIZE (contract: "HETZNER SIZE"). Hetzner worker autoscaling is deferred (#5538, maintainer ruling
+# 2026-10-08), so a pool is a FIXED group of desired_size servers, or min_size when desired_size is
+# left out. max_size is validated and kept, so the same file stays valid on every cloud; it does not
+# add servers on Hetzner.
 
 variable "node_labels" {
   type        = map(string)
@@ -536,7 +537,7 @@ variable "node_pool_subnet_index" {
   type        = map(number)
   default     = {}
   nullable    = false
-  description = "Hetzner only. For an extra pool, by name, the number of the /24 of the cluster network it takes (1 is the /24 after the node subnet). Leave empty: each pool's /24 is chosen from its name. Set it for a pool the plan reports on the same /24 as another."
+  description = "Hetzner only. For an extra pool, by name, the number of the /24 of the cluster network it takes (1 is the /24 after the node subnet). Leave empty: each pool is given a free /24 when it is created and keeps it, recorded on the cluster firewall. Setting it for a pool that already exists moves that pool and replaces its servers."
 
   validation {
     condition     = alltrue([for name, n in var.node_pool_subnet_index : floor(n) == n && n >= 1])
