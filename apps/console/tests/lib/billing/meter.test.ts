@@ -178,5 +178,4 @@ describe("reportJobUsageOnce — meter identifier (#5746)", () => {
 			"runner_minutes-job-j2",
 		]);
 	});
-
 });
