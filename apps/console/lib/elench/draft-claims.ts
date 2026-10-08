@@ -34,10 +34,10 @@ import type {
 import type { ElenchDraftSendKind } from "@/types/jsonb.types";
 
 /** How long a claim may stay silent before any other request of its owner settles it (S5). */
-export const CLAIM_LEASE_SECONDS = 120;
+const CLAIM_LEASE_SECONDS = 120;
 
 /** The failure code a lease settle writes on `failed_send.error`. */
-export const LEASE_ERROR = "lease";
+const LEASE_ERROR = "lease";
 
 /** True, on the database's clock, when a row's claim has been silent past the lease. */
 const claimIsSilent: SQL<boolean> = sql<boolean>`${elenchDrafts.claimed_at} < now() - interval '${sql.raw(String(CLAIM_LEASE_SECONDS))} seconds'`;
