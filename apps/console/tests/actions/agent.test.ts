@@ -56,6 +56,7 @@ function mockChain(rows: unknown[], sequence: unknown[][] = []) {
 		delete: vi.fn(),
 		orderBy: vi.fn(),
 		limit: vi.fn(),
+		for: vi.fn(),
 		onConflictDoNothing: vi.fn(),
 		returning: vi.fn(),
 	};
@@ -97,6 +98,10 @@ function mockChain(rows: unknown[], sequence: unknown[][] = []) {
 		},
 		limit: (...a: unknown[]) => {
 			calls.limit(...a);
+			return db;
+		},
+		for: (...a: unknown[]) => {
+			calls.for(...a);
 			return db;
 		},
 		delete: (...a: unknown[]) => {
@@ -248,9 +253,10 @@ describe("createThread", () => {
 			id: "t-committed",
 			messages: [{ id: "msg-r", role: "user", parts: [{ type: "text", text: "hello" }] }],
 		};
-		const rewritten = { ...stored, title: "hello" };
-		// 1st await: the lookup finds the committed row; 2nd: the rewrite returns it.
-		const { calls } = useChain([], [[stored], [rewritten]]);
+		const rewritten = { ...stored, title: "hello", revision: 2 };
+		// 1st await: the lookup finds the committed row; 2nd: no running claim; 3rd: the rewrite
+		// returns it.
+		const { calls } = useChain([], [[stored], [], [rewritten]]);
 		const thread = await createThread("hello", undefined, { id: "msg-r", text: "hello" });
 		expect(thread).toBe(rewritten);
 		expect(calls.insert).not.toHaveBeenCalled();
@@ -261,10 +267,33 @@ describe("createThread", () => {
 		});
 	});
 
+	// ADR 0003 §4.2: every write to `messages` bumps `revision` in the same UPDATE, and the rewrite
+	// runs under the thread row's lock so its running-claim probe cannot race an acceptance.
+	it("locks the committed row, and its rewrite bumps revision in the same UPDATE", async () => {
+		const stored = { id: "t-rev", revision: 4, messages: [] };
+		const { calls } = useChain([], [[stored], [], [{ ...stored, revision: 5 }]]);
+		const thread = await createThread("hello", undefined, { id: "msg-rev", text: "hello" });
+		expect(thread).toMatchObject({ revision: 5 });
+		expect(calls.for).toHaveBeenCalledWith("update");
+		const revision: unknown = calls.set.mock.calls[0][0].revision;
+		if (!(revision instanceof SQL)) throw new Error("revision is not a SQL expression");
+		expect(new PgDialect().sqlToQuery(revision).sql).toBe('"agent_threads"."revision" + 1');
+	});
+
+	it("does nothing while the thread has a running turn claim, returning the row unchanged", async () => {
+		const stored = { id: "t-busy", revision: 3, messages: [] };
+		// 2nd await: the running-claim probe finds one.
+		const { calls } = useChain([], [[stored], [{ id: "claim-1" }]]);
+		const thread = await createThread("edited", undefined, { id: "msg-b", text: "edited" });
+		expect(thread).toBe(stored);
+		expect(calls.update).not.toHaveBeenCalled();
+		expect(calls.insert).not.toHaveBeenCalled();
+	});
+
 	it("keeps the committed row when it already holds more than the first turn", async () => {
 		const stored = { id: "t-answered", messages: [] };
-		// The rewrite is guarded to a one-message transcript; it matches nothing here.
-		const { calls } = useChain([], [[stored], []]);
+		// No running claim; the rewrite is guarded to a one-message transcript and matches nothing here.
+		const { calls } = useChain([], [[stored], [], []]);
 		const thread = await createThread("hello", undefined, { id: "msg-a", text: "hello" });
 		expect(thread).toBe(stored);
 		expect(calls.insert).not.toHaveBeenCalled();
@@ -320,13 +349,29 @@ describe("listThreads", () => {
 });
 
 describe("getThread", () => {
-	it("returns the first matching row when present", async () => {
-		const row = { id: "t-7", title: "Found" };
-		const { calls } = useChain([row]);
+	it("returns the first matching row with no inFlight when no claim is running", async () => {
+		const row = { id: "t-7", title: "Found", revision: 3 };
+		const { calls } = useChain([], [[row], []]);
 		const thread = await getThread("t-7");
-		expect(thread).toBe(row);
+		expect(thread).toEqual({ ...row, inFlight: null });
 		expect(calls.limit).toHaveBeenCalledWith(1);
-		expect(calls.where).toHaveBeenCalledTimes(1);
+		expect(calls.where).toHaveBeenCalledTimes(2);
+	});
+
+	// ADR 0003 §4.2: inFlight comes from a running claim whose lease is NOT silent, so a dead
+	// process's claim does not show "Being answered" while it waits for the sweep.
+	it("returns inFlight from a running claim, reading only a claim whose lease is not silent", async () => {
+		const row = { id: "t-8", title: "Busy", revision: 2 };
+		const since = new Date("2026-10-08T10:00:00Z");
+		const { calls } = useChain([], [[row], [{ turnId: "msg-9", since }]]);
+		const thread = await getThread("t-8");
+		expect(thread).toEqual({ ...row, inFlight: { turnId: "msg-9", since } });
+		const where = calls.where.mock.calls[1][0];
+		if (!(where instanceof SQL)) throw new Error("not a drizzle predicate");
+		const q = new PgDialect().sqlToQuery(where);
+		expect(q.sql).toMatch(/"agent_turn_claims"\."state" = \$\d/);
+		expect(q.params).toContain("running");
+		expect(q.sql).toMatch(/"agent_turn_claims"\."lease_until" >= now\(\)/);
 	});
 
 	it("returns null when no row matches", async () => {

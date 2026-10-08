@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	createThread,
 	getThread,
+	type LoadedThread,
 	listThreads,
 } from "@/app/server/actions/agent";
 import type { AgentThread } from "@/lib/db/schema";
@@ -31,8 +32,8 @@ vi.mock("@/app/server/actions/agent", () => ({
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 
-/** A persisted thread row with the given id (and transcript), every other column filled. */
-function thread(id: string, messages: UIMessage[] = []): AgentThread {
+/** A persisted thread row with the given id (and transcript), every other column filled, as getThread loads it. */
+function thread(id: string, messages: UIMessage[] = []): LoadedThread {
 	const at = new Date("2026-10-08T00:00:00Z");
 	return {
 		id,
@@ -47,6 +48,7 @@ function thread(id: string, messages: UIMessage[] = []): AgentThread {
 		revision: 1,
 		created_at: at,
 		updated_at: at,
+		inFlight: null,
 	};
 }
 
@@ -196,7 +198,7 @@ describe("useElenchThreads — ready gating", () => {
 describe("useElenchThreads — the late initial resume (#5677)", () => {
 	it("leaves the view the user switched to while the transcript was loading", async () => {
 		vi.mocked(listThreads).mockResolvedValue([thread("t-newest")]);
-		const held = deferred<AgentThread | null>();
+		const held = deferred<LoadedThread | null>();
 		vi.mocked(getThread).mockReturnValue(held.promise);
 
 		const { result } = renderHook(() => useElenchThreads());
@@ -215,7 +217,7 @@ describe("useElenchThreads — the late initial resume (#5677)", () => {
 
 	it("stands down when the user picked another thread while the transcript was loading", async () => {
 		vi.mocked(listThreads).mockResolvedValue([thread("t-newest"), thread("t-older")]);
-		const held = deferred<AgentThread | null>();
+		const held = deferred<LoadedThread | null>();
 		// The resume's round trip (t-newest) is held; the user's pick (t-older) answers at once.
 		vi.mocked(getThread).mockImplementation((id) =>
 			id === "t-newest" ? held.promise : Promise.resolve(thread(id)),
@@ -242,7 +244,7 @@ describe("useElenchThreads — the late initial resume (#5677)", () => {
 
 	it("stands down when the user started a new chat while the transcript was loading", async () => {
 		vi.mocked(listThreads).mockResolvedValue([thread("t-newest")]);
-		const held = deferred<AgentThread | null>();
+		const held = deferred<LoadedThread | null>();
 		vi.mocked(getThread).mockReturnValue(held.promise);
 
 		const { result } = renderHook(() => useElenchThreads());
@@ -333,7 +335,7 @@ describe("useElenchThreads — a context switch or close mid-load (#5680)", () =
 		vi.mocked(listThreads).mockImplementation(async (projectId) =>
 			projectId === "proj-2" ? [thread("pt-1")] : [thread("t-org")],
 		);
-		const held = deferred<AgentThread | null>();
+		const held = deferred<LoadedThread | null>();
 		vi.mocked(getThread).mockImplementation((id) =>
 			id === "t-org" ? held.promise : Promise.resolve(thread(id)),
 		);
@@ -394,7 +396,7 @@ describe("useElenchThreads — a context switch or close mid-load (#5680)", () =
 
 	it("a transcript that arrives after the surface closed writes nothing into the store", async () => {
 		vi.mocked(listThreads).mockResolvedValue([thread("t-newest")]);
-		const held = deferred<AgentThread | null>();
+		const held = deferred<LoadedThread | null>();
 		vi.mocked(getThread).mockReturnValue(held.promise);
 
 		const { result } = renderHook(() => useElenchThreads());
