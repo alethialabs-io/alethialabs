@@ -147,7 +147,7 @@ export async function listDrafts(input: ListDraftsInput): Promise<ListDraftsResu
 				.from(elenchDrafts)
 				.where(
 					and(
-						eq(elenchDrafts.user_id, actor.userId),
+						eq(elenchDrafts.user_id, actor.userId), // authz-scope-ok: owner-only draft rows (ADR 0001 §3.1), authorized upstream by runDraftGate; explicit predicate on top of owner_only RLS
 						eq(elenchDrafts.org_id, actor.orgId),
 						projectId === null
 							? isNull(elenchDrafts.project_id)
@@ -234,7 +234,7 @@ export async function saveDraft(input: SaveDraftInput): Promise<SaveDraftResult>
 					.from(elenchDrafts)
 					.where(
 						and(
-							eq(elenchDrafts.user_id, actor.userId),
+							eq(elenchDrafts.user_id, actor.userId), // authz-scope-ok: owner-only draft rows (ADR 0001 §3.1), authorized upstream by runDraftGate; explicit predicate on top of owner_only RLS
 							eq(elenchDrafts.org_id, actor.orgId),
 							req.projectId === null
 								? isNull(elenchDrafts.project_id)
@@ -313,7 +313,7 @@ function casPredicate(
 ): SQL | undefined {
 	return and(
 		eq(elenchDrafts.id, row.id),
-		eq(elenchDrafts.user_id, actor.userId),
+		eq(elenchDrafts.user_id, actor.userId), // authz-scope-ok: owner-only draft rows (ADR 0001 §3.1), authorized upstream by runDraftGate; explicit predicate on top of owner_only RLS
 		eq(elenchDrafts.org_id, actor.orgId),
 		eq(elenchDrafts.revision, base),
 		eq(elenchDrafts.status, status),
