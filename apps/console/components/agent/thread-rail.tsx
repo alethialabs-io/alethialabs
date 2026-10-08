@@ -26,6 +26,12 @@ interface ThreadRailProps {
 	onOpenKnowledge?: () => void;
 	/** True while the Knowledge panel is the active view. */
 	knowledgeActive?: boolean;
+	/**
+	 * Merged over the rail's own classes. The rail is `hidden` below `lg` by default — the docked
+	 * column it was built for has no room there — so a caller that hosts it somewhere that DOES fit
+	 * a narrow screen (the modal's sheet, #5650) passes `flex` here to show it at every width.
+	 */
+	className?: string;
 }
 
 const DAY = 86_400_000;
@@ -57,8 +63,8 @@ function relTime(d: Date): string {
 
 /**
  * Thread sidebar — New chat, search, and the owner's threads grouped by recency
- * (Today/Yesterday/Earlier). Grayscale/squared; hidden below `lg` (the design
- * sheds this pane on narrow viewports).
+ * (Today/Yesterday/Earlier). Grayscale/squared; hidden below `lg` unless the caller passes a
+ * `className` that shows it — the modal hosts it in a sheet there (#5650).
  */
 export function ThreadRail({
 	threads,
@@ -70,6 +76,7 @@ export function ThreadRail({
 	artifactsActive = false,
 	onOpenKnowledge,
 	knowledgeActive = false,
+	className,
 }: ThreadRailProps) {
 	const [q, setQ] = useState("");
 	// The thread a delete has been REQUESTED for. A chat carries its whole transcript and there is
@@ -96,7 +103,12 @@ export function ThreadRail({
 	}, [threads, q]);
 
 	return (
-		<aside className="hidden w-[284px] flex-none flex-col border-r border-border bg-card lg:flex">
+		<aside
+			className={cn(
+				"hidden w-[284px] flex-none flex-col border-r border-border bg-card lg:flex",
+				className,
+			)}
+		>
 			<div className="flex flex-col gap-1.5 p-2.5">
 				<Button
 					variant="outline"
