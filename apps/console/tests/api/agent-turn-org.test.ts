@@ -84,7 +84,7 @@ beforeEach(() => {
 	});
 	// A session and an injected actor that both name ANOTHER org: if either were read, the answer
 	// would be ORG_B — which no test below expects.
-	vi.mocked(getOwnerScope).mockResolvedValue({ userId: USER, activeOrgId: ORG_B });
+	vi.mocked(getOwnerScope).mockResolvedValue({ userId: USER, sessionId: "s-1", activeOrgId: ORG_B });
 	vi.mocked(getInjectedActor).mockReturnValue({ userId: USER, orgId: ORG_B });
 });
 
