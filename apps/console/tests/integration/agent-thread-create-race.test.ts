@@ -12,7 +12,9 @@
 // The interleaving is forced, not hoped for: a test transaction holds an EXCLUSIVE lock on
 // `agent_turn_claims`, so the acceptance stops at its first claim statement WITH the thread row
 // already locked; the rewrite is started only once the acceptance is seen waiting, and the table lock
-// is released only once the rewrite is seen waiting on the row.
+// is released only once the rewrite is seen waiting on the row. Both probes are scoped to the backend
+// that blocks the waiter (the gate's, then the acceptance's), so another test file's lock waits cannot
+// satisfy them.
 
 import { randomUUID } from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
@@ -33,31 +35,42 @@ function asUser<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const countRows = z.array(z.object({ n: z.coerce.number() }));
+const pidRows = z.array(z.object({ pid: z.coerce.number() }));
 
-/** Poll `probe` (a count) until it is at least 1, or fail after ~10 s. */
-async function until(probe: () => Promise<number>, what: string): Promise<void> {
+/** Poll `probe` until it returns a value, or fail after ~10 s. */
+async function until<T>(probe: () => Promise<T | null>, what: string): Promise<T> {
 	for (let i = 0; i < 200; i++) {
-		if ((await probe()) > 0) return;
+		const found = await probe();
+		if (found !== null) return found;
 		await new Promise((r) => setTimeout(r, 50));
 	}
 	throw new Error(`timed out waiting for ${what}`);
 }
 
-/** Backends waiting for a lock on the `agent_turn_claims` relation. */
-async function waitingOnClaimsTable(): Promise<number> {
+/**
+ * The backend waiting for a lock on the `agent_turn_claims` relation BEHIND the gate's backend
+ * (`gatePid`), or null. Scoped to that blocker, so another test file's waiter cannot satisfy it.
+ */
+async function waitingOnClaimsTableBehind(gatePid: number): Promise<number | null> {
 	const res = await getServiceDb().execute(sql`
-		select count(*) as n from pg_locks l join pg_class c on c.oid = l.relation
+		select l.pid from pg_locks l join pg_class c on c.oid = l.relation
 		 where c.relname = 'agent_turn_claims' and not l.granted
+		   and ${gatePid}::int = any(pg_blocking_pids(l.pid))
 	`);
-	return countRows.parse(res)[0]?.n ?? 0;
+	return pidRows.parse(res)[0]?.pid ?? null;
 }
 
-/** Backends waiting for a row lock (another transaction's id, or the tuple itself). */
-async function waitingOnARow(): Promise<number> {
+/**
+ * Whether a backend waits for a row lock (another transaction's id, or the tuple itself) held by the
+ * acceptance's backend (`acceptancePid`). Scoped to that holder, for the same reason.
+ */
+async function waitingOnARowHeldBy(acceptancePid: number): Promise<true | null> {
 	const res = await getServiceDb().execute(sql`
-		select count(*) as n from pg_locks where not granted and locktype in ('transactionid', 'tuple')
+		select count(*) as n from pg_locks
+		 where not granted and locktype in ('transactionid', 'tuple')
+		   and ${acceptancePid}::int = any(pg_blocking_pids(pid))
 	`);
-	return countRows.parse(res)[0]?.n ?? 0;
+	return (countRows.parse(res)[0]?.n ?? 0) > 0 ? true : null;
 }
 
 describeIfDb("createThread's rewrite against an acceptance (ADR 0003 §4.2)", () => {
@@ -83,17 +96,18 @@ describeIfDb("createThread's rewrite against an acceptance (ADR 0003 §4.2)", ()
 		const released = new Promise<void>((resolve) => {
 			release = resolve;
 		});
+		let gateLocked = (_pid: number): void => {};
+		const gatePidP = new Promise<number>((resolve) => {
+			gateLocked = resolve;
+		});
 		const gate = getServiceDb().transaction(async (tx) => {
 			await tx.execute(sql`lock table agent_turn_claims in exclusive mode`);
+			const me = pidRows.parse(await tx.execute(sql`select pg_backend_pid() as pid`))[0];
+			if (!me) throw new Error("pg_backend_pid() returned no row");
+			gateLocked(me.pid);
 			await released;
 		});
-		await until(async () => {
-			const res = await getServiceDb().execute(sql`
-				select count(*) as n from pg_locks l join pg_class c on c.oid = l.relation
-				 where c.relname = 'agent_turn_claims' and l.mode = 'ExclusiveLock' and l.granted
-			`);
-			return countRows.parse(res)[0]?.n ?? 0;
-		}, "the gate's table lock");
+		const gatePid = await gatePidP;
 
 		// The acceptance answers the stored first turn: it locks the thread, then stops at the claims.
 		const acceptance = reserveTurn({
@@ -106,13 +120,16 @@ describeIfDb("createThread's rewrite against an acceptance (ADR 0003 §4.2)", ()
 			turn: { trigger: "submit-message", turnId, baseRevision: 1 },
 			messages: [{ id: turnId, role: "user", parts: [{ type: "text", text: "deploy staging" }] }],
 		});
-		await until(waitingOnClaimsTable, "the acceptance to wait on agent_turn_claims");
+		const acceptancePid = await until(
+			() => waitingOnClaimsTableBehind(gatePid),
+			"the acceptance to wait on agent_turn_claims behind the gate",
+		);
 
 		// A retried first send with EDITED text: without the lock and the probe it would rewrite.
 		const rewrite = asUser(() =>
 			createThread("deploy prod", undefined, { id: turnId, text: "deploy prod" }),
 		);
-		await until(waitingOnARow, "the rewrite to wait on the thread row");
+		await until(() => waitingOnARowHeldBy(acceptancePid), "the rewrite to wait on the acceptance's thread row");
 
 		release();
 		await gate;
