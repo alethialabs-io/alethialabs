@@ -16,7 +16,10 @@
 // to the public host, and requires the console upstream.
 //
 // WHAT THE RESOLVER RANGES OVER, stated so nobody reads it as Caddy:
-//   - only the `handle` blocks directly inside the `:80` site, and only their `reverse_proxy`.
+//   - only the `handle` blocks directly inside the `:80` site, and only their `reverse_proxy`. Any
+//     other site-level directive except `encode` (`handle_path`, `route`, `redir`, …) THROWS.
+//   - NOT the browser probe in post-deploy-smoke.ts: that it passes its `pathname` to `ctx.visit`
+//     is read there, not tested here.
 //   - matchers: `path` (exact, `prefix*`, `*suffix`), `host`, and `header` / `header_regexp`, which an
 //     anonymous request with no cookies never satisfies. Any other matcher type THROWS, so a new
 //     routing rule the resolver cannot read fails this test rather than being silently skipped.
@@ -112,6 +115,11 @@ function parseRoutes(caddyfile: string): Route[] {
 			routes.push({ label: arg ?? "{catch-all}", conditions, upstream });
 			i += 1;
 			continue;
+		}
+		// Any other site-level directive (`handle_path`, `route`, `redir`, …) could route a path this
+		// resolver would then misattribute, so it is refused rather than walked past.
+		if (depth === 1 && !/^encode\s/.test(line) && line !== "}") {
+			throw new Error(`Caddyfile.tunnel has site-level directive "${line}", which this resolver cannot read`);
 		}
 		if (line.endsWith("{")) depth += 1;
 		if (line === "}") depth -= 1;
