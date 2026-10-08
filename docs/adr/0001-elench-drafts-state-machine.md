@@ -3,10 +3,28 @@
 
 # Elench drafts: server-side rows keyed by (user, org id, conversation), saved by compare-and-set
 
-**Status:** Accepted (maintainer delegation 2026-10-08; veto window open) · **Revision:** 6
+**Status:** Accepted (maintainer delegation 2026-10-08; veto window open) · **Revision:** 7
 (2026-10-08) · **Issue:** #5464 · **Supersedes:** revision 2 of this ADR (833e4e9c4, a client-only
 `sessionStorage` store) and the draft store reverted from #5423 (head 2c1314267) · **Consumed by:**
-ADR 0003 (`docs/adr/0003-chat-turn-answered-and-billed-once.md`, #5548, issue #5515)
+ADR 0003 (`docs/adr/0003-chat-turn-answered-and-billed-once.md`, #5548, issue #5515), revision 5
+
+**Revision 7 (2026-10-08, independent review of revision 6).** Ten inline blockers and fifteen
+advisories. (1) The claim heartbeat is a `fetch` to a route handler, never a server action, so
+Next's global action queue cannot starve it (§1, §3.4, D34, I10). (2) `startConversation` skips the
+lease settle for its own live token (§5.1 step 1). (3) `hasTurn` applies ADR 0003's one `turnText`
+(trim, line endings to `\n`) to **both** sides; ADR 0003 slice 2 owns `lib/agent/turn-key.ts`, and
+this ADR only imports it (§4.2, §14). (4) The empty-cell prompt is an external send: D10y carries
+`metadata.cellTarget` (§7.2). (5) D9d's certain refusals are the route's real ones: 400, 401, 402,
+413, 503; there is no 429. (6) Every `agent_threads` read names `user_id = actor.userId`; the
+`owner_all` policy is not what isolates them (§4 step 5). (7) A project anchor needs
+`projects.org_id = actor.orgId`, read explicitly; `authorizeQuiet` alone admits any project id for
+an org-wide grant (§4 step 4). (8-10) The slices: D21/D22/D26 move to 7b, every S test names its
+slice, slice 9 adds the mount points slice 11 fills, 11 is blocked by 10, cross-ADR order is named,
+and every existing test a slice breaks is in its scope (§14). Advisories taken: RLS is `ENABLE`d
+explicitly; the Lexical figures are re-measured on the pinned 0.52.0; `z.uuid()`; a credential-
+looking paste is not autosaved until the notice is answered (Q7); the third retention rule is
+dropped as subsumed; `created.threadRevision` is never null (ADR 0003 slice 1 lands first); the
+"fails on dev" rule is restated for new modules (§11). Rejected: none.
 
 **Revision 6 (2026-10-08, acceptance).** The maintainer delegated design acceptance to the
 orchestrating session. This revision (a) records a decision for every open question, each with the
@@ -94,8 +112,9 @@ what is eliminated and what still needs a transition and a test.
 
 ## 1. Context: what the code does today (origin/dev @ e02417059)
 
-Every statement was first read at fbe2409c8 and **re-verified for revision 6 at e02417059**, the
-current `origin/dev`. Three statements about `use-elench-threads.ts` had become false (#5677, #5680
+Every statement was first read at fbe2409c8 and **re-verified for revision 6 at e02417059**; the
+statements revision 7's review named were re-read at `origin/dev` @ 37af47c95 (between the two, only
+`elench-modal.tsx`, `thread-rail.tsx` and one test moved; #5655's narrow rail sheet landed there). Three statements about `use-elench-threads.ts` had become false (#5677, #5680
 rewrote the initial resume) and are corrected below; several line numbers moved and are updated.
 Package claims are read from the versions `apps/console/package.json` pins on dev, `ai@6.0.300`
 and `next@16.3.8` (revision 5 had read them from a stale local install of 6.0.279 and 16.3.4; the
@@ -151,8 +170,9 @@ Next line numbers are identical in both, the `ai` ones are updated).
   writes a tombstone (`agent.ts:195-217`).
 - The chat routes save the client's transcript wholesale. The stream uses `originalMessages:
   messages` from the request (`app/api/agent/route.ts:282`), and `onFinish` saves the finished
-  list (`route.ts:376-383`) through `updateLive`, which replaces the whole list
-  (`lib/agent/transcript-save.ts:121`).
+  list (`route.ts:376-383`) through `saveTranscript`, whose `updateLive` call
+  (`lib/agent/transcript-save.ts:121`) replaces the whole list
+  (`lib/agent/thread-transcript.ts:30`, `.set({ messages, … })`).
 - **The budget hold has no per-turn identity.** `/api/agent` reserves it with
   `assertAiAllowed(actor.orgId, "agent", actor.userId)` (`route.ts:201`). Its `refId` is the
   thread id (`route.ts:220-225`), so two requests for the same turn reserve and spend twice.
@@ -173,7 +193,12 @@ Next line numbers are identical in both, the `ai` ones are updated).
   `currentActor()` inside an action invoked from `/acme/…` resolves `acme`. Precisely, Next 16.3.8
   POSTs to the router's `state.canonicalUrl` (`client/components/router-reducer/reducers/server-action-reducer.js:74`),
   and it queues every action of the page, globally, behind any pending action **and any pending
-  navigation** (`client/components/app-router-instance.js:138-169`). The org switcher navigates
+  navigation** (`client/components/app-router-instance.js:108-170`, `dispatchAction`: an action
+  dispatched while `actionQueue.pending !== null` is appended at `:162-169` and starts only when the
+  head settles). The **only** way into that queue is `callServer` (`client/app-call-server.js:14-26`),
+  which every server action call goes through. A `fetch` to a route handler calls the browser's
+  `fetch` directly and never enters it: nothing in Next's client patches `window.fetch`. The draft
+  claim's heartbeat relies on exactly this (D34). The org switcher navigates
   with `router.push` (`components/org-switcher.tsx:108`) and the drafts store outlives the `[org]`
   layout, so a write issued under `/acme/…` that is still queued when the switch commits is POSTed
   to `/beta/…` and resolves `beta` (#5512 thread 4178302266). When the page's slug names no org in which the caller holds
@@ -226,9 +251,11 @@ Next line numbers are identical in both, the `ai` ones are updated).
   composer and `createThread` refuse the same number (`elench-composer.tsx:30`, `agent.ts:9`).
 - **Lexical's JSON is up to 90× the text.** A mention pill is a `TextNode` whose text is `@label`
   (`components/agent/elench/mention-node.ts:29`, `:65-70`), and pasted text becomes one serialized
-  node per line and per tab. Measured with `lexical@0.50.0` (`insertRawText`, then
-  `JSON.stringify({ editor, text })`): 100,000 characters on one line is 200,313 B; 50,000 one-
-  character lines is **6,200,226 B**; 100,000 tabs is **9,000,226 B**. The #5512 round-3 review
+  node per line and per tab. Measured for revision 7 with `lexical@0.52.0`, the version dev pins
+  (`^0.52.0`, lock 0.52.0; revision 6 had measured 0.50.0): `createEditor`, `insertRawText` in a
+  `discrete` update, then `JSON.stringify({ editor: state.toJSON(), text })`. 100,000 characters on
+  one line is 200,313 B; 50,000 one-character lines is **6,200,191 B**; 100,000 tabs is
+  **9,000,226 B**. The #5512 round-3 review
   measured 996,935 B for a 78,371-character paste of 7,000 IP addresses (#5512 thread 4178302268).
 - **Postgres.** A `text` value is TOASTed (compressed or moved out of line) above about 2 kB and may
   be up to 1 GB, so a 300 kB draft is an ordinary row. `text` and `jsonb` cannot hold U+0000, and
@@ -342,6 +369,8 @@ An I test asserts the first point: in one database, user U inserts `(U, A, C)` u
 OR loop (`:1127`):
 
 ```sql
+ALTER TABLE public.elench_drafts ENABLE ROW LEVEL SECURITY;  -- without it the policy is inert
+DROP POLICY IF EXISTS owner_only ON public.elench_drafts;
 CREATE POLICY owner_only ON public.elench_drafts FOR ALL
   USING (user_id = current_setting('app.current_owner', true)::uuid
          AND org_id = current_setting('app.current_org', true)::uuid)
@@ -351,7 +380,10 @@ CREATE POLICY owner_only ON public.elench_drafts FOR ALL
 
 Under the OR policy, any member of an org whose id is `app.current_org` would read every
 member's drafts. Drafts may contain pasted secrets (§9), so this is the one table where that would
-be a leak of the worst kind. Unset variables are NULL, and NULL denies.
+be a leak of the worst kind. Unset variables are NULL, and NULL denies. RLS is `ENABLE`d, as every
+policy-bearing table in `programmables.sql` is (`:1128`, `:1169`), and **not** `FORCE`d: no table in
+the repo forces it, and the two functions below rely on the table owner bypassing it (they raise if
+it is ever forced). The I test asserts `relrowsecurity` is true for `elench_drafts`.
 
 One `SECURITY DEFINER` function crosses orgs, and only within the caller's own rows:
 
@@ -385,9 +417,9 @@ that locks the row `FOR UPDATE` and adds one to `revision`.
 | S1r | `sending` with the **same** `token` | `claimDraft` (a retry of a request whose answer was lost) | — | unchanged | answers `claimed` again: the claim is idempotent per token |
 | S2 | `sending`, `token`, `kind = first` | `startConversation(…, token)` | the thread insert wrote the row (§5.1) | `active` | content emptied, claim cleared, `last_sent := { turnId, kind, at }`, `thread_seen := true`; **the turn is the thread's first message, in the same transaction** |
 | S3 | `sending`, `token`, `kind = later` | `consumeDraft(key, token)` | — | `active` | content emptied, claim cleared, `last_sent := { turnId, kind, at }` |
-| S4 | `sending`, `token` | `releaseClaim(key, token, error, uncertain?, freshTurnId?)` | for `kind = later` without `freshTurnId`: the thread does **not** hold this turn (`hasTurn`, §4.2: a message whose id is `claim_turn_id` **and** whose `turnText` equals the row's text). If it does, the turn reached the transcript, and this is S3 instead, answered `consumed` | `active` | content **kept**, claim cleared, `failed_send := { turnId: freshTurnId ?? claim_turn_id, kind, error, at, uncertain }`. `uncertain` is the caller's: a reloaded tab that cannot know whether its later turn's route accepted says so (D26). With `freshTurnId` (ADR 0003's `turn-committed-different-text`, D9d) it is always this row, never S3, and `uncertain` is false: the stored turn holds an earlier text, and the edit is a new turn (ADR 0003 §9.4 change 1). |
-| S5 | `sending`, `claimed_at < now() - 120 s` | the **lease settle**, run first inside every action that locks or lists the row, and by the daily sweep (§9). **Never** inside a request that presents the row's live `claim_token` (`consumeDraft`, `releaseClaim`, `touchClaim`, `startConversation`): those act on their own claim, whatever its age. | — | `active` | `kind = first`: as S4 (provably unsent, see below). `kind = later`: if the thread holds this turn (`hasTurn`: id **and** text, §4.2), as S3 (the turn reached the transcript); if it holds `claim_turn_id` with a **different** text, as S4 with `failed_send.turnId := null` and `uncertain: false` (that text can never be stored under that id, ADR 0003 §9.3; the client mints a fresh id at the next claim, D9, so the server still never mints a turn id); otherwise as S4 with `uncertain: true` |
-| S7 | `sending`, `token` | `touchClaim(key, token)`: the claiming tab's heartbeat, every 20 s while it holds the claim (D34) | — | `sending` | `claimed_at := now()`. Answers `touched` or `not-claimed(row, thread)` |
+| S4 | `sending`, `token` | `releaseClaim(key, token, error, uncertain?, freshTurnId?)` | for `kind = later` without `freshTurnId`: the thread does **not** hold this turn (`hasTurn`, §4.2: a message whose id is `claim_turn_id` **and** whose `turnText` equals `turnText` of the row's text). If it does, the turn reached the transcript, and this is S3 instead, answered `consumed` | `active` | content **kept**, claim cleared, `failed_send := { turnId: freshTurnId ?? claim_turn_id, kind, error, at, uncertain }`; except that when the thread holds `claim_turn_id` with a **different** text and no `freshTurnId` was given, `failed_send.turnId := null` and `uncertain := false`, exactly as S5 does, so the next claim mints a fresh id instead of re-sending a doomed one (revision 7). `uncertain` is the caller's: a reloaded tab that cannot know whether its later turn's route accepted says so (D26). With `freshTurnId` (ADR 0003's `turn-committed-different-text`, D9d) it is always this row, never S3, and `uncertain` is false: the stored turn holds an earlier text, and the edit is a new turn (ADR 0003 §9.4 change 1). |
+| S5 | `sending`, `claimed_at < now() - 120 s` | the **lease settle**, run first inside every action that locks or lists the row, and by the daily sweep (§9). **Never** inside a request that presents the row's live `claim_token` (`consumeDraft`, `releaseClaim`, the heartbeat `touchClaim`, and `startConversation` with `origin = composer`, §5.1 step 1): those act on their own claim, whatever its age. | — | `active` | `kind = first`: as S4 (provably unsent, see below). `kind = later`: if the thread holds this turn (`hasTurn`: id **and** text, §4.2), as S3 (the turn reached the transcript); if it holds `claim_turn_id` with a **different** text, as S4 with `failed_send.turnId := null` and `uncertain: false` (that text can never be stored under that id, ADR 0003 §9.3; the client mints a fresh id at the next claim, D9, so the server still never mints a turn id); otherwise as S4 with `uncertain: true` |
+| S7 | `sending`, `token` | `touchClaim(key, token)`: the claiming tab's heartbeat, every 20 s while it holds the claim (D34). It is `POST /api/elench/drafts/heartbeat`, a **route handler** called with `fetch`, never a server action (§4.2) | — | `sending` | `claimed_at := now()`. Answers `touched` or `not-claimed(row, thread)` |
 | S6 | `active` | `discardDraft` / `restoreDraft` (§6.2) | `revision = base` | `discarded` / `active` | unchanged from revision 4 |
 
 Every other action against a `sending` row writes nothing and answers `claimed(row, thread)`,
@@ -425,6 +457,24 @@ release is acknowledged. 120 s is six missed heartbeats, and twice Chrome's inte
 hidden tab's timers (one wake-up a minute). A request that carries the live token never settles its
 own claim (S5). So only a tab that has stopped running loses its claim to the lease.
 
+**Why the heartbeat is a route handler, not a server action (revision 7).** Revision 6 made
+`touchClaim` a server action. Every server action of the page runs through Next's one global queue
+(§1), so a heartbeat waited behind exactly the stall the lease exists to survive: a queued
+`listDrafts`, a 30 s start, an unrelated console action, or an **abandoned** request that Next still
+runs (I10). A tab whose queue head stalled 120 s sent no heartbeat, another tab's `listDrafts` then
+settled its live claim, and the live tab's late consume answered `not-claimed`: R0's failure again
+(#5512 review of revision 6, inline at line 426). `touchClaim` is therefore
+`POST /api/elench/drafts/heartbeat`, called with `fetch`, which never enters that queue (§1:
+`callServer` is the queue's only entry). It is guarded like an action (§4): zod on
+`{ orgId, conversationId, token }`; the actor is `resolveTurnActor(userId, orgId)` (ADR 0003 §6.1,
+strictly two-way, so a removed or suspended member gets 403 and the claim lapses by the lease); then
+one `withActorScope` statement, `UPDATE elench_drafts SET claimed_at = now() WHERE user_id =
+actor.userId AND org_id = actor.orgId AND conversation_id = $c AND status = 'sending' AND
+claim_token = $token`, which never settles anything. A route handler has no server action's origin
+check; a forged cross-site POST would need the claim token, a 122-bit value that never leaves the
+user's own rows and tab, so it renews nothing. It is rate limited per user like the actions (§4
+step 7).
+
 **Who may release.**
 - **The claiming tab**, at once, with its token: on a refusal, a failure, or its own timeout (D11).
 - **The same tab after a reload**, with the token restored from the cache (D26).
@@ -435,8 +485,9 @@ own claim (S5). So only a tab that has stopped running loses its claim to the le
 
 ## 4. Server API
 
-All actions go in a new `apps/console/app/server/actions/elench-drafts.ts` (`"use server"`). Every
-action does the following:
+All actions go in a new `apps/console/app/server/actions/elench-drafts.ts` (`"use server"`), except
+the heartbeat, which is the route handler `apps/console/app/api/elench/drafts/heartbeat/route.ts`
+(§3.4, "Why the heartbeat is a route handler"). Every action does the following:
 
 1. It parses its input with a zod schema. The input never carries `user_id`, and no input field
    is trusted as a tenant.
@@ -472,11 +523,26 @@ action does the following:
    address (revision-4 review advisory A13).
 4. It authorizes **quietly**, because an autosave is not an activity-log event (`guard.ts:106-122`).
    For an org anchor it calls `authorizeQuiet("view", { type: "org" })`. For a project anchor it
-   calls `authorizeQuiet("view", { type: "project", id })`, so a project draft needs the project
-   to be visible in **this** org.
+   **first** reads `SELECT 1 FROM projects WHERE id = $projectId AND org_id = actor.orgId`, and
+   then calls `authorizeQuiet("view", { type: "project", id })`. Either failing is
+   `forbidden`, the same answer for a project of another org and for one that does not exist. The
+   explicit read is what enforces "a project of **this** org": `authorizeQuiet` alone does not,
+   because `PostgresRbacPDP.can` answers yes for **any** org-wide grant (`resource_id = null`)
+   without looking at the target id (`lib/authz/evaluate.ts:22-32`, `coversResource`), and fetches
+   a project's ancestors only when a scoped grant is in play (`postgres-rbac-pdp.ts:182-186`). So a
+   member with an org-wide `project:view` would otherwise pass for another org's project id
+   (revision 6 claimed the authz call was enough; that was false). ADR 0003 §6.2 applies the same
+   read to the chat routes.
 5. It runs in `withActorScope(actor, tx => …)` (`lib/db/index.ts:108-113`), so both RLS
-   variables are the actor's. `agent_threads` rows still pass `owner_all` through
-   `user_id = current_owner`.
+   variables are the actor's. **Every statement on `agent_threads` names `user_id = actor.userId`
+   explicitly** (the thread status, `firstTurnId` and `hasTurn` reads of §4.2, `listDrafts`' join,
+   §5.1 step 3's insert and step 5's read). That predicate, not the policy, is what keeps these reads
+   to the caller's own threads: `owner_all` is `user_id = current_owner OR org_id = current_org`
+   (`programmables.sql:1124-1137`), and `withActorScope` sets `current_org` to the actor's **real**
+   org, so the policy alone admits every `agent_threads` row of the page's org. Today every thread
+   row has `org_id = user_id` (`agent.ts:97`), so no teammate's row exists to admit; the predicate
+   keeps it so the day org-scoped threads land (Q6), and an I test inserts a teammate's thread with
+   `org_id` = the page org and asserts no action sees it.
 6. It returns a discriminated union. It never throws for an expected outcome: an
    `UnauthorizedError` becomes `unauthorized`, a `ForbiddenError` becomes `forbidden`, and a
    `notFound()` becomes `scope-changed` or `forbidden` by step 2. A database error is caught and
@@ -492,9 +558,9 @@ action does the following:
 
 ```ts
 const keySchema = z.object({
-  orgId: z.string().uuid(),
-  projectId: z.string().uuid().nullable(),
-  conversationId: z.string().uuid(),
+  orgId: z.uuid(),
+  projectId: z.uuid().nullable(),
+  conversationId: z.uuid(),
 });
 const draftMentionSchema = z.object({
   id: z.string().max(256),
@@ -507,7 +573,7 @@ const contentSchema = z.object({
   text: z.string().max(MAX_USER_MESSAGE_CHARS).refine(isNormalizedDraftText, "invalid"),
   mentions: z.array(draftMentionSchema).max(50)          // one span per pill
     .refine(m => distinctMentions(m) <= 20, "invalid"),  // the routes' cap (lib/ai/mentions.ts:50)
-  artifacts: z.array(z.string().uuid()).max(10),
+  artifacts: z.array(z.uuid()).max(10),
 }).refine(spansAreValid, "invalid");  // sorted, non-overlapping, end ≤ text.length, text.slice(start, end) === "@" + label
 ```
 
@@ -565,20 +631,20 @@ under 1 MiB.
 | the cache (`sessionStorage`) | `local` and `sending` content, as JSON | up to about 1.2 M code units in the pathological all-control-character case (U+0001 is 6 units in JSON) | the 1,000,000-unit budget (I4), counted in JSON units: past it the cache is refused and the footer says so truthfully ("This tab can't keep it either"); the server row still holds the frozen text (R7) |
 
 A test per row: A › `a 100,000-unit draft of U+0001 claims, starts and stores the turn`;
-A › `a 100,000-tab draft saves and the row's text round-trips`; S › `a 50,000-line paste is
-claimed and sent as the first message`; S › `a 50,000-line paste is sent as a later turn`;
+A › `a 100,000-tab draft saves and the row's text round-trips`; S9 › `a 50,000-line paste is
+claimed and sent as the first message`; S9 › `a 50,000-line paste is sent as a later turn`;
 U › `the worst-case action argument encodes under 1 MiB`.
 
 ### 4.2 Actions
 
 | Action | Input | Effect | Outcomes |
 |---|---|---|---|
-| `listDrafts` | `{ projectId, orgHint? }` (the org is the page's) | Settles any stale claim of the scope (S5). Reads the active and sending drafts of this scope, plus the discarded drafts of the last 24 h. It joins `agent_threads` by `conversation_id` (tombstones included) for each draft's thread status and title. | `{ outcome: "ok", orgId: actor.orgId, drafts }` |
+| `listDrafts` | `{ projectId, orgHint? }` (the org is the page's) | Settles any stale claim of the scope (S5). Reads the active and sending drafts of this scope, plus the discarded drafts of the last 24 h. It joins `agent_threads` on `id = conversation_id AND user_id = actor.userId` (tombstones included; §4 step 5) for each draft's thread status and title. | `{ outcome: "ok", orgId: actor.orgId, drafts }` |
 | `saveDraft` | key, `baseRevision` (0 = none yet), content, `threadSeen?`, `tabId` | Locks the row `FOR UPDATE` and settles a stale claim (S5). Inserts when `baseRevision = 0` and no row exists. Updates when `revision = baseRevision` and the row is `active`. Clears `failed_send` when the text changes, unless it is `uncertain` (cleared only by `dismissFailedSend: true`, D31). Sets `thread_seen` only when the server finds the thread row. | `saved(revision)` · `conflict(row, thread)` · `claimed(row, thread)` · `discarded(row, thread)` · `gone(thread)` (no row, and `baseRevision > 0`) · `limit` (§4.3) · `invalid` · `scope-changed` · `unauthorized` · `forbidden` · `rate-limited` · `unavailable` |
 | `claimDraft` | key, `baseRevision`, content, `turnId`, `token`, `kind`, `tabId` | S1 / S1r (§3.4). Settles a stale claim first. | `claimed-by-you(revision, content)` · `claimed(row, thread)` (another token) · `conflict(row, thread)` · `discarded(row, thread)` · `gone(thread)` · `wrong-kind(thread)` · `empty` · the refusals of `saveDraft` |
 | `consumeDraft` | key, `token` | S3 | `consumed(revision)` · `not-claimed(row, thread)` (the token is no longer the row's) · `gone(thread)` |
 | `releaseClaim` | key, `token`, `error`, `uncertain?`, `freshTurnId?` | S4 (or S3 when a later turn is already in the transcript, `hasTurn`, and no `freshTurnId` is given) | `released(row)` · `consumed(revision)` · `not-claimed(row, thread)` · `gone(thread)` |
-| `touchClaim` | key, `token` | S7: the claiming tab's heartbeat. Never settles its own claim. | `touched` · `not-claimed(row, thread)` · `gone(thread)` |
+| `touchClaim` (route handler `POST /api/elench/drafts/heartbeat`, not an action) | `{ orgId, conversationId, token }` | S7: the claiming tab's heartbeat (§3.4). Never settles anything. | 200 `touched` · 200 `not-claimed(row, thread)` · 200 `gone(thread)` · 400 invalid · 401 · 403 (`resolveTurnActor` refused the org) · 429 rate-limited |
 | `discardDraft` | key, `baseRevision` | Sets `status = 'discarded'` and `discarded_at = now()`, and adds one to `revision`, when `revision = baseRevision` and the row is `active`. **It never touches `agent_threads`.** | `discarded(revision)` · `conflict(row, thread)` · `claimed(row, thread)` · `gone(thread)` |
 | `restoreDraft` | key, `baseRevision` | Sets the row back to active when it is discarded at `baseRevision`. | `saved(revision)` · `conflict(row, thread)` · `gone(thread)` |
 | `startConversation` | key, `revision` (the claim's), `token` (composer) **or** external text and mentions, `turnId`, `origin`, `cellTarget?`, `title` | §5 | §5 |
@@ -595,15 +661,22 @@ client guess.
 carries `thread: { status, firstTurnId, hasTurn }`, read from `agent_threads` **in the same
 transaction** as the row it returns. `status` is §2's thread status, and `firstTurnId` is
 `messages->0->>'id'` of a live row, or null when there is no live row or it has no messages.
-`hasTurn` is whether the live row's `messages` hold a message whose id is the turn id the request
-names (the claim's, or the row's `claim_turn_id`) **and** whose `turnText` equals the claimed text;
-it is how a later-turn claim's outcome is read. `turnText(message)` is ADR 0003's one function for
-"the text of a stored user turn" (its parts joined in order, after §4.1's normalization), in
-`lib/agent/turn-key.ts`; whichever of the two ADRs' slices lands first creates that file. An id match
-with a different text is not `hasTurn` (ADR 0003 §9.4 change 1). This is what lets the client
-tell "my own start committed" from "another tab edited the draft" without guessing (D17, #5512
-thread 4177659608). The read runs under `withActorScope`, where `agent_threads`' `owner_all` passes
-on `user_id = current_owner` (§4 step 5), so it sees only the caller's own threads.
+`hasTurn` is whether the live row's `messages` hold a message `m` whose id is the turn id the
+request names (the claim's, or the row's `claim_turn_id`) **and** for which
+`turnText(m) === turnText({ parts: [{ type: "text", text: row.text }] })`: the **same** function on
+**both** sides. It is how a later-turn claim's outcome is read. `turnText` is defined once, in ADR
+0003 §5.2, and implemented once, in `lib/agent/turn-key.ts`, which **ADR 0003 slice 2 owns**; this
+ADR imports it and never defines its own (§14: slice 4 is blocked by ADR 0003 slice 2). Its
+definition, stated identically in both ADRs: the message's `text` parts joined in order with no
+separator; then U+0000 removed and `toWellFormed()` (§4.1's normalization); then `\r\n` and `\r`
+to `\n`; then trimmed. Applying it to the row's untrimmed text is what makes a later turn typed with
+a trailing space or newline, which the send trims (D9b, as `elench-composer.tsx:171` does today),
+compare equal to what the route stored. Revision 6 applied it to the stored side only, so such a
+turn failed `hasTurn`, S5 then released it with a fresh id, and Enter answered and billed it twice
+(#5512 review of revision 6, inline at line 600). An id match with a different text is not `hasTurn`
+(ADR 0003 §9.4 change 1). This is what lets the client tell "my own start committed" from "another
+tab edited the draft" without guessing (D17, #5512 thread 4177659608). The read names
+`user_id = actor.userId` (§4 step 5), which is what keeps it to the caller's own threads.
 
 ### 4.3 Bounds
 
@@ -622,8 +695,12 @@ startConversation({ orgId, projectId, conversationId, turnId, origin,
 
 The whole action is **one** `withActorScope` transaction:
 
-1. `SELECT … FROM elench_drafts WHERE (user, org, conversation) FOR UPDATE`, then the lease settle
-   (S5).
+1. `SELECT … FROM elench_drafts WHERE (user, org, conversation) FOR UPDATE`. Then the lease settle
+   (S5), **unless** `origin = composer` and the row's `claim_token = token`: that request presents
+   the live token, and S5 never runs inside such a request, whatever the claim's age. (Revision 6
+   ran it unconditionally here, so a composer start queued behind Next's action queue for more than
+   120 s settled its own claim and bounced the words back as a release.) For an external origin, or
+   a composer token that is not the row's, the settle runs as everywhere else.
    - `origin = composer`: the row must be `sending` with `claim_token = token`, `claim_kind =
      first` and `claim_turn_id = turnId`. Otherwise return `not-claimed(row, thread)` (§4.2:
      `thread` carries the status and the committed first-turn id). Nothing is written. This is the
@@ -633,25 +710,32 @@ The whole action is **one** `withActorScope` transaction:
      written. An external prompt is not the draft's text, so it takes no claim.
 2. Decide the first turn. For `origin = composer`, the text and mentions are **read from the locked
    row**, never taken from the input. The claim froze the row at exactly the content the box showed
-   (S1). For an external origin they come from the input, validated by `contentSchema`.
+   (S1). For an external origin they come from the input, validated by `contentSchema`. The stored
+   text is `text.trim()`, as every send trims (the composer's `submit`, `elench-composer.tsx:171`;
+   D9b; D10y); mention spans are re-based onto the trimmed text.
 3. `INSERT INTO agent_threads (id, user_id, org_id, project_id, title, messages) VALUES
-   (conversationId, owner, owner, projectId, …, [{ id: turnId, role: "user", parts: [text],
-   metadata: { mentions, cellTarget } }]) ON CONFLICT (id) DO NOTHING RETURNING id`.
+   (conversationId, actor.userId, actor.userId, projectId, …, [{ id: turnId, role: "user",
+   parts: [{ type: "text", text }], metadata: { mentions, cellTarget } }]) ON CONFLICT (id) DO
+   NOTHING RETURNING id, revision`.
 4. The insert wrote the row, so the outcome is `created(revision, threadRevision)`: the draft's new
-   revision, and the thread's `agent_threads.revision` once ADR 0003's column exists (null before
-   it; ADR 0003 §9.4 change 4). In the same transaction, the draft row is updated as follows:
+   revision, and the inserted thread row's `agent_threads.revision` (1, its column default). That
+   column is ADR 0003 slice 1's, which lands before this ADR's slice 1 (§14), so `threadRevision`
+   is never null (ADR 0003 §9.4 change 4). In the same transaction, the draft row is updated as
+   follows:
    - for `origin = composer`, S2: the content is emptied, the row is `active` and the claim is
      cleared;
    - for an external start, the content is left unchanged;
    - `failed_send` is set to null, `thread_seen` to true, and `revision` goes up by one.
-5. The insert wrote nothing. The server reads the conflicting row by id under the same scope,
-   tombstones included, and returns exactly one outcome. For `origin = composer`, every outcome but
+5. The insert wrote nothing. The server reads the conflicting row with `WHERE id = conversationId
+   AND user_id = actor.userId`, tombstones included, and returns exactly one outcome. A row of
+   another owner, live or tombstone, is therefore never read, and both answer the same `conflict`
+   (Q1's no-oracle point, pinned by an I test for each). For `origin = composer`, every outcome but
    `already-stored` also **releases the claim in the same transaction** (S4, with the outcome as the
    error), so the row is `active` with its text and is never left frozen:
 
 | The conflicting row | Outcome | Draft row (composer) |
 |---|---|---|
-| not visible under RLS (another owner's id) | `conflict(revision)` | released (S4) |
+| none with `user_id = actor.userId` (another owner's id, live or tombstone) | `conflict(revision)` | released (S4) |
 | a tombstone | `deleted(revision)` | released (S4) |
 | `kind ≠ 'agent'`, `project_id` differs (null-safe), or zero messages | `conflict(revision)` | released (S4) |
 | first message id ≠ `turnId` | `conflict(revision)` | released (S4) |
@@ -709,12 +793,30 @@ What drafts give ADR 0003 (its §9.4 changes 1-4, adopted in revision 6):
 - **A text-aware settle**: S4's redirect to S3 and the S5 lease consume a later claim only when the
   stored turn's `turnText` equals the claimed text (`hasTurn`, §4.2); an id match with another text
   is released, so an edit is never consumed as if it had been sent.
-- **The cell target on the message**: D9b sends `metadata.cellTarget`.
+- **The cell target on the message**: the empty-cell prompt is an **external** send (D10x into a
+  new conversation, D10y into an existing one), and both put `cellTarget` on the user message's
+  `metadata`. D9b also reads a staged target, for a composer send that has one. (Revision 6 put it
+  on D9b only, which a cell prompt never takes; review of revision 6, inline at line 878.)
 - **The thread revision on `created`**: §5.1 step 4, D12.
 
-ADR 0003's PR 1 does not merge until the server half of the first two (S4's `freshTurnId` arm, the
-text-aware `hasTurn`) and the client half (D9d's arms) are on dev (ADR 0003 §9.4, "The dependency");
-§14 places them in slices 4 (server) and 7b (client).
+**The order between the two ADRs' slices** (both §14 tables state it identically):
+- ADR 0003 slice 1 (its migration) lands before this ADR's slice 1: both edit
+  `lib/db/schema/agent.ts`, `programmables.sql` and the migrations, and `startConversation` returns
+  the `revision` column slice 1 adds.
+- This ADR's slice 4 is blocked by ADR 0003 slice 2 (`turn-key.ts`, `turnText`) and ADR 0003 slice
+  4 (`resolveTurnActor`, which the heartbeat route uses).
+- ADR 0003 slice 6 (the first that answers a refusal) is blocked by this ADR's slice 4 (the server
+  half: S4's `freshTurnId`, S4/S5's text-aware `hasTurn`) and slice 7b (the client half: D9d's
+  four arms). 7b is a pure reducer with no caller until slices 8-9; until then ADR 0003 slice 6's
+  own composer path (its §9.3, `onTurnRefused`) is the only client, and it never consumes a draft.
+- This ADR's slice 9 is blocked by ADR 0003 slice 6: both edit `elench-conversation.tsx`,
+  `use-elench-store.ts` and `app-shell.tsx`, and slice 9 wires `created.threadRevision` into the
+  transport's revision through the setter slice 6 adds (D12).
+- ADR 0003 slice 9 is blocked by this ADR's slices 7b and 9 (the store owns the send; D10y carries
+  the cell target).
+
+`turn-has-accepted-approval` (ADR 0003 revision 5) answers only a regenerate, which the drafts store
+never sends, so no D9d arm reads it.
 
 Drafts never read the chat route's billing org. A draft's tenant is the server action's page org
 (§4), checked against the key on every write.
@@ -868,21 +970,21 @@ only. A duplicated tab copies `sessionStorage`, so a cached id would make two ta
 | D8 | saving | `saved(r)` | — | `server := { …sent content, revision: r }`, `ackSeq := seq`. If `local` still equals what was sent, `local := null` and the cache item is removed (I4). Otherwise save again. |
 | D9 | Drafting | `SUBMIT` | `thread ∈ {listed, unlisted}`, `transcript = loaded`, the chat's `status ∈ {ready, error}` (no other request of this Chat in flight, R3), text non-empty and within the limit, no `conflict`, `claiming = null`, `sending = null` | `claiming := { attempt, token: mint(), turnId: server?.failed_send?.turnId ?? mint(), kind: later, content: the box }`, and `local := null`: the box now shows `claiming.content`, read-only, so `local` holds only what is typed **after** the claim answers. `claimDraft(base = server?.revision ?? 0, content, …)`. This **is** the flush; there is no separate save. (G35, R1) |
 | D9a | Drafting | `SUBMIT` | `thread ∈ {listed, unlisted}`, `transcript ≠ loaded` | **No claim, no send.** The box is untouched. `loadInto(k)` and a lineage bump. The notice reads "This conversation has messages from another tab or device. They are shown now. Press Enter to send." A later SUBMIT is D9. (#5512 thread 4177659625) |
-| D9b | claiming (later) | `claimed-by-you(r)` | `attempt = claiming.attempt` | `sending := { …claiming, text, mentions, phase: routing }`, `claiming := null`, `server := { content, state: sending, revision: r }`, `epoch++`, and the box empties (`local := null`, shown as empty). Stage the mentions in the `pendingMentions` slot synchronously, then `sendMessage({ id: turnId, parts: [{ type: "text", text }], metadata: { mentions, cellTarget } })`, where `cellTarget` is **read, not taken,** from the widget grid's pending slot (`useWidgetGridStore.getState().pendingCellTarget`), so a later-turn cell prompt stores its target on its own message (ADR 0003 §9.4 change 3). `prepareBody` still takes the slot for the body copy (`takePendingCellTarget()`, `elench-conversation.tsx:55-58`, `:172`), which the routes read until ADR 0003's PR 2 deletes it; taking it here would send that copy as null. |
+| D9b | claiming (later) | `claimed-by-you(r)` | `attempt = claiming.attempt` | `sending := { …claiming, text, mentions, phase: routing }`, `claiming := null`, `server := { content, state: sending, revision: r }`, `epoch++`, and the box empties (`local := null`, shown as empty). Stage the mentions in the `pendingMentions` slot synchronously, then `sendMessage({ id: turnId, parts: [{ type: "text", text: text.trim() }], metadata: { mentions, cellTarget } })`, where `cellTarget` is **read, not taken,** from the widget grid's pending slot (`useWidgetGridStore.getState().pendingCellTarget`), null when nothing is staged. The empty-cell prompt itself is not a composer send: it is D10x / D10y (ADR 0003 §9.4 change 3). `prepareBody` still takes the slot for the body copy (`takePendingCellTarget()`, `elench-conversation.tsx:55-58`, `:172`), which the routes read until ADR 0003 slice 9 deletes it; taking it here would send that copy as null. |
 | D9c | sending (later, routing) | that turn's chat request reaches `status = streaming` (the hand-off, §2), or, once ADR 0003 lands, its stream carries `data-turn-accepted { turnId }` (ADR 0003 §5: the route answers 2xx only after acceptance), whichever is first | `turnId = sending.turnId`, and it is the last user message |  `phase := consuming`. `consumeDraft(token)`. On `consumed(r)`: `server := empty active row at r`, `sending := null`; if `local ≠ null` (typed after the claim), save it at base `r`. On `not-claimed(row, thread)` (the lease ran first, which needs 120 s with no heartbeat): if `row.last_sent.turnId = turnId`, adopt as consumed; otherwise the lease released the text although the route has it, so `conflict := uncertain` with the bar "This message was sent, and a copy came back to the draft because the send took too long to confirm. **Discard the copy** / **Keep it**". Nothing is sent automatically. |
-| D9d | sending (later, routing) | that turn's chat request fails **before** `streaming`: a non-2xx, a network error, Stop, or 60 s without reaching `streaming` (the tab then calls `stop()`, so the route sees a disconnect) | `turnId = sending.turnId` | Remove the optimistic user message `turnId` from `useChat` (it never reached the route's transcript). Then, by what failed: **(a) a certain refusal**, one the route answers before its budget hold and which stores nothing: 400, 402, 413, 429 (`message-limits.ts:86-101`, `route.ts:171-205`), and, once ADR 0003 lands, every typed refusal with `committed: false` (409 `thread-busy`, `transcript-stale`, `client-outdated`; 410 `thread-deleted`; 404 `thread-not-found`, `project-not-found`; 403 `org-forbidden`; ADR 0003 §9.4 change 2): `phase := releasing`, `releaseClaim(token, error, uncertain: false)`, then D11r / D11c / D11n. The card reads "Not sent: <reason>. Your message is back in the box." `transcript-stale` also runs `loadInto(k)` and reads "This conversation has newer messages. They are shown now. Press Enter to send." (D9a's wording), and `thread-deleted` is D18 after the release. **(b) An uncertain failure**: Stop, the 60 s deadline, a network error, a 5xx: `releaseClaim(token, error, uncertain: true)`, because the route may still finish and save the turn in the background (`onFinish` runs on abort, `ai@6.0.300` `index.mjs:6700-6712`), and the box then shows D31's card instead of "Not sent" (R4). **(c) A refusal that says the turn is committed with this text** (ADR 0003 `turn-in-progress`, `turn-answered`: `committed: true`, `textCommitted: true`): **not** a failure. `consumeDraft(token)`, then D20. **(d) `turn-committed-different-text`** (`committed: true`, `textCommitted: false`): an earlier text is stored under this id, so the box's text is a new turn. `releaseClaim(token, error, freshTurnId: mint())` (S4 with `freshTurnId`; never consumed), then D11r, `loadInto(k)` and a lineage bump; the card reads "An earlier version of this message was already sent. It is shown above. Your edit is still in the box." Enter sends the edit under the fresh id (ADR 0003 §9.4 change 1). Retry is Enter on the box in every arm. Arms (c) and (d) are dormant until ADR 0003's PR 1 lands. |
+| D9d | sending (later, routing) | that turn's chat request fails **before** `streaming`: a non-2xx, a network error, Stop, or 60 s without reaching `streaming` (the tab then calls `stop()`, so the route sees a disconnect) | `turnId = sending.turnId` | Remove the optimistic user message `turnId` from `useChat` (it never reached the route's transcript). Then, by what failed: **(a) a certain refusal**, one the route answers before its budget hold and which stores nothing: 401 (no session, `route.ts:162-163`; `assistant/route.ts:171-172`), 503 (AI not configured, `route.ts:164-168`; `assistant/route.ts:173-177`), 400 (`route.ts:175-186`, `message-limits.ts:96`), 413 (`message-limits.ts:99`) and 402 (the budget refusal, `route.ts:205-215`; `assistant/route.ts:217`). There is no 429 on either route (revision 6 listed one; `git grep 429` over both routes and `message-limits.ts` is empty). And, once ADR 0003 lands, every typed refusal with `committed: false` (409 `thread-busy`, `transcript-stale`, `client-outdated`; 410 `thread-deleted`; 404 `thread-not-found`, `project-not-found`; 403 `org-forbidden`; ADR 0003 §9.4 change 2): `phase := releasing`, `releaseClaim(token, error, uncertain: false)`, then D11r / D11c / D11n. The card reads "Not sent: <reason>. Your message is back in the box." `transcript-stale` also runs `loadInto(k)` and reads "This conversation has newer messages. They are shown now. Press Enter to send." (D9a's wording), and `thread-deleted` is D18 after the release. **(b) An uncertain failure**: Stop, the 60 s deadline, a network error, any status not listed in (a) or (c)-(d), which includes 500, 502 and 504 (a 503 is the route's own refusal, above; revision 6 read it as uncertain and showed a false "may already have been sent"): `releaseClaim(token, error, uncertain: true)`, because the route may still finish and save the turn in the background (`onFinish` runs on abort, `ai@6.0.300` `index.mjs:6700-6712`), and the box then shows D31's card instead of "Not sent" (R4). **(c) A refusal that says the turn is committed with this text** (ADR 0003 `turn-in-progress`, `turn-answered`: `committed: true`, `textCommitted: true`): **not** a failure. `consumeDraft(token)`, then D20. **(d) `turn-committed-different-text`** (`committed: true`, `textCommitted: false`): an earlier text is stored under this id, so the box's text is a new turn. `releaseClaim(token, error, freshTurnId: mint())` (S4 with `freshTurnId`; never consumed), then D11r, `loadInto(k)` and a lineage bump; the card reads "An earlier version of this message was already sent. It is shown above. Your edit is still in the box." Enter sends the edit under the fresh id (ADR 0003 §9.4 change 1). Retry is Enter on the box in every arm. Arms (c) and (d) are dormant until ADR 0003 slice 6 lands. |
 | D10 | Drafting | `SUBMIT` | `thread ∈ {none, deleted}`, text non-empty and within the limit, no `conflict`, `claiming = null`, `sending = null` | `claiming := { attempt, token: mint(), turnId: server?.failed_send?.turnId ?? mint(), kind: first, content: the box }`, and `local := null`, as in D9. `claimDraft(base = server?.revision ?? 0, content, …)`. |
 | D10b | claiming (first) | `claimed-by-you(r)` | `attempt = claiming.attempt` | `sending := { …, phase: starting }`, `claiming := null`, `server := { content, state: sending, revision: r }`, `epoch++`, the box empties and the bubble shows. Then `startConversation(origin: composer, token, turnId, revision: r)`. The server reads the text from the frozen row (§5.1 step 2), which is exactly what the box showed. |
 | D10c | claiming | any other answer: `conflict`, `claimed`, `discarded`, `gone`, `wrong-kind`, `empty`, `limit`, `invalid`, `scope-changed`, `forbidden`, `unauthorized`, transient, or the claim's own timeout (D32) | `attempt = claiming.attempt` | `local := claiming.content` (null when it equals `server.content`), `claiming := null`. **Nothing is sent**, and the box shows the same words, editable again. The outcome then takes its own transition (D14-D16, D18, D24, D27, D28, D30), and the notice is prefixed "Not sent:". On a timeout the token also goes to `abandoned` and `releaseClaim(token)` is queued (D33), because the claim may have landed. (#5512 thread 4177659605) |
 | D10x | any | `SUBMIT_EXTERNAL(text, mentions, cellTarget?)` | `thread ∈ {none, deleted}`, no `claiming`, no `sending`, the row is not `sending` | `sending := { …, origin, phase: starting }` with no token. `startConversation(revision: server?.revision ?? 0, origin, text, …)`. The box is untouched. An external prompt is not the draft's text, so it takes no claim (§5.1 step 1). |
-| D10y | any | `SUBMIT_EXTERNAL` | `thread = listed`, `transcript = loaded` | `sendMessage` with its own metadata. The box is untouched. (With `transcript ≠ loaded`, D9a first.) |
+| D10y | any | `SUBMIT_EXTERNAL(text, mentions, cellTarget?)` | `thread ∈ {listed, unlisted}`, `transcript = loaded`, the chat's `status ∈ {ready, error}` | `sendMessage({ id: mint(), parts: [{ type: "text", text: text.trim() }], metadata: { mentions, cellTarget } })`. The box is untouched; an external prompt takes no claim. This is the empty-cell prompt's path into an existing conversation: `elench-conversation.tsx:313-324` stages the cell (`setPendingCellTarget`) and sends the text, and slice 9 turns that effect into `SUBMIT_EXTERNAL(text, [], cellTarget)` with `cellTarget` read from `pendingCellTarget`, so the target is on the stored message when ADR 0003 slice 9 deletes `body.cellTarget`. (With `transcript ≠ loaded`, D9a first.) |
 | D10z | claiming or sending | `SUBMIT` / `SUBMIT_EXTERNAL` / Retry | — | refused: "Wait for the message that is being sent." Across tabs and devices the claim serializes sends (D30). |
 | D11 | sending (first, starting) | `START_FAIL(error)`: a rejected call, `unavailable`, or the start's 30 s timeout (D32) | `attempt = sending.attempt` | `phase := releasing`. `releaseClaim(token, error)`. The bubble reads "Not sent yet. Checking…". **Nothing is put back in the box yet**: the words go back only when the server says the start can no longer commit (D11r), so there is never a moment where the box and a committed turn both hold them (G31). |
 | D11r | releasing | `released(row)` | — | The release is definitive (§3.4: the start, or the route, can no longer consume this claim). `epoch++`. `server := row`. The box shows `row.text`, followed by `"\n\n" + local` only when `local ≠ null`. `local` is non-null here only for text typed **after** a claim answered (D9b, D10b), because D9/D10 set it to null at the claim and a restored `claiming` carries none (R1). The merged content is saved at `row.revision`. `sending := null`. The card reads "Not sent. Your message is back in the box." |
 | D11c | releasing | `not-claimed(row, thread)` | `row.last_sent.turnId = turnId`, or `thread.firstTurnId = turnId`, or `thread.hasTurn` | The send was consumed before the release arrived: D17 (a first turn) or D9c's `consumed` arm (a later turn). |
 | D11n | releasing | `not-claimed(row, thread)` | otherwise | The claim was released by the lease, or never landed. As D11r with the returned row. |
 | D11t | releasing | the release fails transiently or times out | — | Retry with D27's backoff. The token stays in `abandoned` and in the cache. The words are safe in the frozen row and in the cache; the lease settles the row after 120 s of silence at the latest (S5). |
-| D12 | sending (first) | `created(r, threadRevision)` | `attempt = sending.attempt` | `server := { empty, active, revision: r }`, `thread := listed`, `transcript := loaded` (the tab's `useChat` is empty for a new conversation, exactly as on dev), `sending := null`. When `threadRevision ≠ null`, it seeds the transport's `revisionRef` (ADR 0003 §9.1), so the first `sendMessage` carries the right base revision; whichever of this ADR's composer slice and ADR 0003's PR 1 lands second wires it. If `k` is mounted and active, `sendMessage({ id: turnId, parts: [the stored text], metadata: { mentions } })` pushes the one turn, so the transcript the route saves starts with `messages[0].id = turnId`, the stored one (R5). Otherwise nothing runs, and the transcript shows "No reply arrived" on open. Pending `artifacts` are placed, and a placement that fails gets a toast naming the artifact. If `local ≠ null` (typed during the send), it is saved at `r`. |
+| D12 | sending (first) | `created(r, threadRevision)` | `attempt = sending.attempt` | `server := { empty, active, revision: r }`, `thread := listed`, `transcript := loaded` (the tab's `useChat` is empty for a new conversation, exactly as on dev), `sending := null`. `threadRevision` seeds the transport's base revision through the setter ADR 0003 slice 6 adds to `useAgentChat` (its §9.1), so the first `sendMessage` carries the right base revision. Slice 9 wires it; it lands after ADR 0003 slice 6 (§5.3, the order). If `k` is mounted and active, `sendMessage({ id: turnId, parts: [{ type: "text", text: the stored text }], metadata: { mentions } })` pushes the one turn, so the transcript the route saves starts with `messages[0].id = turnId`, the stored one (R5). Otherwise nothing runs, and the transcript shows "No reply arrived" on open. Pending `artifacts` are placed, and a placement that fails gets a toast naming the artifact. If `local ≠ null` (typed during the send), it is saved at `r`. |
 | D13 | sending | `already-stored(r)` | attempt matches | As D12, but **no** `sendMessage`: `loadInto(k)` and a lineage bump (§5.2). |
 | D14 | dirty | `conflict(row)` on save | `local` equals `row.content` | adopt: `server := row`, `local := null` |
 | D14s | dirty | `conflict(row)` on save | `row.last_writer = this tab's id` | This tab's own abandoned save landed (D32). Save `local` at `base = row.revision`, silently. (G32) |
@@ -892,7 +994,7 @@ only. A duplicated tab copies `sessionStorage`, so a cached id would make two ta
 | D18 | any | `startConversation` answers `deleted` or `conflict` (§5.1 step 5; the claim was released in that transaction), D9d's `thread-deleted` refusal after its release, or `gone(thread)` on save with `local ≠ null` | — | **FORK**: mint `k''` in the same scope, carry `sending.text` and its mentions (or the start's external prompt), then `local`, and `artifacts`, and save under `k''` at base 0. On `saved`, `discardDraft(k, released revision)`, so the words live in one row (soft, 24 h). `sending := null`. `activeKey` moves only if it was `k`. The notice reads "That conversation was deleted. Your message is kept in a new one." or "This conversation was started from another tab or device. Your message is kept in a new one." |
 | D19 | any | `gone(thread)` on save with `local = null`, `claiming = null` and `sending = null` | — | `epoch++`. `server := null`. If `k` is not the active key, remove the entry. If the thread is `deleted`, the notice reads "Removed the unsent message of a conversation you deleted." |
 | D19L | any | `listDrafts` (request sequence `q`) no longer lists `k` | `local = null`, `claiming = null`, `sending = null`, `server ≠ null`, **and** `ackSeq < q` | as D19. A key the server never acknowledged is **never** removed by a list, and neither is a key whose last write was answered after the list was requested. (#5512 thread 4177659614) |
-| D20 | any | a chat route refuses a turn as `turn-in-progress` or `turn-answered` (ADR 0003 §9.3: `committed: true`, `textCommitted: true`) | — | **Dormant until ADR 0003's PR 1 lands.** No error card. If this tab holds the turn's claim, `consumeDraft(token)` first (D9d (c)). `loadInto(k)` and a lineage bump. For `turn-in-progress` the loaded transcript ends on the user turn, so it reads "Being answered in another tab or device" instead of "No reply arrived", and `getThread` is polled every 5 s until its `inFlight` is null, then loaded again. For `turn-answered` the load is all. This is the transition ADR 0003 names as "D20"; its other refusals are D9d's arms (a) and (d). |
+| D20 | any | a chat route refuses a turn as `turn-in-progress` or `turn-answered` (ADR 0003 §9.3: `committed: true`, `textCommitted: true`) | — | **Dormant until ADR 0003 slice 6 lands.** No error card. If this tab holds the turn's claim, `consumeDraft(token)` first (D9d (c)). `loadInto(k)` and a lineage bump. For `turn-in-progress` the loaded transcript ends on the user turn, so it reads "Being answered in another tab or device" instead of "No reply arrived", and `getThread` is polled every 5 s until its `inFlight` is null, then loaded again. For `turn-answered` the load is all. This is the transition ADR 0003 names as "D20"; its other refusals are D9d's arms (a) and (d). |
 | D21 | Drafting / Failed | `DISCARD` | `claiming = null`, `sending = null`, the row is not `sending` | `discardDraft(base)`. The Undo toast calls `restoreDraft`. A `conflict` answer means another tab changed it, so the discard did not happen; the notice says so and shows that text (D15). A `claimed` answer is D30. |
 | D22 | — | `SERVER_ROWS(list)` (`listDrafts`, request sequence `q`, succeeded for the current scope generation) | — | Only keys of the list's own scope are read. For each listed key with `ackSeq < q`: a row in `sending` whose token is not in `abandoned` is D30, and one whose token is is D33; a row that is `active` while this tab's `sending ≠ null` is read by the claim-outcome table as `not-claimed(row)` (the claim was consumed, or settled after 120 s of silence), never adopted into the box directly (R9); otherwise, if `local = null` and `claiming = null` and `sending = null`, adopt the row (`epoch++` only when the content differs from what is shown); if `local ≠ null` and the row's revision is newer than our base, set `conflict := edited` (D15). A row with `failed_send.uncertain` is D31. A key whose last write was answered after `q` keeps its newer state. Unlisted keys go to D19L. Thread status is updated, and **when a mounted key's status changes from `none`/`deleted` to `listed`/`unlisted`, run `loadInto(k)` and bump the lineage**. `listDrafts` failing changes nothing (§7.4). (#5512 thread 4177659625) |
 | D23 | — | `SCOPE_CHANGE(s')` (org switch, an anchor change through `openPanel`/`openModal`/`togglePanel`, `use-elench-store.ts:218-263`) | — | The selector shows only `s'`. `activeKey := activeKey[s']`. Requests in flight carry their own key and never read the active one. `listDrafts` runs for `s'` with a generation guard, so a late answer for `s` is dropped (AC7). An org change is also `PAGE_ORG(null)` (D29) at once. |
@@ -906,8 +1008,9 @@ only. A duplicated tab copies `sessionStorage`, so a cached id would make two ta
 | D31 | any | a row arrives with `failed_send.uncertain = true` | — | The text is in the box (adopted as in D22, or kept as `local`). `conflict := uncertain`, and the card reads "This message may already have been sent: the tab that sent it stopped confirming. Check the conversation before you send it again", with **Show conversation** (`loadInto`). Enter is allowed and sends the same turn id (§5.3). The marker, and with it the turn id, survives edits: `saveDraft` keeps an `uncertain` marker until the card's **Dismiss** clears it, so a corrected re-send still carries the same turn id for #5515 (R10) **until** the route answers `turn-committed-different-text`; from then on the edit is a new turn under a fresh id (D9d (d); ADR 0003 §9.4 change 1). "Never re-minted for a stored turn" still holds: the fresh id names the edit, which is not stored. |
 | D32 | any | a queued request's client timeout passes (§7.1) | — | The request is abandoned: the slot is freed and the late answer is dropped by its sequence number. A claim goes to D10c, a start to D11, a release to D11t, a consume is retried (D27; a `not-claimed` is read as in D9c), and a save is retried at the same base (D14s recognizes a late landing of the abandoned one). (G32) |
 | D33 | any | an outcome or a listed row shows the row `sending` under a token **in** `abandoned` | — | This is this tab's own abandoned claim, never another tab's. `releaseClaim(token)` at once, read by D11r / D11c / D11n; the token leaves `abandoned` on `released` or `not-claimed`. |
-| D34 | `claiming` or `sending` | every 20 s, and at once on `visibilitychange: visible` | this tab holds a token | `touchClaim(token)` (S7), outside the per-key queue and without a client timeout of its own. `touched` changes nothing. `not-claimed(row, thread)` is read by the claim-outcome table, so a claim this tab lost (it was hidden past 120 s) is never assumed to be held. A failed heartbeat is retried at the next tick. |
+| D34 | `claiming` or `sending` | every 20 s, and at once on `visibilitychange: visible` | this tab holds a token | `touchClaim(token)` (S7): a `fetch` to `POST /api/elench/drafts/heartbeat`, never a server action, so it runs outside the per-key queue **and** outside Next's global action queue (§1, §3.4), with a 10 s fetch timeout of its own. `touched` changes nothing. `not-claimed(row, thread)` is read by the claim-outcome table, so a claim this tab lost (it was hidden past 120 s) is never assumed to be held. A failed heartbeat is retried at the next tick. |
 | D35 | `sending` | `gone(thread)` from `consumeDraft`, `releaseClaim`, `touchClaim` or `startConversation` (a delete elsewhere purged the frozen row, §6.3) | — | Before the hand-off (`phase ∈ {starting, routing, releasing}`): D18, so `sending.text` moves into a new conversation with "That conversation was deleted. Your message is kept in a new one." After it (`consuming`): the text is the sent turn, so `sending := null` and D19. (R8) |
+| D36 | Drafting | `EDIT` whose `local` text newly matches the credential detector (Q7) | this key has no credential acknowledgement | **The autosave is held, so the paste never reaches the server unasked**: `save := held` with reason `credential`, and D7 does not run for this key. The notice (Q7) offers **Save to my account** (acknowledge: the key records it, the hold lifts, D7 runs) and **Keep in this tab only** (the hold stays; the words are in memory and the cache, I4, and `beforeunload` asks before a close). Editing the match away lifts the hold. Enter still works: a claim stores the content because the user chose to send it, and the sent turn is stored anyway. (Revision 7; the review of revision 6 showed the 800 ms autosave had written the secret before revision 6's notice appeared.) |
 
 **Reading a claim's outcome.** It reads only the outcome and the `thread` and `last_sent` the server
 returned with it, from the same transaction (§4.2), so it never guesses. `turnId` is this tab's
@@ -963,8 +1066,12 @@ never reads as "your message was sent" (#5512 thread 4177659608).
   `claimed` or `conflict` (G35).
 - **I10. No unanswered request holds a key's queue.** Each has a client timeout, and its
   abandonment is safe (§7.1, D32) (G32). Abandoning frees the **per-key** slot only: Next's own
-  action queue still runs the abandoned call, so a later request can wait behind it. Correctness
-  never depends on that latency: the claim is kept alive by heartbeats (D34), not by deadlines (R2).
+  action queue still runs the abandoned call, so a later **action** can wait behind it. Correctness
+  never depends on that latency: the claim is kept alive by heartbeats (D34), not by deadlines (R2),
+  and the heartbeat is a route-handler `fetch`, which never enters Next's action queue
+  (`next@16.3.8`: `callServer`, `client/app-call-server.js:14-26`, is the only way into
+  `dispatchAction`, `client/components/app-router-instance.js:108-170`). Revision 6 said the same
+  sentence while the heartbeat was itself a server action, which made it false.
 
 ### 7.3 The cache
 
@@ -990,6 +1097,7 @@ exactly the content on screen.
 | blocked: forbidden (other) | "Not saved: you can no longer write here." |
 | held (`other-org`, D24, D29) | "Not saved yet: this tab shows another organization. It saves when you go back to <org name> in this tab." `beforeunload` asks for confirmation. |
 | blocked: scope (`address`) | D24 |
+| held (`credential`, D36) | "Not saved to your account: this looks like a credential. **Save to my account** · **Keep in this tab only**" |
 | blocked: limit | "Not saved: you have 200 unsent messages here. Send or discard some to save this one." |
 | blocked: invalid / error | "Not saved: something went wrong saving this message. It is kept in this tab only." Reported to error tracking by field path only (§9). |
 | sending, this tab | the bubble: "Sending…", then "Not sent yet. Checking…" while a release is in flight (D11) |
@@ -999,9 +1107,10 @@ exactly the content on screen.
 
 The rail's Unsent group shows a count of keys that are not acknowledged. It is a section of
 `ThreadRail`, so it shows in the docked rail at `lg` and up and in the modal's narrow-screen sheet
-below `lg` (#5655); there the rail is behind a toggle, which shows the same count when it is not
-zero (Q3). The project panel renders no `ThreadRail` (it has `ElenchConversationSwitcher`,
-`elench-panel.tsx:65`), so there the Unsent entries and their count are in the switcher's list. A toast is raised each
+below `lg` (#5655, on dev since 37af47c95); there the rail is behind a toggle, which shows the same
+count when it is not zero (Q3). The docked **panel** renders no `ThreadRail` in either context, org
+or project (it has `ElenchConversationSwitcher`, `elench-panel.tsx:65`), so there the Unsent
+entries and their count are in the switcher's list. A toast is raised each
 time a key **enters** an unsaved or blocked state, and it names the conversation (G19).
 
 ### 7.5 Flush on leave
@@ -1072,15 +1181,18 @@ cost. This design bounds it:
   (`lib/reconcile/loop.ts`, the same host as `kubeconfig-mint-sweep`). It uses the service role and
   touches only rows whose own timestamps have passed:
   - discarded drafts 24 h after `discarded_at`;
-  - active drafts 30 days after `updated_at` (Q2);
-  - drafts whose `(user_id, org_id)` has had no active `member` row for 30 days (measured from the
-    draft's `updated_at`, so the rule needs no new column), except the personal org, where
-    `org_id = user_id`.
+  - every other draft 30 days after `updated_at` (Q2), whether or not its user is still an active
+    member of its org. (Revision 6 listed a third rule for ended memberships, also measured from
+    `updated_at`; it deleted nothing the rule above does not, so it is gone.)
+  - a `sending` row silent for 120 s is settled first (S5), as in every action.
 - **On thread delete:** purged in the same transaction (§6.3).
 - **On account delete:** `elench_drafts` is added to `ERASURE_RULES` as `erase` by `user_id`, next to `agent_threads` (`lib/privacy/erasure-plan.ts:118-127`).
   `tests/privacy/erasure-register-schema.test.ts` then checks the names against the schema.
-- **Backups:** a purged draft remains in database backups until the backup retention expires. The
-  privacy notice must say so. This is the residual cost the ruling accepts.
+- **Backups:** a purged draft remains in database backups until the backup retention expires, and
+  so does every intermediate revision an autosave wrote (they also pass through the WAL), even if
+  the user deleted the paste before sending. The privacy notice must say so. This is the residual
+  cost the ruling accepts; D36 keeps a credential-looking paste out of it until the user says to
+  save it.
 - **The tab:** `sessionStorage` holds a key's words only while the server has not acknowledged them
   (I4), and is cleared on a viewer change (D25).
 
@@ -1103,7 +1215,8 @@ ordered, scoped slices, and where the two differ, §14 wins. Three groups. Slice
    `thread` field of §4.2), the claim actions `claimDraft`, `consumeDraft` and `releaseClaim` with
    the lease settle (§3.4), `startConversation` (§5.1), and the purge in `deleteThread`. The lease
    settle also runs in the daily sweep (§9).
-   `createThread` keeps its signature for the project assistant's callers.
+   `createThread` keeps its arguments for the project assistant's callers; its return type gains
+   the thread's `revision` in ADR 0003 slice 1, which lands first (§5.3, the order).
 5. **No chat route, no `use-agent-chat.ts` change.** Those are #5515's (§5.3, §8.1).
 6. The sweep task, and the erasure register row.
 7. Tests: an integration test, `tests/integration/elench-drafts-rls.test.ts`
@@ -1134,10 +1247,13 @@ that can refuse writes, and the selectors `useDraft(key)` and `useUnsent(scope)`
   `useChat` status for the hand-off (D9c, D9d). `use-agent-chat.ts` is not changed.
 
 **Group 3: threads, the rail and notices (two `class:ui` draft PRs, §14 slices 10-11; Q3).**
-- `useElenchThreads` resumes `activeKey[scope]`, catches `listThreads` and `loadInto` and renders
-  the draft with an inline error and Retry (G10), and calls `listDrafts`.
-- This PR adds the Unsent group, the footer status, the conflict bar, D9a's and D24's notices,
-  the delete-confirm count, and `VIEWER_CHANGE`. D20's "Being answered" state ships with #5515.
+- `useElenchThreads` resumes `activeKey[scope]` instead of `list[0]`, and catches `listThreads` and
+  the resume's `getThread` (G10). `listDrafts` is called by the store's effects (slice 8: `LOAD`,
+  focus, the 60 s poll, a scope change), not by the hook.
+- The Unsent group, the delete-confirm count and the narrow toggle's count (slice 10); the footer
+  status, the bars, D9a/D24/D31/D36's notices and G10's inline error, rendered into the mount points
+  slice 9 adds (slice 11). `VIEWER_CHANGE` is subscribed by slice 9's drafts root. D20's "Being
+  answered" state ships with ADR 0003 slice 9.
 
 **Rollout order.** The server slices change no request the client already makes, so they deploy
 first.
@@ -1161,93 +1277,111 @@ longer exists. **H** means handled: the case still applies, and a named transiti
 covers it. **M** means moved to #5515 (turn idempotency): the case is about answering or billing a
 turn, and this ADR keeps today's behaviour for it (§5.3).
 
-**Test files:**
-- **S**: `apps/console/tests/components/elench-drafts-surface.test.tsx`. It drives the real
-  `ElenchSurface` / `useElenchThreads` / `ElenchConversation` / store / Lexical stack, with the
-  server actions faked in memory **with real compare-and-set semantics**.
-- **U**: `tests/lib/stores/elench-drafts.test.ts` (the reducer and the queue).
-- **A**: `tests/actions/elench-drafts.test.ts` and `tests/actions/agent.test.ts`.
-- **I**: `tests/integration/elench-drafts-rls.test.ts`.
-- **R**: the route test files.
+**Test files** (paths under `apps/console/`; each belongs to exactly one slice of §14):
+- **S9 / S10 / S11**: the surface tests. They drive the real `ElenchSurface` / `useElenchThreads` /
+  `ElenchConversation` / store / Lexical stack, with the server actions faked in memory **with real
+  compare-and-set semantics**. The number is the slice that adds the test, and each slice has its
+  own file: S9 `tests/components/elench-drafts-surface.test.tsx` (composer, send, reload restore,
+  scope and org changes), S10 `tests/components/elench-drafts-threads.test.tsx` (resume of
+  `activeKey`, the Unsent group, the switcher, the delete confirm), S11
+  `tests/components/elench-draft-notices.test.tsx` (every assertion on a notice, bar or footer
+  text). A test that needs a later slice's UI is that later slice's.
+- **U**: slice 2 `tests/lib/elench/draft-content.test.ts`; slice 7a
+  `tests/lib/stores/elench-drafts-drafting.test.ts`; slice 7b
+  `tests/lib/stores/elench-drafts-sending.test.ts`; slice 8
+  `tests/lib/stores/elench-drafts-effects.test.ts`. A U test of a transition lives in the slice
+  that implements it (§14).
+- **A**: slice 3 `tests/actions/elench-drafts.test.ts`; slice 4
+  `tests/actions/elench-draft-claims.test.ts` and `tests/api/elench-drafts-heartbeat.test.ts`;
+  slice 5 `tests/actions/elench-start.test.ts` and `tests/actions/agent.test.ts`.
+- **I**: slice 1 `tests/integration/elench-drafts-rls.test.ts`; slice 5
+  `tests/integration/elench-drafts-threads.test.ts` (the `user_id` predicate against a teammate's
+  thread whose `org_id` is the page org; `conflict` for another owner's live row and tombstone).
+- **R**: the route tests are ADR 0003's (its slices 6 and 9); this ADR adds none.
 
-Every test must fail on the `dev` it is written against **on its assertion**, not at import (#5423 issue comment
-5972776917, adv 1).
+**"Fails on dev", stated for new modules.** Every test is red on its slice's **base** and green on
+the slice's branch, and on the branch it reaches its assertion. Concretely: revert the slice's
+non-test diff and run the test. For a behaviour the slice changes, it must fail on its assertion,
+not at import (#5423 issue comment 5972776917, adv 1). For a module the slice creates
+(`elench-drafts.ts`, the reducer files, the heartbeat route), the reverted run fails at import, which
+is the only way it can fail; the branch run must then reach an assertion, so a test that would
+pass with the import stubbed out does not count.
 
 ### 11.1 #5464 acceptance criteria
 
 | # | Case | St. | How | Test |
 |---|---|---|---|---|
-| 1 | Minimize/maximize keeps a draft and an edit after a failed start; Retry sends what the box shows | E | The composer is a view of the entry, and a definitive release (D11r) puts the failed text back into the box, so Retry is Enter on the box | S › `modal↔panel keeps the restored text and its edit; Retry sends the box` |
-| 2 | Text typed during an in-flight first send survives landing → docked | E | D10b empties the box at the claim (I1), and new text is new content, saved after the send's outcome (D12, D11r) | S › `words typed while the thread is created stay in the docked box, and the first turn is only what was sent` |
-| 3 | Close/reopen keeps a draft and a failed start, for a user with threads | E | Rows are on the server, and reopen resumes `activeKey[scope]` | S › `reopen with threads returns to the failed new conversation` |
-| 4 | Each thread keeps its own draft, and re-select keeps it | E | One row per key (I2) | S › `A→B→A→B keeps each draft; re-selecting keeps it` |
-| 5 | New chat starts empty and keeps the previous unsent conversation (no single slot) | H | D1, D2 | S › `New chat twice keeps both under Unsent` |
-| 6 | Reload keeps the draft and the failed start, and lands where the user was. (The AC's "never stored server-side" is superseded by the 2026-10-04 ruling.) | E | Server rows, the per-tab `activeKey`, and D26 | S › `reload lands on the active conversation with its draft and its Not-sent card` |
-| 7 | Org/account switch: A never seeds B; Retry never runs under B; a switch mid-load neither wedges nor writes A under B | H | D23, D24, D25, I8. A failed start's Retry is `startConversation`, an action in the page's org (§8.1). A **later** turn's billing org is #5515. | S › `org switch shows B's empty box and keeps A's failed start for A`; S › `scope change during listDrafts settles for the new scope only`; A › `startConversation from org B's page with A's key is scope-changed and stores nothing` |
+| 1 | Minimize/maximize keeps a draft and an edit after a failed start; Retry sends what the box shows | E | The composer is a view of the entry, and a definitive release (D11r) puts the failed text back into the box, so Retry is Enter on the box | S9 › `modal↔panel keeps the restored text and its edit; Retry sends the box` |
+| 2 | Text typed during an in-flight first send survives landing → docked | E | D10b empties the box at the claim (I1), and new text is new content, saved after the send's outcome (D12, D11r) | S9 › `words typed while the thread is created stay in the docked box, and the first turn is only what was sent` |
+| 3 | Close/reopen keeps a draft and a failed start, for a user with threads | E | Rows are on the server, and reopen resumes `activeKey[scope]` | S10 › `reopen with threads returns to the failed new conversation` |
+| 4 | Each thread keeps its own draft, and re-select keeps it | E | One row per key (I2) | S10 › `A→B→A→B keeps each draft; re-selecting keeps it` |
+| 5 | New chat starts empty and keeps the previous unsent conversation (no single slot) | H | D1, D2 | S10 › `New chat twice keeps both under Unsent` |
+| 6 | Reload keeps the draft and the failed start, and lands where the user was. (The AC's "never stored server-side" is superseded by the 2026-10-04 ruling.) | E | Server rows, the per-tab `activeKey`, and D26 | S11 › `reload lands on the active conversation with its draft and its Not-sent card` |
+| 7 | Org/account switch: A never seeds B; Retry never runs under B; a switch mid-load neither wedges nor writes A under B | H | D23, D24, D25, I8. A failed start's Retry is `startConversation`, an action in the page's org (§8.1). A **later** turn's billing org is #5515. | S9 › `org switch shows B's empty box and keeps A's failed start for A`; S9 › `scope change during listDrafts settles for the new scope only`; A › `startConversation from org B's page with A's key is scope-changed and stores nothing` |
 | 8 | A bound never evicts the shown conversation or a failed start; any eviction is visible | E | Nothing evicts (I3). `limit` refuses a new row and says so. | A › `the 201st new draft is refused with limit and existing rows still save`; U › `no event removes words except the listed ones` (property test) |
 | 9 | A storage failure is surfaced, and surfaced again after recovery then failure | H | D27, D28, §7.4, a notice per key entry | U › `fail, recover, fail raises two notices` |
-| 10 | After a failed write, a reload never brings back sent, cleared or discarded words, including "deploy" → "deploy now" | E | The server row is the truth. The cache holds only unacknowledged edits with their base, and D22 turns a stale base into a conflict, never an overwrite. | S › `a cache item older than the server row becomes a conflict, not a resurrection` |
-| 11 | A later send in a thread born from New chat never prunes another conversation's draft | E | No pruning by prefix exists. Each key is a row. | S › `a second send in a new thread leaves New chat's draft saved` |
-| 12 | Relocation never hides a failed start; Retry never sends other words | E | There is no relocation. A failed start is the draft's own content plus a marker. | S › `a reaped thread's draft and a failed start stay two rows` |
-| 13 | Relocated and then sent never comes back after a reload | E | No relocation; D12 empties the row in the start's own transaction | S › `sending from an Unsent entry removes it for good` |
-| 14 | An artifact Open-in-new-chat draft survives a reload and the 1 h reap, and is never labelled "deleted" | E | D3 creates a draft row with `artifacts` and no thread row, so there is nothing to reap | S › `artifact new chat creates no thread; the chip survives a reload; the first send places it` |
-| 15 | A reaped thread's draft is kept, and the notice does not say "deleted" | H | `thread = none` with `thread_seen` shows under Unsent as "no longer available" | S › `a reaped thread's draft shows under Unsent as no longer available` |
-| 16 | A thread deleted here or elsewhere is not resurrected | H | §6.3 purge in the delete transaction, D19, D18 for unsaved words only | A › `deleteThread purges the user's drafts of that conversation in every org`; S › `delete elsewhere then reload: no draft` |
+| 10 | After a failed write, a reload never brings back sent, cleared or discarded words, including "deploy" → "deploy now" | E | The server row is the truth. The cache holds only unacknowledged edits with their base, and D22 turns a stale base into a conflict, never an overwrite. | S11 › `a cache item older than the server row becomes a conflict, not a resurrection` |
+| 11 | A later send in a thread born from New chat never prunes another conversation's draft | E | No pruning by prefix exists. Each key is a row. | S9 › `a second send in a new thread leaves New chat's draft saved` |
+| 12 | Relocation never hides a failed start; Retry never sends other words | E | There is no relocation. A failed start is the draft's own content plus a marker. | S10 › `a reaped thread's draft and a failed start stay two rows` |
+| 13 | Relocated and then sent never comes back after a reload | E | No relocation; D12 empties the row in the start's own transaction | S10 › `sending from an Unsent entry removes it for good` |
+| 14 | An artifact Open-in-new-chat draft survives a reload and the 1 h reap, and is never labelled "deleted" | E | D3 creates a draft row with `artifacts` and no thread row, so there is nothing to reap | S10 › `artifact new chat creates no thread; the chip survives a reload; the first send places it` |
+| 15 | A reaped thread's draft is kept, and the notice does not say "deleted" | H | `thread = none` with `thread_seen` shows under Unsent as "no longer available" | S10 › `a reaped thread's draft shows under Unsent as no longer available` |
+| 16 | A thread deleted here or elsewhere is not resurrected | H | §6.3 purge in the delete transaction, D19, D18 for unsaved words only | A › `deleteThread purges the user's drafts of that conversation in every org`; S9 › `delete elsewhere then reload: no draft` |
 | 17 | No path writes one conversation's words into another | E | Immutable keys, the start reads its text from its own locked row, mentions ride their own message, and the scope check | U › `no event writes a key other than its own`; A › `startConversation stores the locked row's text, not the input's` |
 
 ### 11.2 #5423 review cases outside the ACs
 
 | # | Case | Source | St. | How | Test |
 |---|---|---|---|---|---|
-| 18 | Retry with an emptied box sent text the user had deleted | 5970188569 adv 3 | E | Retry is Enter on the box. An empty box sends nothing, and the card says the box is empty. | S › `an emptied box sends nothing and says so` |
+| 18 | Retry with an emptied box sent text the user had deleted | 5970188569 adv 3 | E | Retry is Enter on the box. An empty box sends nothing, and the card says the box is empty. | S11 › `an emptied box sends nothing and says so` |
 | 19 | Typing during the in-flight first send left the sent text in the box, so Enter sent it twice | 5973688789 adv 1 | E | D10b empties the box at the claim, and only a definitive release puts the sent text back (D11r) | covered by #2 |
-| 20 | The card said "has not been lost" while a close or reload lost it | 5973688789 adv 2 | H | §7.4: the copy derives from the acknowledgement state | S › `the card names where the words are` |
+| 20 | The card said "has not been lost" while a close or reload lost it | 5973688789 adv 2 | H | §7.4: the copy derives from the acknowledgement state | S11 › `the card names where the words are` |
 | 21 | Per-keystroke serialization near 100k characters | 5970188569 adv 5 | H | An 800 ms server debounce, a 300 ms cache debounce, and selection-only updates write nothing | U › `selection-only updates write nothing; writes are debounced` |
-| 22 | A second account in one tab, where every personal org is `~` | 5970702244 | E | Rows are RLS-bound to the user, the key is an org id and never `~`, and D25 | I › `user B never reads A's draft`; S › `account B in the same tab never sees A's words` |
+| 22 | A second account in one tab, where every personal org is `~` | 5970702244 | E | Rows are RLS-bound to the user, the key is an org id and never `~`, and D25 | I › `user B never reads A's draft`; S9 › `account B in the same tab never sees A's words` |
 | 23 | Acknowledging notices wholesale dropped one not yet shown | 5971810475 adv 2 | H | Notices are acknowledged by id | U › `ack removes only the shown notice ids` |
-| 24 | An org switch after load wrote A's thread as B's remembered conversation | 5971076371 adv 3 | H | `activeKey` is written per scope from the key's own scope (D23) | S › `org switch after load leaves B's active conversation as it was` |
+| 24 | An org switch after load wrote A's thread as B's remembered conversation | 5971076371 adv 3 | H | `activeKey` is written per scope from the key's own scope (D23) | S10 › `org switch after load leaves B's active conversation as it was` |
 | 25 | An owner change mid-load wedged the skeleton | 5970752756 adv 3 | H | D23's generation guard, G10's catch | covered by #7 |
-| 26 | A `sessionStorage` getter that throws (`SecurityError`) | probe in 5970752756 | E | The cache is optional. The server still saves, and the footer is true. | S › `with storage that throws, drafts still save to the server` |
-| 27 | The too-long card stays after the text is shortened | 5970188569 adv 4 | H | The card derives from the entry's text | S › `the too-long card clears once the box is under the limit` |
+| 26 | A `sessionStorage` getter that throws (`SecurityError`) | probe in 5970752756 | E | The cache is optional. The server still saves, and the footer is true. | S9 › `with storage that throws, drafts still save to the server` |
+| 27 | The too-long card stays after the text is shortened | 5970188569 adv 4 | H | The card derives from the entry's text | S11 › `the too-long card clears once the box is under the limit` |
 | 28 | The store keeps `ctx`/`threadId` across an `[org]` remount | first design review on #5512 | H | D23 | covered by #7 and #24 |
-| 29 | A stale tab sends into a thread deleted elsewhere | 5972776917 adv 2 | H | `startConversation` returns `deleted`, which goes to D18 | A › `a tombstoned id answers deleted`; S › `send into a deleted conversation keeps the words in a new one` |
-| 30 | A draft for an unlisted thread is unreachable | 4174130689 P2; 5970752756 adv 4 | H | `listDrafts` returns every row with its thread status, and the Unsent group shows `none`/`unlisted` | S › `an unlisted thread's draft is shown under Unsent` |
-| 31 | A start that completes after a close or org switch sends into an unmounted chat | design review (`elench-surface.tsx:21`) | H | D12's mounted-and-active guard | S › `close during startConversation: reopen shows "No reply arrived"` |
-| 32 | A failed suggestion, seed or cell prompt is kept and re-sent as it was | 5969533222; 5969992305 | E | An external start that fails puts the prompt into the box as the draft's content and keeps its `cellTarget` on the marker (D11r); its retry is a claimed composer send (D10) | S › `a failed seed prompt survives a reload in the box and Retry sends it with its cell target` |
-| 33 | A failed `startThread` sent into `threadId: null`, and a committed-but-unattached row made Retry bill twice | 4173024467 | E | One transaction with a client-minted id; a lost response is loaded, never re-sent (D13, D17). Server-side exactly-once billing is **M** (#5515). | A › `a lost response then Retry answers already-stored`; S › `a lost created response: the next Enter loads the turn and sends nothing` |
+| 29 | A stale tab sends into a thread deleted elsewhere | 5972776917 adv 2 | H | `startConversation` returns `deleted`, which goes to D18 | A › `a tombstoned id answers deleted`; S9 › `send into a deleted conversation keeps the words in a new one` |
+| 30 | A draft for an unlisted thread is unreachable | 4174130689 P2; 5970752756 adv 4 | H | `listDrafts` returns every row with its thread status, and the Unsent group shows `none`/`unlisted` | S10 › `an unlisted thread's draft is shown under Unsent` |
+| 31 | A start that completes after a close or org switch sends into an unmounted chat | design review (`elench-surface.tsx:21`) | H | D12's mounted-and-active guard | S10 › `close during startConversation: reopen shows "No reply arrived"` |
+| 32 | A failed suggestion, seed or cell prompt is kept and re-sent as it was | 5969533222; 5969992305 | E | An external start that fails puts the prompt into the box as the draft's content and keeps its `cellTarget` on the marker (D11r); its retry is a claimed composer send (D10) | S10 › `a failed seed prompt survives a reload in the box and Retry sends it with its cell target` |
+| 33 | A failed `startThread` sent into `threadId: null`, and a committed-but-unattached row made Retry bill twice | 4173024467 | E | One transaction with a client-minted id; a lost response is loaded, never re-sent (D13, D17). Server-side exactly-once billing is **M** (#5515). | A › `a lost response then Retry answers already-stored`; S9 › `a lost created response: the next Enter loads the turn and sends nothing` |
 
 ### 11.3 #5512 inline gaps (G1-G11: first review, resolved on revision 2; G12-G21: second review)
 
 | # | Gap (thread comment id) | St. | How the server model handles it | Test |
 |---|---|---|---|---|
-| G1 | A PK conflict returned the existing row, so a duplicated tab billed twice and erased the other tab's reply. Different turn ids were rewritten. `RECONCILE(listed)` left `thread=local`. (4177444315) | E | Compare-and-set on the draft serializes starts. The start-outcome table has no rewrite. `listDrafts` reports `listed`, and D22 loads the transcript. A second **answer** to one turn is **M** (#5515). | A › `two startConversation calls at one base: one created, one draft-conflict`; S › `duplicated tab: Retry in B after A's success loads A's transcript, and a further send from B keeps A's turns` |
+| G1 | A PK conflict returned the existing row, so a duplicated tab billed twice and erased the other tab's reply. Different turn ids were rewritten. `RECONCILE(listed)` left `thread=local`. (4177444315) | E | Compare-and-set on the draft serializes starts. The start-outcome table has no rewrite. `listDrafts` reports `listed`, and D22 loads the transcript. A second **answer** to one turn is **M** (#5515). | A › `two startConversation calls at one base: one created, one draft-conflict`; S9 › `duplicated tab: Retry in B after A's success loads A's transcript, and a further send from B keeps A's turns` |
 | G2 | Nothing held the submitted text; mentions came through a global slot (4177444322) | E | D10 moves the words out of the box (I1). Mentions ride the message metadata (§5.1). | U › `the first turn is exactly the locked row's text`; R › `mentions are read from the last user message` |
-| G3 | A persisted in-flight start had no exit; Discard during Starting; Undo; no timeout (4177444324) | E | The claim and its token are cached; a reload releases by token (D26), and the answer is definitive: `released` or a consumed claim (D17). Discard of a `sending` row is refused (`claimed`). The 30 s timeout is D11, which releases rather than restores. | S › `reload during startConversation restores the words in the box, or the thread if it committed` |
+| G3 | A persisted in-flight start had no exit; Discard during Starting; Undo; no timeout (4177444324) | E | The claim and its token are cached; a reload releases by token (D26), and the answer is definitive: `released` or a consumed claim (D17). Discard of a `sending` row is refused (`claimed`). The 30 s timeout is D11, which releases rather than restores. | S9 › `reload during startConversation restores the words in the box, or the thread if it committed` |
 | G4 | `SUBMIT_EXTERNAL` had no transition, and FORK dropped external text (4177444326) | E | D10x, D10y and D10z. On failure the prompt goes into the box (D11r), and FORK carries it (D18). | U › `SUBMIT_EXTERNAL in every state` |
 | G5 | I6 was client-only, and the route billed under the session org (4177444337) | M | #5515 (§8.1). Draft writes are org-checked actions (I8). | — (#5515) |
-| G6 | A delete cleared one org's draft, and the confirm undercounted (4177444340) | H | §6.3: purge across orgs, pinned to the current owner, and count in the confirm | A › `purge removes the drafts in orgs A and B, and never another user's`; S › `the confirm counted two` |
+| G6 | A delete cleared one org's draft, and the confirm undercounted (4177444340) | H | §6.3: purge across orgs, pinned to the current owner, and count in the confirm | A › `purge removes the drafts in orgs A and B, and never another user's`; S10 › `the confirm counted two` |
 | G7 | "Never evict" spent the origin's `sessionStorage` (4177444343) | E | The cache holds only unacknowledged words, within a budget, and refusing it never evicts (I4) | U › `at the budget a cache write is refused and a canvas-draft write still succeeds` |
-| G8 | The unmount flush could write a sent message back (4177444345) | E | Writes come from the store's `local`, never from the editor. D10 bumps `epoch`, so a late editor update is dropped (I6). | S › `landing → first send succeeds → unmount → reload: the box is empty` |
-| G9 | A sign-out other than the menu left secrets in the tab (4177444348) | H | D25 is raised by `useViewer()`, D26 sweeps other viewers' items, and the cache holds only unsaved words (I4) | S › `a session that ends without the menu clears the cache` |
-| G10 | The LOAD-time `getThread` wedged the skeleton; the anchor change was not a scope change (4177444353) | H | Slice 10 (§14) adds the catch (still missing on dev, §1), and the draft renders with an inline error and Retry. The anchor change is D23. | S › `getThread rejecting on load renders the draft with Retry`; S › `project and back restores each anchor's active conversation` |
+| G8 | The unmount flush could write a sent message back (4177444345) | E | Writes come from the store's `local`, never from the editor. D10 bumps `epoch`, so a late editor update is dropped (I6). | S9 › `landing → first send succeeds → unmount → reload: the box is empty` |
+| G9 | A sign-out other than the menu left secrets in the tab (4177444348) | H | D25 is raised by `useViewer()`, D26 sweeps other viewers' items, and the cache holds only unsaved words (I4) | S9 › `a session that ends without the menu clears the cache` |
+| G10 | The LOAD-time `getThread` wedged the skeleton; the anchor change was not a scope change (4177444353) | H | Slice 10 (§14) adds the catch (still missing on dev, §1), and the draft renders with an inline error and Retry. The anchor change is D23. | S11 › `getThread rejecting on load renders the draft with Retry`; S10 › `project and back restores each anchor's active conversation` |
 | G11 | Traceability: no row for 4173024467, wrong citations (4177444357) | H | Row 33. This table cites every source by id. | review |
 | G12 | The per-call `body` is dropped by `use-agent-chat.ts:61-63` (4177527031) | H | No draft path relies on the per-call `body`. The first turn's mentions are stored on its message (§5.1). Later turns keep the existing slot, as on dev, until #5515 changes the routes and the transport. | A › `the stored first turn carries its mentions` |
-| G13 | `ALREADY_STORED` in a mounted tab left `useChat` empty, so the next Enter overwrote the row (4177527037) | H | D13, D17 and D22 always run `loadInto` and bump the lineage (D20 too, once #5515 lands). D9 needs `transcript = loaded`. §5.2 forbids an auto-send. | S › `B gets already-stored, the transcript shows A's turns, and B's next send keeps them in the row` |
-| G14 | Discard ran an unconditional `deleteThread` (4177527041) | E | §6.2: Discard is a soft delete of the draft row only. A committed start has no Discard. | A › `discardDraft never changes agent_threads`; S › `Discard in B while A chats in the thread leaves the thread and its widgets` |
-| G15 | `checked` was never set on a successful reconcile, and `RECONCILE(absent)` on `local` had no row (4177527043) | E | There is no `checked` and no client gate. Retry is a `startConversation` that the server classifies. | S › `reload after a startConversation that threw: Retry works at once` |
+| G13 | `ALREADY_STORED` in a mounted tab left `useChat` empty, so the next Enter overwrote the row (4177527037) | H | D13, D17 and D22 always run `loadInto` and bump the lineage (D20 too, once #5515 lands). D9 needs `transcript = loaded`. §5.2 forbids an auto-send. | S9 › `B gets already-stored, the transcript shows A's turns, and B's next send keeps them in the row` |
+| G14 | Discard ran an unconditional `deleteThread` (4177527041) | E | §6.2: Discard is a soft delete of the draft row only. A committed start has no Discard. | A › `discardDraft never changes agent_threads`; S9 › `Discard in B while A chats in the thread leaves the thread and its widgets` |
+| G15 | `checked` was never set on a successful reconcile, and `RECONCILE(absent)` on `local` had no row (4177527043) | E | There is no `checked` and no client gate. Retry is a `startConversation` that the server classifies. | S9 › `reload after a startConversation that threw: Retry works at once` |
 | G16 | I9's rev bump on every non-EDIT transition dropped keystrokes (4177527050) | E | `epoch` bumps only on an outside replacement of the box (I6). A refresh, an acknowledgement or a persist result never bumps it. | U › `an EDIT after a list refresh or a save ack in the same tick is kept` |
-| G17 | The key used `orgSlug`, which is renamable and reusable (4177527056) | E | The key is the server-resolved org id. Every action checks it against the page's actor (§4 step 3). | A › `saveDraft with an orgId other than the page actor's is scope-changed and writes nothing`; S › `after a slug rename, the words stay under the org id and save after reload` |
+| G17 | The key used `orgSlug`, which is renamable and reusable (4177527056) | E | The key is the server-resolved org id. Every action checks it against the page's actor (§4 step 3). | A › `saveDraft with an orgId other than the page actor's is scope-changed and writes nothing`; S9 › `after a slug rename, the words stay under the org id and save after reload` |
 | G18 | After T30, two attempts in one realm could store stale text over an edit (4177527060) | E | No `rewritten` outcome and no realm. A start needs the live claim's token, so every older attempt answers `not-claimed`. | A › `a late start whose claim was released is not-claimed and stores nothing` |
 | G19 | The notice fired only on ∅ → non-∅ (4177527068) | H | A notice is raised each time a key enters an unsaved or blocked state, and it names the conversation (§7.4) | U › `one key permanently unsaved, then another fails: two notices` |
-| G20 | T24 after a reload applied rule P to an edited text, and Retry sent the stale snapshot (4177527076) | E | No rule P. The box after D17 holds only text typed after the claim, never the sent text, and the notice states that the first message was sent. A committed turn is never rewritten. | S › `committed-but-lost start, type more, reload: the box holds only the later text and the notice says the first message was sent` |
-| G21 | A `gone` Unsent conversation could not be opened (4177527085) | H | D4 opens `none`/`deleted` keys without `getThread` | S › `an Unsent entry whose thread was reaped opens and sends` |
+| G20 | T24 after a reload applied rule P to an edited text, and Retry sent the stale snapshot (4177527076) | E | No rule P. The box after D17 holds only text typed after the claim, never the sent text, and the notice states that the first message was sent. A committed turn is never rewritten. | S11 › `committed-but-lost start, type more, reload: the box holds only the later text and the notice says the first message was sent` |
+| G21 | A `gone` Unsent conversation could not be opened (4177527085) | H | D4 opens `none`/`deleted` keys without `getThread` | S10 › `an Unsent entry whose thread was reaped opens and sends` |
 
 ### 11.4 #5512 second-review advisories
 
 | # | Advisory | St. | How | Test |
 |---|---|---|---|---|
 | A1 | No outcome for "the insert wrote nothing and the RLS read found nothing" | H | Named `conflict` in §5.1, then D18 | A › `an id held by another owner answers conflict` |
-| A2 | I6 named the billing org but did not check the project | M | #5515 (the hold is the route's). A project draft's own action already requires `authorizeQuiet("view", { type: "project", id })` in the page's org (§4 step 4). | A › `saveDraft for a project of another org is forbidden` |
+| A2 | I6 named the billing org but did not check the project | M | #5515 (the hold is the route's; ADR 0003 §6.2). A project draft's own action reads `projects.org_id = actor.orgId` explicitly, then authorizes (§4 step 4). | A › `saveDraft for a project of another org is forbidden, for a member with an org-wide project:view grant` |
 | A3 | A stored first turn has no mentions | E | Mentions are stored in the first message's metadata (§5.1) | A › `the stored first turn carries its mentions` |
 | A4 | An entry with `artifacts` and no words had no state name | E | States are not derived from content any more. An artifacts-only draft is an ordinary row, and D1 checks "no content". | U › `D1 with an artifacts-only draft mints a new key` |
 | A5 | A stale tab can rebuild a conversation deleted more than a day ago | H | **The first-send path.** While the tombstone lives, `startConversation` answers `deleted`, and D18 forks to a new key. After the tombstone is reaped, a start from a stale draft creates a thread under the old id that holds only the first turn, read from the draft row, never the old transcript. **A stale tab's later turn** that carries the old transcript is transcript compare-and-set, **M** (#5515). | A › `a start after the tombstone is reaped stores only the first turn` |
@@ -1261,21 +1395,21 @@ Every test must fail on the `dev` it is written against **on its assertion**, no
 | G23 | The claim's global primary key collides across orgs under an org-scoped policy; `deleteThread` cannot remove it (4177659592) | M | The claim table is #5515 case 8. `elench_drafts` has no such collision: its unique key contains both policy columns (§3.2), and removal is the owner-pinned purge (§3.3, §6.3). | I › `one user's conversation C in orgs A and B is two rows, and both inserts succeed` |
 | G24 | `maxDuration` bounds nothing under `output: "standalone"`; `agent.ts:121` is wrong (4177659595) | M | #5515's wrong-code facts. §1 states the fact; nothing here depends on a route duration. | — (#5515) |
 | G25 | `currentActor()` cannot resolve a named org, and the enterprise fallback lands a removed member on their personal org (4177659598) | M | #5515's wrong-code facts. §8.1: drafts never use the route's billing org. | — (#5515) |
-| G26 | A renamed slug or ended membership throws `notFound()`, which the client retried for ever as transient (4177659600) | H | §4 step 2 maps it to `scope-changed { reason: "address", slug }` or `forbidden { reason: "membership" }`; D24 and D28 never retry them; §7.4 says which. Other throws stop after three tries (D27). | A › `a renamed slug answers scope-changed with the new slug and writes nothing`; A › `a suspended member answers forbidden(membership) and writes nothing`; S › `after a rename the footer offers the new address, and following it in this tab saves the words` |
-| G27 | D10 ignored the flush's outcome; a `draft-conflict` with no committed turn had no transition (4177659605) | H | D10/D10b/D10c: the start runs only after `claimed-by-you` for exactly the content on screen, with the box read-only for the claim. Any other claim answer sends nothing (D10c). | U › `every claim outcome × SUBMIT: only claimed-by-you starts`; S › `device B saves, device A presses Enter inside the debounce: nothing is sent and the conflict bar shows both texts` |
-| G28 | D17's guard read a first-message id no outcome carried (4177659608) | H | Every refusal carries `thread: { status, firstTurnId, hasTurn }` and the row's `last_sent` from the same transaction (§4.2); §7.2's claim-outcome table classifies by them. | A › `a conflict after a committed start names its firstTurnId; a conflict from another tab's edit names none`; S › `a lost created response, then the 30 s timeout: the release answers not-claimed, the card says the message was sent, and no second send happens` |
-| G29 | D19's list arm removed entries with unsaved words (`limit`, `too-large`, `forbidden`, retrying, a race with the first save) (4177659614) | H | D19L applies only to a key with nothing unsaved, nothing in flight, a server row seen, and no write answered after the list was requested. | U › property `no SERVER_ROWS removes an entry whose local ≠ null or whose server = null`; S › `New chat, type, focus inside the debounce: the words stay` |
-| G30 | D22 set `listed` without loading the transcript, and D9 then sent from an empty `useChat` (4177659625) | H | D22 loads on a status change of a mounted key; D9 requires `transcript = loaded`; D9a loads instead of sending. | S › `device A starts K; on device B the refresh lands and B sends: the row holds A's turns followed by B's` |
+| G26 | A renamed slug or ended membership throws `notFound()`, which the client retried for ever as transient (4177659600) | H | §4 step 2 maps it to `scope-changed { reason: "address", slug }` or `forbidden { reason: "membership" }`; D24 and D28 never retry them; §7.4 says which. Other throws stop after three tries (D27). | A › `a renamed slug answers scope-changed with the new slug and writes nothing`; A › `a suspended member answers forbidden(membership) and writes nothing`; S11 › `after a rename the footer offers the new address, and following it in this tab saves the words` |
+| G27 | D10 ignored the flush's outcome; a `draft-conflict` with no committed turn had no transition (4177659605) | H | D10/D10b/D10c: the start runs only after `claimed-by-you` for exactly the content on screen, with the box read-only for the claim. Any other claim answer sends nothing (D10c). | U › `every claim outcome × SUBMIT: only claimed-by-you starts`; S11 › `device B saves, device A presses Enter inside the debounce: nothing is sent and the conflict bar shows both texts` |
+| G28 | D17's guard read a first-message id no outcome carried (4177659608) | H | Every refusal carries `thread: { status, firstTurnId, hasTurn }` and the row's `last_sent` from the same transaction (§4.2); §7.2's claim-outcome table classifies by them. | A › `a conflict after a committed start names its firstTurnId; a conflict from another tab's edit names none`; S11 › `a lost created response, then the 30 s timeout: the release answers not-claimed, the card says the message was sent, and no second send happens` |
+| G29 | D19's list arm removed entries with unsaved words (`limit`, `too-large`, `forbidden`, retrying, a race with the first save) (4177659614) | H | D19L applies only to a key with nothing unsaved, nothing in flight, a server row seen, and no write answered after the list was requested. | U › property `no SERVER_ROWS removes an entry whose local ≠ null or whose server = null`; S9 › `New chat, type, focus inside the debounce: the words stay` |
+| G30 | D22 set `listed` without loading the transcript, and D9 then sent from an empty `useChat` (4177659625) | H | D22 loads on a status change of a mounted key; D9 requires `transcript = loaded`; D9a loads instead of sending. | S9 › `device A starts K; on device B the refresh lands and B sends: the row holds A's turns followed by B's` |
 
 ### 11.6 #5512 revision-4 inline gaps (G31-G35) and that review's advisories (A11-A13)
 
 | # | Gap (thread comment id) | St. | How | Test |
 |---|---|---|---|---|
-| G31 | D17 kept the text D11 had put back, so after a late commit the box held the sent message as "your edited text", and Enter sent it twice (4178302258) | H | Nothing puts the sent text back until the server answers `released`, after which the start can never commit (§3.4, D11, D11r). A commit learned late is D17, whose box holds only the text typed after the claim, and whose "still in the box" line appears only when there is such text. | S › `reload during a start that commits: the box is empty and no second turn is sent`; S › `a start slower than 30 s that commits: the release answers not-claimed and the box holds only the later text`; U › `no transition puts sending.text into the box except D11r` |
+| G31 | D17 kept the text D11 had put back, so after a late commit the box held the sent message as "your edited text", and Enter sent it twice (4178302258) | H | Nothing puts the sent text back until the server answers `released`, after which the start can never commit (§3.4, D11, D11r). A commit learned late is D17, whose box holds only the text typed after the claim, and whose "still in the box" line appears only when there is such text. | S9 › `reload during a start that commits: the box is empty and no second turn is sent`; S9 › `a start slower than 30 s that commits: the release answers not-claimed and the box holds only the later text`; U › `no transition puts sending.text into the box except D11r` |
 | G32 | D11's timeout save waited behind the unanswered start in a one-slot queue, or bypassed it and broke the queue's invariant (4178302264) | H | Every request has a client timeout and is abandoned, not awaited (§7.1, D32, I10). The timeout runs a release, which is safe to race with the abandoned start because both lock the row and the start needs the token (§5.1 step 1). A late save of this tab's own is D14s. | U › `a start that never answers: after 30 s the release is sent, and a late created answer is ignored`; U › `a save that never answers: after 15 s the next save is sent, and the late landing is rebased silently` |
-| G33 | A write POSTed after an org switch was answered `other-org`, which blocked the key for ever (4178302266) | H | The client sends a key's write only from that org's page and holds it otherwise (§7.1, D29). `other-org` is a race and is `held`, resumed by `PAGE_ORG`. §4 step 3's cause is corrected. | S › `type on A, switch to B while a save is in flight, switch back: the words save under A and the footer says Saved`; S › `Back/Forward between orgs inside the debounce: no write is POSTed from B's page`; S › `following the address link re-arms the blocked key and saves it` |
+| G33 | A write POSTed after an org switch was answered `other-org`, which blocked the key for ever (4178302266) | H | The client sends a key's write only from that org's page and holds it otherwise (§7.1, D29). `other-org` is a race and is `held`, resumed by `PAGE_ORG`. §4 step 3's cause is corrected. | S11 › `type on A, switch to B while a save is in flight, switch back: the words save under A and the footer says Saved`; S9 › `Back/Forward between orgs inside the debounce: no write is POSTed from B's page`; S9 › `following the address link re-arms the blocked key and saves it` |
 | G34 | The 900 KB content cap was reached far below 100,000 characters, so a first message the route accepts became unsendable (4178302268) | E | The editor JSON is no longer stored; the text is held once (§4.1). There is no byte cap and no `too-large`: the only size refusal is `MAX_USER_MESSAGE_CHARS`, the same number as the composer and the routes' 413. The worst case is 757,235 B, measured (R7), against 1 MiB. | A › `a first message of 99,999 chars in 1-char lines saves and starts`; U › `the worst-case action argument encodes under 1 MiB`; U › property `contentToEditor ∘ editorToContent is the identity` |
-| G35 | D9 sent a later turn from the shared draft without a compare-and-set, so two devices both sent it (4178302271) | H | D9 claims the draft at its revision before it sends (I9); the second device's claim answers `claimed` or `conflict` with `last_sent`, and it shows "This message was sent from another tab or device" (D30, D15). | S › `two devices, same draft, Enter on both: one turn is sent, and the other device shows the sent notice`; A › `two claimDraft calls at one base: one claimed-by-you, one claimed` |
+| G35 | D9 sent a later turn from the shared draft without a compare-and-set, so two devices both sent it (4178302271) | H | D9 claims the draft at its revision before it sends (I9); the second device's claim answers `claimed` or `conflict` with `last_sent`, and it shows "This message was sent from another tab or device" (D30, D15). | S11 › `two devices, same draft, Enter on both: one turn is sent, and the other device shows the sent notice`; A › `two claimDraft calls at one base: one claimed-by-you, one claimed` |
 | A11 | The definer functions lacked `SET row_security = off` | H | §3.3 | I › `the purge raises instead of filtering when row security is forced` |
 | A12 | §4 step 2's membership read needs `input.orgId`, which three actions do not take | H | `orgHint` (§4 step 3) | A › `listDrafts on a renamed slug with orgHint answers scope-changed(address)` |
 | A13 | In community a renamed org's `address` outcome linked to `~` | H | Worded as "Open Elench again to save" (§4 step 3) | A › `community: a renamed slug answers address with slug ~` |
@@ -1288,21 +1422,21 @@ Every test must fail on the `dev` it is written against **on its assertion**, no
 | S4 for a later turn already in the transcript | A › `releaseClaim of a later claim whose turn is stored answers consumed` |
 | S5 lease, first turn | A › `a first-turn claim silent for 120 s is released by the next listDrafts with its text intact` |
 | S5 lease, later turn | A › `a later-turn claim silent for 120 s: consumed if the transcript holds the turn, released uncertain otherwise` |
-| D9b / D9c | S › `a later turn: claimed, sent with turnId as the message id, consumed at streaming` |
+| D9b / D9c | S9 › `a later turn: claimed, sent with turnId as the message id, consumed at streaming` |
 | D9c `not-claimed` | U › `consume after the lease released a silent claim: the copy-came-back bar, nothing sent` |
-| D9d | S › `the route answers 402 before streaming: the user bubble is removed and the words are back in the box` |
+| D9d | S9 › `the route answers 402 before streaming: the user bubble is removed and the words are back in the box` |
 | D11t | U › `a release that keeps failing retries with backoff and the cache keeps the token` |
-| D30 | S › `device A's live claim: device B's box is read-only with the being-sent bar` |
-| D31 | S › `a tab closed after its later turn's route accepted: the next open shows may-already-have-been-sent, and Enter after an edit still sends the same turn id` |
+| D30 | S11 › `device A's live claim: device B's box is read-only with the being-sent bar` |
+| D31 | S11 › `a tab closed after its later turn's route accepted: the next open shows may-already-have-been-sent, and Enter after an edit still sends the same turn id` |
 | D33 | U › `a listed row frozen under this tab's abandoned token is released, never shown as another tab's` |
 | D21 on a frozen row | A › `discardDraft on a sending row answers claimed and changes nothing` |
-| D26 restoring a claim | S › `reload between claimDraft and startConversation: the words are back in the box once` |
+| D26 restoring a claim | S9 › `reload between claimDraft and startConversation: the words are back in the box once` |
 | S4 with `freshTurnId` (ADR 0003 §9.4 change 1) | A › `releaseClaim with freshTurnId keeps the text, never consumes, and stores the fresh id on failed_send` |
 | S5 text-aware settle (change 1) | A › `the lease settle releases, not consumes, a claim whose stored turn has different text` |
 | D9d (a) typed `committed: false` refusals (change 2) | U › `transcript-stale, thread-busy, client-outdated, 410, 404 and 403 release certain: no may-already-have-been-sent card` |
 | D9d (c) / D20 | U › `turn-in-progress consumes, loads the transcript and polls until inFlight is null` |
-| D9d (d) | S › `an uncertain later turn stored by a late acceptance, edited and re-sent: turn-committed-different-text keeps the edit in the box under a new turn id, and Enter sends it as a new turn` |
-| D9b cell target (change 3) | U › `a later-turn cell prompt stores its cell target in the user message's metadata, and the body copy still carries it` |
+| D9d (d) | S9 › `an uncertain later turn stored by a late acceptance, edited and re-sent: turn-committed-different-text keeps the edit in the box under a new turn id, and Enter sends it as a new turn` |
+| D10y cell target (change 3) | U › `SUBMIT_EXTERNAL with a cellTarget into a listed thread sends it in the user message's metadata`; S9 › `the empty-cell prompt into an existing conversation, driven through pendingCellRequest, stores its cell target on its own message, and the body copy still carries it` |
 | D12 `threadRevision` (change 4) | U › `created seeds revisionRef when threadRevision is not null` |
 | §5.3 item 1, the `parts` form | U › `the pushed user message's id is turnId` |
 
@@ -1310,24 +1444,40 @@ Every test must fail on the `dev` it is written against **on its assertion**, no
 
 | # | Finding | St. | How | Test |
 |---|---|---|---|---|
-| R0 | The 90 s lease settled a **live** tab's later-turn claim whose consume reached the server late; a false "tab closed" notice and a re-send followed (blocker) | H | The lease measures silence: a 20 s heartbeat (S7, D34), 120 s, and no request carrying the live token ever settles its own claim (S5) | A › `consumeDraft with the live token on a claim older than 120 s consumes, and never settles first`; U › `a claim held through a 100 s action-queue stall is still held: heartbeats renew it`; S › `a later turn whose consume is delayed 95 s is consumed once, and no other device shows the text` |
-| R1 | A timed-out or reloaded `claiming` doubled the text in D11r | H | D9/D10 set `local := null` at the claim; D10c restores; D11r merges only post-claim text | S › `Enter inside the debounce, reload: the box holds the text once` |
-| R2 | §1 named the wrong POST target, and I10 ignored Next's global action queue | H | §1 corrected; `PAGE_ORG(null)` dispatched before the navigation (D29); I10 restated | S › `a save handed to Next before router.push is answered other-org and held, then saved on return` |
+| R0 | The 90 s lease settled a **live** tab's later-turn claim whose consume reached the server late; a false "tab closed" notice and a re-send followed (blocker) | H | The lease measures silence: a 20 s heartbeat (S7, D34), 120 s, and no request carrying the live token ever settles its own claim (S5) | A › `consumeDraft with the live token on a claim older than 120 s consumes, and never settles first`; U › `a claim held through a 100 s action-queue stall is still held: heartbeats renew it` (the fake stalls a server action that never resolves; the heartbeat `fetch` still fires every 20 s); A › `the heartbeat route renews claimed_at for the live token, and for any other token renews nothing`; S9 › `a later turn whose consume is delayed 95 s is consumed once, and no other device shows the text` |
+| R1 | A timed-out or reloaded `claiming` doubled the text in D11r | H | D9/D10 set `local := null` at the claim; D10c restores; D11r merges only post-claim text | S9 › `Enter inside the debounce, reload: the box holds the text once` |
+| R2 | §1 named the wrong POST target, and I10 ignored Next's global action queue | H | §1 corrected; `PAGE_ORG(null)` dispatched before the navigation (D29); I10 restated | S9 › `a save handed to Next before router.push is answered other-org and held, then saved on return` |
 | R3 | `streaming` as the hand-off depends on the step-0 marker; status is per Chat | H | D9 requires `status ∈ {ready, error}`; D9c requires our turn to be the last user message; the dependency is pinned | R › `both chat routes write a data-agent-step part before the model's first token` |
-| R4 | A release after Stop, a timeout, a network error or a 5xx could say "Not sent" while the route later saved the turn | H | Only 400/402/413/429 release as certain; the rest release `uncertain` (D9d) | S › `a 5xx before streaming releases uncertain and shows the check-the-conversation card` |
-| R5 | D12 read as two identical first turns | H | D12 states `useChat` is empty and one `sendMessage({ id: turnId })` pushes the turn | S › `a first send leaves exactly one user turn, with id turnId, in the saved transcript` |
+| R4 | A release after Stop, a timeout, a network error or a 5xx could say "Not sent" while the route later saved the turn | H | Only the routes' own pre-hold refusals (400, 401, 402, 413, 503) release as certain; the rest release `uncertain` (D9d; revision 7 corrected the list) | S11 › `a 5xx before streaming releases uncertain and shows the check-the-conversation card` |
+| R5 | D12 read as two identical first turns | H | D12 states `useChat` is empty and one `sendMessage({ id: turnId })` pushes the turn | S9 › `a first send leaves exactly one user turn, with id turnId, in the saved transcript` |
 | R6 | Trim, cap and spans disagreed | H | One untrimmed string capped everywhere; spans per pill on normalized text; at most 20 distinct mentions | U › `a 100,000-char paste with a trailing newline is refused by the composer, never by the server`; U › property `spans index the normalized text` |
 | R7 | The measured worst case understated the bound; the cache budget is in JSON units | H | Re-measured at 757,235 B; the cache row states its true limit | U › `the worst-case action argument, control-character ids and labels included, encodes under 1 MiB` |
-| R8 | No `gone` arm during a send | H | D35; the delete confirm names a message being sent | S › `delete in tab B while tab A's first send is starting: A's words move to a new conversation` |
+| R8 | No `gone` arm during a send | H | D35; the delete confirm names a message being sent | S9 › `delete in tab B while tab A's first send is starting: A's words move to a new conversation` |
 | R9 | D22 had no arm for an `active` row while this tab is sending | H | D22 reads it through the claim-outcome table | U › `a list that shows our sending row active resolves through not-claimed` |
 | R10 | Editing cleared the `uncertain` marker and its turn id | H | The marker survives edits until Dismiss (D31, `saveDraft`) | A › `saveDraft keeps an uncertain failed_send across a text change` |
 
+**The revision-6 review** (#5512, ten inline blockers and the advisory comment; the advisories this
+revision took are named in the header):
+
+| # | Finding (inline line on revision 6) | St. | How | Test |
+|---|---|---|---|---|
+| B1 | The heartbeat was a server action, so Next's global action queue starved it, and R0's failure came back (426) | H | `touchClaim` is a route-handler `fetch` (§1, §3.4, D34, I10) | U › `the heartbeat is sent with fetch while a server action is pending and never resolves`; A › `the heartbeat route refuses an org the caller is not an active member of with 403 and renews nothing` |
+| B2 | `startConversation` ran the lease settle against its own live claim (625) | H | §5.1 step 1 skips S5 for `origin = composer` with the row's token | A › `a composer start whose claim is 130 s old and whose token is live commits, and is not settled first` |
+| B3 | `hasTurn` normalized one side only, and disagreed with ADR 0003 on trim and line endings (600) | H | One `turnText`, ADR 0003's, on both sides (§4.2); the send trims (D9b, §5.1 step 2) | A › `a later turn typed with a trailing newline and stored trimmed is hasTurn, and S5 consumes it` |
+| B4 | ADR 0003's change 3 was on D9b, which the empty-cell prompt never takes (878) | H | D10y (and D10x) carry `metadata.cellTarget` (§7.2) | see `D10y cell target` above |
+| B5 | The certain-refusal list named a 429 the routes never return and missed 401 and 503 (873) | H | D9d (a) lists 400, 401, 402, 413, 503 with their lines | U › `401 and 503 before streaming release certain: Not sent, never may-already-have-been-sent` |
+| B6 | The thread reads relied on `owner_all`, which admits every row of the page's org (606) | H | Every `agent_threads` statement names `user_id = actor.userId` (§4 step 5) | I › `a teammate's thread whose org_id is the page org is invisible to listDrafts, hasTurn and the start's conflict read` |
+| B7 | `authorizeQuiet` on a project admits another org's project for an org-wide grant (476) | H | An explicit `projects.org_id = actor.orgId` read first (§4 step 4) | A2's test |
+| B8 | `turn-key.ts` was in both ADRs' parallel slices (1452) | H | ADR 0003 slice 2 owns it; slice 4 here is blocked by it (§14) | — (plan) |
+| B9 | 7a used transitions only 7b defines (1489) | H | D21, D22 and D26 move to 7b (§14) | — (plan) |
+| B10 | Slice 9's tests needed slice 10, and slice 11 had no mount point (1503) | H | Every S test names its slice; slice 9 adds the mount points; 11 is blocked by 10 (§14) | — (plan) |
+
 ### 11.7 Count
 
-The table has 88 cases: 17 ACs, 16 #5423 review cases, 21 #5512 gaps from revisions 1-2, 9
-advisories (A1-A6, A11-A13), 9 revision-3 gaps, 5 revision-4 gaps and 11 revision-5 review findings
-(R0-R10). **34 are eliminated** by the server model (E), **48 are handled** by a transition and a
-test (H), and **6 are moved** to #5515
+The table has 98 cases: 17 ACs, 16 #5423 review cases, 21 #5512 gaps from revisions 1-2, 9
+advisories (A1-A6, A11-A13), 9 revision-3 gaps, 5 revision-4 gaps, 11 revision-5 review findings
+(R0-R10) and 10 revision-6 review blockers (B1-B10). **34 are eliminated** by the server model (E),
+**58 are handled** by a transition and a test, or by the plan (H), and **6 are moved** to #5515
 (M: G5, A2, G22, G23, G24, G25). Rows 33 and G1 are E for their draft half and name their billing
 half as #5515's.
 
@@ -1377,8 +1527,11 @@ cases.
    step 5 answers `conflict`, which D18 turns into a fork that keeps Y's words under a fresh id. The
    design closes the rest: the id is minted with `crypto.randomUUID()` (122 random bits) and is not
    put in a URL, a log line or an analytics event before its first send commits; `conflict` is the
-   same outcome for another owner's row as for a mismatch on one's own, so it is no existence
-   oracle; and `already-stored` and `deleted` need a row visible under the caller's RLS. Slice 5's
+   same outcome for another owner's row, live or tombstone, as for a mismatch on one's own, so it
+   is no existence oracle; and `already-stored` and `deleted` need a row with `user_id =
+   actor.userId`. That holds because §5.1 step 5's read names `user_id` explicitly (§4 step 5), not
+   because of `owner_all`, which would admit a teammate's row once threads are org-scoped (Q6); an I
+   test pins `conflict` for another owner's live row and for another owner's tombstone. Slice 5's
    security review checks exactly these three points. *Why approve despite it:* the squat costs the
    victim one fork and no words, and the existing route path has the same property today.
 2. **Q: Retention of active drafts?** **Decision: 30 days after the last edit; discarded drafts
@@ -1407,10 +1560,14 @@ cases.
    a draft per org. Change that here?** **Decision: no; a separate issue.** §3.2 and §6.3 are
    correct either way. *Why:* it changes thread visibility, which is a product decision with its own
    migration, and drafts do not depend on it.
-7. **Q: A paste that looks like a credential?** **Decision: a one-line inline notice, the first time
-   per draft**: "Drafts are saved to your account. Avoid pasting credentials." No blocking, no
-   redaction. Detection is client-side and best-effort, and the notice claims no more. *Why:* it tells
-   the SRE the one fact they need (this is stored) without getting in the way of pasting a log.
+7. **Q: A paste that looks like a credential?** **Decision (revision 7): the autosave of that
+   draft is held until the user answers an inline notice**, the first time per draft: "Not saved to
+   your account: this looks like a credential. **Save to my account** · **Keep in this tab only**"
+   (D36). No blocking of the box or of Enter, no redaction. Detection is client-side and
+   best-effort, and the notice claims no more. *Why:* revision 6 showed the notice after the paste,
+   by which time the 800 ms autosave had usually written the secret, and every intermediate revision
+   reaches the WAL and backups (§9). Holding the save costs the SRE one click and keeps the secret
+   off the server unless they choose otherwise; pasting a log is still not in the way.
 8. **Q: The draft limit per scope?** **Decision: 200**, refusing new rows only, never evicting, and
    saying so (§4.3, §7.4). *Why:* nobody loses words to a cap, and a runaway client cannot grow the
    table without bound.
@@ -1441,77 +1598,103 @@ cases.
 
 Ordered. Each slice is one PR into `dev`, sized to be reviewable (about 800 changed lines or fewer,
 tests included). Slices with no dependency between them have disjoint `scope:` globs and may run in
-parallel. Only slice 1 has a migration (migrations are serialized repo-wide: it holds
-`mutex:migration`). Every slice's tests must fail on `dev` on their assertion (§11).
+parallel. Slices 3, 4 and 5 all own `app/server/actions/elench-drafts.ts`, and are strictly serial
+(3 → 4 → 5). Only slice 1 has a migration (migrations are serialized repo-wide: it holds
+`mutex:migration`). Every slice's tests are red on its base and green on its branch, as §11 defines
+"fails on dev". Every existing test a slice breaks is in that slice's scope. **Cross-ADR
+dependencies** (ADR 0003's slices are "0003/<n>") are stated identically in ADR 0003 §14 and in
+§5.3 above. #5464's `scope:` names `lib/stores/elench-drafts.ts`; the slices use the directory
+`lib/stores/elench-drafts/`, and each slice's issue carries the globs below.
 
-| # | Title | Scope globs | Blocked by | Migration | Security review |
+| # | Title | Scope globs (under `apps/console/`) | Blocked by | Migration | Security review |
 |---|---|---|---|---|---|
-| 1 | `elench_drafts` table, RLS and owner-pinned functions | `apps/console/lib/db/schema/agent.ts`, `apps/console/lib/db/migrations/**`, `apps/console/lib/db/programmables.sql`, `apps/console/types/jsonb.types.ts`, `apps/console/tests/integration/elench-drafts-rls.test.ts` | — | **yes** | **yes** (seam 3) |
-| 2 | Draft content codec | `apps/console/lib/elench/draft-content.ts`, `apps/console/components/agent/elench/draft-editor.ts`, `apps/console/tests/lib/elench/draft-content.test.ts`, `apps/console/tests/components/elench-draft-editor.test.ts` | — | no | no |
-| 3 | Draft actions: gate, list, save, discard, restore | `apps/console/app/server/actions/elench-drafts.ts`, `apps/console/lib/elench/draft-outcomes.ts`, `apps/console/lib/elench/draft-gate.ts`, `apps/console/tests/actions/elench-drafts.test.ts` | 1, 2 | no | **yes** (seams 2, 3) |
-| 4 | The draft claim: claim, consume, release, heartbeat, lease | `apps/console/app/server/actions/elench-drafts.ts`, `apps/console/lib/elench/draft-claims.ts`, `apps/console/lib/agent/turn-key.ts`, `apps/console/tests/actions/elench-draft-claims.test.ts` | 3 | no | **yes** (seams 2, 3) |
-| 5 | `startConversation` and the thread-delete purge | `apps/console/app/server/actions/elench-drafts.ts`, `apps/console/app/server/actions/agent.ts`, `apps/console/tests/actions/elench-start.test.ts`, `apps/console/tests/actions/agent.test.ts` | 4 | no | **yes** (seams 2, 3) |
-| 6 | Retention sweep and erasure register | `apps/console/lib/elench/drafts-sweep.ts`, `apps/console/lib/reconcile/loop.ts`, `apps/console/lib/privacy/erasure-plan.ts`, `apps/console/tests/lib/elench/drafts-sweep.test.ts` | 4 | no | **yes** (service role) |
-| 7a | Client reducer: drafting | `apps/console/lib/stores/elench-drafts/reducer-drafting.ts`, `apps/console/lib/stores/elench-drafts/types.ts`, `apps/console/tests/lib/stores/elench-drafts-drafting.test.ts` | 2, 3 | no | no |
-| 7b | Client reducer: sending | `apps/console/lib/stores/elench-drafts/reducer-sending.ts`, `apps/console/lib/stores/elench-drafts/reducer.ts`, `apps/console/tests/lib/stores/elench-drafts-sending.test.ts` | 7a | no | no |
-| 8 | Client effects: queue, cache, page org, heartbeat | `apps/console/lib/stores/elench-drafts/queue.ts`, `apps/console/lib/stores/elench-drafts/cache.ts`, `apps/console/lib/stores/elench-drafts/store.ts`, `apps/console/lib/stores/elench-drafts/selectors.ts`, `apps/console/tests/lib/stores/elench-drafts-effects.test.ts` | 5, 7b | no | no |
-| 9 | Composer and conversation on the store | `apps/console/components/agent/elench/elench-composer.tsx`, `apps/console/components/agent/elench/use-elench-send.ts`, `apps/console/components/agent/elench/elench-conversation.tsx`, `apps/console/lib/stores/use-elench-store.ts`, `apps/console/tests/components/elench-drafts-surface.test.tsx` | 8 | no | no |
-| 10 | Threads, the rail's Unsent group and the delete confirm (`class:ui`, draft) | `apps/console/components/agent/elench/use-elench-threads.ts`, `apps/console/components/agent/thread-rail.tsx`, `apps/console/components/agent/elench/elench-modal.tsx`, `apps/console/components/agent/elench/elench-conversation-switcher.tsx`, `apps/console/tests/components/elench-unsent-rail.test.tsx` | 9, and #5655 merged | no | no |
-| 11 | Footer status, bars and notices (`class:ui`, draft) | `apps/console/components/agent/elench/draft-status/**`, `apps/console/components/shell/sidebar-profile.tsx`, `apps/console/tests/components/elench-draft-notices.test.tsx` | 9 | no | no |
+| 1 | `elench_drafts` table, RLS and owner-pinned functions | `lib/db/schema/agent.ts`, `lib/db/migrations/**`, `lib/db/programmables.sql`, `types/jsonb.types.ts`, `tests/integration/elench-drafts-rls.test.ts` | **0003/1** (same schema, policy and migration files; its `revision` column) | **yes** | **yes** (seam 3) |
+| 2 | Draft content codec | `lib/elench/draft-content.ts`, `components/agent/elench/draft-editor.ts`, `tests/lib/elench/draft-content.test.ts`, `tests/components/elench-draft-editor.test.ts` | — | no | no |
+| 3 | Draft actions: gate, list, save, discard, restore | `app/server/actions/elench-drafts.ts`, `lib/elench/draft-outcomes.ts`, `lib/elench/draft-gate.ts`, `tests/actions/elench-drafts.test.ts` | 1, 2 | no | **yes** (seams 2, 3) |
+| 4 | The draft claim: claim, consume, release, the heartbeat route, the lease | `app/server/actions/elench-drafts.ts`, `lib/elench/draft-claims.ts`, `app/api/elench/drafts/heartbeat/route.ts`, `tests/actions/elench-draft-claims.test.ts`, `tests/api/elench-drafts-heartbeat.test.ts` | 3, **0003/2** (`turn-key.ts`), **0003/4** (`resolveTurnActor`) | no | **yes** (seams 2, 3; a cookie-authenticated route handler) |
+| 5 | `startConversation` and the thread-delete purge | `app/server/actions/elench-drafts.ts`, `app/server/actions/agent.ts`, `tests/actions/elench-start.test.ts`, `tests/actions/agent.test.ts`, `tests/integration/elench-drafts-threads.test.ts` | 4 (and 0003/1 through 1) | no | **yes** (seams 2, 3) |
+| 6 | Retention sweep and erasure register | `lib/elench/drafts-sweep.ts`, `lib/reconcile/loop.ts`, `lib/privacy/erasure-plan.ts`, `tests/lib/elench/drafts-sweep.test.ts`, `tests/lib/reconcile/loop.test.ts` | 4 | no | **yes** (service role) |
+| 7a | Client reducer: drafting | `lib/stores/elench-drafts/reducer-drafting.ts`, `lib/stores/elench-drafts/types.ts`, `tests/lib/stores/elench-drafts-drafting.test.ts` | 2, 3 | no | no |
+| 7b | Client reducer: sending | `lib/stores/elench-drafts/reducer-sending.ts`, `lib/stores/elench-drafts/reducer.ts`, `tests/lib/stores/elench-drafts-sending.test.ts` | 7a | no | no |
+| 8 | Client effects: queue, cache, page org, heartbeat, list | `lib/stores/elench-drafts/queue.ts`, `lib/stores/elench-drafts/cache.ts`, `lib/stores/elench-drafts/heartbeat.ts`, `lib/stores/elench-drafts/store.ts`, `lib/stores/elench-drafts/selectors.ts`, `tests/lib/stores/elench-drafts-effects.test.ts` | 5, 7b | no | no |
+| 9 | Composer and conversation on the store, the drafts root, the mount points | `components/agent/elench/elench-composer.tsx`, `components/agent/elench/use-elench-send.ts`, `components/agent/elench/elench-conversation.tsx`, `components/agent/elench/elench-surface.tsx`, `components/agent/elench/elench-drafts-root.tsx`, `components/agent/elench/draft-status/slots.tsx`, `components/shell/app-shell.tsx`, `lib/stores/use-elench-store.ts`, `tests/components/elench-drafts-surface.test.tsx`, `tests/components/elench-composer-limit.test.tsx`, `tests/components/elench-composer-submit.test.tsx`, `tests/components/use-elench-send.test.tsx`, `tests/components/elench-conversation-retry.test.tsx` | 8, **0003/6** (same files; its revision setter) | no | no |
+| 10 | Threads, the rail's Unsent group and the delete confirm (`class:ui`, draft) | `components/agent/elench/use-elench-threads.ts`, `components/agent/thread-rail.tsx`, `components/agent/elench/elench-modal.tsx`, `components/agent/elench/elench-conversation-switcher.tsx`, `tests/components/elench-drafts-threads.test.tsx`, `tests/components/use-elench-threads.test.tsx` | 9 | no | no |
+| 11 | Footer status, bars and notices (`class:ui`, draft) | `components/agent/elench/draft-status/**`, `components/shell/sidebar-profile.tsx`, `tests/components/elench-draft-notices.test.tsx` | 10 (and 9's mount points) | no | no |
+
+**Cross-ADR, the other direction:** 0003/6 is blocked by slices 4 and 7b here; 0003/9 is blocked by
+slices 7b and 9 here.
 
 **Done when**, per slice:
 
-1. The schema, the generated migration (`pnpm -F console db:generate` in one worktree, then
-   `check:migrations`), the `owner_only` AND policy and the two `SECURITY DEFINER` functions with
-   `row_security = off`, `REVOKE … FROM PUBLIC` and the app-role grant are on dev; the JSONB
-   interfaces are in `types/jsonb.types.ts`; the I tests prove that a member never reads another
-   member's draft in one org, that the org wall holds, that one conversation in two orgs is two rows
-   (§3.2), that the purge never touches another user's rows, and that it raises when row security is
-   forced (A11).
-2. `contentSchema`, `isNormalizedDraftText`, the span rules and the distinct-mention cap (§4.1) are
-   one module; `contentToEditor` / `editorToContent` round-trip by property test; the worst-case
-   argument encodes under 1 MiB (R7). No caller yet.
+1. The schema, the generated migration (`pnpm -F console db:generate` in one worktree, after
+   rebasing over 0003/1, then `check:migrations`), RLS `ENABLE`d on `elench_drafts`, the `owner_only`
+   AND policy and the two `SECURITY DEFINER` functions with `row_security = off`, `REVOKE … FROM
+   PUBLIC` and the app-role grant are on dev; the JSONB interfaces are in `types/jsonb.types.ts`; the
+   I tests prove that RLS is enabled on the table, that a member never reads another member's draft
+   in one org, that the org wall holds, that one conversation in two orgs is two rows (§3.2), that
+   the purge never touches another user's rows, and that it raises when row security is forced
+   (A11).
+2. `contentSchema` (with `z.uuid()`), `isNormalizedDraftText`, the span rules and the
+   distinct-mention cap (§4.1) are one module; `contentToEditor` / `editorToContent` round-trip by
+   property test; the worst-case argument encodes under 1 MiB (R7). No caller yet.
 3. The action preamble of §4 (zod, `currentActor()`, the `notFound()` mapping to `address` /
-   `membership`, `other-org`, quiet authorization, `withActorScope`, the outcome union, the rate
-   limit) and `listDrafts`, `saveDraft`, `discardDraft`, `restoreDraft` with their compare-and-set and
-   §4.3 limit are on dev, with the A tests of G17, G26, A12, A13 and AC8. `draft-outcomes.ts` exports
-   every outcome of §4.2, including the claim outcomes slice 4 implements, so slice 7a can start.
-4. `claimDraft`, `consumeDraft`, `releaseClaim` (with `freshTurnId`), `touchClaim` and the S5 lease
-   settle (never inside a live-token request; text-aware `hasTurn` via `turnText`) are on dev, with
-   the S1-S7 A tests and ADR 0003 §9.4 change 1's A test (`the lease settle releases, not consumes,
-   a claim whose stored turn has different text`). This is the server half ADR 0003's PR 1 waits for.
-5. `startConversation` (§5.1, both origins, the outcome table, `created`'s `threadRevision`) and the
-   purge plus `countDraftsOfConversation` in `deleteThread`'s transaction are on dev. `createThread`
-   keeps its signature. ADR 0003's PR 1 also edits `agent.ts`: whichever lands second rebases.
-6. The daily `elench-drafts-sweep` on the reconcile loop (discarded 24 h, active 30 days, ended
-   membership 30 days, and the S5 settle for silent claims) and the `ERASURE_RULES` row are on dev;
+   `membership`, `other-org`, the explicit `projects.org_id` read and quiet authorization,
+   `withActorScope` with the explicit `user_id` predicate on every `agent_threads` statement, the
+   outcome union, the rate limit) and `listDrafts`, `saveDraft`, `discardDraft`, `restoreDraft` with
+   their compare-and-set and §4.3 limit are on dev, with the A tests of G17, G26, A2 (an org-wide
+   grant and another org's project), A12, A13 and AC8. `draft-outcomes.ts` exports every outcome of
+   §4.2, including the claim outcomes slice 4 implements, so slice 7a can start.
+4. `claimDraft`, `consumeDraft`, `releaseClaim` (with `freshTurnId`, and S4's null-id arm), the
+   heartbeat route `POST /api/elench/drafts/heartbeat` (§3.4: zod, `resolveTurnActor`, the
+   token-matched update, the rate limit) and the S5 lease settle (never inside a live-token request;
+   `hasTurn` with 0003/2's `turnText` on both sides) are on dev, with the S1-S7 A tests, B1's and
+   B3's tests, and ADR 0003 §9.4 change 1's A test (`the lease settle releases, not consumes, a
+   claim whose stored turn has different text`). This is the server half 0003/6 waits for.
+5. `startConversation` (§5.1: both origins, the step 1 settle exception, the trimmed text in the
+   `parts` form, the outcome table, `created`'s `threadRevision` read from the inserted row) and the
+   purge plus `countDraftsOfConversation` in `deleteThread`'s transaction are on dev, with B2's A
+   test and the I tests of `elench-drafts-threads.test.ts`. `createThread` is not changed here
+   (0003/1 already made it return the revision).
+6. The daily `elench-drafts-sweep` on the reconcile loop (discarded 24 h, every other draft 30
+   days, and the S5 settle for silent claims) and the `ERASURE_RULES` row are on dev;
    `tests/privacy/erasure-register-schema.test.ts` passes unchanged.
-7a. A pure `reduce(entry, event) → { entry, effects }` for D1-D8, D14-D16, D19, D19L and D21-D29, with
-    the U property tests of I3, I5 and I6 (no event removes words except the listed ones; unsaved
-    edits are never overwritten; a stale-epoch edit is dropped).
-7b. D9-D13, D17, D18, D20 and D30-D35 and the claim-outcome table, including D9d's four arms (ADR
-    0003 §9.4 changes 1 and 2, the client half) and D9b's `metadata.cellTarget`, with the U tests
-    named in §11.6.
+7a. A pure `reduce(entry, event) → { entry, effects }` for D1-D8, D14-D16, D19, D19L, D23-D25,
+    D27-D29 and D36, with the U property tests of I3, I5 and I6 over **these** events (no event
+    removes words except the listed ones; unsaved edits are never overwritten; a stale-epoch edit is
+    dropped). It stands alone: none of these transitions reads a claim outcome.
+7b. D9-D13, D17, D18, D20-D22, D26 and D30-D35 and the claim-outcome table, including D9d's four
+    arms with revision 7's certain list (ADR 0003 §9.4 changes 1 and 2, the client half), D9b's and
+    D10y's `metadata.cellTarget`, and D22's and D26's reads of `sending` rows through D30/D33 and
+    the claim-outcome table, with the U tests named in §11.6; 7a's property tests then run over
+    **every** event. This is the client half 0003/6 waits for.
 8. The per-key queue with client timeouts and abandonment (D32), the `sessionStorage` cache with its
    budget and the removal of the v1/v2 keys (§7.3), `pageOrg` and `PAGE_ORG` (D29), the heartbeat
-   timer (D34), and `useDraft` / `useUnsent`, with U tests against a fake cache that can refuse
-   writes. Nothing renders it yet.
-9. The composer seeds from the entry and reseeds on `epoch`, normalizes on input and paste,
-   `useElenchSend` dispatches, `newChat` mints a conversation id, a later turn is sent with
-   `sendMessage({ id: turnId, … })` and the hand-off is watched (D9c, D9d), and the
-   `use-elench-store.ts` comment ("Flipping never remounts the chat") is corrected. The S tests of
-   §11.1-§11.6 that need no new UI pass. ADR 0003's PR 1 edits `elench-conversation.tsx` and
-   `use-agent-chat.ts` too: whichever lands second rebases and wires `revisionRef` from `created`
-   (D12); if that is this slice, its scope gains `apps/console/components/agent/use-agent-chat.ts`
-   for that one setter.
-10. `useElenchThreads` resumes `activeKey[scope]`, catches `listThreads` / `getThread` and renders the
-    draft with Retry (G10), and calls `listDrafts`; the rail shows the Unsent group in the docked
-    column and in the narrow sheet, the narrow toggle shows the count, the panel's conversation
-    switcher lists the same entries, and the delete confirm names
-    the draft count and orgs (§6.3). Opens as a draft PR; the maintainer marks it ready.
-11. The footer status of §7.4, the conflict, claimed and uncertain bars, D9a/D24/D31 and the
-    credential notice (Q7), the sign-out confirm (D25), raised once per key entering an unsaved state
-    (G19). Opens as a draft PR; the maintainer marks it ready.
+   timer as a `fetch` to slice 4's route (D34), and the `listDrafts` calls (`LOAD`, focus, the 60 s
+   poll, a scope change), and `useDraft` / `useUnsent`, with U tests against a fake cache that can
+   refuse writes and a fake server action that never resolves. Nothing renders it yet.
+9. The composer seeds from the entry and reseeds on `epoch`, normalizes on input and paste, caps the
+   untrimmed text, and trims at send; `useElenchSend` dispatches; the empty-cell prompt effect
+   dispatches `SUBMIT_EXTERNAL(text, [], cellTarget)`; `newChat` mints a conversation id; a later
+   turn is sent with `sendMessage({ id: turnId, … })` and the hand-off is watched (D9c, D9d);
+   `created.threadRevision` is wired into 0003/6's revision setter (D12); `ElenchDraftsRoot`, mounted
+   once in `AppShell`, runs `LOAD`, `PAGE_ORG` and the `useViewer()` subscription (D25) whether or not
+   the surface is open; `draft-status/slots.tsx` exports `DraftFooterSlot` and `DraftBarSlot`, which
+   the composer and the conversation render and which render nothing until slice 11; the
+   `use-elench-store.ts` comment ("Flipping never remounts the chat") is corrected. Every **S9** test
+   of §11 passes. If the slice runs past about 800 lines, the conversation half
+   (`elench-conversation.tsx`, `elench-surface.tsx`, the root, the slots) splits into a 9b with the
+   same dependencies, and slice 10 waits for both.
+10. `useElenchThreads` resumes `activeKey[scope]` and catches `listThreads` / the resume's
+    `getThread` into a `loadError` state (G10); the rail shows the Unsent group in the docked column
+    and in the narrow sheet, the narrow toggle shows the count, the panel's conversation switcher
+    lists the same entries, and the delete confirm names the draft count, the orgs and a message
+    being sent (§6.3). Every **S10** test passes. Opens as a draft PR; the maintainer marks it ready.
+11. The footer status of §7.4, the conflict, claimed, uncertain and credential bars, D9a/D24/D31/D36
+    and G10's inline error with Retry, rendered into slice 9's slots; the sign-out confirm (D25); a
+    notice raised once per key entering an unsaved state (G19). Every **S11** test passes. Its issue
+    is filed only after slice 9 merges, because `draft-status/**` contains slice 9's `slots.tsx`
+    (an open issue's scope may not name a file an in-flight PR touches). Opens as a draft PR; the
+    maintainer marks it ready.
 
-Slices 1 and 2 run in parallel. After 4, slices 5 and 6 run in parallel, and 7a can start once 3 is
-on dev. Slices 10 and 11 run in parallel after 9.
+Slices 1 (after 0003/1) and 2 run in parallel. After 4, slices 5 and 6 run in parallel, and 7a can
+start once 3 is on dev. 9, 10 and 11 are serial.
