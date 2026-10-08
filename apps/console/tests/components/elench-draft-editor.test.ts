@@ -28,7 +28,11 @@ import {
 	contentToEditor,
 	editorToContent,
 } from "@/components/agent/elench/draft-editor";
-import { $createMentionNode, $isMentionNode, MentionNode } from "@/components/agent/elench/mention-node";
+import {
+	$createMentionNode,
+	$isMentionNode,
+	MentionNode,
+} from "@/components/agent/elench/mention-node";
 import {
 	contentSchema,
 	type DraftEditorContent,
@@ -62,13 +66,20 @@ function pick<T>(next: () => number, items: readonly T[]): T {
  * `\r\n` and a lone `\r` are in on purpose: Lexical's `insertRawText` folds `\r\n` into one line
  * break, which would move every span after it.
  */
-const TEXT_UNITS = ["a", "b", " ", "@", "\n", "\r", "\r\n", "\t", "\u0001", "\uD83D\uDE00", "中", "-"];
+const TEXT_UNITS = [
+	"a", "b", " ", "@", "\n", "\r", "\r\n", "\t", "\u0001", "\uD83D\uDE00", "中", "-",
+];
 
 /** Units a mention label may hold: what a resource name or a typed label can carry. */
 const LABEL_UNITS = ["w", "e", "b", "-", " ", "@", "\uD83D\uDE00", "中", "\t", "\n"];
 
 /** A random string of `min` to `max` units drawn from `units`. */
-function randomString(next: () => number, units: readonly string[], min: number, max: number): string {
+function randomString(
+	next: () => number,
+	units: readonly string[],
+	min: number,
+	max: number,
+): string {
 	let out = "";
 	const length = min + Math.floor(next() * (max - min + 1));
 	for (let i = 0; i < length; i++) out += pick(next, units);
@@ -78,7 +89,7 @@ function randomString(next: () => number, units: readonly string[], min: number,
 /** A small pool of mentions, so repeats of one resource happen (one span per pill). */
 const IDS = ["p1", "p2", "c1", "uuid-like-0f3e", "x"];
 
-/** A random valid `{ text, mentions }`: gaps and pills interleaved, so the spans hold by construction. */
+/** A random valid `{ text, mentions }`: gaps and pills interleaved, so spans hold by construction. */
 function randomContent(next: () => number): DraftEditorContent {
 	let text = "";
 	const mentions: DraftMention[] = [];
@@ -249,14 +260,16 @@ describe("contentToEditor → editorToContent", () => {
 	});
 });
 
-/** A random composer-shaped editor: paragraphs of text runs, breaks, tabs and pills. */
-function randomEditor(next: () => number): LexicalEditor {
+/**
+ * A random editor of `paragraphs` paragraphs of text runs, breaks, tabs and pills. One paragraph
+ * is the composer's shape (plain text turns Enter into a line break, never a paragraph).
+ */
+function randomEditor(next: () => number, paragraphs: number): LexicalEditor {
 	const editor = newEditor();
 	editor.update(
 		() => {
 			const root = $getRoot();
 			root.clear();
-			const paragraphs = 1 + Math.floor(next() * 3);
 			for (let p = 0; p < paragraphs; p++) {
 				const paragraph = $createParagraphNode();
 				const count = Math.floor(next() * 10);
@@ -264,12 +277,14 @@ function randomEditor(next: () => number): LexicalEditor {
 				for (let i = 0; i < count; i++) {
 					const roll = next();
 					if (roll < 0.4) {
-						nodes.push($createTextNode(randomString(next, ["a", " ", "@", "\r", "\uD83D\uDE00", "中"], 1, 5)));
+						const units = ["a", " ", "@", "\r", "\uD83D\uDE00", "中"];
+						nodes.push($createTextNode(randomString(next, units, 1, 5)));
 					} else if (roll < 0.55) nodes.push($createLineBreakNode());
 					else if (roll < 0.65) nodes.push($createTabNode());
 					else {
 						const label = randomString(next, LABEL_UNITS, 1, 5);
-						nodes.push($createMentionNode(`@${label}`, pick(next, IDS), pick(next, MENTION_TYPES)));
+						const type = pick(next, MENTION_TYPES);
+						nodes.push($createMentionNode(`@${label}`, pick(next, IDS), type));
 					}
 				}
 				paragraph.append(...nodes);
@@ -282,20 +297,27 @@ function randomEditor(next: () => number): LexicalEditor {
 }
 
 describe("editorToContent → contentToEditor", () => {
-	it("reads the editor's own text, and rebuilds the same pills and text (seeded, 1,000 cases)", () => {
+	it("rebuilds a composer's editor node for node, text runs merged (seeded, 1,000 cases)", () => {
 		for (let seed = 1; seed <= 1_000; seed++) {
-			const editor = randomEditor(rng(seed));
+			const editor = randomEditor(rng(seed), 1);
 			const read = editorToContent(editor.getEditorState());
 			// The spans index the text the composer's send reads today.
 			expect(read.text, `seed ${seed}`).toBe(rootText(editor));
 			expect(spansAreValid(read), `seed ${seed}`).toBe(true);
 			const rebuilt = editorFrom(read);
+			expect(leaves(rebuilt), `seed ${seed}`).toEqual(leaves(editor));
 			expect(editorToContent(rebuilt.getEditorState()), `seed ${seed}`).toEqual(read);
-			// A one-paragraph editor (the composer's: plain text has no paragraphs) comes back
-			// node for node, text runs merged.
-			if (leaves(editor).length === 1) {
-				expect(leaves(rebuilt), `seed ${seed}`).toEqual(leaves(editor));
-			}
+		}
+	});
+
+	it("reads any editor's own text, and its content is a fixed point (seeded, 500 cases of 2-3 paragraphs)", () => {
+		for (let seed = 1; seed <= 500; seed++) {
+			const next = rng(seed);
+			const editor = randomEditor(next, 2 + Math.floor(next() * 2));
+			const read = editorToContent(editor.getEditorState());
+			expect(read.text, `seed ${seed}`).toBe(rootText(editor));
+			expect(spansAreValid(read), `seed ${seed}`).toBe(true);
+			expect(editorToContent(editorFrom(read).getEditorState()), `seed ${seed}`).toEqual(read);
 		}
 	});
 

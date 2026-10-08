@@ -130,6 +130,12 @@ describe("contentSchema: the span rules", () => {
 
 	it("refuses a span past the end of the text", () => {
 		expect(contentSchema.safeParse(content("ask @we", [span("p1", "web", 4)])).success).toBe(false);
+		// `slice` clamps at the end of the text, so the label check alone would pass this one.
+		expect(
+			contentSchema.safeParse(
+				content("@web", [{ id: "p1", type: "project", label: "web", start: 0, end: 10 }]),
+			).success,
+		).toBe(false);
 	});
 
 	it("refuses a span that does not cover '@' + its label", () => {

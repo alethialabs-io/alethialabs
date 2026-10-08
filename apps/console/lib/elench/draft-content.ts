@@ -48,7 +48,7 @@ const mentionFieldSchema = z
 	.refine(isNormalizedDraftText, "invalid");
 
 /** One mention pill, as a span `[start, end)` of the draft text in UTF-16 offsets. */
-export const draftMentionSchema = z.object({
+const draftMentionSchema = z.object({
 	id: mentionFieldSchema,
 	type: z.enum(MENTION_TYPES),
 	label: mentionFieldSchema.min(1),
@@ -60,7 +60,7 @@ export const draftMentionSchema = z.object({
 export type DraftMention = z.infer<typeof draftMentionSchema>;
 
 /** The widget-grid cell an empty-cell prompt asked to fill (the routes' shape, `/api/agent`). */
-export const draftCellTargetSchema = z.object({
+const draftCellTargetSchema = z.object({
 	x: z.number().int().min(0).max(4),
 	y: z.number().int().min(0),
 });

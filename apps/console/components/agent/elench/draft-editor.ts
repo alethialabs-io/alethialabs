@@ -41,7 +41,7 @@ function $appendGap(out: LexicalNode[], gap: string): void {
  * is trusted to pass content that satisfies the span rules (`contentSchema` checks them); a span
  * that does not fit the text is written as plain text rather than lost.
  */
-export function $writeDraftContent(content: DraftEditorContent): void {
+function $writeDraftContent(content: DraftEditorContent): void {
 	const nodes: LexicalNode[] = [];
 	let cursor = 0;
 	for (const span of content.mentions) {
@@ -109,7 +109,7 @@ function $readNode(node: LexicalNode, walk: Walk): void {
 }
 
 /** Reads the current editor into `{ text, mentions }`, one span per pill. Runs inside a read. */
-export function $readDraftContent(): DraftEditorContent {
+function $readDraftContent(): DraftEditorContent {
 	const walk: Walk = { text: "", mentions: [] };
 	$readNode($getRoot(), walk);
 	return walk;
