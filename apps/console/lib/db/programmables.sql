@@ -1157,6 +1157,25 @@ BEGIN
                 OR user_id = current_setting('app.current_owner', true)::uuid));
 END $$;
 
+-- Chat-turn claims (ADR 0003 §4.3, #5730): USER-only, with no org arm — deliberately outside the
+-- owner_all loop above. A thread is its user's (org_id = owner) and is listed in every org, and the
+-- claim key (thread_id, turn_id, attempt_key) carries no org, so one turn is one turn whichever org's
+-- tab drives it: two orgs' tabs sending it collide on the key and this policy shows BOTH of them the
+-- row they collide on. The org a turn bills to is the `billing_org_id` column, not a visibility rule.
+-- ENABLE first — without it the policy is inert. Not FORCEd, as no table here is. Acceptance,
+-- heartbeat and finalize run on the service role (RLS-bypassing) and name `user_id = $actor`
+-- explicitly; ownership of the thread is proved there by a locked read, not by a foreign key (there
+-- is none: a claim outlives its thread's delete, and Postgres skips row security for FK checks).
+-- This policy governs the app-role reads (getThread's `inFlight`, createThread's running-claim probe).
+DO $$
+BEGIN
+  ALTER TABLE public.agent_turn_claims ENABLE ROW LEVEL SECURITY;
+  DROP POLICY IF EXISTS owner_only ON public.agent_turn_claims;
+  CREATE POLICY owner_only ON public.agent_turn_claims FOR ALL
+    USING (user_id = current_setting('app.current_owner', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_owner', true)::uuid);
+END $$;
+
 -- Kubeconfig mint requests (#5280): a row holds a client's ephemeral PUBLIC key and, once the runner
 -- has posted, a SEALED (HPKE) credential only that client can open. Org-scoped AND actor-scoped:
 -- unlike `owner_all`'s OR, both must hold. A mint request is its requester's alone — a teammate in

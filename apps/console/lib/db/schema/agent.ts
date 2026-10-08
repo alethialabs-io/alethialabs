@@ -3,7 +3,10 @@
 
 import type { UIMessage } from "ai";
 import type { KnowledgeDoc } from "@/types/jsonb.types";
+import { sql } from "drizzle-orm";
 import {
+	boolean,
+	check,
 	index,
 	integer,
 	jsonb,
@@ -34,6 +37,16 @@ export const agentThreads = pgTable(
 		// assistant persona. Lets listThreads separate the two surfaces from one table.
 		kind: text().default("agent").notNull(),
 		messages: jsonb().$type<UIMessage[]>().default([]).notNull(),
+		// ADR 0003 §4.2: the org this thread's turns bill to. From ADR 0003 slice 5 it is written once,
+		// by the acceptance of the thread's first turn under the thread lock (`… WHERE billing_org_id
+		// IS NULL`), and never changed. Nothing writes it yet (slice 1 adds the column only), so it is
+		// NULL on every row until slice 5 lands; an existing thread is then pinned by its next turn.
+		billing_org_id: uuid(),
+		// ADR 0003 §4.2: the thread's revision. The default backfills every existing row with 1. Today
+		// only `createThread` bumps it; `thread-transcript.ts`'s writes of `messages` do not yet,
+		// and nothing checks a base revision. From slices 5 and 6, every statement that writes
+		// `messages` bumps it in that same UPDATE and a write from a stale tab is refused.
+		revision: integer().default(1).notNull(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
@@ -46,6 +59,88 @@ export const agentThreads = pgTable(
 
 export type AgentThread = typeof agentThreads.$inferSelect;
 export type NewAgentThread = typeof agentThreads.$inferInsert;
+
+/** The lifecycle of one attempt's claim (ADR 0003 §5). */
+export type TurnClaimState = "running" | "answered" | "failed" | "expired";
+
+// A chat turn's claim (ADR 0003 §4.1): one row per ATTEMPT KEY of one turn of one thread, re-armed in
+// place when a failed or expired attempt is retried. It is what makes a turn answered, and billed,
+// exactly once: the route may call the model only after it holds the running claim.
+//
+// `thread_id` has NO foreign key, on purpose (§4.3): a claim outlives its thread's delete, so a late
+// finalize is still decided by its `token` compare-and-set rather than by a cascade that erased which
+// attempt owned the turn. Claims are removed only by the sweep's 30-day retention pass and by an
+// acceptance that recreates a reaped thread id.
+//
+// RLS: `owner_only` in programmables.sql (`user_id = app.current_owner`, no org arm — the key carries
+// no org, and a thread is its user's in every org). Acceptance, heartbeat and finalize run on the
+// service role and name `user_id` explicitly; the policy governs the app-role reads.
+export const agentTurnClaims = pgTable(
+	"agent_turn_claims",
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		thread_id: uuid().notNull(),
+		// The thread's owner; the RLS column.
+		user_id: uuid().notNull(),
+		// The user message id (client-minted; validated as 1-128 chars of [A-Za-z0-9_-] at the route).
+		turn_id: text().notNull(),
+		// `answer` · `regen:<answer id>` · `continue:<answer id>:<tool call ids>` (ADR 0003 §3).
+		attempt_key: text().notNull(),
+		state: text().$type<TurnClaimState>().notNull(),
+		// Minted per attempt by the route; fences a late finalize or heartbeat.
+		token: uuid().notNull(),
+		// +1 each time a failed/expired row is re-armed.
+		attempt_no: integer().default(1).notNull(),
+		// A copy of the thread's pinned org at acceptance. Data, not visibility.
+		billing_org_id: uuid().notNull(),
+		// A copy of the thread's project, or NULL for an org thread.
+		project_id: uuid(),
+		// ai_usage_ledger.id of this attempt's hold; NULL without hosted billing.
+		hold_id: uuid(),
+		// The thread's revision after acceptance.
+		accepted_revision: integer().notNull(),
+		// Set together with `answered` (the check below).
+		answer_id: text(),
+		// The answer ended by abort or timeout.
+		partial: boolean().default(false).notNull(),
+		// A code, never model or user text.
+		error: text(),
+		// Silence bound: renewed to now() + 90 s by every heartbeat (ADR 0003 §8.2).
+		lease_until: timestamp({ withTimezone: true }).notNull(),
+		// The age bound of the heartbeat and the sweep: TURN_BUDGET_MS + 90 s from here (§8.2).
+		accepted_at: timestamp({ withTimezone: true }).notNull(),
+		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
+		finished_at: timestamp({ withTimezone: true }),
+	},
+	(t) => [
+		// One row per attempt key, re-armed in place.
+		unique("uq_agent_turn_claims_key").on(t.thread_id, t.turn_id, t.attempt_key),
+		// One running attempt per thread (ADR 0003 case 20).
+		uniqueIndex("uq_agent_turn_claims_one_running")
+			.on(t.thread_id)
+			.where(sql`state = 'running'`),
+		// The expiry sweep.
+		index("idx_agent_turn_claims_lease")
+			.on(t.lease_until)
+			.where(sql`state = 'running'`),
+		// The age pass's NOT EXISTS probe of a claimed hold.
+		index("idx_agent_turn_claims_hold")
+			.on(t.hold_id)
+			.where(sql`state = 'running'`),
+		// The retention pass.
+		index("idx_agent_turn_claims_finished")
+			.on(t.finished_at)
+			.where(sql`state <> 'running'`),
+		check(
+			"agent_turn_claims_answered_has_answer",
+			sql`(${t.state} = 'answered') = (${t.answer_id} IS NOT NULL)`,
+		),
+	],
+);
+
+export type AgentTurnClaim = typeof agentTurnClaims.$inferSelect;
+export type NewAgentTurnClaim = typeof agentTurnClaims.$inferInsert;
 
 // Agent identity (elench) — a scoped, persistent agent modeled as DATA, not a
 // standing process (Letta/MemGPT pattern): persona + mission + tool-scope + a

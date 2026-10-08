@@ -31,6 +31,8 @@ function thread(): AgentThread {
 		status: "active",
 		kind: "chat",
 		messages: [],
+		billing_org_id: null,
+		revision: 1,
 		created_at: now,
 		updated_at: now,
 	};
