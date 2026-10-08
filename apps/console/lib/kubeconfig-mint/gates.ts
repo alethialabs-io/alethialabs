@@ -4,12 +4,12 @@
 // The two gates every surface that mints a kubeconfig shares: the CLI routes
 // (app/api/cli/clusters/[id]/kubeconfig/**) and the console's download action
 // (app/server/actions/kubeconfig-download.ts, #5285). One definition, so a person cannot double their
-// mint budget by alternating surfaces, and the poll's tier re-check cannot differ between them. Also the
+// mint budget by alternating surfaces, and the poll's tier re-check (collectGate) cannot differ between them. Also the
 // credential a mint binds to, and which credentials may ask for which tier (#5310).
 
 import { getPdp } from "@/lib/authz";
 import type { CliAuthorization } from "@/lib/authz/guard";
-import { type Actor, ForbiddenError } from "@/lib/authz/types";
+import { type Actor, ForbiddenError, type ResourceRef } from "@/lib/authz/types";
 import type { KubeconfigMintTier } from "@/lib/db/schema/enums";
 import { checkRateLimit } from "@/lib/rate-limit";
 import type { MintCredential } from "./audit";
@@ -38,24 +38,55 @@ export async function takeMintRateLimit(actor: { orgId: string; userId: string }
 }
 
 /**
- * Whether `actor` may COLLECT a mint of `tier` on `clusterId` now — the poll's re-check. A read-only
- * mint needs `cluster:access_readonly`, which every caller has already been checked for before it
- * polls; an admin mint is re-checked against `cluster:access_admin`, so somebody demoted after asking
- * does not collect the admin credential.
+ * The poll's tier re-check, in its two strengths (#5667). A read-only mint needs
+ * `cluster:access_readonly`, which every caller has already checked before it polls, so both answer
+ * true for it without asking again. An ADMIN mint is re-checked against `cluster:access_admin`, so
+ * somebody demoted after asking does not collect the admin credential.
+ *
+ * WHICH ONE, AND WHY THERE ARE TWO. `enforce` RECORDS: it goes through the PDP's `enforce` →
+ * `enforceDecision`, which writes an `authz_activity_log` row for every allow of a non-read action
+ * (and `access_admin` is not a read) and for every denial, and emits the action event. Both clients
+ * poll every two seconds, so asking that on every poll wrote an "accessed admin" row per poll while
+ * the mint was still pending — rows that record waiting, not access. So:
+ *
+ * - `probe` asks `can()`, which records nothing. lib/kubeconfig-mint/poll.ts uses it while there is
+ *   nothing to hand over (pending, failed, expired): it still refuses a demoted person early, but it
+ *   authorizes nothing, because no credential leaves on those paths.
+ * - `enforce` is the recording check. The poll calls it ONLY when it is about to hand over a `ready`
+ *   admin credential, immediately before the consuming DELETE — a fresh PDP decision at that moment,
+ *   never a remembered answer from an earlier probe. So the activity log gets one row per hand-over
+ *   (or per refusal at hand-over), which is the event an `access_admin` alert rule is about.
+ *
+ * Which strength applies is poll.ts's decision, not the caller's: both callers (the CLI route and the
+ * console action) pass the gate whole, so they cannot disagree about when a hand-over is recorded.
  */
-export async function mayCollectTier(
-	actor: Actor,
-	clusterId: string,
-	tier: KubeconfigMintTier,
-): Promise<boolean> {
-	if (tier === "readonly") return true;
-	try {
-		await getPdp().enforce(actor, actionForTier(tier), { type: "cluster", id: clusterId });
-		return true;
-	} catch (e) {
-		if (e instanceof ForbiddenError) return false;
-		throw e;
-	}
+export interface CollectGate {
+	/** Non-recording: whether `tier` may be collected, for a poll that hands nothing over. */
+	probe(tier: KubeconfigMintTier): Promise<boolean>;
+	/** Recording and enforcing: whether `tier` may be handed over NOW. Call only at the hand-over. */
+	enforce(tier: KubeconfigMintTier): Promise<boolean>;
+}
+
+/** The {@link CollectGate} for `actor` collecting a mint on `clusterId`. */
+export function collectGate(actor: Actor, clusterId: string): CollectGate {
+	const resource: ResourceRef = { type: "cluster", id: clusterId };
+	return {
+		async probe(tier) {
+			if (tier === "readonly") return true;
+			const decision = await getPdp().can(actor, actionForTier(tier), resource);
+			return decision.allowed;
+		},
+		async enforce(tier) {
+			if (tier === "readonly") return true;
+			try {
+				await getPdp().enforce(actor, actionForTier(tier), resource);
+				return true;
+			} catch (e) {
+				if (e instanceof ForbiddenError) return false;
+				throw e;
+			}
+		},
+	};
 }
 
 /**
