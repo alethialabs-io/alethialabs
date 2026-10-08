@@ -8,7 +8,8 @@
 // Asserts: org context lists org-level threads → resumes the latest; an EMPTY list resolves
 // to an ephemeral conversation (nothing persisted — no createThread); PROJECT context does
 // the SAME, scoped by projectId; `ready` flips true only after the initial list→resume
-// settles; and the late resume never overrides what the user did while it was in flight.
+// settles; the late resume never overrides what the user did while it was in flight; and a
+// context switch or close mid-load neither wedges the skeleton nor writes the stale resume (#5680).
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { UIMessage } from "ai";
@@ -367,6 +368,26 @@ describe("useElenchThreads — a context switch or close mid-load (#5680)", () =
 		expect(useElenchStore.getState().threadId).toBeNull();
 		expect(result.current.threads).toHaveLength(0);
 		expect(result.current.initialMessages).toHaveLength(0);
+	});
+
+	it("a switch after the load shows the skeleton until the new context resolves, then its threads", async () => {
+		const projectList = deferred<AgentThread[]>();
+		vi.mocked(listThreads).mockImplementation((projectId) =>
+			projectId === "proj-2" ? projectList.promise : Promise.resolve([thread("t-org")]),
+		);
+		vi.mocked(getThread).mockImplementation(async (id) => thread(id));
+
+		const { result } = renderHook(() => useElenchThreads());
+		await waitFor(() => expect(result.current.ready).toBe(true));
+
+		act(() => useElenchStore.getState().openPanel(PROJECT));
+		// Exactly as opening there from closed: the skeleton, not the org conversation.
+		await waitFor(() => expect(result.current.ready).toBe(false));
+
+		await act(async () => projectList.resolve([thread("pt-1")]));
+		await waitFor(() => expect(result.current.ready).toBe(true));
+		expect(result.current.threads.map((t) => t.id)).toEqual(["pt-1"]);
+		expect(useElenchStore.getState().threadId).toBe("pt-1");
 	});
 
 	it("a transcript that arrives after the surface closed writes nothing into the store", async () => {

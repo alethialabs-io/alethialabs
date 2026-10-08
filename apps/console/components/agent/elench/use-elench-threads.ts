@@ -80,7 +80,8 @@ export function useElenchThreads() {
 	// epoch captured before the list is compared after EACH round trip, and a changed one means
 	// the user has already chosen, so the resume stands down rather than overriding them.
 	//
-	// The effect runs once per (open, context) — there is deliberately no "already loaded" flag.
+	// The effect runs once per (open, context) — `resumeStore` is a stable zustand action, so
+	// it never re-runs on its own account — and there is deliberately no "already loaded" flag.
 	// A context switch on an OPEN surface (`openPanel`/`openModal` with another project, or org ↔
 	// project) changes `projectId`; the cleanup stands the old context's load down and this body
 	// runs again for the new one, exactly as opening from closed in that context would: skeleton,
@@ -98,9 +99,6 @@ export function useElenchThreads() {
 		const startEpoch = useElenchStore.getState().epoch;
 		/** True once the user has picked a thread or started a new chat since the load began. */
 		const userActed = () => useElenchStore.getState().epoch !== startEpoch;
-		// A no-op on a first open (it is already false); on a context switch it puts the body
-		// back on its skeleton until the new context resolves, as a fresh open shows it.
-		setInitialResolved(false);
 		(async () => {
 			const list = await listThreads(projectId);
 			if (cancelled) return;
@@ -122,13 +120,13 @@ export function useElenchThreads() {
 		})();
 		return () => {
 			cancelled = true;
+			// Besides unmount (where the reset is moot), the cleanup runs on the two events that
+			// invalidate this resolution — the surface closing and the context switching — so the body is back on its skeleton
+			// until the next load settles: a reopen re-resumes cleanly, and a switch shows the
+			// new context the way a fresh open there would.
+			setInitialResolved(false);
 		};
 	}, [open, projectId, resumeStore]);
-
-	// Reset when the surface closes so reopening shows the skeleton until it re-resumes.
-	useEffect(() => {
-		if (!open) setInitialResolved(false);
-	}, [open]);
 
 	/** Resume a persisted thread (loads its transcript first). */
 	const selectThread = useCallback(
