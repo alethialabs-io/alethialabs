@@ -121,7 +121,7 @@ describe("a finished paid setup reports the plan state the LINK read (#5522)", (
 			const other: NewOrgPlanState = state === "not_active" ? "active" : "not_active";
 			resolveNewOrgSetup.mockResolvedValue(serverSays(sub, false, other));
 			const paymentUrl = state === "action_needed" ? PAY_URL : null;
-			linkSubscriptionToNewOrg.mockResolvedValue({ planState: state, paymentUrl });
+			linkSubscriptionToNewOrg.mockResolvedValue({ kind: "linked", planState: state, paymentUrl });
 
 			const outcome = await finishPaidSetup("user-1", record(sub), hooks);
 

@@ -21,10 +21,15 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { and, asc, desc, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
+import type Stripe from "stripe";
 import { z } from "zod";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { BILLING_FIELD_CAPS } from "@/lib/billing/billing-field-caps";
-import type { FirstPayment } from "@/lib/billing/first-payment";
+import { type FirstPayment, readFirstPayment } from "@/lib/billing/first-payment";
+import { alertPaymentNeedsSupport } from "@/lib/billing/payment-alert";
+import { getOrgBilling } from "@/lib/billing/queries";
+import { getStripe } from "@/lib/billing/stripe";
+import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import {
 	NEW_ORG_CREATED_BY_KEY,
 	NEW_ORG_SETUP_IN_PROGRESS_CODE,
@@ -36,6 +41,10 @@ import {
 import { TAX_ID_TYPES, type TaxIdType } from "@/lib/billing/tax-ids";
 import { getServiceDb } from "@/lib/db";
 import { member, organization, organizationBilling, pendingOrgSetups } from "@/lib/db/schema";
+import type {
+	PendingOrgSetupClosedReason,
+	PendingOrgSetupRefusedReason,
+} from "@/lib/db/schema/pending-org-setups";
 import { ORG_SLUG_MAX_LENGTH, ORG_SLUG_PATTERN } from "@repo/org-slug";
 import type { PendingOrgSetupBilling } from "@/types/jsonb.types";
 
@@ -175,8 +184,8 @@ export interface UnfinishedSetupCursor {
 }
 
 /**
- * One page of the actor's setups whose last step (the payer declaration) has not been recorded, newest
- * first (ties broken by id), and the cursor of the page after it — null when this page is the last.
+ * One page of the actor's setups whose last step (the payer declaration) has not been recorded and
+ * that are not closed, newest first (ties broken by id), and the cursor of the page after it — null when this page is the last.
  *
  * A KEYSET page (#5463): it starts after `after`'s position in that order, not after a row count, so a
  * caller that deletes rows from a page it has read (`findUnfinishedNewOrgSetup` drops expired ones)
@@ -195,6 +204,8 @@ export async function unfinishedPendingOrgSetups(
 			and(
 				eq(pendingOrgSetups.user_id, userId),
 				isNull(pendingOrgSetups.declared_at),
+				// A closed setup is finished for good (ADR 0002 §5.6): never offered for resume again.
+				isNull(pendingOrgSetups.closed_at),
 				after
 					? sql`(${pendingOrgSetups.created_at}, ${pendingOrgSetups.id}) < (${after.at}::timestamptz, ${after.id}::uuid)`
 					: undefined,
@@ -260,7 +271,11 @@ export async function savePendingOrgSetupDetails(
 		);
 }
 
-/** Stamps the link step: the subscription now names `orgId`. */
+/**
+ * Stamps the link step: the subscription now names `orgId`. A CLOSED setup is left closed (#5714):
+ * closed is terminal, and the link of a subscription the closer has just read as ended must not turn
+ * it back into a linked one.
+ */
 export async function markPendingOrgSetupLinked(
 	userId: string,
 	subscriptionId: string,
@@ -273,6 +288,7 @@ export async function markPendingOrgSetupLinked(
 			and(
 				eq(pendingOrgSetups.user_id, userId),
 				eq(pendingOrgSetups.subscription_id, subscriptionId),
+				isNull(pendingOrgSetups.closed_at),
 			),
 		);
 }
@@ -595,4 +611,254 @@ export async function findSetupOrg(
 			.where(and(eq(pendingOrgSetups.id, row.id), eq(pendingOrgSetups.user_id, userId)));
 	}
 	return { id: org.id, slug: org.slug ?? "" };
+}
+
+// ── The open setup, its guard and its exits (ADR 0002 §5.7, #5714) ─────────────────────────────────
+//
+// An org is created BEFORE its subscription is linked to it, so for a while the org carries a paid
+// setup that its billing row does not show. Its own purchase flows must not mint a second plan there
+// (`openPendingOrgSetupsForOrg` is what they read), and every such setup needs a way out that does not
+// depend on its creator coming back (`settleOpenSetup`, the closer). "Open" is
+// `linked_at IS NULL AND closed_at IS NULL`.
+//
+// Every write below is a COMPARE-AND-SET on that predicate, returning the row. Several readers can
+// find the same subscription at once (the guard, both resume lookups, the link); only the caller whose
+// statement returned the row logs the event or raises the alert, so "alerted once" has a mechanism.
+
+/** Subscription statuses under which Stripe will never collect a payment for it again. */
+const ENDED_STATUSES: ReadonlySet<string> = new Set(["canceled", "incomplete_expired"]);
+
+/** Billing statuses that mean the org's row holds a live plan. */
+const LIVE_BILLING_STATUSES: ReadonlySet<string> = new Set(["active", "trialing"]);
+
+/**
+ * Writes one structured log line with a stable event name (ADR 0002 §5.4: the console has no billing
+ * audit table, so the durable record is the row's own columns and this line is the event).
+ */
+export function logBillingEvent(event: string, fields: Record<string, string | null>): void {
+	console.info(JSON.stringify({ event, ...fields }));
+}
+
+/** True for Stripe's "No such …" error — the id names nothing in this account. */
+export function isStripeResourceMissing(e: unknown): boolean {
+	return typeof e === "object" && e !== null && Reflect.get(e, "code") === "resource_missing";
+}
+
+/**
+ * The OPEN setups that name `orgId` — by `created_org_id`, or by the subscription in the org's own
+ * server-stamped marker (so the guard holds even when `recordNewOrgCreated` never wrote
+ * `created_org_id`, C93). Read with the SERVICE role on purpose: the buyer may be another owner of the
+ * org, whom RLS would show nothing of the creator's row. The caller turns a row into a refusal and, at
+ * most, the creator's name from the org's own member list; no other column reaches the buyer.
+ */
+export async function openPendingOrgSetupsForOrg(orgId: string): Promise<PendingOrgSetupRow[]> {
+	const db = getServiceDb();
+	const [org] = await db
+		.select({ metadata: organization.metadata })
+		.from(organization)
+		.where(eq(organization.id, orgId))
+		.limit(1);
+	const marker = newOrgSubscriptionIdOf(org?.metadata ?? null);
+	return db
+		.select()
+		.from(pendingOrgSetups)
+		.where(
+			and(
+				isNull(pendingOrgSetups.linked_at),
+				isNull(pendingOrgSetups.closed_at),
+				or(
+					eq(pendingOrgSetups.created_org_id, orgId),
+					marker ? eq(pendingOrgSetups.subscription_id, marker) : undefined,
+				),
+			),
+		);
+}
+
+/**
+ * Closes the open setup of `subscriptionId` — one compare-and-set on `closed_at IS NULL AND
+ * linked_at IS NULL` — and returns the row it closed, or null when it was not open (already closed or
+ * linked, by this caller or another one) or does not exist. `userId`, when given, must own it.
+ */
+export async function closePendingOrgSetup(input: {
+	subscriptionId: string;
+	reason: PendingOrgSetupClosedReason;
+	refusedReason?: PendingOrgSetupRefusedReason;
+	userId?: string;
+	closedBy?: string;
+	note?: string;
+}): Promise<PendingOrgSetupRow | null> {
+	const now = new Date();
+	const [closed] = await getServiceDb()
+		.update(pendingOrgSetups)
+		.set({
+			closed_at: now,
+			closed_reason: input.reason,
+			...(input.refusedReason ? { refused_reason: input.refusedReason } : {}),
+			...(input.closedBy ? { closed_by: input.closedBy } : {}),
+			...(input.note ? { closed_note: input.note } : {}),
+			updated_at: now,
+		})
+		.where(
+			and(
+				eq(pendingOrgSetups.subscription_id, input.subscriptionId),
+				input.userId ? eq(pendingOrgSetups.user_id, input.userId) : undefined,
+				isNull(pendingOrgSetups.closed_at),
+				isNull(pendingOrgSetups.linked_at),
+			),
+		)
+		.returning();
+	return closed ?? null;
+}
+
+/**
+ * Marks the open setup of `subscriptionId` linked to `orgId` — the write the link's last step would
+ * have made — with the same compare-and-set as `closePendingOrgSetup`. Returns the row, or null when it
+ * was not open.
+ */
+async function adoptPendingOrgSetup(
+	subscriptionId: string,
+	orgId: string,
+): Promise<PendingOrgSetupRow | null> {
+	const now = new Date();
+	const [adopted] = await getServiceDb()
+		.update(pendingOrgSetups)
+		.set({
+			linked_at: now,
+			created_org_id: sql`coalesce(${pendingOrgSetups.created_org_id}, ${orgId}::uuid)`,
+			updated_at: now,
+		})
+		.where(
+			and(
+				eq(pendingOrgSetups.subscription_id, subscriptionId),
+				isNull(pendingOrgSetups.closed_at),
+				isNull(pendingOrgSetups.linked_at),
+			),
+		)
+		.returning();
+	return adopted ?? null;
+}
+
+/**
+ * What the closer left the setup as: `closed` (it no longer blocks anything), `linked` (adopted, or
+ * already linked), or `open` (it still blocks the org's purchases, and some other exit must end it).
+ */
+export type SetupCloserVerdict = "closed" | "linked" | "open";
+
+/**
+ * THE SETUP CLOSER (ADR 0002 §5.7 "Every open setup has an exit"). Run by the guard, both resume
+ * lookups and the link before they answer. It has two branches, and nothing else in it writes:
+ *
+ *   - CLOSE: the subscription X reads ended (`canceled`, `incomplete_expired`). The setup is closed
+ *     (`closed_reason = 'ended'`), and when `readFirstPayment` does not read `never_paid` — money may
+ *     have moved on a setup nobody will finish — the operator is alerted. Nothing is refunded here.
+ *   - ADOPT: X is not ended, its `metadata.organization_id` is the setup's org, its
+ *     `metadata.created_by` is the setup's user, and the org's billing row names X — the state a link
+ *     leaves when it throws after `subscriptions.update` and before its mark (C96). The setup is marked
+ *     linked. When the metadata names the org but the row does not name X yet, X is synced once first
+ *     (the same idempotent call the webhook makes); a row that then names ANOTHER live plan is the S1
+ *     refusal (closed with `org_has_plan`, alerted). Metadata naming a different org or user is never
+ *     adopted.
+ *
+ * Everything else stays open. A subscription Stripe cannot find (`resource_missing`) is NEVER closed
+ * here: a wrong key makes every read missing, and only an operator can tell that from a reset test
+ * account (`scripts/pending-org-setups.ts close-setup`). Any other failed read is THROWN with nothing
+ * written, so the guard can refuse the purchase rather than pass it.
+ *
+ * `sub` is X as the caller already read it (saves a read); `orgId` is the org the caller knows the
+ * setup by, else the row's `created_org_id`.
+ */
+export async function settleOpenSetup(
+	row: PendingOrgSetupRow,
+	opts: { sub?: Stripe.Subscription; orgId?: string | null } = {},
+): Promise<SetupCloserVerdict> {
+	if (row.closed_at) return "closed";
+	if (row.linked_at) return "linked";
+	let sub = opts.sub;
+	if (!sub) {
+		try {
+			sub = await getStripe().subscriptions.retrieve(row.subscription_id);
+		} catch (e) {
+			if (isStripeResourceMissing(e)) return "open";
+			throw e;
+		}
+	}
+	const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+
+	if (ENDED_STATUSES.has(sub.status)) {
+		// Read BEFORE the write: a failed read throws with nothing written (fail closed).
+		const firstPayment = await readFirstPayment(sub);
+		const closed = await closePendingOrgSetup({ subscriptionId: row.subscription_id, reason: "ended" });
+		if (closed) {
+			logBillingEvent("billing.pending_org_setup.closed", {
+				subscription_id: row.subscription_id,
+				user_id: row.user_id,
+				org_id: closed.created_org_id,
+				closed_reason: "ended",
+				x_read: sub.status,
+				first_payment: firstPayment,
+			});
+			if (firstPayment !== "never_paid") {
+				await alertPaymentNeedsSupport({
+					subscriptionId: sub.id,
+					customerId,
+					paymentIntentId: null,
+					context: "setup_closed",
+					detail: `it reads ${sub.status} and its first payment is not proven unmoved, so money may have been taken for a team setup nobody will finish. Nothing was refunded automatically; check the payment and refund it by hand if it was taken.`,
+				});
+			}
+		}
+		return "closed";
+	}
+
+	const orgId = opts.orgId ?? row.created_org_id;
+	if (
+		!orgId ||
+		sub.metadata?.organization_id !== orgId ||
+		sub.metadata?.created_by !== row.user_id
+	) {
+		return "open";
+	}
+	let billing = await getOrgBilling(orgId);
+	if (billing?.stripeSubscriptionId !== sub.id) {
+		await syncSubscriptionToBilling(sub);
+		billing = await getOrgBilling(orgId);
+	}
+	if (billing?.stripeSubscriptionId === sub.id) {
+		const adopted = await adoptPendingOrgSetup(row.subscription_id, orgId);
+		if (adopted) {
+			logBillingEvent("billing.pending_org_setup.adopted", {
+				subscription_id: row.subscription_id,
+				user_id: row.user_id,
+				org_id: orgId,
+				x_read: sub.status,
+			});
+		}
+		return "linked";
+	}
+	if (billing?.stripeSubscriptionId && LIVE_BILLING_STATUSES.has(billing.status)) {
+		const closed = await closePendingOrgSetup({
+			subscriptionId: row.subscription_id,
+			reason: "org_has_plan",
+			refusedReason: "org_has_plan",
+		});
+		if (closed) {
+			logBillingEvent("billing.pending_org_setup.closed", {
+				subscription_id: row.subscription_id,
+				user_id: row.user_id,
+				org_id: orgId,
+				closed_reason: "org_has_plan",
+				x_read: sub.status,
+				org_subscription_id: billing.stripeSubscriptionId,
+			});
+			await alertPaymentNeedsSupport({
+				subscriptionId: sub.id,
+				customerId,
+				paymentIntentId: null,
+				context: "link_refused",
+				detail: `it names team ${orgId}, whose billing row holds another live subscription (${billing.stripeSubscriptionId}), so it was not linked and keeps renewing beside it. Refund it, or move it to the right team.`,
+			});
+		}
+		return "closed";
+	}
+	return "open";
 }

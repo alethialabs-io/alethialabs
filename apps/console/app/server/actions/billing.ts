@@ -77,10 +77,13 @@ import {
 } from "@/lib/billing/new-org-plan-state";
 import { type NewOrgSetupState, PAID_SUBSCRIPTION_STATUSES } from "@/lib/billing/new-org-setup";
 import {
+	closePendingOrgSetup,
 	findSetupOrg,
 	forgetPendingOrgSetup,
+	logBillingEvent,
 	markPendingOrgSetupDeclared,
 	markPendingOrgSetupLinked,
+	openPendingOrgSetupsForOrg,
 	pendingOrgSetupBillingSchema,
 	pendingOrgSetupFor,
 	pendingOrgSetupSlugSchema,
@@ -88,11 +91,13 @@ import {
 	REPLACEABLE_SUBSCRIPTION_STATUSES,
 	recordPendingOrgSetup,
 	savePendingOrgSetupDetails,
+	settleOpenSetup,
 	type UnfinishedSetupCursor,
 	unfinishedPendingOrgSetups,
 	unlinkedPendingOrgSetupCustomers,
 } from "@/lib/billing/pending-org-setup";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
+import { displayName } from "@/lib/user-display";
 import { mapStatus, syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { computeUsage, type UsageSummary } from "@/lib/billing/usage";
 import {
@@ -794,6 +799,73 @@ const PURCHASE_IN_PROGRESS =
 	"Another purchase on this account is being started right now, so nothing new was started. Wait a moment and try again.";
 
 /**
+ * The link's refusal beside the team's other live plan (ADR 0002 §5.5, #5714). The second sentence is
+ * added only when `alertPaymentNeedsSupport` returned true (I8).
+ */
+const LINK_REFUSED_ORG_HAS_PLAN = `This team already has an active plan, so this payment was not linked to it. Contact support at ${SUPPORT_EMAIL}, who will refund it or move it to the right team.`;
+const LINK_REFUSED_ALERTED = " We have raised this with support.";
+
+/** The open-setup guard's refusal, to the setup's creator (ADR 0002 §5.5). */
+const OPEN_SETUP_CREATOR = `Your paid setup for this team has not finished, so a plan cannot be started here yet. Open Create a team to see where it stands, or contact support at ${SUPPORT_EMAIL}.`;
+
+/**
+ * The open-setup guard's refusal, to anyone but the creator (ADR 0002 §5.5): it names who started the
+ * setup and offers support, and never says "finish" — only the creator can.
+ */
+function openSetupOtherMember(creator: string): string {
+	return `${creator} started a paid setup for this team that has not finished, so a plan cannot be started here yet. Ask them, or contact support at ${SUPPORT_EMAIL}.`;
+}
+
+/** The open-setup guard's refusal when its Stripe read failed — it fails closed (ADR 0002 §5.7). */
+const OPEN_SETUP_UNCHECKED =
+	"We could not check this team's earlier paid setup just now, so a plan cannot be started yet. Try again in a few minutes.";
+
+/**
+ * THE OPEN-SETUP GUARD (ADR 0002 §5.7, #5714). An org is created before its paid create-a-team
+ * subscription X is linked to it, so its billing row cannot show X yet; a plan, a Checkout or a trial
+ * started there in that window minted a second subscription Y beside X, and X then renewed unseen.
+ * `createSubscriptionIntent`, `createCheckoutSession` and `startProTrial` call this before any Stripe
+ * write and refuse with what it returns; null lets the purchase proceed.
+ *
+ * It reads every OPEN setup naming the org (service role: the buyer may be a co-owner, whom RLS shows
+ * nothing of the creator's row) and runs the setup closer on each first, so an ended X, or one already
+ * linked in Stripe, never blocks the org. A setup still open after that refuses — the creator is sent to
+ * Create a team or support, anyone else is told who started it. Only the creator's display name, from
+ * the org's own member list, leaves the creator's row. A closer that THROWS refuses the purchase with
+ * the try-again clause: a failed read never passes it (fail closed).
+ */
+async function openSetupRefusal(actor: { userId: string; orgId: string }): Promise<string | null> {
+	const rows = await openPendingOrgSetupsForOrg(actor.orgId);
+	for (const row of rows) {
+		let verdict: Awaited<ReturnType<typeof settleOpenSetup>>;
+		try {
+			verdict = await settleOpenSetup(row, { orgId: actor.orgId });
+		} catch (e) {
+			console.error(`[billing] open-setup guard could not check ${row.subscription_id}:`, e);
+			return OPEN_SETUP_UNCHECKED;
+		}
+		if (verdict !== "open") continue;
+		if (row.user_id === actor.userId) return OPEN_SETUP_CREATOR;
+		return openSetupOtherMember(await setupCreatorName(actor.orgId, row.user_id));
+	}
+	return null;
+}
+
+/**
+ * The setup creator's name as the org's member list shows it, or "Another member of this team" when
+ * the creator is no longer a member of the org.
+ */
+async function setupCreatorName(orgId: string, userId: string): Promise<string> {
+	const [creator] = await getServiceDb()
+		.select({ name: user.name, email: user.email, username: user.username })
+		.from(member)
+		.innerJoin(user, eq(user.id, member.userId))
+		.where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
+		.limit(1);
+	return creator ? displayName(creator) : "Another member of this team";
+}
+
+/**
  * The refusal for a set of `PaymentOutcome`s — the most serious one wins — or null when none refuses.
  * A form whose alert reached nobody outranks the one whose alert did, so the copy never says "we have
  * raised an alert" while any of the payments it covers was not alerted on.
@@ -1128,6 +1200,9 @@ export async function createCheckoutSession(
 	if (actor.orgId === actor.userId) {
 		throw new Error("Create an organization before subscribing to a plan.");
 	}
+	// Before any Stripe write (#5714): the org's unlinked paid setup must not get a plan beside it.
+	const openSetup = await openSetupRefusal(actor);
+	if (openSetup) throw new Error(openSetup);
 	await gatePaidConversion(actor);
 
 	const cfg = getStripeConfig();
@@ -1193,6 +1268,10 @@ export async function createSubscriptionIntent(
 			error: "This organization already has an active subscription — change the plan instead.",
 		};
 	}
+	// After the live-plan check (so a live plan still reads "change the plan instead"), before any
+	// Stripe write (#5714): the org's unlinked paid setup must not get a second plan beside it.
+	const openSetup = await openSetupRefusal(actor);
+	if (openSetup) return { error: openSetup };
 	await gatePaidConversion(actor);
 	// One purchase per org at a time (#5489): two tabs that each read "nothing in flight" before either
 	// minted would otherwise each mint a payable subscription.
@@ -1379,6 +1458,9 @@ export async function startProTrial(opts?: {
 	) {
 		throw new Error("This organization already has an active subscription.");
 	}
+	// Before any Stripe write (#5714): no trial beside the org's unlinked paid setup.
+	const openSetup = await openSetupRefusal(actor);
+	if (openSetup) throw new Error(openSetup);
 
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
 	// Pin the currency now so the trial's eventual paid invoice bills correctly (Stripe
@@ -1857,7 +1939,7 @@ export async function linkSubscriptionToNewOrg(input: {
 	 * coverage test found exactly that gap.
 	 */
 	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
-}): Promise<NewOrgPlanReport> {
+}): Promise<NewOrgLinkResult> {
 	// NAMED, not ambient (#4133). This runs from a sheet on the CURRENT org's page, against the org
 	// just created — so the address and the target genuinely differ, and always did. It used to work
 	// by asking for the verb in the ambient scope and then asserting that scope WAS the new org,
@@ -1884,11 +1966,26 @@ export async function linkSubscriptionToNewOrg(input: {
 	// (both of which converge: the sync re-applies the same subscription, the payer write is an update).
 	// A subscription naming a DIFFERENT org is still refused.
 	const linkedTo = sub.metadata?.organization_id;
+	if (linkedTo && (linkedTo !== input.orgId || sub.metadata?.created_by !== actor.userId)) {
+		throw new Error("Subscription is already linked to an organization.");
+	}
+
+	// The setup closer runs before the link answers (ADR 0002 §5.7): an ended X closes its setup, and
+	// one a lost response left linked in Stripe is adopted.
+	const setup = await pendingOrgSetupFor(actor.userId, sub.id);
+	if (setup) await settleOpenSetup(setup, { sub, orgId: input.orgId });
+
+	// THE REFUSED SYNC (ADR 0002 §5.6, #5714). The org may already hold another live plan Y — bought
+	// in it, or trialled, while this link had not yet run. Linking X beside it left X renewing next to
+	// Y while the sheet reported "active". Checked here, BEFORE any Stripe write, and again after a sync
+	// the row's guard refused (Y took the row in between).
+	const before = await getOrgBilling(input.orgId);
+	if (namesOtherLivePlan(before, sub.id)) {
+		return refuseNewOrgLink({ actor, sub, customerId: input.customerId, orgId: input.orgId, rowSubscriptionId: before?.stripeSubscriptionId ?? null });
+	}
+
 	let linked: Stripe.Subscription;
 	if (linkedTo) {
-		if (linkedTo !== input.orgId || sub.metadata?.created_by !== actor.userId) {
-			throw new Error("Subscription is already linked to an organization.");
-		}
 		linked = sub;
 	} else {
 		const [org] = await getServiceDb()
@@ -1909,8 +2006,16 @@ export async function linkSubscriptionToNewOrg(input: {
 		});
 	}
 
-	// Deterministic activation — don't wait for the (already-fired) webhook.
-	await syncSubscriptionToBilling(linked);
+	// Deterministic activation — don't wait for the (already-fired) webhook. An "ignored" sync is no
+	// longer discarded: beside another live plan it is the refusal above, reached by a race. Beside a
+	// row naming X itself it is #5549's rank guard keeping a later state (C76), and X is linked.
+	const synced = await syncSubscriptionToBilling(linked);
+	if (synced === "ignored") {
+		const after = await getOrgBilling(input.orgId);
+		if (namesOtherLivePlan(after, sub.id)) {
+			return refuseNewOrgLink({ actor, sub, customerId: input.customerId, orgId: input.orgId, rowSubscriptionId: after?.stripeSubscriptionId ?? null });
+		}
+	}
 
 	// Then carry the declared payer facts onto the row syncSubscriptionToBilling just created. After
 	// it, never before: the row does not exist until then, and writing them first would either race
@@ -1932,7 +2037,74 @@ export async function linkSubscriptionToNewOrg(input: {
 	// What the sheet may say about the plan (#5522): read from the subscription just linked, never
 	// assumed. Stripe keeps it `incomplete` while the first invoice settles, so "active" here would
 	// often be false.
-	return readNewOrgPlanState(linked);
+	return { kind: "linked", ...(await readNewOrgPlanState(linked)) };
+}
+
+/**
+ * What `linkSubscriptionToNewOrg` did (ADR 0002 §5.6): linked, with the plan state it read (#5539's
+ * report, unchanged), or refused, with the sentence the sheet shows. A refusal is final for this
+ * setup — the sheet does not offer a retry.
+ */
+export type NewOrgLinkResult =
+	| ({ kind: "linked" } & NewOrgPlanReport)
+	| { kind: "refused"; clause: string };
+
+/** The org's billing row names a subscription other than `subscriptionId` that is live (active or trialing). */
+function namesOtherLivePlan(
+	billing: Awaited<ReturnType<typeof getOrgBilling>>,
+	subscriptionId: string,
+): boolean {
+	return (
+		!!billing?.stripeSubscriptionId &&
+		billing.stripeSubscriptionId !== subscriptionId &&
+		(billing.status === "active" || billing.status === "trialing")
+	);
+}
+
+/**
+ * The link's refusal beside the org's other live plan (ADR 0002 §5.6 "The refused sync", #5714). It
+ * writes nothing to the plan and never marks the setup linked: it closes the setup with
+ * `refused_reason = 'org_has_plan'` (one compare-and-set), logs `billing.new_org_link.refused`, and
+ * alerts the operator with X as the subject — X is paid or may be, unlinked, and renews until a person
+ * refunds it or moves it. The alert is skipped only when this setup was ALREADY closed by an earlier
+ * caller, which alerted then; a subscription with no setup record at all is alerted on. The customer is
+ * told the alert was raised only when it reached a channel (I8).
+ */
+async function refuseNewOrgLink(input: {
+	actor: { userId: string };
+	sub: Stripe.Subscription;
+	customerId: string;
+	orgId: string;
+	rowSubscriptionId: string | null;
+}): Promise<NewOrgLinkResult> {
+	const closed = await closePendingOrgSetup({
+		subscriptionId: input.sub.id,
+		userId: input.actor.userId,
+		reason: "org_has_plan",
+		refusedReason: "org_has_plan",
+	});
+	const record = closed ?? (await pendingOrgSetupFor(input.actor.userId, input.sub.id));
+	logBillingEvent("billing.new_org_link.refused", {
+		subscription_id: input.sub.id,
+		customer_id: input.customerId,
+		org_id: input.orgId,
+		org_subscription_id: input.rowSubscriptionId,
+		setup_closed_now: closed ? "true" : "false",
+	});
+	let alerted = false;
+	if (closed || !record) {
+		alerted = await alertPaymentNeedsSupport({
+			subscriptionId: input.sub.id,
+			customerId: input.customerId,
+			paymentIntentId: null,
+			context: "link_refused",
+			detail: `the link to team ${input.orgId} was refused because its billing row holds another live subscription (${input.rowSubscriptionId ?? "unknown"}), so this one is unlinked and keeps renewing beside it. Refund it, or move it to the right team.`,
+		});
+	}
+	return {
+		kind: "refused",
+		clause: `${LINK_REFUSED_ORG_HAS_PLAN}${alerted ? LINK_REFUSED_ALERTED : ""}`,
+	};
 }
 
 /**
@@ -2061,6 +2233,12 @@ async function newOrgSetupStateFor(
 		org = { id: owned.id, slug: owned.slug ?? "" };
 	}
 
+	// The setup closer runs before the lookup answers (ADR 0002 §5.6, §5.7): an open setup whose X
+	// reads ended is closed, and one a lost response left linked in Stripe is adopted. The answer
+	// below is about X and does not depend on it, so a closer that cannot read is logged, not thrown —
+	// the setup stays open and the next reader tries again.
+	await settleOpenSetupQuietly(row, sub, org?.id ?? null);
+
 	let declared = false;
 	if (org) {
 		const [billing] = await db
@@ -2093,6 +2271,23 @@ async function newOrgSetupStateFor(
 		billing: row.billing ?? null,
 		currency: sub.currency,
 	};
+}
+
+/**
+ * Runs the setup closer for a lookup, which must answer whether or not it could: a failure is logged
+ * and the setup stays open for the next reader (the guard, which does fail closed, or another lookup).
+ */
+async function settleOpenSetupQuietly(
+	row: PendingOrgSetupRow,
+	sub: Stripe.Subscription,
+	orgId: string | null,
+): Promise<void> {
+	if (row.closed_at || row.linked_at) return;
+	try {
+		await settleOpenSetup(row, { sub, orgId });
+	} catch (e) {
+		console.error(`[billing] setup closer could not check ${row.subscription_id}:`, e);
+	}
 }
 
 /**
@@ -2186,6 +2381,13 @@ export async function findUnfinishedNewOrgSetup(): Promise<NewOrgSetupState | nu
 						continue;
 					}
 					await forgetPendingOrgSetup(actor.userId, sub, firstPayment);
+				}
+				// A record still there — it has an organization, or its payment is not proven unmoved, or it
+				// was cancelled — is CLOSED once it reads ended (#5714), so it no longer blocks that
+				// organization's plan purchases; it used to be skipped and kept open for good. One the line
+				// above deleted matches nothing in the closer's compare-and-set, so nothing is logged twice.
+				if (ENDED_SUBSCRIPTION_STATUSES.has(sub.status)) {
+					await settleOpenSetupQuietly(row, sub, row.created_org_id);
 				}
 				continue;
 			}
