@@ -30,6 +30,7 @@ export function useElenchThreads() {
 	const ctx = useElenchStore((s) => s.ctx);
 	const threadId = useElenchStore((s) => s.threadId);
 	const selectStore = useElenchStore((s) => s.selectThread);
+	const resumeStore = useElenchStore((s) => s.resumeThread);
 	const attachStore = useElenchStore((s) => s.attachThread);
 	const newChatStore = useElenchStore((s) => s.newChat);
 
@@ -72,23 +73,39 @@ export function useElenchThreads() {
 	// so `setInitialResolved(true)` never landed, wedging the body on its loading skeleton.
 	// It only reproduces once a thread exists (an empty list never resumes), which is how it
 	// survived until the AI e2e suite drove a second conversation.
+	//
+	// The resume goes through `resumeThread`, NOT `selectThread`: the rail is interactive while
+	// these two round trips are in flight, and `selectThread` resets `mainView` to the chat — a
+	// click on Artifacts/Knowledge in that window was silently snapped back (#5677). The same
+	// window allows a user-initiated thread pick or "New chat", both of which bump `epoch`; the
+	// epoch captured before the list is compared after EACH round trip, and a changed one means
+	// the user has already chosen, so the resume stands down rather than overriding them.
 	useEffect(() => {
 		if (!open || initialized.current) return;
 		initialized.current = true;
 		let cancelled = false;
+		const startEpoch = useElenchStore.getState().epoch;
+		/** True once the user has picked a thread or started a new chat since the load began. */
+		const userActed = () => useElenchStore.getState().epoch !== startEpoch;
 		(async () => {
 			const list = await listThreads(projectId);
 			if (cancelled) return;
 			setThreads(list);
 			const resume = resumeIdRef.current ?? list[0]?.id;
-			if (resume) await loadInto(resume);
+			if (resume && !userActed()) {
+				const full = await getThread(resume);
+				if (!userActed()) {
+					setInitialMessages(full?.messages ?? []);
+					resumeStore(resume);
+				}
+			}
 			// else: leave threadId null + initialMessages empty → the ephemeral landing.
 			if (!cancelled) setInitialResolved(true);
 		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [open, projectId, loadInto]);
+	}, [open, projectId, resumeStore]);
 
 	// Reset when the surface closes so reopening re-resumes cleanly.
 	useEffect(() => {
