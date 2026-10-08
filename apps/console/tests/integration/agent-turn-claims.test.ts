@@ -281,6 +281,36 @@ describeIfDb("the claim state machine (ADR 0003 slice 5)", () => {
 		expect((await ledger(A)).length + (await ledger(B)).length).toBe(1);
 	});
 
+	it("a first turn from orgs A and B into a free id: one acceptance, the other is pin-moved, never thread-not-found", async () => {
+		// The two acceptances take DIFFERENT advisory locks, so they run concurrently: the second's
+		// INSERT waits on the first's uncommitted row, does nothing, and must then lock that live row.
+		for (let i = 0; i < 3; i++) {
+			const { user } = freshUser();
+			const A = freshOrg();
+			const B = freshOrg();
+			const threadId = randomUUID();
+			const u = userMsg(`u-fresh-${i}`, "list clusters");
+			const results = await Promise.all([
+				reserveTurn(submit(user, A, threadId, [u], { baseRevision: 1 })),
+				reserveTurn(submit(user, B, threadId, [u], { baseRevision: 1 })),
+			]);
+			const winner = results.find((r) => r.outcome === "accepted");
+			const moved = results.find((r) => r.outcome === "pin-moved");
+			if (!winner || winner.outcome !== "accepted" || !moved || moved.outcome !== "pin-moved") {
+				throw new Error(`expected one acceptance and one pin-moved, got ${JSON.stringify(results)}`);
+			}
+			expect(moved.pinnedOrgId).toBe(winner.turn.billingOrgId);
+			// The route re-resolves the pin and calls once more: the claim it collides on refuses it.
+			const again = await reserveTurn(
+				submit(user, winner.turn.billingOrgId, threadId, [u], { baseRevision: winner.turn.acceptedRevision }),
+			);
+			if (again.outcome !== "refused") throw new Error(JSON.stringify(again));
+			expect(again.body).toMatchObject({ refusal: "turn-in-progress", committed: true });
+			expect(await claims(threadId)).toHaveLength(1);
+			expect((await ledger(A)).length + (await ledger(B)).length).toBe(1);
+		}
+	});
+
 	it("one turn driven from org A and org B: the second accept sees the first claim and refuses", async () => {
 		const { user } = freshUser();
 		const A = freshOrg();

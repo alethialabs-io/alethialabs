@@ -14,10 +14,20 @@ import "server-only";
 // ONE LOCK ORDER, everywhere (§5): the org's AI-budget advisory lock, then the thread row, then the
 // claim row, then the hold's ledger row. A transaction skips a lock it does not need and never takes
 // them out of order, so acceptance, finalize, expiry and the heartbeat cannot deadlock each other.
+// One addition, in finalize's `deleted` outcome only: after the claim, `recoverTranscript` may lock a
+// SECOND thread row (an earlier Recovered thread of the same owner, through `updateLive`). No cycle
+// can close on it: acceptance takes a thread's lock before any claim, so nothing that holds that
+// Recovered thread's row waits on this claim or this hold.
 //
 // Every statement is on the service role (the ledger writes need it, ADR 0003 hand-off from #5723's
-// review) and names `user_id` explicitly, so the service role is held to the rows the owner's RLS
-// policy would allow (§4.3). No route calls this module yet: ADR 0003 slice 6 cuts the routes over.
+// review). What holds the service role to the owner's rows (§4.3) differs by table:
+// - every claim and thread statement names `user_id` explicitly;
+// - a ledger write matches the hold by id ALONE; that id is only ever read from a claim row selected
+//   with its owner's `user_id`, or taken from the in-memory `AcceptedTurn` this module returned, so
+//   an `AcceptedTurn` must never be built from request data;
+// - `expireSilentTurns`' candidate scan has NO owner predicate, by design: the sweep serves every
+//   user, and re-checks each candidate under its locks with that candidate's own `user_id`.
+// No route calls this module yet: ADR 0003 slice 6 cuts the routes over.
 
 import { randomUUID } from "node:crypto";
 import { getToolName, isToolUIPart, type UIMessage } from "ai";
@@ -509,16 +519,8 @@ interface LockedThread {
 	messages: UIMessage[];
 }
 
-/**
- * §5.1 step 2: lock the caller's thread, or recreate a reaped `agent` thread under its id (running
- * C8 on the id's claims first, then deleting its terminal claims, so a turn the old thread answered
- * cannot answer `turn-answered` in the new one). Refuses a tombstone, a missing support thread, an
- * id held by another owner, and a thread of another kind or project.
- */
-async function lockThread(tx: Tx, input: ReserveTurnInput, u: UIMessage | undefined): Promise<LockedThread> {
-	const { threadId, userId, turn } = input;
-	const notFound = (revision: number | null): never =>
-		halt(turnRefusal("thread-not-found", turn.turnId, [], revision));
+/** `SELECT … FOR UPDATE` of the caller's thread row (`user_id` named): the row, or undefined. */
+async function selectThreadForUpdate(tx: Tx, threadId: string, userId: string): Promise<LockedThread | undefined> {
 	const [row] = await tx
 		.select({
 			kind: agentThreads.kind,
@@ -531,13 +533,34 @@ async function lockThread(tx: Tx, input: ReserveTurnInput, u: UIMessage | undefi
 		.from(agentThreads)
 		.where(and(eq(agentThreads.id, threadId), eq(agentThreads.user_id, userId)))
 		.for("update");
-	if (row) {
+	return row;
+}
+
+/**
+ * §5.1 step 2: lock the caller's thread, or recreate a reaped `agent` thread under its id (running
+ * C8 on the id's claims first, then deleting its terminal claims, so a turn the old thread answered
+ * cannot answer `turn-answered` in the new one). Refuses a tombstone, a missing support thread, an
+ * id held by another owner, and a thread of another kind or project.
+ *
+ * When the recreating INSERT does nothing, another transaction committed a row under the id after
+ * this one's first read: another owner's (404), this owner's tombstone (410), or this owner's LIVE
+ * thread, which a concurrent first turn under ANOTHER org (so another advisory lock) just created.
+ * That row is locked like any existing one, so the second request reads the first one's pin and
+ * claim (§4.3 case 8) instead of being told the thread does not exist.
+ */
+async function lockThread(tx: Tx, input: ReserveTurnInput, u: UIMessage | undefined): Promise<LockedThread> {
+	const { threadId, userId, turn } = input;
+	const notFound = (): never => halt(turnRefusal("thread-not-found", turn.turnId, [], null));
+	/** The checks every existing row of the caller's goes through. */
+	const existing = (row: LockedThread): LockedThread => {
 		if (row.status === THREAD_DELETED) halt(turnRefusal("thread-deleted", turn.turnId, [], null));
-		if (row.kind !== input.threadKind || row.projectId !== input.projectId) notFound(null);
+		if (row.kind !== input.threadKind || row.projectId !== input.projectId) notFound();
 		return row;
-	}
+	};
+	const row = await selectThreadForUpdate(tx, threadId, userId);
+	if (row) return existing(row);
 	// dev never recreates a support thread (no client creates one), and this does not start to.
-	if (input.threadKind !== "agent") notFound(null);
+	if (input.threadKind !== "agent") notFound();
 	const [inserted] = await tx
 		.insert(agentThreads)
 		.values({
@@ -551,13 +574,9 @@ async function lockThread(tx: Tx, input: ReserveTurnInput, u: UIMessage | undefi
 		.onConflictDoNothing({ target: agentThreads.id })
 		.returning({ revision: agentThreads.revision });
 	if (!inserted) {
-		// Held by another owner, or this owner's tombstone committed after this statement's snapshot.
-		const [held] = await tx
-			.select({ status: agentThreads.status })
-			.from(agentThreads)
-			.where(and(eq(agentThreads.id, threadId), eq(agentThreads.user_id, userId)));
-		if (held?.status === THREAD_DELETED) halt(turnRefusal("thread-deleted", turn.turnId, [], null));
-		return notFound(null);
+		// A row committed under the id since the first read: lock it (a fresh READ COMMITTED snapshot).
+		const raced = await selectThreadForUpdate(tx, threadId, userId);
+		return raced ? existing(raced) : notFound();
 	}
 	// C8 first, so a claim it ends is deleted with the rest instead of surviving on the new id.
 	await expireStaleRunning(tx, threadId, userId);
