@@ -19,6 +19,7 @@ import { type ElenchDraft, elenchDrafts } from "@/lib/db/schema";
 import { contentSchema } from "@/lib/elench/draft-content";
 import {
 	lockDraft,
+	lockDraftScope,
 	readThread,
 	readThreadSummaries,
 	runDraftGate,
@@ -225,6 +226,9 @@ export async function saveDraft(input: SaveDraftInput): Promise<SaveDraftResult>
 
 			if (row === null) {
 				if (req.baseRevision > 0) return goneOf(tx, actor, req.conversationId);
+				// §4.3 is a count, then an insert: serialized per scope so a concurrent base-0 save of
+				// another conversation cannot read the same count and land the 201st row.
+				await lockDraftScope(tx, actor, req.projectId);
 				const [count] = await tx
 					.select({ n: sql<number>`count(*)`.mapWith(Number) })
 					.from(elenchDrafts)

@@ -13,6 +13,13 @@
 //     rows. So a predicate an action drops is a predicate the fake stops applying: the user_id
 //     predicate on `agent_threads`, the compare-and-set on `revision` and the `projects.org_id` read
 //     are each observed through what the action answers, not through a recorded call count.
+//     One predicate is not an equality: `listDrafts`' 24-hour window on discarded rows. The fake
+//     reads its interval OUT OF the rendered statement and fails closed when the shape is absent,
+//     so dropping the window throws and widening it lists a row it must not. The real clock and
+//     the real `now() - interval` are proved against Postgres in
+//     tests/integration/elench-drafts-actions.test.ts, with §4.3's concurrent inserts;
+//   - `tx.execute` (only §4.3's scope lock uses it) is recorded as a `lock` statement and changes
+//     no row: what the lock serializes is observable only against a real database.
 
 import { PgDialect } from "drizzle-orm/pg-core";
 import { Column, getTableName, is, SQL, Table } from "drizzle-orm";
@@ -55,7 +62,7 @@ const TURN = "00000000-0000-4000-8000-0000000d0001";
 type Row = Record<string, unknown>;
 
 interface Statement {
-	verb: "select" | "insert" | "update";
+	verb: "select" | "insert" | "update" | "lock";
 	table: string;
 	sql: string;
 	params: unknown[];
@@ -85,11 +92,18 @@ function matches(row: Row, table: string, text: string, params: unknown[]): bool
 		const allowed = (m[3] ?? "").split(", ").map((p) => params[Number(p.slice(1)) - 1]);
 		if (m[1] === table && !allowed.includes(col(m[1], m[2] ?? ""))) return false;
 	}
-	// listDrafts' state filter: active and sending, plus discarded in the last 24 hours.
+	// listDrafts' state filter: active and sending, plus discarded within the window the STATEMENT
+	// names. The interval is parsed from the rendered SQL, never assumed, and a filter without one
+	// is a defect the fake refuses rather than evaluates.
 	if (text.includes(`in ('active', 'sending') or`)) {
+		const discardWindow = text.match(
+			/"elench_drafts"\."discarded_at" > now\(\) - interval '(\d+) hours'/,
+		);
+		if (!discardWindow) throw new Error(`fake: listDrafts' state filter has no discard window: ${text}`);
+		const hours = Number(discardWindow[1]);
 		const status = row.status;
 		const at = row.discarded_at;
-		const recent = at instanceof Date && at.getTime() > Date.now() - 24 * 3600 * 1000;
+		const recent = at instanceof Date && at.getTime() > Date.now() - hours * 3600 * 1000;
 		if (!(status === "active" || status === "sending" || (status === "discarded" && recent))) {
 			return false;
 		}
@@ -197,6 +211,11 @@ function fakeTx() {
 			};
 			return chain;
 		},
+		execute(q: SQL) {
+			const st: Statement = { verb: "lock", table: "", ...render(q), forUpdate: false };
+			statements.push(st);
+			return Promise.resolve([]);
+		},
 		update(t: Table) {
 			const st: Statement = {
 				verb: "update",
@@ -285,7 +304,7 @@ function stored(conversationId = CONV, org = ORG_A): Row | undefined {
 	);
 }
 
-const writes = () => statements.filter((s) => s.verb !== "select");
+const writes = () => statements.filter((s) => s.verb === "insert" || s.verb === "update");
 
 // ── the actor and the PDP ───────────────────────────────────────────────────────────────────────
 
@@ -398,6 +417,24 @@ describe("the page org", () => {
 		const out = await save({ orgId: USER });
 		expect(out).toEqual({ outcome: "scope-changed", reason: "address", slug: "~" });
 		expect(statements).toEqual([]);
+	});
+
+	it("a database error on the lost-scope read is unavailable, not a throw", async () => {
+		vi.mocked(currentActor).mockImplementation(async () => notFound());
+		const driver = Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" });
+		vi.mocked(getServiceDb).mockImplementation(() => {
+			throw Object.assign(new Error("Failed query"), { name: "DrizzleQueryError", cause: driver });
+		});
+		expect(await save()).toEqual({ outcome: "unavailable" });
+		expect(await listDrafts({ projectId: null, orgHint: ORG_A })).toEqual({
+			outcome: "unavailable",
+		});
+	});
+
+	it("a session lost between the actor and the lost-scope read is unauthorized", async () => {
+		vi.mocked(currentActor).mockImplementation(async () => notFound());
+		vi.mocked(getOwnerScope).mockRejectedValue(new UnauthorizedError());
+		expect(await save()).toEqual({ outcome: "unauthorized" });
 	});
 
 	it("rethrows a throw that is not an expected outcome (a redirect, a defect)", async () => {
@@ -548,6 +585,18 @@ describe("saveDraft", () => {
 		tables.elench_drafts?.push(draftRow({ revision: 1, text: "first tab" }));
 		expect(await save()).toMatchObject({ outcome: "conflict", row: { revision: 1 } });
 		expect(writes()).toEqual([]);
+	});
+
+	it("the row lock names the caller's user and org: a teammate's or another org's row under the same conversation is not this key's", async () => {
+		tables.elench_drafts?.push(
+			draftRow({ user_id: TEAMMATE, revision: 7, text: "teammate's" }),
+			draftRow({ org_id: ORG_B, revision: 4, text: "mine in B" }),
+		);
+		expect(await save({ content: text("mine in A") })).toEqual({ outcome: "saved", revision: 1 });
+		expect(stored()?.text).toBe("mine in A");
+		const lock = statements.find((s) => s.table === "elench_drafts" && s.forUpdate);
+		expect(lock?.sql).toMatch(/"elench_drafts"\."user_id" = \$\d+/);
+		expect(lock?.sql).toMatch(/"elench_drafts"\."org_id" = \$\d+/);
 	});
 
 	it("a base-0 save that loses the insert race to another tab is conflict", async () => {
@@ -732,6 +781,18 @@ describe("the bound", () => {
 			await save({ conversationId: String(existing?.conversation_id), baseRevision: 1, content: text("edited") }),
 		).toEqual({ outcome: "saved", revision: 2 });
 		expect(tables.elench_drafts).toHaveLength(200);
+	});
+
+	it("the count runs after the scope's advisory lock, which names user, org and anchor", async () => {
+		await save({ projectId: PROJECT_A });
+		const lockAt = statements.findIndex((s) => s.verb === "lock");
+		const countAt = statements.findIndex(
+			(s) => s.table === "elench_drafts" && !s.forUpdate && s.verb === "select",
+		);
+		expect(lockAt).toBeGreaterThan(-1);
+		expect(lockAt).toBeLessThan(countAt);
+		expect(statements[lockAt]?.sql).toContain("pg_advisory_xact_lock");
+		expect(statements[lockAt]?.params).toEqual([`elench-drafts:${USER}:${ORG_A}:${PROJECT_A}`]);
 	});
 
 	it("discarded drafts and other scopes do not count toward it", async () => {

@@ -70,8 +70,8 @@ export function isNotFoundSignal(e: unknown): boolean {
 /**
  * True when `e` came from the database: anything in its cause chain is a Drizzle query error or a
  * postgres.js error, or carries a code (a SQLSTATE, or a connection error's `ECONNREFUSED`).
- * Only these become `unavailable`; any other throw is a defect and is rethrown, so the client
- * stops after three tries instead of retrying it for ever (§4 step 6).
+ * Only these become `unavailable`; any other throw is a defect and is rethrown: §4 step 6 keeps
+ * `unavailable` for the transient case, so slice 7's client will not retry a defect for ever.
  */
 export function isDatabaseError(e: unknown): boolean {
 	if (pgErrorCode(e) !== undefined) return true;
@@ -94,7 +94,7 @@ async function refuseLostScope(
 ): Promise<DraftGateRefusal> {
 	if (hintOrgId === null) return { outcome: "forbidden", reason: "membership" };
 	// The personal org: in community every slug resolves here, so a renamed slug is the same
-	// tenant and the client words it as "Open Elench again to save" (A13).
+	// tenant; slice 7's client will word it as "Open Elench again to save" (A13).
 	if (hintOrgId === userId) {
 		return { outcome: "scope-changed", reason: "address", slug: PERSONAL_ORG_SLUG };
 	}
@@ -124,16 +124,29 @@ async function refuseLostScope(
 /**
  * Maps a throw from the preamble or the body to its outcome (§4 step 6), or rethrows it. A
  * `notFound()` is step 2's lost scope; a redirect and every other unexpected throw propagate.
+ * The lost-scope reads run here, inside the catch, so a throw from THEM (a database outage on the
+ * service-role membership read, a session that is gone) is classified the same way rather than
+ * escaping the action as a rejection.
  */
 async function classifyThrow(e: unknown, scope: DraftScope): Promise<DraftGateRefusal> {
-	if (e instanceof UnauthorizedError) return { outcome: "unauthorized" };
-	if (e instanceof ForbiddenError) return { outcome: "forbidden" };
-	if (isNotFoundSignal(e)) {
+	if (!isNotFoundSignal(e)) return classifyPlainThrow(e);
+	try {
 		// `currentActor()` threw after the session resolved (only the address failed), so the
 		// session read here answers the same user.
 		const { userId } = await getOwnerScope();
-		return refuseLostScope(userId, scope.keyOrgId ?? scope.orgHint);
+		return await refuseLostScope(userId, scope.keyOrgId ?? scope.orgHint);
+	} catch (inner) {
+		return classifyPlainThrow(inner);
 	}
+}
+
+/**
+ * Maps a throw that is not a `notFound()` to its outcome: no session is `unauthorized`, a refused
+ * authorization `forbidden`, a database error `unavailable`. Anything else is rethrown.
+ */
+function classifyPlainThrow(e: unknown): DraftGateRefusal {
+	if (e instanceof UnauthorizedError) return { outcome: "unauthorized" };
+	if (e instanceof ForbiddenError) return { outcome: "forbidden" };
 	if (isDatabaseError(e)) {
 		// The name only: a driver error's message can quote the statement's parameters, which here
 		// include the user's draft text.
@@ -197,6 +210,21 @@ export async function runDraftGate<T>(
 }
 
 // ── Reads every action shares ───────────────────────────────────────────────────────────────────
+
+/**
+ * Serializes the new-row path of one scope (§4.3): a transaction-scoped advisory lock on the
+ * caller's `(user, org, anchor)`, released at commit or rollback. Taken before the active-draft
+ * count, so two concurrent base-0 saves of different conversations in one scope count one after
+ * the other instead of both reading 199 and both inserting.
+ */
+export async function lockDraftScope(
+	tx: Tx,
+	actor: Actor,
+	projectId: string | null,
+): Promise<void> {
+	const scopeKey = `elench-drafts:${actor.userId}:${actor.orgId}:${projectId ?? "~"}`;
+	await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${scopeKey}, 0))`);
+}
 
 /**
  * Locks the caller's draft row for a key `FOR UPDATE`, or returns null when there is none. The

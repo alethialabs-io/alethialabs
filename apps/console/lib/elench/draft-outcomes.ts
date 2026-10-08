@@ -1,14 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The outcomes of the Elench draft actions (ADR 0001 §4.2), as one module the client reducer can
-// import without importing a `"use server"` file. Every action returns a discriminated union on
-// `outcome` and never throws for an expected answer (§4 step 6).
+// The outcomes of the Elench draft actions (ADR 0001 §4.2), as one module slice 7's client reducer
+// will be able to import without importing a `"use server"` file. Every action returns a
+// discriminated union on `outcome` and never throws for an expected answer (§4 step 6).
 //
-// This file names every outcome of §4.2, including those of actions a later slice adds: the
+// This file names every outcome of §4.2's draft actions, including those a later slice adds: the
 // claim outcomes (`claimDraft`, `consumeDraft`, `releaseClaim`, the heartbeat route) are slice 4's,
 // and the `startConversation` outcomes (§5.1) are slice 5's. Until those slices land, nothing
 // returns them. Types only: nothing here runs.
+//
+// No client imports this module yet: the store that reads these outcomes is slice 7's. Where a
+// comment below cites a D-transition, it says what that transition WILL do once slice 7 lands;
+// what the outcome means is true today.
+//
+// Not here: `deleteThread`'s changed answer (`{ purged }`) and the new `countDraftsOfConversation`'s
+// (`{ count, orgs }`). Both are slice 5's, which will type them beside those actions when it adds
+// the purge and the count.
 
 import type { DraftContent } from "@/lib/elench/draft-content";
 import type {
@@ -81,12 +89,15 @@ export interface DraftListEntry {
 
 // ── The refusals every action can answer (§4 steps 1-7) ─────────────────────────────────────────
 
-/** The input failed its zod schema. Not retried (D28). */
+/** The input failed its zod schema. Slice 7's client will not retry it (D28). */
 export interface DraftInvalid {
 	outcome: "invalid";
 }
 
-/** There is no session. Retried once after the viewer signs in again (D28). */
+/**
+ * There is no session. Slice 7's client will retry the request once after the viewer signs in
+ * again (D28).
+ */
 export interface DraftUnauthorized {
 	outcome: "unauthorized";
 }
@@ -102,20 +113,26 @@ export interface DraftForbidden {
 }
 
 /**
- * The write's org is not the page's. `other-org`: the key's org is not the actor's (§4 step 3), and
- * the client holds the write (D24). `address`: the page's slug no longer names the org, which still
- * exists for this user under `slug` (`~` for the personal org).
+ * The write's org is not the page's, and nothing was written. `other-org`: the key's org is not the
+ * actor's (§4 step 3); slice 7's client will hold the write (D24). `address`: the page's slug no
+ * longer names the org, which still exists for this user under `slug` (`~` for the personal org).
  */
 export type DraftScopeChanged =
 	| { outcome: "scope-changed"; reason: "other-org" }
 	| { outcome: "scope-changed"; reason: "address"; slug: string };
 
-/** Over the per-user rate. Transient (D27). */
+/**
+ * Over the per-user rate; nothing was written. The ADR classes it transient (D27): slice 7's client
+ * will retry it with backoff.
+ */
 export interface DraftRateLimited {
 	outcome: "rate-limited";
 }
 
-/** A database error. Transient (D27). */
+/**
+ * A database error; nothing was committed. The ADR classes it transient (D27): slice 7's client
+ * will retry it with backoff.
+ */
 export interface DraftUnavailable {
 	outcome: "unavailable";
 }
