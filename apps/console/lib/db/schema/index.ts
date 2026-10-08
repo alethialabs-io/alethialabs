@@ -43,6 +43,7 @@ export * from "./legal";
 export * from "./privacy";
 export * from "./organization-billing";
 export * from "./pending-org-setups";
+export * from "./purchase-leases";
 export * from "./invoices";
 export * from "./teams";
 export * from "./sso";

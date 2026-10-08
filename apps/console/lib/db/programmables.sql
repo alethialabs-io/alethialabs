@@ -1787,6 +1787,17 @@ CREATE POLICY pending_org_setup_owner ON public.pending_org_setups FOR ALL
   USING (user_id = current_setting('app.current_owner', true)::uuid)
   WITH CHECK (user_id = current_setting('app.current_owner', true)::uuid);
 
+-- purchase_leases (ADR 0002 §4.4, #5741): the create-a-team purchase lease. SERVICE-ROLE ONLY — RLS
+-- enabled with NO app policy denies the app role outright (the cli_logins idiom below). A lease names
+-- no tenant and nothing in it is a user's to see; an app-role write could block, or steal, another
+-- user's purchase. Only lib/billing/purchase-lease.ts touches it, through getServiceDb().
+ALTER TABLE public.purchase_leases ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alethia_app') THEN
+    EXECUTE 'REVOKE ALL ON public.purchase_leases FROM alethia_app';
+  END IF;
+END $$;
+
 -- cli_logins: service-role only — RLS enabled with no app policy denies the app role.
 ALTER TABLE public.cli_logins ENABLE ROW LEVEL SECURITY;
 
