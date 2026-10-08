@@ -8,6 +8,10 @@
 `sessionStorage` store) and the draft store reverted from #5423 (head 2c1314267) · **Consumed by:**
 ADR 0003 (`docs/adr/0003-chat-turn-answered-and-billed-once.md`, #5548, issue #5515), revision 5.1
 
+**Amendment (2026-10-08, as shipped in #5724).** §4.1 only: `contentToEditor` writes the gaps
+with its own split on `\n` and `\t`, not Lexical's `insertRawText`; and a mention's `id` and `label`
+must be normalized like the text.
+
 **Revision 7.1 (2026-10-08, delta review of revision 7).** Two inline blockers and four advisories.
 (1) The heartbeat is sent only while this tab holds a **granted** claim (`sending`), never while
 `claiming`: a route-handler `fetch` can overtake the `claimDraft` it would renew, and a
@@ -594,10 +598,11 @@ const keySchema = z.object({
   projectId: z.uuid().nullable(),
   conversationId: z.uuid(),
 });
+const mentionFieldSchema = z.string().max(256).refine(isNormalizedDraftText, "invalid");
 const draftMentionSchema = z.object({
-  id: z.string().max(256),
+  id: mentionFieldSchema,                                // normalized like the text (amendment, #5724)
   type: z.enum(MENTION_TYPES),
-  label: z.string().min(1).max(256),
+  label: mentionFieldSchema.min(1),
   start: z.number().int().min(0),                        // UTF-16 offsets into text
   end: z.number().int().min(1),
 });
@@ -615,8 +620,16 @@ const contentSchema = z.object({
 composer derives `{ text, mentions }` from the editor with one span **per pill**. (The send-time walk at
 `elench-composer.tsx:156-170` dedupes; the deduped list, at most 20 as the routes require, is derived from the
 spans at send, and the typeahead refuses a 21st distinct mention.) It rebuilds the editor from them with one pure function,
-`contentToEditor(content)`: `insertRawText` for the gaps, `$createMentionNode` for each span. Its
-inverse is `editorToContent`, and a property test pins the round trip. `isNormalizedDraftText` is
+`contentToEditor(content)`: each gap split on exactly `\n` and `\t` (a line-break node per `\n`, a
+tab node per `\t`, text nodes between), `$createMentionNode` for each span. Its
+inverse is `editorToContent`, and a property test pins the round trip. **Not `insertRawText`
+(amendment, #5724):** Lexical 0.52's `insertRawText` tokenizes with `/(\r?\n|\t)/`, so it folds
+`\r\n` into one line break; normalization keeps `\r`, so a draft holding `\r\n` would come back one
+unit shorter and every span after it would move. **A mention's `id` and `label` are normalized
+too (amendment, #5724):** they are stored in `jsonb`, which refuses U+0000 and changes a lone
+surrogate, so the schema refuses an `id` or `label` that `isNormalizedDraftText` rejects (U+0000
+present, or not well-formed). With well-formed labels and text, no span can split a surrogate pair.
+R7's worst case (256 × U+0001 ids and labels) is still admitted. `isNormalizedDraftText` is
 `text === text.replaceAll("\u0000", "").toWellFormed()`: the composer applies the same
 normalization on every `EDIT`, so the box never shows a character Postgres would change or refuse
 (§1). Normalization runs in the editor, on input and paste, **before** any span is taken, so

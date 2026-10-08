@@ -186,6 +186,11 @@ relative to the repo root, as the board's `scope:` lines are.
     (§5.7); (6) in `createSubscriptionIntent` the guard runs after the existing live-plan check
     (`billing.ts:1187-1194`).
 
+- **Amendment** (2026-10-08, as shipped in #5715, S1). (a) The link's `org_has_plan` refusal also
+  treats a `past_due` Y on the org's row as live (§5.6 "The refused sync"). (b) The refusal's alert
+  is skipped in one case only (§5.6). (c) The co-owner's guard copy never says "finish" in any form
+  (§5.5). Three follow-ups from the S1 review are recorded in the slices that own them (S9, S10).
+
 ---
 
 ## 1. Context
@@ -979,7 +984,7 @@ state **and** its `last_pay`.
 | a link refused on an ended X with no hold, read anything else (§5.6, rev 6) | "This checkout was closed, and we could not confirm whether its payment went through, so it was not linked to a team. Contact support at <email> with the time of the payment." Add "We have raised an alert." **only when alerted**. Add "A team already created for it stays on the free plan." when one was. |
 | a link refused beside a live, paid plan (§5.6), including S1's refused sync | "This team already has an active plan, so this payment was not linked to it. Contact support at <email>, who will refund it or move it to the right team." Add "We have raised this with support." **only when alerted** (I8). |
 | §5.7's guard, to the setup's creator (rev 7) | "Your paid setup for this team has not finished, so a plan cannot be started here yet. Open Create a team to see where it stands, or contact support at <email>." From S8, when an open hold names X, the hold's clause replaces the first sentence. |
-| §5.7's guard, to anyone else (rev 7) | "<Creator> started a paid setup for this team that has not finished, so a plan cannot be started here yet. Ask them, or contact support at <email>." `<Creator>` is the creator's name as the org's member list shows it, and "Another member of this team" when the creator is no longer a member. It never says "finish the setup": only the creator can. |
+| §5.7's guard, to anyone else (rev 7; amended 2026-10-08, #5715) | "<Creator> started paying for this team's plan and it is still being set up, so a plan cannot be started here yet. Ask them, or contact support at <email>." `<Creator>` is the creator's name as the org's member list shows it, and "Another member of this team" when the creator is no longer a member. It never says "finish" or "finished", in any form: only the creator can finish the setup. |
 | §5.7's guard found an open setup and its Stripe read of X failed (rev 7.1), to anyone | "We could not check this team's earlier paid setup just now, so a plan cannot be started yet. Try again in a few minutes." The guard fails closed: a read failure refuses and never passes the purchase. |
 | a link that succeeded (§5.6, rev 6) | #5539's `NEW_ORG_PLAN_COPY[planState]` (`lib/billing/new-org-plan-state.ts`), unchanged. Its `processing` copy says the payment went through only when a PaymentIntent succeeded, and its `confirming` copy claims nothing about the outcome. Rev 5's own "link and defer" sentence is withdrawn. |
 | T0h | The clause of the existing hold. |
@@ -1021,7 +1026,16 @@ reached the link, so nothing closed the setup at all (R7-1).
 
 **The refused sync (rev 7, S1).** The link no longer ignores what `syncSubscriptionToBilling`
 returns (`billing.ts:1913`). It refuses with `org_has_plan` when the org's billing row names a
-subscription other than X whose status is `active` or `trialing`, in two places:
+subscription other than X whose status is `active`, `trialing` or `past_due` (`namesOtherLivePlan`),
+in two places. **Amendment (2026-10-08, #5715):** `past_due` is a deliberate widening for this
+refusal only. The sync's row guard also refuses an X that does not supersede a `past_due` Y, so
+without it the link would mark X linked while X and Y both bill, silently; the refusal sends both to
+a person instead. **The setup closer's set is narrower on purpose:** its adopt branch closes a setup
+with `org_has_plan` only beside an `active` or `trialing` Y (`LIVE_BILLING_STATUSES`,
+`lib/billing/pending-org-setup.ts:632`), and leaves a setup beside a `past_due` Y open, because the
+link refuses that case itself (`namesOtherLivePlan`): right afterwards when the link ran the closer,
+and on the resumed link when a guard or resume lookup did. The two sets differ by design; do not
+align either to the other:
 - **before any Stripe write**, from the row as read; nothing is written to X or its customer;
 - **after the sync**, when the sync returned `"ignored"` and the row, read again, still names such a
   Y. This is the race in which Y took the row between the first read and the sync. X's metadata
@@ -1030,10 +1044,15 @@ subscription other than X whose status is `active` or `trialing`, in two places:
 A refused link never reports a plan state, never calls `markPendingOrgSetupLinked`, never writes the
 payer facts, and returns `{ kind: "refused", clause }` with the "already has an active plan" clause
 (§5.5). It logs the stable event `billing.new_org_link.refused` (subscription, customer, org, the
-row's subscription) and calls `alertPaymentNeedsSupport` with X as the subject. An `"ignored"` sync
+row's subscription) and calls `alertPaymentNeedsSupport` with X as the subject. **Amendment
+(2026-10-08, #5715):** the alert is skipped in exactly one case: this call's compare-and-set closed
+nothing **and** the setup's `closed_reason` is already `org_has_plan` (an earlier refusal of the same
+X raised the same alert). Every other case alerts, including no setup record, and a setup closed as
+`ended`, `operator`, or already linked. An `"ignored"` sync
 whose row names **X itself** is not a refusal: that is #5549's rank guard keeping a later `active`
 (C76), and the link reports X's state as today. Neither is an `"ignored"` sync beside a row that
-holds a `past_due` Y or an off-Stripe grant while X is `incomplete`: that is link and defer (C77).
+holds an off-Stripe grant while X is `incomplete`: that is link and defer (C77). (Amended: a row that
+holds a `past_due` Y is refused, above.)
 Until S9, the S1 refusal closes the setup (no holds exist yet, and S1's closer has no hold to wait
 for). From S9 on, the `org_has_plan` refusal of a live or `incomplete` X opens the `needs_operator`
 hold below, so the setup stays open (I16).
@@ -1044,8 +1063,8 @@ hold below, so the setup stays open (I16).
 | X is ended, **no** hold names it **(rev 6, R6-3)** | The link reads the held-invoice payments as #5539's `readNewOrgPlanState` does. If it reads `not_charged` (no money moved), it returns `{ kind: "refused" }` with the "closed before its payment completed" clause. If it reads anything else (`not_active`: money may have moved, or the read failed), it returns `{ kind: "refused" }` with the "contact support" clause (§5.5) and raises `alertPaymentNeedsSupport` with X as the subject. **It refunds nothing.** Only a hold may refund (I3, C34), and a hold is opened only by a flow that voided or cancelled X. An operator decides this case (C86). |
 | an open hold in `payment_in_flight`, `invoice_payable`, `refund_due`, `refund_pending` or `needs_operator` | `{ kind: "refused", clause }` with that hold's clause. Rev 7: the setup stays open (`refused_reason = held`), and the hold's end decides it. |
 | an open hold in `closing` or `cancel_unproven` | Run `advanceHold` first (the link holds the lease). `released(adopted)`: link as below. A T4-shaped observation that is still open: **link and defer**. Otherwise X was just closed: refused, as in the first row. |
-| **the org's billing row names a different subscription Y that is `active` or `trialing` (rev 5, narrowed in rev 5.1)** | `{ kind: "refused", clause }` with the "already has an active plan" clause (§5.5). Rev 6: the clause says "we have raised this" only when the alert returned true (I8). **Before** it returns, the link opens a hold on X in `needs_operator` (`open_note = link_refused`, T2o does not apply), which alerts with X as the subject and blocks U's next create-a-team. A paid, live X is therefore never left renewing without an alert (C80). With §5.7 in place, only a race can reach this row. Rev 7: the hold is open, so the setup stays open (I16) until an operator releases the hold. Checked both before the Stripe writes and after the sync ("The refused sync"). |
-| the row names a different subscription Y that is **not** live and paid (`none`, `canceled`, `past_due` (which includes Stripe's `unpaid`, `sync.ts:51-53`), or no subscription id) **(rev 5.1, corrected in rev 6)** | Link X as below. #5518's rule (`queries.ts:249-258`): any X, `incomplete` included, takes a row whose status is `none` or `canceled`. Only a **paid** X takes a row that holds a `past_due` subscription, or a live status with no subscription id (an off-Stripe grant). In those two cases an `incomplete` X takes the row once its own `active` event arrives (C77). Y is untouched: an abandoned `none` Y expires (S3), and a `past_due` Y keeps its own dunning (§7). |
+| **the org's billing row names a different subscription Y that is `active`, `trialing` or `past_due` (rev 5, narrowed in rev 5.1; `past_due` added by the 2026-10-08 amendment, #5715)** | `{ kind: "refused", clause }` with the "already has an active plan" clause (§5.5). Rev 6: the clause says "we have raised this" only when the alert returned true (I8). **Before** it returns, the link opens a hold on X in `needs_operator` (`open_note = link_refused`, T2o does not apply), which alerts with X as the subject and blocks U's next create-a-team. A paid, live X is therefore never left renewing without an alert (C80). With §5.7 in place, only a race can reach this row. Rev 7: the hold is open, so the setup stays open (I16) until an operator releases the hold. Checked both before the Stripe writes and after the sync ("The refused sync"). |
+| the row names a different subscription Y that is **not** live and paid (`none`, `canceled`, or no subscription id) **(rev 5.1, corrected in rev 6; amended 2026-10-08, #5715: `past_due`, which includes Stripe's `unpaid` (`sync.ts:51-53`), moved to the row above)** | Link X as below. #5518's rule (`queries.ts:249-258`): any X, `incomplete` included, takes a row whose status is `none` or `canceled`. Only a **paid** X takes a row that holds a live status with no subscription id (an off-Stripe grant); an `incomplete` X takes such a row once its own `active` event arrives (C77). Y is untouched: an abandoned `none` Y expires (S3). |
 | X `incomplete`, no hold | **Link and defer**: `{ kind: "linked", ...readNewOrgPlanState(X) }`. That is `processing`, `confirming`, `action_needed` or `unconfirmed`, with #5539's copy. |
 | X live | Link as today: `{ kind: "linked", planState: "active", paymentUrl: null }`. |
 
@@ -1569,7 +1588,8 @@ whatever this column says.
       `refused_reason` (all nullable) to `pending_org_setups`, and the partial index on
       `(created_org_id) WHERE linked_at IS NULL AND closed_at IS NULL`.
    2. **The link stops ignoring a refused sync.** It refuses with `org_has_plan` when the org's row
-      names another subscription that is `active` or `trialing`: before any Stripe write, and again
+      names another subscription that is `active`, `trialing` or (amended 2026-10-08, #5715)
+      `past_due`: before any Stripe write, and again
       after a sync that returned `"ignored"`. A refused link never calls
       `markPendingOrgSetupLinked`, never writes the payer facts, never returns a plan state, logs
       `billing.new_org_link.refused`, calls `alertPaymentNeedsSupport` with X as the subject, writes
@@ -1692,6 +1712,12 @@ whatever this column says.
    purchase flow and `payment-holds release` call it after an `adopted` release whose setup has an
    org (§5.6 "When a hold ends"). The backfill listing prints S1-era `org_has_plan` closures whose X
    is live (§8). C57, C60, C77, C80, C84, C85, C86 and C91 pass on the server side.
+   **Follow-ups from the S1 review (amendment 2026-10-08, #5715), owned here:** (1) the refusal's
+   clause can omit "We have raised this with support." when the in-link setup closer
+   (`settleOpenSetup`, which runs before the refusal) already closed the setup with `org_has_plan`
+   and alerted: the refusal then closes nothing, reads `org_has_plan`, and skips its own alert, so
+   the copy under-claims; (2) a refused X with **no** setup record re-alerts on every retried link,
+   limited only by the alert rule's throttle.
    - scope: `apps/console/app/server/actions/billing.ts apps/console/lib/billing/new-org-setup.ts apps/console/lib/billing/new-org-plan-state.ts apps/console/lib/billing/pending-org-setup.ts apps/console/lib/billing/payment-holds/sweeper.ts apps/console/scripts/payment-holds.ts apps/console/tests/actions/billing-subscription.test.ts apps/console/tests/actions/billing-new-org-link.test.ts apps/console/tests/integration/payment-hold-sweeper.test.ts`
    - Blocked by: S8. Migration: no (`closed_at` came with S1). Security review: **yes** (the link
      writes Stripe metadata and the org's billing row).
@@ -1701,7 +1727,10 @@ whatever this column says.
     closable, §5.6) (C78), renders a
     typed refusal as non-retryable with its clause and clears the browser record (C57, S half), and
     keeps "Retry to complete setup" only for a thrown error, without "you won't be charged again"
-    (C79, C32 S half). #5539's re-read loop stops on a reported hold. If the board labels it
+    (C79, C32 S half). #5539's re-read loop stops on a reported hold. **Follow-up from the S1
+    review (amendment 2026-10-08, #5715), owned here:** a stale client can still call the link for
+    an X whose setup is already closed: the link runs the closer, which answers `closed`, and does
+    not refuse on it. If the board labels it
     `class:ui`, it opens as a draft and stays one (CLAUDE.md §4).
     - scope: `apps/console/components/org/pending-paid-setup.ts apps/console/components/org/create-org-sheet.tsx apps/console/tests/components/org/**`
     - Blocked by: S9. Migration: no. Security review: no.
