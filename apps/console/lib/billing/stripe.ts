@@ -1,35 +1,60 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The Stripe client singleton. Server-only. Built lazily from the validated config so
-// a community / self-managed build (no STRIPE_SECRET_KEY) never constructs it.
+// The Stripe clients. Server-only. Built lazily from the validated config so a community /
+// self-managed build (no STRIPE_SECRET_KEY) never constructs either.
 //
-// THE TIMEOUT (ADR 0002 §4.4, #5741). The SDK's default is 80s per attempt, and nothing set it. The
-// create-a-team purchase runs under a 120s lease that must be renewed before every Stripe write and
-// must still have more than the mint's worst case left when `subscriptions.create` is called, so the
-// worst case has to be a number: `STRIPE_REQUEST_TIMEOUT_MS` per attempt, `1 + STRIPE_MAX_NETWORK_RETRIES`
-// attempts. Every caller shares this client, so the bound holds wherever a purchase reads or writes.
+// TWO CLIENTS, ON PURPOSE (ADR 0002 §4.4 and §8 step 1, #5741). `getStripe()` is the shared client and
+// keeps the SDK's defaults (80s timeout, 2 network retries): every caller outside the create-a-team
+// purchase — metering, webhook sync, reconcile, the backup-card `invoices.pay` loop — relies on them,
+// and an app-level retry after a call that succeeded at Stripe but answered slowly can act twice (the
+// meter re-reports). `getPurchaseStripe()` is the purchase path's client — the calls the create-a-team
+// purchase and its link make directly — with a shorter timeout and one retry.
+//
+// WHAT THE TIMEOUT IS, AND IS NOT. On Node the SDK arms `req.setTimeout(timeout)`: a SOCKET-INACTIVITY
+// timer that resets at each stage of the request (connect, send, each chunk of the response). It is
+// not a cap on a request's total duration — a response that keeps trickling in is never cut off — and
+// a connection closed by the peer can be retried outside `maxNetworkRetries`, after a backoff. So no
+// number here bounds how long `subscriptions.create` takes. What makes a slow mint safe is the
+// artifact gate (§4.4 rule 3, app/server/actions/billing.ts): the secret leaves the server only after a
+// renewal made AFTER the create returned still finds this holder. The timeout only stops a request
+// that has gone silent from holding the purchase for 80s.
 
 import Stripe from "stripe";
 import { getStripeConfig } from "./config";
 
-/** How long one Stripe request may take before the SDK abandons it. */
+/** The purchase client's per-stage socket-inactivity timeout (not a total-duration cap; see above). */
 export const STRIPE_REQUEST_TIMEOUT_MS = 20_000;
 
-/** How many times the SDK retries a request that failed on the network or with a retryable status. */
+/** How many times the purchase client retries a request that failed on the network or with a retryable status. */
 export const STRIPE_MAX_NETWORK_RETRIES = 1;
 
-let client: Stripe | null = null;
+/** Identifies this integration to Stripe; the API version is the account's default. */
+const APP_INFO = { name: "Alethia", url: "https://alethialabs.io" };
 
-/** The shared Stripe client (test or live, per STRIPE_SECRET_KEY). Throws if unset. */
+let client: Stripe | null = null;
+let purchaseClient: Stripe | null = null;
+
+/** The shared Stripe client (test or live, per STRIPE_SECRET_KEY), on the SDK's defaults. Throws if unset. */
 export function getStripe(): Stripe {
 	if (!client) {
-		client = new Stripe(getStripeConfig().secretKey, {
-			// Pin via the account's default; let the SDK's bundled version drive typing.
-			appInfo: { name: "Alethia", url: "https://alethialabs.io" },
+		client = new Stripe(getStripeConfig().secretKey, { appInfo: APP_INFO });
+	}
+	return client;
+}
+
+/**
+ * The create-a-team purchase path's Stripe client: `STRIPE_REQUEST_TIMEOUT_MS` of socket inactivity per
+ * stage, `STRIPE_MAX_NETWORK_RETRIES` retries. Used only by the calls that purchase and its link make
+ * directly (app/server/actions/billing.ts). Throws if STRIPE_SECRET_KEY is unset.
+ */
+export function getPurchaseStripe(): Stripe {
+	if (!purchaseClient) {
+		purchaseClient = new Stripe(getStripeConfig().secretKey, {
+			appInfo: APP_INFO,
 			timeout: STRIPE_REQUEST_TIMEOUT_MS,
 			maxNetworkRetries: STRIPE_MAX_NETWORK_RETRIES,
 		});
 	}
-	return client;
+	return purchaseClient;
 }

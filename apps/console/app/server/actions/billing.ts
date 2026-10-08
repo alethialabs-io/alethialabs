@@ -60,7 +60,7 @@ import {
 	type LiveAiPriceMap,
 	type LivePlanPriceMap,
 } from "@/lib/billing/pricing";
-import { getStripe, STRIPE_MAX_NETWORK_RETRIES, STRIPE_REQUEST_TIMEOUT_MS } from "@/lib/billing/stripe";
+import { getPurchaseStripe, getStripe, STRIPE_MAX_NETWORK_RETRIES, STRIPE_REQUEST_TIMEOUT_MS } from "@/lib/billing/stripe";
 import { withPurchaseLock } from "@/lib/billing/purchase-lock";
 import {
 	fenceFor,
@@ -1690,7 +1690,9 @@ export type NewOrgSubscriptionStart =
  *
  * The whole of it runs under the user's purchase lease (`withUserPurchaseLease`, ADR 0002 §4.4), so a
  * second request from another tab or another instance waits for this one and then sweeps what it
- * minted. Every Stripe write renews the lease first; one that finds it lost stops and refuses.
+ * minted. Every Stripe write renews the lease first (§4.4 rule 1), and one that finds it lost stops and
+ * refuses — except the writes of the close-out (rule 4), which run after a lost lease by design and
+ * touch only the subscription this request minted and never handed out.
  */
 export async function createNewOrgSubscriptionIntent(
 	plan: PaidPlan,
@@ -1726,7 +1728,8 @@ export async function createNewOrgSubscriptionIntent(
  * FOR ONE RELEASE it also takes the advisory key the older build takes, `new-org:<userId>`
  * (`withPurchaseLock`), inside the lease, so during a rolling deploy an old pod's purchase and a new
  * pod's exclude each other (ADR 0002 §8 step 1). That half holds a pooled connection for the purchase,
- * as before; S3 removes it once this release has rolled out to every pod.
+ * as before. S3 will remove it, and S3 deploys only after this release has rolled out to every pod;
+ * until then both are taken.
  */
 async function withUserPurchaseLease<T>(
 	userId: string,
@@ -1748,9 +1751,14 @@ async function withUserPurchaseLease<T>(
 const MINT_DEADLINE_MARGIN_MS = 10_000;
 
 /**
- * What the renewal before the mint must leave on the lease (§4.4 rule 2): the longest
- * `subscriptions.create` can take — every attempt the shared client makes, each up to its timeout
- * (lib/billing/stripe.ts) — plus `MINT_DEADLINE_MARGIN_MS`.
+ * What the renewal before the mint must leave on the lease (§4.4 rule 2): one silent window of the
+ * purchase client's timeout per attempt (lib/billing/stripe.ts) plus `MINT_DEADLINE_MARGIN_MS`.
+ *
+ * This is NOT the longest `subscriptions.create` can take. On Node the timeout is socket inactivity that
+ * resets at each stage, so a response that trickles in runs past it, and a closed connection is retried
+ * beyond the retry count. And a renewal always sets the full lease lifetime (120s), so the check is met
+ * by construction; it bites only if the lifetime is ever lowered below this. A slow mint is made safe by
+ * the artifact gate (rule 3), not by this number.
  */
 function mintDeadlineMs(): number {
 	return (1 + STRIPE_MAX_NETWORK_RETRIES) * STRIPE_REQUEST_TIMEOUT_MS + MINT_DEADLINE_MARGIN_MS;
@@ -1773,7 +1781,7 @@ const CLOSEOUT_STAMP = "alethia:closeout";
  * proves it unpaid), or Stripe expires it. A cancel that fails is logged and left the same way.
  */
 async function closeOutMintedSubscription(sub: Stripe.Subscription): Promise<void> {
-	const stripe = getStripe();
+	const stripe = getPurchaseStripe();
 	const invoiceId =
 		typeof sub.latest_invoice === "string" ? sub.latest_invoice : (sub.latest_invoice?.id ?? null);
 	let voided = false;
@@ -1812,7 +1820,8 @@ async function closeOutMintedSubscription(sub: Stripe.Subscription): Promise<voi
  * The body of `createNewOrgSubscriptionIntent`, run under the user's purchase lease: replaces the prior
  * attempt, resolves the customer, sweeps, mints, and records the setup. Every Stripe write renews
  * `lease` first (`fence`, §4.4 rule 1) and a lost lease is thrown as `PurchaseLeaseLostError`; the mint
- * and its artifact gate follow rules 2–4.
+ * and its artifact gate follow rules 2–4. The one exception is the close-out (rule 4): its writes run
+ * after the lease is lost, and close only the subscription this request minted.
  */
 async function startNewOrgSubscription(
 	actor: { userId: string },
@@ -1882,7 +1891,7 @@ async function startNewOrgSubscription(
 	// Otherwise mint a fresh bare customer (no organization_id until the org exists and is linked).
 	let customerId: string | null = null;
 	if (opts.customerId) {
-		const existing = await getStripe().customers.retrieve(opts.customerId);
+		const existing = await getPurchaseStripe().customers.retrieve(opts.customerId);
 		if (
 			!existing.deleted &&
 			existing.metadata?.created_by === actor.userId
@@ -1900,7 +1909,7 @@ async function startNewOrgSubscription(
 			.where(eq(user.id, actor.userId))
 			.limit(1);
 		await fence();
-		const customer = await getStripe().customers.create({
+		const customer = await getPurchaseStripe().customers.create({
 			email: u?.email,
 			name: opts.orgName,
 			metadata: { created_by: actor.userId },
@@ -1934,13 +1943,15 @@ async function startNewOrgSubscription(
 	// selection wins, else the request geo.
 	const currency = opts.currency ?? (await currencyFromRequest());
 	// THE MINT DEADLINE (§4.4 rule 2): the renewal right before the mint must leave the lease more than
-	// the mint's worst case plus a margin, so the lease cannot lapse while Stripe is still answering.
+	// `mintDeadlineMs()`. It does not stop the lease lapsing while Stripe is still answering — the timeout
+	// is per-stage inactivity, not a total cap — so a mint that outlives the lease is caught by the
+	// artifact gate below (rule 3), which is what keeps a second secret from leaving.
 	await fenceFor(lease, mintDeadlineMs())();
 	// The org doesn't exist yet (owner only) — start at 1 seat; per-seat sync grows the
 	// quantity as invited members accept (lib/billing/seats syncOrgSeats via org hooks).
 	// The idempotency key names this HOLDER, on purpose: a key shared between holders would replay A's
 	// subscription to B after B's sweep had cancelled it.
-	const sub = await getStripe().subscriptions.create(
+	const sub = await getPurchaseStripe().subscriptions.create(
 		{
 			customer: customerId,
 			items: planCreateItems(plan, 1),
@@ -1991,14 +2002,31 @@ async function startNewOrgSubscription(
 			slug: (parsedSlug.success && parsedSlug.data) || slugifyOrEmpty(opts.orgName),
 		});
 	} catch (e) {
-		try {
-			await getStripe().subscriptions.cancel(sub.id);
-		} catch {
-			// Unpaid and never handed out: it expires on its own (Stripe voids an incomplete one in 23h).
-		}
+		await cancelUnrecordedSubscription(sub, fence);
 		throw new Error("Couldn't start the purchase — try again.", { cause: e });
 	}
 	return { kind: "intent", clientSecret, subscriptionId: sub.id, customerId, currency };
+}
+
+/**
+ * Cancels `sub`, which this request minted and whose setup record could not be written, so its secret
+ * never left the server. The cancel is a Stripe write, so it renews the lease first (§4.4 rule 1). A
+ * lease lost by then — or a renewal that throws — leaves this request a stale holder, and the only writes
+ * it may still make are the close-out's (rule 4): void first, cancel only after a proven void.
+ */
+async function cancelUnrecordedSubscription(sub: Stripe.Subscription, fence: StripeWriteFence): Promise<void> {
+	try {
+		await fence();
+	} catch (e) {
+		console.error(`[billing] the lease was not held before cancelling ${sub.id}; closing it out instead:`, e);
+		await closeOutMintedSubscription(sub);
+		return;
+	}
+	try {
+		await getPurchaseStripe().subscriptions.cancel(sub.id);
+	} catch {
+		// Unpaid and never handed out: it expires on its own (Stripe voids an incomplete one in 23h).
+	}
 }
 
 /**
@@ -2008,7 +2036,7 @@ async function startNewOrgSubscription(
 async function ownedCustomer(customerId: string, userId: string): Promise<string | null> {
 	let existing: Stripe.Customer | Stripe.DeletedCustomer;
 	try {
-		existing = await getStripe().customers.retrieve(customerId);
+		existing = await getPurchaseStripe().customers.retrieve(customerId);
 	} catch (e) {
 		if (isStripeResourceMissing(e)) return null;
 		throw e;
@@ -2028,7 +2056,7 @@ async function ownNewOrgSubscription(
 ): Promise<Stripe.Subscription | null> {
 	let sub: Stripe.Subscription;
 	try {
-		sub = await getStripe().subscriptions.retrieve(subscriptionId, { expand: ["customer"] });
+		sub = await getPurchaseStripe().subscriptions.retrieve(subscriptionId, { expand: ["customer"] });
 	} catch (e) {
 		if (isStripeResourceMissing(e)) return null;
 		throw e;
@@ -2136,13 +2164,13 @@ async function linkSubscriptionToNewOrgUnderLease(
 	input: Parameters<typeof linkSubscriptionToNewOrg>[0],
 	fence: StripeWriteFence,
 ): Promise<NewOrgLinkResult> {
-	const sub = await getStripe().subscriptions.retrieve(input.subscriptionId);
+	const sub = await getPurchaseStripe().subscriptions.retrieve(input.subscriptionId);
 	const subCustomerId =
 		typeof sub.customer === "string" ? sub.customer : sub.customer.id;
 	if (subCustomerId !== input.customerId) {
 		throw new Error("Subscription does not match the expected customer.");
 	}
-	const customer = await getStripe().customers.retrieve(input.customerId);
+	const customer = await getPurchaseStripe().customers.retrieve(input.customerId);
 	if (customer.deleted || customer.metadata?.created_by !== actor.userId) {
 		throw new Error("Not allowed to link this subscription.");
 	}
@@ -2186,12 +2214,12 @@ async function linkSubscriptionToNewOrgUnderLease(
 		// idempotent branch above (and the webhook) read, so it is written LAST — a failure between
 		// the two leaves an unlinked subscription, which a retry links normally.
 		await fence();
-		await getStripe().customers.update(input.customerId, {
+		await getPurchaseStripe().customers.update(input.customerId, {
 			name: org?.name,
 			metadata: { created_by: actor.userId, organization_id: input.orgId },
 		});
 		await fence();
-		linked = await getStripe().subscriptions.update(input.subscriptionId, {
+		linked = await getPurchaseStripe().subscriptions.update(input.subscriptionId, {
 			metadata: { created_by: actor.userId, organization_id: input.orgId },
 		});
 	}

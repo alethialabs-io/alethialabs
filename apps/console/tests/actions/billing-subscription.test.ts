@@ -25,9 +25,11 @@ vi.mock("@/lib/billing/queries", () => ({
 	getOrgBilling: vi.fn(),
 	upsertOrgBilling: vi.fn(),
 }));
-// The client's timeout constants are the real values: the mint deadline is computed from them.
+// The client's timeout constants are the real values: the mint deadline is computed from them. Both
+// clients answer with the same fake; which one a call went through is asserted where it matters.
 vi.mock("@/lib/billing/stripe", () => ({
 	getStripe: vi.fn(),
+	getPurchaseStripe: vi.fn(),
 	STRIPE_REQUEST_TIMEOUT_MS: 20_000,
 	STRIPE_MAX_NETWORK_RETRIES: 1,
 }));
@@ -197,7 +199,7 @@ import { authorize, authorizeInOrg, currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
-import { getStripe } from "@/lib/billing/stripe";
+import { getPurchaseStripe, getStripe } from "@/lib/billing/stripe";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import {
 	closePendingOrgSetup,
@@ -332,6 +334,7 @@ beforeEach(() => {
 	stripe = makeStripe();
 	db = makeDb();
 	vi.mocked(getStripe).mockReturnValue(stripe as never);
+	vi.mocked(getPurchaseStripe).mockReturnValue(stripe as never);
 	vi.mocked(getServiceDb).mockReturnValue(db.db as never);
 	// Default: no dangling incomplete subs to clean up (cancelIncompleteSubscriptions).
 	stripe.subscriptions.list.mockResolvedValue({ data: [] } as never);
@@ -3799,16 +3802,91 @@ describe("ADR 0002 S2 — the user: purchase lease (#5741)", () => {
 		purchaseLease.renewLease.mockImplementation(async () => stripe.subscriptions.create.mock.calls.length === 0);
 	}
 
-	it("the shared Stripe client is built with a 20s timeout and one retry — the mint's worst case", async () => {
-		vi.mocked(getStripeConfig).mockReturnValueOnce({
+	it("only the purchase client is bounded: the shared client keeps the SDK's defaults (meter, sync, reconcile)", async () => {
+		const config = {
 			appUrl: "https://app.test",
 			secretKey: "sk_test_unit_never_used",
+			webhookSecret: "whsec_unit_never_used",
 			prices: { team: "price_team" },
-		});
+		};
+		// One read per client built.
+		vi.mocked(getStripeConfig).mockReturnValueOnce(config).mockReturnValueOnce(config);
 		const real = await vi.importActual<typeof import("@/lib/billing/stripe")>("@/lib/billing/stripe");
-		const client = real.getStripe();
-		expect(client.getApiField("timeout")).toBe(20_000);
-		expect(client.getMaxNetworkRetries()).toBe(1);
+		const { default: Stripe } = await vi.importActual<typeof import("stripe")>("stripe");
+		const sdkDefaults = new Stripe("sk_test_unit_never_used");
+
+		const purchase = real.getPurchaseStripe();
+		expect(purchase.getApiField("timeout")).toBe(20_000);
+		expect(purchase.getMaxNetworkRetries()).toBe(1);
+
+		// `lib/billing/meter.ts` reports through `getStripe()`: it must keep the SDK's 80s / 2 retries.
+		const shared = real.getStripe();
+		expect(shared).not.toBe(purchase);
+		expect(shared.getApiField("timeout")).toBe(sdkDefaults.getApiField("timeout"));
+		expect(shared.getMaxNetworkRetries()).toBe(sdkDefaults.getMaxNetworkRetries());
+		expect(shared.getApiField("timeout")).toBe(80_000);
+	});
+
+	it("the create-a-team mint goes through the purchase client; the org-plan purchase never does", async () => {
+		// The purchase client is its own fake here, so the call is attributed to the client that made it.
+		const purchaseClient = makeStripe();
+		purchaseClient.customers.retrieve.mockResolvedValue(ownedCustomer);
+		purchaseClient.subscriptions.create.mockResolvedValue(minted);
+		vi.mocked(getPurchaseStripe).mockReturnValue(purchaseClient as never);
+		await createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" });
+		expect(purchaseClient.subscriptions.create).toHaveBeenCalledTimes(1);
+		expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+
+		vi.mocked(getPurchaseStripe).mockClear();
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", plan: "community", status: "none" } as never);
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_org",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_org" } },
+		});
+		await createSubscriptionIntent("team");
+		expect(getPurchaseStripe).not.toHaveBeenCalled();
+	});
+
+	it("rule 1: the cancel of a subscription whose record could not be written renews the lease first", async () => {
+		stripe.customers.retrieve.mockResolvedValue(ownedCustomer);
+		stripe.subscriptions.create.mockResolvedValue(minted);
+		vi.mocked(recordPendingOrgSetup).mockRejectedValueOnce(new Error("db down"));
+
+		await expect(
+			createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" }),
+		).rejects.toThrow(/couldn't start the purchase/i);
+
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_z");
+		expect(stripe.invoices.voidInvoice).not.toHaveBeenCalled();
+		// The gate renewal, then the fence of the cancel: two renewals after the create, the last before it.
+		const afterCreate = purchaseLease.renewLease.mock.invocationCallOrder.filter(
+			(order) => order > stripe.subscriptions.create.mock.invocationCallOrder[0],
+		);
+		expect(afterCreate).toHaveLength(2);
+		expect(afterCreate[1]).toBeLessThan(stripe.subscriptions.cancel.mock.invocationCallOrder[0]);
+	});
+
+	it("rules 1 and 4: a lease lost before that cancel turns it into the close-out — void first, cancel stamped", async () => {
+		stripe.customers.retrieve.mockResolvedValue(ownedCustomer);
+		stripe.subscriptions.create.mockResolvedValue(minted);
+		vi.mocked(recordPendingOrgSetup).mockRejectedValueOnce(new Error("db down"));
+		// Held through the gate (the first renewal after the create), lost at the cancel's fence.
+		purchaseLease.renewLease.mockImplementation(async () => {
+			const after = purchaseLease.renewLease.mock.invocationCallOrder.filter(
+				(order) => stripe.subscriptions.create.mock.calls.length > 0 && order > stripe.subscriptions.create.mock.invocationCallOrder[0],
+			);
+			return after.length < 2;
+		});
+
+		await expect(
+			createNewOrgSubscriptionIntent("team", { orgName: "NewCo", customerId: "cus_own" }),
+		).rejects.toThrow(/couldn't start the purchase/i);
+
+		expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith("in_z");
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledTimes(1);
+		expect(stripe.subscriptions.cancel).toHaveBeenCalledWith("sub_z", {
+			cancellation_details: { comment: "alethia:closeout" },
+		});
 	});
 
 	it("takes the user: lease and, inside it, the old new-org: advisory key", async () => {

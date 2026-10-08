@@ -17,7 +17,8 @@
 //        Variant: A's close-out cannot prove the void, so Z is never cancelled; B's next purchase sweeps it.
 //   ---  for one release the purchase also takes the old `new-org:<user>` advisory key, so a pod still
 //        running the older build and a pod running this one exclude each other.
-//   ---  the shared Stripe client carries the timeout the mint deadline is computed from.
+//   ---  the purchase path's Stripe client carries the timeout the mint deadline is computed from; the
+//        shared client keeps the SDK's defaults.
 //   ---  RLS: `purchase_leases` is service-role only.
 //
 // Stripe is the one boundary faked here, as in pending-org-setups.test.ts; the lease, the advisory lock
@@ -123,7 +124,7 @@ function randomUUIDish(): string {
 
 vi.mock("@/lib/billing/stripe", async (importActual) => {
 	const actual = await importActual<typeof import("@/lib/billing/stripe")>();
-	return { ...actual, getStripe: () => fakeStripe };
+	return { ...actual, getStripe: () => fakeStripe, getPurchaseStripe: () => fakeStripe };
 });
 // The paid-conversion gate refuses by default (PAID_MARKETS is empty); it is not what this file tests.
 vi.mock("@/lib/billing/eligibility", () => ({ assertPaidConversionAllowed: vi.fn(async () => undefined) }));
@@ -193,10 +194,13 @@ describeIfDb("purchase_leases — C25: the lease row, its takeover and its fence
 		await new Promise((r) => setTimeout(r, 600));
 		expect(second).toBeUndefined();
 		// The advisory lock this replaces kept a session in an open transaction, blocked on a lock, for
-		// the whole wait. The lease's waiter holds nothing between polls.
+		// the whole wait. The lease's waiter holds nothing between polls. Only sessions whose last
+		// statement touched `purchase_leases` are counted — no other integration file uses that table,
+		// so a file running in parallel cannot make this flake.
 		const busy = await getServiceDb().execute(sql`
 			select count(*)::int as n from pg_stat_activity
 			where datname = current_database() and pid <> pg_backend_pid()
+			  and query ilike '%purchase_leases%'
 			  and (state = 'idle in transaction' or wait_event_type = 'Lock')`);
 		expect(busy[0]?.n).toBe(0);
 
@@ -237,7 +241,9 @@ describeIfDb("purchase_leases — C25: the lease row, its takeover and its fence
 		expect(await holderOf(key)).toBeNull();
 	});
 
-	it("a renewal reports the lease's remaining time by the database's clock (the mint deadline)", async () => {
+	// A held lease always reports its whole lifetime left (the renewal sets it), so the mint deadline is
+	// met by construction; this pins only that the comparison is made, by the database's clock.
+	it("a renewal compares the remaining time against the asked minimum (met by construction below the lifetime)", async () => {
 		const key = `it-lease:${randomUUID()}`;
 		const lease = await tryAcquirePurchaseLease(key);
 		if (!lease) throw new Error("fixture: the first taker did not get a free lease");
@@ -298,9 +304,15 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 	}
 
 	beforeAll(async () => {
-		for (const k of ["STRIPE_SECRET_KEY", "STRIPE_PRICE_TEAM"]) saved[k] = process.env[k];
+		// Everything the Stripe config schema requires (lib/billing/config.ts): without the webhook secret
+		// `getStripeConfig` throws before the purchase reaches the lease.
+		for (const k of ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_TEAM", "NEXT_PUBLIC_APP_URL"]) {
+			saved[k] = process.env[k];
+		}
 		process.env.STRIPE_SECRET_KEY = "sk_test_integration_never_used";
+		process.env.STRIPE_WEBHOOK_SECRET = "whsec_integration_never_used";
 		process.env.STRIPE_PRICE_TEAM = "price_it_team";
+		process.env.NEXT_PUBLIC_APP_URL ??= "http://localhost:3000";
 		fake.state.userId = USER;
 		await getServiceDb().insert(user).values({ id: USER, email: `it-lease-${USER}@example.test` });
 	});
@@ -324,12 +336,15 @@ describeIfDb("the create-a-team purchase under the lease — C28, C52 and the ol
 		await db.delete(user).where(eq(user.id, USER));
 	});
 
-	it("the shared Stripe client has the timeout the mint deadline is computed from", async () => {
+	it("the purchase client has the timeout the mint deadline is computed from; the shared client keeps the SDK's", async () => {
 		const actual = await vi.importActual<typeof import("@/lib/billing/stripe")>("@/lib/billing/stripe");
-		const client = actual.getStripe();
-		expect(client.getApiField("timeout")).toBe(actual.STRIPE_REQUEST_TIMEOUT_MS);
+		const purchaseClient = actual.getPurchaseStripe();
+		expect(purchaseClient.getApiField("timeout")).toBe(actual.STRIPE_REQUEST_TIMEOUT_MS);
 		expect(actual.STRIPE_REQUEST_TIMEOUT_MS).toBe(20_000);
-		expect(client.getMaxNetworkRetries()).toBe(1);
+		expect(purchaseClient.getMaxNetworkRetries()).toBe(1);
+		const shared = actual.getStripe();
+		expect(shared.getApiField("timeout")).toBe(80_000);
+		expect(shared.getMaxNetworkRetries()).toBe(2);
 	});
 
 	it("C28: two purchases started at once run one after the other, and the second sweeps the first's subscription", async () => {

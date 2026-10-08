@@ -19,7 +19,9 @@
 //   3. after the mint, renew once more before the client secret leaves the server (the artifact gate);
 //   4. after a failed gate, make only the writes that close what this request minted (the close-out).
 // Rules 2–4 are the caller's (app/server/actions/billing.ts); this module gives it the renewal they
-// are built on.
+// are built on. A fence narrows the window but cannot close it: a request that pauses after a
+// successful renewal and before its write (a GC pause, a slow event loop) still writes. The ADR accepts
+// that for the sweep's cancels and refunds; only the mint's secret is gated, by rule 3.
 
 import "server-only";
 import { randomUUID } from "node:crypto";
@@ -106,7 +108,9 @@ export async function acquirePurchaseLease(
 /**
  * Renews `lease` for another `PURCHASE_LEASE_TTL_SECONDS` (§4.4 rule 1). True only when the row still
  * names this holder AND the renewed lease has more than `minRemainingMs` left by the database's clock
- * (rule 2's mint deadline). A lease taken over by another request matches no row: false.
+ * (rule 2's mint deadline). A lease taken over by another request matches no row: false. A renewal sets
+ * the full lifetime and measures it against the same `now()`, so a held lease always reports the whole
+ * lifetime left: `minRemainingMs` refuses only a value above `PURCHASE_LEASE_TTL_SECONDS`.
  */
 export async function renewPurchaseLease(lease: PurchaseLease, minRemainingMs = 0): Promise<boolean> {
 	const rows = await getServiceDb()
