@@ -66,9 +66,10 @@ export type LoadedThread = AgentThread & { inFlight: ThreadInFlight | null };
  * and the returned row carries the new revision. It takes the thread row's lock first and does
  * NOTHING while the thread has a running turn claim: only the attempt writes `messages` while it
  * runs, so a rewrite here could otherwise replace a transcript the attempt is about to finalize
- * against. The lock is what makes the claim probe sound — an acceptance locks the same row before
- * it inserts its claim, so the probe (a fresh statement under READ COMMITTED) sees any claim
- * committed before the lock was granted.
+ * against. The lock is what makes the claim probe sound once ADR 0003 slice 5 lands — its
+ * acceptance locks the same row before it inserts its claim, so the probe (a fresh statement under
+ * READ COMMITTED) sees any claim committed before the lock was granted. Until then nothing inserts
+ * a claim, so the probe always finds none.
  */
 export async function createThread(
 	title?: string,
@@ -152,10 +153,12 @@ export async function createThread(
  *
  * A deleted thread's tombstone (`deleteThread`) is never listed, and is reaped a day after the
  * delete — far past the longest a turn that was streaming at the delete can run, so such a turn's
- * save always finds it. That bound is ADR 0003 §8.2's: a turn is aborted at `TURN_BUDGET_MS` (15
- * minutes) after its acceptance, and a claim whose route died is expired after its 90 s lease goes
- * silent, so a turn streaming at the delete finalizes within about 16 minutes. (This used to cite the
- * routes' `maxDuration` of 300 s, which bounds nothing on a standalone Node server.) A NEW turn sent into the deleted id
+ * save always finds it. That bound is ADR 0003 §8.2's, and it holds from ADR 0003 slice 6 on: a
+ * turn is aborted at `TURN_BUDGET_MS` (15 minutes) after its acceptance, and a claim whose route
+ * died is expired after its 90 s lease goes silent, so a turn streaming at the delete finalizes
+ * within about 16 minutes. Until slice 6 lands no route takes a claim and no turn is bounded (the
+ * routes' `maxDuration` of 300 s bounds nothing on a standalone Node server), so the day is a margin,
+ * not a proven bound. A NEW turn sent into the deleted id
  * from a tab that still shows the thread is not bounded that way: within the day it is saved into
  * a "Recovered: …" thread, and after the reap it recreates the thread under its id.
  */

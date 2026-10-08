@@ -37,13 +37,15 @@ export const agentThreads = pgTable(
 		// assistant persona. Lets listThreads separate the two surfaces from one table.
 		kind: text().default("agent").notNull(),
 		messages: jsonb().$type<UIMessage[]>().default([]).notNull(),
-		// ADR 0003 §4.2: the org this thread's turns bill to. Written once, by the acceptance of the
-		// thread's first turn under the thread lock (`… WHERE billing_org_id IS NULL`), and never
-		// changed. NULL until then — an existing thread is pinned by its next accepted turn.
+		// ADR 0003 §4.2: the org this thread's turns bill to. From ADR 0003 slice 5 it is written once,
+		// by the acceptance of the thread's first turn under the thread lock (`… WHERE billing_org_id
+		// IS NULL`), and never changed. Nothing writes it yet (slice 1 adds the column only), so it is
+		// NULL on every row until slice 5 lands; an existing thread is then pinned by its next turn.
 		billing_org_id: uuid(),
-		// ADR 0003 §4.2: +1 on every statement that writes `messages`, in that same UPDATE. A tab
-		// sends the revision it holds as its base, so a write from a stale tab is refused rather than
-		// replacing newer turns. The default backfills every existing row with 1.
+		// ADR 0003 §4.2: the thread's revision. The default backfills every existing row with 1. Today
+		// only `createThread` bumps it; `thread-transcript.ts`'s writes of `messages` do not yet,
+		// and nothing checks a base revision. From slices 5 and 6, every statement that writes
+		// `messages` bumps it in that same UPDATE and a write from a stale tab is refused.
 		revision: integer().default(1).notNull(),
 		created_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		updated_at: timestamp({ withTimezone: true }).defaultNow().notNull(),
