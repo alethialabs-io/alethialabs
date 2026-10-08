@@ -43,6 +43,8 @@ function thread(id: string, messages: UIMessage[] = []): AgentThread {
 		status: "active",
 		kind: "agent",
 		messages,
+		billing_org_id: null,
+		revision: 1,
 		created_at: at,
 		updated_at: at,
 	};

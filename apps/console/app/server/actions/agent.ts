@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { UIMessage } from "ai";
-import { and, desc, eq, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireOwner } from "@/lib/auth/owner";
 import { MAX_USER_MESSAGE_CHARS } from "@/lib/ai/message-limits";
 import { THREAD_DELETED, threadTitle } from "@/lib/agent/transcript-save";
 import { withOwnerScope } from "@/lib/db";
-import { type AgentThread, agentThreads } from "@/lib/db/schema";
+import { type AgentThread, agentThreads, agentTurnClaims } from "@/lib/db/schema";
 
 /** A row that is a thread, not the tombstone of a deleted one (`deleteThread`). */
 const live = ne(agentThreads.status, THREAD_DELETED);
@@ -33,6 +33,15 @@ const firstTurnSchema = z.object({
 /** The first user turn of a new thread (see `firstTurnSchema`). */
 export type FirstTurn = z.infer<typeof firstTurnSchema>;
 
+/** The turn a live attempt is answering right now (ADR 0003 §4.2): its id and when it was accepted. */
+export interface ThreadInFlight {
+	turnId: string;
+	since: Date;
+}
+
+/** A thread as `getThread` loads it: the row (with its `revision`) and the turn being answered, if any. */
+export type LoadedThread = AgentThread & { inFlight: ThreadInFlight | null };
+
 /**
  * Create a new owner-scoped agent chat thread. `projectId` scopes it to a project
  * (the project assistant); omitted → an org-level conversation (the general agent).
@@ -52,6 +61,14 @@ export type FirstTurn = z.infer<typeof firstTurnSchema>;
  * turn (the retry may carry edited text). This is a read-then-insert, not a constraint: it
  * covers SEQUENTIAL retries, which is what the client issues — `useElenchSend` never runs two
  * first sends at once.
+ *
+ * The rewrite is a write to `messages`, so it bumps `revision` in the same UPDATE (ADR 0003 §4.2),
+ * and the returned row carries the new revision. It takes the thread row's lock first and does
+ * NOTHING while the thread has a running turn claim: only the attempt writes `messages` while it
+ * runs, so a rewrite here could otherwise replace a transcript the attempt is about to finalize
+ * against. The lock is what makes the claim probe sound — an acceptance locks the same row before
+ * it inserts its claim, so the probe (a fresh statement under READ COMMITTED) sees any claim
+ * committed before the lock was granted.
  */
 export async function createThread(
 	title?: string,
@@ -75,11 +92,28 @@ export async function createThread(
 						sql`${agentThreads.messages}->0->>'id' = ${turn.id}`,
 					),
 				)
-				.limit(1);
+				.limit(1)
+				.for("update");
 			if (existing) {
+				const [running] = await tx
+					.select({ id: agentTurnClaims.id })
+					.from(agentTurnClaims)
+					.where(
+						and(
+							eq(agentTurnClaims.thread_id, existing.id),
+							eq(agentTurnClaims.state, "running"),
+						),
+					)
+					.limit(1);
+				if (running) return existing;
 				const [rewritten] = await tx
 					.update(agentThreads)
-					.set({ title: threadTitle(title), messages, updated_at: sql`now()` })
+					.set({
+						title: threadTitle(title),
+						messages,
+						revision: sql`${agentThreads.revision} + 1`,
+						updated_at: sql`now()`,
+					})
 					.where(
 						and(
 							eq(agentThreads.id, existing.id),
@@ -117,8 +151,11 @@ export async function createThread(
  * recreates it (`saveThreadTranscript`).
  *
  * A deleted thread's tombstone (`deleteThread`) is never listed, and is reaped a day after the
- * delete — far past the longest a turn that was streaming at the delete can run (the chat routes'
- * `maxDuration` is 300s), so such a turn's save always finds it. A NEW turn sent into the deleted id
+ * delete — far past the longest a turn that was streaming at the delete can run, so such a turn's
+ * save always finds it. That bound is ADR 0003 §8.2's: a turn is aborted at `TURN_BUDGET_MS` (15
+ * minutes) after its acceptance, and a claim whose route died is expired after its 90 s lease goes
+ * silent, so a turn streaming at the delete finalizes within about 16 minutes. (This used to cite the
+ * routes' `maxDuration` of 300 s, which bounds nothing on a standalone Node server.) A NEW turn sent into the deleted id
  * from a tab that still shows the thread is not bounded that way: within the day it is saved into
  * a "Recovered: …" thread, and after the reap it recreates the thread under its id.
  */
@@ -158,8 +195,14 @@ export async function listThreads(projectId?: string): Promise<AgentThread[]> {
 	});
 }
 
-/** Load one thread (with its full message transcript); null when there is none, or it was deleted. */
-export async function getThread(id: string): Promise<AgentThread | null> {
+/**
+ * Load one thread (with its full message transcript and its `revision`); null when there is none, or
+ * it was deleted. `inFlight` names the turn a running claim is answering (ADR 0003 §4.2), read only
+ * from a claim whose lease is NOT silent (`lease_until >= now()`): a dead process's claim must not
+ * show "Being answered" while it waits for the sweep to expire it. RLS (`owner_only`) scopes the
+ * claim read to this owner.
+ */
+export async function getThread(id: string): Promise<LoadedThread | null> {
 	const owner = await requireOwner();
 	return withOwnerScope(owner, async (tx) => {
 		const [thread] = await tx
@@ -167,7 +210,22 @@ export async function getThread(id: string): Promise<AgentThread | null> {
 			.from(agentThreads)
 			.where(and(eq(agentThreads.id, id), live))
 			.limit(1);
-		return thread ?? null;
+		if (!thread) return null;
+		const [claim] = await tx
+			.select({
+				turnId: agentTurnClaims.turn_id,
+				since: agentTurnClaims.accepted_at,
+			})
+			.from(agentTurnClaims)
+			.where(
+				and(
+					eq(agentTurnClaims.thread_id, thread.id),
+					eq(agentTurnClaims.state, "running"),
+					gte(agentTurnClaims.lease_until, sql`now()`),
+				),
+			)
+			.limit(1);
+		return { ...thread, inFlight: claim ?? null };
 	});
 }
 

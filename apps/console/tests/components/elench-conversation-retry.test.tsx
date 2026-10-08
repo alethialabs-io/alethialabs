@@ -191,6 +191,8 @@ function renderConversation(opts: {
 			status: "active",
 			kind: "agent",
 			messages: [],
+			billing_org_id: null,
+			revision: 1,
 			created_at: now,
 			updated_at: now,
 		} satisfies AgentThread;
