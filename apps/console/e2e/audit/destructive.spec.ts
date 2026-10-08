@@ -209,8 +209,9 @@ const SEEDABLE_FIXTURES: ReadonlySet<string> = new Set(FIXTURE_SEEDERS.keys());
  * product, not "no fixture yet" — an entry whose fixture is unseedable never reaches this list at
  * all, because `SEEDABLE_FIXTURES` already excludes it.
  *
- * ⚠ NONE OF THE THIRTEEN IS THIS UNIT'S TO FIX. `destructive-actions.yaml` is a shared registry and
- * these are other units' entries, so they are cited here and reported on the PR rather than edited.
+ * ⚠ NONE OF THESE LINES WAS #4458's TO FIX. `destructive-actions.yaml` is a shared registry and
+ * these were other units' entries, so they were cited here and reported on the PR rather than
+ * edited. A unit that fixes an entry deletes its line in the same PR (#5640, #5659 did).
  */
 const UNREACHED: ReadonlyMap<string, string> = new Map([
 	// ── the two alerts switches: reached, and one name for two controls ──────────────────────────
@@ -265,32 +266,14 @@ const UNREACHED: ReadonlyMap<string, string> = new Map([
 			"is seeded; the entry names a control the DOM does not have.",
 	]),
 
-	// ── the four agent entries: "Ask AI" opens the PANEL, and the panel has none of these ───────
+	// ── the agent entries: none left ─────────────────────────────────────────────────────────────
 	//
-	// Measured: `ask-ai-button.tsx` calls `togglePanel`, which sets `view: "panel"`;
-	// `elench-conversation.tsx` then renders `ElenchPanel`, and `elench-panel.tsx` imports NO
-	// `ThreadRail`, no `WidgetGrid`, no gallery and no knowledge panel — all four are mounted only
-	// by `elench-modal.tsx` (its imports at :10-11). The step between them is the panel header's
-	// `aria-label="Expand to full screen"` (`elench-panel.tsx:83`), which none of these four reach.
-	//
-	// It was five. `agent.thread.delete` took the step in #5640 and left this list; the self-test
-	// "a control mounted only by the assistant MODAL reaches through the panel's expand step" now
-	// fails any entry on a modal-only surface that neither takes the step nor is declared here.
-	...(
-		[
-			"agent.artifact.delete",
-			"agent.artifact.unshare",
-			"agent.knowledge.delete",
-			"agent.widget.remove",
-		] as const
-	).map((id): [string, string] => [
-		id,
-		'its reach chain starts at {open: "Ask AI"}, which opens the PANEL (`ask-ai-button.tsx` → `togglePanel` → ' +
-			"`view: \"panel\"`). `elench-panel.tsx` mounts no thread rail, no artifact gallery, no knowledge panel and " +
-			"no widget grid — every one of them is imported only by `elench-modal.tsx` (:10-11). The chain is missing " +
-			'the step {open: "Expand to full screen"} (`elench-panel.tsx:83`). The rows are seeded; the chain stops one ' +
-			"click short of the surface that renders them.",
-	]),
+	// There were five, all one click short: "Ask AI" opens the docked PANEL, and the rail, the
+	// gallery, the knowledge panel and the widget grid exist only in `elench-modal.tsx`. #5640 gave
+	// `agent.thread.delete` the panel's {open: "Expand to full screen"} step; #5659 gave it to the
+	// other four, each followed by whatever opens its view (the rail's "Artifacts" / "Knowledge",
+	// or the audit thread then "Open widget grid"), and deleted their lines. Direction 1 of
+	// `owedFindings` is now what fails a chain that stops short again.
 
 	[
 		"env.delete",
@@ -1210,6 +1193,38 @@ async function confirmationDialog(page: Page, before: JSHandle<Element[]>): Prom
 /** The attribute {@link confirmationDialog} puts on the dialog it chose, so the choice survives DOM changes. */
 const CONFIRMATION_MARK = "data-destructive-audit-confirmation";
 
+/** How long after the trigger click the confirmation is given to mount before it is looked for. */
+const CONFIRMATION_SETTLE_MS = 500;
+
+/**
+ * Click the trigger and return the confirmation the click OPENED, or null — the snapshot, the click
+ * and the lookup as ONE seam, which the control loop calls and the self-tests drive (#5659, A3).
+ *
+ * The ORDER is the function, and each half has a way to be wrong that no other self-test sees:
+ *
+ *  · The snapshot is taken BEFORE the click. Taken after it, the confirmation is already in the
+ *    "before" set, so every confirmation reads as "none appeared" — a mismatch on every entry, or,
+ *    for a `none` control, a dialog that appeared and was never counted.
+ *  · The lookup is {@link confirmationDialog}'s identity rule. `page.locator(DIALOG_SELECTOR).first()`
+ *    answers with whichever dialog comes first in DOCUMENT order — the host the trigger lives in, for
+ *    every entry whose reach leaves a dialog open — and makes "a dialog appeared" true before the
+ *    click has done anything.
+ *
+ * The control loop calls nothing else between the reach and the verdict to click or to look for a
+ * dialog; the self-test "the control loop clicks through `clickForConfirmation`" reads that off the
+ * loop's source, so an inlined sequence that bypasses this seam fails rather than going unexercised.
+ */
+async function clickForConfirmation(page: Page, trigger: Locator, settleMs = CONFIRMATION_SETTLE_MS): Promise<Locator | null> {
+	const before = await visibleDialogs(page);
+	try {
+		await trigger.click();
+		await page.waitForTimeout(settleMs);
+		return await confirmationDialog(page, before);
+	} finally {
+		await before.dispose().catch(() => {});
+	}
+}
+
 /**
  * Measure a `confirm: undo` control: the click has already fired, so press the entry's undo chord
  * and check that the thing it removed is back.
@@ -1571,29 +1586,25 @@ for (const entry of CONTROLS) {
 		}
 		const watch = watchMutations(page);
 
-		// The dialogs already up BEFORE the click — so the confirmation can be told from the surface
-		// the trigger lives in (#5640: the thread rail is inside the assistant modal).
-		const dialogsBefore = await visibleDialogs(page);
-		await trigger.click();
-		await page.waitForTimeout(500);
-
 		// A dialog APPEARED only if the click opened one: a dialog already up (the modal or sheet the
-		// reach chain left open) is the trigger's host, not its confirmation. `dialog` is never read
-		// when nothing appeared — every branch below checks `dialogAppeared` first.
-		const opened = await confirmationDialog(page, dialogsBefore).finally(() => dialogsBefore.dispose().catch(() => {}));
+		// reach chain left open) is the trigger's host, not its confirmation (#5640: the thread rail is
+		// inside the assistant modal). The snapshot, the click and the lookup are ONE seam so the
+		// self-tests drive this exact sequence — see `clickForConfirmation`. There is no fallback
+		// locator: with nothing new, there is no dialog to read.
+		const opened = await clickForConfirmation(page, trigger);
 		const dialogAppeared = opened !== null;
-		const dialog = opened ?? page.locator(DIALOG_SELECTOR).first();
 
 		const expectsDialog = entry.confirm === "alert-dialog" || entry.confirm === "confirm-dialog";
 		let observed: Observed;
 
 		if (expectsDialog) {
-			if (!dialogAppeared) {
+			if (!opened) {
 				const requests = watch.stop();
 				record({ id: entry.id, route: entry.route, expected: String(entry.status), observed: "missing", verdict: "mismatch", reason: "no confirmation appeared" });
 				expect(dialogAppeared, `${entry.id}: the registry says this control confirms with a ${entry.confirm}, and no dialog appeared. Requests seen: ${describeRequests(requests) || "none"}`).toBe(true);
 				return;
 			}
+			const dialog = opened;
 			// The destructive button is ASSERTED, never activated.
 			if (entry.confirm_action) {
 				const confirmButton = assertNeverPressed(dialog.getByRole("button", { name: new RegExp(escapeRe(entry.confirm_action), "i") }).first(), entry.id);
@@ -2170,25 +2181,37 @@ test("self-test — an overlay that REPLACES another counts as opened, by identi
 	await again.dispose();
 });
 
-test("self-test — a confirmation NESTED over the dialog holding its trigger is the one measured, not the host", async ({ page }) => {
-	// #5640's shape: the trigger lives inside a modal, and its confirmation is a portal appended after.
-	await page.setContent(`
+/**
+ * A host dialog holding the trigger, whose click appends `opens` new dialogs after it, in order —
+ * SYNCHRONOUSLY, inside the click handler. Synchronous is the point: a snapshot taken after the
+ * click then already contains them, which is the misordering the seam's self-tests must catch.
+ */
+function hostWithTrigger(opens: { id: string; role: string; title: string }[]): string {
+	return `
 		<div role="dialog" aria-label="Host"><button id="t">Delete chat Audit chat</button></div>
 		<script>
+			const opens = ${JSON.stringify(opens)};
 			document.getElementById("t").addEventListener("click", () => {
-				const d = document.createElement("div");
-				d.setAttribute("role", "alertdialog");
-				d.id = "confirm";
-				d.innerHTML = "<h2>Delete Audit chat?</h2><button>Cancel</button><button>Delete chat</button>";
-				document.body.appendChild(d);
+				for (const o of opens) {
+					const d = document.createElement("div");
+					d.setAttribute("role", o.role);
+					d.id = o.id;
+					d.innerHTML = "<h2>" + o.title + "</h2><button>Cancel</button><button>Delete chat</button>";
+					document.body.appendChild(d);
+				}
 			});
-		</script>`);
-	const before = await visibleDialogs(page);
-	await page.locator("#t").click();
-	const dialog = await confirmationDialog(page, before);
-	await before.dispose();
-	expect(dialog, "the click opened a confirmation, so one must be found").not.toBeNull();
-	await expect(dialog ?? page.locator("#none")).toHaveAttribute("id", "confirm");
+		</script>`;
+}
+
+test("self-test — a confirmation NESTED over the dialog holding its trigger is the one measured, not the host", async ({ page }) => {
+	// #5640's shape: the trigger lives inside a modal, and its confirmation is a portal appended
+	// after. Driven through `clickForConfirmation`, the seam the control loop calls (#5659, A3), so
+	// this fails if the snapshot moves after the click (the confirmation is then "already up", and
+	// null comes back) or if the lookup goes back to `.first()` (the HOST comes back).
+	await page.setContent(hostWithTrigger([{ id: "confirm", role: "alertdialog", title: "Delete Audit chat?" }]));
+	const dialog = await clickForConfirmation(page, page.locator("#t"), 100);
+	expect(dialog, "the click opened a confirmation, so one must be found — null here means the snapshot was taken AFTER the click").not.toBeNull();
+	await expect(dialog ?? page.locator("#none"), "the HOST came back — the lookup is reading document order, not identity").toHaveAttribute("id", "confirm");
 	await expect((dialog ?? page.locator("#none")).getByRole("button", { name: /^Delete chat$/ })).toBeVisible();
 	// The hazard it replaces: document order puts the HOST first.
 	await expect(page.locator(DIALOG_SELECTOR).first()).toHaveAttribute("aria-label", "Host");
@@ -2196,14 +2219,48 @@ test("self-test — a confirmation NESTED over the dialog holding its trigger is
 
 test("self-test — a trigger INSIDE an open dialog whose click opens nothing has NO confirmation", async ({ page }) => {
 	// The old lookup answered "a dialog appeared" from the HOST, before the click had done anything.
-	await page.setContent(`<div role="dialog" aria-label="Host"><button>Delete</button></div>`);
-	const before = await visibleDialogs(page);
-	await page.getByRole("button", { name: "Delete" }).click();
-	const dialog = await confirmationDialog(page, before);
-	await before.dispose();
+	await page.setContent(hostWithTrigger([]));
+	const dialog = await clickForConfirmation(page, page.locator("#t"), 100);
 	expect(dialog, "the host dialog was up before the click; it is not this control's confirmation").toBeNull();
 	// What the old `.first().isVisible()` read here — the false "confirmed" this replaces.
 	expect(await page.locator(DIALOG_SELECTOR).first().isVisible()).toBe(true);
+});
+
+test("self-test — when ONE click opens TWO new dialogs, the LAST in document order is the one measured", async ({ page }) => {
+	// #5659, A2. `confirmationDialog` takes the last NEW dialog, because a confirmation nested over a
+	// surface the same click raised is appended after it. Nothing pinned that choice: taking the
+	// first new one passed every other self-test. Here both are new, the confirmation comes second,
+	// and only "last" reaches it — the first is a plain dialog with no such title.
+	await page.setContent(
+		hostWithTrigger([
+			{ id: "sheet", role: "dialog", title: "Chat details" },
+			{ id: "confirm", role: "alertdialog", title: "Delete Audit chat?" },
+		]),
+	);
+	const dialog = await clickForConfirmation(page, page.locator("#t"), 100);
+	expect(dialog, "two dialogs appeared, so one must be found").not.toBeNull();
+	await expect(dialog ?? page.locator("#none"), "the FIRST new dialog came back; the rule is the last").toHaveAttribute("id", "confirm");
+	await expect(dialog ?? page.locator("#none")).toContainText("Delete Audit chat?");
+});
+
+test("self-test — the control loop clicks through `clickForConfirmation`, and through nothing else", async () => {
+	// The seam's self-tests above prove the seam. They prove nothing about a loop that stopped
+	// calling it: an inlined snapshot-click-lookup in the loop body would be exercised only by the
+	// live gate. So the loop's own source is read, from `for (const entry of CONTROLS)` to the end
+	// of that block.
+	//
+	// ⚠ BOUNDARY: this reads TEXT, so it checks the loop body's own statements — not helpers it calls.
+	// `observeUndo` / `observeStaged` act after the verdict's click and are out of its reach by design.
+	const src = readFileSync(__filename, "utf8");
+	const start = src.indexOf("\nfor (const entry of CONTROLS) {");
+	expect(start, "the control loop moved — re-point this test at it").toBeGreaterThan(-1);
+	const end = src.indexOf("\n}\n", start);
+	const loop = src.slice(start, end);
+	expect(loop.match(/\bclickForConfirmation\(page, trigger\)/g)?.length ?? 0, "the loop must click its trigger through the seam, exactly once").toBe(1);
+	expect(loop, "the loop clicks the trigger itself, bypassing the seam's snapshot order").not.toMatch(/\btrigger\.click\(/);
+	expect(loop, "the loop takes its own dialog snapshot, which no self-test drives").not.toMatch(/\bvisibleDialogs\(/);
+	expect(loop, "the loop looks the confirmation up itself, which no self-test drives").not.toMatch(/\bconfirmationDialog\(/);
+	expect(loop, "a document-order dialog lookup in the loop answers with the HOST").not.toMatch(/locator\(DIALOG_SELECTOR\)\.first\(\)/);
 });
 
 test("self-test — a reached control withheld as NOT RENDERED attaches its evidence", async ({ page }, testInfo) => {
@@ -2535,8 +2592,11 @@ test("self-test — the UNREACHED ledger fails in BOTH directions, against the R
  * Read from the two chrome files rather than listed, so a component moved into or out of the panel
  * changes the answer without anyone editing this file. ⚠ BOUNDARY: DIRECT `@/components/agent/…`
  * imports only. A control one import deeper (`widget-card.tsx`, inside `widget-grid.tsx`) or one
- * handed to the modal as a prop (the artifact gallery, the knowledge panel) is not in this set —
- * those entries are covered, today, only by their UNREACHED lines.
+ * handed to the modal as a prop (the artifact gallery, the knowledge panel) is not in this set.
+ * Those four entries (`agent.widget.remove`, `agent.artifact.delete`, `agent.artifact.unshare`,
+ * `agent.knowledge.delete`) take the step since #5659, and nothing HERE would notice one dropping
+ * it: what would is direction 1 of `owedFindings` on the gate run, which fails an owed entry that
+ * withholds — loud, but only live.
  */
 function modalOnlySurfaces(modalSrc: string, panelSrc: string): Set<string> {
 	const imports = (src: string): Set<string> =>
