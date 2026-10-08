@@ -306,8 +306,13 @@ function reduceEdit(
 		// The box holds only what is typed after the claim; nothing typed is nothing to keep.
 		if (isEmptyContent(next)) local = null;
 	} else if (entry.sending === null) {
-		if (entry.server !== null ? contentEquals(next, entry.server.content) : isEmptyContent(next))
-			local = null;
+		// Equal to the acknowledged row is not enough while a save flies: its ack will make the row
+		// the in-flight content, so the box must keep these words as unsaved and save them after (I5).
+		const flying = entry.inflight !== null && !contentEquals(next, entry.inflight.content);
+		const matchesRow =
+			entry.server !== null ? contentEquals(next, entry.server.content) : isEmptyContent(next);
+		// While a conflict bar is open the box is "mine" by definition (D15/D16): never null.
+		if (matchesRow && !flying && entry.conflict === null) local = null;
 	}
 	const edit: DraftEntry = { ...entry, local };
 	const held = entry.blockedBy?.kind === "credential";
@@ -318,7 +323,7 @@ function reduceEdit(
 	return {
 		entry: lifted,
 		effects:
-			local === null ? [] : [{ type: "schedule-save", key: entry.key, delayMs: SAVE_DEBOUNCE_MS }],
+			local === null ? [] : [{ type: "schedule-save", key: entry.key, delayMs: SAVE_DEBOUNCE_MS, reason: "timer" }],
 	};
 }
 
@@ -382,7 +387,7 @@ function retryAfter(entry: DraftEntry, n: number): DraftEntryTransition {
 	const effects = failing ? t.effects.filter((x) => x.type !== "notice") : t.effects;
 	return {
 		entry: t.entry,
-		effects: [...effects, { type: "schedule-save", key: entry.key, delayMs: retryDelayMs(n) }],
+		effects: [...effects, { type: "schedule-save", key: entry.key, delayMs: retryDelayMs(n), reason: "retry" }],
 	};
 }
 
@@ -475,7 +480,7 @@ function reduceConflict(
 ): DraftEntryTransition {
 	// Nothing unsaved (the box was edited back to the row it was based on while the save flew):
 	// nothing is replaced here, so no keystroke in flight can be dropped (I6). From slice 7b the next
-	// list refresh adopts the newer row (D22); until then an edit saves at the old base and its
+	// list refresh will adopt the newer row (D22); until then an edit saves at the old base and its
 	// conflict opens D15, which shows both texts.
 	if (entry.local === null) return unchanged(entry);
 	if (contentEquals(entry.local, row.content)) return unchanged({ ...entry, server: row, local: null }); // D14
@@ -624,9 +629,12 @@ function reduceEntryEvent(
 			// D16 "Restore": `restoreDraft` at the discarded row's revision, then a save (on its answer).
 			const row = entry.conflict?.kind === "discarded" ? entry.conflict.row : null;
 			if (row === null || entry.inflight !== null) return unchanged(entry);
+			// With nothing unsaved the box now shows the restored row: replaced from outside (D6, I6).
+			const replaced = !contentEquals(shownContent(entry), entry.local ?? row.content);
 			return {
 				entry: {
 					...entry,
+					epoch: replaced ? entry.epoch + 1 : entry.epoch,
 					server: row,
 					conflict: null,
 					inflight: { op: "restore", base: row.revision, content: row.content, failedSend: null },
@@ -693,9 +701,13 @@ export function initialDraftsState(viewerId: string | null): DraftsState {
 	return { viewerId, scope: null, generation: 0, pageOrg: null, activeKey: {}, entries: {} };
 }
 
-/** True when an entry holds no content, no row and no send: New chat on it would only add clutter (D1). */
+/**
+ * True when an entry is D1's `none`: no thread, no content, no row and no send. New chat on it would
+ * only add clutter. An open conversation with no draft (`listed`, `unlisted`, `deleted`) is not.
+ */
 function isBlank(entry: DraftEntry): boolean {
 	return (
+		entry.thread === "none" &&
 		entry.server === null &&
 		(entry.local === null || isEmptyContent(entry.local)) &&
 		entry.claiming === null &&
@@ -733,7 +745,15 @@ function applyToEntry(
 	const entry = state.entries[id];
 	if (entry === undefined) return { state, effects: [] };
 	const t = reduceDraftEntry(entry, event, contextFor(state, entry.key, env));
-	return { state: putEntry(state, id, t.entry), effects: t.effects };
+	const next = putEntry(state, id, t.entry);
+	const sid = scopeId(entry.key);
+	if (t.entry !== null || next.activeKey[sid] !== entry.key.conversationId)
+		return { state: next, effects: t.effects };
+	// The active key's entry was removed (D16 "Let it go"): the scope has no active key, so the next
+	// New chat mints one (D2) instead of pointing the box at an entry that no longer exists.
+	const activeKey = { ...next.activeKey };
+	delete activeKey[sid];
+	return { state: { ...next, activeKey }, effects: t.effects };
 }
 
 /**
@@ -753,7 +773,7 @@ export function reduceDrafts(
 			const activeId = state.activeKey[sid];
 			if (activeId !== undefined) {
 				const active = state.entries[keyId({ ...scope, conversationId: activeId })];
-				if (active === undefined || isBlank(active)) return { state, effects: [] }; // D1
+				if (active !== undefined && isBlank(active)) return { state, effects: [] }; // D1
 			}
 			// D2: a new key; the old entry is untouched. An id this tab already holds is not fresh,
 			// and never replaces that entry.

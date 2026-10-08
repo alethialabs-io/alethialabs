@@ -237,7 +237,11 @@ export type DraftEffect =
 			failedSend: PendingFailedSend | null;
 	  }
 	| { type: "restore"; key: DraftKey; base: number }
-	| { type: "schedule-save"; key: DraftKey; delayMs: number }
+	/**
+	 * Arm a timer that dispatches `SAVE_TRIGGER` with `reason` after `delayMs`: `timer` for D5's
+	 * debounce, `retry` for D27's backoff (a `timer` trigger is ignored while retrying).
+	 */
+	| { type: "schedule-save"; key: DraftKey; delayMs: number; reason: "timer" | "retry" }
 	| { type: "load-transcript"; key: DraftKey }
 	| { type: "list"; scope: DraftScope; generation: number }
 	| { type: "cache-remove"; key: DraftKey }

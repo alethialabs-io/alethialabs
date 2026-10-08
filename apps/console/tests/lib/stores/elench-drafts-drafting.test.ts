@@ -8,7 +8,7 @@
 // of the console: a failure names its seed and step, and the same seed replays it.
 
 import { describe, expect, it } from "vitest";
-import type { DraftContent } from "@/lib/elench/draft-content";
+import { type DraftContent, normalizeDraftText } from "@/lib/elench/draft-content";
 import type { ServerDraft } from "@/lib/elench/draft-outcomes";
 import {
 	EMPTY_CONTENT,
@@ -21,6 +21,7 @@ import {
 	retryDelayMs,
 	SAVE_DEBOUNCE_MS,
 	scopeId,
+	shownContent,
 } from "@/lib/stores/elench-drafts/reducer-drafting";
 import type {
 	DraftEffect,
@@ -132,6 +133,13 @@ describe("D1 / D2 OPEN_NEW", () => {
 		expect(s.entries[keyId(k1)]).toBe(before);
 	});
 
+	it("D1 › an open conversation with no draft is not `none`: New chat mints a new key", () => {
+		let s = reduceDrafts(storeA(), { type: "SELECT", key: K, thread: "listed" }, ENV).state;
+		s = reduceDrafts(s, { type: "OPEN_NEW", conversationId: "n2" }, ENV).state;
+		expect(s.activeKey[scopeId(SCOPE_A)]).toBe("n2");
+		expect(s.entries[keyId({ ...SCOPE_A, conversationId: "n2" })]?.thread).toBe("none");
+	});
+
 	it("D1 with an artifacts-only draft mints a new key (A4)", () => {
 		let s = reduceDrafts(storeA(), { type: "OPEN_ARTIFACT_NEW", conversationId: "n1", artifactId: "art" }, ENV).state;
 		s = reduceDrafts(s, { type: "OPEN_NEW", conversationId: "n2" }, ENV).state;
@@ -179,7 +187,7 @@ describe("D5 / D6 EDIT", () => {
 	it("D5 › an edit at the current epoch becomes local and schedules a save after 800 ms", () => {
 		const t = step(entry(), edit(0, "deploy"));
 		expect(t.entry?.local).toEqual(c("deploy"));
-		expect(t.effects).toEqual([{ type: "schedule-save", key: K, delayMs: SAVE_DEBOUNCE_MS }]);
+		expect(t.effects).toEqual([{ type: "schedule-save", key: K, delayMs: SAVE_DEBOUNCE_MS, reason: "timer" }]);
 	});
 
 	it("D5 › the text is normalized, and artifacts and the cell target are carried over", () => {
@@ -254,6 +262,25 @@ describe("D8 saved", () => {
 		const t = step(e, { type: "SAVE_RESULT", seq: 1, result: { outcome: "saved", revision: 1 } });
 		expect(t.entry?.local).toEqual(c("ab"));
 		expect(t.effects).toEqual([{ type: "save", key: K, base: 1, content: c("ab"), failedSend: null }]);
+	});
+
+	it("I5 › an edit back to the saved text while a save flies is kept, and saved after the ack", () => {
+		// The server holds "A"; "AB" is sent; the B is deleted while it flies.
+		let e: DraftEntry | null = entry({ server: row(c("A"), 1) });
+		e = step(e, edit(0, "AB")).entry;
+		if (e === null) throw new Error("removed");
+		e = step(e, { type: "SAVE_TRIGGER", reason: "timer" }).entry;
+		if (e === null) throw new Error("removed");
+		e = step(e, edit(0, "A")).entry;
+		if (e === null) throw new Error("removed");
+		expect(shownContent(e).text).toBe("A");
+		const t = step(e, { type: "SAVE_RESULT", seq: 1, result: { outcome: "saved", revision: 2 } });
+		if (t.entry === null) throw new Error("removed");
+		expect(shownContent(t.entry).text).toBe("A");
+		expect(t.entry.server?.content.text).toBe("AB");
+		expect(ofType(t.effects, "save")).toEqual([
+			{ type: "save", key: K, base: 2, content: c("A"), failedSend: null },
+		]);
 	});
 
 	it("D8 › a carried failed-send marker is cleared once acknowledged", () => {
@@ -333,6 +360,23 @@ describe("D16 discarded", () => {
 		const t2 = step(t1.entry, { type: "RESTORE_RESULT", seq: 2, result: { outcome: "saved", revision: 5 } });
 		expect(t2.entry?.server?.state).toBe("active");
 		expect(t2.effects).toEqual([{ type: "save", key: K, base: 5, content: c("mine"), failedSend: null }]);
+	});
+
+	it("D16 › Let it go on the active key clears it, so New chat and later edits work", () => {
+		let s = reduceDrafts(storeA(), { type: "OPEN_NEW", conversationId: "n1" }, ENV).state;
+		const k1 = { ...SCOPE_A, conversationId: "n1" };
+		const id = keyId(k1);
+		const e1 = s.entries[id];
+		if (e1 === undefined) throw new Error("missing");
+		s = { ...s, entries: { ...s.entries, [id]: { ...e1, local: c("mine"), conflict: { kind: "discarded", row: { ...r, ...k1 } } } } };
+		s = reduceDrafts(s, { type: "ENTRY", key: k1, event: { type: "CONFLICT_LET_GO" } }, ENV).state;
+		expect(s.entries[id]).toBeUndefined();
+		expect(s.activeKey[scopeId(SCOPE_A)]).toBeUndefined();
+		s = reduceDrafts(s, { type: "OPEN_NEW", conversationId: "n2" }, ENV).state;
+		const k2 = { ...SCOPE_A, conversationId: "n2" };
+		expect(s.activeKey[scopeId(SCOPE_A)]).toBe("n2");
+		s = reduceDrafts(s, { type: "ENTRY", key: k2, event: edit(0, "next") }, ENV).state;
+		expect(s.entries[keyId(k2)]?.local).toEqual(c("next"));
 	});
 
 	it("D16 › Let it go removes the entry", () => {
@@ -431,7 +475,7 @@ describe("D27 / D28 failures", () => {
 		expect([1, 2, 3, 7, 8].map(retryDelayMs)).toEqual([1000, 2000, 4000, 60000, 60000]);
 		const t = step(saving(c("a")), { type: "SAVE_RESULT", seq: 1, result: { outcome: "unavailable" } });
 		expect(t.entry?.save).toBe("retrying");
-		expect(ofType(t.effects, "schedule-save")).toEqual([{ type: "schedule-save", key: K, delayMs: 1000 }]);
+		expect(ofType(t.effects, "schedule-save")).toEqual([{ type: "schedule-save", key: K, delayMs: 1000, reason: "retry" }]);
 	});
 
 	it("fail, recover, fail raises two notices (G19)", () => {
@@ -574,7 +618,7 @@ describe("D36 credential hold", () => {
 		const t = step(held, edit(0, "nothing secret"));
 		expect(t.entry?.save).toBe("idle");
 		expect(t.entry?.blockedBy).toBeNull();
-		expect(t.effects).toEqual([{ type: "schedule-save", key: K, delayMs: SAVE_DEBOUNCE_MS }]);
+		expect(t.effects).toEqual([{ type: "schedule-save", key: K, delayMs: SAVE_DEBOUNCE_MS, reason: "timer" }]);
 	});
 
 	it("D36 › a save already in flight when the paste lands is followed by no save of the secret", () => {
@@ -690,6 +734,7 @@ const reached = { staleEdit: 0, unsavedKept: 0, ack: 0, conflictOpened: 0, crede
 /** Runs the generator for `seed` and checks every property at every step. */
 function runSeed(seed: number, steps: number): void {
 	const r = rng(seed);
+	const boxModel = new Map<string, string>();
 	let n = 0;
 	const seq = () => (n += 1);
 	let state = reduceDrafts(initialDraftsState("viewer-1"), { type: "SCOPE_CHANGE", scope: SCOPE_A }, ENV).state;
@@ -700,6 +745,26 @@ function runSeed(seed: number, steps: number): void {
 		const where = `seed ${seed} step ${i} ${JSON.stringify(ev)}`;
 		const t = reduceDrafts(state, ev, ENV);
 		const x = entryEvent(ev);
+		// I5, model-based: what the box shows is the last applied EDIT, unless a listed event replaced
+		// it from outside (the epoch moved) or the entry is new to this step.
+		for (const [id, after] of Object.entries(t.state.entries)) {
+			const before = state.entries[id];
+			const shown = shownContent(after).text;
+			const own = ev.type === "ENTRY" && keyId(ev.key) === id;
+			const model = boxModel.get(id);
+			if (before === undefined || model === undefined || after.epoch !== before.epoch) {
+				boxModel.set(id, shown);
+				continue;
+			}
+			if (own && x?.type === "EDIT" && x.epoch === before.epoch && before.claiming === null) {
+				const typed = normalizeDraftText(x.content.text);
+				expect(shown, `${where}: box is not the edit just applied`).toBe(typed);
+				boxModel.set(id, typed);
+				continue;
+			}
+			expect(shown, `${where}: box changed without an outside replacement`).toBe(model);
+		}
+		for (const id of [...boxModel.keys()]) if (t.state.entries[id] === undefined) boxModel.delete(id);
 		for (const [id, before] of Object.entries(state.entries)) {
 			const after = t.state.entries[id];
 			const own = ev.type === "ENTRY" && keyId(ev.key) === id;
@@ -738,7 +803,8 @@ function runSeed(seed: number, steps: number): void {
 				expect(after, `${where}: stale edit applied`).toBe(before);
 				expect(t.effects, `${where}: stale edit had effects`).toEqual([]);
 			}
-			if (after.epoch !== before.epoch) expect(listed, `${where}: epoch moved`).toBe(true);
+			const restore = own && x?.type === "CONFLICT_RESTORE"; // D16, in D6's list
+			if (after.epoch !== before.epoch) expect(listed || restore, `${where}: epoch moved`).toBe(true);
 		}
 		// D36: no save ever carries a credential the key has not acknowledged.
 		for (const fx of ofType(t.effects, "save")) {
