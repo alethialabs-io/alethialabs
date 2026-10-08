@@ -846,7 +846,11 @@ controls:
     route: /[org]
     surface: apps/console/components/agent/agent-artifact-gallery.tsx
     mutation: deleteArtifact
-    reach: [{ open: "Ask AI" }, { open: "Artifacts" }]
+    # THREE steps. "Ask AI" opens the docked PANEL; the gallery is handed to `elench-modal.tsx` as
+    # its `gallery` prop and rendered only there, behind the rail's "Artifacts" nav button
+    # (`thread-rail.tsx`, `onOpenArtifacts` → `mainView: "artifacts"`). See `agent.thread.delete`
+    # for why the panel needs "Expand to full screen" first (#5659).
+    reach: [{ open: "Ask AI" }, { open: "Expand to full screen" }, { open: "Artifacts" }]
     # The noun is IN the accessible name, and the spec is why. `triggerFor` matches a templated name
     # by its literal prefix, so "Delete <name>" is `/Delete/i` — and the thread rail is mounted
     # BEFORE <main> and stays mounted over the Artifacts and Knowledge views, so `.first()` resolved
@@ -869,13 +873,14 @@ controls:
     route: /[org]
     surface: apps/console/components/agent/artifact-share-popover.tsx
     mutation: unshareArtifact
-    # FOUR steps, because `ArtifactSharePopover` is rendered in exactly one place —
+    # FIVE steps: the panel's expand step (see `agent.artifact.delete`, #5659), then the gallery,
+    # an artifact, and Share — because `ArtifactSharePopover` is rendered in exactly one place,
     # `agent-artifact-viewer.tsx`, i.e. INSIDE an opened artifact. A chain that went straight from
     # the gallery to `{ open: "Share" }` never opened one, and worse, it did not sit still: `/Share/i`
     # matched the gallery's "Shared with you" TAB, so the audit switched to the shared tab — where no
     # owned artifact and no Share button exist — and then withheld blaming the trigger. The gallery
     # card now names itself "Open artifact <name>" so a step can predict it.
-    reach: [{ open: "Ask AI" }, { open: "Artifacts" }, { open: "Open artifact" }, { open: "Share" }]
+    reach: [{ open: "Ask AI" }, { open: "Expand to full screen" }, { open: "Artifacts" }, { open: "Open artifact" }, { open: "Share" }]
     # NOT a switch named "Shared" — no such control has ever existed here. The popover lists one
     # BUTTON per share target ("Everyone in org", then a row per team and per role), each with a
     # check box drawn inside it.
@@ -906,7 +911,14 @@ controls:
     surface: apps/console/components/agent/thread-rail.tsx
     mutation_surface: apps/console/components/agent/elench/use-elench-threads.ts
     mutation: deleteThread
-    reach: [{ open: "Ask AI" }]
+    # TWO steps, because "Ask AI" opens the docked PANEL (`ask-ai-button.tsx` → `togglePanel` →
+    # `view: "panel"`), and the panel mounts no thread rail: its conversation controls are the
+    # switcher (select a chat, start one) and "New conversation" — neither deletes. `ThreadRail` is imported
+    # by `elench-modal.tsx` alone, so the rail — and this control — exists only after the panel's
+    # "Expand to full screen" (`elench-panel.tsx`, `onClick={maximize}` → `view: "modal"`). The
+    # modal then shows the rail when `railOpen` (true by default) AND the viewport is `lg` or wider
+    # (`hidden … lg:flex`); the audit-interaction project runs at Desktop Chrome's 1280px.
+    reach: [{ open: "Ask AI" }, { open: "Expand to full screen" }]
     # Templated because the rail's trash IS templated — every row carries its own title. The literal
     # prefix `/Delete chat/i` is what this entry resolves on, and no other agent surface starts with
     # those two words.
@@ -923,7 +935,9 @@ controls:
     route: /[org]
     surface: apps/console/components/agent/agent-knowledge-panel.tsx
     mutation: upsertAgentContext
-    reach: [{ open: "Ask AI" }, { open: "Knowledge" }]
+    # Like the gallery, the knowledge panel is the modal's `knowledge` prop, behind the rail's
+    # "Knowledge" nav button — so the panel's expand step comes first (#5659).
+    reach: [{ open: "Ask AI" }, { open: "Expand to full screen" }, { open: "Knowledge" }]
     # See `agent.artifact.delete` — the noun separates this from the rail's "Delete chat …".
     control: { role: button, name: "Delete document <title>" }
     confirm: confirm-dialog
@@ -939,7 +953,14 @@ controls:
     surface: apps/console/components/agent/widgets/widget-card.tsx
     mutation_surface: apps/console/lib/stores/use-widget-grid-store.ts
     mutation: deleteWidget
-    reach: [{ open: "Ask AI" }, { open: "a dashboard turn" }]
+    # FOUR steps (#5659). `{open: "a dashboard turn"}` was prose where a control name belongs, and
+    # it could never match. The widget grid is the modal's split pane (`elench-modal.tsx` →
+    # `WidgetGrid` → `WidgetCard`), hydrated for the ACTIVE thread only, and the seeded widget hangs
+    # off the audit thread. So: expand, select "Audit chat" in the rail (`thread-rail.tsx` — the
+    # row button precedes its own "Delete chat Audit chat" in document order, and the step takes
+    # the first match), then the top bar's "Open widget grid", which renders only once the
+    # selected conversation has messages (the seeded thread has two).
+    reach: [{ open: "Ask AI" }, { open: "Expand to full screen" }, { open: "Audit chat" }, { open: "Open widget grid" }]
     control: { role: button, name: "Remove <title>" }
     confirm: confirm-dialog
     confirm_action: "Remove widget"

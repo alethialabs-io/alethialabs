@@ -38,10 +38,15 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 # Build args are scoped per stage. Redeclare VERSION here so the running container carries the
 # commit that produced its standalone bundle, rather than leaving provenance behind in `build`.
+# NEXT_PUBLIC_APP_VERSION must be set HERE, not only in `build`: next-runtime-env reads it from the
+# server's RUNTIME process.env (env() and `<PublicEnvScript />` → window.__ENV), which is where the
+# post-deploy smoke's build-id check and the PostHog release tag read it (#5621).
+# tests/unit/dockerfile-runtime-public-env.test.ts fails if a runtime-read NEXT_PUBLIC_* goes missing.
 ARG VERSION=dev
 ENV NODE_ENV=production \
     ALETHIA_EDITION=community \
-    ALETHIA_SOURCE_COMMIT=$VERSION
+    ALETHIA_SOURCE_COMMIT=$VERSION \
+    NEXT_PUBLIC_APP_VERSION=$VERSION
 RUN addgroup -S nodejs && adduser -S nextjs -G nodejs
 COPY --from=build --chown=nextjs:nodejs /app/apps/console/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/apps/console/.next/static ./apps/console/.next/static

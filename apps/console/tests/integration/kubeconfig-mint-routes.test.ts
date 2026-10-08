@@ -37,7 +37,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { describeIfDb } from "./db";
 
-vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn() }));
+vi.mock("@/lib/authz/guard", () => ({ authorizeCli: vi.fn(), authorizeCliQuiet: vi.fn() }));
 vi.mock("@/lib/auth/trusted-ip", () => ({ trustedClientIp: vi.fn(() => "203.0.113.9") }));
 vi.mock("@/lib/billing/usage-guard", async (orig) => ({
 	...(await orig<typeof import("@/lib/billing/usage-guard")>()),
@@ -52,7 +52,7 @@ import {
 	GET as specGet,
 	POST as resultPost,
 } from "@/app/api/jobs/[id]/kubeconfig-mint/route";
-import { authorizeCli } from "@/lib/authz/guard";
+import { authorizeCli, authorizeCliQuiet } from "@/lib/authz/guard";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { getServiceDb } from "@/lib/db";
@@ -104,21 +104,27 @@ const mintBody = z.object({ mint: z.object({ id: z.uuid(), job_id: z.uuid() }) }
 
 /** Points the stubbed CLI guard at `userId` in `orgId` (a session). */
 function actingAs(userId: string, orgId: string): void {
-	vi.mocked(authorizeCli).mockResolvedValue({
-		actor: { userId, orgId },
-		credential: "session",
-		orgScope: [orgId, userId],
-	});
+	// Both guards: the POST goes through the recording `authorizeCli`, the poll through its quiet
+	// variant (#5670). Same caller, same answer.
+	for (const guard of [authorizeCli, authorizeCliQuiet]) {
+		vi.mocked(guard).mockResolvedValue({
+			actor: { userId, orgId },
+			credential: "session",
+			orgScope: [orgId, userId],
+		});
+	}
 }
 
 /** Points the stubbed CLI guard at USER_A in ORG_A, authenticated by service token `tokenId`. */
 function actingAsToken(tokenId: string): void {
-	vi.mocked(authorizeCli).mockResolvedValue({
-		actor: { userId: USER_A, orgId: ORG_A },
-		credential: "service_token",
-		serviceTokenId: tokenId,
-		orgScope: [ORG_A],
-	});
+	for (const guard of [authorizeCli, authorizeCliQuiet]) {
+		vi.mocked(guard).mockResolvedValue({
+			actor: { userId: USER_A, orgId: ORG_A },
+			credential: "service_token",
+			serviceTokenId: tokenId,
+			orgScope: [ORG_A],
+		});
+	}
 }
 
 /** Requests a mint on `clusterId` as the current actor. */

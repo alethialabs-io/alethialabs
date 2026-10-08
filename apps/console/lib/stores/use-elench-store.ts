@@ -172,6 +172,15 @@ interface ElenchState {
 	 */
 	selectThread: (id: string | null) => void;
 	/**
+	 * The INITIAL-LOAD resume of a persisted thread: point at it and bump `epoch`, exactly like
+	 * `selectThread`, but leave `mainView` alone. The resume lands after two server round trips,
+	 * and the rail (Artifacts, Knowledge) is clickable while it is in flight, so resetting the
+	 * view here silently overrode a click the user made in that window (#5677). Opening from
+	 * closed already lands on the chat (`openPanel`/`openModal`), so nothing is lost by not
+	 * resetting it again. A user-initiated pick uses `selectThread`, which still resets.
+	 */
+	resumeThread: (id: string) => void;
+	/**
 	 * Attach a lazily-created thread id WITHOUT bumping `epoch` — used on the first send of an
 	 * ephemeral conversation so the new id rides subsequent requests while the in-flight chat
 	 * (and its just-sent message) survives intact.
@@ -219,6 +228,9 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 			ctx,
 			threadId: fresh ? null : cur.threadId,
 			epoch: fresh ? cur.epoch + 1 : cur.epoch,
+			// Opening from closed lands on the conversation (the initial resume no longer resets
+			// the view — see `resumeThread`); an already-open surface keeps what it shows.
+			mainView: cur.open ? cur.mainView : "chat",
 		});
 	},
 
@@ -233,6 +245,9 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 			ctx,
 			threadId: fresh ? null : cur.threadId,
 			epoch: fresh ? cur.epoch + 1 : cur.epoch,
+			// Opening from closed lands on the conversation (the initial resume no longer resets
+			// the view — see `resumeThread`); an already-open surface keeps what it shows.
+			mainView: cur.open ? cur.mainView : "chat",
 		});
 	},
 
@@ -263,6 +278,8 @@ export const useElenchStore = create<ElenchState>((set, get) => ({
 	// Selecting a thread / starting a new chat returns to the conversation view.
 	selectThread: (id) =>
 		set((s) => ({ threadId: id, epoch: s.epoch + 1, mainView: "chat" as const })),
+	// The initial resume: same lineage bump as `selectThread`, but the view is left as it is.
+	resumeThread: (id) => set((s) => ({ threadId: id, epoch: s.epoch + 1 })),
 	attachThread: (id) => set({ threadId: id }),
 	newChat: () =>
 		set((s) => ({

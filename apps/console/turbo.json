@@ -1,0 +1,73 @@
+{
+	"$schema": "https://turborepo.com/schema.json",
+	"extends": ["//"],
+	"tasks": {
+		// The console suite reads files OUTSIDE this package — parity guards against the Go catalog,
+		// the infra templates, the deploy workflow, the e2e fixtures, a docs/legal page. turbo's
+		// default inputs are this package's files only, so a PR that edits only one of those got a
+		// cache hit and CI replayed the old green log without running the guard (#5629, #5638).
+		// Every path below is one a console test MAY read, as `pnpm check:console-test-inputs`
+		// derives it by static analysis of the test sources and the modules they import. It fails
+		// when a derived read is missing here, or when a line here matches no derived read. The
+		// derivation over-approximates: it takes whole modules, so some entries are never opened at
+		// runtime (brand_gen.go / vocab_gen.go are generator OUTPUT paths; check-destructive-actions
+		// and check-shared-surface are named as paths but not read). An extra entry costs a cache
+		// miss; a missing one costs a replayed green. Add what it names; do not curate this by hand.
+		//
+		// NOT `$TURBO_EXTENDS$`, on purpose: that would carry the root's `!**/*.md` / `!**/*.mdx`,
+		// and turbo lets that negation win over an explicit in-package path (measured on 2.11.7:
+		// `README.md` listed here stayed out of the key in either order), while some of this suite
+		// reads in-package markdown (apps/console/README.md, docs/ui-conformance/*.md). Outside
+		// markdown is unaffected — `$TURBO_ROOT$/docs/legal/GDPR_ACCOUNTABILITY.md` is hashed either way.
+		// Cost: an edit to any of the 17 in-package .md files now re-runs this task; 5 of the 100
+		// commits that touched one in the 90 days to 2026-10-07 changed nothing else in the package.
+		//
+		// Any change to ANY input re-runs the WHOLE console test task, not just the test reading it.
+		"test": {
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"$TURBO_ROOT$/.github/workflows/deploy-console.yml",
+				"$TURBO_ROOT$/apps/cli/cmd/provider_config_keys.json",
+				"$TURBO_ROOT$/apps/cli/cmd/testdata/kubeconfig-access-cases.json",
+				"$TURBO_ROOT$/deploy/status/config.yaml",
+				"$TURBO_ROOT$/docs/legal/GDPR_ACCOUNTABILITY.md",
+				"$TURBO_ROOT$/examples/addons/**",
+				"$TURBO_ROOT$/infra/config-carriage-exclusions.yaml",
+				"$TURBO_ROOT$/infra/offer-exclusions.yaml",
+				"$TURBO_ROOT$/infra/templates/argocd/cert-manager.yaml",
+				"$TURBO_ROOT$/infra/templates/argocd/external-dns.yaml",
+				"$TURBO_ROOT$/infra/templates/project/alibaba/variables.tf",
+				"$TURBO_ROOT$/infra/templates/project/aws/modules/eks/irsa.tf",
+				"$TURBO_ROOT$/infra/templates/project/aws/variables.tf",
+				"$TURBO_ROOT$/infra/templates/project/azure/variables.tf",
+				"$TURBO_ROOT$/infra/templates/project/azure/workload-identity.tf",
+				"$TURBO_ROOT$/infra/templates/project/gcp/variables.tf",
+				"$TURBO_ROOT$/infra/templates/project/gcp/workload-identity.tf",
+				"$TURBO_ROOT$/infra/templates/project/hetzner/variables.tf",
+				"$TURBO_ROOT$/infra/templates/runner/**",
+				"$TURBO_ROOT$/packages/core/api/testdata/*",
+				"$TURBO_ROOT$/packages/core/argocd/addon_identity.go",
+				"$TURBO_ROOT$/packages/core/catalog/catalog.json",
+				"$TURBO_ROOT$/packages/core/catalog/testdata/nearest-instance-parity.json",
+				"$TURBO_ROOT$/packages/core/cloud/hetzner_provider.go",
+				"$TURBO_ROOT$/packages/core/cloud/testdata/k8s_version_resolution.json",
+				"$TURBO_ROOT$/packages/core/compat/testdata/engine_parity.json",
+				"$TURBO_ROOT$/packages/core/format/format.go",
+				"$TURBO_ROOT$/packages/core/kubeaccess/testdata/seal_vectors.json",
+				"$TURBO_ROOT$/packages/core/types/brand_gen.go",
+				"$TURBO_ROOT$/packages/core/types/vocab_gen.go",
+				"$TURBO_ROOT$/scripts/check-destructive-actions.mjs",
+				"$TURBO_ROOT$/scripts/check-filter-standard.mjs",
+				"$TURBO_ROOT$/scripts/check-route-states.mjs",
+				"$TURBO_ROOT$/scripts/check-shared-surface.mjs",
+				"$TURBO_ROOT$/scripts/lib/console-routes.mjs",
+				"$TURBO_ROOT$/test/e2e/fixtures/addon_catalog.*.json",
+				"$TURBO_ROOT$/test/e2e/fixtures/chart_workloads.json",
+				"$TURBO_ROOT$/test/e2e/fixtures/config_snapshot_components.aws.json",
+				"$TURBO_ROOT$/test/e2e/fixtures/hetzner_data_services.json",
+				"$TURBO_ROOT$/test/e2e/fixtures/t2_config_snapshot.*.json",
+				"$TURBO_ROOT$/test/e2e/fixtures/w1_services.json"
+			]
+		}
+	}
+}

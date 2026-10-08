@@ -54,6 +54,9 @@ import { seedCloudIdentity, type Owner } from "../helpers/seed";
 import { seedChannel, seedRule } from "../helpers/seed-alerts";
 import { seedOrgMember } from "../helpers/seed-rbac";
 import { seedDeployedRunner, seedFleetPool, seedRunner } from "../helpers/seed-runners";
+import { artifactSpecSchema, artifactWidgetSchema } from "@/lib/ai/artifact-spec";
+import type { ArtifactSpec, KnowledgeDoc, WidgetData } from "@/types/jsonb.types";
+import type { z } from "zod";
 import type { AuditContext } from "./context";
 
 // ── the scope a seeder writes into ──────────────────────────────────────────────────────────────
@@ -123,6 +126,84 @@ export interface FixtureSeeder {
 /** A unique-enough suffix, so two workers (or two runs against one database) cannot collide. */
 function unique(): string {
 	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ── the three jsonb values the assistant checks depend on (#5674) ─────────────────────────────
+//
+// `agent_context.documents`, `thread_widgets.data` and `agent_artifacts.spec` are jsonb typed by
+// drizzle's `$type<>()` alone, so a raw `sql.json(...)` seed bypasses both the TypeScript type and
+// the zod schema the app writes them through — the class #5662 found in `support_cases.contact`,
+// where the gate "exercised" a control against a row the product could never produce. Each value
+// below is therefore built as a literal that `satisfies` the column's `$type` (so a wrong or extra
+// key fails to compile) and, where the write path's schema is importable, parsed through it (so a
+// constraint the type cannot state — a non-empty title, a position inside the 5-column grid —
+// throws at seed time, which `seedDestructiveFixtures` reports against the fixture by name).
+//
+// The literal is what gets written, not the parse result: zod's output types `data.output` as
+// `unknown`, which postgres' `sql.json` (an index-signatured `JSONValue`) cannot accept, and an
+// interface such as `KnowledgeDoc` never satisfies an index signature either. The parse is a
+// check; the `satisfies` keeps the compile-time tie to the column.
+
+/**
+ * Parse `value` through `schema` and hand back the value itself, so a fixture that the write path
+ * would reject throws here instead of being written. Returns the input (not zod's output) to keep
+ * the literal's JSON-serialisable type for `sql.json`.
+ */
+function validatedBy<T>(schema: z.ZodType, value: T): T {
+	schema.parse(value);
+	return value;
+}
+
+/**
+ * The knowledge document the `knowledge-doc` fixture pins — an `agent_context.documents` entry.
+ *
+ * Typed, not parsed: the schema the write path validates with (`documentSchema` in
+ * `app/server/actions/agent-context.ts`) lives in a `"use server"` module, which may export only
+ * async functions, so it cannot be imported here. `satisfies KnowledgeDoc` holds the four keys
+ * (an extra or misspelt one fails to compile); what that schema adds — a non-empty id, a title of
+ * 1–200 characters, content under `KNOWLEDGE_LIMIT` — the constant literal below already meets. `updated_at` is an ISO string, as
+ * the Knowledge panel writes it (`new Date().toISOString()`).
+ */
+function seedKnowledgeDoc(): { id: string; title: string; content: string; updated_at: string } {
+	return {
+		id: `audit-doc-${unique()}`,
+		title: "Audit document",
+		content: "Seeded by the destructive-action audit so its Delete control has a document to act on.",
+		updated_at: new Date().toISOString(),
+	} satisfies KnowledgeDoc;
+}
+
+/**
+ * A `stat` widget's frozen payload — the `thread_widgets.data` value `WidgetCard` renders when the
+ * widget has no `source`. Parsed through `artifactWidgetSchema.shape.data`, which is the same
+ * `{ output?, block? }` object `pinWidget`'s (unexportable, `"use server"`) `pinInputSchema.data`
+ * declares, and the one an artifact's widgets are copied onto a thread through.
+ */
+function seedStatWidgetData(title: string, value: number) {
+	return validatedBy(artifactWidgetSchema.shape.data, {
+		block: { kind: "stat", title, value },
+	} satisfies WidgetData);
+}
+
+/**
+ * The audit artifact's `agent_artifacts.spec`: one frozen `stat` widget. Parsed through
+ * `artifactSpecSchema`, the schema `saveArtifact`/`updateArtifact` write with — which also
+ * requires `widgets` to be non-empty, the property the gallery card relies on.
+ */
+function seedArtifactSpec() {
+	return validatedBy(artifactSpecSchema, {
+		widgets: [
+			{
+				kind: "stat",
+				title: "Audit stat",
+				source: null,
+				data: seedStatWidgetData("Audit stat", 1),
+				mode: "frozen",
+				position: { x: 0, y: 0 },
+				size: { colspan: 1, rowspan: 1 },
+			},
+		],
+	} satisfies ArtifactSpec);
 }
 
 /**
@@ -682,9 +763,8 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 			writes: "one `KnowledgeDoc` entry in `agent_context.documents` — a JSONB entry, NOT a row of its own",
 			seed: async (scope) => {
 				const sql = db();
-				// The shape is `types/jsonb.types.ts` → `KnowledgeDoc`, and the write path's zod
-				// (`app/server/actions/agent-context.ts`) enforces exactly these four keys with a
-				// non-empty id and title. `updated_at` is an ISO STRING, deliberately — the
+				// The entry is built by `seedKnowledgeDoc`, typed against `KnowledgeDoc` (see there
+				// for why it is not parsed). `updated_at` is an ISO STRING, deliberately — the
 				// interface says so, "stored as a string so the JSONB round-trips without a Date
 				// revival step" — so a Date here would round-trip into something the reader does not
 				// expect.
@@ -692,12 +772,7 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 				// `project_id` must be NULL: the org-level Knowledge panel calls
 				// `getAgentContext(undefined)`. The unique index is (org_id, project_id) NULLS NOT
 				// DISTINCT, which is what makes the upsert below reach the right row.
-				const doc = {
-					id: `audit-doc-${unique()}`,
-					title: "Audit document",
-					content: "Seeded by the destructive-action audit so its Delete control has a document to act on.",
-					updated_at: new Date().toISOString(),
-				};
+				const doc = seedKnowledgeDoc();
 				await sql`
 					insert into agent_context ${sql({
 						user_id: scope.owner.userId,
@@ -733,7 +808,7 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 						kind: "stat",
 						title: "Audit widget",
 						source: null,
-						data: sql.json({ block: { kind: "stat", title: "Audit widget", value: 42 } }),
+						data: sql.json(seedStatWidgetData("Audit widget", 42)),
 						pos_x: 0,
 						pos_y: 0,
 						colspan: 1,
@@ -955,19 +1030,7 @@ async function ensureAuditArtifact(scope: FixtureScope): Promise<string> {
 			org_id: scope.owner.userId,
 			name: NAME,
 			kind: "dashboard",
-			spec: sql.json({
-				widgets: [
-					{
-						kind: "stat",
-						title: "Audit stat",
-						source: null,
-						data: { block: { kind: "stat", title: "Audit stat", value: 1 } },
-						mode: "frozen",
-						position: { x: 0, y: 0 },
-						size: { colspan: 1, rowspan: 1 },
-					},
-				],
-			}),
+			spec: sql.json(seedArtifactSpec()),
 		})}
 		returning id`;
 	if (!row) throw new Error("insert into agent_artifacts returned no row");

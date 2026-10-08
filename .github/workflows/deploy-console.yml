@@ -345,6 +345,16 @@ jobs:
     outputs:
       apps: ${{ steps.filter.outputs.apps }}
       runner: ${{ steps.filter.outputs.runner }}
+      # IS THE APPS GROUP (console included) REBUILT IN THIS RUN? `true` or `false`, never empty.
+      # This is the ONE place that question is answered. `build-amd64` runs on it, and the smoke's
+      # `SMOKE_EXPECTED_SHA` and the deploy's provenance assertion read it, so "was the console
+      # rebuilt" cannot mean two things in one run. They used to be written separately: the build
+      # ran on `apps == 'true' || workflow_dispatch` while the smoke read `apps == 'true'` alone, so a
+      # manual redeploy REBUILT the console and then skipped the served-build-id check as
+      # NOT ASSERTED (#5624). scripts/ci/check-workflow-shape.mjs refuses `SMOKE_EXPECTED_SHA`
+      # drifting from `build-amd64`'s `if:` — and ONLY that pair. The deploy's `APPS_BUILT` and the
+      # `retag-unchanged` condition are unguarded: keep them reading this output by hand.
+      apps_build: ${{ steps.apps_build.outputs.value }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -377,6 +387,20 @@ jobs:
               - 'apps/runner/**'
               - 'packages/core/**'
               - 'infra/templates/**'
+      # A manual dispatch rebuilds every group regardless of the path filter (`retag-unchanged` is
+      # skipped on it), so the apps verdict is "changed, or dispatched".
+      - name: Decide whether the apps group is rebuilt
+        id: apps_build
+        env:
+          APPS_CHANGED: ${{ steps.filter.outputs.apps }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$APPS_CHANGED" = true ] || [ "$EVENT_NAME" = workflow_dispatch ]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
 
   # Native per-arch builds — NO QEMU. The control-plane box is Hetzner CX (x86) so its
   # images are linux/amd64 (built natively on ubuntu-latest); the fleet VMs are Hetzner
@@ -389,7 +413,8 @@ jobs:
   # amd64 box images (single-arch, tagged) — native x86. Skipped when no app/package changed.
   build-amd64:
     needs: changes
-    if: ${{ needs.changes.outputs.apps == 'true' || github.event_name == 'workflow_dispatch' }}
+    # Decided ONCE, in `changes` (apps_build) — the smoke's expected SHA reads the same output.
+    if: ${{ needs.changes.outputs.apps_build == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       # Every leg runs to completion. These matrices build INDEPENDENT images, so cancelling the
@@ -908,6 +933,15 @@ jobs:
     needs: changes
     if: ${{ github.event_name != 'workflow_dispatch' && (needs.changes.outputs.apps != 'true' || needs.changes.outputs.runner != 'true') }}
     runs-on: ubuntu-latest
+    # Which path `stale_check` took for the CONSOLE image, for report-failure's alert (#5643):
+    #   checked:<built sha>  the source-path diff ran and found nothing changed since <built sha>
+    #   skipped:<reason>     a `::warning::… retagging anyway` path — equivalence NOT asserted
+    #   refused:<built sha>  the source paths DID change since <built sha>; the retag is refused and
+    #                        this job fails, so `deploy` is skipped and the alert never renders it as live
+    #   not-retagged         the apps group was rebuilt, so the console was not retagged here
+    # Empty when this job was skipped, or died before the line is written.
+    outputs:
+      console_equivalence: ${{ steps.retag.outputs.console_equivalence }}
     steps:
       # Full history: the staleness guard below asks git what changed between the commit an image
       # was built from and this one, which needs both commits present.
@@ -922,6 +956,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Retag unchanged images latest → sha
+        id: retag
         env:
           SHA: ${{ github.sha }}
           APPS_CHANGED: ${{ needs.changes.outputs.apps }}
@@ -967,10 +1002,12 @@ jobs:
               | head -n1)"
             if [ -z "$built" ] || [ "$built" = dev ]; then
               echo "::warning::$img:latest carries no usable ALETHIA_SOURCE_COMMIT — cannot prove it is current; retagging anyway."
+              [ "$img" != console ] || CONSOLE_EQUIVALENCE="skipped:no-source-commit"
               return 0
             fi
             if ! git cat-file -e "${built}^{commit}" 2>/dev/null; then
               echo "::warning::$img:latest names commit ${built}, which is not in this repository's history; retagging anyway."
+              [ "$img" != console ] || CONSOLE_EQUIVALENCE="skipped:unknown-commit"
               return 0
             fi
             # Unquoted on purpose — $paths is a space-separated pathspec list, and quoting it would
@@ -986,8 +1023,10 @@ jobs:
               git diff --name-only "${built}" "${SHA}" -- $paths 2>/dev/null | head -20 | sed 's/^/::error::  /' || true
               echo "::error::latest is stale for this group. Retagging it would ship old code under a new SHA — rebuild instead."
               echo "::error::If those paths do NOT feed this image, the group's path list here and the changes filter have drifted apart (#2762)."
+              [ "$img" != console ] || CONSOLE_EQUIVALENCE="refused:${built}"
               return 1
             fi
+            [ "$img" != console ] || CONSOLE_EQUIVALENCE="checked:${built}"
           }
 
           retag() {
@@ -996,6 +1035,7 @@ jobs:
             docker buildx imagetools create -t "${IMAGE_PREFIX}/$1:${SHA}" "${IMAGE_PREFIX}/$1:latest"
           }
           rc=0
+          CONSOLE_EQUIVALENCE=not-retagged
           if [ "${APPS_CHANGED}" != "true" ]; then
             for img in console console-migrate docs blog marketing admin; do retag "$img" "$APPS_PATHS" || rc=1; done
           fi
@@ -1007,6 +1047,7 @@ jobs:
           # and stopped, saying nothing about the five runner images behind it. `|| rc=1` keeps the
           # sweep going and `exit $rc` still fails the job, so one run now lists everything that
           # needs rebuilding instead of surfacing them one promotion at a time.
+          echo "console_equivalence=${CONSOLE_EQUIVALENCE}" >> "$GITHUB_OUTPUT"
           exit $rc
 
   deploy:
@@ -1022,7 +1063,8 @@ jobs:
       id-token: write # assume the read-only vault role via GitHub OIDC — no stored secrets
     env:
       IMAGE_TAG: ${{ github.sha }}
-      APPS_CHANGED: ${{ needs.changes.outputs.apps }}
+      # Whether `build-amd64` rebuilt the apps images in THIS run (a dispatch does, whatever changed).
+      APPS_BUILT: ${{ needs.changes.outputs.apps_build }}
       ASM_SECRET_ID: alethia/prod/env
       ASM_REGION: eu-central-1
     steps:
@@ -1292,7 +1334,7 @@ jobs:
           # On the box: checkout the built SHA, swap in .env, render s3.json from the
           # same storage creds (checkout -f resets that tracked file), compose up behind
           # the tunnel. `bash -s` gets IMAGE_TAG + the apps build verdict from the ssh env.
-          ssh $SSHOPTS "root@${HOST}" "IMAGE_TAG='${IMAGE_TAG}' APPS_CHANGED='${APPS_CHANGED}' bash -s" <<'REMOTE'
+          ssh $SSHOPTS "root@${HOST}" "IMAGE_TAG='${IMAGE_TAG}' APPS_BUILT='${APPS_BUILT}' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/alethia
           git fetch origin main
@@ -1338,11 +1380,11 @@ jobs:
             echo "::error::Running console carries no ALETHIA_SOURCE_COMMIT provenance."
             exit 1
           fi
-          if [ "$APPS_CHANGED" = true ] && [ "$deployed_commit" != "$IMAGE_TAG" ]; then
+          if [ "$APPS_BUILT" = true ] && [ "$deployed_commit" != "$IMAGE_TAG" ]; then
             echo "::error::Running console provenance '${deployed_commit:-missing}' does not match promoted SHA '$IMAGE_TAG'."
             exit 1
           fi
-          echo "✓ running console carries ALETHIA_SOURCE_COMMIT=$deployed_commit (apps changed: $APPS_CHANGED)"
+          echo "✓ running console carries ALETHIA_SOURCE_COMMIT=$deployed_commit (apps rebuilt: $APPS_BUILT)"
           # `git checkout` replaces tracked files atomically. Caddy bind-mounts one
           # tracked file, so its existing mount can stay attached to the old inode
           # even though /opt/alethia now shows the new routes. Compose cannot detect
@@ -1424,7 +1466,8 @@ jobs:
   # Chromium plus a pnpm install do not belong in the job that holds it. The blast radius of a
   # compromised browser dependency should not include the production host key.
   #
-  # `SMOKE_EXPECTED_SHA` is set only when the apps group actually rebuilt. On a runner-only push the
+  # `SMOKE_EXPECTED_SHA` is set only when the apps group actually rebuilt — `changes.outputs.apps_build`,
+  # the SAME output `build-amd64` runs on, so a manual dispatch (which rebuilds) asserts too. On a runner-only push the
   # console images are re-tagged rather than rebuilt, so the served build id is the PREVIOUS commit
   # and asserting equality would red every runner-only deploy. Empty means "do not compare", which
   # the smoke script reads as a skip with its reason, never as a pass.
@@ -1444,7 +1487,7 @@ jobs:
       contents: read
     env:
       SMOKE_BASE_URL: ${{ vars.PUBLIC_APP_URL || 'https://alethialabs.io' }}
-      SMOKE_EXPECTED_SHA: ${{ needs.changes.outputs.apps == 'true' && github.sha || '' }}
+      SMOKE_EXPECTED_SHA: ${{ needs.changes.outputs.apps_build == 'true' && github.sha || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -1515,50 +1558,28 @@ jobs:
       contents: read
       issues: write
     steps:
+      # Only the one script — nothing else in the tree is read here.
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/deploy-failure-report.mjs
+          sparse-checkout-cone-mode: false
+      # What the issue says production is running comes from `needs.deploy.result` (#5643): a red
+      # smoke after a GREEN deploy is a live release with a failing check, not a commit production
+      # never received, and it is filed under its own title so the two never update each other's
+      # issue. The case table, and the self-test that pins it, live in the script. `changes`,
+      # `deploy` and `smoke` must be DIRECT needs above — the `needs` context carries nothing transitive.
       - name: Open or update the deploy-broken issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          TITLE="prod: Deploy Console is red on main — production is not receiving new code"
-
-          # Name the jobs that actually failed, so the issue body is a diagnosis rather than a link.
-          jobs_json="$(gh api "repos/${REPO}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" --paginate 2>/dev/null || echo '{"jobs":[]}')"
-          bad="$(printf '%s' "$jobs_json" | jq -r '.jobs[]? | select(.conclusion=="failure" or .conclusion=="cancelled") | "- `\(.name)` — \(.conclusion)"' | head -40)"
-          [ -n "$bad" ] || bad="- (could not enumerate jobs — see the run)"
-
-          # Static Markdown comes from QUOTED heredocs (backticks stay literal, nothing expands);
-          # dynamic values are printf'd in between with plain %s formats. Keeping the two apart is
-          # what lets the body carry backticks without shellcheck reading them as substitutions.
-          # The heredoc bodies sit at this block's indent on purpose: YAML strips it, so the closing
-          # MD lands at column 0 for the shell.
-          {
-            cat <<'MD'
-          `Deploy Console` failed on `main` at commit:
-          MD
-            printf '%s\n\n' "$SHA"
-            cat <<'MD'
-          **The `deploy` job is gated `!cancelled() && !failure()`, so production did NOT receive this commit.**
-          
-          Failing jobs:
-          MD
-            printf '%s\n\n' "$bad"
-            printf 'Run: %s\n\n' "$RUN_URL"
-            cat <<'MD'
-          Do not close this until a `Deploy Console` run on main reaches `deploy: success`. A green run is
-          not sufficient on its own — `retag-unchanged` can report success while shipping a stale image, so
-          confirm the deployed `ALETHIA_SOURCE_COMMIT` matches the promoted SHA.
-          MD
-          } > /tmp/deploy-failure-body.md
-
-          existing="$(gh issue list --repo "$REPO" --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')"
-          if [ -n "$existing" ]; then
-            echo "Updating existing issue #${existing}"
-            gh issue comment "$existing" --repo "$REPO" --body-file /tmp/deploy-failure-body.md
-          else
-            echo "Opening a new issue"
-            gh issue create --repo "$REPO" --title "$TITLE" --body-file /tmp/deploy-failure-body.md
-          fi
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+          # "true" only when the console was rebuilt in this run — the one case where `deploy`'s
+          # provenance check proved the live console IS this commit. Otherwise it is a retag.
+          APPS_BUILD: ${{ needs.changes.outputs.apps_build }}
+          # Which path retag-unchanged's equivalence check took for the console (see its `outputs:`).
+          CONSOLE_EQUIVALENCE: ${{ needs.retag-unchanged.outputs.console_equivalence }}
+        run: node scripts/deploy-failure-report.mjs
