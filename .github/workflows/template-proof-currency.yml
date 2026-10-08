@@ -140,7 +140,15 @@ jobs:
             exit 0
           fi
 
-          { printf '%s\n' "$REPORT"; printf "\n_Refreshed by \`.github/workflows/template-proof-currency.yml\` on %s ([run](%s)). It reports only — nothing is re-proved or dispatched automatically, by ruling (#5686): re-proving costs real spend, so a person runs the command above. It closes itself once every HEAD is proven again._\n" "$now" "$run_url"; } > body.md
+          # The footer depends on WHICH red this is. Only drift (1) is fixed by a re-prove, and only a
+          # drift report carries the command. An unanswered check (2) is fixed by repairing the
+          # instrument, and pointing its reader at paid spend would be the wrong action.
+          if [ "$CODE" = "1" ]; then
+            next="Nothing is re-proved or dispatched automatically, by ruling (#5686): re-proving costs real spend, so a person runs the command above."
+          else
+            next="This run could not answer for every template. Fix what the Unanswered table names first: a re-prove does not repair an unread HEAD or an unreadable proof. Nothing is re-proved or dispatched automatically, by ruling (#5686)."
+          fi
+          { printf '%s\n' "$REPORT"; printf "\n_Refreshed by \`.github/workflows/template-proof-currency.yml\` on %s ([run](%s)). %s It closes itself once every HEAD is proven again._\n" "$now" "$run_url" "$next"; } > body.md
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --body-file body.md
             echo "updated #$existing"

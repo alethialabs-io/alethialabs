@@ -69,7 +69,8 @@ export const EXIT_BLIND = 2;
 /**
  * The one command a person runs to re-prove the starter templates after drift — printed in the drift
  * report, which the workflow files as the tracker issue body. `templates` is hetzner-only (refused
- * on any other provider by `e2e-nightly.yml`), and `--ref dev` is where proof bundles are committed.
+ * on any other provider by `e2e-nightly.yml`), and `--ref dev` because a dispatch declares the
+ * `e2e-dev` environment, whose deployment-branch policy admits `dev` only — `--ref main` is refused.
  * The self-test checks both input values against `e2e-nightly.yml`'s own `workflow_dispatch` choices,
  * so a renamed dimension or provider reds here rather than in front of the person who copies it.
  */
@@ -222,7 +223,7 @@ export function report(v) {
 			REPROVE_COMMAND,
 			"```",
 			"",
-			`Then commit the new bundle under \`${PROOFS_DIR.split(path.sep).join("/")}/<template>/\`; this check reads the newest PASS bundle's \`${SUMMARY_FILE}\`.`,
+			`Then commit the proof with \`scripts/e2e/commit-proof.sh <run_id> hetzner\` — CI never pushes, and that script splits the run's bundle into one \`${PROOFS_DIR.split(path.sep).join("/")}/<template>/\` directory per template; this check reads the newest PASS bundle's \`${SUMMARY_FILE}\`.`,
 			"Nothing re-proves automatically, by ruling: drift opens this issue only, because a re-prove costs real spend and a person decides (epic #2766 unit 3, #5686).",
 			"",
 		);
@@ -475,6 +476,10 @@ function selfTest() {
 	ok("mutation applied: stripping the command changed the report", stripped !== rep);
 	ok("MUTATION: a drift report without the re-prove command fails the check", !carriesReproveCommand(stripped));
 	ok("a current report does not tell anyone to re-prove", !carriesReproveCommand(report(decide(proofs, hd(allCurrent)))));
+	// An unanswered-only report (exit 2, nothing drifted) must not send its reader to paid spend: the
+	// fix there is the instrument, and a re-prove does not repair an unread HEAD.
+	const blindOnly = decide(proofs, hd({ ...allCurrent, "o/starter-ai": "" }));
+	ok("an unanswered-only report does not tell anyone to re-prove", blindOnly.code === EXIT_BLIND && blindOnly.drifted.length === 0 && !carriesReproveCommand(report(blindOnly)));
 
 	// The command must be one e2e-nightly.yml accepts: both inputs are choice inputs there, so a
 	// renamed value would make the copied command fail. Read the REAL workflow; no network.
