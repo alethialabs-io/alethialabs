@@ -443,11 +443,89 @@ export type CliAuthorization =
  * A SERVICE-ACCOUNT token overrides that entirely: its org is fixed at mint time, a conflicting
  * header is refused rather than ignored, and the minting profile's membership is re-checked on every
  * request. See the branch below.
+ *
+ * The decision is RECORDED (`enforce()`): every denial, and every allow of a non-read action, writes
+ * an activity row. A request that only waits on earlier work uses {@link authorizeCliQuiet}.
  */
 export async function authorizeCli(
 	req: Request,
 	action: Action,
 	resource: { type: Resource; id?: string },
+): Promise<CliAuthorization | { error: Response }> {
+	return authorizeCliWith(req, action, resource, recordingDecision);
+}
+
+/**
+ * {@link authorizeCli} without the activity row (#5670): the same authentication, the same actor
+ * resolution (the service-token pin, the `X-Alethia-Org` header, the minter's membership re-check),
+ * the same tenancy scope and the same deny → 403 — but the permission is asked with `can()`, so
+ * nothing is written to `authz_activity_log` and no action event is emitted, allow OR deny.
+ *
+ * It is {@link authorizeCli}'s own body with a different last step, not a copy of it: both go
+ * through `authorizeCliWith`, and the two engines' `enforce` is `can` + record (activity.ts
+ * `enforceDecision`), so the two variants cannot disagree about WHO is let in — only about whether
+ * the decision is written down.
+ *
+ * For a request that is WAITING, not acting — today exactly one: the kubeconfig mint poll
+ * (`app/api/cli/clusters/[id]/kubeconfig/[mintId]/route.ts`). The CLI repeats it with a backoff
+ * (apps/cli/cmd/clusters_kubeconfig_mint.go: 500 ms, doubling to a 5 s cap, so polls land at
+ * 0.5 s, 1.5 s, 3.5 s, 7.5 s and then every 5 s) until the mint completes, for at most the server's
+ * 10-minute mint window (an 11-minute client ceiling behind it) — on the order of 120 polls for a
+ * mint that never finishes. The request that STARTED the mint went through the recording
+ * {@link authorizeCli}, and an admin hand-over is recorded by `collectGate` (#5667), so the mint is
+ * on the record once without a row per poll — the console's `pollKubeconfigDownload` does the same
+ * with {@link authorizeQuiet}. A request that DOES something must use {@link authorizeCli}.
+ *
+ * WHAT A QUIET DENIAL GIVES UP. `enforce()` records a denial AND emits it as an action event
+ * (`emitActionEvent(…, false)`), which an org's alert rule can match. This does neither: a caller
+ * refused on every poll writes no denial row and fires no alert rule, however many times it polls.
+ * The mint's START still goes through {@link authorizeCli}, so a caller refused there is recorded
+ * and emitted as before; what goes unrecorded is only a refusal of somebody polling a mint they
+ * were allowed to start (their grant revoked while it was pending) — the same trade the console's
+ * {@link authorizeQuiet} poll and #5668's `collectGate.probe` make.
+ *
+ * Its importers are pinned: tests/lib/authz/authorize-cli-quiet-importers.test.ts fails if any file
+ * other than the mint poll route imports it, or if that route stops doing so.
+ */
+export async function authorizeCliQuiet(
+	req: Request,
+	action: Action,
+	resource: { type: Resource; id?: string },
+): Promise<CliAuthorization | { error: Response }> {
+	return authorizeCliWith(req, action, resource, quietDecision);
+}
+
+/**
+ * The permission step of a CLI authorization: true when `actor` may perform `action` on `ref`.
+ * The ONLY thing that differs between {@link authorizeCli} and {@link authorizeCliQuiet}.
+ */
+type CliDecision = (actor: Actor, action: Action, ref: ResourceRef) => Promise<boolean>;
+
+/** The recording decision: `enforce()`, which writes the activity row; a ForbiddenError is a deny. */
+const recordingDecision: CliDecision = async (actor, action, ref) => {
+	try {
+		await getPdp().enforce(actor, action, ref);
+		return true;
+	} catch (e) {
+		if (e instanceof ForbiddenError) return false;
+		throw e;
+	}
+};
+
+/** The quiet decision: `can()`, the same question `enforce()` asks, with nothing recorded. */
+const quietDecision: CliDecision = async (actor, action, ref) =>
+	(await getPdp().can(actor, action, ref)).allowed;
+
+/**
+ * The body {@link authorizeCli} and {@link authorizeCliQuiet} share: verify the token, resolve and
+ * scope the actor, then ask `decide`. Everything but that last step is common, so a change to who
+ * is let in (a new refusal, a pin rule) reaches both variants at once.
+ */
+async function authorizeCliWith(
+	req: Request,
+	action: Action,
+	resource: { type: Resource; id?: string },
+	decide: CliDecision,
 ): Promise<CliAuthorization | { error: Response }> {
 	const { payload, error } = await verifyCliToken(req);
 	if (error) return { error };
@@ -496,14 +574,8 @@ export async function authorizeCli(
 		// resolves to anything other than the pinned org is refused, never substituted.
 		const serviceActor = await resolveNamedOrgScope(userId, serviceOrg);
 		if (!serviceActor) return { error: forbidden() };
-		try {
-			await getPdp().enforce(serviceActor, action, {
-				type: resource.type,
-				id: resource.id,
-			});
-		} catch (e) {
-			if (e instanceof ForbiddenError) return { error: forbidden() };
-			throw e;
+		if (!(await decide(serviceActor, action, { type: resource.type, id: resource.id }))) {
+			return { error: forbidden() };
 		}
 		return {
 			actor: serviceActor,
@@ -523,14 +595,8 @@ export async function authorizeCli(
 		? await resolveNamedOrgScope(userId, headerOrg)
 		: await getActiveScope(userId);
 	if (!actor) return { error: forbidden() };
-	try {
-		await getPdp().enforce(actor, action, {
-			type: resource.type,
-			id: resource.id,
-		});
-	} catch (e) {
-		if (e instanceof ForbiddenError) return { error: forbidden() };
-		throw e;
+	if (!(await decide(actor, action, { type: resource.type, id: resource.id }))) {
+		return { error: forbidden() };
 	}
 	return {
 		actor,
