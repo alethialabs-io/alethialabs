@@ -294,7 +294,7 @@ export interface AiUsageInput {
 }
 
 /** The model usage of one ledger row: what its cost-of-serve is priced from. */
-export type AiRowUsage = Pick<
+type AiRowUsage = Pick<
 	AiUsageInput,
 	"model" | "inputTokens" | "outputTokens" | "cachedInputTokens"
 >;
@@ -309,16 +309,6 @@ function usageCostMicros(u: AiRowUsage): number | null {
 				cachedInputTokens: u.cachedInputTokens,
 			})
 		: null;
-}
-
-/**
- * The credits {@link recordAiUsage} books for a settle row (`credits` omitted) with this usage —
- * the same derivation it runs, exported so a caller that must know a turn's total BEFORE writing
- * it (the partial-answer floor, `recordAgentTurnUsage`) computes the number the ledger will hold.
- */
-export function settleCredits(u: AiRowUsage): number {
-	const costMicros = usageCostMicros(u);
-	return costMicros != null ? costToCredits(costMicros) : 0;
 }
 
 /**

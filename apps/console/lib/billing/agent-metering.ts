@@ -4,13 +4,14 @@
 import "server-only";
 import type { AiMessage } from "@/lib/analytics/server";
 import type { AiCharge } from "@/lib/billing/ai-guard";
+import { costToCredits } from "@/lib/billing/ai-credits";
 import {
 	type AiUsageAfterCommit,
 	type AiUsageInput,
 	type AiUsageKind,
 	recordAiUsage,
-	settleCredits,
 } from "@/lib/billing/ai-quota";
+import { aiCostMicros } from "@/lib/billing/model-costs";
 import type { Tx } from "@/lib/db";
 
 /**
@@ -75,6 +76,23 @@ export function aggregateUsageByModel(steps: AgentStep[]): ModelUsageRecord[] {
 		if (!existing) records.push(rec);
 	}
 	return records;
+}
+
+/**
+ * The credits `recordAiUsage` books for a settle row with this model usage (`credits` omitted):
+ * `costToCredits(aiCostMicros(usage))`, the derivation it runs. The floor needs the attempt's total
+ * BEFORE the rows are written. tests/integration/ai-hold-tx.test.ts pins that this number is the
+ * one the ledger then holds.
+ */
+function settleCredits(rec: ModelUsageRecord): number {
+	return costToCredits(
+		aiCostMicros({
+			model: rec.model,
+			inputTokens: rec.inputTokens,
+			outputTokens: rec.outputTokens,
+			cachedInputTokens: rec.cachedInputTokens,
+		}),
+	);
 }
 
 /** The after-commit of a call whose side effects already ran, or that wrote nothing. */
@@ -153,8 +171,8 @@ export async function recordAgentTurnUsage(
 	}
 
 	// The credits each row would book without a floor — computed only under one, so the un-floored
-	// call is the one that always ran. Settle rows derive their own (`settleCredits` is the very
-	// derivation `recordAiUsage` runs); a fixed charge books once, on row 0.
+	// call is the one that always ran. Settle rows derive their own (`settleCredits`, the derivation
+	// `recordAiUsage` runs); a fixed charge books once, on row 0.
 	const unfloored =
 		floor > 0
 			? records.map((rec, i) =>

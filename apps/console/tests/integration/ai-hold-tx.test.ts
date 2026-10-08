@@ -39,7 +39,9 @@ import {
 	reserveAiHold,
 } from "@/lib/billing/ai-guard";
 import { aiTierSpec, resolveAiPlan } from "@/lib/billing/ai-plan";
-import { settleCredits, sumCredits } from "@/lib/billing/ai-quota";
+import { costToCredits } from "@/lib/billing/ai-credits";
+import { sumCredits } from "@/lib/billing/ai-quota";
+import { aiCostMicros } from "@/lib/billing/model-costs";
 import { checkAiSpendThreshold } from "@/lib/billing/ai-spend-alert";
 import { getServiceDb, type Tx } from "@/lib/db";
 import { aiUsageLedger, organization, organizationBilling } from "@/lib/db/schema";
@@ -304,8 +306,12 @@ describeIfDb("AI billing on one transaction (ADR 0003 slice 3)", () => {
 			{ model: SONNET, usage: { inputTokens: 1000, outputTokens: 200 } },
 			{ model: HAIKU, usage: { inputTokens: 2000, outputTokens: 300 } },
 		];
-		const sonnet = settleCredits({ model: SONNET, inputTokens: 1000, outputTokens: 200 });
-		const haiku = settleCredits({ model: HAIKU, inputTokens: 2000, outputTokens: 300 });
+		const sonnet = costToCredits(
+			aiCostMicros({ model: SONNET, inputTokens: 1000, outputTokens: 200 }),
+		);
+		const haiku = costToCredits(
+			aiCostMicros({ model: HAIKU, inputTokens: 2000, outputTokens: 300 }),
+		);
 		// Non-vacuous: both rows have a real cost, and together they are under the reserve.
 		expect(sonnet).toBeGreaterThan(0);
 		expect(haiku).toBeGreaterThan(0);

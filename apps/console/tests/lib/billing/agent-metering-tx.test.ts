@@ -7,26 +7,26 @@
 //    the attempt costs max(floor, total) however a multi-model turn spreads its cost.
 //  - `tx`: every row is written on the caller's transaction, and the side effects of every row are
 //    returned as ONE after-commit function instead of running.
-// recordAiUsage is mocked; its own tx behaviour is pinned in ai-quota-tx.test.ts. settleCredits is
-// mocked to fixed per-model figures so the floor arithmetic is legible.
+// recordAiUsage is mocked; its own tx behaviour is pinned in ai-quota-tx.test.ts. aiCostMicros is
+// mocked to fixed per-model costs (the real costToCredits turns them into credits) so the floor
+// arithmetic is legible; tests/integration/ai-hold-tx.test.ts checks the floor against real rows.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/billing/ai-quota", () => ({
-	recordAiUsage: vi.fn(),
-	settleCredits: vi.fn(),
-}));
+vi.mock("@/lib/billing/ai-quota", () => ({ recordAiUsage: vi.fn() }));
+vi.mock("@/lib/billing/model-costs", () => ({ aiCostMicros: vi.fn() }));
 
 import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
-import { recordAiUsage, settleCredits } from "@/lib/billing/ai-quota";
+import { recordAiUsage } from "@/lib/billing/ai-quota";
+import { aiCostMicros } from "@/lib/billing/model-costs";
 import type { Tx } from "@/lib/db";
 
 const HAIKU = "anthropic/claude-haiku-4-5";
 const SONNET = "anthropic/claude-sonnet-4-6";
 
-/** Per-model settle credits for these tests: Sonnet rows cost 30, Haiku rows 20. */
-const CREDITS: Record<string, number> = { [SONNET]: 30, [HAIKU]: 20 };
+/** Per-model cost for these tests, in USD micros: Sonnet rows settle 30 credits, Haiku rows 20. */
+const MICROS: Record<string, number> = { [SONNET]: 30_000, [HAIKU]: 20_000 };
 
 const SETTLE = { source: "included" as const, settle: true as const, holdId: "hold-1" };
 
@@ -47,7 +47,7 @@ const TX = {} as unknown as Tx;
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(recordAiUsage).mockResolvedValue(() => {});
-	vi.mocked(settleCredits).mockImplementation((u) => CREDITS[u.model ?? ""] ?? 0);
+	vi.mocked(aiCostMicros).mockImplementation((u) => MICROS[u.model] ?? 0);
 });
 
 describe("recordAgentTurnUsage — floorCredits against the attempt's SUM", () => {
@@ -128,7 +128,7 @@ describe("recordAgentTurnUsage — floorCredits against the attempt's SUM", () =
 		});
 		expect(creditsOfRow(0)).toBeUndefined();
 		expect(creditsOfRow(1)).toBeUndefined();
-		expect(settleCredits).not.toHaveBeenCalled();
+		expect(aiCostMicros).not.toHaveBeenCalled();
 	});
 
 	it("refuses a floor that is not a non-negative integer, before writing anything", async () => {

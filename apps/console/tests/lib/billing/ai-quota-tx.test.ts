@@ -7,15 +7,13 @@
 // function, so a rolled-back settle reports nothing and the spend alert reads the settled ledger.
 // Without `tx`, nothing changes: the pooled write, then both effects, then a no-op return.
 //
-// The settle-credit derivation itself is pinned by ai-quota-settle.test.ts; settleCredits must be
-// the same number, which the last block checks against the row recordAiUsage actually books.
+// The settle-credit derivation itself is pinned by ai-quota-settle.test.ts.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const pooledValues = vi.fn().mockResolvedValue(undefined);
-const pooledInsert = vi.fn(() => ({ values: pooledValues }));
+const pooledInsert = vi.fn(() => ({ values: vi.fn().mockResolvedValue(undefined) }));
 const pooledWhere = vi.fn().mockResolvedValue(undefined);
 const pooledSet = vi.fn(() => ({ where: pooledWhere }));
 const pooledUpdate = vi.fn(() => ({ set: pooledSet }));
@@ -30,7 +28,7 @@ vi.mock("@/lib/billing/ai-spend-alert", () => ({
 }));
 
 import { captureAiGeneration } from "@/lib/analytics/server";
-import { recordAiUsage, settleCredits } from "@/lib/billing/ai-quota";
+import { recordAiUsage } from "@/lib/billing/ai-quota";
 import { checkAiSpendThreshold } from "@/lib/billing/ai-spend-alert";
 import { aiCostMicros } from "@/lib/billing/model-costs";
 import type { Tx } from "@/lib/db";
@@ -151,29 +149,5 @@ describe("recordAiUsage without a tx (every existing caller)", () => {
 		afterCommit();
 		expect(captureAiGeneration).toHaveBeenCalledTimes(1);
 		expect(checkAiSpendThreshold).toHaveBeenCalledTimes(1);
-	});
-});
-
-describe("settleCredits", () => {
-	it("is the number recordAiUsage books for the same settle row", async () => {
-		vi.mocked(aiCostMicros).mockReturnValue(117_500);
-		const usage = { model: MODEL, inputTokens: 900, outputTokens: 300 };
-		const predicted = settleCredits(usage);
-		await recordAiUsage({
-			orgId: "org-1",
-			userId: "user-1",
-			kind: "agent",
-			source: "included",
-			...usage,
-		});
-		expect(predicted).toBe(118);
-		expect(pooledValues).toHaveBeenCalledWith(
-			expect.objectContaining({ credits: predicted }),
-		);
-	});
-
-	it("is 0 without a model", () => {
-		expect(settleCredits({})).toBe(0);
-		expect(aiCostMicros).not.toHaveBeenCalled();
 	});
 });
