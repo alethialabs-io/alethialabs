@@ -144,8 +144,10 @@ The plan gives each pool a `/24` in this order:
 
 1. The number in `node_pool_subnet_index` for the pool, if you set one.
 2. The number that the cluster recorded for the pool when the pool was created.
-3. For a new pool, the free `/24` that its name hashes to, if no other pool has it. If another pool
-   has it, the new pool takes the lowest free `/24` that no pool has.
+3. If the pool has no record, the `/24` that its servers already use.
+4. For a new pool, the free `/24` that its name hashes to, if no other pool has it. If another pool
+   has it, the new pool takes the lowest free `/24` that no pool has. A `/24` of a pool that the
+   same plan removes is not free until the next plan.
 
 So two pools never get the same `/24`, and you do not need `node_pool_subnet_index` to add a pool,
 also when you have 10 pools. A pool keeps its `/24` when you add, remove or reorder other pools.
@@ -171,7 +173,9 @@ same resource.
 
 A cluster that was created before the record existed has pools but no labels. On its first plan
 after the upgrade, a pool keeps the `/24` that its servers use. A pool that has no servers is given
-a `/24` as if it were new. The first apply then writes the labels.
+a `/24` as if it were new, so a pool that you add in the same plan can take its `/24`. The first
+apply then writes the labels. To keep every pool where it is, apply once after the upgrade before
+you add pools.
 
 #### Choosing a subnet yourself
 
@@ -207,9 +211,10 @@ extra_node_pools pools ["edge","search"] would all take /24 number 41 (10.0.41.0
 The plan also refuses a pool when the other pools have every free `/24`. On a `/20` network, which
 has 5 free numbers, the sixth pool is refused. Use a larger network.
 
-If you change `pod_cidr`, `service_cidr` or the network range, a recorded number can stop being
-free. That pool is then given a `/24` as if it were new, and its servers are replaced. Change these
-values before you add pools, not after.
+If you change the network range, every pool's subnet changes, also when its number stays the same,
+and its servers are replaced. If you change `pod_cidr` or `service_cidr`, a recorded number can stop
+being free. That pool is then given a `/24` as if it were new, and its servers are replaced. Change
+these values before you add pools, not after.
 
 If you bring your own network (`provision_network: false`), the plan cannot see the subnets that
 are already on it. If a pool's `/24` is already a subnet of that network, Hetzner refuses it when

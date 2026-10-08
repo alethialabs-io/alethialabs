@@ -677,6 +677,72 @@ run "hetzner_removing_a_pool_moves_no_other_pool" {
   }
 }
 
+# A /24 a removed pool still holds is not handed to a pool added in the SAME plan: its subnet is
+# destroyed in the apply that would create the new one, and nothing orders the two. Here edge is
+# removed while search is added; search hashes to 41, edge's recorded /24, so it takes the lowest free.
+run "hetzner_an_added_pool_skips_a_removed_pools_subnet" {
+  command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/edge" = "41", "subnet.alethia.io/b" = "22" } }]
+    }
+  }
+
+  variables {
+    extra_node_pools = [
+      { name = "b", instance_type = "cpx31", min_size = 1, max_size = 1 },
+      { name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 },
+    ]
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["b"].ip_range == "10.0.22.0/24" && hcloud_network_subnet.node_pools["search"].ip_range == "10.0.1.0/24"
+    error_message = "search must not take 41 while removed edge's subnet is still recorded there; it takes 10.0.1.0/24."
+  }
+
+  assert {
+    condition     = jsonencode(hcloud_firewall.this.labels) == jsonencode(merge(local.default_labels, { "subnet.alethia.io/b" = "22", "subnet.alethia.io/search" = "1" }))
+    error_message = "edge's label must be dropped, so 41 is free on the next plan."
+  }
+}
+
+# The record wins over where a pool's servers are: a server read at another /24 (an address the
+# ledger does not agree with) does not move a recorded pool.
+run "hetzner_a_record_wins_over_server_addresses" {
+  command = plan
+
+  override_data {
+    target = data.hcloud_firewalls.node_pool_ledger
+    values = {
+      firewalls = [{ id = 4142, apply_to = [], rule = [], name = "acme-dev", labels = { cluster = "acme-dev", "subnet.alethia.io/search" = "7" } }]
+    }
+  }
+
+  override_data {
+    target = data.hcloud_servers.node_pool_ledger
+    values = {
+      servers = [{
+        id                = 9001, name = "acme-dev-search-0", status = "running", server_type = "cpx31", image = "", location = "fsn1", datacenter = "fsn1-dc14",
+        backup_window     = "", backups = false, delete_protection = false, rebuild_protection = false, rescue = "", iso = "", placement_group_id = 0,
+        primary_disk_size = 160, ipv4_address = "", ipv6_address = "", ipv6_network = "", firewall_ids = [4142],
+        labels            = { cluster = "acme-dev", role = "worker", pool = "search" }
+        network           = [{ ip = "10.0.41.101", network_id = 4141, alias_ips = [], mac_address = "" }]
+      }]
+    }
+  }
+
+  variables {
+    extra_node_pools = [{ name = "search", instance_type = "cpx31", min_size = 1, max_size = 1 }]
+  }
+
+  assert {
+    condition     = hcloud_network_subnet.node_pools["search"].ip_range == "10.0.7.0/24"
+    error_message = "The recorded /24 (7) must win over the /24 a server address suggests (41)."
+  }
+}
+
 # Upgrade from the hash-only template: the firewall carries no ledger yet, but search's server already
 # sits in 10.0.41.0/24. Adding edge in that same plan must not take search's /24 from it.
 run "hetzner_upgrade_keeps_a_pool_where_its_servers_are" {

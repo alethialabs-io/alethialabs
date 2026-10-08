@@ -113,9 +113,9 @@ resource "hcloud_server" "workers" {
 #     1. node_pool_subnet_index[name], when set (a pin; it moves an existing pool);
 #     2. the number RECORDED for it in the ledger (below), when that number is still a free /24;
 #     3. the /24 its servers already sit in, for a pool built before the ledger existed (upgrade);
-#     4. otherwise it is NEW: its hash slot, if no 1-3 pool holds it and no new pool that sorts
-#        before it by name has the same hash slot; else the lowest free /24 nobody holds, handed to
-#        those pools in name order.
+#     4. otherwise it is NEW: its hash slot, if no 1-3 pool holds it, no pool this plan removes is
+#        still recorded on it, and no new pool that sorts before it by name has the same hash slot;
+#        else the lowest free /24 nobody holds, handed to those pools in name order.
 #   1-3 can still collide with each other (two pins, a pin onto a recorded pool, a hand-edited
 #   ledger); that is refused at plan, naming the pools. Step 4 cannot collide, by construction.
 #
@@ -221,6 +221,13 @@ locals {
     if contains(keys(var.node_pool_subnet_index), name) || contains(keys(local.node_pool_recorded_slot), name) || contains(keys(local.node_pool_existing_slot), name)
   }
 
+  # The /24s a NEW pool may not take: every held one, AND every one still recorded for a pool that this
+  # plan removes. A removed pool's subnet is destroyed in the same apply that would create the new one,
+  # and nothing orders the two, so Hetzner could refuse the overlap part-way through. Its label is
+  # dropped by this plan (node_pool_ledger_labels lists only current pools), so the /24 is free again
+  # on the next plan.
+  node_pool_reserved_slots = distinct(concat(values(local.node_pool_held_slot), values(local.node_pool_recorded_slot)))
+
   # Step 4, the new pools in name order, each with its hash slot (-1 when the network has no free /24).
   node_pool_new_names = sort([for name in keys(local.node_pools) : name if !contains(keys(local.node_pool_held_slot), name)])
   node_pool_hash_slot = {
@@ -235,7 +242,7 @@ locals {
   node_pool_hash_winners = {
     for i, name in local.node_pool_new_names : name => local.node_pool_hash_slot[name]
     if local.node_pool_hash_slot[name] > 0 &&
-    !contains(values(local.node_pool_held_slot), local.node_pool_hash_slot[name]) &&
+    !contains(local.node_pool_reserved_slots, local.node_pool_hash_slot[name]) &&
     !contains([for earlier in slice(local.node_pool_new_names, 0, i) : local.node_pool_hash_slot[earlier]], local.node_pool_hash_slot[name])
   }
 
@@ -243,7 +250,7 @@ locals {
   # null when the network has run out of free /24s (the fit check then says so).
   node_pool_spare_slots = [
     for n in local.node_pool_free_slots : n
-    if !contains(values(local.node_pool_held_slot), n) && !contains(values(local.node_pool_hash_winners), n)
+    if !contains(local.node_pool_reserved_slots, n) && !contains(values(local.node_pool_hash_winners), n)
   ]
   node_pool_hash_losers = [for name in local.node_pool_new_names : name if !contains(keys(local.node_pool_hash_winners), name)]
 
