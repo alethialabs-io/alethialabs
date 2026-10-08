@@ -280,6 +280,9 @@ describe("parseClientToolOutput", () => {
 		).toBe(false);
 		expect(parseClientToolOutput("create_support_case", APPROVED).ok).toBe(false);
 		expect(parseClientToolOutput("propose_changes", { status: "accepted" }).ok).toBe(false);
+		expect(
+			parseClientToolOutput("propose_changes", { status: "accepted", label: "x".repeat(2001) }).ok,
+		).toBe(false);
 		expect(parseClientToolOutput("propose_changes", { status: "rejected", label: "x" }).ok).toBe(
 			false,
 		);

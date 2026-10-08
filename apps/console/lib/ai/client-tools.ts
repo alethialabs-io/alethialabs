@@ -75,12 +75,12 @@ export const createSupportCaseOutputSchema = z.discriminatedUnion("status", [
 /**
  * `propose_changes`' output: what `components/agent/render-tool-parts/project-tool-parts.tsx`
  * sends when the user clicks Accept, the only output that card produces. `label` echoes the
- * proposal's own label, which the model wrote, so it has no length rule of its own: the
- * 4,096-byte cap on the whole output bounds it.
+ * proposal's own label, which the model wrote, so it is bounded at 2,000 characters (ADR 0003
+ * §5.1 step 8) like a denial's reason; slice 6 truncates it in the browser to fit.
  */
 export const proposeChangesOutputSchema = z.object({
 	status: z.literal("accepted"),
-	label: z.string(),
+	label: z.string().max(REASON_MAX_CHARS),
 });
 
 /** The output schema of each client tool, keyed by its name. */
