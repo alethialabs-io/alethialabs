@@ -138,6 +138,7 @@ export async function endClaim(
 				eq(elenchDrafts.user_id, actor.userId), // authz-scope-ok: owner-only draft rows (ADR 0001 §3.1), on top of owner_only RLS
 				eq(elenchDrafts.org_id, actor.orgId),
 				eq(elenchDrafts.status, "sending"),
+				eq(elenchDrafts.claim_token, claim.token),
 				onlyIfSilent ? claimIsSilent : undefined,
 			),
 		)
