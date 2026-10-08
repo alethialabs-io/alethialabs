@@ -37,7 +37,9 @@ Stripe call is surprising without this context. The alternatives (Stripe metadat
 holds written after the fact) were real and are recorded below.
 
 Every claim about today's code cites `file:line` at `origin/dev` `e02417059` (2026-10-08). Rev 6
-re-checked every citation there. Three billing changes merged after rev 5.1 and are now part of
+re-checked every citation there. Rev 7 re-checked them at `37af47c95`: no file under
+`apps/console/app/server/actions/billing.ts`, `lib/billing/`, `components/org/` or `lib/db/schema/`
+changed between the two, so every line number still holds. Three billing changes merged after rev 5.1 and are now part of
 "today": #5518 (`f586e91e5`, the row guard), #5549 (`835c01937`, N2) and #5539 (`9cb8b9539`, the
 plan state the sheet shows). **Every path is relative to `apps/console/`**, including
 `docs/stripe-prod-runbook.md` and `scripts/stripe-setup.ts`, which exist only there. There are two
@@ -136,6 +138,31 @@ relative to the repo root, as the board's `scope:` lines are.
   - **No advisory is rejected.** Every advisory from the five reviews is taken, or is closed by the
     rev-5 narrowing, as the table above records.
 
+- **Revision 7** (2026-10-08, the money review of `3bb3e8ca2`: three blockers, ten advisories). The
+  review also confirmed a **live double-charge window on `dev`** (§1.1, "The link ignores a refused
+  sync"), and S1 now closes it alone, first.
+  - **R7-1 (blocker): `closed_at` had one writer, so I15 was false.** The sheet's pre-link stop and
+    every setup whose link never runs again left the §5.7 guard on for good, and S1 shipped the guard
+    with no writer at all. New invariant **I16**: no slice ships a guard without the writers that
+    release it, and every open setup state has an exit. S1 now ships, with the guard: a closer that
+    runs wherever an ended X is **read** (the link, both resume lookups and the guard itself, §5.7
+    "Every open setup has an exit"); the link's refusal of a refused sync; and an audited operator
+    command, `pending-org-setups close-setup`. The guard's message to a co-owner names the creator and
+    offers support, and never says "finish the setup". New cases C87–C90.
+  - **R7-2 (blocker): T2o plus `closed_at` stranded a paid, live, unlinked X.** A setup whose
+    subscription has an **open hold** is never closed. A refusal while a hold is open leaves the setup
+    open with `refused_reason`, and the hold's terminal transition closes it or links it (§5.6 "When a
+    hold ends"). T2 and T2o adoption on a setup that has an org re-attempt the link. C57 and C80 are
+    corrected; new cases C91 and C92.
+  - **R7-3 (blocker): "ADR 0003" was taken** by #5548. F1 is now ADR 0004 (§10.2).
+  - **Advisories, all taken:** (1) §4.3 names its record set, which includes org-created and closed
+    records (C94); (2) S8's backfill is re-run after its rollout completes; (3) S3 removes S2's
+    advisory lock key; (4) §8 step 3 no longer stamps the cancels, S8 does; (5) `forgetPendingOrgSetup`
+    is specified (§8); (6) the Q3 email has one sender, the sweeper, and a claim column (§4.1, C95);
+    (7) the Q10 two-charges window is stated in §3.1 and in the `refund_pending` copy; (8) C81's
+    co-owner half is a real-Postgres integration test; (9) the guard also matches the org's
+    `newOrgSubscriptionId` marker (C93); (10) the gap test is `:1524-1550`, not `:1522-1545`.
+
 ---
 
 ## 1. Context
@@ -172,7 +199,7 @@ relative to the repo root, as the board's `scope:` lines are.
   - otherwise alerts (`alertPaymentNeedsSupport`, `lib/billing/payment-alert.ts:31-57`) and refuses.
 - **Nothing is remembered.** The sweep lists only `incomplete`, so a subscription this flow
   cancelled is invisible to the next request. The `PaymentOutcome` docblock says so (`billing.ts:685-704`).
-  A test pins the gap for create-a-team: `tests/actions/billing-subscription.test.ts:1522-1545`.
+  A test pins the gap for create-a-team: `tests/actions/billing-subscription.test.ts:1524-1550`.
 - **Lock.** `withPurchaseLock` (`lib/billing/purchase-lock.ts:32-46`) runs
   `pg_advisory_xact_lock(hashtextextended('purchase:'+key))` in a transaction on a pooled service
   connection, with `lock_timeout = 30s` (`:22`). The key here is `new-org:<userId>` (`billing.ts:1582`).
@@ -191,6 +218,23 @@ relative to the repo root, as the board's `scope:` lines are.
   afterwards (`Promise<NewOrgPlanReport>`, `:1860`, `:1935`; `readNewOrgPlanState`, `:1948-1971`).
   For `action_needed`, that report includes Stripe's hosted page for the open first invoice
   (`openInvoicePaymentUrl`, `:1989-2000`).
+- **The link ignores a refused sync: a live double-charge window (rev 7, confirmed by the review of
+  `3bb3e8ca2`).** `syncSubscriptionToBilling` returns `"applied" | "ignored"` (`lib/billing/sync.ts:105`,
+  `:118-121`), and the link discards it (`billing.ts:1913`). It then marks the setup linked (`:1930`)
+  and returns `readNewOrgPlanState(linked)` (`:1935`), which reads X's own status. The sequence:
+  1. The tab pays X. The org O is created (`recordNewOrgCreated` stamps `created_org_id`,
+     `lib/billing/pending-org-setup.ts:494-511`), and `setActiveOrganization` runs.
+  2. The link throws before `subscriptions.update` writes `organization_id`, so no event for X writes
+     O's row.
+  3. The user opens O's billing. `createSubscriptionIntent` sees no row (`billing.ts:1187-1194`), and
+     `ensureCustomer` mints a fresh customer, so X's customer is never swept. The user pays Y, and the
+     webhook writes O's row naming Y, `active`.
+  4. The retried link writes X's metadata. The sync of X is refused by the superseder rule
+     (`queries.ts:249-258`), and the result is ignored. The link marks the setup linked and reports
+     X's `active`, so the sheet toasts "Subscription active".
+
+  X renews beside Y, and each renewal sends a receipt. `startProTrial` (a `trialing` Y) and
+  `createCheckoutSession` reach the same state. S1 (§10) closes it.
 - **The sheet shows the server's plan state, but has no refusal (rev 6).** `runSteps` keeps the
   link's report (`pending-paid-setup.ts:539-548`) and toasts it (`:582-593`), so "Subscription
   active" appears only for `active` (#5539). It still replaces any thrown error other than
@@ -328,6 +372,12 @@ way back. A refund that later **fails** returns the hold to `refund_due` (T10f),
 refunds again, or an operator does (T14). A refund that neither succeeds nor fails reaches an operator
 through I11.
 
+**The window this leaves, stated (rev 7).** While a hold is `refund_pending`, the user may mint and pay
+Y. If X's refund then fails (T10f), the customer carries **two charges** (X's, not yet refunded, and
+Y's) until T5's next refund attempt succeeds or an operator refunds it (T14). That is a delay on money
+already owed back, not a second plan: X is ended. The `refund_pending` clause says so (§5.5), so
+"not a second charge for the same thing" is never read as "never two charges at once".
+
 Every open state sets a non-null `next_check_at` when it is entered: `closing` and `cancel_unproven`
 5m, `invoice_payable` 15m, `payment_in_flight` 1h, `refund_due` the §3.5 backoff, `refund_pending` 1h,
 `needs_operator` 24h (observe only). Every state entry writes `state_since`. Every successful
@@ -397,7 +447,7 @@ the Stripe write, then observes again in the same call, up to 3 steps per call.
 | T0f | — | E0 `open`, and the **write fails** | Nothing is voided or cancelled. The purchase is refused (`UNCONFIRMED`, no promise of a block). The subscription is still `incomplete`, so the next sweep finds it. | (no row) |
 | T0h | — | E0 `open`, and the insert conflicts with an **open** hold on the same subscription (the partial unique index, §4.1). **Rev 5:** this now happens only when the backfill (§8) and a purchase meet the same subscription. | No new row, and nothing is voided or cancelled. The flow refuses with that hold's clause (§5.5). | (the existing row) |
 | T1 | any open state | `sub = missing` | alert | `needs_operator` |
-| T2 | `closing`, `cancel_unproven` | `sub = live` | none. The flow treats it as the user's paid setup and returns `resume` (§4.3). | `released(adopted)` |
+| T2 | `closing`, `cancel_unproven` | `sub = live` | none. The flow treats it as the user's paid setup and returns `resume` (§4.3). **Rev 7:** the release runs §5.6 "When a hold ends": a setup with an org is re-linked, one without stays open for the resume. | `released(adopted)` |
 | T3 | `closing`, `cancel_unproven` | `sub = incomplete`, `pay ∈ {awaiting, failed}`, `inv ∈ {open, uncollectible}` | → act: **void the held invoice**, then **re-read it**. Only a re-read showing `inv = void` lets the same call go on to cancel (T3v). A void that throws, or a re-read showing anything else, **makes no cancel** and goes to T3a. | the next observe decides |
 | T3v | `closing`, `cancel_unproven` | `sub = incomplete`, `inv = void`, `pay ∈ {awaiting, failed}` | → act: **cancel**, stamped `cancellation_details.comment = "alethia:checkout_closed:<hold id>"` (S12, §5.3 (4)), then re-read. | `ended` → T9; a cancel failure → `cancel_unproven` |
 | T3a | `closing` | `sub = incomplete`, and the void or the cancel threw, or the re-read did not show `void` | No alert. `attempts += 1`. | `cancel_unproven` |
@@ -417,7 +467,7 @@ the Stripe write, then observes again in the same call, up to 3 steps per call.
 | T12 | `invoice_payable` | the void fails | → act: re-read the payments once. `succeeded` → T5, `in_flight` → T6, else stay. | as matched |
 | T13 | `refund_due` | `refunds.create` fails, budget left (§3.5) | `next_check_at = now + backoff` | `refund_due` |
 | T14 | `refund_due` | the refund fails and `refund_attempt >= 5` | alert | `needs_operator` |
-| T2o (rev 5.1) | `needs_operator` | `sub ∈ {active, trialing}` | none. A paid, live subscription is the customer's to keep, so waiting for an operator only delays their team. The link (§5.6) or the next purchase (§4.3) then links or resumes it. Not for a hold opened by the link's refusal (C80), which carries `open_note = link_refused` and is the operator's. | `released(adopted)` |
+| T2o (rev 5.1, corrected in rev 7) | `needs_operator` | `sub ∈ {active, trialing}` | none. A paid, live subscription is the customer's to keep, so waiting for an operator only delays their team. **Rev 7 (R7-2):** the release runs §5.6 "When a hold ends" in the same caller, under the same lease. A setup with an org is re-linked at once. A setup with no org stays **open**, so `findUnfinishedNewOrgSetup` resumes it and §4.3's live check returns `resume`, and the sweeper sends the Q3 "finish creating your team" email. A setup is never closed while this hold is open (I16), so a refusal earlier in the hold's life cannot hide X. Not for a hold opened by the link's refusal (C80), which carries `open_note = link_refused` and is the operator's. | `released(adopted)` |
 | T15 | `needs_operator` | E1 `observe`, anything T2o does not match | Observe and record only. Never auto-releases. | `needs_operator` |
 | T16 | any open state | E2 `operator_release(reason)` | Under the user's lease (up to 30s wait, refused if still busy). Prints the live observation, then writes `released_by`, `release_note` and an audit event with a compare-and-set on `version`. | `released(operator)` |
 | T17 | any open state | `sub` reads a status outside these rows (`unpaid`, `paused` on an ended sub, an unknown value) | alert | `needs_operator` |
@@ -507,10 +557,19 @@ Each invariant is tested (§6).
   not return (rev 5).** §5.6.
 - **I14, a paid create-a-team subscription is never left live, unlinked and unwatched (rev 5.1).**
   The link links it, defers it, or refuses it with a `needs_operator` hold that alerts. And the
-  org's own purchase flows cannot take the org's row while its setup is open, which means unlinked
-  and not closed by a refusal (§5.7).
-- **I15, a refusal never locks the org out (rev 6).** Every link refusal closes U's setup
-  (`closed_at`), so §5.7's guard never outlives the setup it protects.
+  org's own purchase flows cannot take the org's row while its setup is open (§5.7). **Rev 7:** a
+  setup is never closed while X may still become live and unlinked: it closes only when X reads
+  ended and no open hold names X (I16). An adoption re-links a setup that has an org (§5.6 "When a
+  hold ends").
+- **I15, the guard never locks the org out (rev 6, corrected in rev 7).** Every open setup has an
+  exit that does not depend on the creator coming back (§5.7 "Every open setup has an exit"). Rev 6
+  claimed this from one writer, the link's refusal, and the claim was false (R7-1).
+- **I16, no guard ships without the writers that release it (rev 7).** A slice that adds a refusal
+  also adds every write that lifts it, in the same PR. Two rules make the setup's exits sound:
+  (a) **a setup whose subscription has an open hold is never closed**, by any writer; a refusal
+  while a hold is open records `refused_reason` and leaves the setup open; (b) **a hold's terminal
+  transition decides the setup**: `adopted` links it (or leaves it open for the resume when no org
+  exists), and every other release closes it. Each half has a case (C91, C92).
 
 ---
 
@@ -536,7 +595,10 @@ The table is new, service-role only, with RLS enabled and no app policy, like th
 - `attempts`, `last_error`, `next_check_at`, `alerted_at`
 - `notice_last_sent_at`: when a response last **carried** this hold's clause. It never means
   "delivered".
-- `opened_by_user_id`, `opened_by` (`purchase | backfill`), `open_note`
+- `notified_state`, `notified_at` (rev 7, Q3): the state whose email has been **claimed** for
+  sending (`refund_pending`, `released:refunded` or `released:adopted`), and when. Null when no
+  email was claimed. The sweeper is the only writer (§5.4).
+- `opened_by_user_id`, `opened_by` (`purchase | backfill | link`), `open_note`
 - `state_since`, `last_pay`, `refund_action_since`, `age_alerted_at`
 - `observed_at`: when the observation behind the last state write **started**. E0 sets it to the
   insert time.
@@ -553,8 +615,17 @@ The table is new, service-role only, with RLS enabled and no app policy, like th
 |---|---|---|---|
 | **State write** | E0 (insert), every `advanceHold` transition, T5's attempt reservation, T16, the sweeper's age alert | `state`, `state_since`, `release_*`, `refund_attempt`, `attempts`, `last_error`, `last_pay`, `refund_action_since`, `observed_at`, `next_check_at`, `alerted_at`, `age_alerted_at`, `version` | `WHERE id = $1 AND version = $2` **and**, in the same statement, `EXISTS (SELECT 1 FROM purchase_leases WHERE key = $k AND holder = $h AND expires_at > now())`. Sets `version = version + 1`. |
 | **Hint write** | the webhook nudge | `nudged_at`, `updated_at` and nothing else | No `version` check, no bump, no lease. `WHERE subscription_id = $1 AND state <> 'released'`. |
+| **Notice claim (rev 7)** | the sweeper, before it sends a Q3 email | `notified_state`, `notified_at` and nothing else | No `version` check, no bump. `WHERE id = $1 AND notified_state IS DISTINCT FROM $s RETURNING id`. Only a returned row lets the email out. A send that throws writes `notified_state = NULL WHERE id = $1 AND notified_state = $s`, so the next tick retries. |
 
-A hint write cannot change state, counters or schedule, so it needs no fence. Because it never
+**A release decides the setup (rev 7, I16).** The state write that moves a hold to `released`
+also writes, in the same transaction, the `pending_org_setups` row whose `subscription_id` is the
+hold's: for every `release_reason` except `adopted`, `closed_at = now()` and `closed_reason =
+'hold_released'` when the row is still open. An `adopted` release leaves the row open, and its caller
+runs §5.6 "When a hold ends" after the commit.
+
+A hint write cannot change state, counters or schedule, so it needs no fence. A notice claim cannot
+either, and its compare-and-set makes each email at most once per hold and state. A crash between
+the claim and the send loses that one email; the `notice` (§5.5) still carries the clause. Because it never
 touches `version`, it can never make a state write miss (C74). A nudge that lands during a step has
 `nudged_at` later than that step's `observed_at`, so the hold is due again at once.
 
@@ -592,7 +663,14 @@ org-plan or AI checkout.
 
 Before minting, after the hold pass and the sweep, the flow lists
 `subscriptions.list({ customer, status: "all" })` for every customer U's records name, fully paged,
-and filters to U's create-a-team subscriptions. A **live** one returns `kind: "resume"` through
+and filters to U's create-a-team subscriptions.
+
+**Which records (rev 7).** Every `pending_org_setups` row of U with `linked_at IS NULL`, **whether or
+not `created_org_id` is set and whether or not it is closed**, keyset-paged and capped at 50
+customers (over the cap, refuse), plus the customers of U's open holds. This is a new helper. It is
+**not** `unlinkedPendingOrgSetupCustomers`, which excludes every record with `created_org_id` set
+(`pending-org-setup.ts:227`) because it answers a different question (which customer to reuse). With
+that helper, a paid, unlinked X whose org exists was invisible to I1 (c) (C94). A **live** one returns `kind: "resume"` through
 `newOrgSetupStateFor` (`billing.ts:2036`), as the paid-prior path does at `:1603-1610`. A linked one
 is no longer U's create-a-team subscription. It belongs to the new org, and its later purchases are
 out of scope (§7).
@@ -821,7 +899,29 @@ These numbers are part of Q4.
 - `release <sub> --reason "<text>" --operator <userId>` is T16. It refuses when there is no reason,
   takes the user's lease, prints the live observation, then writes the `version` compare-and-set and
   an audit event (`billing.payment_hold.released`). It is the way out of `needs_operator` and of the
-  `unpaid` or `paused` dead end (AC9).
+  `unpaid` or `paused` dead end (AC9). **Rev 7:** the release decides the setup (§4.1): it closes it,
+  or, when X reads live, runs §5.6 "When a hold ends", which links it. A live X whose link is refused
+  makes the command refuse the release and print why (the org's row names a live Y): the operator
+  first cancels and refunds X, or Y, in Stripe.
+
+**The setup command (rev 7, shipped by S1).** `scripts/pending-org-setups.ts close-setup
+<subscription_id> --reason "<text>" --operator <userId>` is the operator's exit for a setup no
+reader can close (§5.7). It refuses with no reason. It reads X from Stripe and prints it with the
+setup row. It refuses unless X reads ended (`canceled` or `incomplete_expired`): an operator who
+decides a live or `incomplete` X must go cancels it in Stripe first (refunding it when it was paid),
+because closing the setup of a live X would hide it from §4.3. From S8 on it also refuses while an
+open hold names X (I16): `payment-holds release` is the way out then. Otherwise it writes
+`closed_at`, `closed_reason = 'operator'`, `closed_by` and `closed_note` with a compare-and-set on
+`closed_at IS NULL AND linked_at IS NULL`, and writes the audit event
+`billing.pending_org_setup.closed`.
+
+**Who sends the Q3 emails (rev 7).** The sweeper, and nothing else. Each tick also selects every
+hold whose state is `refund_pending`, `released(refunded)` or `released(adopted)` (the last only
+when its setup has no org, §5.6), released within the last 14 days for the two released states,
+and whose `notified_state` is not that state. For each one it
+takes the notice claim (§4.1) and then sends. The purchase flow, the link and the operator command
+move holds but never send, so an email cannot be sent twice by two callers, and a state entered by
+any caller is mailed within one tick.
 
 ### 5.5 Customer copy
 
@@ -837,12 +937,14 @@ state **and** its `last_pay`.
 | a kept subscription with no payment, or with `has_more` (C39) | "An earlier checkout is still open and we could not confirm it is unpaid, so nothing new was started. Try again later; it closes on its own within a day." |
 | `invoice_payable` | "We could not yet close an earlier checkout's invoice, so nothing new was started. Try again in a few minutes." |
 | `refund_due` | "An earlier payment went through after that checkout was cancelled. Its refund has not gone through yet; nothing new can be started until it has." |
-| `refund_pending` | "An earlier payment went through after that checkout was cancelled. We have issued its refund, and it is on its way back to you." |
+| `refund_pending` | "An earlier payment went through after that checkout was cancelled. We have issued its refund, and it is on its way back to you. If you buy again now and that refund fails, you may see both charges until we have refunded it again." (Rev 7: the second sentence states the §3.1 window.) |
 | `needs_operator` | "…contact support at <email>…", plus "we have raised an alert" **only when alerted**. |
 | `released(refunded)` or `released(already_refunded)` in the last 14 days | **Appended** to any of the above (C26): "An earlier payment was refunded in full; it can take 5–10 business days to reach you." |
 | a link refused on an ended X with no hold, read `not_charged` (§5.6) | "This checkout was closed before its payment completed, so it was not linked to a team. It was not charged. A team already created for it stays on the free plan." (Rev 6: rev 5.1's "nothing more will be charged" is dropped. A cancelled subscription's open invoice can still be paid from a stale tab (S1), so the clause says only what the read proved.) |
 | a link refused on an ended X with no hold, read anything else (§5.6, rev 6) | "This checkout was closed, and we could not confirm whether its payment went through, so it was not linked to a team. Contact support at <email> with the time of the payment." Add "We have raised an alert." **only when alerted**. Add "A team already created for it stays on the free plan." when one was. |
-| a link refused beside a live, paid plan (§5.6) | "This team already has an active plan, so this payment was not linked to it. Contact support at <email>, who will refund it or move it to the right team." Add "We have raised this with support." **only when alerted** (I8). |
+| a link refused beside a live, paid plan (§5.6), including S1's refused sync | "This team already has an active plan, so this payment was not linked to it. Contact support at <email>, who will refund it or move it to the right team." Add "We have raised this with support." **only when alerted** (I8). |
+| §5.7's guard, to the setup's creator (rev 7) | "Your paid setup for this team has not finished, so a plan cannot be started here yet. Open Create a team to see where it stands, or contact support at <email>." From S8, when an open hold names X, the hold's clause replaces the first sentence. |
+| §5.7's guard, to anyone else (rev 7) | "<Creator> started a paid setup for this team that has not finished, so a plan cannot be started here yet. Ask them, or contact support at <email>." `<Creator>` is the creator's name as the org's member list shows it, and "Another member of this team" when the creator is no longer a member. It never says "finish the setup": only the creator can. |
 | a link that succeeded (§5.6, rev 6) | #5539's `NEW_ORG_PLAN_COPY[planState]` (`lib/billing/new-org-plan-state.ts`), unchanged. Its `processing` copy says the payment went through only when a PaymentIntent succeeded, and its `confirming` copy claims nothing about the outcome. Rev 5's own "link and defer" sentence is withdrawn. |
 | T0h | The clause of the existing hold. |
 | T0f | `UNCONFIRMED` text, with no promise of a block. |
@@ -865,18 +967,48 @@ clause is appended to every create-a-team response of that user for 14 days afte
 type is `{ kind: "linked" } & NewOrgPlanReport | { kind: "refused"; clause: string }` (rev 6). The
 linked arm is #5539's report unchanged: `planState` from `readNewOrgPlanState` and its `paymentUrl`.
 
-**Every refusal closes the setup (rev 6, R6-1).** Before it returns `refused`, the link writes
-`pending_org_setups.closed_at = now()` and `closed_reason` (`ended`, `held` or `org_has_plan`) on U's
-row for X. A closed setup is no longer unfinished. `findUnfinishedNewOrgSetup` skips it, and §5.7's
-guard ignores it. Its memory stays where it was: the hold row, and the `closed_*` columns.
+**A refusal closes the setup only when it is terminal (rev 6; corrected in rev 7, R7-1 and R7-2).**
+Before it returns `refused`, the link writes `refused_reason` (`ended`, `held` or `org_has_plan`) on
+U's row for X. It also writes `closed_at = now()` and `closed_reason = refused_reason`, but **only
+when X reads ended and no open hold names X** (I16), in one statement:
+`… WHERE subscription_id = $x AND linked_at IS NULL AND closed_at IS NULL AND NOT EXISTS (SELECT 1
+FROM payment_holds WHERE subscription_id = $x AND state <> 'released')`. Every other refusal leaves
+the setup open, and the hold that names X decides it when it ends ("When a hold ends", below). S1's closer has
+no `payment_holds` table to read, and none is needed before holds exist; S8 adds the `NOT EXISTS`
+to it and to `close-setup`. A
+closed setup is no longer unfinished: `findUnfinishedNewOrgSetup` skips it, and §5.7's guard ignores
+it. Its memory stays where it was: the hold row, and the `closed_*` and `refused_reason` columns.
+
+Rev 6 closed on every refusal. That lost X twice: a `needs_operator` hold on an `incomplete` X could
+adopt after the refusal (T2o), and then nothing listed X (R7-2); and the sheet's pre-link stop never
+reached the link, so nothing closed the setup at all (R7-1).
+
+**The refused sync (rev 7, S1).** The link no longer ignores what `syncSubscriptionToBilling`
+returns (`billing.ts:1913`). It refuses with `org_has_plan` when the org's billing row names a
+subscription other than X whose status is `active` or `trialing`, in two places:
+- **before any Stripe write**, from the row as read; nothing is written to X or its customer;
+- **after the sync**, when the sync returned `"ignored"` and the row, read again, still names such a
+  Y. This is the race in which Y took the row between the first read and the sync. X's metadata
+  already names the org here; nothing undoes that, and the alert below is what reaches it.
+
+A refused link never reports a plan state, never calls `markPendingOrgSetupLinked`, never writes the
+payer facts, and returns `{ kind: "refused", clause }` with the "already has an active plan" clause
+(§5.5). It logs the stable event `billing.new_org_link.refused` (subscription, customer, org, the
+row's subscription) and calls `alertPaymentNeedsSupport` with X as the subject. An `"ignored"` sync
+whose row names **X itself** is not a refusal: that is #5549's rank guard keeping a later `active`
+(C76), and the link reports X's state as today. Neither is an `"ignored"` sync beside a row that
+holds a `past_due` Y or an off-Stripe grant while X is `incomplete`: that is link and defer (C77).
+Until S9, the S1 refusal closes the setup (no holds exist yet, and S1's closer has no hold to wait
+for). From S9 on, the `org_has_plan` refusal of a live or `incomplete` X opens the `needs_operator`
+hold below, so the setup stays open (I16).
 
 | X, and any open hold naming X | The link returns |
 |---|---|
-| X is ended (`canceled` or `incomplete_expired`) and a hold names it | `{ kind: "refused", clause }` with the hold's clause (§5.5). X keeps its create-a-team metadata, and its hold keeps the user as payer (I12). |
+| X is ended (`canceled` or `incomplete_expired`) and a hold names it | `{ kind: "refused", clause }` with the hold's clause (§5.5). X keeps its create-a-team metadata, and its hold keeps the user as payer (I12). Rev 7: an **open** hold leaves the setup open (`refused_reason = held`); its release closes it (§4.1). A hold already released closes it now. |
 | X is ended, **no** hold names it **(rev 6, R6-3)** | The link reads the held-invoice payments as #5539's `readNewOrgPlanState` does. If it reads `not_charged` (no money moved), it returns `{ kind: "refused" }` with the "closed before its payment completed" clause. If it reads anything else (`not_active`: money may have moved, or the read failed), it returns `{ kind: "refused" }` with the "contact support" clause (§5.5) and raises `alertPaymentNeedsSupport` with X as the subject. **It refunds nothing.** Only a hold may refund (I3, C34), and a hold is opened only by a flow that voided or cancelled X. An operator decides this case (C86). |
-| an open hold in `payment_in_flight`, `invoice_payable`, `refund_due`, `refund_pending` or `needs_operator` | `{ kind: "refused", clause }` with that hold's clause. |
+| an open hold in `payment_in_flight`, `invoice_payable`, `refund_due`, `refund_pending` or `needs_operator` | `{ kind: "refused", clause }` with that hold's clause. Rev 7: the setup stays open (`refused_reason = held`), and the hold's end decides it. |
 | an open hold in `closing` or `cancel_unproven` | Run `advanceHold` first (the link holds the lease). `released(adopted)`: link as below. A T4-shaped observation that is still open: **link and defer**. Otherwise X was just closed: refused, as in the first row. |
-| **the org's billing row names a different subscription Y that is `active` or `trialing` (rev 5, narrowed in rev 5.1)** | `{ kind: "refused", clause }` with the "already has an active plan" clause (§5.5). Rev 6: the clause says "we have raised this" only when the alert returned true (I8). **Before** it returns, the link opens a hold on X in `needs_operator` (`open_note = link_refused`, T2o does not apply), which alerts with X as the subject and blocks U's next create-a-team. A paid, live X is therefore never left renewing without an alert (C80). With §5.7 in place, only a race can reach this row. |
+| **the org's billing row names a different subscription Y that is `active` or `trialing` (rev 5, narrowed in rev 5.1)** | `{ kind: "refused", clause }` with the "already has an active plan" clause (§5.5). Rev 6: the clause says "we have raised this" only when the alert returned true (I8). **Before** it returns, the link opens a hold on X in `needs_operator` (`open_note = link_refused`, T2o does not apply), which alerts with X as the subject and blocks U's next create-a-team. A paid, live X is therefore never left renewing without an alert (C80). With §5.7 in place, only a race can reach this row. Rev 7: the hold is open, so the setup stays open (I16) until an operator releases the hold. Checked both before the Stripe writes and after the sync ("The refused sync"). |
 | the row names a different subscription Y that is **not** live and paid (`none`, `canceled`, `past_due` (which includes Stripe's `unpaid`, `sync.ts:51-53`), or no subscription id) **(rev 5.1, corrected in rev 6)** | Link X as below. #5518's rule (`queries.ts:249-258`): any X, `incomplete` included, takes a row whose status is `none` or `canceled`. Only a **paid** X takes a row that holds a `past_due` subscription, or a live status with no subscription id (an off-Stripe grant). In those two cases an `incomplete` X takes the row once its own `active` event arrives (C77). Y is untouched: an abandoned `none` Y expires (S3), and a `past_due` Y keeps its own dunning (§7). |
 | X `incomplete`, no hold | **Link and defer**: `{ kind: "linked", ...readNewOrgPlanState(X) }`. That is `processing`, `confirming`, `action_needed` or `unconfirmed`, with #5539's copy. |
 | X live | Link as today: `{ kind: "linked", planState: "active", paymentUrl: null }`. |
@@ -895,11 +1027,39 @@ carries `organization_id`, so the webhook that reports X `active` applies the pl
 N2, which holds on `dev` since #5549 (§5.3 (2), C76). If X's payment later fails, the hold that names X voids and cancels it.
 With no hold, Stripe expires it (S3). The team stays on `community`, and nothing is charged.
 
+**When a hold ends (rev 7, R7-2).** A hold's release decides the setup whose `subscription_id` is
+the hold's (I16 (b)):
+- **Any release except `adopted`:** X is ended, or settled for good, so the release's own state write
+  closes the setup (`closed_reason = 'hold_released'`, §4.1).
+- **`adopted` (T2, T2o, or T16 on a live X), and the setup has an org** (`created_org_id`, or the
+  org's `newOrgSubscriptionId` marker): the caller that released it runs the link's core for that
+  setup at once, still under U's lease. The core takes no session. It re-checks what the session
+  checks: X's `metadata.created_by` and its customer's `created_by` are U, and U still holds
+  `manage_billing` in that org (an authorization check for U, not for whoever runs the sweeper). A
+  link that succeeds marks the setup linked. A link that is refused takes the §5.6 table's row: beside
+  a live, paid Y, a new `needs_operator` hold (`link_refused`) opens and alerts, and the setup stays
+  open. A U who no longer holds `manage_billing` gets no link; the caller alerts with X as the subject
+  and leaves the setup open for an operator.
+- **`adopted`, and the setup has no org:** the setup stays open. `findUnfinishedNewOrgSetup` returns
+  it (X is paid), §4.3's live check returns `resume` for it, and the sweeper sends the Q3 email that
+  the payment went through and the team can be finished from Create a team (§5.4).
+
+Between S8 and S9 the re-link does not exist yet: an adopted setup with an org stays open, and the
+creator's next Create a team links it through today's link.
+
 **The resume lookups report a held setup.** `NewOrgSetupState` (`lib/billing/new-org-setup.ts:72-103`)
 gains `hold: { state; notice } | null`, and `resolveNewOrgSetup` (`billing.ts:2107`) and
 `findUnfinishedNewOrgSetup` (`:2158`) fill it. A held setup is never reported as resumable. A
 reported hold is not a settling plan state, so #5539's re-read loop (`pollSettlingPlanState`,
 `pending-paid-setup.ts:615-654`) stops on it.
+
+**The resume lookups close what they read as ended (rev 7, R7-1; shipped by S1).** Both lookups
+already retrieve X (`billing.ts:2115`, `:2175`). When X reads ended and the setup is open, they run
+the setup closer (§5.7 "Every open setup has an exit") **before** they answer, so the sheet's
+pre-link stop (sheet rule 1) needs no write of its own: the server has closed the setup by the time
+the sheet sees "ended". On `dev`, `findUnfinishedNewOrgSetup` drops an `incomplete_expired` record
+only when it has no org (`forgetPendingOrgSetup`, `pending-org-setup.ts:128-147`); a record with
+`created_org_id` set was skipped and kept open for good. It is now closed instead.
 
 **The sheet (rev 5, K5).** `runSteps` (`components/org/pending-paid-setup.ts`) changes in four places:
 
@@ -907,14 +1067,16 @@ reported hold is not a settling plan state, so #5539's re-read loop (`pollSettli
    runs before the org is created (`:476`). It reports X ended, or a hold in `payment_in_flight`,
    `invoice_payable`, `refund_due`, `refund_pending` or `needs_operator`. In those cases the run throws
    `SetupStopped(notice)` **before** `authClient.organization.create` (`:495`), and the browser
-   record is cleared, because the server keeps the memory. A hold in `closing` or `cancel_unproven`
+   record is cleared, because the server keeps the memory. Rev 7: this rule also runs when the org
+   already exists (`server.org` set, `:483-492`), and the stop writes nothing: the lookup has already
+   closed an ended, unheld setup, and a held one stays open until its hold ends (I16). A hold in `closing` or `cancel_unproven`
    does **not** stop the run. The link advances it under the lease, and adopts, defers or refuses
    it (the link's `closing` / `cancel_unproven` row). That way a card payment that succeeded while another tab's sweep opened a hold
    is linked, not stopped.
 2. **Render the link's result.** `{ kind: "refused" }` throws `SetupStopped(clause)`: non-retryable,
    with the clause as the message. The browser record is then cleared, because the server keeps the
-   memory (the hold row and the closed `pending_org_setups` row), and a retry would only be refused
-   again. An org created before a racing refusal stays on the free plan, and the clause says so.
+   memory (the hold row, and the `pending_org_setups` row: closed when X is ended and unheld, open
+   with `refused_reason` while a hold decides it), and a retry would only be refused again. An org created before a racing refusal stays on the free plan, and the clause says so.
    The linked arm is carried to the outcome as #5539 carries the report today (`:548`).
 3. **No false success. Already true on `dev` (#5539).** `done` carries `planState`, and the toast
    and the final view show it (`pending-paid-setup.ts:582-593`). "Subscription active" appears only
@@ -938,29 +1100,57 @@ So a second subscription Y can name the org before X does. That breaks the assum
 relies on, and it would strand X (C80). The review of `4332d792f` found it.
 
 **The guard.** `createSubscriptionIntent`, `createCheckoutSession` and `startProTrial` refuse for an
-org that an **open** `pending_org_setups` row names (`created_org_id = <org>`, `linked_at IS NULL`,
-`closed_at IS NULL`). The message is "This team's paid setup has not finished. Open Create a team to
-finish it, and nothing more will be charged." It changes those three out-of-scope flows only for this
-one case, and it is the only change this design makes to them. `createAiSubscriptionIntent` is not
-gated: an AI price routes to the AI columns only (`sync.ts:141-146`, `:215-234`), so it cannot take
-the plan row from X.
+org that an **open** `pending_org_setups` row names. Open means `linked_at IS NULL AND closed_at IS
+NULL`. A row names the org when `created_org_id = <org>`, **or** (rev 7) when its `subscription_id`
+is the subscription in the org's own `newOrgSubscriptionId` marker (`NEW_ORG_SUBSCRIPTION_KEY`,
+`lib/billing/new-org-setup.ts:25`, read with `newOrgSubscriptionIdOf`, `:44`). The marker is
+written in the same insert as the org row, so the guard holds even when the `afterCreateOrganization`
+write of `created_org_id` (`recordNewOrgCreated`, `pending-org-setup.ts:494-511`) failed (C93). The
+message depends on who is buying (§5.5, rev 7): the creator is sent to Create a team or support,
+and anyone else is told who started the setup and offered support, never "finish the setup", which
+only the creator can do. Rev 6's "and nothing more will be charged" is dropped: nothing proves it
+at that point. The guard changes those three out-of-scope flows only for this one case, and it is
+the only change this design makes to them. `createAiSubscriptionIntent` is not gated: an AI price
+routes to the AI columns only (`sync.ts:141-146`, `:215-234`), so it cannot take the plan row from X.
+
+**Every open setup has an exit (rev 7, R7-1, I15, I16).** The setup closer is one function in
+`lib/billing/pending-org-setup.ts`. It closes a setup (`closed_at`, `closed_reason`) only when X
+reads ended (`canceled` or `incomplete_expired`) and, from S8, no open hold names X. When X ended
+and `readFirstPayment` does not read `never_paid`, it also raises `alertPaymentNeedsSupport` with X
+as the subject, because money may have moved on a setup nobody will finish; it refunds nothing (I3).
+These are every state an open setup can be in, and its exit:
+
+| Open setup, X reads | Exit | Writer | From |
+|---|---|---|---|
+| ended, no open hold | closed by whichever reader sees it first: the guard (it retrieves X when it finds an open row, so a co-owner is never blocked by an ended X), either resume lookup, or the link | the closer | S1 |
+| ended or not, an open hold names X | the hold's release closes it, or `adopted` links it (§5.6 "When a hold ends") | the hold store, the link core | S4, S9 |
+| `incomplete`, no hold | Stripe expires X after about 23h (S3), and the row above applies | the closer | S1 |
+| live, no hold, the creator returns | the creator's Create a team resumes and links it | the link | `dev` |
+| live, no hold, the creator does not return | the co-owner's message names the creator and support; support cancels (and refunds) X in Stripe, then runs `pending-org-setups close-setup` (§5.4) | the operator | S1 |
+| the link refused beside a live Y (S1, no holds yet) | closed by the refusal, with the alert | the link | S1 |
+
+A setup that closes while X is still live occurs only in the last row (S1's refusal before holds
+exist). X is then outside every reader, and the alert is its watch. §8 lists those setups for the
+operator when S9 deploys.
 
 Three details, each corrected in rev 6:
 - **`closed_at IS NULL` (R6-1).** Without it, a refused link left `linked_at` null for good. The org
   could then never buy a plan, and the message sent the customer to a Create a team that would
-  refuse again. A refusal closes the setup (§5.6), and the guard lifts.
+  refuse again. Rev 7: the closer and the operator command, not only the refusal, now write it.
 - **An index.** `pending_org_setups` is indexed only on `(user_id, created_at)` (`lib/db/schema/
   pending-org-setups.ts:60`). The guard reads by `created_org_id`, so the migration that adds
   `closed_at` also adds a partial index on `(created_org_id) WHERE linked_at IS NULL AND closed_at IS
-  NULL`.
+  NULL`. The marker branch reads by `subscription_id`, which is already unique (`:44`).
 - **The service role.** RLS scopes a row to its `user_id` (`programmables.sql`). The buyer may be
-  another owner of the same org, so the guard reads with the service role and returns only whether
-  such a row exists. No column of U's row reaches the other owner.
+  another owner of the same org, so the guard reads with the service role. It returns only whether
+  an open row exists and that row's `user_id`, which it turns into a name only through the org's own
+  member list, which the buyer can already see. No other column of U's row reaches the other owner.
 
 **The race it leaves.** The guard's read and the link are not serialised: the org-plan flow holds
 `org-plan:<org>`, and the link holds `user:<user>`. A plan started in the same seconds as a retried
 link can still mint Y beside X. Then the link's "live, paid plan" row (§5.6) refuses X under an alert and a `needs_operator`
-hold (C80). That is an operator's case with nothing lost silently, which is the bar.
+hold (C80), checked again after the sync (§5.6 "The refused sync"). That is an operator's case with
+nothing lost silently, which is the bar.
 
 ---
 
@@ -991,7 +1181,7 @@ Stripe, so they reach every row regardless.
 
 | ID | Case | Source | Transitions | Test |
 |---|---|---|---|---|
-| C1 | After the cancel, the PaymentIntent is `processing`, and the retry mints. If it succeeds, the customer paid twice. | 5506; AC1; 4176221898 | T0, T3, T6. Retry: E1 on `payment_in_flight`, so I1 refuses. | A: the create-a-team gap test at `:1522-1545`, flipped. The retry is refused and `subscriptions.create` is not called. |
+| C1 | After the cancel, the PaymentIntent is `processing`, and the retry mints. If it succeeds, the customer paid twice. | 5506; AC1; 4176221898 | T0, T3, T6. Retry: E1 on `payment_in_flight`, so I1 refuses. | A: the create-a-team gap test at `:1524-1550`, flipped. The retry is refused and `subscriptions.create` is not called. |
 | C2 | After the cancel, the payments cannot be read, twice. | 5506 | T0, T3, then an observation failure (I5). | A: the retry is refused. H: a read failure changes only `attempts`. |
 | C3 | The invoice cannot be voided, so it stays payable. | 5506; AC4; 4176267018 | T3a, or on an ended subscription T8 to `invoice_payable`. | A: a void rejection, then the retry is refused. H: `invoice_payable` plus a void success gives `released(voided_unpaid)`. |
 | C4 | After the cancel, the refund fails. | 5506; AC2 | T5, `refund_due`, T13. | A: refused. H: the second attempt uses key `-1`. |
@@ -1040,7 +1230,7 @@ Stripe, so they reach every row regardless.
 | C54 | A pending SEPA refund is told "refunded in full", then fails. | #5511 review 1 | `refund` by status; T10p; T10f. | H: `pending` gives `refund_pending` and no "in full"; `failed` gives `refund_due`, `refund_attempt = 1`; only `succeeded` gives `released(refunded)`. |
 | C55 | A customer shared with an org is reused for create-a-team. | #5511 review 1; `billing.ts:666-670`, `:1657-1663`, `:1757-1767` | §4.2 (2). | A: create-a-team does not reuse a customer that has `organization_id`, from the browser or a record. |
 | C56 | A refund clause on a request that mints has nowhere to go. | #5511 review 1 | `notice` on `{ kind: "intent" }`. | A: each blocking state and the kept outcome produce a message; a minting response within 14 days of a refund carries `notice`. |
-| C57 | Tab 1 pays X after X was ended, and the link links it and syncs a cancelled plan. | 4176267018; #5511 review 1 | §5.6. | A: X `canceled` with a `refund_due` hold: the link makes no `customers.update` or `subscriptions.update` and returns `{ kind: "refused" }` with the clause, and the setup's `closed_at` is set. A: `resolveNewOrgSetup` returns the setup with `hold` set, not resumable, and `findUnfinishedNewOrgSetup` no longer returns the closed setup. **S† (rev 5):** the run stops, its outcome is `failed`, `retryable: false`, with the clause as the message, and the browser record is cleared. No "Subscription active" toast. |
+| C57 | Tab 1 pays X after X was ended, and the link links it and syncs a cancelled plan. | 4176267018; #5511 review 1 | §5.6. | A: X `canceled` with a `refund_due` hold: the link makes no `customers.update` or `subscriptions.update` and returns `{ kind: "refused" }` with the clause. **Rev 7:** the hold is open, so the setup stays open with `refused_reason = held` and `closed_at` null; when the hold then releases `refunded`, the same transaction closes it (C92). A: `resolveNewOrgSetup` returns the setup with `hold` set, not resumable. **S† (rev 5):** the run stops, its outcome is `failed`, `retryable: false`, with the clause as the message, and the browser record is cleared. No "Subscription active" toast. |
 | C58 | The backfill refunds legitimate revenue. | #5511 review 2 | §8 B1–B6. | I†: `reconcile --backfill` holds only the never-live checkout; the others are listed. |
 | C59 | A refund in `requires_action` is stuck. | #5511 review 2 | I11. | I: alerts once at 25h, stays `refund_pending`. |
 | C60 | The link refuses a paid `incomplete` X, and the org gets no plan. | #5511 review 2 | Link and defer. | A: X `incomplete`, its payment `processing`, no hold: the link writes `organization_id`, returns `{ kind: "linked", planState: "confirming", paymentUrl: null }` (#5539's state for a payment in flight), and the row is `community`; then `updated(X, active)` syncs the plan (W). The sheet half (the toast is not "Subscription active") is already on `dev`, tested by #5539 in `tests/components/org/paid-setup-plan-state.test.tsx`. |
@@ -1060,13 +1250,22 @@ Stripe, so they reach every row regardless.
 | C77 | **Rev 5.1 (B1).** The row names a different subscription Y that is not live and paid: an abandoned `none` Y, or a `past_due` one. | #5511 review 5 | §5.6, the "not live and paid" row. | A: the row names a `none` Y and X is `active`: the link links X and returns `{ kind: "linked", planState: "active" }`. With #5514's sync, an integration case shows X taking the row. |
 | C78 | **Rev 5 (K5), narrowed in 5.1.** The sheet creates a team for a setup the link would refuse, or stops one it would link. | #5511 reviews 4 and 5; `pending-paid-setup.ts:476`, `:495` | §5.6 sheet (1). | S†: `resolveNewOrgSetup` reports a `refund_due` hold. `authClient.organization.create` is not called, the outcome is `failed` and non-retryable with the notice, and the browser record is cleared. A `closing` hold does **not** stop the run, which goes on to the link. |
 | C79 | **Rev 5 (K5).** A thrown link error is reported as "Retry … you won't be charged again". | #5511 review 4; `pending-paid-setup.ts:559-569` | §5.6 sheet (4). | S†: a thrown link error is `retryable: true`, and its text does not match `/charged again/`. A typed refusal is never retryable. |
-| C80 | **Rev 5.1 (B1).** A paid X is refused by the link beside a live, paid Y, and is left renewing with no alert. | #5511 review 5 | §5.6, the "live, paid plan" row; I14. | A: the row names an `active` Y. The link for an `active` X returns `{ kind: "refused" }`, makes no Stripe write and no billing-row write, closes the setup (`closed_at`), opens a `needs_operator` hold on X (`open_note = link_refused`), and calls the alert with X as the subject. H: T2o does not release that hold. |
-| C81 | **Rev 5.1 (B1).** The org's own flows write its row while its paid setup is unlinked. | #5511 review 5; `billing.ts:1187-1194`, `:1411-1421` | §5.7. | A: a `pending_org_setups` row names the org with `linked_at` null. `createSubscriptionIntent`, `createCheckoutSession` and `startProTrial` each refuse with the finish-setup message and call no `subscriptions.create` or `checkout.sessions.create`. `createAiSubscriptionIntent` is unaffected. Rev 6: with `closed_at` set, or `linked_at` set, none of them is refused. The read runs as the service role, so another owner of the org is refused too. |
+| C80 | **Rev 5.1 (B1).** A paid X is refused by the link beside a live, paid Y, and is left renewing with no alert. | #5511 review 5 | §5.6, the "live, paid plan" row; I14. | A: the row names an `active` Y. The link for an `active` X returns `{ kind: "refused" }`, makes no Stripe write and no billing-row write, opens a `needs_operator` hold on X (`open_note = link_refused`), leaves the setup **open** with `refused_reason = org_has_plan` (rev 7, I16), and calls the alert with X as the subject. H: T2o does not release that hold. |
+| C81 | **Rev 5.1 (B1).** The org's own flows write its row while its paid setup is unlinked. | #5511 review 5; `billing.ts:1187-1194`, `:1411-1421` | §5.7. | A: a `pending_org_setups` row names the org with `linked_at` null. `createSubscriptionIntent`, `createCheckoutSession` and `startProTrial` each refuse with the finish-setup message and call no `subscriptions.create` or `checkout.sessions.create`. `createAiSubscriptionIntent` is unaffected. Rev 6: with `closed_at` set, or `linked_at` set, none of them is refused. **Rev 7:** the co-owner half moves to I (`tests/integration/pending-org-setups.test.ts`, real Postgres under RLS): a second owner of the org, whose session cannot read U's row, is refused too, and the refusal carries no column of U's row but the creator's member name. |
 | C82 | **Rev 5.1 (advisory).** A paid, live X sits in `needs_operator` until an operator acts. | #5511 review 5 | T2o. | H: `needs_operator` with the subscription `active` gives `released(adopted)`. With `unpaid`, it stays `needs_operator`. |
 | C83 | **Rev 5.1 (advisory).** The receipt and backup-card rules change invoices outside the scope. | #5511 review 5 | §5.3 (1) and (2), scoped to held invoices and create-a-team subscriptions. | W: an org-plan renewal invoice whose subscription reads `canceled` on redelivery still gets its receipt, and an org-plan first invoice still gets its backup-card retry. |
 | C84 | **Rev 6 (R6-2).** #5539's hosted invoice link invites a payment of an invoice a hold is voiding or refunding. | rev 6; `billing.ts:1989-2000` | §5.6 "No payment link while a hold is open". | A: X `incomplete`, `action_needed`, with a `closing` hold: the link and `resolveNewOrgSetup` return `paymentUrl: null`. With no hold, the URL is returned as on `dev`. |
-| C85 | **Rev 6 (R6-1).** A refused link leaves `linked_at` null, and §5.7 then refuses the org's plan purchases for good. | rev 6 | §5.6 "Every refusal closes the setup"; §5.7; I15. | A: an org created before a refused link (an ended X). `createSubscriptionIntent` for that org is **not** refused afterwards, and `findUnfinishedNewOrgSetup` does not return the setup. I: the partial index exists, and the guard's query uses it. |
+| C85 | **Rev 6 (R6-1).** A refused link leaves `linked_at` null, and §5.7 then refuses the org's plan purchases for good. | rev 6 | §5.6 "A refusal closes the setup only when it is terminal"; §5.7; I15. | A: an org created before a refused link (an ended X, no hold). `createSubscriptionIntent` for that org is **not** refused afterwards, and `findUnfinishedNewOrgSetup` does not return the setup. I: the partial index exists, and the guard's query uses it. |
 | C86 | **Rev 6 (R6-3).** An ended X with no hold, whose payment may have moved, is told "it was not charged". | rev 6 | §5.6, the "ended, no hold" row. | A: X `canceled`, no hold, the payments read `succeeded`: the link returns `refused` with the contact-support clause, raises the alert, and calls no `refunds.create`. Read `none`: the "not charged" clause, and no alert. |
+| C87 | **Rev 7 (R7-1).** The org exists, the link threw, X then ended; nothing ever reaches the link again, and §5.7 refuses the org for good. | #5511 review 6 | §5.6 "The resume lookups close what they read as ended"; §5.7 exits. | A: `resolveNewOrgSetup` reads X `incomplete_expired` for a setup with `created_org_id` set: `closed_at` is set before it answers, and `createSubscriptionIntent` for the org is not refused afterwards. Variant with no resume: a co-owner's `createSubscriptionIntent` finds the open row, reads X ended, closes it and proceeds. Variant: X `canceled` with a payment read `succeeded`: closed, and the alert is raised once. |
+| C88 | **Rev 7.** The live double-charge window on `dev`: the link's sync is refused beside a live Y, and the link marks the setup linked and reports `active`. | #5511 review 6; `billing.ts:1913`, `:1930`, `:1935` | §5.6 "The refused sync". | A: the row names an `active` Y before the link: `{ kind: "refused" }`, no `customers.update` or `subscriptions.update`, `markPendingOrgSetupLinked` not called, no payer write, `billing.new_org_link.refused` logged, the alert called with X. Race variant: the row names nothing at the first read and Y after the sync: the same refusal, with X's metadata written. Control: an `"ignored"` sync whose row names X itself (C76) is linked. S: the sheet's run ends `failed`, `retryable: false`, with the clause; no "Subscription active". |
+| C89 | **Rev 7.** The guard tells a co-owner to "finish" a setup only its creator can finish. | #5511 review 6 | §5.5 guard rows. | A: the creator gets the Create-a-team-or-support message; a second owner gets the creator's member name and support, and no `/finish/`; a creator who left the org reads "Another member of this team". |
+| C90 | **Rev 7.** An open setup with a live X whose creator never returns has no exit. | #5511 review 6 | §5.4 "The setup command". | `tests/scripts/pending-org-setups.test.ts`: `close-setup` with no `--reason` refuses; on a live or `incomplete` X it refuses and writes nothing; on an ended X it writes `closed_at`, `closed_reason = operator`, `closed_by`, `closed_note` and the audit event; a second run changes nothing. From S8: with an open hold naming X it refuses. |
+| C91 | **Rev 7 (R7-2).** `needs_operator` on an `incomplete` X; the link refuses; X goes `active`; T2o adopts silently and nothing links X. | #5511 review 6 | T2o; §5.6 "When a hold ends"; I16. | A: the link refuses with the hold's clause and the setup stays open (`refused_reason = held`). H and I: the sweeper's T2o releases `adopted`, and, with an org, the link core links X (`linked_at` set, the row names X). Without an org: the setup stays open, `findUnfinishedNewOrgSetup` returns it, §4.3 returns `resume`, and the Q3 adoption email is claimed once. Variant: U no longer holds `manage_billing`: no link, an alert, the setup open. |
+| C92 | **Rev 7 (I16).** A setup is closed while a hold on its subscription is open. | #5511 review 6 | §4.1 "A release decides the setup"; the closer's `NOT EXISTS`. | I: with an open hold on X, the closer, the link's refusal and `close-setup` each leave `closed_at` null. The hold's release to `voided_unpaid` sets `closed_at` and `closed_reason = hold_released` in the same transaction; a release to `adopted` does not. |
+| C93 | **Rev 7 (advisory 9).** `recordNewOrgCreated` failed, so `created_org_id` is null and the guard misses. | #5511 review 6 | §5.7, the marker branch. | I: an org whose metadata carries `newOrgSubscriptionId = X`, and an open row for X with `created_org_id` null: `createSubscriptionIntent` for that org is refused. |
+| C94 | **Rev 7 (advisory 1).** The live check cannot see a paid, unlinked X whose org exists, because its customer helper excludes `created_org_id`. | #5511 review 6; `pending-org-setup.ts:227` | §4.3 "Which records". | A: U's only record has `created_org_id` set and X `active`, unlinked: the purchase returns `resume` and calls no `subscriptions.create`. The same with the record closed. |
+| C95 | **Rev 7 (advisory 6).** The Q3 email is sent twice, or by a caller with no fence. | #5511 review 6 | §4.1 notice claim; §5.4 "Who sends the Q3 emails". | I: two sweeper ticks over one `refund_pending` hold send one email; a send that throws un-claims, and the next tick sends it; the purchase flow and the link entering `refund_pending` send nothing. |
 
 **Retired by rev 5.** These were in rev 4's table and are now about flows §7 lists as not covered:
 
@@ -1082,7 +1281,7 @@ Stripe, so they reach every row regardless.
 | C62 | a stale holder's Checkout URL or trial | Checkout and the trial are not covered |
 | C68, C70 | the trial's `created` event and the gate marker | the trial is not covered (K1) |
 
-That is 76 cases in scope: 73 at rev 5.1 (whose text said 67, a miscount) and C84–C86 from rev 6.
+That is 85 cases in scope: 73 at rev 5.1 (whose text said 67, a miscount), C84–C86 from rev 6, and C87–C95 from rev 7.
 
 ---
 
@@ -1106,7 +1305,7 @@ for every flow except create-a-team. §10.2 proposes their follow-up issues.
 | **Disputes and chargebacks** | Not a first-payment settlement. | Stripe's dispute flow. No handler in this repo. |
 | **Two live subscriptions on one org** (adopted beside a live plan; a Checkout completed beside an embedded purchase) | Produced by flows not covered. A new org's setup cannot produce one: §5.7 keeps the org's own flows off its row until the link, and the link refuses beside a live, paid Y under a `needs_operator` hold (C80). | #5514 (PR #5518) keeps the row on the live one. #5518 names the residual itself: when the row's subscription is cancelled, the other one takes the row only at its next event. No detector exists. Rev 4's §7 detector is withdrawn with the rest of the org-plan scope. |
 | **Self-hosted or community deployments with no Stripe** | No payment. | `requireHostedBilling` (`billing.ts:591-597`) refuses first. |
-| **Emailing the customer when a hold settles asynchronously** | A decision, Q3. | The next create-a-team response's `notice` (§5.5), and Stripe's own receipt and refund emails. |
+| **Emailing the customer when a hold settles asynchronously** | Decided in Q3 (rev 7: covered). | The sweeper sends it under the notice claim (§4.1, §5.4), alongside the next create-a-team response's `notice` (§5.5). |
 
 ---
 
@@ -1121,7 +1320,8 @@ a migration rebases first (CLAUDE.md §5).
    the artifact gate and the close-out (§4.4 rules 1–4), and a timeout on the Stripe client of the
    purchase path. `withPurchaseLock` stays for the org-plan flow. **Rolling deploy:** for one release
    the create-a-team flow takes both the lease and the old advisory key, so old and new pods exclude
-   each other. The next step's PR removes the advisory half. Tests: L, C25, C28, C52.
+   each other. **S3 removes the advisory half (rev 7)**, and S3 deploys only after S2's rollout has
+   completed on every pod. Tests: L, C25, C28, C52.
 2. **The table, the machine and the sweeper, behind no caller.** Add the `payment_holds` migration
    (with the partial unique index), RLS in `programmables.sql`, the store, `advanceHold` as a pure
    transition function over an injected Stripe reader and writer, and `startPaymentHoldSweeper`. With
@@ -1130,8 +1330,10 @@ a migration rebases first (CLAUDE.md §5).
 3. **The webhook (§5.3), before the flow.** **Precondition, met on 2026-10-04: #5514 merged (#5518,
    `f586e91e5`), and N2 merged (#5549, `835c01937`). C69 and C76 are on `dev`.** This step does not
    re-implement them. Then add the backup-retry guard, the receipt
-   rule and the stamped-cancel silence. Stamp today's two create-a-team cancels (`billing.ts:1034` as
-   the create-a-team sweep calls it, and `:1744`). The nudges are inert until holds exist. Tests: W.
+   rule and the stamped-cancel silence. The nudges are inert until holds exist. Tests: W. **Rev 7:**
+   stamping today's two create-a-team cancels (`billing.ts:1034` as the create-a-team sweep calls it,
+   and `:1744`) is **not** in this step: it is in step 4's flow change (S8 in §10), which owns
+   `billing.ts`. Until S8, an unstamped machine cancel keeps today's email, as on `dev`.
 4. **The create-a-team flow, the link and the sheet.** In order:
    - Replace the create-a-team flow's calls to `cancelNeverPaid` and `settleCancelledSubscription`,
      and its `canceled`-prior arm (`billing.ts:1611-1650`), with open → advance. The org-plan flow
@@ -1143,12 +1345,14 @@ a migration rebases first (CLAUDE.md §5).
      `needs_operator` hold (§5.6). Add `hold` to the resume lookups.
    - **Rev 5.1:** add §5.7's refusal to `createSubscriptionIntent`, `createCheckoutSession` and
      `startProTrial` for an org with an open paid setup. **Rev 6:** with `closed_at` and its partial
-     index, and with every link refusal closing the setup.
+     index, and with every link refusal closing the setup. **Rev 7:** that part ships first, in S1,
+     with the refused-sync refusal and every exit (§5.7). This step adds only the hold-aware half: a
+     refusal under an open hold leaves the setup open (I16).
    - Add the §5.5 composer for create-a-team and `notice` on `{ kind: "intent" }`.
    - **Rev 5:** change `components/org/pending-paid-setup.ts` and `components/org/create-org-sheet.tsx`
      as §5.6 "The sheet" says. This builds on #5539 (#5522), which has landed and already carries
      `planState` to the final view.
-   - Flip the create-a-team gap test (`billing-subscription.test.ts:1522-1545`).
+   - Flip the create-a-team gap test (`billing-subscription.test.ts:1524-1550`).
 
    Tests: A, S†.
 5. **Operator script and runbook.** Add `scripts/payment-holds.ts`, a section of
@@ -1187,7 +1391,25 @@ once. A hold the machine cannot settle reaches `needs_operator`. **Everything el
 held**: printed with the failed test named, and nothing is written for it (Q12).
 
 **After this release** every create-a-team machine cancel is stamped and has a hold row, so no later
-backfill is needed.
+backfill is needed, **once the rollout has completed (rev 7)**. During a rolling deploy of S8, old
+pods keep cancelling without holds after the operator's first `--backfill`. So the operator runs
+`payment-holds reconcile --backfill` again after the last old pod has stopped. B1–B6 make a second
+run safe: a subscription already held conflicts on the partial unique index (T0h) and is skipped.
+
+**S1-era closures (rev 7).** Before holds exist, S1's refused sync closes a setup whose X may still
+be live (§5.7 exits, last row). When S9 deploys, the backfill's listing also prints every setup with
+`closed_reason = org_has_plan` whose X reads live, for the operator. It holds none of them: X is
+paid and live, and only an operator may decide its money (Q12).
+
+**`forgetPendingOrgSetup` (rev 7, advisory 5).** It stays, with today's guard
+(`pending-org-setup.ts:128-147`): it deletes a record only when X's `created_by` is U, its status is
+`incomplete` or `incomplete_expired`, `readFirstPayment` reads `never_paid`, and the record has no
+`created_org_id` and no `linked_at`. From S8 it adds one condition: no hold names X, open or
+released with any reason but `voided_unpaid`, `deleted_draft` or `expired_unpaid`. A record it
+deletes therefore had no org (so §5.7 never needed it) and a subscription that cannot become payable
+again (so §4.3 never needs it). The resume lookups and `closed_at` work on every record it keeps.
+Within S8 the create-a-team flow calls it only after such a release, never after a bare cancel as
+`billing.ts:1632` and `:1695` do today.
 
 **Rollback.** Steps 1 to 5 are code plus two additive tables. A hold left open by a reverted build
 blocks nothing, because nothing reads it, and the sweeper advances it after a redeploy.
@@ -1215,7 +1437,11 @@ revisions.
   **Decision: an email on `released(refunded)` and on the first entry to `refund_pending`, as well as
   the `notice`.** Reason: a customer who never tries again would otherwise hear about their money only
   from their bank. The email says only what was read. "Refunded" is sent only for a refund that reads
-  `succeeded`, and `refund_pending` says "issued" (I8). It is sent once per hold and state entry.
+  `succeeded`, and `refund_pending` says "issued" (I8). **Rev 7:** the sweeper is the only sender
+  (§5.4). It claims each email with a compare-and-set on `notified_state` before sending (§4.1), so
+  each hold and state is mailed at most once, whichever caller moved the hold. The same mechanism
+  sends one "your payment went through; finish creating your team" email when a hold on a setup
+  with no org is adopted (§5.6 "When a hold ends").
 - **Q4.** *The refund budget and the §5.4 age bounds.*
   **Decision: as written.** 5 attempts over about 32h (5m, 30m, 2h, 6h, 24h), then `needs_operator`,
   with the §5.4 age table unchanged. Reason: every open state reaches a person within a stated
@@ -1236,7 +1462,9 @@ revisions.
   **Decision: no (§3.1).** Reason: the earlier payment has landed and is on its way back, so a new
   purchase is not a second charge for the same thing. A refund that later fails returns the hold to
   `refund_due`, which blocks again (T10f). Blocking would make the customer wait days for a bank to
-  finish a refund that is already issued.
+  finish a refund that is already issued. **Rev 7:** the cost is stated, not hidden. If the refund
+  fails after the customer bought again, they carry two charges until the refund is re-issued (§3.1),
+  and the `refund_pending` clause tells them so before they buy (§5.5).
 - **Q12.** *Who works the backfill's review list, and is a refund for one of them a support decision
   per case?*
   **Decision: the platform operator works it, and each refund is a support decision per case, with
@@ -1244,7 +1472,7 @@ revisions.
   Everything else may be legitimate revenue, and refunding it without a person's review could refund
   a purchase the customer meant to keep.
 - **Q13.** *When should the org-plan purchase get holds?*
-  **Decision: in a separate ADR, after this one ships (follow-up F1, §10.2).** Reason: it needs the
+  **Decision: in a separate ADR, ADR 0004, after this one ships (follow-up F1, §10.2).** Reason: it needs the
   parts rev 4 had and rev 5 removed: the scope column, a superseder rule with a fresh read (W1, W2),
   the off-Stripe-grant guard, and the two-live detector. Its gaps stay as #5506 lists them until
   then. Two of them have small fixes that need no holds, filed separately as F2 and F3.
@@ -1264,18 +1492,40 @@ touches tenant data, RLS, a service-role read across users, a webhook, or an ope
 point. Every slice that can move money also gets an adversarial money review against §3.3 and §6,
 whatever this column says.
 
-1. **S1: The open-setup guard (§5.7) and `closed_at`.**
-   Done when `createSubscriptionIntent`, `createCheckoutSession` and `startProTrial` refuse, with the
-   finish-setup message, for an org that an open `pending_org_setups` row names (`linked_at IS NULL`,
-   `closed_at IS NULL`). The read uses the service role. The migration adds `closed_at` and
-   `closed_reason` (both nullable) and the partial index on `created_org_id`. Nothing writes
-   `closed_at` yet. C81, plus the C85 half that needs no link (a row with `closed_at` set does not
-   refuse), each fail on `dev` first. It lands first because the gap it closes is live today. On
-   `dev`, a plan started inside an org whose link failed once can take the row, and the retried link
-   then leaves a paid X live and renewing beside it, unseen.
-   - scope: `apps/console/lib/db/schema/pending-org-setups.ts apps/console/lib/db/migrations/** apps/console/lib/billing/pending-org-setup.ts apps/console/app/server/actions/billing.ts apps/console/tests/actions/billing-subscription.test.ts apps/console/tests/integration/pending-org-setups.test.ts`
+1. **S1: Close the live double-charge window: the refused link, the open-setup guard, and every exit
+   from it (§1.1, §5.6 "The refused sync", §5.7, I15, I16).** It ships alone, first, and depends on
+   nothing else in this ADR.
+   Done when all six hold, in one PR:
+   1. The migration adds `closed_at`, `closed_reason`, `closed_by`, `closed_note` and
+      `refused_reason` (all nullable) to `pending_org_setups`, and the partial index on
+      `(created_org_id) WHERE linked_at IS NULL AND closed_at IS NULL`.
+   2. **The link stops ignoring a refused sync.** It refuses with `org_has_plan` when the org's row
+      names another subscription that is `active` or `trialing`: before any Stripe write, and again
+      after a sync that returned `"ignored"`. A refused link never calls
+      `markPendingOrgSetupLinked`, never writes the payer facts, never returns a plan state, logs
+      `billing.new_org_link.refused`, calls `alertPaymentNeedsSupport` with X as the subject, writes
+      `refused_reason` and closes the setup, and returns `{ kind: "refused"; clause }` with the
+      contact-support clause (§5.5). The linked arm is `{ kind: "linked" } & NewOrgPlanReport`. An
+      `"ignored"` sync whose row names X itself is still linked (C76).
+   3. The sheet turns `{ kind: "refused" }` into `SetupStopped(clause)`, which is non-retryable.
+      Nothing else in the sheet changes (the rest is S10).
+   4. **The guard.** `createSubscriptionIntent`, `createCheckoutSession` and `startProTrial` refuse for
+      an org that an open row names, by `created_org_id` or by the org's `newOrgSubscriptionId`
+      marker, read with the service role. The creator and everyone else get their own messages
+      (§5.5). The message to anyone else names the creator and support, and never says "finish".
+   5. **The exits.** The setup closer (§5.7) closes an open setup whose X reads ended, and alerts
+      when the first payment is not `never_paid`. The guard, `resolveNewOrgSetup` and
+      `findUnfinishedNewOrgSetup` run it before they answer, so an ended X never blocks the org.
+   6. `scripts/pending-org-setups.ts close-setup <subscription_id> --reason --operator` exists as
+      §5.4 says (it refuses with no reason, and refuses a live or `incomplete` X), with its audit
+      event and a runbook section.
+
+   C81 (A for the three flows, I for the co-owner), the C85 half that needs no hold, C87, C88, C89,
+   C90 and C93 each fail on `dev` first. This slice may run past ~800 lines. I16 forbids shipping the
+   guard without the writers that release it, so it is not split.
+   - scope: `apps/console/lib/db/schema/pending-org-setups.ts apps/console/lib/db/migrations/** apps/console/lib/billing/pending-org-setup.ts apps/console/lib/billing/new-org-setup.ts apps/console/app/server/actions/billing.ts apps/console/components/org/pending-paid-setup.ts apps/console/scripts/pending-org-setups.ts apps/console/docs/stripe-prod-runbook.md apps/console/tests/actions/billing-subscription.test.ts apps/console/tests/integration/pending-org-setups.test.ts apps/console/tests/components/org/pending-paid-setup.test.ts apps/console/tests/scripts/pending-org-setups.test.ts`
    - Blocked by: none. Migration: **yes**. Security review: **yes** (a service-role read across
-     users' rows).
+     users' rows, the creator's name shown to a co-owner, and an operator command that writes them).
 2. **S2: The `user:` lease (§4.4, Q2).**
    Done when the create-a-team flow and the link take `purchase_leases` with fenced renewal, the
    artifact gate and the close-out (rules 1–4). For one release they also take the old advisory
@@ -1288,16 +1538,20 @@ whatever this column says.
    Done when the create-a-team sweep lists only subscriptions classified to the user, paged to the
    end (with a cap of 1000 that refuses). Another payer's subscription is alerted on and left
    alone. A customer that has `organization_id` is never reused. `unlinkedPendingOrgSetupCustomers`
-   pages over every record (with a cap of 50 that refuses). C18, C20, C21 and C55 fail on `dev`
-   first. These are live defects, so the slice ships ahead of the holds.
+   pages over every record (with a cap of 50 that refuses). **Rev 7:** the create-a-team flow and
+   the link stop taking S2's old `new-org:<user>` advisory key, and the PR says it must deploy only
+   after S2's rollout has completed. C18, C20, C21 and C55 fail on `dev` first. These are live
+   defects, so the slice ships ahead of the holds.
    - scope: `apps/console/app/server/actions/billing.ts apps/console/lib/billing/pending-org-setup.ts apps/console/tests/actions/billing-subscription.test.ts apps/console/tests/integration/pending-org-setups.test.ts`
    - Blocked by: S2 (`billing.ts`). Migration: no. Security review: **yes** (which payer's
      subscriptions a flow may cancel).
 4. **S4: The `payment_holds` table and store (§4.1).**
    Done when the migration adds `payment_holds` with the partial unique index on `subscription_id`
-   and the open-row index on `payer_key`, with RLS enabled and no app policy. The store does the
-   state-write and hint-write kinds with their fences (§4.1 table). The integration tests for C51,
-   C65 and C74 pass. No caller exists.
+   and the open-row index on `payer_key`, with RLS enabled and no app policy, and the rev 7
+   `notified_state` and `notified_at` columns. The store does the state-write, hint-write and
+   notice-claim kinds with their fences (§4.1 table). A release to any reason but `adopted` closes
+   the hold's open setup in the same transaction (§4.1, "A release decides the setup"). The
+   integration tests for C51, C65, C74 and the release half of C92 pass. No caller exists.
    - scope: `apps/console/lib/db/schema/payment-holds.ts apps/console/lib/db/schema/index.ts apps/console/lib/db/migrations/** apps/console/lib/db/programmables.sql apps/console/lib/billing/payment-holds/store.ts apps/console/tests/integration/payment-holds.test.ts`
    - Blocked by: S2 (migration chain; the fence reads `purchase_leases`). **Parallel with S3.**
      Migration: **yes**. Security review: **yes** (RLS on a new table).
@@ -1313,7 +1567,8 @@ whatever this column says.
 6. **S6: The sweeper, the operator script, the runbook and the backfill (§5.4, §8 step 5, Q3, Q12).**
    Done when `startPaymentHoldSweeper` boots from `instrumentation.ts` in the `registerLoop` shape,
    with a twin route behind `ALETHIA_CRON_SECRET` and `wakePaymentHoldSweeper`. The age alerts
-   follow §5.4, and the Q3 settle emails are sent. `scripts/payment-holds.ts` has `list`, `show`,
+   follow §5.4. The Q3 emails are sent by the sweeper alone, under the notice claim (C95), for
+   `refund_pending`, `released(refunded)` and an adoption with no org. `scripts/payment-holds.ts` has `list`, `show`,
    `release` (T16, audited) and `reconcile [--backfill]` (B1–B6). The runbook documents them and
    the `system.platform.payment_needs_support` rule. C19 (release), C53 (sweeper half), C58, C59
    and C61 (age) pass.
@@ -1333,23 +1588,31 @@ whatever this column says.
    user, and mints only through I1 (a)–(c), including the live check (C24). Its `canceled`-prior arm
    is replaced. Today's two cancels are stamped (`billing.ts:1034` as the create-a-team sweep calls
    it, and `:1744`). The §5.5 composer and `notice` on `{ kind: "intent" }` are in place. The gap
-   test `billing-subscription.test.ts:1522-1545` is flipped. The A cases pass: C1, C6, C7, C11,
-   C13, C15, C16, C26, C31, C32, C34–C39, C56. **Deploy only after an operator has run
-   `payment-holds reconcile --backfill` (S6).**
-   - scope: `apps/console/app/server/actions/billing.ts apps/console/lib/billing/new-org-hold-copy.ts apps/console/tests/actions/billing-subscription.test.ts apps/console/tests/actions/billing-new-org-holds.test.ts`
+   test `billing-subscription.test.ts:1524-1550` is flipped. **Rev 7:** the setup closer and
+   `close-setup` gain the open-hold `NOT EXISTS` (I16, C92); §4.3 reads its own record set (C94);
+   `forgetPendingOrgSetup` gains its hold condition (§8); the guard's creator message carries an
+   open hold's clause. The A cases pass: C1, C6, C7, C11, C13, C15, C16, C24, C26, C31, C32,
+   C34–C39, C56, C94. **Deploy only after an operator has run `payment-holds reconcile --backfill`
+   (S6), and run it again once the rollout has completed (§8).**
+   - scope: `apps/console/app/server/actions/billing.ts apps/console/lib/billing/new-org-hold-copy.ts apps/console/lib/billing/pending-org-setup.ts apps/console/scripts/pending-org-setups.ts apps/console/tests/actions/billing-subscription.test.ts apps/console/tests/actions/billing-new-org-holds.test.ts apps/console/tests/integration/pending-org-setups.test.ts`
    - Blocked by: S3, S5, S6, S7. Migration: no. Security review: **yes** (the purchase path).
 9. **S9: The link and the resume lookups (§5.6).**
    Done when the link takes the `user:` lease, consults holds before any Stripe write, and returns
-   `{ kind: "linked" } & NewOrgPlanReport | { kind: "refused"; clause }` by the §5.6 table. Every
-   refusal closes the setup. The live-paid-plan refusal opens a `needs_operator` hold that alerts.
-   No `paymentUrl` is returned while a hold is open. `NewOrgSetupState` gains `hold`, and
-   `findUnfinishedNewOrgSetup` skips closed setups. C57, C60, C77, C80, C84, C85 and C86 pass on
-   the server side.
-   - scope: `apps/console/app/server/actions/billing.ts apps/console/lib/billing/new-org-setup.ts apps/console/lib/billing/new-org-plan-state.ts apps/console/lib/billing/pending-org-setup.ts apps/console/tests/actions/billing-subscription.test.ts apps/console/tests/actions/billing-new-org-link.test.ts`
+   `{ kind: "linked" } & NewOrgPlanReport | { kind: "refused"; clause }` by the §5.6 table. A
+   refusal closes the setup only when X is ended and unheld; otherwise it writes `refused_reason`
+   and leaves it open (I16). The live-paid-plan refusal opens a `needs_operator` hold that alerts.
+   No `paymentUrl` is returned while a hold is open. `NewOrgSetupState` gains `hold`. **Rev 7:** the
+   link's core runs without a session, re-checking U's `manage_billing`, and the sweeper, the
+   purchase flow and `payment-holds release` call it after an `adopted` release whose setup has an
+   org (§5.6 "When a hold ends"). The backfill listing prints S1-era `org_has_plan` closures whose X
+   is live (§8). C57, C60, C77, C80, C84, C85, C86 and C91 pass on the server side.
+   - scope: `apps/console/app/server/actions/billing.ts apps/console/lib/billing/new-org-setup.ts apps/console/lib/billing/new-org-plan-state.ts apps/console/lib/billing/pending-org-setup.ts apps/console/lib/billing/payment-holds/sweeper.ts apps/console/scripts/payment-holds.ts apps/console/tests/actions/billing-subscription.test.ts apps/console/tests/actions/billing-new-org-link.test.ts apps/console/tests/integration/payment-hold-sweeper.test.ts`
    - Blocked by: S8. Migration: no (`closed_at` came with S1). Security review: **yes** (the link
      writes Stripe metadata and the org's billing row).
 10. **S10: The sheet (§5.6 "The sheet").**
-    Done when `runSteps` stops before creating the org where the link would refuse (C78), renders a
+    Done when `runSteps` stops where the link would refuse, before creating the org and also on a
+    resume where the org already exists, writing nothing (the lookup has already closed what is
+    closable, §5.6) (C78), renders a
     typed refusal as non-retryable with its clause and clears the browser record (C57, S half), and
     keeps "Retry to complete setup" only for a thrown error, without "you won't be charged again"
     (C79, C32 S half). #5539's re-read loop stops on a reported hold. If the board labels it
@@ -1358,7 +1621,9 @@ whatever this column says.
     - Blocked by: S9. Migration: no. Security review: no.
 
 Order: S1 → S2, then two lanes. Lane (a) is S3. Lane (b) is S4 → S5 → S6 → S7. The lanes join at
-S8, then S9 → S10. The two lanes' scopes are disjoint.
+S8, then S9 → S10. The two lanes' scopes are disjoint (rev 7 re-checked: S4's release-closes-setup
+write lives in `payment-holds/store.ts`, not in S3's `pending-org-setup.ts`). S8's and S9's scopes
+reach S1's and S6's files, which is sound because they run after both.
 
 ### 10.2 Follow-up issues for the descoped flows (proposed, not filed)
 
@@ -1367,7 +1632,10 @@ flows they are not covered (§7). These three issues are proposed for them. File
 S9 has merged. Until then `billing.ts` is in every in-flight slice's scope, and an open issue naming
 it would fail those PRs' scope check.
 
-- **F1. billing: payment holds for the org-plan purchase, design first (ADR 0003). AC 8 and Q13.**
+- **F1. billing: payment holds for the org-plan purchase, design first (ADR 0004). AC 8 and Q13.**
+  Rev 7: 0003 is taken by #5548 (`docs/adr/0003-chat-turn-answered-and-billed-once.md`) and 0001 by
+  #5512. If 0004 is taken when F1 is filed, it takes the next number free at `origin/dev` and in
+  open PRs; it never reuses a number.
   Done when an accepted ADR covers holds for `createSubscriptionIntent`. It must cover a hold scope
   per flow, so an org-plan hold never blocks or reroutes a create-a-team purchase (AC 8). It must
   also cover the superseder rule with a fresh read (rev 4's W1 and W2), the off-Stripe-grant guard,
