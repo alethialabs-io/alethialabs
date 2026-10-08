@@ -80,8 +80,8 @@ export function ThreadRail({
 }: ThreadRailProps) {
 	const [q, setQ] = useState("");
 	// The thread a delete has been REQUESTED for. A chat carries its whole transcript and there is
-	// no undo, and the trigger is a small icon (hover-revealed where a pointer can hover) a hand's width from the row you meant to
-	// open — so the click asks first (#4280).
+	// no undo, and the trigger is a small icon (hover-revealed where a pointer can hover) a hand's
+	// width from the row you meant to open — so the click asks first (#4280).
 	const [pendingDelete, setPendingDelete] = useState<AgentThread | null>(null);
 
 	const groups = useMemo(() => {
@@ -229,7 +229,7 @@ export function ThreadRail({
 										type="button"
 										aria-label={`Delete chat ${t.title}`}
 										onClick={() => setPendingDelete(t)}
-										className="absolute right-2 top-2 flex size-4 items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+										className="absolute right-2 top-2 flex size-4 items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100 [@media(any-pointer:coarse)]:opacity-100"
 									>
 										<Trash2 className="h-3 w-3" />
 									</button>

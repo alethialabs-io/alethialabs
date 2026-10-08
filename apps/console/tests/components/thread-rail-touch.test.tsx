@@ -60,6 +60,12 @@ describe("thread rail delete control on touch screens (#5657)", () => {
 		expect(classes).toContain("[@media(hover:none)]:opacity-100");
 	});
 
+	it("is shown outright when ANY pointer is coarse — a touchscreen laptop's primary pointer can hover", () => {
+		// (hover: none) reads only the PRIMARY pointer, so a laptop with a touchscreen, or a tablet
+		// with a trackpad, would otherwise leave a tap with nothing to press.
+		expect(deleteControlClasses()).toContain("[@media(any-pointer:coarse)]:opacity-100");
+	});
+
 	it("keeps the hover reveal for pointers that can hover, and reveals on keyboard focus", () => {
 		const classes = deleteControlClasses();
 		expect(classes).toContain("group-hover:opacity-100");
