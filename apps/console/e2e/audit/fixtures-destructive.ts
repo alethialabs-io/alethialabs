@@ -137,10 +137,10 @@ function unique(): string {
 // the zod schema the app writes them through — the class #5662 found in `support_cases.contact`,
 // where the gate "exercised" a control against a row the product could never produce. Each value
 // below is therefore built as a literal that `satisfies` the column's `$type` (so a wrong or extra
-// key fails to compile) and parsed through the write path's own schema — all three now live in
-// plain `lib/ai/*` modules rather than `"use server"` files (#5683) — so a
-// constraint the type cannot state — a non-empty title, a position inside the 5-column grid —
-// throws at seed time, which `seedDestructiveFixtures` reports against the fixture by name).
+// key fails to compile) and parsed through the write path's own schema, each importable from a plain
+// `lib/ai/*` module (#5683 moved the knowledge-doc and widget-pin ones out of `"use server"` files).
+// So a constraint the type cannot state (a non-empty title, a position inside the 5-column grid)
+// throws at seed time, which `seedDestructiveFixtures` reports against the fixture by name.
 //
 // The literal is what gets written, not the parse result: zod's output types `data.output` as
 // `unknown`, which postgres' `sql.json` (an index-signatured `JSONValue`) cannot accept, and an

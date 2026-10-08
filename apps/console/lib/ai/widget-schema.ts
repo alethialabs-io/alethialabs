@@ -5,9 +5,10 @@
 // "use server" module (those may only export async functions) so tests and fixtures can import it.
 //
 // `data` is not redeclared here: it IS `artifactWidgetSchema.shape.data`, the same object an
-// artifact's widgets carry. An artifact's widgets are copied onto a thread through this pin path,
-// so the two must accept and reject the same payloads — sharing the one schema object is what makes
-// that true, rather than a comment saying so.
+// artifact's widgets carry. Both end up in the same `thread_widgets.data` column `WidgetCard`
+// renders — a pin through `pinWidget`, an artifact's widgets inserted directly by
+// `openArtifactOnGrid` after `artifactSpecSchema` validated them at save — so the two must accept
+// and reject the same payloads. Sharing the one schema object is what makes that true.
 
 import { z } from "zod";
 import { artifactWidgetSchema } from "@/lib/ai/artifact-spec";

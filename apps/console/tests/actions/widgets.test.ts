@@ -12,7 +12,7 @@ vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/db", () => ({ withOwnerScope: vi.fn() }));
 vi.mock("@/lib/ai/tools", () => ({ buildAgentTools: vi.fn() }));
 
-import { pinWidget } from "@/app/server/actions/widgets";
+import { pinWidget, updateWidget } from "@/app/server/actions/widgets";
 import { requireOwner } from "@/lib/auth/owner";
 import { withOwnerScope } from "@/lib/db";
 
@@ -57,5 +57,18 @@ describe("pinWidget — validation", () => {
 		// @ts-expect-error — a boolean value is outside the stat block's string | number.
 		await expect(pinWidget({ ...PIN, data })).rejects.toBeInstanceOf(ZodError);
 		expect(requireOwner).not.toHaveBeenCalled();
+	});
+});
+
+describe("updateWidget — validation", () => {
+	it("rejects an unknown mode before resolving the owner", async () => {
+		// @ts-expect-error — "paused" is not a WidgetMode.
+		await expect(updateWidget({ id: PIN.threadId, mode: "paused" })).rejects.toBeInstanceOf(ZodError);
+		expect(requireOwner).not.toHaveBeenCalled();
+	});
+
+	it("a valid mode change passes the schema and goes on to resolve the owner", async () => {
+		await expect(updateWidget({ id: PIN.threadId, mode: "live" })).rejects.toThrow(REACHED_OWNER);
+		expect(requireOwner).toHaveBeenCalledTimes(1);
 	});
 });
