@@ -57,15 +57,18 @@ export const CLAIM_RETENTION_DAYS = 30;
  */
 const SWEEP_BATCH_LIMIT = 1000;
 
-/** What one run of the sweep did, pass by pass. */
-export interface HoldSweepResult {
+/**
+ * What one run of the sweep did, pass by pass. A type alias, not an interface, so it satisfies the
+ * `Record<string, number>` that `runTask` records on the heartbeat.
+ */
+export type HoldSweepResult = {
 	/** Pass 1: running claims set `expired`, each with its hold released to 0. */
 	expired: number;
 	/** Pass 2: unclaimed outstanding holds released to 0. */
 	released: number;
 	/** Pass 3: terminal claims deleted past their retention. */
 	removed: number;
-}
+};
 
 /**
  * The `release-ai-holds` task: the three passes of ADR 0003 §8.2, in order (see the file header).
