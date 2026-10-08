@@ -40,7 +40,8 @@ vi.mock("@/lib/billing/pending-org-setup", async (importActual) => {
 		// closer changes nothing; the tests of ADR 0002's C-cases opt into the REAL closer
 		// (`useRealCloser`), which then runs its compare-and-set writes over the queue below.
 		closePendingOrgSetup: vi.fn(async () => null),
-		logBillingEvent: vi.fn(),
+		// Real: it only writes a structured line to console.info, which the #5714 tests read.
+		logBillingEvent: actual.logBillingEvent,
 		openPendingOrgSetupsForOrg: vi.fn(async () => []),
 		settleOpenSetup: vi.fn(async () => "open"),
 		findSetupOrg: vi.fn(),
@@ -113,6 +114,7 @@ vi.mock("@/lib/billing/config", () => ({
 	isStripeTaxEnabled: vi.fn(() => false),
 	meterPriceIdForPlan: vi.fn(() => undefined),
 	priceIdForPlan: vi.fn((plan: string) => `price_${plan}`),
+	aiPriceIdForTier: vi.fn((tier: string) => `price_${tier}`),
 	planForPriceId: vi.fn(() => null),
 	getPublishableKey: vi.fn(() => ""),
 	RUNNER_MINUTES_METER_EVENT: "alethia_runner_minutes",
@@ -123,6 +125,7 @@ import {
 	attachTaxIdToCustomer,
 	cancelSubscription,
 	changeSubscriptionPlan,
+	createAiSubscriptionIntent,
 	createBillingPortalSession,
 	createCheckoutSession,
 	createCreditPackIntent,
@@ -205,6 +208,12 @@ function makeDb() {
 	]) {
 		chain[m] = () => chain;
 	}
+	// Every `.set(...)` payload, in order — what an UPDATE wrote (#5714's compare-and-set writes).
+	const sets: unknown[] = [];
+	chain.set = (values: unknown) => {
+		sets.push(values);
+		return chain;
+	};
 	(chain as { then: unknown }).then = (
 		resolve: (v: unknown) => unknown,
 		reject?: (e: unknown) => unknown,
@@ -214,7 +223,7 @@ function makeDb() {
 	const insert = vi.fn(() => chain);
 	const del = vi.fn(() => chain);
 	const db = { select, update, insert, delete: del };
-	return { db, queue, select, update, insert };
+	return { db, queue, select, update, insert, sets };
 }
 
 /** A fully-stubbed Stripe client with every method the billing actions touch. */
@@ -3190,5 +3199,494 @@ describe("linkSubscriptionToNewOrg — the plan state it reports (#5522)", () =>
 		stripe.invoicePayments.list.mockRejectedValue(new Error("Stripe is unavailable"));
 		await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ kind: "linked", planState: "unconfirmed", paymentUrl: null });
 		expect(markPendingOrgSetupLinked).toHaveBeenCalledWith("user-1", "sub_1", "org-1");
+	});
+});
+
+// ── ADR 0002 S1 (#5714): the refused link, the open-setup guard, and every exit from it ────────────
+//
+// THE LIVE DOUBLE-CHARGE WINDOW ON dev. The create-a-team sheet creates the org BEFORE it links the
+// paid subscription X to it. If the link failed once, the org's own billing could mint a plan Y (or a
+// trial, or a Checkout) beside X, and the retried link ignored its refused sync, marked the setup
+// linked and reported "active" — X then renewed beside Y with nothing alerted. Each case below is
+// named for ADR 0002's case catalogue (§6) and fails on dev: there the link returns a bare plan report,
+// no guard reads open setups, and no closer exists.
+describe("ADR 0002 S1 (#5714)", () => {
+	let info: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(() => {
+		info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+	});
+
+	afterEach(() => {
+		info.mockRestore();
+		vi.unstubAllEnvs();
+	});
+
+	/** Opts this test into the REAL setup closer (lib/billing/pending-org-setup.ts `settleOpenSetup`). */
+	async function useRealCloser(): Promise<void> {
+		const actual = await vi.importActual<typeof import("@/lib/billing/pending-org-setup")>(
+			"@/lib/billing/pending-org-setup",
+		);
+		vi.mocked(settleOpenSetup).mockImplementation(actual.settleOpenSetup);
+	}
+
+	/** The real closer, called directly. */
+	async function realCloser(): Promise<typeof import("@/lib/billing/pending-org-setup")["settleOpenSetup"]> {
+		const actual = await vi.importActual<typeof import("@/lib/billing/pending-org-setup")>(
+			"@/lib/billing/pending-org-setup",
+		);
+		return actual.settleOpenSetup;
+	}
+
+	/** The stable event names logged so far (structured lines on console.info). */
+	function events(): string[] {
+		const names: string[] = [];
+		for (const call of info.mock.calls) {
+			try {
+				const parsed: unknown = JSON.parse(String(call[0]));
+				const name = typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "event") : null;
+				if (typeof name === "string") names.push(name);
+			} catch {
+				// not a structured line
+			}
+		}
+		return names;
+	}
+
+	/** user-1's OPEN setup for sub_x, whose org is org-1. */
+	function openRow(overrides: Partial<PendingOrgSetupRow> = {}): PendingOrgSetupRow {
+		return setupRow({ subscription_id: "sub_x", customer_id: "cus_x", created_org_id: "org-1", ...overrides });
+	}
+
+	/** X as Stripe returns it. Default metadata: minted by user-1, never linked (the link threw first). */
+	function subX(status: string, metadata: Record<string, string> = { created_by: "user-1" }) {
+		return { id: "sub_x", status, customer: "cus_x", latest_invoice: "in_x", currency: "eur", items: { data: [] }, metadata };
+	}
+
+	/** The org's billing row naming `subscriptionId` in `status`. */
+	function rowNames(subscriptionId: string, status: string) {
+		return { stripeCustomerId: "cus_1", stripeSubscriptionId: subscriptionId, status } as never;
+	}
+
+	/** A mint that succeeds, for the flows the guard lets through. */
+	function mintSucceeds(): void {
+		stripe.subscriptions.create.mockResolvedValue({
+			id: "sub_new",
+			latest_invoice: { confirmation_secret: { client_secret: "cs_new" } },
+		} as never);
+	}
+
+	const CREATOR_REFUSAL = /^Your paid setup for this team has not finished, so a plan cannot be started here yet\. Open Create a team to see where it stands, or contact support at /;
+	const TRY_AGAIN = "We could not check this team's earlier paid setup just now, so a plan cannot be started yet. Try again in a few minutes.";
+
+	describe("C81 — the org's own purchase flows refuse while its paid setup is open", () => {
+		beforeEach(async () => {
+			await useRealCloser();
+			vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([openRow()]);
+			// X is live and not linked in Stripe: no reader can close or adopt it.
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("active"));
+		});
+
+		it("createSubscriptionIntent refuses, and mints nothing", async () => {
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+			mintSucceeds();
+			const r = await createSubscriptionIntent("team");
+			expect(r).toEqual({ error: expect.stringMatching(CREATOR_REFUSAL) });
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+			expect(stripe.customers.create).not.toHaveBeenCalled();
+			expect(openPendingOrgSetupsForOrg).toHaveBeenCalledWith("org-1");
+		});
+
+		it("createCheckoutSession refuses, and opens no Checkout", async () => {
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+			stripe.checkout.sessions.create.mockResolvedValue({ url: "https://checkout.test" } as never);
+			await expect(createCheckoutSession("team")).rejects.toThrow(CREATOR_REFUSAL);
+			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+		});
+
+		it("startProTrial refuses, and starts no trial", async () => {
+			db.queue.push([{ proTrialConsumedAt: null }]);
+			db.queue.push([]);
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+			mintSucceeds();
+			await expect(startProTrial()).rejects.toThrow(CREATOR_REFUSAL);
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+			expect(syncSubscriptionToBilling).not.toHaveBeenCalled();
+		});
+
+		it("createAiSubscriptionIntent is not gated: an AI price cannot take the plan row", async () => {
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+			mintSucceeds();
+			await expect(createAiSubscriptionIntent("ai_plus")).resolves.toMatchObject({ clientSecret: "cs_new" });
+			expect(openPendingOrgSetupsForOrg).not.toHaveBeenCalled();
+		});
+
+		it("a setup already closed, or already linked, refuses nothing", async () => {
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+			mintSucceeds();
+			for (const done of [{ closed_at: new Date() }, { linked_at: new Date() }]) {
+				vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValueOnce([openRow(done)]);
+				await expect(createSubscriptionIntent("team")).resolves.toMatchObject({ clientSecret: "cs_new" });
+			}
+			expect(stripe.subscriptions.retrieve).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("C89 — the guard's message depends on who is buying", () => {
+		beforeEach(async () => {
+			await useRealCloser();
+			vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([openRow()]);
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("active"));
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+		});
+
+		it("the creator is sent to Create a team or support", async () => {
+			const r = await createSubscriptionIntent("team");
+			expect(r).toEqual({ error: expect.stringMatching(CREATOR_REFUSAL) });
+		});
+
+		it("a co-owner is told who started it and offered support — never told to finish it, and shown nothing else of the row", async () => {
+			authz.mockResolvedValue({ orgId: "org-1", userId: "user-2" } as never);
+			db.queue.push([{ name: "Ada Lovelace", email: "ada@example.test", username: null }]);
+			const r = await createSubscriptionIntent("team");
+			if (!("error" in r)) throw new Error("expected a refusal");
+			expect(r.error).toBe(
+				"Ada Lovelace started a paid setup for this team that has not finished, so a plan cannot be started here yet. Ask them, or contact support at support@alethialabs.io.",
+			);
+			// §5.5's copy says the setup "has not finished" — a fact. What it must never do is tell
+			// this member to FINISH it, which only the creator can (the imperative word).
+			expect(r.error).not.toMatch(/\bfinish\b/i);
+			for (const column of ["sub_x", "cus_x", "Acme Cloud", "acme", "user-1"]) {
+				expect(r.error).not.toContain(column);
+			}
+		});
+
+		it("a creator who has left the org reads as another member", async () => {
+			authz.mockResolvedValue({ orgId: "org-1", userId: "user-2" } as never);
+			db.queue.push([]);
+			const r = await createSubscriptionIntent("team");
+			expect(r).toEqual({
+				error: expect.stringMatching(/^Another member of this team started a paid setup for this team/),
+			});
+		});
+	});
+
+	describe("C87 — an ended X closes its setup wherever it is read", () => {
+		it("resolveNewOrgSetup closes the setup of an expired X whose org exists, before it answers", async () => {
+			await useRealCloser();
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete_expired"));
+			vi.mocked(pendingOrgSetupFor).mockResolvedValue(openRow());
+			vi.mocked(findSetupOrg).mockResolvedValue({ id: "org-1", slug: "acme" });
+			db.queue.push([openRow({ closed_at: new Date(), closed_reason: "ended" })]); // the close CAS
+			db.queue.push([]); // the declaration read
+			await expect(resolveNewOrgSetup({ subscriptionId: "sub_x", customerId: "cus_x" })).resolves.toMatchObject({
+				subscriptionId: "sub_x",
+			});
+			expect(db.sets).toEqual([expect.objectContaining({ closed_reason: "ended", closed_at: expect.any(Date) })]);
+			expect(events()).toEqual(["billing.pending_org_setup.closed"]);
+		});
+
+		it("findUnfinishedNewOrgSetup closes an expired X's setup that has an org — on dev it was skipped and kept open for good", async () => {
+			await useRealCloser();
+			vi.mocked(unfinishedPendingOrgSetups).mockResolvedValue(page([openRow()]));
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete_expired"));
+			vi.mocked(forgetPendingOrgSetup).mockResolvedValue(true); // it deletes nothing: the row has an org
+			db.queue.push([openRow({ closed_at: new Date() })]);
+			stripe.subscriptions.search = vi.fn(async () => ({ data: [] }));
+			await expect(findUnfinishedNewOrgSetup()).resolves.toBeNull();
+			expect(db.sets).toEqual([expect.objectContaining({ closed_reason: "ended" })]);
+		});
+
+		it("a co-owner's purchase finds the open setup, reads X canceled, closes it with ONE alert, and proceeds", async () => {
+			await useRealCloser();
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			authz.mockResolvedValue({ orgId: "org-1", userId: "user-2" } as never);
+			vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([openRow()]);
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("canceled"));
+			db.queue.push([openRow({ closed_at: new Date() })]);
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+			mintSucceeds();
+			await expect(createSubscriptionIntent("team")).resolves.toMatchObject({ clientSecret: "cs_new" });
+			expect(db.sets).toEqual([expect.objectContaining({ closed_reason: "ended" })]);
+			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({
+					resource_id: "sub_x",
+					summary: expect.stringContaining("whose unfinished setup was closed because the subscription ended"),
+				}),
+			);
+			expect(vi.mocked(emitAlertEvent).mock.calls[0]?.[2]?.summary).not.toMatch(/purchase flow cancelled or was replacing/);
+		});
+
+		it("an expired X whose payment never happened is closed with no alert", async () => {
+			const closer = await realCloser();
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			db.queue.push([openRow({ closed_at: new Date() })]);
+			await expect(closer(openRow(), { sub: subX("incomplete_expired") as never })).resolves.toBe("closed");
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+		});
+
+		it("two readers closing the same setup at once: one compare-and-set returns it, and only that caller alerts and logs", async () => {
+			const closer = await realCloser();
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			db.queue.push([openRow({ closed_at: new Date() })]); // the first UPDATE … RETURNING wins
+			db.queue.push([]); // the second matches nothing
+			const x = subX("canceled") as never;
+			await expect(Promise.all([closer(openRow(), { sub: x }), closer(openRow(), { sub: x })])).resolves.toEqual([
+				"closed",
+				"closed",
+			]);
+			expect(db.sets).toHaveLength(2);
+			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+			expect(events()).toEqual(["billing.pending_org_setup.closed"]);
+		});
+
+		it("fails closed: a Stripe read of X that fails refuses with the try-again clause, writes nothing and buys nothing", async () => {
+			await useRealCloser();
+			vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([openRow()]);
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+			mintSucceeds();
+			stripe.subscriptions.retrieve.mockRejectedValue(Object.assign(new Error("Stripe 500"), { type: "StripeAPIError" }));
+			await expect(createSubscriptionIntent("team")).resolves.toEqual({ error: TRY_AGAIN });
+			await expect(createCheckoutSession("team")).rejects.toThrow(TRY_AGAIN);
+			// The payments read inside the closer fails too: the same.
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("incomplete_expired"));
+			stripe.invoicePayments.list.mockRejectedValue(new Error("Stripe 503"));
+			await expect(createSubscriptionIntent("team")).resolves.toEqual({ error: TRY_AGAIN });
+			expect(db.update).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+			expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
+		});
+
+		it("an org whose row is live gets 'change the plan instead', and the guard is not reached", async () => {
+			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
+			vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([openRow()]);
+			await expect(createSubscriptionIntent("team")).resolves.toEqual({
+				error: "This organization already has an active subscription — change the plan instead.",
+			});
+			expect(openPendingOrgSetupsForOrg).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("C85 — a refused or ended setup never locks the org out", () => {
+		it("after the setup is closed, the org's plan purchase is not refused", async () => {
+			await useRealCloser();
+			// What the guard reads once the setup is closed: the closed row (or none — the SQL skips it).
+			vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([
+				openRow({ closed_at: new Date(), closed_reason: "org_has_plan", refused_reason: "org_has_plan" }),
+			]);
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+			mintSucceeds();
+			await expect(createSubscriptionIntent("team")).resolves.toMatchObject({ clientSecret: "cs_new" });
+		});
+	});
+
+	describe("C88 — the link no longer ignores a refused sync", () => {
+		const input = { orgId: "org-1", subscriptionId: "sub_1", customerId: "cus_1" };
+		const payer = { capacity: "organization" as const, billingCountry: "de" };
+
+		beforeEach(() => {
+			stripe.customers.retrieve.mockResolvedValue({ deleted: false, metadata: { created_by: "user-1" } });
+			vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ created_org_id: "org-1" }));
+		});
+
+		it("the row names a live Y before the link: refused before any Stripe write — nothing linked, nothing marked, alerted", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
+			vi.mocked(closePendingOrgSetup).mockResolvedValue(setupRow({ closed_at: new Date() }));
+
+			const r = await linkSubscriptionToNewOrg({ ...input, payer });
+
+			expect(r).toEqual({
+				kind: "refused",
+				clause:
+					"This team already has an active plan, so this payment was not linked to it. Contact support at support@alethialabs.io, who will refund it or move it to the right team. We have raised this with support.",
+			});
+			expect(stripe.customers.update).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.update).not.toHaveBeenCalled();
+			expect(syncSubscriptionToBilling).not.toHaveBeenCalled();
+			expect(markPendingOrgSetupLinked).not.toHaveBeenCalled();
+			expect(db.update).not.toHaveBeenCalled(); // no payer write
+			expect(closePendingOrgSetup).toHaveBeenCalledWith({
+				subscriptionId: "sub_1",
+				userId: "user-1",
+				reason: "org_has_plan",
+				refusedReason: "org_has_plan",
+			});
+			expect(events()).toEqual(["billing.new_org_link.refused"]);
+			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+			expect(emitAlertEvent).toHaveBeenCalledWith(
+				"org-platform",
+				"system.platform.payment_needs_support",
+				expect.objectContaining({
+					resource_id: "sub_1",
+					summary: expect.stringContaining("the link refused because the team already has another live plan"),
+				}),
+			);
+		});
+
+		it("a trialing Y refuses the same way; the clause claims no alert when none reached a channel", async () => {
+			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			orgBilling.mockResolvedValue(rowNames("sub_y", "trialing"));
+			vi.mocked(closePendingOrgSetup).mockResolvedValue(setupRow({ closed_at: new Date() }));
+			const r = await linkSubscriptionToNewOrg(input);
+			expect(r).toMatchObject({ kind: "refused" });
+			expect("clause" in r && r.clause).not.toMatch(/raised/);
+		});
+
+		it("race: the row names nothing at the first read and Y after the sync — refused, X's metadata already written, still not marked", async () => {
+			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			db.queue.push([{ name: "LinkedCo" }]);
+			const linked = { id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1", organization_id: "org-1" } };
+			stripe.subscriptions.update.mockResolvedValue(linked);
+			orgBilling.mockResolvedValueOnce(null).mockResolvedValueOnce(rowNames("sub_y", "active"));
+			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
+			vi.mocked(closePendingOrgSetup).mockResolvedValue(setupRow({ closed_at: new Date() }));
+
+			const r = await linkSubscriptionToNewOrg({ ...input, payer });
+
+			expect(r).toMatchObject({ kind: "refused", clause: expect.stringMatching(/already has an active plan/) });
+			expect(stripe.subscriptions.update).toHaveBeenCalledTimes(1);
+			expect(markPendingOrgSetupLinked).not.toHaveBeenCalled();
+			expect(db.update).not.toHaveBeenCalled();
+			expect(events()).toEqual(["billing.new_org_link.refused"]);
+		});
+
+		it("control (C76): an ignored sync whose row names X itself is linked, and reports X's state", async () => {
+			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			db.queue.push([{ name: "LinkedCo" }]);
+			const linked = { id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1", organization_id: "org-1" } };
+			stripe.subscriptions.update.mockResolvedValue(linked);
+			orgBilling.mockResolvedValueOnce(null).mockResolvedValueOnce(rowNames("sub_1", "active"));
+			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
+
+			await expect(linkSubscriptionToNewOrg(input)).resolves.toEqual({ kind: "linked", planState: "active", paymentUrl: null });
+			expect(markPendingOrgSetupLinked).toHaveBeenCalledWith("user-1", "sub_1", "org-1");
+			expect(closePendingOrgSetup).not.toHaveBeenCalled();
+			expect(events()).toEqual([]);
+		});
+
+		it("the link runs the closer on its setup before it answers", async () => {
+			const x = { id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } };
+			stripe.subscriptions.retrieve.mockResolvedValue(x);
+			db.queue.push([{ name: "LinkedCo" }]);
+			stripe.subscriptions.update.mockResolvedValue({ ...x, metadata: { created_by: "user-1", organization_id: "org-1" } });
+			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("applied");
+			await linkSubscriptionToNewOrg(input);
+			expect(settleOpenSetup).toHaveBeenCalledWith(expect.objectContaining({ subscription_id: "sub_1" }), {
+				sub: x,
+				orgId: "org-1",
+			});
+		});
+
+		it("a refusal whose setup an earlier caller already closed (and alerted on) does not alert again", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
+			vi.mocked(closePendingOrgSetup).mockResolvedValue(null);
+			vi.mocked(pendingOrgSetupFor).mockResolvedValue(setupRow({ closed_at: new Date(), refused_reason: "org_has_plan" }));
+			await expect(linkSubscriptionToNewOrg(input)).resolves.toMatchObject({ kind: "refused" });
+			expect(emitAlertEvent).not.toHaveBeenCalled();
+		});
+
+		it("a refused X with no setup record at all is still alerted on", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			stripe.subscriptions.retrieve.mockResolvedValue({ id: "sub_1", status: "active", customer: "cus_1", metadata: { created_by: "user-1" } });
+			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
+			vi.mocked(closePendingOrgSetup).mockResolvedValue(null);
+			vi.mocked(pendingOrgSetupFor).mockResolvedValue(null);
+			await expect(linkSubscriptionToNewOrg(input)).resolves.toMatchObject({ kind: "refused" });
+			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe("C96 — an X already linked in Stripe, whose mark never landed, is adopted", () => {
+		const linkedX = () => subX("active", { created_by: "user-1", organization_id: "org-1" });
+
+		beforeEach(async () => {
+			await useRealCloser();
+			vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([openRow()]);
+			stripe.checkout.sessions.create.mockResolvedValue({ url: "https://checkout.test/s" } as never);
+		});
+
+		it("the org's row names X: createCheckoutSession is not refused, and that call sets linked_at", async () => {
+			stripe.subscriptions.retrieve.mockResolvedValue(linkedX());
+			orgBilling.mockResolvedValue(rowNames("sub_x", "active"));
+			db.queue.push([openRow({ linked_at: new Date() })]);
+			await expect(createCheckoutSession("team")).resolves.toEqual({ url: "https://checkout.test/s" });
+			expect(db.sets).toEqual([expect.objectContaining({ linked_at: expect.any(Date) })]);
+			expect(syncSubscriptionToBilling).not.toHaveBeenCalled();
+			expect(events()).toEqual(["billing.pending_org_setup.adopted"]);
+		});
+
+		it("a concurrent resume lookup sets nothing twice: only one compare-and-set returns the row", async () => {
+			const closer = await realCloser();
+			orgBilling.mockResolvedValue(rowNames("sub_x", "active"));
+			db.queue.push([openRow({ linked_at: new Date() })]);
+			db.queue.push([]);
+			const x = linkedX() as never;
+			await expect(Promise.all([closer(openRow(), { sub: x }), closer(openRow(), { sub: x })])).resolves.toEqual([
+				"linked",
+				"linked",
+			]);
+			expect(events()).toEqual(["billing.pending_org_setup.adopted"]);
+		});
+
+		it("the row does not name X yet: the closer syncs X once, then adopts", async () => {
+			stripe.subscriptions.retrieve.mockResolvedValue(linkedX());
+			orgBilling.mockResolvedValueOnce(null).mockResolvedValueOnce(rowNames("sub_x", "active")).mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("applied");
+			db.queue.push([openRow({ linked_at: new Date() })]);
+			await expect(createCheckoutSession("team")).resolves.toEqual({ url: "https://checkout.test/s" });
+			expect(syncSubscriptionToBilling).toHaveBeenCalledTimes(1);
+			expect(syncSubscriptionToBilling).toHaveBeenCalledWith(linkedX());
+			expect(db.sets).toEqual([expect.objectContaining({ linked_at: expect.any(Date) })]);
+		});
+
+		it("the row names another live Y: the S1 refusal — closed with org_has_plan, alerted", async () => {
+			vi.stubEnv("ALETHIA_PLATFORM_ALERT_ORG_ID", "org-platform");
+			vi.mocked(emitAlertEvent).mockResolvedValue(1);
+			stripe.subscriptions.retrieve.mockResolvedValue(linkedX());
+			orgBilling.mockResolvedValue(rowNames("sub_y", "active"));
+			vi.mocked(syncSubscriptionToBilling).mockResolvedValue("ignored");
+			db.queue.push([openRow({ closed_at: new Date() })]);
+			await createCheckoutSession("team");
+			expect(db.sets).toEqual([
+				expect.objectContaining({ closed_reason: "org_has_plan", refused_reason: "org_has_plan" }),
+			]);
+			expect(emitAlertEvent).toHaveBeenCalledTimes(1);
+			expect(events()).toEqual(["billing.pending_org_setup.closed"]);
+		});
+
+		it("control: metadata naming ANOTHER user is never adopted, and the guard refuses", async () => {
+			stripe.subscriptions.retrieve.mockResolvedValue(subX("active", { created_by: "user-9", organization_id: "org-1" }));
+			orgBilling.mockResolvedValue(rowNames("sub_x", "active"));
+			await expect(createCheckoutSession("team")).rejects.toThrow(CREATOR_REFUSAL);
+			expect(db.update).not.toHaveBeenCalled();
+			expect(syncSubscriptionToBilling).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("C97 — an X Stripe cannot find is never closed automatically", () => {
+		it("the guard refuses as for any open setup, and closes nothing", async () => {
+			await useRealCloser();
+			vi.mocked(openPendingOrgSetupsForOrg).mockResolvedValue([openRow()]);
+			orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1", status: "none" } as never);
+			mintSucceeds();
+			stripe.subscriptions.retrieve.mockRejectedValue(
+				Object.assign(new Error("No such subscription"), { code: "resource_missing" }),
+			);
+			await expect(createSubscriptionIntent("team")).resolves.toEqual({ error: expect.stringMatching(CREATOR_REFUSAL) });
+			expect(db.update).not.toHaveBeenCalled();
+			expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+		});
 	});
 });

@@ -640,7 +640,7 @@ export function logBillingEvent(event: string, fields: Record<string, string | n
 }
 
 /** True for Stripe's "No such …" error — the id names nothing in this account. */
-export function isStripeResourceMissing(e: unknown): boolean {
+function isStripeResourceMissing(e: unknown): boolean {
 	return typeof e === "object" && e !== null && Reflect.get(e, "code") === "resource_missing";
 }
 
