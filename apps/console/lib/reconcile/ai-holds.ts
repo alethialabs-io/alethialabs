@@ -12,9 +12,10 @@
 // went. That cannot be caught in-process, which is why this is a sweep rather than a retry.
 //
 // One run is three passes, in this order (§8.2):
-//   1. C8: every `running` turn claim whose lease is silent or that is past its age bound is set
-//      `expired` and its hold released to 0 (`expireSilentTurns`, one transaction per claim, each
-//      candidate re-checked under its locks);
+//   1. C8: `running` turn claims whose lease is silent or that are past their age bound are set
+//      `expired` and their holds released to 0 (`expireSilentTurns`, one transaction per claim, each
+//      candidate re-checked under its locks). One run takes at most 500 and skips a claim whose
+//      thread is locked (SKIP LOCKED); the next run picks up the rest;
 //   2. every outstanding hold older than {@link STRANDED_HOLD_AGE_MINUTES} that NO `running` claim
 //      names is released to 0. A claimed hold is released only through its claim (pass 1), never by
 //      age;
@@ -36,7 +37,7 @@ import { agentTurnClaims, aiUsageLedger } from "@/lib/db/schema";
  * `maxDuration` exports bound nothing, and no platform timeout ends a request. What bounds a hold:
  * - a hold a `running` turn claim names is never read by this pass (it is excluded below); its turn
  *   is bounded by `TURN_BUDGET_MS` (15 minutes) and its release by C8 in pass 1. From ADR 0003
- *   slice 6 the chat routes' holds are claimed;
+ *   slice 6 the chat routes' holds will be claimed; today no route claims one;
  * - every other hold (today every chat route's, the support and agent-identity routes', the
  *   `colony` and `verify` actions', and a turn that ran on the old process across a deploy) has NO
  *   time bound at all. For those, 60 minutes is an assumption.
