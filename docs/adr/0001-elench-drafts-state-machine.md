@@ -260,7 +260,9 @@ Next line numbers are identical in both, the `ai` ones are updated).
 
   The draft's `thread_seen` flag tells two kinds of `none` apart. If the flag is false, the
   conversation was never sent. If it is true, the thread existed once and has since been reaped.
-- **Failed-send marker**: `{ turnId, kind, error, at, cellTarget?, uncertain }` on the draft. It
+- **Failed-send marker**: `{ turnId, kind, error, at, cellTarget?, uncertain }` on the draft.
+  `turnId` is null only when the lease found the claimed id stored with another text (§3.4 S5); the
+  next claim then mints a fresh one (D9, D10). It
   records that a send of this draft was claimed and then released. It holds no text, because the
   text is the draft's content. `uncertain` is true only for a later turn released by the lease (§3.4
   S5), where the server cannot know whether the chat route accepted it.
@@ -883,7 +885,7 @@ only. A duplicated tab copies `sessionStorage`, so a cached id would make two ta
 | D15 | dirty | `conflict(row)` on save | otherwise | `conflict := edited`. The box keeps `local`. The bar reads "Changed in another tab or device", with **Keep mine** (save at `base = row.revision`) and **Use theirs** (`epoch++`, `local := null`, `server := row`). When `row.last_sent` is newer than our base, the bar reads "This message was sent from another tab or device" and names its first 60 characters from the transcript once loaded. No autosave runs while the conflict is open. The words stay in memory and the cache. |
 | D16 | dirty | `discarded(row)` | — | `conflict := discarded`. The box keeps `local`, with **Restore** (`restoreDraft` and then save) and **Let it go** (`epoch++`, entry removed). |
 | D17 | any | a first send of this tab is learned to be committed (D11c, D26) | — | `thread := listed`, `sending := null`, `loadInto` and a lineage bump, and no auto-send. The box holds only `local`, the text typed **after** the claim. It never holds the sent text, because the claim emptied the box and only a definitive release puts the text back (G31). The notice reads "Your first message was sent", plus "The text you typed after it is still in the box" only when `local ≠ null`. |
-| D18 | any | `startConversation` answers `deleted` or `conflict` (§5.1 step 5; the claim was released in that transaction), or `gone(thread)` on save with `local ≠ null` | — | **FORK**: mint `k''` in the same scope, carry `sending.text` and its mentions (or the start's external prompt), then `local`, and `artifacts`, and save under `k''` at base 0. On `saved`, `discardDraft(k, released revision)`, so the words live in one row (soft, 24 h). `sending := null`. `activeKey` moves only if it was `k`. The notice reads "That conversation was deleted. Your message is kept in a new one." or "This conversation was started from another tab or device. Your message is kept in a new one." |
+| D18 | any | `startConversation` answers `deleted` or `conflict` (§5.1 step 5; the claim was released in that transaction), D9d's `thread-deleted` refusal after its release, or `gone(thread)` on save with `local ≠ null` | — | **FORK**: mint `k''` in the same scope, carry `sending.text` and its mentions (or the start's external prompt), then `local`, and `artifacts`, and save under `k''` at base 0. On `saved`, `discardDraft(k, released revision)`, so the words live in one row (soft, 24 h). `sending := null`. `activeKey` moves only if it was `k`. The notice reads "That conversation was deleted. Your message is kept in a new one." or "This conversation was started from another tab or device. Your message is kept in a new one." |
 | D19 | any | `gone(thread)` on save with `local = null`, `claiming = null` and `sending = null` | — | `epoch++`. `server := null`. If `k` is not the active key, remove the entry. If the thread is `deleted`, the notice reads "Removed the unsent message of a conversation you deleted." |
 | D19L | any | `listDrafts` (request sequence `q`) no longer lists `k` | `local = null`, `claiming = null`, `sending = null`, `server ≠ null`, **and** `ackSeq < q` | as D19. A key the server never acknowledged is **never** removed by a list, and neither is a key whose last write was answered after the list was requested. (#5512 thread 4177659614) |
 | D20 | any | a chat route refuses a turn as `turn-in-progress` or `turn-answered` (ADR 0003 §9.3: `committed: true`, `textCommitted: true`) | — | **Dormant until ADR 0003's PR 1 lands.** No error card. If this tab holds the turn's claim, `consumeDraft(token)` first (D9d (c)). `loadInto(k)` and a lineage bump. For `turn-in-progress` the loaded transcript ends on the user turn, so it reads "Being answered in another tab or device" instead of "No reply arrived", and `getThread` is polled every 5 s until its `inFlight` is null, then loaded again. For `turn-answered` the load is all. This is the transition ADR 0003 names as "D20"; its other refusals are D9d's arms (a) and (d). |
@@ -1494,8 +1496,10 @@ parallel. Only slice 1 has a migration (migrations are serialized repo-wide: it 
    `useElenchSend` dispatches, `newChat` mints a conversation id, a later turn is sent with
    `sendMessage({ id: turnId, … })` and the hand-off is watched (D9c, D9d), and the
    `use-elench-store.ts` comment ("Flipping never remounts the chat") is corrected. The S tests of
-   §11.1-§11.6 that need no new UI pass. ADR 0003's PR 1 edits `elench-conversation.tsx` too:
-   whichever lands second rebases and wires `revisionRef` from `created` (D12).
+   §11.1-§11.6 that need no new UI pass. ADR 0003's PR 1 edits `elench-conversation.tsx` and
+   `use-agent-chat.ts` too: whichever lands second rebases and wires `revisionRef` from `created`
+   (D12); if that is this slice, its scope gains `apps/console/components/agent/use-agent-chat.ts`
+   for that one setter.
 10. `useElenchThreads` resumes `activeKey[scope]`, catches `listThreads` / `getThread` and renders the
     draft with Retry (G10), and calls `listDrafts`; the rail shows the Unsent group in the docked
     column and in the narrow sheet, the narrow toggle shows the count, the panel's conversation
