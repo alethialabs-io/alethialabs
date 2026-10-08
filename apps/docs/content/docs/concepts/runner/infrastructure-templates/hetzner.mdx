@@ -125,9 +125,9 @@ smaller, does not rename the servers of another pool.
   `desired_size` out. `min_size` and `max_size` are checked but do not change the number of
   servers. See [Worker count is fixed](#worker-count-is-fixed).
 - **Network.** Each pool has its own `/24` subnet on the cluster's private network. Its servers
-  take the addresses from `.101` onward in that subnet. The template chooses the subnet from the
-  pool's **name**, not from its position in the list. So you can add, remove or reorder pools, and
-  no other pool changes its subnet. See [How a pool's subnet is chosen](#how-a-pools-subnet-is-chosen).
+  take the addresses from `.101` onward in that subnet. A pool gets a free subnet when you create
+  it and keeps it. So you can add, remove or reorder pools, and no other pool changes its subnet.
+  See [How a pool's subnet is chosen](#how-a-pools-subnet-is-chosen).
 - **Image.** The pool's servers boot the Talos image for the pool's `arch`.
 - **Isolation.** The pool's servers have the same firewall and the same private network as the
   default workers, and the same kind of public address: an IPv4 and an IPv6 address each.
@@ -140,25 +140,47 @@ and that does not overlap the pod or the service range. On the default `10.0.0.0
 free numbers are `1` to `95`. The highest number is `1023`, also on a network that is larger than a
 `/14` and so has more `/24` subnets.
 
-A pool takes the free `/24` that its name hashes to. The same name always gets the same subnet on
-the same network, so the order of the list does not matter.
+The plan gives each pool a `/24` in this order:
 
-The hash is taken over the list of free numbers. So if you change `pod_cidr`, `service_cidr` or the
-network range, the list changes, and every pool is hashed again. A pool that is not in
-`node_pool_subnet_index` then usually moves to a different `/24`, and its servers are replaced. Change these values before you add pools, not after.
+1. The number in `node_pool_subnet_index` for the pool, if you set one.
+2. The number that the cluster recorded for the pool when the pool was created.
+3. If the pool has no record, the `/24` that its servers already use.
+4. For a new pool, the free `/24` that its name hashes to, if no other pool has it. If another pool
+   has it, the new pool takes the lowest free `/24` that no pool has. A `/24` of a pool that the
+   same plan removes is not free until the next plan.
 
-Two names can hash to the same `/24`, and this is common when you add several pools. On the default
-network, the chance of at least one clash is about 10% for 5 pools and about 38% for 10. On a small
-network, such as a `/20` with 5 free numbers, a clash is almost certain after 3 pools.
-[#5595](https://github.com/alethialabs-io/alethialabs/issues/5595) tracks how to make clashes
-rarer. The plan refuses the pools that clash and names them, for example:
+So two pools never get the same `/24`, and you do not need `node_pool_subnet_index` to add a pool,
+also when you have 10 pools. A pool keeps its `/24` when you add, remove or reorder other pools.
+When you remove a pool, its `/24` is free again.
 
-```text
-extra_node_pools pools ["edge","search"] would all take /24 number 41 (10.0.41.0/24) of the network.
-```
+#### Where the record is kept
 
-To fix it, choose a free number for the pool you are adding, and set it in
-`node_pool_subnet_index`, which is a Hetzner-only key:
+The cluster records each pool's number as a label on the cluster's Hetzner firewall, which has the
+same name as the cluster. The label key is `subnet.alethia.io/<pool>` and the value is the number,
+for example `subnet.alethia.io/db=41`. The plan reads these labels before it chooses, and the apply
+writes them before it creates a pool's subnet. A cluster that has no extra pools has no such
+labels.
+
+<Callout type="warn">
+  Do not edit or delete the `subnet.alethia.io/` labels on the firewall. The plan uses them to keep
+  each pool on its `/24`. If you change a pool's label, the pool can move to another `/24`, and its
+  servers are replaced. Always check the plan before you apply it.
+</Callout>
+
+The record is outside the OpenTofu state, in the Hetzner project. OpenTofu cannot keep it in the
+state, because the value that chooses a pool's `/24` cannot also read the earlier value from the
+same resource.
+
+A cluster that was created before the record existed has pools but no labels. On its first plan
+after the upgrade, a pool keeps the `/24` that its servers use. A pool that has no servers is given
+a `/24` as if it were new, so a pool that you add in the same plan can take its `/24`. The first
+apply then writes the labels. To keep every pool where it is, apply once after the upgrade before
+you add pools.
+
+#### Choosing a subnet yourself
+
+To put a new pool on a `/24` that you choose, set the number in `node_pool_subnet_index`, which is a
+Hetzner-only key:
 
 ```yaml
 provider_config:
@@ -167,25 +189,32 @@ provider_config:
       instance_type: cpx31
       min_size: 1
       max_size: 1
-    - name: search
-      instance_type: cpx31
-      min_size: 1
-      max_size: 1
   node_pool_subnet_index:
-    search: 42
+    edge: 42
 ```
-
-The error message suggests a free number. You can also rename the new pool.
 
 <Callout type="warn">
   Set `node_pool_subnet_index` only for a pool that you are adding. If you set it for a pool that
   already exists, its subnet moves, and its servers are replaced.
 </Callout>
 
-The plan also refuses these values:
+The plan refuses these values:
 
 - a `node_pool_subnet_index` value that is `0`, outside the network, or in the pod or service range;
-- a `node_pool_subnet_index` key that is not the name of a pool in `extra_node_pools`.
+- a `node_pool_subnet_index` key that is not the name of a pool in `extra_node_pools`;
+- a `node_pool_subnet_index` value that another pool already has, for example:
+
+```text
+extra_node_pools pools ["edge","search"] would all take /24 number 41 (10.0.41.0/24) of the network.
+```
+
+The plan also refuses a pool when the other pools have every free `/24`. On a `/20` network, which
+has 5 free numbers, the sixth pool is refused. Use a larger network.
+
+If you change the network range, every pool's subnet changes, also when its number stays the same,
+and its servers are replaced. If you change `pod_cidr` or `service_cidr`, a recorded number can stop
+being free. That pool is then given a `/24` as if it were new, and its servers are replaced. Change
+these values before you add pools, not after.
 
 If you bring your own network (`provision_network: false`), the plan cannot see the subnets that
 are already on it. If a pool's `/24` is already a subnet of that network, Hetzner refuses it when
@@ -222,11 +251,12 @@ The Hetzner plan refuses these values, in addition to the rules that every cloud
   A `cx`, `cpx` or `ccx` pool must leave `arch` out or set it to `amd64`.
 - **A network too small for the pools.** A pool's `/24` must be inside the network and must not
   overlap the pod or service ranges. A `/16` network, the default, has 95 free `/24` subnets.
-- **Two pools on one subnet.** See [How a pool's subnet is chosen](#how-a-pools-subnet-is-chosen).
+- **Two pools on one subnet, set by hand.** See [How a pool's subnet is chosen](#how-a-pools-subnet-is-chosen).
 
 ## When you set none of these keys
 
 If you leave `node_labels`, `node_taints` and `extra_node_pools` unset, the plan creates identical
-resources to the template before these keys existed. It adds one output, `nodepool_contract_render`,
+resources to the template before these keys existed. The firewall gets no `subnet.alethia.io/`
+labels. It adds one output, `nodepool_contract_render`,
 which lists the labels and taints of each pool. So the first plan after an upgrade shows that output
 as a change, and no resource changes.

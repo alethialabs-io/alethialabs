@@ -9461,7 +9461,7 @@
 			"required": false,
 			"description": "Node pools beside the default pool. Each has a name, an instance type, min/max/desired sizes, an optional arch (amd64 or arm64) and capacity_type (on-demand or spot), and its own labels and taints. Its nodes carry the label alethia.io/pool=<name>; an arm64 pool also carries the taint alethia.io/arch=arm64:NoSchedule.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:418",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:419",
 			"readBy": [
 				"hetzner"
 			],
@@ -9541,7 +9541,7 @@
 			"required": false,
 			"description": "Labels on the nodes of every Alethia-managed pool, the default pool included. A pool's own labels win for the same key. At most 24. Keys whose prefix ends in kubernetes.io, k8s.io, karpenter.sh, karpenter.k8s.aws, amazonaws.com, cloud.google.com, gke.io, azure.com, hetzner.cloud or alethia.io are refused.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:365",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:366",
 			"readBy": [
 				"hetzner"
 			],
@@ -9559,9 +9559,9 @@
 			"kind": "map",
 			"typeExpr": "map(number)",
 			"required": false,
-			"description": "Hetzner only. For an extra pool, by name, the number of the /24 of the cluster network it takes (1 is the /24 after the node subnet). Leave empty: each pool's /24 is chosen from its name. Set it for a pool the plan reports on the same /24 as another.",
+			"description": "Hetzner only. For an extra pool, by name, the number of the /24 of the cluster network it takes (1 is the /24 after the node subnet). Leave empty: each pool is given a free /24 when it is created and keeps it, recorded on the cluster firewall. Setting it for a pool that already exists moves that pool and replaces its servers.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:535",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:536",
 			"readBy": [
 				"hetzner"
 			],
@@ -9581,7 +9581,7 @@
 			"required": false,
 			"description": "Taints on the nodes of every extra pool (not the default pool, which runs the platform's add-ons). A pool's own taint wins for the same key and effect. At most 24. effect is one of NoSchedule, PreferNoSchedule and NoExecute.",
 			"sensitive": false,
-			"declaredAt": "infra/templates/project/hetzner/variables.tf:387",
+			"declaredAt": "infra/templates/project/hetzner/variables.tf:388",
 			"readBy": [
 				"hetzner"
 			],
