@@ -222,7 +222,7 @@ Found while reading the code for this ADR:
 | 15 | Nested `currentActor()` | Even with a named billing org, the project's environment and every tool would resolve the session's org |
 | 16 | A crashed process | The hold stays at the 100-credit reserve with no answer until `release-ai-holds` releases it to 0, 60 to 75 minutes later (§1) |
 | 17 | Auto-send before the save | The client sees `finish` before `onFinish` has saved, so a continuation can arrive before the answer is stored |
-| 18 | Thread deleted mid-turn | Covered today by the tombstone; a claim with `ON DELETE CASCADE` disappears under a running attempt, and with it the record of which attempt owns the turn (revision 5, §4.3) |
+| 18 | Thread deleted mid-turn | Covered today by the tombstone. A design hazard, not today's code: a claim cascaded with its thread (revision 4's design) would disappear under a running attempt, and with it the record of which attempt owns the turn (fixed in revision 5, §4.3) |
 | 19 | Re-send of a stored, unanswered turn with edited text | Which text is answered: the stored one or the edit? And the edit must not be lost (ADR 0001's invariant) |
 | 20 | Two tabs send **different** new turns at one base | Both answer; the second save erases the first |
 | 21 | An open tab running the old bundle after the deploy | It sends no org, no revision, no trigger |
@@ -345,7 +345,7 @@ CREATE POLICY owner_only ON public.agent_turn_claims FOR ALL
   shows both of them the row they collide on. That collision is the claim working. The org the turn
   is billed to is a column (`billing_org_id`), not a visibility rule.
 - **Ownership is proved by a locked read.** Acceptance first locks the thread with `SELECT … FOR
-  UPDATE … WHERE id = $thread AND user_id = $actor` (§5 step 2). A thread the caller does not own is
+  UPDATE … WHERE id = $thread AND user_id = $actor` (§5.1 step 2). A thread the caller does not own is
   `thread-not-found`, and nothing is written. (A foreign key would not have proved it: Postgres skips
   row security for foreign-key checks.)
 - **A claim outlives its thread's delete (revision 5).** Revision 4 cascaded claims with the thread.
@@ -1098,8 +1098,9 @@ holds `mutex:migration` (`.claude/skills/db-pipeline/SKILL.md`).
    policy, the service-role statements and their explicit owner predicates), and billing.
 
 **PR 2: the client half on ADR 0001's store.** Needs ADR 0001 slices 7b and 9 (§9.4).
-`onTurnRefused` dispatches to the store (D9d's new arms, D20) and its composer path is deleted; the
-"Being answered" state; `body.mentions`, `body.cellTarget` and the `pendingMentions` slot deleted,
+`onTurnRefused` dispatches to the store (D9d's new arms, D20) and its composer path is deleted, so the
+"Being answered" state (shown by slice 6's composer path since PR 1) becomes the store's D20;
+`body.mentions`, `body.cellTarget` and the `pendingMentions` slot deleted,
 and the routes read metadata only; optionally the transport sends only the last message.
 
 **Rollout.**
@@ -1131,7 +1132,7 @@ and the routes read metadata only; optionally the transport sends only the last 
 ## 11. Cases, mechanisms and tests
 
 **Test files** (paths under `apps/console/`; each belongs to one slice of §14):
-- **R**: `tests/api/agent-turn-routes.test.ts` (slice 6; extended by slices 8 and 9). Both routes,
+- **R**: `tests/api/agent-turn-routes.test.ts` (slice 6; extended by slice 9). Slice 8's routes have their own file, `tests/api/support-turn-routes.test.ts`. Both routes,
   with ai's mock language model and `reserveTurn` over an in-memory fake with real lock and
   compare-and-set semantics. **The route-level org and project tests of cases 3 and 4 are R tests**
   in this file (they need a route, a claim and a hold), and so is the community team-org URL test
@@ -1176,7 +1177,7 @@ its exact globs.
 | 9 | `maxDuration` is not a bound | §8.2: in-route timeout, 30 s heartbeat, 90 s silence | R › `a turn running past 90 s with heartbeats keeps its claim; a Retry answers turn-in-progress`; R › `TURN_BUDGET_MS fires onAbort and finalizes partial` |
 | 10 | Named-org resolver | `resolveTurnActor` (§6.1) | O › `enterprise: a suspended member naming their former org is 403 before the hold, not billed to their personal org`; O › `community: orgId = userId resolves` |
 | 11 | Regenerate re-bills; stale tab | `regen:a` requires `a` to be the stored last answer (§5.2, §9.1) | R › `regenerate of a displayed answer is billed once`; R › `regenerate from a tab that never saw the newer answer: turn-answered` |
-| 12 | The client half of a refusal | §9.3; PR 1's `onTurnRefused` (§10 item 8) | C › `turn-answered loads the transcript and shows no error card`; C › `transcript-stale reloads the transcript, restores the text, shows no error card, and the next Enter is accepted`; C › `turn-in-progress shows Being answered and reloads when inFlight clears` (PR 2) |
+| 12 | The client half of a refusal | §9.3; PR 1's `onTurnRefused` (§10 item 8) | C › `turn-answered loads the transcript and shows no error card`; C › `transcript-stale reloads the transcript, restores the text, shows no error card, and the next Enter is accepted`; C › `turn-in-progress shows Being answered and reloads when inFlight clears` (slice 6, composer path; slice 9 re-runs it with the store owning the send) |
 | 13 | Mentions, `trigger`, `messageId` | §9.1, §9.2 | C › `the request carries trigger, turnId, answerId, toolCallIds and baseRevision`; R › `mentions are read from the stored user message's metadata`; R › `a later-turn cell prompt with body.cellTarget and no metadata lands in the named cell` |
 | 14 | Stream then disconnect, billed 0 | §8.1: `partial` answer billed, floor the reserve | R › `abort after model output: answered partial, hold settled to at least the reserve`; C › `Retry after a partial answer with no client tool output is regenerate({ messageId })`; R › `a provider error after two completed steps bills those two steps, collected by onStepFinish` |
 | 15 | Nested `currentActor()` | `runWithActor` (§6.3) | R › `a tool executed in step 2 resolves the named org while the session names another` |
@@ -1339,7 +1340,7 @@ recreated (§5.1 step 2). The floor of Q8 for a support turn is the hold its kin
   plan is read on `tx` after the lock (§5.1 step 7), because a read before the lock is a read on a
   second pooled connection, the deadlock `ai-guard.ts:308-311` warns against. The revision-2 review
   accepted this.
-- Revision 4 (this one) corrected six statements about the code that were false at origin/dev:
+- Revision 4 corrected six statements about the code that were false at origin/dev:
   `Dockerfile:87` (the `CMD` is at `:93`); `deploy-console.yml:1316` (the `up -d` is at `:1363`); "`use-project-assistant.ts` has no caller" (its
   snapshot helpers do, §12); "`propose_operation` alone" (true for the Elench routes only, §3);
   the project route's `refId` (`threadId ?? projectId`, §1); and the in-transaction settle, which
@@ -1383,8 +1384,8 @@ PR 2. **Cross-ADR order** (stated identically in ADR 0001 §5.3 and §14): 0001/
 | 5 | The claim state machine | `lib/agent/turn-claims.ts`, `lib/agent/transcript-save.ts`, `lib/agent/thread-transcript.ts`, `tests/lib/agent/turn-claims.test.ts`, `tests/integration/agent-turn-claims.test.ts`, `tests/lib/agent/transcript-save.test.ts`, `tests/lib/agent/thread-transcript.test.ts` | 1, 2, 3 | no (uses Slice 1's) | **yes** (service-role statements with explicit owner predicates, billing) |
 | 6 | The Elench cut-over: routes, transport and the minimum recovery | `app/api/agent/route.ts`, `app/api/projects/[projectId]/assistant/route.ts`, `lib/agent/turn-route.ts`, `components/agent/use-agent-chat.ts`, `components/agent/agent-chat.tsx`, `components/agent/elench/elench-conversation.tsx`, `components/project-assistant/use-project-assistant.ts`, `app/(private)/[org]/layout.tsx`, `components/shell/app-shell.tsx`, `lib/stores/use-elench-store.ts`, `tests/api/agent-turn-routes.test.ts`, `tests/components/agent-turn-refusal.test.tsx`, `tests/api/agent-message-limit.test.ts`, `tests/api/projects/assistant-route-env.test.ts`, `tests/components/elench-conversation-retry.test.tsx`, `tests/components/agent-chat-parts.test.tsx` | 4, 5, **0001/4**, **0001/7b** | no | **yes** (route org and project gates, seam 2) |
 | 7 | The sweep | `lib/reconcile/ai-holds.ts`, `tests/integration/ai-hold-sweep.test.ts`, `tests/lib/reconcile/ai-holds.test.ts` | 5 (parallel with 6) | no | **yes** (money release) |
-| 8 | The support and agent-identity routes (Q11), and the `mcp` route's `maxDuration` | `app/api/support/ask/route.ts`, `app/api/agent/[agentId]/route.ts`, `app/api/mcp/route.ts`, `tests/api/support-turn-routes.test.ts` | 6 | no | **yes** (route org gates) |
-| 9 | The client half on ADR 0001's store (PR 2) | `components/agent/use-agent-chat.ts`, `components/agent/elench/elench-conversation.tsx`, `lib/stores/use-elench-store.ts`, `lib/agent/turn-route.ts`, `app/api/agent/route.ts`, `app/api/projects/[projectId]/assistant/route.ts`, `tests/components/agent-turn-refusal.test.tsx`, `tests/api/agent-turn-routes.test.ts` | 6, **0001/7b**, **0001/9** | no | no |
+| 8 | The support and agent-identity routes (Q11), and the `mcp` route's `maxDuration` | `app/api/support/ask/route.ts`, `app/api/agent/[agentId]/route.ts`, `app/api/mcp/route.ts`, `lib/agent/turn-route-support.ts`, `tests/api/support-turn-routes.test.ts` | 6 (it imports slice 6's `turn-route.ts` and never edits it; a change it needs there is a separate PR ordered against slice 9) | no | **yes** (route org gates) |
+| 9 | The client half on ADR 0001's store (PR 2) | `components/agent/use-agent-chat.ts`, `components/agent/elench/elench-conversation.tsx`, `components/agent/elench/use-elench-send.ts`, `lib/stores/use-elench-store.ts`, `lib/stores/elench-drafts/reducer-sending.ts`, `lib/agent/turn-route.ts`, `app/api/agent/route.ts`, `app/api/projects/[projectId]/assistant/route.ts`, `tests/components/agent-turn-refusal.test.tsx`, `tests/api/agent-turn-routes.test.ts`, `tests/lib/stores/elench-drafts-sending.test.ts` | 6, **0001/7b**, **0001/9** (and 9b, if it splits) | no | no |
 
 **Slice 1. Schema, migration and RLS.** *Done when:* `agent_turn_claims` (§4.1: every column,
 `accepted_at` included, `thread_id` with **no** foreign key, both unique constraints, the three
@@ -1477,5 +1478,6 @@ support turn. The support chat's components are not changed.
 **Slice 9. The client half on ADR 0001's store (PR 2).** *Done when:* `onTurnRefused` dispatches to
 the store only (D9d's arms, D20) and its composer path is deleted; "Being answered" polls
 `getThread.inFlight`; `body.mentions`, `body.cellTarget` and the `pendingMentions` slot are deleted
-and the routes read the stored message's metadata only; the PR 2 tests of §11 pass, the empty-cell
+and the routes read the stored message's metadata only, which removes D9b's staging of the slot
+(`reducer-sending.ts`, `use-elench-send.ts`, both in scope); the PR 2 tests of §11 pass, the empty-cell
 prompt test of §9.2 included.
