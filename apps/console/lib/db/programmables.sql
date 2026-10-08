@@ -1798,6 +1798,18 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- payment_holds (ADR 0002 §4.1, #5755): one row per create-a-team subscription not yet proven settled.
+-- SERVICE-ROLE ONLY — RLS enabled with NO app policy, the purchase_leases idiom above. A hold is about
+-- money: an app-role write could release another user's hold or move its state, and an app-role read
+-- would show one payer's Stripe ids to another. Only lib/billing/payment-holds/store.ts touches it,
+-- through getServiceDb().
+ALTER TABLE public.payment_holds ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'alethia_app') THEN
+    EXECUTE 'REVOKE ALL ON public.payment_holds FROM alethia_app';
+  END IF;
+END $$;
+
 -- cli_logins: service-role only — RLS enabled with no app policy denies the app role.
 ALTER TABLE public.cli_logins ENABLE ROW LEVEL SECURITY;
 
