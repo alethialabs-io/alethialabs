@@ -25,6 +25,7 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 import { db, orgIdBySlug } from "../helpers/db";
 import { seedJob, seedProject, type Owner } from "../helpers/seed";
+import { seedSupportContact } from "../helpers/support-contact";
 import type { RouteParam, RouteRecord } from "./manifest";
 
 export interface AuditContext {
@@ -92,7 +93,7 @@ export async function seedRouteFixtures(ctx: AuditContext): Promise<void> {
 			status: "open",
 			subject: "UI audit fixture case",
 			context: sql.json({}),
-			contact: sql.json({ email: "audit@alethia.test" }),
+			contact: sql.json(seedSupportContact()),
 		})}
 		returning id`;
 	await sql`
