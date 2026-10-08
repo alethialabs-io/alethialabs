@@ -1302,6 +1302,17 @@ function isCreateATeamSubscriptionOf(sub: Pick<Stripe.Subscription, "metadata">,
  * left alone and returned in `foreign`, for the caller to report. `"customer"` — the org-plan purchase,
  * whose customer is the org's own — touches every one, as before ADR 0002.
  *
+ * WHICH CLIENT (ADR 0002 S2 hand-off, decided in S3). This sweep and the helpers it shares with the
+ * create-a-team prior's replacement — `cancelNeverPaid`, `voidPayableInvoice`, `refundTakenPayment` —
+ * stay on the shared client (`getStripe()`, the SDK's 80s / 2 retries), not the purchase client. They
+ * also serve the org-plan purchase, which `lib/billing/stripe.ts` keeps on the shared client's defaults;
+ * the first-payment reads they depend on (`lib/billing/first-payment.ts`) are on the shared client
+ * anyway. The cost is that a silent call can hold the purchase longer (about 240s at worst against
+ * about 40s). That is a wait, not a double charge: every write here renews the lease first, and a write
+ * whose request stalls past the lease and lands after another holder took over only cancels or voids a
+ * subscription this request listed (so minted before that holder's), or refunds a payment under its
+ * per-PaymentIntent idempotency key. The other holder's mint is behind its own sweep and artifact gate.
+ *
  * `incomplete` is not "never paid": Stripe keeps a subscription `incomplete` while its first payment
  * is `processing`, and until its invoice settles after the payment succeeded. So each one is cancelled
  * only when `readFirstPayment` proves it unpaid (read twice, `readTwice`); any other — or one whose
