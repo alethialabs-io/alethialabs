@@ -5,12 +5,13 @@
 // A chat turn is answered by the model, and billed, exactly once. Every test asks the database:
 //
 //   acceptance   two concurrent accepts of one turn → one claim, one hold; the pin read under the
-//                thread lock; thread-busy; another owner's id; a reaped id recreated with its old
+//                thread lock, also for two orgs' first turns into a free id; thread-busy; another owner's id; a reaped id recreated with its old
 //                claims gone; a silent claim expired by the next accept; a 402 that rolls back the
 //                claim and the appended turn; ONE connection (a pool of one cannot deadlock it)
 //   finalize     settled in its own transaction (and the spend alert only after the commit); C7;
 //                lost after expiry; moved; a partial answer floored at the reserve; a metering write
-//                that fails rolls the answer back; the delete sequence of case 18
+//                that fails rolls the answer back; the delete sequence of case 18; ONE connection for
+//                C6 and the deleted outcome; a mismatched continuation settled, never released
 //   the rest     the heartbeat and its age bound; the sweep's C8 (lease or age); the continuation,
 //                its schema refusal and its resume; a regenerate; no deadlock between an acceptance
 //                running C8 and the finalize of the same claim; self-host reserves nothing
@@ -193,6 +194,34 @@ async function acceptedFirstTurn(text = "what failed?") {
 	const u = userMsg(`u-${randomUUID()}`, text);
 	const turn = accepted(await reserveTurn(submit(user, org, threadId, [u], { baseRevision: 1 })));
 	return { user, org, threadId, u, turn };
+}
+
+/**
+ * Run `fn` with a service pool of ONE connection and an app pool that fails at once: any second
+ * checkout from the service pool waits for the connection `fn`'s transaction holds, for ever, so a
+ * call that needs two connections times out here (10 s) instead of completing.
+ */
+async function withPoolOfOne<T>(fn: () => Promise<T>): Promise<T> {
+	const url = process.env.ALETHIA_DATABASE_URL ?? "";
+	const original = globalThis.__alethiaServiceDb;
+	const originalApp = globalThis.__alethiaAppDb;
+	const one = postgres(url, { max: 1, prepare: false });
+	const nowhere = postgres("postgres://nobody:nothing@127.0.0.1:1/none", { max: 1, connect_timeout: 1 });
+	globalThis.__alethiaServiceDb = drizzle(one, { schema, casing: "snake_case" });
+	globalThis.__alethiaAppDb = drizzle(nowhere, { schema, casing: "snake_case" });
+	try {
+		const result = await Promise.race([
+			fn(),
+			new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 10_000)),
+		]);
+		if (result === "hung") throw new Error("the call waited on a second connection");
+		return result;
+	} finally {
+		globalThis.__alethiaServiceDb = original;
+		globalThis.__alethiaAppDb = originalApp;
+		await one.end({ timeout: 1 });
+		await nowhere.end({ timeout: 1 });
+	}
 }
 
 describeIfDb("the claim state machine (ADR 0003 slice 5)", () => {
@@ -461,31 +490,29 @@ describeIfDb("the claim state machine (ADR 0003 slice 5)", () => {
 	it("reserveTurn opens one connection: with a service pool of ONE it still completes, C8 included", async () => {
 		const { user, org, threadId, u, turn } = await acceptedFirstTurn();
 		await silence(turn.claimId);
-		const url = process.env.ALETHIA_DATABASE_URL ?? "";
-		const original = globalThis.__alethiaServiceDb;
-		const originalApp = globalThis.__alethiaAppDb;
-		const one = postgres(url, { max: 1, prepare: false });
-		const nowhere = postgres("postgres://nobody:nothing@127.0.0.1:1/none", { max: 1, connect_timeout: 1 });
-		// Any second checkout from the service pool would wait for the one connection the acceptance
-		// holds, for ever; any use of the app pool fails at once.
-		globalThis.__alethiaServiceDb = drizzle(one, { schema, casing: "snake_case" });
-		globalThis.__alethiaAppDb = drizzle(nowhere, { schema, casing: "snake_case" });
-		try {
-			const result = await Promise.race([
-				reserveTurn({
-					...submit(user, org, threadId, [u], { baseRevision: turn.acceptedRevision }),
-					turn: { trigger: "regenerate-message", turnId: u.id, baseRevision: turn.acceptedRevision },
-				}),
-				new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 10_000)),
-			]);
-			if (result === "hung") throw new Error("reserveTurn waited on a second connection");
-			expect(accepted(result).attemptNo).toBe(2);
-		} finally {
-			globalThis.__alethiaServiceDb = original;
-			globalThis.__alethiaAppDb = originalApp;
-			await one.end({ timeout: 1 });
-			await nowhere.end({ timeout: 1 });
-		}
+		const result = await withPoolOfOne(() =>
+			reserveTurn({
+				...submit(user, org, threadId, [u], { baseRevision: turn.acceptedRevision }),
+				turn: { trigger: "regenerate-message", turnId: u.id, baseRevision: turn.acceptedRevision },
+			}),
+		);
+		expect(accepted(result).attemptNo).toBe(2);
+	});
+
+	it("finalizeTurn opens one connection: with a service pool of ONE, C6 and the deleted outcome complete", async () => {
+		const first = await acceptedFirstTurn();
+		expect(
+			await withPoolOfOne(() => finalizeTurn(first.turn, { answer: answerMsg("a-one", "Done."), steps: STEPS, partial: false })),
+		).toMatchObject({ outcome: "won", state: "answered" });
+		expect((await hold(holdIdOf(first.turn))).settled_at).not.toBeNull();
+		// The deleted outcome: recoverTranscript and the metering, all on finalize's connection.
+		const second = await acceptedFirstTurn("deploy staging");
+		await deleteAsTheUserDoes(second.threadId, second.user);
+		const recovered = await withPoolOfOne(() =>
+			finalizeTurn(second.turn, { answer: answerMsg("a-rec", "Recovered."), steps: STEPS, partial: false }),
+		);
+		expect(recovered).toMatchObject({ outcome: "deleted", answerId: "a-rec" });
+		expect((await hold(holdIdOf(second.turn))).settled_at).not.toBeNull();
 	});
 
 	// ── Finalize ─────────────────────────────────────────────────────────────────────────────────
