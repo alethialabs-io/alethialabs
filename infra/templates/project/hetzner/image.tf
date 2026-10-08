@@ -100,8 +100,8 @@ locals {
   talos_image_cache_label_value = "talos-image"
 
   # The extension set REQUESTED from the Image Factory, and the third dimension of the cache key.
-  # Feeds BOTH the extensions lookup below and the key, so the two can never describe different
-  # images. Add an extension here and every cached entry is superseded, automatically.
+  # Feeds BOTH the schematic's officialExtensions and the cache key, so the two can never describe
+  # different images. Add an extension here and every cached entry is superseded, automatically.
   talos_image_extensions = ["siderolabs/qemu-guest-agent"]
 
   # sha256 is 64 hex chars; an hcloud label VALUE caps at 63. 32 hex chars is 128 bits — far more
