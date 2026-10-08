@@ -724,7 +724,7 @@ Drafts never read the chat route's billing org. A draft's tenant is the server a
 | | Draft claim (this ADR, §3.4) | Turn claim (#5515) |
 |---|---|---|
 | Guards | **this text is sent once**: one draft is consumed by at most one send | **this turn is answered and billed once** |
-| Key | the draft row `(user, org, conversation)` + a per-attempt token | `(thread id, turn id)` |
+| Key | the draft row `(user, org, conversation)` + a per-attempt token | `(thread id, turn id, attempt key)` (ADR 0003 §4.1) |
 | Lives | from Enter until the **hand-off** (§2): the start's commit, or the chat route's 2xx | from the route's acceptance until the answer is stored or the turn fails |
 | Taken by | the client, through `claimDraft` | the chat route |
 | Ends | consumed (S2/S3), released with the text intact (S4), or settled by the 120 s lease (S5) | #5515's lease and outcomes |
@@ -738,7 +738,11 @@ UI says the message may have been sent (D31). A re-send of that text is a send o
 which #5515 refuses as `turn-in-progress` or `turn-answered` (D20). **While #5515 is open**, that one
 case can be answered twice, as any re-send on dev can; the notice tells the user to check the
 conversation first, and it is strictly narrower than dev, where a reload during a later turn loses
-the words and a retype is always a new turn.
+the words and a retype is always a new turn. **Once ADR 0003 lands** the case narrows further:
+acceptance appends the user turn to the stored transcript in the same transaction (its decision 3,
+§5), so from the hand-off on `hasTurn` is true and S5 **consumes**; `uncertain` is then left only
+for a tab that died before acceptance committed, and its re-send is accepted or refused exactly
+once by the turn claim.
 
 **While #5515 is open, nothing about turns regresses against dev @ e02417059.**
 - The chat routes, `components/agent/use-agent-chat.ts` and the budget hold are not changed by this
