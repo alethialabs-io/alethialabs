@@ -26,7 +26,7 @@ import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { UsageLimitError } from "@/lib/billing/usage-guard";
 import { KUBECONFIG_MINT_SHARED_CLUSTER_REASON } from "@/lib/clusters/mint-eligibility";
 import { errorName } from "@/lib/errors";
-import { mayCollectTier, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
+import { collectGate, takeMintRateLimit } from "@/lib/kubeconfig-mint/gates";
 import { pollKubeconfigMint } from "@/lib/kubeconfig-mint/poll";
 import { type MintRequestRefusal, requestKubeconfigMint } from "@/lib/kubeconfig-mint/request";
 import { log } from "@/lib/observability/log";
@@ -156,8 +156,15 @@ export async function requestKubeconfigDownload(input: {
 /**
  * Polls one mint the caller requested. `ready` is served once — the row is deleted by the read, with
  * its delivery audit row — and carries ciphertext only. Another person's mint, another cluster's, and
- * one already collected are all 404. Uses the quiet PDP check: a poll every two seconds is not an
- * activity-feed event, and the request already recorded one.
+ * one already collected are all 404.
+ *
+ * What it records (#5667): a poll every two seconds is not an activity-feed event, so nothing a poll
+ * that hands nothing over asks is recorded — the `access_readonly` check below is the quiet one, and
+ * the admin-tier re-check of a pending, failed or expired mint is a non-recording probe. The ONE
+ * recorded check is the hand-over: collecting a `ready` admin mint asks the enforcing
+ * `cluster:access_admin` check afresh (lib/kubeconfig-mint/gates.ts `collectGate`), which writes one
+ * activity row — an allow, or the denial that refuses it. A read-only hand-over records no row here
+ * (`access_readonly` is quiet); its record is the delivery audit row poll.ts writes.
  */
 export async function pollKubeconfigDownload(input: {
 	clusterId: string;
@@ -183,7 +190,7 @@ export async function pollKubeconfigDownload(input: {
 			client: "console",
 			credential: { kind: "session" },
 			sourceIp: await sourceIp(),
-			mayCollect: (tier) => mayCollectTier(actor, clusterId, tier),
+			gate: collectGate(actor, clusterId),
 		});
 		if (!outcome.ok) return { ok: false, status: outcome.refusal === "forbidden" ? 403 : 404 };
 		return { ok: true, poll: outcome.body };

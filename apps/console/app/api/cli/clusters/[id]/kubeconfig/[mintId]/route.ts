@@ -6,7 +6,7 @@ import { trustedClientIp } from "@/lib/auth/trusted-ip";
 import { authorizeCli } from "@/lib/authz/guard";
 import { cliJson } from "@/lib/cli/respond";
 import { errorName } from "@/lib/errors";
-import { mayCollectTier, mintCredentialOf } from "@/lib/kubeconfig-mint/gates";
+import { collectGate, mintCredentialOf } from "@/lib/kubeconfig-mint/gates";
 import { mintError, noStore } from "@/lib/kubeconfig-mint/http";
 import { pollKubeconfigMint } from "@/lib/kubeconfig-mint/poll";
 import { log } from "@/lib/observability/log";
@@ -21,7 +21,10 @@ const mlog = log.child({ component: "kubeconfig-mint" });
  *
  * - **Who.** The CLI actor is authenticated and must hold `cluster:access_readonly` (every mint
  *   needs at least that). An ADMIN mint is re-checked against `cluster:access_admin` before
- *   anything is answered: somebody demoted after asking does not collect the admin credential.
+ *   anything is answered: somebody demoted after asking does not collect the admin credential. That
+ *   re-check records an activity row only at the hand-over of a `ready` mint, where it is a fresh,
+ *   enforcing decision; while the mint is pending it is a non-recording probe (#5667,
+ *   lib/kubeconfig-mint/gates.ts `collectGate`).
  * - **Whose.** Only the CREDENTIAL that requested the mint, in the org it was requested in, sees it:
  *   the same service token (by its id), or the same person's session (#5310). The person is enforced
  *   by the row's RLS policy and the query; the credential by the query (lib/kubeconfig-mint/poll.ts).
@@ -54,7 +57,7 @@ export async function GET(
 			client: "cli",
 			credential: mintCredentialOf(auth),
 			sourceIp: trustedClientIp(req.headers),
-			mayCollect: (tier) => mayCollectTier(actor, id, tier),
+			gate: collectGate(actor, id),
 		});
 		if (!outcome.ok) {
 			return outcome.refusal === "forbidden"
