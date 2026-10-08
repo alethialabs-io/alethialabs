@@ -16,7 +16,9 @@
 //   - `linked_at` — by `linkSubscriptionToNewOrg`, once the subscription names the org;
 //   - `declared_at` — by `declarePayer` for that org, the last step. `billing` is nulled then;
 //   - `closed_at` (+ `closed_reason`, and `closed_by` / `closed_note` for an operator) — by the setup
-//     closer, the link's refusal, or `scripts/pending-org-setups.ts close-setup` (ADR 0002 §5.7, #5714).
+//     closer, the link's refusal, or `scripts/pending-org-setups.ts close-setup` (ADR 0002 §5.7, #5714);
+//     and, once slice 5 gives it a caller, by the release of a payment hold on the subscription
+//     (`closed_reason = 'hold_released'`, ADR 0002 §4.1, lib/billing/payment-holds/store.ts).
 //     A closed setup is finished for good: it never blocks the org's purchases again and is never
 //     offered for resume. `refused_reason` records why the link refused, beside it.
 // "Unfinished" is `declared_at IS NULL AND closed_at IS NULL`; recovery reads it by `user_id`, so it
@@ -41,9 +43,11 @@ import { organization } from "./organizations";
 
 /**
  * Why a setup was closed (ADR 0002 §5.7): its subscription read ended (`ended`), the link refused it
- * beside another live plan (`org_has_plan`), or an operator closed it (`operator`).
+ * beside another live plan (`org_has_plan`), an operator closed it (`operator`), or a payment hold on
+ * its subscription was released for any reason but `adopted` (`hold_released`, §4.1 — written by
+ * `releaseHold` in lib/billing/payment-holds/store.ts, which has no caller until slice 5).
  */
-export type PendingOrgSetupClosedReason = "ended" | "org_has_plan" | "operator";
+export type PendingOrgSetupClosedReason = "ended" | "org_has_plan" | "operator" | "hold_released";
 
 /** Why the link refused a setup (ADR 0002 §5.6). S1 writes only `org_has_plan`. */
 export type PendingOrgSetupRefusedReason = "ended" | "held" | "org_has_plan";
