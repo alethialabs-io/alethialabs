@@ -349,7 +349,7 @@ describe("R7: the worst-case action argument", () => {
 
 		expect(bytes).toBeLessThan(1024 * 1024);
 		// And it IS the pathological case, not a smaller one that passes for the wrong reason:
-		// six bytes per U+0001 puts it above 600 kB (ADR 0001 §4.1 measured 757,235 B).
+		// six bytes per U+0001 puts it above 700 kB (ADR 0001 §4.1 measured 757,235 B).
 		expect(bytes).toBeGreaterThan(700_000);
 	});
 });

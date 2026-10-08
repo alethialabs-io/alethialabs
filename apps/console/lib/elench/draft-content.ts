@@ -30,7 +30,8 @@ export const MAX_DRAFT_MENTION_FIELD = 256;
  * Normalizes draft text the way the composer does on every edit (ADR 0001 §4.1): U+0000 removed
  * and lone surrogates replaced (`toWellFormed`). These are exactly the characters Postgres `text`
  * and `jsonb` refuse or change. It does NOT trim and does NOT touch line endings: the draft is the
- * box as typed. ADR 0003's `turnText` applies this same step first, then CRLF→LF and the trim.
+ * box as typed. ADR 0003's `turnText` applies this same step first, then turns every `\r\n`
+ * AND every lone `\r` into `\n`, then trims. A draft keeps a lone `\r`; the sent turn does not.
  */
 export function normalizeDraftText(text: string): string {
 	return text.replaceAll("\u0000", "").toWellFormed();
@@ -105,9 +106,10 @@ export function spansAreValid(content: DraftEditorContent): boolean {
 }
 
 /**
- * A draft's content as `saveDraft` and `claimDraft` receive it (ADR 0001 §4.1). The only size
- * refusal is the character cap, the same number the composer and the routes' 413 enforce; the
- * worst case it admits encodes well under the 1 MiB action body (R7, pinned by a test).
+ * A draft's content as `saveDraft` and `claimDraft` receive it (ADR 0001 §4.1). It refuses on
+ * the character cap (the same number the composer and the routes' 413 enforce), on the count caps
+ * (artifacts, spans, distinct mentions) and on the 256-unit field caps; the worst case it admits
+ * encodes well under the 1 MiB action body (R7, pinned by a test).
  */
 export const contentSchema = z
 	.object({
