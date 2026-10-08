@@ -34,7 +34,6 @@ import {
 } from "@/app/server/actions/alerts";
 import { getPdp } from "@/lib/authz";
 import { authorize } from "@/lib/authz/guard";
-import { ForbiddenError } from "@/lib/authz/types";
 import { getChannelSender } from "@/lib/alerts/channels";
 import { invalidateOrgRules } from "@/lib/alerts/rule-cache";
 import { ALL_EVENTS } from "@/lib/alerts/catalog";
@@ -58,12 +57,14 @@ function actor(over: Record<string, unknown> = {}) {
 
 const senderVerify = vi.fn();
 const pdpEnforce = vi.fn();
+const pdpCan = vi.fn();
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(authorize).mockResolvedValue(actor() as never);
-	vi.mocked(getPdp).mockReturnValue({ enforce: pdpEnforce } as never);
+	vi.mocked(getPdp).mockReturnValue({ enforce: pdpEnforce, can: pdpCan } as never);
 	pdpEnforce.mockResolvedValue(undefined);
+	pdpCan.mockResolvedValue({ allowed: true });
 	vi.mocked(checkRateLimit).mockResolvedValue({ ok: true, remaining: 1 });
 	vi.mocked(isCredEncryptionConfigured).mockReturnValue(true);
 	vi.mocked(encryptSecret).mockReturnValue({ enc: "sealed" } as never);
@@ -228,7 +229,7 @@ describe("getAlertsBootstrap", () => {
 	});
 
 	it("reports canManage=false when the PDP forbids manage_alerts", async () => {
-		pdpEnforce.mockRejectedValue(new ForbiddenError("manage_alerts" as never, { type: "alert" }));
+		pdpCan.mockResolvedValue({ allowed: false, reason: "no_grant" });
 		mockBootstrapDb({ channels: [], rules: [], bindings: [], deliveries: [], routed: [] });
 		const r = await getAlertsBootstrap();
 		expect(r.canManage).toBe(false);
