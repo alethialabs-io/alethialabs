@@ -99,8 +99,11 @@ export interface TurnRefusal {
 	answerId: string | null;
 }
 
+/** The statuses a refusal answers with. */
+export type TurnRefusalStatus = 403 | 404 | 409 | 410;
+
 /** The HTTP status of each refusal (ADR 0003 §9.3). */
-export const TURN_REFUSAL_STATUS = {
+export const TURN_REFUSAL_STATUS: { readonly [K in TurnRefusalCode]: TurnRefusalStatus } = {
 	"turn-in-progress": 409,
 	"turn-answered": 409,
 	"turn-committed-different-text": 409,
@@ -112,7 +115,7 @@ export const TURN_REFUSAL_STATUS = {
 	"thread-not-found": 404,
 	"project-not-found": 404,
 	"org-forbidden": 403,
-} as const satisfies Record<TurnRefusalCode, number>;
+};
 
 /**
  * The refusals that say the turn IS committed, whatever the transcript position of the request's
@@ -403,7 +406,7 @@ export interface AcceptedTurn {
 /** What {@link reserveTurn} answered. */
 export type ReserveTurnResult =
 	| { outcome: "accepted"; turn: AcceptedTurn }
-	| { outcome: "refused"; status: (typeof TURN_REFUSAL_STATUS)[TurnRefusalCode]; body: TurnRefusal }
+	| { outcome: "refused"; status: TurnRefusalStatus; body: TurnRefusal }
 	/** A 400: a malformed turn, a request that contradicts its turn fields, or an output that fails its schema. */
 	| { outcome: "invalid"; reason: string }
 	/** A 402: the budget refused the hold; everything this acceptance wrote was rolled back. */

@@ -630,15 +630,19 @@ describeIfDb("the claim state machine (ADR 0003 slice 5)", () => {
 				turn: { trigger: "regenerate-message", turnId: u.id, baseRevision: turn.acceptedRevision },
 			}),
 		]);
-		// Either order is correct; both are one transaction each, serialized by the thread lock.
-		if (fin.outcome === "won") {
-			expect(refusalOf(acc)).toBe("turn-answered");
-			expect(await ledger(org)).toHaveLength(1);
-		} else {
-			expect(fin).toEqual({ outcome: "lost" });
-			expect(accepted(acc).attemptNo).toBe(2);
-			expect(await hold(holdIdOf(turn))).toMatchObject({ credits: 0 });
-		}
+		// Either order is correct; both are one transaction each, serialized by the thread lock. The
+		// finalize won (the retry is turn-answered, one hold, settled at cost), or the acceptance's C8
+		// did first (the finalize is lost, its hold released to 0, the retry re-armed with its own).
+		const seen = {
+			finalize: fin.outcome,
+			acceptance: acc.outcome === "refused" ? acc.body.refusal : acc.outcome === "accepted" ? `attempt ${acc.turn.attemptNo}` : acc.outcome,
+			firstHoldReleased: (await hold(holdIdOf(turn))).credits === 0,
+			holds: (await ledger(org)).length,
+		};
+		expect([
+			{ finalize: "won", acceptance: "turn-answered", firstHoldReleased: false, holds: 1 },
+			{ finalize: "lost", acceptance: "attempt 2", firstHoldReleased: true, holds: 2 },
+		]).toContainEqual(seen);
 	});
 
 	// ── The heartbeat and the sweep ──────────────────────────────────────────────────────────────
