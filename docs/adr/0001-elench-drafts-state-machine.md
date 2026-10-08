@@ -14,8 +14,8 @@ Next's global action queue cannot starve it (§1, §3.4, D34, I10). (2) `startCo
 lease settle for its own live token (§5.1 step 1). (3) `hasTurn` applies ADR 0003's one `turnText`
 (trim, line endings to `\n`) to **both** sides; ADR 0003 slice 2 owns `lib/agent/turn-key.ts`, and
 this ADR only imports it (§4.2, §14). (4) The empty-cell prompt is an external send: D10y carries
-`metadata.cellTarget` (§7.2). (5) D9d's certain refusals are the route's real ones: 400, 401, 402,
-413, 503; there is no 429. (6) Every `agent_threads` read names `user_id = actor.userId`; the
+`metadata.cellTarget` (§7.2). (5) D9d's certain refusals are the routes' real pre-hold ones (400,
+401, 402, 413, 503; there is no 429) plus ADR 0003's typed `committed: false` refusals. (6) Every `agent_threads` read names `user_id = actor.userId`; the
 `owner_all` policy is not what isolates them (§4 step 5). (7) A project anchor needs
 `projects.org_id = actor.orgId`, read explicitly; `authorizeQuiet` alone admits any project id for
 an org-wide grant (§4 step 4). (8-10) The slices: D21/D22/D26 move to 7b, every S test names its
@@ -786,7 +786,8 @@ four:
    consume and then D20 (arm c), and `committed && !textCommitted` is a release under a fresh turn
    id (arm d).
 
-What drafts give ADR 0003 (its §9.4 changes 1-4, adopted in revision 6):
+What drafts give ADR 0003 (its §9.4 changes 1-4, adopted in revision 6; revision 7 corrected
+changes 2 and 3):
 - **The turn id**, minted at the claim and never re-minted for a stored turn (item 1), and replaced
   by a fresh id only for an edit the route refused as `turn-committed-different-text` (D9d (d), S4
   with `freshTurnId`, D31).
@@ -1252,8 +1253,9 @@ that can refuse writes, and the selectors `useDraft(key)` and `useUnsent(scope)`
   focus, the 60 s poll, a scope change), not by the hook.
 - The Unsent group, the delete-confirm count and the narrow toggle's count (slice 10); the footer
   status, the bars, D9a/D24/D31/D36's notices and G10's inline error, rendered into the mount points
-  slice 9 adds (slice 11). `VIEWER_CHANGE` is subscribed by slice 9's drafts root. D20's "Being
-  answered" state ships with ADR 0003 slice 9.
+  slice 9 adds (slice 11). `VIEWER_CHANGE` is subscribed by slice 9's drafts root. D20 (the
+  "Being answered" state for a store-owned send) is in 7b; ADR 0003 slice 6 already shows it on
+  its composer path, and its slice 9 hands it to the store.
 
 **Rollout order.** The server slices change no request the client already makes, so they deploy
 first.
@@ -1437,7 +1439,7 @@ pass with the import stubbed out does not count.
 | D9d (c) / D20 | U › `turn-in-progress consumes, loads the transcript and polls until inFlight is null` |
 | D9d (d) | S9 › `an uncertain later turn stored by a late acceptance, edited and re-sent: turn-committed-different-text keeps the edit in the box under a new turn id, and Enter sends it as a new turn` |
 | D10y cell target (change 3) | U › `SUBMIT_EXTERNAL with a cellTarget into a listed thread sends it in the user message's metadata`; S9 › `the empty-cell prompt into an existing conversation, driven through pendingCellRequest, stores its cell target on its own message, and the body copy still carries it` |
-| D12 `threadRevision` (change 4) | U › `created seeds revisionRef when threadRevision is not null` |
+| D12 `threadRevision` (change 4) | U › `created seeds the transport's base revision with threadRevision` |
 | §5.3 item 1, the `parts` form | U › `the pushed user message's id is turnId` |
 
 **The revision-5 review** (#5512 inline at line 360 for R0; the summary comment for R1-R10):
@@ -1448,7 +1450,7 @@ pass with the import stubbed out does not count.
 | R1 | A timed-out or reloaded `claiming` doubled the text in D11r | H | D9/D10 set `local := null` at the claim; D10c restores; D11r merges only post-claim text | S9 › `Enter inside the debounce, reload: the box holds the text once` |
 | R2 | §1 named the wrong POST target, and I10 ignored Next's global action queue | H | §1 corrected; `PAGE_ORG(null)` dispatched before the navigation (D29); I10 restated | S9 › `a save handed to Next before router.push is answered other-org and held, then saved on return` |
 | R3 | `streaming` as the hand-off depends on the step-0 marker; status is per Chat | H | D9 requires `status ∈ {ready, error}`; D9c requires our turn to be the last user message; the dependency is pinned | R › `both chat routes write a data-agent-step part before the model's first token` |
-| R4 | A release after Stop, a timeout, a network error or a 5xx could say "Not sent" while the route later saved the turn | H | Only the routes' own pre-hold refusals (400, 401, 402, 413, 503) release as certain; the rest release `uncertain` (D9d; revision 7 corrected the list) | S11 › `a 5xx before streaming releases uncertain and shows the check-the-conversation card` |
+| R4 | A release after Stop, a timeout, a network error or a 5xx could say "Not sent" while the route later saved the turn | H | Only the routes' own pre-hold refusals (400, 401, 402, 413, 503) and ADR 0003's typed `committed: false` refusals release as certain; the rest release `uncertain` (D9d; revision 7 corrected the list) | S11 › `a 5xx before streaming releases uncertain and shows the check-the-conversation card` |
 | R5 | D12 read as two identical first turns | H | D12 states `useChat` is empty and one `sendMessage({ id: turnId })` pushes the turn | S9 › `a first send leaves exactly one user turn, with id turnId, in the saved transcript` |
 | R6 | Trim, cap and spans disagreed | H | One untrimmed string capped everywhere; spans per pill on normalized text; at most 20 distinct mentions | U › `a 100,000-char paste with a trailing newline is refused by the composer, never by the server`; U › property `spans index the normalized text` |
 | R7 | The measured worst case understated the bound; the cache budget is in JSON units | H | Re-measured at 757,235 B; the cache row states its true limit | U › `the worst-case action argument, control-character ids and labels included, encodes under 1 MiB` |
@@ -1465,7 +1467,7 @@ revision took are named in the header):
 | B2 | `startConversation` ran the lease settle against its own live claim (625) | H | §5.1 step 1 skips S5 for `origin = composer` with the row's token | A › `a composer start whose claim is 130 s old and whose token is live commits, and is not settled first` |
 | B3 | `hasTurn` normalized one side only, and disagreed with ADR 0003 on trim and line endings (600) | H | One `turnText`, ADR 0003's, on both sides (§4.2); the send trims (D9b, §5.1 step 2) | A › `a later turn typed with a trailing newline and stored trimmed is hasTurn, and S5 consumes it` |
 | B4 | ADR 0003's change 3 was on D9b, which the empty-cell prompt never takes (878) | H | D10y (and D10x) carry `metadata.cellTarget` (§7.2) | see `D10y cell target` above |
-| B5 | The certain-refusal list named a 429 the routes never return and missed 401 and 503 (873) | H | D9d (a) lists 400, 401, 402, 413, 503 with their lines | U › `401 and 503 before streaming release certain: Not sent, never may-already-have-been-sent` |
+| B5 | The certain-refusal list named a 429 the routes never return and missed 401 and 503 (873) | H | D9d (a) lists 400, 401, 402, 413, 503 with their lines, plus ADR 0003's typed `committed: false` refusals | U › `401 and 503 before streaming release certain: Not sent, never may-already-have-been-sent` |
 | B6 | The thread reads relied on `owner_all`, which admits every row of the page's org (606) | H | Every `agent_threads` statement names `user_id = actor.userId` (§4 step 5) | I › `a teammate's thread whose org_id is the page org is invisible to listDrafts, hasTurn and the start's conflict read` |
 | B7 | `authorizeQuiet` on a project admits another org's project for an org-wide grant (476) | H | An explicit `projects.org_id = actor.orgId` read first (§4 step 4) | A2's test |
 | B8 | `turn-key.ts` was in both ADRs' parallel slices (1452) | H | ADR 0003 slice 2 owns it; slice 4 here is blocked by it (§14) | — (plan) |
@@ -1683,7 +1685,8 @@ slices 7b and 9 here.
    `use-elench-store.ts` comment ("Flipping never remounts the chat") is corrected. Every **S9** test
    of §11 passes. If the slice runs past about 800 lines, the conversation half
    (`elench-conversation.tsx`, `elench-surface.tsx`, the root, the slots) splits into a 9b with the
-   same dependencies, and slice 10 waits for both.
+   same dependencies; slice 10 and ADR 0003 slice 9 then wait for both, and "0001/9" in either
+   ADR means 9 and 9b.
 10. `useElenchThreads` resumes `activeKey[scope]` and catches `listThreads` / the resume's
     `getThread` into a `loadError` state (G10); the rail shows the Unsent group in the docked column
     and in the narrow sheet, the narrow toggle shows the count, the panel's conversation switcher
