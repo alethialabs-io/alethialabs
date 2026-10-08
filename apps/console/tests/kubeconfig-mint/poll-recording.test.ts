@@ -7,7 +7,8 @@
 //
 // Before the fix every poll of an admin mint ran the recording `getPdp().enforce(…, "access_admin")`
 // whatever the mint's status, and `enforceDecision` writes an `authz_activity_log` row for every allow
-// of a non-read action — so both clients, which poll every two seconds, wrote one "accessed admin" row
+// of a non-read action — so both clients (the console every 2 s; the CLI backing off from 500 ms to a
+// 5 s cap, apps/cli/cmd/clusters_kubeconfig_mint.go) wrote one "accessed admin" row
 // per poll while the mint was pending.
 //
 // This file keeps the REAL recording path end to end, through BOTH callers (the CLI route and the
@@ -16,7 +17,8 @@
 // (`can`) is stubbed — so the test can revoke `access_admin` between polls — plus the DB handles (the
 // RLS transaction holding one mint row, and the service handle so the activity INSERT is observable),
 // the action-event emitter, and the callers' session/token resolution (each caller's own
-// `access_readonly` gate is not what this file is about; the CLI route's is noted in the PR).
+// `access_readonly` gate is not what this file is about; the CLI route's is
+// tests/kubeconfig-mint/cli-poll-entry-recording.test.ts, #5670).
 //
 // The security half: the hand-over must still REFUSE somebody who lost `access_admin` after the mint
 // started, on a decision made at the hand-over — not one remembered from an earlier poll.
@@ -111,6 +113,7 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorize: vi.fn(),
 	authorizeQuiet: vi.fn(),
 	authorizeCli: vi.fn(),
+	authorizeCliQuiet: vi.fn(),
 	currentActor: vi.fn(),
 }));
 vi.mock("@/lib/rate-limit", () => ({ checkRateLimit: vi.fn() }));
@@ -126,7 +129,7 @@ import { GET } from "@/app/api/cli/clusters/[id]/kubeconfig/[mintId]/route";
 import { pollKubeconfigDownload } from "@/app/server/actions/kubeconfig-download";
 import { emitActionEvent } from "@/lib/alerts/emit";
 import { getPdp } from "@/lib/authz";
-import { authorizeCli, authorizeQuiet } from "@/lib/authz/guard";
+import { authorizeCliQuiet, authorizeQuiet } from "@/lib/authz/guard";
 import { PostgresRbacPDP } from "@/lib/authz/postgres-rbac-pdp";
 import type { Actor } from "@/lib/authz/types";
 
@@ -200,7 +203,7 @@ beforeEach(() => {
 	);
 	vi.mocked(getPdp).mockReturnValue(pdp);
 	vi.mocked(authorizeQuiet).mockResolvedValue(ACTOR);
-	vi.mocked(authorizeCli).mockResolvedValue({
+	vi.mocked(authorizeCliQuiet).mockResolvedValue({
 		actor: ACTOR,
 		credential: "session",
 		orgScope: [ORG, USER],
