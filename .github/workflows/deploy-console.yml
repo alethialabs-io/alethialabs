@@ -1458,7 +1458,7 @@ jobs:
 
   # DID THE DEPLOY ACTUALLY SERVE? A green `deploy` job proves the box accepted the images; it does
   # not prove the public URL answers, and `retag-unchanged` can report success while shipping a stale
-  # image. So this runs ten checks against https://alethialabs.io itself, including "the served build
+  # image. So this runs eleven checks against https://alethialabs.io itself, including "the served build
   # id equals the promoted SHA" — the one assertion that separates a deploy from a deploy that
   # landed.
   #
@@ -1471,6 +1471,12 @@ jobs:
   # console images are re-tagged rather than rebuilt, so the served build id is the PREVIOUS commit
   # and asserting equality would red every runner-only deploy. Empty means "do not compare", which
   # the smoke script reads as a skip with its reason, never as a pass.
+  #
+  # The `marketing-build-id` check reads the SAME value (#5697). Marketing is in the apps group with
+  # the console: `build-amd64` builds both at `github.sha` when `apps_build` is true, and
+  # `retag-unchanged` retags both (the apps loop) when it is false. So marketing never carries the
+  # deploy SHA without the console carrying it too, and a retagged-unchanged marketing image is
+  # NOT ASSERTED exactly as the console is — never compared against a SHA it was not built at.
   smoke:
     name: Post-deploy smoke (the public URL, and the build it serves)
     needs: [changes, deploy]
@@ -1509,8 +1515,8 @@ jobs:
           set -euo pipefail
           out="$(pnpm -C apps/console run smoke:prod -- --list)"
           printf '%s\n' "$out"
-          printf '%s' "$out" | grep -qE '^post-deploy smoke — 10 checks:$' || {
-            echo "::error::the post-deploy smoke manifest is not 10 checks. If a check was added or removed deliberately, move this number in the same PR; if not, the suite shrank and would have reported green on almost nothing."
+          printf '%s' "$out" | grep -qE '^post-deploy smoke — 11 checks:$' || {
+            echo "::error::the post-deploy smoke manifest is not 11 checks. If a check was added or removed deliberately, move this number in the same PR; if not, the suite shrank and would have reported green on almost nothing."
             exit 1
           }
 

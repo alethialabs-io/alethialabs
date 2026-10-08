@@ -155,8 +155,9 @@ across 15 merges.
 
 1. **Watch the `Deploy Console` run to `deploy: success`** — not merely to "green".
 2. **Confirm `Post-deploy smoke (the public URL, and the build it serves)` is green.** This is the
-   check that replaced hand-running `docker buildx imagetools inspect`: it runs ten checks against
-   the public site, one of which asserts that the served build id equals the promoted SHA. That is
+   check that replaced hand-running `docker buildx imagetools inspect`: it runs eleven checks against
+   the public site, two of which assert that the served build ids — the console's and marketing's —
+   equal the promoted SHA. That is
    the assertion that catches the failure the manual step existed for — `retag-unchanged` retags
    `latest` → the new SHA for an image group that did not change, and on 2026-08-13 it did that to
    a 14-day-old image whose builds had all failed, a green deploy of stale code under a fresh SHA.

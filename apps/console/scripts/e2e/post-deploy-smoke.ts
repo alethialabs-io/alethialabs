@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// THE POST-DEPLOY SMOKE — ten checks a real browser makes against the PUBLIC console URL.
+// THE POST-DEPLOY SMOKE — eleven checks a real browser makes against the PUBLIC console URL.
 //
 // # Why this exists
 //
@@ -48,7 +48,12 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { assertServedBuild } from "./build-id-check";
+import {
+	assertServedBuild,
+	CONSOLE_BUILD,
+	MARKETING_BUILD,
+	type BuildIdProbe,
+} from "./build-id-check";
 
 const OUT_DIR = path.resolve(import.meta.dirname, "../../smoke-results");
 
@@ -248,35 +253,40 @@ const CHECKS: Check[] = [
 		// runtime env into `window.__ENV`.
 		//
 		// It is read on BUILD_ID_PATH (`/login`), NOT on `/`: an anonymous `/` is the MARKETING
-		// container (see the header), whose image never sets that key, so reading `/` reported
-		// "unset" on every deploy even after #5621 (#5620). build-id-check.ts states the route and
+		// container (see the header), so reading `/` reported marketing's build, not the console's —
+		// "unset" on every deploy even after #5621, because marketing's image then set no such key
+		// (#5620). build-id-check.ts states the route and
 		// tests/unit/post-deploy-smoke-build-id.test.ts resolves it through the production
-		// Caddyfile.tunnel to the console upstream. Marketing's own build is NOT asserted here.
+		// Caddyfile.tunnel to the console upstream. Marketing's own build is `marketing-build-id`, below.
 		//
 		// Reading it from the BROWSER is the point: a value read server-side would report the file
 		// the host currently holds, which is exactly what is already correct when this fails.
 		async run(ctx) {
 			await assertServedBuild(
-				{
-					/** Opens `pathname` in the smoke's browser and reads the build id the page was handed. */
-					async read(pathname) {
-						const v = await ctx.visit(pathname);
-						try {
-							// No local `declare global` and no cast. `next-runtime-env` already declares
-							// `Window.__ENV: NodeJS.ProcessEnv`, so re-declaring it is TS2717/TS2687 and a
-							// `window as …` cast is a lint error (`assertionStyle: "never"` outside
-							// `tests/**` and `e2e/**`; `scripts/e2e/**` is not that `e2e/`). The optional
-							// chain stays because the script tag genuinely may not have rendered, which is
-							// a state this check must observe rather than crash on.
-							const version = await v.page.evaluate(
-								() => window.__ENV?.NEXT_PUBLIC_APP_VERSION ?? null,
-							);
-							return { version, finalPathname: new URL(v.page.url()).pathname };
-						} finally {
-							await v.page.close();
-						}
-					},
-				},
+				CONSOLE_BUILD,
+				browserBuildProbe(ctx),
+				process.env.SMOKE_EXPECTED_SHA?.trim(),
+				ctx,
+			);
+		},
+	},
+	{
+		id: "marketing-build-id",
+		name: "the marketing site's served build id equals the promoted SHA",
+		// The same assertion against the OTHER app on the public host (#5697). An anonymous `/` is the
+		// marketing container (Caddyfile.tunnel `@marketing`), whose runner stage sets
+		// `NEXT_PUBLIC_APP_VERSION` from the deploy SHA since #5697 — the dockerfile-runtime-public-env
+		// test fails if it stops — and whose app/layout.tsx renders `<PublicEnvScript />` too.
+		//
+		// The SAME expected SHA as `build-id`, deliberately: marketing is built in the apps group
+		// alongside the console (`build-amd64`'s matrix) and retagged alongside it
+		// (`retag-unchanged`'s apps loop). `changes.outputs.apps_build` is the one verdict for both, so
+		// a deploy that retagged marketing unchanged also retagged the console, and both report
+		// NOT ASSERTED rather than comparing an older image to the deploy SHA.
+		async run(ctx) {
+			await assertServedBuild(
+				MARKETING_BUILD,
+				browserBuildProbe(ctx),
 				process.env.SMOKE_EXPECTED_SHA?.trim(),
 				ctx,
 			);
@@ -323,6 +333,31 @@ const CHECKS: Check[] = [
 		},
 	},
 ];
+
+/**
+ * Opens a page in the smoke's browser and reads the build id it was handed — the probe both build-id
+ * checks run through.
+ */
+function browserBuildProbe(ctx: Ctx): BuildIdProbe {
+	return {
+		/** Opens `pathname` in the smoke's browser and reads the build id the page was handed. */
+		async read(pathname) {
+			const v = await ctx.visit(pathname);
+			try {
+				// No local `declare global` and no cast. `next-runtime-env` already declares
+				// `Window.__ENV: NodeJS.ProcessEnv`, so re-declaring it is TS2717/TS2687 and a
+				// `window as …` cast is a lint error (`assertionStyle: "never"` outside
+				// `tests/**` and `e2e/**`; `scripts/e2e/**` is not that `e2e/`). The optional
+				// chain stays because the script tag genuinely may not have rendered, which is
+				// a state this check must observe rather than crash on.
+				const version = await v.page.evaluate(() => window.__ENV?.NEXT_PUBLIC_APP_VERSION ?? null);
+				return { version, finalPathname: new URL(v.page.url()).pathname };
+			} finally {
+				await v.page.close();
+			}
+		},
+	};
+}
 
 /** Checks 2/4/5's shared "and is clean" half: no console errors, no failed same-origin requests. */
 function assertClean(ctx: Ctx, v: Visit, where: string): void {
