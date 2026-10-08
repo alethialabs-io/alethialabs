@@ -1183,8 +1183,9 @@ END $$;
 -- user's own draft in another org is invisible here too. Community/personal: org_id == user id ==
 -- current_owner, so this is the same row set. Unset GUCs are NULL, and NULL denies. ENABLE first —
 -- without it the policy is inert. NOT FORCEd, as no table here is: the two functions below rely on
--- the table owner bypassing it (and raise if it is ever forced, see their note). The retention sweep
--- and the erasure executor run on the service role (RLS-bypassing) and name their rows explicitly.
+-- the table owner bypassing it (and raise if it is ever forced, see their note). Nothing sweeps or
+-- erases drafts yet: the retention sweep and the erasure executor arrive in ADR 0001 slice 6, and
+-- will run on the service role (RLS-bypassing), naming their rows explicitly.
 DO $$
 BEGIN
   ALTER TABLE public.elench_drafts ENABLE ROW LEVEL SECURITY;
@@ -1196,16 +1197,17 @@ BEGIN
            AND org_id = current_setting('app.current_org', true)::uuid);
 END $$;
 
--- The two OWNER-PINNED cross-org functions (ADR 0001 §3.3). Deleting a thread removes the caller's
--- drafts of that conversation in EVERY org (the same conversation id in two orgs is two rows, §3.2),
--- which the policy above cannot do from one org's scope — so these run with definer rights. What
--- keeps that safe:
+-- The two OWNER-PINNED cross-org functions (ADR 0001 §3.3). From ADR 0001 slice 5, deleting a
+-- thread calls the purge to remove the caller's drafts of that conversation in EVERY org (the same
+-- conversation id in two orgs is two rows, §3.2), which the policy above cannot do from one org's
+-- scope — so these run with definer rights. Nothing calls either function yet: today `deleteThread`
+-- leaves a conversation's drafts in place. What keeps them safe:
 --   * The owner is read from `app.current_owner`, the GUC withScope sets, NEVER from an argument, so
 --     no caller can point either function at another user. Unset → NULL → no row matches.
 --   * The only argument is a conversation id, and the only predicate besides the owner pin is
 --     equality on it: definer rights widen the ORG, never the USER.
 --   * `count_…` returns a number and nothing else, so it reveals no content, and only the caller's
---     own count (it feeds the delete confirm).
+--     own count (slice 10's delete confirm will read it).
 --   * `SET row_security = off`, as derive_component_org_id and project_environments_require_one_
 --     default above: for an owner that bypasses the policy it is a no-op, but if these functions are
 --     ever owned by a role that IS subject to the policy — not the table owner, or the table gains
