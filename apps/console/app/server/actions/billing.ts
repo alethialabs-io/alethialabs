@@ -1744,14 +1744,17 @@ async function withUserPurchaseLease<T>(
 	}
 }
 
-/**
- * The longest `subscriptions.create` can take: every attempt the shared client makes, each up to its
- * timeout (lib/billing/stripe.ts).
- */
-const MINT_WORST_CASE_MS = (1 + STRIPE_MAX_NETWORK_RETRIES) * STRIPE_REQUEST_TIMEOUT_MS;
-
 /** What the renewal before the mint must leave on the lease beyond the mint's worst case (§4.4 rule 2). */
 const MINT_DEADLINE_MARGIN_MS = 10_000;
+
+/**
+ * What the renewal before the mint must leave on the lease (§4.4 rule 2): the longest
+ * `subscriptions.create` can take — every attempt the shared client makes, each up to its timeout
+ * (lib/billing/stripe.ts) — plus `MINT_DEADLINE_MARGIN_MS`.
+ */
+function mintDeadlineMs(): number {
+	return (1 + STRIPE_MAX_NETWORK_RETRIES) * STRIPE_REQUEST_TIMEOUT_MS + MINT_DEADLINE_MARGIN_MS;
+}
 
 /** The `cancellation_details.comment` that marks a close-out's cancel (ADR 0002 §4.4 rule 4, S12). */
 const CLOSEOUT_STAMP = "alethia:closeout";
@@ -1932,7 +1935,7 @@ async function startNewOrgSubscription(
 	const currency = opts.currency ?? (await currencyFromRequest());
 	// THE MINT DEADLINE (§4.4 rule 2): the renewal right before the mint must leave the lease more than
 	// the mint's worst case plus a margin, so the lease cannot lapse while Stripe is still answering.
-	await fenceFor(lease, MINT_WORST_CASE_MS + MINT_DEADLINE_MARGIN_MS)();
+	await fenceFor(lease, mintDeadlineMs())();
 	// The org doesn't exist yet (owner only) — start at 1 seat; per-seat sync grows the
 	// quantity as invited members accept (lib/billing/seats syncOrgSeats via org hooks).
 	// The idempotency key names this HOLDER, on purpose: a key shared between holders would replay A's
